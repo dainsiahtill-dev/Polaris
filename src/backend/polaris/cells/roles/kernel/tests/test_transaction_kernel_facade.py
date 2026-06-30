@@ -2136,12 +2136,110 @@ def test_single_target_quality_repair_contract_suppresses_generic_verify_and_tem
 
     assert "Single-target quality repair is active" in hint
     assert "src/models/weather.py" in hint
-    assert "exactly one write_file" in hint
+    assert "exactly one write/edit tool call" in hint
     assert "Verification is required by the user" not in hint
     assert "Include verification tools" not in hint
     assert "POSITIVE TOOL SEQUENCE TEMPLATES" not in hint
     assert "requirements.txt, src/__init__.py" not in hint
     assert "VALID pattern: emit [search/read tool]" not in hint
+    assert "Mutation target files detected from user request" not in hint
+    assert "TOOL FAILURE RECOVERY PROTOCOL" not in hint
+
+
+def test_single_target_quality_repair_drops_stale_verify_contract_requirements() -> None:
+    context = [
+        {
+            "role": "user",
+            "content": (
+                "[mode:materialize]\n"
+                "MATERIALIZATION QUALITY REPAIR MODE:\n"
+                "EXISTING FAILED TARGET FILES — repair these exact paths NOW.\n"
+                "- src/main.ts\n"
+                "SINGLE FAILED TARGET REPAIR:\n"
+                "[director_quality_repair:edit_preferred_single_target]\n"
+                "- Target path: src/main.ts\n"
+                "- For edit_file, use an exact SEARCH string from the current content.\n"
+                "Do not list directories. Do not explore. Do not explain.\n"
+                "Quality errors:\n"
+                "- Artifact quality scan failed: TypeScript project typecheck failed: src/main.ts(10,10): "
+                "error TS6133: 'Market' is declared but its value is never read.\n"
+            ),
+            "metadata": {
+                "tool_contract": {
+                    "single_batch": True,
+                    "required_tools": ["execute_command"],
+                    "min_tool_calls": 3,
+                }
+            },
+        }
+    ]
+    tool_definitions = [
+        {"type": "function", "function": {"name": "edit_file"}},
+        {"type": "function", "function": {"name": "write_file"}},
+        {"type": "function", "function": {"name": "execute_command"}},
+    ]
+
+    hint, _metadata = build_single_batch_task_contract_hint(context, tool_definitions)
+
+    assert "Single-target quality repair is active" in hint
+    assert "`src/main.ts`" in hint
+    assert "Contract-required tools are mandatory" not in hint
+    assert "execute_command" not in hint
+    assert "Contract minimum tool-call count for this batch: >= 1." in hint
+    assert ">= 3" not in hint
+    assert "Mutation target files detected from user request" not in hint
+    assert "TOOL FAILURE RECOVERY PROTOCOL" not in hint
+
+
+def test_single_batch_hint_does_not_suggest_mixed_read_write_without_bypass() -> None:
+    context = [
+        {
+            "role": "user",
+            "content": "Read src/app.ts and update src/app.ts in this single-batch task.",
+            "metadata": {
+                "tool_contract": {
+                    "single_batch": True,
+                    "required_tools": ["read_file", "edit_file"],
+                    "min_tool_calls": 2,
+                }
+            },
+        }
+    ]
+    tool_definitions = [
+        {"type": "function", "function": {"name": "read_file"}},
+        {"type": "function", "function": {"name": "edit_file"}},
+    ]
+
+    hint, _metadata = build_single_batch_task_contract_hint(context, tool_definitions)
+
+    assert "VALID pattern: emit [search/read tool] then [write tool] in the same batch" not in hint
+    assert "Do not mix read/search tools with write/edit tools in one parallel batch" in hint
+
+
+def test_single_batch_hint_allows_mixed_read_write_when_contract_bypasses_barrier() -> None:
+    context = [
+        {
+            "role": "user",
+            "content": "Read src/app.ts and update src/app.ts in this single-batch task.",
+            "metadata": {
+                "tool_contract": {
+                    "single_batch": True,
+                    "required_tools": ["read_file", "edit_file"],
+                    "min_tool_calls": 2,
+                    "allow_mixed_read_write_batch": True,
+                }
+            },
+        }
+    ]
+    tool_definitions = [
+        {"type": "function", "function": {"name": "read_file"}},
+        {"type": "function", "function": {"name": "edit_file"}},
+    ]
+
+    hint, _metadata = build_single_batch_task_contract_hint(context, tool_definitions)
+
+    assert "VALID pattern: emit [search/read tool] then [write tool] in the same batch" in hint
+    assert "Do not mix read/search tools with write/edit tools in one parallel batch" not in hint
 
 
 def test_build_decision_messages_includes_benchmark_required_tools_hint() -> None:

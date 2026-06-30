@@ -678,6 +678,23 @@ class TestMergeReviewResult:
         assert "qa_llm_judgement_unavailable" in merged["warnings"]
         assert "llm_excerpt=bad json" in merged["evidence"]
 
+    def test_llm_unparsed_does_not_mask_deterministic_gate_failure(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        base = {
+            "verdict": "FAIL",
+            "score": 70,
+            "critical_issues": ["workspace_quality_gate_failed"],
+            "major_issues": [],
+            "warnings": [],
+            "evidence": ["workspace_quality_passed=False"],
+            "suggestions": [],
+        }
+        llm = {"parsed_json": False, "raw_excerpt": "not json"}
+        merged = adapter._merge_review_result(base, llm)
+        assert "qa_llm_judgement_unavailable" not in merged["warnings"]
+        assert "qa_llm_judgement_unavailable_suppressed=deterministic_gate_blocked" in merged["evidence"]
+        assert "llm_excerpt=not json" in merged["evidence"]
+
     def test_dedupe(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         base = {

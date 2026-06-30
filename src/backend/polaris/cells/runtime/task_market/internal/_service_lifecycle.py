@@ -54,6 +54,15 @@ _LEGACY_RESOLVED_REOPEN_SOURCES: frozenset[str] = frozenset()
 # models.TERMINAL_STATUSES minus "resolved"): dependents must cascade,
 # not strand.
 _DEPENDENCY_TERMINAL_FAILURE_STATUSES = frozenset({"rejected", "dead_letter"})
+_REQUEUE_CONTEXT_PAYLOAD_KEYS = frozenset(
+    {
+        "amendment_request",
+        "director_interface_discrepancy_retry",
+        "interface_discrepancy_context",
+        "task_boundary_discrepancy_evidence",
+        "task_boundary_interface_discrepancy_retry",
+    }
+)
 
 __all__ = [
     "_DEPENDENCY_TERMINAL_FAILURE_STATUSES",
@@ -657,6 +666,9 @@ class LifecycleMixin(ServiceBaseMixin):
             # see WHY the last attempt failed — claim results expose payload,
             # not last_error (live I3-r10: QA verify bounces retried blind,
             # made no changes, and died no_materialized_changes).
+            requeue_context_payload = (
+                self._requeue_context_payload(command.metadata) if command.requeue_stage else {}
+            )
             item.payload = {
                 **dict(item.payload),
                 "last_failure": {
@@ -664,6 +676,7 @@ class LifecycleMixin(ServiceBaseMixin):
                     "error_message": str(command.error_message or "")[:600],
                     "occurred_at": str(item.last_error["occurred_at"]),
                 },
+                **requeue_context_payload,
             }
             feedback_counters = self._normalize_feedback_counters(
                 dict(item.payload).get("feedback_counters"),
@@ -1456,6 +1469,26 @@ class LifecycleMixin(ServiceBaseMixin):
                     continue
                 counters[key] = max(counters.get(key, 0), max(0, value))
         return counters
+
+    @staticmethod
+    def _requeue_context_payload(metadata: Any) -> dict[str, Any]:
+        if not isinstance(metadata, dict):
+            return {}
+        payload: dict[str, Any] = {}
+        for key in _REQUEUE_CONTEXT_PAYLOAD_KEYS:
+            value = metadata.get(key)
+            if value is None:
+                continue
+            payload[key] = value
+        if not payload:
+            return {}
+        return {
+            **payload,
+            "requeue_context": {
+                "schema_version": "task_market.requeue_context.v1",
+                "keys": sorted(payload),
+            },
+        }
 
     @staticmethod
     def _integration_qa_reopen_allowed(command: RequeueTaskCommandV1) -> bool:

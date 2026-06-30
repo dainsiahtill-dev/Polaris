@@ -74,6 +74,14 @@ def _empty_projection(
         "projected": 0,
         "missing": 0,
         "failed": 0,
+        "missing_required_modalities": [],
+        "failed_required_modalities": [],
+        "failed_control_plane_events": [],
+        "failed_evidence_details": {
+            "required_modalities": [],
+            "control_plane_events": [],
+            "failed_gate_count": 0,
+        },
         "projects": [],
         "detail": "run ledger projection is not available yet",
         "evidence_policy": {
@@ -284,6 +292,14 @@ def _project_from_events(project_id: str, events: list[dict[str, Any]]) -> dict[
     evidence_policy_map = evidence_policy if isinstance(evidence_policy, dict) else {}
     evidence_modalities = projection.get("evidence_modalities")
     evidence_modalities_map = evidence_modalities if isinstance(evidence_modalities, dict) else {}
+    missing_required = evidence_policy_map.get("missing_required_modalities")
+    missing_required_list = [str(item) for item in missing_required] if isinstance(missing_required, list) else []
+    failed_required = evidence_policy_map.get("failed_required_modalities")
+    failed_required_list = [str(item) for item in failed_required] if isinstance(failed_required, list) else []
+    failed_control_plane_events = summary.get("failed_control_plane_events")
+    failed_control_plane_event_list = (
+        [str(item) for item in failed_control_plane_events] if isinstance(failed_control_plane_events, list) else []
+    )
     task_boundary = projection.get("task_boundary")
     task_boundary_map = task_boundary if isinstance(task_boundary, dict) else {}
     tool_lifecycle = projection.get("tool_lifecycle")
@@ -298,6 +314,14 @@ def _project_from_events(project_id: str, events: list[dict[str, Any]]) -> dict[
         "latest_token_id": str(capability_map.get("latest_token_id") or ""),
         "detail": str(summary.get("detail") or ""),
         "missing": list(summary.get("missing") or []),
+        "missing_required_modalities": missing_required_list,
+        "failed_required_modalities": failed_required_list,
+        "failed_control_plane_events": failed_control_plane_event_list,
+        "failed_evidence_details": {
+            "required_modalities": failed_required_list,
+            "control_plane_events": failed_control_plane_event_list,
+            "failed_gate_count": int(summary.get("failed_gate_count") or 0),
+        },
         "evidence_policy": evidence_policy_map,
         "evidence_modalities": evidence_modalities_map,
         "task_boundary": task_boundary_map,
@@ -348,6 +372,17 @@ def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedg
     ok = projected > 0 and failed == 0
     task_boundary = _merge_task_boundary(projects)
     tool_lifecycle = _merge_tool_lifecycle(projects)
+    evidence_policy = _merge_evidence_policy(projects)
+    missing_required = list(evidence_policy.get("missing_required_modalities") or [])
+    failed_required = list(evidence_policy.get("failed_required_modalities") or [])
+    failed_control_plane_events = list(
+        dict.fromkeys(
+            str(item)
+            for project in projects
+            for item in (project.get("failed_control_plane_events") or [])
+            if str(item)
+        )
+    )
     return RunLedgerProjectionResultV1(
         projection={
             "schema_version": 1,
@@ -361,9 +396,17 @@ def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedg
             "projected": projected,
             "missing": 0,
             "failed": failed,
+            "missing_required_modalities": missing_required,
+            "failed_required_modalities": failed_required,
+            "failed_control_plane_events": failed_control_plane_events,
+            "failed_evidence_details": {
+                "required_modalities": failed_required,
+                "control_plane_events": failed_control_plane_events,
+                "failed_project_count": failed,
+            },
             "projects": projects,
             "detail": f"run ledger projection {projected} project(s), {failed} failed",
-            "evidence_policy": _merge_evidence_policy(projects),
+            "evidence_policy": evidence_policy,
             "evidence_modalities": _merge_evidence_modalities(projects),
             "task_boundary": task_boundary,
             "tool_lifecycle": tool_lifecycle,

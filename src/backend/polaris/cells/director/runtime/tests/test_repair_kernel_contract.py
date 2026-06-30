@@ -512,6 +512,38 @@ def test_javascript_missing_export_without_declaration_is_covered_unplannable() 
     assert probe.covered_unplannable_source_tools == ("deterministic_javascript_missing_export_repair",)
 
 
+def test_javascript_missing_run_export_with_entrypoint_contract_is_plannable() -> None:
+    diagnostics = (
+        "Artifact quality scan failed: unresolved import symbol 'run' "
+        "from '../src/index.js' in tests/test_basic.js",
+    )
+    base_files = {
+        "src/index.js": "console.log('dream note app');\n",
+        "tests/test_basic.js": (
+            'import { run } from "../src/index.js";\n'
+            "const output = run();\n"
+            "assert.equal(output.ok, true);\n"
+            "assert.match(output.entrypoint, /src[\\\\/]+index\\.js$/);\n"
+        ),
+    }
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool="deterministic_javascript_missing_export_repair",
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["composition_summary"]["changed_paths"] == ["src/index.js"]
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "export function run(...args)" in repaired
+    assert "return { ok: true, entrypoint };" in repaired
+
+
 def test_repair_rule_registry_rejects_duplicate_rule_ids_and_unknown_source_tool() -> None:
     rule = RepairRuleDefinition(
         rule_id="typescript.object_literal_missing_comma",
@@ -10470,7 +10502,18 @@ def test_public_post_execution_schedule_is_runtime_owned_and_read_only() -> None
     assert payload["items"][0]["phase"] == "dependency_resolution"
     assert payload["items"][1]["phase"] == "dependency_resolution"
     assert payload["items"][2]["phase"] == "multi_phase_convergence"
+    assert payload["items"][1]["source_tool_kind"] == "executable_runtime"
+    assert payload["items"][1]["executable_runtime_source_tool"] is True
+    assert payload["items"][2]["source_tool"] == "deterministic_rust_post_repair"
+    assert payload["items"][2]["source_tool_kind"] == "callback_schedule_label"
+    assert payload["items"][2]["executable_runtime_source_tool"] is False
     assert payload["items"][3]["priority"] == 1
+    assert payload["summary"]["source_tool_kind_counts"] == {
+        "callback_schedule_label": 1,
+        "executable_runtime": 4,
+    }
+    assert payload["summary"]["callback_schedule_label_source_tools"] == ["deterministic_rust_post_repair"]
+    assert "deterministic_rust_post_repair" not in payload["summary"]["executable_runtime_source_tools"]
     assert payload["summary"]["runtime_schedule_authoritative"] is True
     assert payload["summary"]["runner_binding_owner"] == "roles.adapters"
     assert payload["summary"]["target_scheduler"] == "director.runtime.repair_kernel.scheduler"
@@ -10522,6 +10565,11 @@ def test_runtime_post_execution_schedule_runs_callbacks_and_injects_step_metadat
     assert payload["language"] == "rust"
     assert payload["phase"] == "dependency_resolution"
     assert payload["priority"] == 0
+    assert payload["scheduled_source_tool"] == "deterministic_rust_dependency_repair"
+    assert payload["scheduled_source_tool_kind"] == "executable_runtime"
+    assert payload["scheduled_source_tool_executable_runtime"] is True
+    assert payload["schedule_source_tool_kind"] == "executable_runtime"
+    assert payload["schedule_source_tool_is_runtime_executable"] is True
     assert payload["round_number"] == 1
     assert payload["max_rounds"] == 1
     assert payload["scheduler_round_number"] == 1
@@ -10660,12 +10708,22 @@ def test_public_materialization_quality_schedule_is_runtime_owned_and_read_only(
     assert payload["agi_execution_authority"] is False
     assert [item["step_id"] for item in payload["items"]] == expected_step_ids
     assert payload["items"][0]["phase"] == "hygiene"
+    assert payload["items"][0]["source_tool_kind"] == "callback_schedule_label"
+    assert payload["items"][0]["executable_runtime_source_tool"] is False
     assert payload["items"][3]["source_tool"] == "deterministic_html_typescript_module_script_repair"
+    assert payload["items"][3]["source_tool_kind"] == "callback_schedule_label"
+    assert payload["items"][3]["executable_runtime_source_tool"] is False
     assert payload["items"][4]["depends_on"] == ["materialization.html_entrypoint"]
     assert payload["items"][-1]["depends_on"] == ["materialization.python_import"]
     assert payload["summary"]["step_count"] == len(expected_step_ids)
     assert payload["summary"]["ordered_step_ids"] == expected_step_ids
     assert payload["summary"]["languages"] == ["go", "html", "javascript", "multi", "python", "rust", "typescript"]
+    assert payload["summary"]["source_tool_kind_counts"] == {
+        "callback_schedule_label": len(expected_step_ids),
+        "executable_runtime": 0,
+    }
+    assert payload["summary"]["executable_runtime_source_tools"] == []
+    assert payload["summary"]["callback_schedule_label_source_tools"] == payload["summary"]["source_tools"]
     assert payload["summary"]["runtime_schedule_authoritative"] is True
     assert payload["summary"]["runner_binding_owner"] == "roles.adapters"
     assert payload["summary"]["target_scheduler"] == "director.runtime.repair_kernel.scheduler"
@@ -10714,6 +10772,11 @@ def test_runtime_materialization_quality_schedule_runs_callbacks_and_injects_ste
     assert payload["language"] == "multi"
     assert payload["phase"] == "hygiene"
     assert payload["priority"] == 0
+    assert payload["scheduled_source_tool"] == "deterministic_materialization_hygiene_repair"
+    assert payload["scheduled_source_tool_kind"] == "callback_schedule_label"
+    assert payload["scheduled_source_tool_executable_runtime"] is False
+    assert payload["schedule_source_tool_kind"] == "callback_schedule_label"
+    assert payload["schedule_source_tool_is_runtime_executable"] is False
     assert payload["round_number"] == 1
     assert payload["scheduler_round_number"] == 1
     assert payload["convergence_status"] == "max_rounds_reached"

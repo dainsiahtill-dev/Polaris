@@ -322,6 +322,36 @@ class TestProcessContextOverride:
         assert "key1: value1" in result["content"]
         assert "key2: value2" in result["content"]
 
+    def test_context_override_tool_history_failure_is_prompt_safe(self):
+        """Tool failure receipts embedded in history-like override keys must not
+        re-enter the next LLM prompt as raw actionable evidence."""
+
+        result = self._gateway()._process_context_override(
+            {
+                "recent_episodes": {
+                    "role": "tool",
+                    "content": {
+                        "tool_name": "write_file",
+                        "status": "error",
+                        "error_type": "director_write_policy_denied",
+                        "reason": "Write scope validated",
+                        "allowed_scope": "src/main.ts",
+                        "receipt_detail": {"raw": "large runtime evidence"},
+                    },
+                },
+                "quality_errors": 'TypeScript project typecheck failed: {"status": "error"}',
+            }
+        )
+
+        assert result is not None
+        content = result["content"]
+        assert "[tool_failure_summary]" in content
+        assert "director_write_policy_denied" in content
+        assert "receipt_detail" in content
+        assert "large runtime evidence" not in content
+        # Non-tool diagnostic context remains available to the model.
+        assert "quality_errors: TypeScript project typecheck failed" in content
+
     @staticmethod
     def _gateway() -> RoleContextGateway:
         from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
@@ -644,6 +674,42 @@ class TestExtractToolMessagesFromHistory:
         assert result[0]["role"] == "tool"
         assert result[0]["content"] == "<result>test</result>"
 
+    def test_extract_tool_failure_history_as_prompt_safe_summary(self):
+        """Fallback history extraction summarizes raw failed tool receipts."""
+        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+
+        mock_profile = MagicMock()
+        mock_profile.context_policy = MagicMock()
+        mock_profile.context_policy.max_history_turns = 8
+        mock_profile.context_policy.max_context_tokens = 128000
+        mock_profile.context_policy.include_project_structure = False
+        mock_profile.context_policy.include_task_history = False
+        mock_profile.context_policy.compression_strategy = "none"
+        mock_profile.context_domain = None
+        mock_profile.provider_id = None
+        mock_profile.model = None
+        mock_profile.role_id = "test"
+        mock_profile.display_name = "Test"
+
+        gateway = RoleContextGateway(mock_profile, workspace=".")
+
+        history = [
+            (
+                "tool",
+                "{'tool_name': 'write_file', 'status': 'error', "
+                "'error_type': 'director_write_policy_denied', "
+                "'reason': 'Write scope validated', "
+                "'receipt_detail': {'raw': 'full runtime payload'}}",
+            )
+        ]
+        result = gateway._extract_tool_messages_from_history(history)
+
+        assert len(result) == 1
+        content = result[0]["content"]
+        assert content.startswith("[tool_failure_summary]")
+        assert "director_write_policy_denied" in content
+        assert "full runtime payload" not in content
+
     def test_extract_multiple_tool_messages(self):
         """Verify extraction of multiple tool messages."""
         from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
@@ -777,6 +843,42 @@ class TestProcessToolMessagesForFallback:
         result = gateway._process_tool_messages_for_fallback(tool_messages)
 
         assert result[0]["role"] == "tool"
+
+    def test_process_tool_failure_fallback_before_truncation(self):
+        """Prompt-safe failure summaries are compacted before fallback truncation."""
+        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+
+        mock_profile = MagicMock()
+        mock_profile.context_policy = MagicMock()
+        mock_profile.context_policy.max_history_turns = 8
+        mock_profile.context_policy.max_context_tokens = 128000
+        mock_profile.context_policy.include_project_structure = False
+        mock_profile.context_policy.include_task_history = False
+        mock_profile.context_policy.compression_strategy = "none"
+        mock_profile.context_domain = None
+        mock_profile.provider_id = None
+        mock_profile.model = None
+        mock_profile.role_id = "test"
+        mock_profile.display_name = "Test"
+
+        gateway = RoleContextGateway(mock_profile, workspace=".")
+
+        raw_payload = (
+            "{'tool_name': 'edit_file', 'status': 'failed', "
+            "'error_type': 'tool_failure', 'reason': 'tool execution failed', "
+            f"'receipt_detail': '{'x' * 5000}'}}"
+        )
+        result = gateway._process_tool_messages_for_fallback(
+            [{"role": "tool", "content": raw_payload}],
+            max_chars=2000,
+        )
+
+        assert len(result) == 1
+        content = result[0]["content"]
+        assert content.startswith("[tool_failure_summary]")
+        assert "CONTEXT_TRUNCATED" not in content
+        assert "receipt_detail" in content
+        assert "xxxxx" not in content
 
 
 class TestCompressionEngineToolPreservation:

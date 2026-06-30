@@ -531,26 +531,8 @@
     },
     {
       "type": "function",
-      "name": "_apply_deterministic_scaffold_marker_cleanup",
-      "description": "Clean deterministic scaffold markers from declared cleanup task files.",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_deterministic_node_test_script_contract_repair",
-      "description": "Replace an over-strict generated Node test contract with substantive checks.",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
       "name": "_build_substantive_node_test_script",
       "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_deterministic_unresolved_import_symbol_repair",
-      "description": "Repair cross-file Python unresolved import symbol failures.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
     {
@@ -563,24 +545,6 @@
       "type": "function",
       "name": "_build_python_symbol_stub",
       "description": "Choose the most useful minimal binding for ``symbol``.",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_deterministic_python_static_smoke",
-      "description": "py_compile every Python artifact the model wrote, declared or not.",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_deterministic_python_runtime_smoke",
-      "description": "Surface runtime errors that ``py_compile`` cannot catch.",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_deterministic_typescript_reexport_repair",
-      "description": "Repair a narrow TypeScript runtime re-export miss without target-specific code.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
     {
@@ -639,12 +603,6 @@
     },
     {
       "type": "function",
-      "name": "_apply_deterministic_pre_materialization_declared_target_repairs",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
       "name": "_filter_pre_materialization_declared_target_errors",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
@@ -652,18 +610,6 @@
     {
       "type": "function",
       "name": "_pre_materialization_declared_target_repair_allowed",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_deterministic_declared_target_contract_repairs",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_deterministic_typeorm_model_normalization_repair",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
@@ -687,12 +633,6 @@
     },
     {
       "type": "function",
-      "name": "_apply_deterministic_typescript_escaped_newline_repair",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
       "name": "_repair_typescript_escaped_newline_in_line_comments",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
@@ -700,12 +640,6 @@
     {
       "type": "function",
       "name": "_replace_escaped_newline",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_deterministic_typescript_zod_type_class_collision_repair",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
@@ -729,18 +663,6 @@
     },
     {
       "type": "function",
-      "name": "_apply_deterministic_runtime_dependency_repair",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_deterministic_npm_test_script_repair",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
       "name": "_is_repairable_npm_test_script_error",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
@@ -754,12 +676,6 @@
     {
       "type": "function",
       "name": "_typescript_relative_import_without_suffix",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_deterministic_missing_declared_target_repair",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },

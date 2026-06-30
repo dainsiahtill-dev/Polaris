@@ -152,6 +152,24 @@ def test_tool_calling_canonical_rule_and_stage_declared() -> None:
     assert "tool_calling_canonical_gate" in stage_ids
 
 
+def test_director_adapter_does_not_execute_textual_tool_protocol() -> None:
+    source_path = (
+        BACKEND_ROOT
+        / "polaris"
+        / "cells"
+        / "roles"
+        / "adapters"
+        / "internal"
+        / "director"
+        / "execution.py"
+    )
+    source = source_path.read_text(encoding="utf-8")
+
+    assert "parse_tool_calls(" not in source
+    assert "legacy_text_tool_protocol_disabled" in source
+    assert "_TEXTUAL_TOOL_PROTOCOL_PATTERN" in source
+
+
 def _multi_tool_payload(
     *,
     raw_tools: list[str],

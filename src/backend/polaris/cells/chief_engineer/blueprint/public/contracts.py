@@ -295,6 +295,7 @@ class TaskBlueprintResultV1:
     # Existing target file export summaries so downstream Director tasks
     # (e.g. test generation) know the actual API of files created by earlier tasks.
     existing_target_files: tuple[dict[str, str], ...] = field(default_factory=tuple)
+    module_interface_contract: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
@@ -319,6 +320,12 @@ class TaskBlueprintResultV1:
                 decisions.append(ArchitectureDecisionV1.from_mapping(item))
         object.__setattr__(self, "architecture_decisions", tuple(decisions))
         object.__setattr__(self, "selected_libraries", _string_tuple(self.selected_libraries))
+        object.__setattr__(
+            self,
+            "existing_target_files",
+            tuple(dict(item) for item in self.existing_target_files if isinstance(item, Mapping)),
+        )
+        object.__setattr__(self, "module_interface_contract", _to_dict_copy(self.module_interface_contract))
 
 
 class ChiefEngineerBlueprintErrorV1(RuntimeError):  # noqa: N818

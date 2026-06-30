@@ -41,6 +41,11 @@ be invoked through `PlanDirectorRepairCommandV1` or
 catalog-only source tools must return `unsupported_repair_source_tool` as a
 first-class public result `error_code`, must not write the workspace, and must
 not fall back to legacy regex/direct-write helpers.
+Runtime schedule steps also expose `source_tool_kind` and
+`executable_runtime_source_tool`. Schedule labels such as
+`deterministic_rust_post_repair` or materialization-quality step source tools
+with `source_tool_kind=callback_schedule_label` are runner labels only; they
+must not be passed to public Plan/Run repair commands.
 
 Runtime owns repair planning, composition, policy, scheduler, receipts, and
 advisory validation. It does not own Director tool execution. Write effects must
@@ -211,7 +216,8 @@ Remaining code still lives elsewhere:
   reorder schedule entries in adapter code. The current runtime-owned steps are
   `materialization.hygiene_scaffold`,
   `materialization.typescript_scaffold`, `materialization.typescript_compiler`,
-  `materialization.node_manifest`, `materialization.rust_compiler`,
+  `materialization.html_entrypoint`, `materialization.node_manifest`,
+  `materialization.rust_compiler`,
   `materialization.target_runtime`, `materialization.python_import`, and
   `materialization.go_import`; do not collapse them back into a single
   `materialization.quality_repair_host` step. The legacy

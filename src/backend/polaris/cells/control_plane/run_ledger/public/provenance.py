@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public.ledger import stable_hash
+from polaris.kernelone.llm.engine.internal.context_hash import validate_context_hash
 
 _MISSING_PREFIX = "missing:"
 
@@ -71,16 +72,45 @@ def _collect_hashes_by_keys(value: Any, keys: set[str]) -> list[str]:
     return list(dict.fromkeys(hashes))
 
 
-def _collect_evidence_refs(value: Any) -> list[str]:
+def _invalid_evidence_ref(*, ref_type: str, value: str, reason: str) -> dict[str, str]:
+    return {
+        "ref_type": ref_type,
+        "value": value,
+        "reason": reason,
+    }
+
+
+def _collect_evidence_refs(value: Any) -> tuple[list[str], list[dict[str, str]]]:
     refs: list[str] = []
+    invalid_refs: list[dict[str, str]] = []
     for row in _walk_dicts(value):
-        for key in ("context_snapshot_ref", "evidence_ref", "verifier_logs_ref", "ledger_path", "_ledger_path"):
+        context_ref = _clean_string(row.get("context_snapshot_ref"))
+        if context_ref:
+            try:
+                refs.append(validate_context_hash(context_ref))
+            except ValueError as exc:
+                invalid_refs.append(
+                    _invalid_evidence_ref(
+                        ref_type="context_snapshot_ref",
+                        value=context_ref,
+                        reason=str(exc),
+                    )
+                )
+        for key in ("evidence_ref", "verifier_logs_ref", "ledger_path", "_ledger_path"):
             token = _clean_string(row.get(key))
             if token:
                 refs.append(token)
         refs.extend(_string_list(row.get("evidence_refs")))
         refs.extend(_string_list(row.get("receipt_refs")))
-    return list(dict.fromkeys(refs))
+    deduped_invalid_refs: list[dict[str, str]] = []
+    seen_invalid_refs: set[tuple[str, str, str]] = set()
+    for row in invalid_refs:
+        key = (row["ref_type"], row["value"], row["reason"])
+        if key in seen_invalid_refs:
+            continue
+        seen_invalid_refs.add(key)
+        deduped_invalid_refs.append(row)
+    return list(dict.fromkeys(refs)), deduped_invalid_refs
 
 
 def _collect_final_provider_request_hashes(events: list[dict[str, Any]]) -> list[str]:
@@ -166,6 +196,9 @@ def _status_from_projection(projection: dict[str, Any], events: list[dict[str, A
     missing = evidence_policy.get("missing_required_modalities") or projection.get("missing")
     if missing or not bool(capability.get("ok", True)):
         return "blocked"
+    failed_required = evidence_policy.get("failed_required_modalities") or projection.get("failed_required_modalities")
+    if failed_required:
+        return "failed"
     failed_gates = projection.get("failed_gates")
     if isinstance(failed_gates, list) and failed_gates:
         return "failed"
@@ -200,6 +233,8 @@ def build_run_provenance_bundle(
         "handoff_decision_hash": _workflow_hash_from_final_request(events, "handoff_decision_hash"),
         "execution_envelope_hash": _workflow_hash_from_final_request(events, "execution_envelope_hash"),
     }
+    evidence_policy = _dict_value(projection.get("evidence_policy"))
+    evidence_refs, invalid_evidence_refs = _collect_evidence_refs(events)
     bundle_without_id = {
         "schema_version": "polaris.run_provenance_bundle.v1",
         "run_id": _clean_string(run_id) or _clean_string(latest_token.get("run_id")) or "unknown",
@@ -256,7 +291,14 @@ def build_run_provenance_bundle(
             missing_key="verifier_logs_ref",
         ),
         "final_status": _clean_string(projection.get("status")) or status,
-        "evidence_refs": _collect_evidence_refs(events),
+        "missing_required_modalities": _string_list(
+            evidence_policy.get("missing_required_modalities") or projection.get("missing_required_modalities")
+        ),
+        "failed_required_modalities": _string_list(
+            evidence_policy.get("failed_required_modalities") or projection.get("failed_required_modalities")
+        ),
+        "evidence_refs": evidence_refs,
+        "invalid_evidence_refs": invalid_evidence_refs,
         "created_at": created_at or _utc_now(),
     }
     bundle_id = "run-prov-" + stable_hash(bundle_without_id)[:24]

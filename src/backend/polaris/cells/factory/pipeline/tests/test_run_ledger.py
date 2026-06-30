@@ -13,6 +13,7 @@ from polaris.cells.control_plane.verifier_policy.public import (
 from polaris.cells.factory.pipeline.internal.bench_gates import build_real_run_gate
 from polaris.cells.factory.pipeline.internal.run_ledger import (
     RunLedger,
+    _missing_required_modalities,
     build_gate_ledger_event,
     build_job_token_from_record,
     build_run_ledger_projection,
@@ -21,6 +22,55 @@ from polaris.cells.factory.pipeline.internal.run_ledger import (
     summarize_run_ledger_meta,
     summarize_run_ledger_projection,
 )
+
+
+def test_legacy_missing_required_modalities_does_not_treat_failed_present_evidence_as_missing() -> None:
+    missing = _missing_required_modalities(
+        ["command", "browser"],
+        {
+            "command": {"present": True, "ok": False, "failed": 1},
+            "browser": {"present": False, "ok": False},
+        },
+    )
+
+    assert missing == ["browser"]
+
+
+def test_run_ledger_command_modality_accepts_passed_field() -> None:
+    token = build_job_token_from_record(
+        {
+            "id": "L1-command",
+            "target_files": ["src/index.js"],
+            "scope_paths": ["src/index.js"],
+            "required_evidence_modalities": ["command"],
+        },
+        run_id="run-command",
+        project_id="L1-command",
+        stage="workspace_validation",
+    )
+    event = build_gate_ledger_event(
+        token,
+        {
+            "ok": True,
+            "summary": "workspace validation passed",
+            "command_count_total": 1,
+            "commands": [
+                {
+                    "command": ["npm", "test"],
+                    "passed": True,
+                    "exit_code": 0,
+                }
+            ],
+            "requirements": {"workspace_validation": {"ok": True}},
+        },
+        gate_name="workspace_validation",
+    )
+
+    projection = build_run_ledger_projection([event])
+
+    assert projection["evidence_policy"]["missing_required_modalities"] == []
+    assert projection["evidence_policy"]["failed_required_modalities"] == []
+    assert projection["evidence_modalities"]["command"]["ok"] == 1
 
 
 def test_job_token_is_stable_and_carries_canonical_paths() -> None:
@@ -128,6 +178,64 @@ def test_run_ledger_appends_gate_evidence(tmp_path: Path) -> None:
     assert projection["evidence_modalities"]["command"]["ok"] == 0
     assert projection["evidence_modalities"]["command"]["failed"] == 1
     assert projection["evidence_policy"]["failed_required_modalities"] == ["command"]
+
+
+def test_factory_gate_ledger_projects_repair_and_environment_prep_modalities() -> None:
+    token = build_job_token_from_record(
+        {
+            "code_files": ["package.json"],
+            "chain_results": {"contract_goal": "repair package manifest"},
+            "chain": {"audit_bundle": {"blueprint_id": "bp-1"}},
+            "required_evidence_modalities": ["repair", "environment_prep"],
+        },
+        run_id="bench_1",
+        project_id="P1",
+        stage="director_repair",
+    )
+    gate = {
+        "ok": True,
+        "summary": "repair and env prep evidence projected",
+        "repair_receipts": [
+            {
+                "receipt_id": "repair-1",
+                "source_tool": "deterministic_runtime_dependency_repair",
+                "status": "applied",
+                "authoritative": True,
+                "evidence_status": "resolved_evidence",
+            }
+        ],
+        "receipt_authority_policy": {
+            "schema_version": "director.repair_receipt_authority_policy.v1",
+            "authoritative_success": True,
+            "receipt_count": 1,
+            "missing_evidence_receipt_count": 0,
+            "failed_evidence_receipt_count": 0,
+            "non_authoritative_receipt_count": 0,
+        },
+        "environment_prep_receipts": [
+            {
+                "schema_version": "director.environment_prep_receipt.v1",
+                "plan_id": "env-prep-1",
+                "ecosystem": "node",
+                "package_manager": "npm",
+                "command": ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"],
+                "exit_code": 0,
+                "status": "succeeded",
+                "manifest": "package.json",
+            }
+        ],
+    }
+
+    event = build_gate_ledger_event(token, gate, gate_name="director_repair_gate")
+    projection = build_run_ledger_projection([event])
+
+    assert event["physical_evidence"]["repair_receipts"][0]["receipt_id"] == "repair-1"
+    assert event["physical_evidence"]["environment_prep_receipts"][0]["plan_id"] == "env-prep-1"
+    assert projection["ok"] is True
+    assert projection["evidence_policy"]["missing_required_modalities"] == []
+    assert projection["evidence_policy"]["failed_required_modalities"] == []
+    assert projection["gates"][0]["evidence_modalities"]["repair"]["ok"] is True
+    assert projection["gates"][0]["evidence_modalities"]["environment_prep"]["ok"] is True
 
 
 def test_real_run_gate_persists_ledger_event_from_single_token_source(tmp_path: Path) -> None:

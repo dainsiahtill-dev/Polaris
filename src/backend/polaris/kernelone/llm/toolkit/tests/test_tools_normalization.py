@@ -541,6 +541,14 @@ class TestExecuteCommandNormalization:
 
         assert normalize_tool_name("run_command") == "execute_command"
 
+    def test_schema_normalizer_escape_hatch_uses_canonical_tool_name(self) -> None:
+        """Direct schema normalization must still honor tool-name aliases."""
+        from polaris.kernelone.llm.toolkit.tool_normalization.schema_driven_normalizer import normalize_with_schema
+
+        normalized = normalize_with_schema("run_command", {"argv": ["npm", "run", "build"]})
+
+        assert normalized["command"] == "npm run build"
+
 
 class TestToolNameNormalization:
     """Test tool name normalization."""
@@ -591,6 +599,38 @@ class TestToolNameNormalization:
         from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
 
         assert normalize_tool_name("fs.delete_everything") == "fs.delete_everything"
+
+    def test_tool_spec_registry_updates_are_visible_after_first_normalization(self) -> None:
+        """The schema normalizer must not keep a stale global ToolSpec snapshot."""
+        from polaris.kernelone.tool_execution import tool_spec_registry
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        normalize_tool_arguments("write_file", {"file": "warmup.txt", "content": "ok\n"})
+        try:
+            ToolSpecRegistry.register(
+                "dynamic_probe",
+                {
+                    "category": "read",
+                    "description": "Dynamic test tool",
+                    "aliases": ["dynamic_probe_alias"],
+                    "arg_aliases": {"p": "path", "n": "limit"},
+                    "arguments": [
+                        {"name": "path", "type": "string", "required": True},
+                        {"name": "limit", "type": "integer", "required": False},
+                    ],
+                    "required_any": [("path",)],
+                    "required_doc": "args.path required",
+                },
+            )
+
+            normalized = normalize_tool_arguments(
+                "dynamic_probe_alias",
+                {"p": "/workspace/src/app.py", "n": "5"},
+            )
+
+            assert normalized == {"path": "src/app.py", "limit": 5}
+        finally:
+            tool_spec_registry.migrate_from_contracts_specs()
 
 
 class TestRepoReadHeadNormalization:

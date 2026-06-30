@@ -182,6 +182,50 @@ class TestRoleToolGateway:
         assert can_run is False
         assert "危险" in reason or "dangerous" in reason.lower()
 
+    def test_missing_tool_whitelist_fails_closed(self, temp_workspace):
+        """A missing role whitelist must not become executor-level allow-all."""
+        profile = SimpleNamespace(
+            role_id="director",
+            tool_policy=SimpleNamespace(
+                policy_id="missing-whitelist",
+                whitelist=None,
+                blacklist=[],
+                allow_code_write=True,
+                allow_command_execution=True,
+                allow_file_delete=True,
+                max_tool_calls_per_turn=10,
+            ),
+        )
+        gateway = RoleToolGateway(profile, temp_workspace)
+
+        allowed, reason = gateway.check_tool_permission("read_file", {"file": "README.md"})
+
+        assert allowed is False
+        assert "白名单" in reason or "whitelist" in reason.lower()
+        assert gateway._get_allowed_tools_for_executor() == frozenset()
+
+    def test_empty_tool_whitelist_fails_closed(self, temp_workspace):
+        """An explicitly empty role whitelist should reject every tool."""
+        profile = SimpleNamespace(
+            role_id="director",
+            tool_policy=SimpleNamespace(
+                policy_id="empty-whitelist",
+                whitelist=[],
+                blacklist=[],
+                allow_code_write=True,
+                allow_command_execution=True,
+                allow_file_delete=True,
+                max_tool_calls_per_turn=10,
+            ),
+        )
+        gateway = RoleToolGateway(profile, temp_workspace)
+
+        allowed, reason = gateway.check_tool_permission("write_file", {"file": "a.py", "content": "x = 1\n"})
+
+        assert allowed is False
+        assert "白名单" in reason or "whitelist" in reason.lower()
+        assert gateway._get_allowed_tools_for_executor() == frozenset()
+
     def test_execute_tool_respects_executor_failure_payload(
         self,
         registry,

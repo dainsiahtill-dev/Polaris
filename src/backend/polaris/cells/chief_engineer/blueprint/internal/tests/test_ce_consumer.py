@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -159,6 +160,90 @@ class TestCEConsumerPollOnce:
         assert database["decision_status"] == "guidance"
         assert database["source"] == "platform_signal_guidance"
         assert any("vector" in item.lower() for item in database["options_considered"])
+
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    def test_claim_preserves_interface_discrepancy_context_in_blueprint_handoff(
+        self,
+        mock_get_svc: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        amendment_request = {
+            "schema_version": "cross_artifact.contract_amendment_request.v1",
+            "task_id": "task-contract",
+            "requested_by": "director",
+            "reason": "consumer imports symbols the owner task never exported",
+        }
+        interface_context = {
+            "schema_version": "interface_discrepancy.context.v1",
+            "recommended_owner": "chief_engineer",
+            "interface_delta": [
+                {
+                    "owner_file": "src/models/weather.py",
+                    "consumer_file": "src/engine/forecast.py",
+                    "missing_symbols": ["Weather", "WeatherKind"],
+                }
+            ],
+        }
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-contract"
+        claim_result.lease_token = "lease-contract"
+        claim_result.payload = {
+            "title": "Fix cross-file interface contract",
+            "description": "Align weather model exports with forecast consumers.",
+            "target_files": ["src/models/weather.py", "src/engine/forecast.py"],
+            "scope_paths": ["src/models/weather.py", "src/engine/forecast.py"],
+            "acceptance_criteria": ["imports resolve"],
+            "execution_checklist": ["Update owner module exports", "Update consumer imports"],
+            "amendment_request": amendment_request,
+            "interface_discrepancy_context": interface_context,
+            "requeue_context": {
+                "schema_version": "task_market.requeue_context.v1",
+                "keys": ["amendment_request", "interface_discrepancy_context"],
+            },
+        }
+        no_claim_result = MagicMock()
+        no_claim_result.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim_result]
+        ack_result = MagicMock()
+        ack_result.ok = True
+        ack_result.status = "pending_exec"
+        mock_svc.acknowledge_task_stage.return_value = ack_result
+
+        consumer = CEConsumer(
+            workspace=str(tmp_path),
+            worker_id="w1",
+            enable_director_pool=False,
+        )
+
+        with patch.object(
+            consumer,
+            "_run_ce_preflight",
+            return_value={
+                "blueprint_id": "bp-task-contract",
+                "target_files": ["src/models/weather.py", "src/engine/forecast.py"],
+                "scope_paths": ["src/models/weather.py", "src/engine/forecast.py"],
+            },
+        ) as preflight:
+            results = consumer.poll_once()
+
+        assert results[0]["ok"] is True
+        preflight_payload = preflight.call_args[0][1]
+        assert preflight_payload["amendment_request"] == amendment_request
+        assert preflight_payload["interface_discrepancy_context"] == interface_context
+
+        ack_call_args = mock_svc.acknowledge_task_stage.call_args
+        assert ack_call_args is not None
+        cmd = ack_call_args[0][0]
+        assert cmd.metadata["amendment_request"] == amendment_request
+        assert cmd.metadata["interface_discrepancy_context"] == interface_context
+        assert cmd.metadata["requeue_context"] == {
+            "schema_version": "task_market.requeue_context.v1",
+            "keys": ["amendment_request", "interface_discrepancy_context"],
+        }
 
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
     def test_successful_claim_preserves_pm_task_test_targets(self, mock_get_svc: MagicMock) -> None:

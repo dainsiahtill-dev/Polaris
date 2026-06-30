@@ -63,7 +63,11 @@ from polaris.cells.roles.kernel.internal.context_event import (
     ToolLoopSafetyPolicy,
 )
 from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
-from polaris.cells.roles.kernel.internal.context_gateway.prompt_safety import prompt_safe_message_content
+from polaris.cells.roles.kernel.internal.context_gateway.prompt_safety import (
+    format_tool_failure_summary,
+    parse_tool_failure_summary,
+    prompt_safe_message_content,
+)
 from polaris.cells.roles.kernel.internal.metrics import get_dead_loop_metrics
 from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
 from polaris.kernelone.llm.runtime_config import get_role_model
@@ -294,7 +298,74 @@ class ToolLoopController:
             )
             result.append(ctx_event)
 
-        return result if result else self._NO_SNAPSHOT
+        if not result:
+            return self._NO_SNAPSHOT
+        return self._compact_tool_failure_context_events(result)
+
+    @staticmethod
+    def _compact_tool_failure_context_events(
+        events: list[ContextEvent],
+        *,
+        max_failure_kinds: int = 4,
+    ) -> list[ContextEvent]:
+        aggregate: dict[tuple[str, str, str], dict[str, Any]] = {}
+        first_failure: ContextEvent | None = None
+        result: list[ContextEvent] = []
+        failure_count = 0
+        for event in events:
+            payload = parse_tool_failure_summary(event.content)
+            if payload is None:
+                result.append(event)
+                continue
+            failure_count += 1
+            if first_failure is None:
+                first_failure = event
+                result.append(event)
+            key = (
+                str(payload.get("tool") or "unknown"),
+                str(payload.get("error_type") or "tool_failure"),
+                str(payload.get("reason") or "tool execution failed"),
+            )
+            entry = aggregate.setdefault(
+                key,
+                {
+                    "tool": key[0],
+                    "error_type": key[1],
+                    "reason": key[2],
+                    "count": 0,
+                },
+            )
+            entry["count"] = int(entry["count"]) + 1
+
+        if first_failure is None or failure_count <= 1:
+            return events
+
+        failures = sorted(aggregate.values(), key=lambda item: (-int(item["count"]), str(item["tool"])))
+        included = failures[: max(1, int(max_failure_kinds))]
+        digest = {
+            "schema_version": "tool_failure_summary_digest.v1",
+            "failure_count": sum(int(item["count"]) for item in failures),
+            "unique_failure_count": len(failures),
+            "failures": included,
+            "omitted_failure_kinds": max(0, len(failures) - len(included)),
+            "prompt_safe": True,
+            "observation_only": True,
+            "non_deliverable": True,
+            "receipt_detail": "omitted; see runtime tool_result event for audit evidence",
+        }
+        first_index = result.index(first_failure)
+        result[first_index] = ContextEvent(
+            event_id=f"{first_failure.event_id}:tool_failure_digest",
+            role="system",
+            content=format_tool_failure_summary(digest),
+            sequence=first_failure.sequence,
+            metadata={
+                **dict(first_failure.metadata),
+                "kind": "tool_failure_summary_digest",
+                "compacted_tool_failure_count": failure_count,
+            },
+        )
+        return result
 
     def _should_raise_on_hard_stagnation(self) -> bool:
         read_only_streak = getattr(self._circuit_breaker, "_read_only_streak", 0)

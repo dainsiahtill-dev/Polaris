@@ -28,6 +28,7 @@ from polaris.cells.roles.kernel.internal.transaction.task_contract_builder impor
     build_single_batch_task_contract_hint,
     platform_tool_contract_is_single_batch,
 )
+from polaris.kernelone.context.prompt_safety import format_tool_failure_summary, parse_tool_failure_summary
 
 
 def _is_materialization_quality_repair(text: str) -> bool:
@@ -154,15 +155,76 @@ def _is_readonly_qa_judgement_turn(context: list[dict[str, Any]], latest_user: s
     return any(marker in joined or marker in latest for marker in readonly_markers)
 
 
+def _compact_tool_failure_messages(
+    messages: list[dict[str, Any]],
+    *,
+    max_failure_kinds: int = 4,
+) -> list[dict[str, Any]]:
+    """Collapse repeated prompt-safe tool failures before final provider request."""
+
+    aggregate: dict[tuple[str, str, str], dict[str, Any]] = {}
+    result: list[dict[str, Any]] = []
+    first_failure_index: int | None = None
+    failure_count = 0
+    for message in messages:
+        payload = parse_tool_failure_summary(message.get("content", ""))
+        if payload is None:
+            result.append(message)
+            continue
+        failure_count += 1
+        if first_failure_index is None:
+            first_failure_index = len(result)
+            result.append({})
+        key = (
+            str(payload.get("tool") or "unknown"),
+            str(payload.get("error_type") or "tool_failure"),
+            str(payload.get("reason") or "tool execution failed"),
+        )
+        entry = aggregate.setdefault(
+            key,
+            {
+                "tool": key[0],
+                "error_type": key[1],
+                "reason": key[2],
+                "count": 0,
+            },
+        )
+        entry["count"] = int(entry["count"]) + 1
+
+    if first_failure_index is None or failure_count <= 1:
+        return messages
+
+    failures = sorted(aggregate.values(), key=lambda item: (-int(item["count"]), str(item["tool"])))
+    included = failures[: max(1, int(max_failure_kinds))]
+    digest = {
+        "schema_version": "tool_failure_summary_digest.v1",
+        "failure_count": sum(int(item["count"]) for item in failures),
+        "unique_failure_count": len(failures),
+        "failures": included,
+        "omitted_failure_kinds": max(0, len(failures) - len(included)),
+        "prompt_safe": True,
+        "observation_only": True,
+        "non_deliverable": True,
+        "receipt_detail": "omitted; see runtime tool_result event for audit evidence",
+    }
+    result[first_failure_index] = {
+        "role": "system",
+        "content": format_tool_failure_summary(digest),
+        "name": "tool_failure_summary_digest",
+        "metadata": {"plane": "control", "kind": "tool_failure_summary_digest"},
+    }
+    return result
+
+
 def build_decision_messages(
     context: list[dict[str, Any]],
     tool_definitions: list[dict[str, Any]],
     ledger: TurnLedger | None = None,
 ) -> list[dict[str, Any]]:
     """Build decision-stage messages with single-batch execution constraints."""
-    messages: list[dict[str, Any]] = [
+    messages: list[dict[str, Any]] = _compact_tool_failure_messages([
         dict(message) for message in context if message.get("metadata", {}).get("plane") != "control"
-    ]
+    ])
     if not tool_definitions:
         return messages
 

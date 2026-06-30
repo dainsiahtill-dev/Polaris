@@ -21,14 +21,16 @@ Behavior preservation notes:
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from polaris.kernelone.benchmark.factory_audit import check_workspace_delivery_depth_contract
 
@@ -68,6 +70,17 @@ _LONG_RUNNING_WEB_START_MARKERS = (
 _NESTED_JAVAC_DIAGNOSTIC_TIMEOUT_SECONDS = 30.0
 
 
+@dataclass(frozen=True)
+class WorkspaceQualityFilePatch:
+    """Controlled local patch emitted by workspace-quality repair helpers."""
+
+    source_tool: str
+    path: str
+    content_before: str
+    content_after: str
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
 def _npm_start_runs_long_lived_web_server(script: str) -> bool:
     normalized = re.sub(r"\s+", " ", str(script or "").strip().lower())
     if not normalized:
@@ -82,6 +95,51 @@ class WorkspaceQualityRunner:
 
     def __init__(self, workspace: Path) -> None:
         self.workspace = Path(workspace)
+        self._repair_receipts: list[dict[str, Any]] = []
+
+    def consume_repair_receipts(self) -> list[dict[str, Any]]:
+        receipts = [dict(item) for item in self._repair_receipts]
+        self._repair_receipts.clear()
+        return receipts
+
+    def _workspace_relative_path(self, path: Path) -> str | None:
+        try:
+            return path.resolve().relative_to(self.workspace.resolve()).as_posix()
+        except ValueError:
+            return None
+
+    def _apply_workspace_quality_patch(self, patch: WorkspaceQualityFilePatch) -> dict[str, Any] | None:
+        relative_path = str(patch.path or "").strip().replace("\\", "/")
+        if not relative_path or relative_path.startswith("../") or relative_path.startswith("/"):
+            return None
+        path = (self.workspace / relative_path).resolve()
+        if self._workspace_relative_path(path) != relative_path:
+            return None
+        try:
+            current = path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        if current != patch.content_before or patch.content_before == patch.content_after:
+            return None
+
+        before_hash = hashlib.sha256(patch.content_before.encode("utf-8")).hexdigest()
+        after_hash = hashlib.sha256(patch.content_after.encode("utf-8")).hexdigest()
+        path.write_text(patch.content_after, encoding="utf-8")
+        receipt = {
+            "schema_version": "factory.workspace_quality.repair_patch_receipt.v1",
+            "source": "factory.workspace_quality",
+            "source_tool": patch.source_tool,
+            "path": relative_path,
+            "operation": "write_file",
+            "before_hash": before_hash,
+            "after_hash": after_hash,
+            "metadata": dict(patch.metadata),
+            "authoritative": False,
+            "runtime_migration_required": True,
+            "preferred_owner": "director.runtime.repair_kernel",
+        }
+        self._repair_receipts.append(receipt)
+        return receipt
 
     def workspace_package_has_external_dependencies(self) -> bool:
         package_path = (self.workspace / "package.json").resolve()
@@ -419,11 +477,26 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
                         actually_removed.append(name)
         if not actually_removed:
             return []
-        package_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
+        relative_path = self._workspace_relative_path(package_path)
+        if not relative_path:
+            return []
+        receipt = self._apply_workspace_quality_patch(
+            WorkspaceQualityFilePatch(
+                source_tool="factory_workspace_quality.hallucinated_npm_dependency",
+                path=relative_path,
+                content_before=package_path.read_text(encoding="utf-8"),
+                content_after=json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+                metadata={
+                    "removed_dependencies": list(actually_removed),
+                    "dependency_sections": [
+                        key
+                        for key in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies")
+                        if isinstance(payload.get(key), dict)
+                    ],
+                },
+            )
         )
-        return actually_removed
+        return actually_removed if receipt is not None else []
 
     # Regex for CJS destructuring require: const { X } = require("./path")
     _CJS_DESTRUCTURE_REQUIRE = re.compile(r"const\s*\{([^}]+)\}\s*=\s*require\(\s*['\"]([^'\"]+)['\"]\s*\)")
@@ -468,6 +541,7 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
             except OSError:
                 continue
             modified = False
+            file_repairs: list[dict[str, str]] = []
             new_lines: list[str] = []
             for line in content.split("\n"):
                 match = self._CJS_DESTRUCTURE_REQUIRE.search(line)
@@ -486,7 +560,7 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
                                 indent = line[: len(line) - len(line.lstrip())]
                                 line = f'{indent}const {exported_name} = require("{require_path}");'
                                 modified = True
-                                repairs.append(
+                                file_repairs.append(
                                     {
                                         "file": str(js_file.relative_to(self.workspace)),
                                         "fix": f"destructure_to_direct:{exported_name}",
@@ -494,7 +568,20 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
                                 )
                 new_lines.append(line)
             if modified:
-                js_file.write_text("\n".join(new_lines), encoding="utf-8")
+                relative_path = self._workspace_relative_path(js_file)
+                if not relative_path:
+                    continue
+                receipt = self._apply_workspace_quality_patch(
+                    WorkspaceQualityFilePatch(
+                        source_tool="factory_workspace_quality.cjs_export_import_mismatch",
+                        path=relative_path,
+                        content_before=content,
+                        content_after="\n".join(new_lines),
+                        metadata={"repairs": list(file_repairs)},
+                    )
+                )
+                if receipt is not None:
+                    repairs.extend(file_repairs)
 
         return repairs
 
@@ -551,8 +638,20 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
                         lines[i] = patched_line
                         modified = True
             if modified:
-                test_file.write_text("\n".join(lines), encoding="utf-8")
-                patched.append(str(test_file.relative_to(self.workspace)))
+                relative_path = self._workspace_relative_path(test_file)
+                if not relative_path:
+                    continue
+                receipt = self._apply_workspace_quality_patch(
+                    WorkspaceQualityFilePatch(
+                        source_tool="factory_workspace_quality.test_trim_mismatch",
+                        path=relative_path,
+                        content_before=content,
+                        content_after="\n".join(lines),
+                        metadata={"stderr_pattern": "whitespace_only_assertion_diff"},
+                    )
+                )
+                if receipt is not None:
+                    patched.append(str(test_file.relative_to(self.workspace)))
 
         return patched
 

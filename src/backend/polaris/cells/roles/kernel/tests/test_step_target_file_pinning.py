@@ -144,7 +144,14 @@ class TestPinWriteToolFileParam:
                             "file": {"type": "string"},
                             "path": {"type": "string"},
                             "filepath": {"type": "string"},
+                            "filePath": {"type": "string"},
                             "file_path": {"type": "string"},
+                            "filename": {"type": "string"},
+                            "target": {"type": "string"},
+                            "target_file": {"type": "string"},
+                            "targetFile": {"type": "string"},
+                            "target_path": {"type": "string"},
+                            "targetPath": {"type": "string"},
                             "content": {"type": "string"},
                         },
                         "required": ["file", "content"],
@@ -154,7 +161,19 @@ class TestPinWriteToolFileParam:
         ]
         pinned = pin_write_tool_file_param_to_targets(defs, ("a.md", "./a.md"))
         properties = pinned[0]["function"]["parameters"]["properties"]
-        for name in ("file", "path", "filepath", "file_path"):
+        for name in (
+            "file",
+            "path",
+            "filepath",
+            "filePath",
+            "file_path",
+            "filename",
+            "target",
+            "target_file",
+            "targetFile",
+            "target_path",
+            "targetPath",
+        ):
             assert properties[name]["enum"] == ["a.md", "./a.md"], name
         assert "enum" not in properties["content"]
 

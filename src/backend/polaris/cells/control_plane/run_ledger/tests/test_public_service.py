@@ -212,7 +212,86 @@ def test_projection_exposes_tool_dispatch_dropped() -> None:
     assert projection["tool_lifecycle"]["events"][0]["provider_response_hash"] == "provider-response-hash"
     assert projection["tool_lifecycle"]["events"][0]["receipt"]["schema_version"] == "tool_call_lifecycle_receipt.v1"
     assert summary["detail"] == "run ledger projection tool lifecycle failed: TOOL_DISPATCH_DROPPED"
-    assert summary["missing"] == ["TOOL_DISPATCH_DROPPED"]
+    assert summary["missing"] == []
+    assert summary["failed_control_plane_events"] == ["TOOL_DISPATCH_DROPPED"]
+
+
+def test_task_boundary_plan_probe_projects_failed_required_evidence() -> None:
+    projection = build_run_ledger_projection(
+        [
+            {
+                "event_type": "gate_evaluated",
+                "stage": "workspace_quality",
+                "gate": {"name": "workspace_quality", "ok": False, "summary": "task boundary triage"},
+                "job_token": {
+                    "token_id": "token-1",
+                    "project_id": "P1",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {"required_evidence_modalities": ["task_boundary"]},
+                },
+                "physical_evidence": {
+                    "repair": {
+                        "plan_probe_preaudit": {
+                            "status": "coverage_matched_but_unplannable",
+                            "plannable_source_tools": [],
+                            "covered_unplannable_source_tools": ["deterministic_go_missing_symbol_repair"],
+                            "covered_unplannable_diagnostic_count": 1,
+                        },
+                        "interface_discrepancy_evidence": {
+                            "reason": "coverage_matched_but_unplannable",
+                            "recommended_owner": "chief_engineer",
+                            "recommended_route": "pending_design_interface_contract",
+                            "llm_fallback_blocked": True,
+                        },
+                        "interface_discrepancy_receipts": [
+                            {
+                                "schema_version": "director.interface_discrepancy_receipt.v1",
+                                "task_id": "TASK-1",
+                                "status": "semantic_discrepancy_triage_required",
+                                "source": "director.runtime.task_boundary_quality_loop",
+                                "plan_probe_status": "coverage_matched_but_unplannable",
+                                "reason": "coverage_matched_but_unplannable",
+                                "source_tools": ["deterministic_go_missing_symbol_repair"],
+                                "recommended_owner": "chief_engineer",
+                                "recommended_route": "pending_design_interface_contract",
+                                "llm_fallback_blocked": True,
+                                "director_retry_allowed": False,
+                                "interface_delta": {
+                                    "schema_version": "director.interface_delta.v1",
+                                    "contract_present": False,
+                                    "requested_symbols": ["NewCapsule"],
+                                    "diagnostic_paths": ["src/main.go"],
+                                },
+                                "triage_summary": {
+                                    "schema_version": "director.interface_discrepancy_triage.v1",
+                                    "recommended_owner": "chief_engineer",
+                                    "recommended_route": "pending_design_interface_contract",
+                                    "reason": "task_interface_contract_missing",
+                                },
+                            }
+                        ],
+                    }
+                },
+            }
+        ]
+    )
+    summary = summarize_run_ledger_projection(projection)
+
+    assert projection["integrity_ok"] is True
+    assert projection["outcome_ok"] is False
+    assert projection["evidence_modalities"]["task_boundary"]["present"] == 1
+    assert projection["evidence_modalities"]["task_boundary"]["failed"] == 1
+    assert projection["evidence_policy"]["missing_required_modalities"] == []
+    assert projection["evidence_policy"]["failed_required_modalities"] == ["task_boundary"]
+    task_boundary_metadata = projection["gates"][0]["evidence_modalities"]["task_boundary"]["metadata"]
+    assert task_boundary_metadata["interface_discrepancy_schema_version"] == "director.interface_discrepancy_receipt.v1"
+    assert task_boundary_metadata["interface_delta_available"] is True
+    assert task_boundary_metadata["interface_delta"]["requested_symbols"] == ["NewCapsule"]
+    assert task_boundary_metadata["triage_summary_available"] is True
+    assert task_boundary_metadata["triage_summary"]["reason"] == "task_interface_contract_missing"
+    assert summary["missing"] == []
+    assert summary["failed_required_modalities"] == ["task_boundary"]
+    assert summary["detail"] == "run ledger projection required evidence failed: task_boundary"
 
 
 def test_projection_exposes_failed_tool_lifecycle_without_dropped_dispatch() -> None:
@@ -269,7 +348,8 @@ def test_projection_exposes_failed_tool_lifecycle_without_dropped_dispatch() -> 
     assert projection["tool_lifecycle"]["dropped_count"] == 0
     assert projection["tool_lifecycle"]["events"][0]["failed"] is True
     assert summary["detail"] == "run ledger projection tool lifecycle failed: MISSING_EFFECT_RECEIPT"
-    assert summary["missing"] == ["MISSING_EFFECT_RECEIPT"]
+    assert summary["missing"] == []
+    assert summary["failed_control_plane_events"] == ["MISSING_EFFECT_RECEIPT"]
 
 
 def test_projection_exposes_task_boundary_failure() -> None:
@@ -428,6 +508,119 @@ def test_read_run_ledger_projection_evidence_policy_failed_is_not_ok(tmp_path: P
     assert projection["evidence_policy"]["ok"] is False
     assert projection["evidence_policy"]["missing_required_modalities"] == []
     assert projection["evidence_policy"]["failed_required_modalities"] == ["command"]
+
+
+def test_read_run_ledger_projection_repair_missing_evidence_is_failed_not_missing(tmp_path: Path) -> None:
+    append_result = append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-1",
+            event={
+                "event_type": "gate_evaluated",
+                "stage": "director_repair",
+                "gate": {"name": "director_repair_gate", "ok": True, "summary": "repair wrote file"},
+                "job_token": {
+                    "token_id": "token-1",
+                    "run_id": "run-1",
+                    "project_id": "P1",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {
+                        "enabled_evidence_modalities": ["repair"],
+                        "required_evidence_modalities": ["repair"],
+                    },
+                },
+                "physical_evidence": {
+                    "repair_receipts": [
+                        {
+                            "receipt_id": "repair-1",
+                            "source_tool": "deterministic_typescript_return_object_semicolon_repair",
+                            "status": "applied",
+                            "authoritative": False,
+                            "evidence_status": "missing_evidence",
+                        }
+                    ],
+                    "receipt_authority_policy": {
+                        "schema_version": "director.repair_receipt_authority_policy.v1",
+                        "authoritative_success": False,
+                        "receipt_count": 1,
+                        "missing_evidence_receipt_count": 1,
+                        "failed_evidence_receipt_count": 0,
+                        "non_authoritative_receipt_count": 1,
+                    },
+                },
+            },
+        )
+    )
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-1")
+    ).projection
+    canonical = build_run_ledger_projection([append_result.receipt["event"]])
+
+    repair_modality = canonical["gates"][0]["evidence_modalities"]["repair"]
+    assert projection["ok"] is False
+    assert projection["evidence_policy"]["missing_required_modalities"] == []
+    assert projection["evidence_policy"]["failed_required_modalities"] == ["repair"]
+    assert repair_modality["present"] is True
+    assert repair_modality["ok"] is False
+    assert repair_modality["metadata"]["blocker"] == "repair_missing_revalidation_evidence"
+    assert repair_modality["metadata"]["missing_evidence_receipt_count"] == 1
+
+
+def test_read_run_ledger_projection_environment_prep_failed_is_failed_not_missing(tmp_path: Path) -> None:
+    append_result = append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-1",
+            event={
+                "event_type": "gate_evaluated",
+                "stage": "director_repair",
+                "gate": {"name": "director_repair_gate", "ok": True, "summary": "env prep ran"},
+                "job_token": {
+                    "token_id": "token-1",
+                    "run_id": "run-1",
+                    "project_id": "P1",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {
+                        "enabled_evidence_modalities": ["environment_prep"],
+                        "required_evidence_modalities": ["environment_prep"],
+                    },
+                },
+                "physical_evidence": {
+                    "environment_prep_receipts": [
+                        {
+                            "schema_version": "director.environment_prep_receipt.v1",
+                            "plan_id": "env-prep-1",
+                            "ecosystem": "node",
+                            "package_manager": "npm",
+                            "command": ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"],
+                            "exit_code": 1,
+                            "status": "failed",
+                            "manifest": "package.json",
+                            "error_code": "environment_prep_command_failed",
+                        }
+                    ],
+                },
+            },
+        )
+    )
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-1")
+    ).projection
+    canonical = build_run_ledger_projection([append_result.receipt["event"]])
+
+    env_modality = canonical["gates"][0]["evidence_modalities"]["environment_prep"]
+    assert projection["ok"] is False
+    assert projection["missing_required_modalities"] == []
+    assert projection["failed_required_modalities"] == ["environment_prep"]
+    assert projection["failed_evidence_details"]["required_modalities"] == ["environment_prep"]
+    assert projection["evidence_policy"]["missing_required_modalities"] == []
+    assert projection["evidence_policy"]["failed_required_modalities"] == ["environment_prep"]
+    assert env_modality["present"] is True
+    assert env_modality["ok"] is False
+    assert env_modality["metadata"]["failed_receipt_count"] == 1
+    assert env_modality["metadata"]["error_codes"] == ["environment_prep_command_failed"]
 
 
 def test_read_run_ledger_projection_barrier_waits_for_effect_receipt(tmp_path: Path) -> None:
@@ -665,7 +858,7 @@ def test_read_run_provenance_bundle_links_contract_blueprint_envelope_and_receip
                             },
                         },
                     },
-                    "context_snapshot_ref": "runtime/contexts/aa/provider-request.json",
+                    "context_snapshot_ref": "abcdefabcdefabcdefabcdef",
                 },
             },
         )
@@ -685,7 +878,88 @@ def test_read_run_provenance_bundle_links_contract_blueprint_envelope_and_receip
     assert bundle["final_provider_request_hashes"] == ["provider-request-hash"]
     assert bundle["tool_receipt_hashes"]
     assert bundle["command_receipt_hashes"]
-    assert "runtime/contexts/aa/provider-request.json" in bundle["evidence_refs"]
+    assert "abcdefabcdefabcdefabcdef" in bundle["evidence_refs"]
+    assert bundle["invalid_evidence_refs"] == []
+
+
+def test_read_run_provenance_bundle_rejects_path_shaped_context_snapshot_ref(
+    tmp_path: Path,
+) -> None:
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-1",
+            event={
+                "event_type": "gate_evaluated",
+                "stage": "llm_request",
+                "gate": {"name": "llm_request", "ok": True, "summary": "snapshot emitted"},
+                "job_token": {
+                    "token_id": "token-1",
+                    "run_id": "run-1",
+                    "task_id": "TASK-1",
+                    "project_id": "P1",
+                    "capability_audit": {"ok": True, "issues": []},
+                },
+                "physical_evidence": {
+                    "context_snapshot_ref": "runtime/contexts/aa/provider-request.json",
+                    "evidence_ref": "runtime/evidence/provider-request.json",
+                },
+            },
+        )
+    )
+
+    bundle = read_run_provenance_bundle(ReadRunProvenanceBundleQueryV1(workspace=str(tmp_path), run_id="run-1")).bundle
+
+    assert "runtime/contexts/aa/provider-request.json" not in bundle["evidence_refs"]
+    assert "runtime/evidence/provider-request.json" in bundle["evidence_refs"]
+    assert bundle["invalid_evidence_refs"] == [
+        {
+            "ref_type": "context_snapshot_ref",
+            "value": "runtime/contexts/aa/provider-request.json",
+            "reason": "context hash must be a 24-character lowercase hexadecimal string",
+        }
+    ]
+
+
+def test_read_run_provenance_bundle_marks_failed_required_evidence_as_failed(
+    tmp_path: Path,
+) -> None:
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-1",
+            event={
+                "event_type": "gate_evaluated",
+                "stage": "real_run",
+                "gate": {"name": "real_run_gate", "ok": True, "summary": "gate emitted command evidence"},
+                "job_token": {
+                    "token_id": "token-1",
+                    "run_id": "run-1",
+                    "task_id": "TASK-1",
+                    "project_id": "P1",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {"required_evidence_modalities": ["command"]},
+                },
+                "physical_evidence": {
+                    "modalities": {
+                        "command": {
+                            "present": True,
+                            "ok": False,
+                            "detail": "npm test failed",
+                            "exit_code": 1,
+                        }
+                    },
+                    "commands": [{"command": "npm test", "ok": False, "exit_code": 1}],
+                },
+            },
+        )
+    )
+
+    bundle = read_run_provenance_bundle(ReadRunProvenanceBundleQueryV1(workspace=str(tmp_path), run_id="run-1")).bundle
+
+    assert bundle["status"] == "failed"
+    assert bundle["missing_required_modalities"] == []
+    assert bundle["failed_required_modalities"] == ["command"]
 
 
 def test_read_run_provenance_bundle_exposes_missing_authority_hashes(tmp_path: Path) -> None:

@@ -19,12 +19,15 @@ from polaris.cells.director.runtime.internal.repair_kernel.contracts import FILE
 from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairConvergenceResultV1,
     DirectorRepairConvergenceVerifierRequestV1,
+    DirectorRepairEnvironmentPrepReceiptV1,
+    DirectorRepairPlanningResultV1,
     DirectorRepairVerifierSnapshotInputV1,
     QueryDirectorRepairPlanProbeV1,
     RunDirectorRepairConvergenceCommandV1,
     RunDirectorTaskBoundaryQualityLoopCommandV1,
 )
 from polaris.cells.director.runtime.public.service import (
+    _plan_probe_item_status,
     query_director_repair_plan_probe,
     run_director_repair_convergence,
     run_director_task_boundary_quality_loop,
@@ -216,6 +219,34 @@ def test_public_plan_probe_distinguishes_coverage_from_plannable_patch() -> None
     assert target_item.status == "covered_unplannable"
 
 
+def test_plan_probe_requires_changed_patch_for_plannable_status() -> None:
+    planning = DirectorRepairPlanningResultV1(
+        ok=True,
+        planned=True,
+        source_tool=_SOURCE_TOOL,
+        diagnostic_count=1,
+    )
+
+    assert (
+        _plan_probe_item_status(
+            planning=planning,
+            matched_diagnostic_count=1,
+            patch_count=1,
+            changed_paths=(),
+        )
+        == "covered_unplannable"
+    )
+    assert (
+        _plan_probe_item_status(
+            planning=planning,
+            matched_diagnostic_count=1,
+            patch_count=1,
+            changed_paths=("src/models/Flight.ts",),
+        )
+        == "covered_plannable"
+    )
+
+
 def test_task_boundary_quality_loop_runs_convergence_only_after_plan_probe(tmp_path: Path) -> None:
     target = _write_initial_file(tmp_path)
     requests: list[DirectorRepairConvergenceVerifierRequestV1] = []
@@ -283,9 +314,62 @@ def test_task_boundary_quality_loop_emits_interface_discrepancy_for_unplannable(
     assert result.error_code == "coverage_matched_but_unplannable"
     discrepancy_receipts = result.metadata["interface_discrepancy_receipts"]
     assert len(discrepancy_receipts) == 1
+    assert discrepancy_receipts[0]["schema_version"] == "director.interface_discrepancy_receipt.v1"
+    assert discrepancy_receipts[0]["source"] == "director.runtime.task_boundary_quality_loop"
+    assert discrepancy_receipts[0]["llm_fallback_blocked"] is True
+    assert discrepancy_receipts[0]["director_retry_allowed"] is False
     assert discrepancy_receipts[0]["recommended_owner"] == "chief_engineer"
     assert discrepancy_receipts[0]["recommended_route"] == "pending_design_interface_contract"
     assert discrepancy_receipts[0]["macro_blueprint_regeneration_allowed"] is False
+    assert discrepancy_receipts[0]["interface_delta"]["contract_present"] is False
+    assert discrepancy_receipts[0]["triage_summary"]["reason"] == "task_interface_contract_missing"
+
+
+def test_task_boundary_interface_discrepancy_with_contract_routes_to_director_retry() -> None:
+    def verifier(_: DirectorRepairConvergenceVerifierRequestV1) -> DirectorRepairVerifierSnapshotInputV1:
+        raise AssertionError("covered-unplannable task boundary must stop before verifier")
+
+    result = run_director_task_boundary_quality_loop(
+        RunDirectorTaskBoundaryQualityLoopCommandV1(
+            task_id="task-boundary-contract-unplannable",
+            workspace="/tmp/polaris-task-boundary-contract-unplannable",
+            artifact_quality_errors=(
+                "src/engine/forecast.ts(4,10): error TS2305: Module '\"../models/weather\"' "
+                "has no exported member 'WeatherKind'.",
+            ),
+            base_files={},
+            task_interface_contract={
+                "schema_version": "chief_engineer.module_interface_contract.v1",
+                "modules": [
+                    {
+                        "path": "src/models/weather.ts",
+                        "planned_public_symbols": ["WeatherReport"],
+                        "actual_public_symbols": ["WeatherReport"],
+                    },
+                    {
+                        "path": "src/engine/forecast.ts",
+                        "planned_public_symbols": ["forecastFor"],
+                    },
+                ],
+            },
+        ),
+        writer=lambda path, content: {"ok": True, "file": path, "bytes_written": len(content.encode("utf-8"))},
+        verifier=verifier,
+    )
+
+    assert result.ok is False
+    assert result.status == "coverage_matched_but_unplannable"
+    receipt = result.metadata["interface_discrepancy_receipts"][0]
+    assert receipt["task_interface_contract_present"] is True
+    assert receipt["recommended_owner"] == "director"
+    assert receipt["recommended_route"] == "director_retry_with_interface_discrepancy_context"
+    assert receipt["director_retry_allowed"] is True
+    assert receipt["llm_fallback_blocked"] is False
+    assert receipt["interface_delta"]["requested_symbols"] == ["WeatherKind"]
+    assert receipt["interface_delta"]["actual_public_symbols_by_path"]["src/models/weather.ts"] == [
+        "WeatherReport"
+    ]
+    assert receipt["triage_summary"]["reason"] == "director_local_retry_with_interface_delta"
 
 
 def test_public_convergence_success_uses_typed_receipts_and_revalidation_evidence(tmp_path: Path) -> None:
@@ -429,6 +513,24 @@ def test_public_convergence_projects_environment_prep_plan_before_revalidation(
             command=("rtk", "test", "package-verify"),
             exit_code=0 if not residual_errors else 1,
             raw_output_ref=f"runtime/verifier/package-round-{request.round_number}.log",
+            environment_prep_receipts=(
+                DirectorRepairEnvironmentPrepReceiptV1(
+                    plan_id=request.environment_prep_plans[0].plan_id,
+                    ecosystem=request.environment_prep_plans[0].ecosystem,
+                    package_manager=request.environment_prep_plans[0].package_manager,
+                    command=request.environment_prep_plans[0].command,
+                    exit_code=0,
+                    status="succeeded",
+                    manifest=request.environment_prep_plans[0].manifest,
+                    lockfile=request.environment_prep_plans[0].lockfile,
+                    freshness_key=request.environment_prep_plans[0].freshness_key,
+                    stdout_ref=f"runtime/verifier/package-env-prep-round-{request.round_number}.log",
+                    stderr_ref=f"runtime/verifier/package-env-prep-round-{request.round_number}.log",
+                    metadata={"evidence_source": "adapter_environment_prep_runner"},
+                ),
+            )
+            if request.environment_prep_plans
+            else (),
             metadata=_valid_verifier_metadata(),
         )
 
@@ -455,6 +557,14 @@ def test_public_convergence_projects_environment_prep_plan_before_revalidation(
     assert env_plan.command == ("npm", "install", "--ignore-scripts", "--no-audit", "--no-fund")
     assert env_plan.policy["command_source"] == "director.runtime.environment_prep_catalog"
     assert result.receipts[0].metadata["environment_refresh_required"] is True
+    receipt_evidence_metadata = result.receipts[0].revalidation_evidence["metadata"]
+    assert receipt_evidence_metadata["environment_prep_receipt_count"] == 1
+    assert receipt_evidence_metadata["environment_prep_failed_receipt_count"] == 0
+    prep_receipt = receipt_evidence_metadata["environment_prep_receipts"][0]
+    assert prep_receipt["schema_version"] == "director.environment_prep_receipt.v1"
+    assert prep_receipt["plan_id"] == env_plan.plan_id
+    assert prep_receipt["status"] == "succeeded"
+    assert prep_receipt["authoritative_repair"] is False
 
 
 def test_public_convergence_delete_file_uses_policy_gated_deleter(

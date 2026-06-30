@@ -493,6 +493,114 @@ def _existing_export_symbols_by_path(context: dict[str, Any]) -> dict[str, list[
     return by_path
 
 
+def _summary_line_for_interface_symbol(symbol: Any) -> str:
+    name = str(getattr(symbol, "name", "") or "").strip()
+    if not name:
+        return ""
+    kind = str(getattr(symbol, "symbol_kind", "") or "").strip().lower()
+    if kind in {"class", "struct"}:
+        return f"export class {name}"
+    if kind in {"function", "method"}:
+        return f"export function {name}"
+    if kind in {"interface"}:
+        return f"export interface {name}"
+    if kind in {"type", "type_alias"}:
+        return f"export type {name} ="
+    if kind in {"enum"}:
+        return f"export enum {name}"
+    return f"export const {name}"
+
+
+def _workspace_existing_target_file_summaries(workspace: str | Path, *, limit: int = 64) -> list[dict[str, str]]:
+    """Return bounded actual export summaries from the workspace symbol index.
+
+    Factory normally injects ``existing_target_files`` before CE runs. Direct CE
+    callers can bypass that path, so CE keeps its own read-only fallback to avoid
+    regressing to heuristic interface guesses.
+    """
+
+    try:
+        from polaris.kernelone.quality.cross_artifact_interfaces import build_symbol_index_snapshot
+
+        snapshot = build_symbol_index_snapshot(workspace)
+    except (OSError, RuntimeError, ValueError, TypeError, ImportError):
+        return []
+    exports = getattr(snapshot, "namespace_exports", {}) or getattr(snapshot, "physical_exports", {}) or {}
+    summaries: list[dict[str, str]] = []
+    for path in sorted(exports):
+        symbols = exports[path]
+        lines: list[str] = []
+        seen: set[str] = set()
+        for symbol in symbols:
+            name = str(getattr(symbol, "name", "") or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            line = _summary_line_for_interface_symbol(symbol)
+            if line:
+                lines.append(line)
+            if len(lines) >= 16:
+                break
+        if lines:
+            summaries.append(
+                {
+                    "path": str(path).replace("\\", "/").strip("/"),
+                    "exports": "\n".join(lines),
+                    "source": "workspace_symbol_index",
+                }
+            )
+        if len(summaries) >= limit:
+            break
+    return summaries
+
+
+def _merge_existing_target_file_summaries(
+    primary: Any,
+    fallback: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    if isinstance(primary, (list, tuple)):
+        for item in primary:
+            if not isinstance(item, dict):
+                continue
+            path = _normalize_blueprint_file_path(item.get("path"))
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            rows.append(dict(item))
+    for item in fallback:
+        path = _normalize_blueprint_file_path(item.get("path"))
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        rows.append(dict(item))
+    return rows
+
+
+_INTERFACE_SNAPSHOT_SOURCE_SUFFIXES = (
+    ".py",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".ts",
+    ".tsx",
+    ".go",
+    ".rs",
+    ".java",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".h",
+    ".hpp",
+)
+
+
+def _needs_workspace_interface_snapshot(target_files: list[str]) -> bool:
+    return any(str(path or "").replace("\\", "/").lower().endswith(_INTERFACE_SNAPSHOT_SOURCE_SUFFIXES) for path in target_files)
+
+
 def _owner_terms_overlap(left: list[str], right: list[str]) -> bool:
     left_set = {str(item or "").strip().lower() for item in left if str(item or "").strip()}
     right_set = {str(item or "").strip().lower() for item in right if str(item or "").strip()}
@@ -519,6 +627,15 @@ def _module_interface_contract(
     modules: list[dict[str, Any]] = []
     interface_conflicts: list[dict[str, Any]] = []
     existing_symbols_by_path = _existing_export_symbols_by_path(context)
+    raw_existing_rows = context.get("existing_target_files")
+    existing_rows = raw_existing_rows if isinstance(raw_existing_rows, (list, tuple)) else ()
+    actual_sources = sorted(
+        {
+            str(item.get("source") or "context_existing_target_files").strip() or "context_existing_target_files"
+            for item in existing_rows
+            if isinstance(item, dict)
+        }
+    )
     existing_owner_entries = [
         (path, _module_owner_terms(path, semantic_terms), symbols) for path, symbols in existing_symbols_by_path.items()
     ]
@@ -572,6 +689,8 @@ def _module_interface_contract(
         "authority": "handoff_guidance_not_scope_authority",
         "language": language,
         "modules": modules,
+        "actual_interface_snapshot_sources": actual_sources,
+        "actual_interface_snapshot_file_count": len(existing_symbols_by_path),
         "rules": [
             "Every symbol imported from a sibling target module must be defined by that module in the same task.",
             "Shared domain types should have one owner module; dependent files must import from that owner instead of redefining.",
@@ -1082,6 +1201,13 @@ def _tuple_from_payload(value: Any) -> tuple[str, ...]:
     return tuple(_string_list(value))
 
 
+def _existing_target_files_from_payload(payload: dict[str, Any]) -> tuple[dict[str, str], ...]:
+    raw = payload.get("existing_target_files") or _mapping(payload.get("context")).get("existing_target_files")
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    return tuple(dict(item) for item in raw if isinstance(item, dict))
+
+
 def _normalize_task_token(token: str) -> str:
     """Normalize task identifiers for comparison.
 
@@ -1170,6 +1296,17 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     )
     architecture_decision_payloads = [decision.to_dict() for decision in architecture_decisions]
     selected_libraries = list(selected_libraries_from_decisions(architecture_decisions))
+    workspace_existing_target_files = (
+        _workspace_existing_target_file_summaries(command.workspace)
+        if _needs_workspace_interface_snapshot(target_files)
+        else []
+    )
+    merged_existing_target_files = _merge_existing_target_file_summaries(
+        context.get("existing_target_files"),
+        workspace_existing_target_files,
+    )
+    if merged_existing_target_files:
+        context["existing_target_files"] = merged_existing_target_files
     module_interface_contract = _module_interface_contract(
         target_files=target_files,
         delivery_depth_contract=delivery_depth_contract,
@@ -1268,6 +1405,7 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         "dependencies": dependencies,
         "architecture_decisions": architecture_decision_payloads,
         "selected_libraries": selected_libraries,
+        "existing_target_files": merged_existing_target_files,
         "module_interface_contract": module_interface_contract,
         "delivery_plan_document": delivery_plan_document,
         "delivery_depth_contract": delivery_depth_contract,
@@ -1331,9 +1469,8 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         dependencies=tuple(dependencies),
         architecture_decisions=architecture_decisions,
         selected_libraries=tuple(selected_libraries),
-        existing_target_files=tuple(
-            dict(item) for item in context.get("existing_target_files", []) if isinstance(item, dict)
-        ),
+        existing_target_files=tuple(dict(item) for item in merged_existing_target_files if isinstance(item, dict)),
+        module_interface_contract=module_interface_contract,
     )
 
 
@@ -1378,6 +1515,8 @@ def get_blueprint_status(query: GetBlueprintStatusQueryV1) -> TaskBlueprintResul
         dependencies=_tuple_from_payload(payload.get("dependencies")),
         architecture_decisions=normalize_architecture_decisions(payload.get("architecture_decisions")),
         selected_libraries=_tuple_from_payload(payload.get("selected_libraries")),
+        existing_target_files=_existing_target_files_from_payload(payload),
+        module_interface_contract=_mapping(payload.get("module_interface_contract")),
     )
 
 

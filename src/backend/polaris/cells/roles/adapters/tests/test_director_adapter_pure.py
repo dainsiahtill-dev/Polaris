@@ -31,8 +31,10 @@ from polaris.cells.director.runtime.internal.repair_kernel.javascript_syntax imp
 from polaris.cells.roles.adapters.internal.director import execute_method as execute_method_module
 from polaris.cells.roles.adapters.internal.director.adapter import (
     DirectorAdapter,
+    _build_director_actual_sibling_exports_payload,
     _build_director_blueprint_handoff_lines,
     _director_actual_interface_injection_enabled,
+    _inject_director_actual_sibling_exports,
     _load_ce_blueprint_contract_payload,
     _merge_ce_blueprint_contract_payload,
     _normalize_director_role_response,
@@ -66,7 +68,10 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _empty_write_content_retry_needed,
     _extract_task_target_path_candidates,
     _finalize_claimed_execution,
+    _materialization_task_boundary_triage_summary,
     _no_write_materialization_retry_needed,
+    _no_write_materialization_retry_tool_definitions,
+    _pin_file_schema_to_declared_targets,
     _resolve_claim_external_task_id,
     _run_empty_write_content_materialization_retry,
     _task_requires_fresh_materialization,
@@ -80,7 +85,14 @@ from polaris.cells.roles.adapters.internal.director.execute_method_repair_bridge
 )
 from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor
 from polaris.cells.roles.adapters.internal.director.execution_tools import DirectorToolExecutor
-from polaris.cells.roles.adapters.internal.director.quality_gate import _go_runtime_smoke_repair_target_files
+from polaris.cells.roles.adapters.internal.director.quality_gate import (
+    _extract_task_interface_contract,
+    _go_runtime_smoke_repair_target_files,
+    _materialization_interface_discrepancy_evidence,
+    _materialization_interface_discrepancy_retry_authorized,
+    _quality_repair_edit_file_tool_definition,
+    _quality_repair_write_file_tool_definition,
+)
 from polaris.cells.roles.adapters.internal.director.runtime_repair_tool_adapter import (
     run_runtime_repair_with_director_tools,
 )
@@ -101,12 +113,204 @@ def _make_adapter(tmp_path: Any, task_board: Any = None, task_runtime: Any = Non
     return adapter
 
 
+def test_extract_task_interface_contract_accepts_ce_module_interface_contract_alias() -> None:
+    contract = {
+        "exports": {"src/models/weather.py": ["WeatherSnapshot"]},
+        "consumes": {"src/engine/forecast.py": ["WeatherSnapshot"]},
+    }
+
+    assert _extract_task_interface_contract({"module_interface_contract": contract}) == contract
+    assert _extract_task_interface_contract({"metadata": {"module_interface_contract": contract}}) == contract
+
+
+def test_materialization_interface_discrepancy_uses_module_interface_contract_for_director_route() -> None:
+    evidence = _materialization_interface_discrepancy_evidence(
+        task={
+            "id": "TASK-2",
+            "metadata": {
+                "module_interface_contract": {
+                    "exports": {"src/models/weather.py": ["WeatherSnapshot"]},
+                    "consumes": {"src/engine/forecast.py": ["WeatherSnapshot"]},
+                }
+            },
+        },
+        plan_probe={
+            "status": "coverage_matched_but_unplannable",
+            "covered_unplannable_source_tools": ["deterministic_python_missing_export_repair"],
+            "covered_unplannable_diagnostics": [
+                {"path": "src/engine/forecast.py", "message": "module has no exported member"}
+            ],
+        },
+        repair_target_files=["src/engine/forecast.py"],
+        artifact_quality_errors=["module has no exported member"],
+    )
+
+    assert evidence["task_interface_contract_present"] is True
+    assert evidence["recommended_owner"] == "director"
+    assert evidence["recommended_route"] == "director_retry_with_interface_discrepancy_context"
+    assert evidence["director_retry_allowed"] is True
+    assert evidence["llm_fallback_blocked"] is False
+    assert evidence["interface_delta"]["contract_present"] is True
+    assert evidence["triage_summary"]["reason"] == "director_local_retry_with_interface_delta"
+    assert "exports" in evidence["task_interface_contract_keys"]
+
+
+def test_materialization_interface_discrepancy_retry_authorization_accepts_standard_and_legacy_keys() -> None:
+    evidence = {
+        "reason": "coverage_matched_but_unplannable",
+        "recommended_owner": "director",
+        "recommended_route": "director_retry_with_interface_discrepancy_context",
+    }
+
+    assert _materialization_interface_discrepancy_retry_authorized(
+        context={
+            "director_interface_discrepancy_retry": {
+                "authorized": True,
+                "interface_discrepancy_evidence": evidence,
+            }
+        },
+        evidence=evidence,
+    )
+    assert _materialization_interface_discrepancy_retry_authorized(
+        context={
+            "task_boundary_interface_discrepancy_retry": {
+                "authorized": True,
+                "interface_discrepancy_evidence": evidence,
+            }
+        },
+        evidence=evidence,
+    )
+
+
+def test_materialization_quality_repair_prompt_includes_interface_discrepancy_context_json() -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _build_materialization_quality_repair_message,
+    )
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair TypeScript verification exports.",
+        artifact_quality_errors=[
+            "Artifact quality scan failed: unresolved import symbol 'runVerification' "
+            "from '../src/verify.js' in tests/verify.test.ts (sibling module does not define it)"
+        ],
+        changed_files=["src/verify.ts", "tests/verify.test.ts"],
+        repair_target_files=["tests/verify.test.ts"],
+        interface_discrepancy_evidence={
+            "schema_version": "director.interface_discrepancy_receipt.v1",
+            "recommended_owner": "director",
+            "recommended_route": "director_retry_with_interface_discrepancy_context",
+            "director_retry_allowed": True,
+            "llm_fallback_blocked": False,
+            "covered_unplannable_source_tools": ["deterministic_typescript_missing_export_repair"],
+            "interface_delta": {
+                "schema_version": "director.interface_delta.v1",
+                "requested_symbols": ["runVerification"],
+                "actual_public_symbols_by_path": {"src/verify.ts": ["verify"]},
+            },
+            "triage_summary": {
+                "schema_version": "director.interface_discrepancy_triage.v1",
+                "reason": "director_local_retry_with_interface_delta",
+            },
+            "diagnostics": [{"code": "unresolved_import_symbol", "path": "tests/verify.test.ts"}],
+        },
+    )
+
+    assert "INTERFACE DISCREPANCY CONTEXT JSON" in message
+    assert '"interface_delta"' in message
+    assert '"triage_summary"' in message
+    assert "runVerification" in message
+    assert "director_local_retry_with_interface_delta" in message
+
+
+def test_materialization_task_boundary_triage_summary_preserves_director_retry_evidence() -> None:
+    source_evidence = {
+        "schema_version": "director.interface_discrepancy_receipt.v1",
+        "task_id": "TASK-2",
+        "reason": "coverage_matched_but_unplannable",
+        "recommended_owner": "director",
+        "recommended_route": "director_retry_with_interface_discrepancy_context",
+        "director_retry_allowed": True,
+        "llm_fallback_blocked": False,
+        "interface_delta": {
+            "schema_version": "director.interface_delta.v1",
+            "requested_symbols": ["WeatherKind"],
+            "actual_public_symbols_by_path": {"src/models/weather.py": ["WeatherReport"]},
+        },
+        "triage_summary": {
+            "schema_version": "director.interface_discrepancy_triage.v1",
+            "reason": "director_local_retry_with_interface_delta",
+        },
+        "metadata": {"interface_delta_available": True},
+    }
+    summary = _materialization_task_boundary_triage_summary(
+        {
+            "task_id": "TASK-2",
+            "plan_probe_preaudit": {
+                "status": "coverage_matched_but_unplannable",
+                "covered_unplannable_source_tools": ["deterministic_python_missing_export_repair"],
+                "covered_unplannable_diagnostic_count": 1,
+            },
+            "task_boundary_interface_discrepancy_retry_authorized": True,
+            "interface_discrepancy_evidence": source_evidence,
+        },
+        repair_attempt=2,
+        artifact_quality_errors=["module has no exported member WeatherKind"],
+    )
+
+    assert summary["director_retry_allowed"] is True
+    assert summary["llm_fallback_blocked"] is False
+    assert summary["task_boundary_interface_discrepancy_retry_authorized"] is True
+    receipt = summary["interface_discrepancy_evidence"]
+    assert receipt["director_retry_allowed"] is True
+    assert receipt["llm_fallback_blocked"] is False
+    assert receipt["interface_delta"]["requested_symbols"] == ["WeatherKind"]
+    assert receipt["triage_summary"]["reason"] == "director_local_retry_with_interface_delta"
+    assert receipt["metadata"]["repair_attempt"] == 2
+
+
 def test_director_actual_interface_injection_defaults_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("KERNELONE_DIRECTOR_INJECT_WORKSPACE_INTERFACE", raising=False)
     assert _director_actual_interface_injection_enabled() is True
 
     monkeypatch.setenv("KERNELONE_DIRECTOR_INJECT_WORKSPACE_INTERFACE", "0")
     assert _director_actual_interface_injection_enabled() is False
+
+
+def test_director_actual_sibling_exports_promoted_to_context_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    def fake_snapshot(workspace: str) -> SimpleNamespace:
+        assert workspace == str(tmp_path)
+        return SimpleNamespace(
+            physical_exports={
+                "src/models/stall.ts": [
+                    SimpleNamespace(name="Stall", symbol_kind="class", signature="class Stall"),
+                    SimpleNamespace(
+                        name="createStall",
+                        symbol_kind="function",
+                        signature="function createStall(): Stall",
+                    ),
+                ]
+            }
+        )
+
+    monkeypatch.setattr(
+        "polaris.kernelone.quality.cross_artifact_interfaces.build_symbol_index_snapshot",
+        fake_snapshot,
+    )
+
+    payload = _build_director_actual_sibling_exports_payload(str(tmp_path))
+    assert payload["schema_version"] == "polaris.actual_sibling_exports.evidence.v1"
+    assert payload["source"] == "roles.adapters.director.workspace_symbol_index"
+    assert payload["modules"][0]["path"] == "src/models/stall.ts"
+    assert payload["modules"][0]["symbols"] == ["Stall", "createStall"]
+
+    context: dict[str, Any] = {"metadata": {"task_id": "TASK-2"}}
+    _inject_director_actual_sibling_exports(context, workspace=str(tmp_path))
+
+    assert context["actual_sibling_exports"] == payload
+    assert context["metadata"]["actual_sibling_exports"] == payload
 
 
 def test_director_blueprint_handoff_projects_module_interface_contract(tmp_path: Any) -> None:
@@ -2807,8 +3011,57 @@ async def test_phase_quality_repair_loop_stops_on_plan_probe_task_boundary_triag
     assert summary["stage"] == "runtime_plan_probe_unplannable"
     assert summary["llm_fallback_blocked"] is True
     assert summary["success_reason"] == "task_boundary_interface_discrepancy_required"
+    assert (
+        summary["interface_discrepancy_evidence"]["schema_version"]
+        == "director.interface_discrepancy_receipt.v1"
+    )
+    assert (
+        summary["interface_discrepancy_evidence"]["source"]
+        == "roles.adapters.execute_method.materialization_quality_loop"
+    )
     assert summary["interface_discrepancy_evidence"]["plan_probe_status"] == "coverage_matched_but_unplannable"
     assert quality_repair_attempts == [summary]
+
+
+def test_plan_probe_task_boundary_triage_is_cross_language() -> None:
+    for source_tool in (
+        "deterministic_go_missing_symbol_repair",
+        "deterministic_rust_wrong_crate_path_repair",
+        "deterministic_cpp_include_path_repair",
+        "deterministic_typescript_member_alias_repair",
+    ):
+        assert execute_method_module._materialization_plan_probe_requires_task_boundary_triage(
+            {
+                "plan_probe_preaudit": {
+                    "status": "coverage_matched_but_unplannable",
+                    "plannable_source_tools": [],
+                    "covered_unplannable_source_tools": [source_tool],
+                    "covered_unplannable_diagnostic_count": 1,
+                    "coverage_gap_count": 0,
+                }
+            }
+        )
+
+    assert not execute_method_module._materialization_plan_probe_requires_task_boundary_triage(
+        {
+            "plan_probe_preaudit": {
+                "status": "covered_plannable",
+                "plannable_source_tools": ["deterministic_go_missing_symbol_repair"],
+                "covered_unplannable_source_tools": [],
+                "covered_unplannable_diagnostic_count": 0,
+            }
+        }
+    )
+    assert not execute_method_module._materialization_plan_probe_requires_task_boundary_triage(
+        {
+            "plan_probe_preaudit": {
+                "status": "coverage_matched_but_unplannable",
+                "plannable_source_tools": ["deterministic_go_missing_symbol_repair"],
+                "covered_unplannable_source_tools": ["deterministic_rust_wrong_crate_path_repair"],
+                "covered_unplannable_diagnostic_count": 1,
+            }
+        }
+    )
 
 
 def test_go_bare_import_string_repair_uses_director_runtime_kernel(
@@ -11677,6 +11930,141 @@ class TestQualityRepairMissingTargetContract:
         assert "runVerification" not in repaired
 
     @pytest.mark.asyncio
+    async def test_quality_repair_interface_discrepancy_retry_requires_final_request_evidence(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                del result
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self.repair_context: dict[str, Any] = {}
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, timeout_seconds, stage_label
+                self.repair_context = context
+                return {"content": ""}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.internal.director.quality_gate.has_materialization_quality_runtime_repair_coverage",
+            lambda errors: False,
+        )
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.internal.director.quality_gate.run_typescript_semantic_quality_repairs",
+            lambda *args, **kwargs: [],
+        )
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src" / "verify.ts").write_text("export const verify = () => true;\n", encoding="utf-8")
+        (tmp_path / "tests" / "verify.test.ts").write_text(
+            "import { runVerification } from '../src/verify.js';\nvoid runVerification;\n",
+            encoding="utf-8",
+        )
+        task = {
+            "id": "TASK-2",
+            "target_files": ["src/verify.ts", "tests/verify.test.ts"],
+            "metadata": {
+                "module_interface_contract": {
+                    "modules": [
+                        {
+                            "path": "src/verify.ts",
+                            "actual_public_symbols": ["verify"],
+                            "planned_public_symbols": ["verify"],
+                        },
+                        {
+                            "path": "tests/verify.test.ts",
+                            "consumed_symbols": ["runVerification"],
+                        },
+                    ]
+                }
+            },
+        }
+        quality_error = (
+            "Artifact quality scan failed: TypeScript project typecheck failed: "
+            "src/verify.ts(1,1): error TS9999: custom interface discrepancy retry failure"
+        )
+        interface_discrepancy_evidence = {
+            "schema_version": "director.interface_discrepancy_receipt.v1",
+            "reason": "coverage_matched_but_unplannable",
+            "recommended_owner": "director",
+            "recommended_route": "director_retry_with_interface_discrepancy_context",
+            "director_retry_allowed": True,
+            "llm_fallback_blocked": False,
+            "interface_delta": {
+                "schema_version": "director.interface_delta.v1",
+                "contract_present": True,
+                "requested_symbols": ["runVerification"],
+            },
+            "triage_summary": {
+                "schema_version": "director.interface_discrepancy_triage.v1",
+                "reason": "director_local_retry_with_interface_delta",
+            },
+        }
+        retry_context = {
+            "director_interface_discrepancy_retry": {
+                "authorized": True,
+                "recommended_owner": "director",
+                "recommended_route": "director_retry_with_interface_discrepancy_context",
+                "reason": "coverage_matched_but_unplannable",
+                "interface_discrepancy_evidence": interface_discrepancy_evidence,
+            }
+        }
+
+        adapter = _Adapter()
+        await _run_materialization_quality_repair_retry(
+            adapter,
+            task=task,
+            target_task_id="TASK-2",
+            run_id="run-interface-discrepancy-retry",
+            context=retry_context,
+            original_message="Repair TypeScript verification exports.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[quality_error],
+            changed_files=["src/verify.ts", "tests/verify.test.ts"],
+        )
+
+        assert "interface_discrepancy_context" in adapter.repair_context["required_evidence"]
+        assert (
+            adapter.repair_context["director_interface_discrepancy_retry"]["recommended_route"]
+            == "director_retry_with_interface_discrepancy_context"
+        )
+        evidence = adapter.repair_context["director_interface_discrepancy_retry"]["interface_discrepancy_evidence"]
+        assert evidence["director_retry_allowed"] is True
+        assert evidence["interface_delta"]["contract_present"] is True
+        assert evidence["triage_summary"]["reason"] == "director_local_retry_with_interface_delta"
+
+    @pytest.mark.asyncio
     async def test_quality_repair_skips_llm_when_factory_deadline_is_too_close(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
@@ -17186,3 +17574,63 @@ async def test_phase_first_llm_call_retries_transient_provider_error(tmp_path: A
     assert summary is not None
     assert summary["success"] is True
     assert state.tool_results[0]["tool_name"] == "write_file"
+def _tool_properties(definition: dict[str, Any]) -> dict[str, Any]:
+    function_payload = definition.get("function")
+    assert isinstance(function_payload, dict)
+    parameters = function_payload.get("parameters")
+    assert isinstance(parameters, dict)
+    properties = parameters.get("properties")
+    assert isinstance(properties, dict)
+    return properties
+
+
+def test_no_write_retry_forced_tool_schemas_include_alias_expanded_arguments() -> None:
+    definitions = _no_write_materialization_retry_tool_definitions(
+        ["src/main.ts", "tests/behavior.test.ts"],
+        strict_write_only=False,
+    )
+    by_name = {item["function"]["name"]: item for item in definitions}
+
+    write_props = _tool_properties(by_name["write_file"])
+    assert {"file", "path", "targetPath", "body", "newText"} <= set(write_props)
+    assert write_props["file"]["enum"] == ["src/main.ts", "tests/behavior.test.ts"]
+    assert write_props["path"]["enum"] == ["src/main.ts", "tests/behavior.test.ts"]
+    assert write_props["targetPath"]["enum"] == ["src/main.ts", "tests/behavior.test.ts"]
+
+    edit_props = _tool_properties(by_name["edit_file"])
+    assert {"file", "path", "target_path", "oldText", "newText", "search", "replace"} <= set(edit_props)
+    assert edit_props["target_path"]["enum"] == ["src/main.ts", "tests/behavior.test.ts"]
+
+
+def test_strict_write_only_forced_schema_preserves_write_aliases() -> None:
+    definitions = _no_write_materialization_retry_tool_definitions(
+        ["src/main.ts"],
+        strict_write_only=True,
+    )
+
+    assert len(definitions) == 1
+    props = _tool_properties(definitions[0])
+    assert {"file", "path", "targetFile", "body", "newCode"} <= set(props)
+    assert props["file"]["enum"] == ["src/main.ts"]
+    assert props["path"]["enum"] == ["src/main.ts"]
+    assert props["targetFile"]["enum"] == ["src/main.ts"]
+
+
+def test_quality_repair_write_and_edit_schemas_are_alias_expanded_but_edit_is_search_replace_only() -> None:
+    write_props = _tool_properties(_quality_repair_write_file_tool_definition())
+    assert {"file", "path", "targetPath", "body", "newText"} <= set(write_props)
+
+    edit_props = _tool_properties(_quality_repair_edit_file_tool_definition())
+    assert {"file", "path", "targetPath", "oldText", "newText", "search", "replace"} <= set(edit_props)
+    assert "start_line" not in edit_props
+    assert "end_line" not in edit_props
+    assert "content" not in edit_props
+
+
+def test_forced_schema_file_enum_pins_all_common_path_aliases() -> None:
+    definition = _quality_repair_write_file_tool_definition()
+    pinned = _pin_file_schema_to_declared_targets(definition, ["src/app.ts"])
+    props = _tool_properties(pinned)
+
+    for key in ("file", "path", "filepath", "file_path", "filename", "target_file", "targetPath"):
+        assert props[key]["enum"] == ["src/app.ts"]

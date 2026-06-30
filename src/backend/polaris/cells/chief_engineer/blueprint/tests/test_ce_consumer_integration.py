@@ -296,6 +296,96 @@ class TestCEConsumerStepFission:
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.run_pre_dispatch_chief_engineer_ctx")
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.ADRStore")
+    def test_fission_hardens_mixed_task_boundaries_before_publish(
+        self,
+        mock_adr_store_cls: MagicMock,
+        mock_run_preflight: MagicMock,
+        mock_get_svc: MagicMock,
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        monkeypatch.setenv("KERNELONE_CE_STEP_FISSION", "1")
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "PM-10"
+        claim_result.lease_token = "lease-10"
+        claim_result.payload = {
+            "title": "实现 TypeScript project",
+            "workspace": str(tmp_path),
+            "run_id": "run-10",
+            "target_files": ["package.json", "src/index.ts", "tests/behavior.test.ts", "README.md"],
+        }
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        ack = MagicMock()
+        ack.ok = True
+        ack.status = "pending_exec"
+        mock_svc.acknowledge_task_stage.return_value = ack
+        mock_run_preflight.return_value = {"blueprint_id": "bp-PM-10"}
+        mock_adr_store_cls.return_value = MagicMock()
+
+        steps = [
+            {
+                "step_id": "PM-10-S1",
+                "parent_pm_task": "PM-10",
+                "target_file": "package.json",
+                "est_lines": 20,
+                "signatures": [],
+                "verify": "test -f package.json",
+                "depends_on": [],
+                "title": "manifest",
+            },
+            {
+                "step_id": "PM-10-S2",
+                "parent_pm_task": "PM-10",
+                "target_file": "src/index.ts",
+                "est_lines": 60,
+                "signatures": ["export function createService()"],
+                "verify": "npx tsc --noEmit",
+                "depends_on": [],
+                "title": "source",
+            },
+            {
+                "step_id": "PM-10-S3",
+                "parent_pm_task": "PM-10",
+                "target_file": "tests/behavior.test.ts",
+                "est_lines": 40,
+                "signatures": ["describe behavior"],
+                "verify": "npx tsc --noEmit",
+                "depends_on": [],
+                "title": "tests",
+            },
+            {
+                "step_id": "PM-10-S4",
+                "parent_pm_task": "PM-10",
+                "target_file": "README.md",
+                "est_lines": 20,
+                "signatures": [],
+                "verify": "test -f README.md",
+                "depends_on": [],
+                "title": "docs",
+            },
+        ]
+        consumer = CEConsumer(workspace=str(tmp_path), worker_id="w1")
+        with patch.object(CEConsumer, "_run_step_fission", return_value=(steps, [])):
+            results = consumer.poll_once()
+
+        assert results[0]["ok"] is True
+        published = {c.args[0].task_id: c.args[0] for c in mock_svc.publish_work_item.call_args_list}
+        assert published["PM-10-S1"].depends_on == ()
+        assert published["PM-10-S2"].depends_on == ("PM-10-S1",)
+        assert published["PM-10-S3"].depends_on == ("PM-10-S2",)
+        assert published["PM-10-S4"].depends_on == ("PM-10-S3",)
+        assert published["PM-10-S3"].payload["construction_step"]["artifact_role"] == "test"
+        assert published["PM-10-S4"].payload["construction_step"]["task_boundary_phase"] == 4
+
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.run_pre_dispatch_chief_engineer_ctx")
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.ADRStore")
     def test_gate_failure_circuit_breaks_to_requeue(
         self,
         mock_adr_store_cls: MagicMock,

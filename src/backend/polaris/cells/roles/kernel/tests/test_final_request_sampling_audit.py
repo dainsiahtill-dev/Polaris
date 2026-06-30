@@ -105,6 +105,71 @@ def test_final_request_context_audit_includes_sampling_profile() -> None:
     assert audit["execution_contract_hash"]
 
 
+def test_final_provider_request_snapshot_preserves_alias_expanded_forced_tool_schema() -> None:
+    tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file": {"type": "string"},
+                    "path": {"type": "string"},
+                    "targetPath": {"type": "string"},
+                    "content": {"type": "string"},
+                    "body": {"type": "string"},
+                    "newText": {"type": "string"},
+                },
+                "required": [],
+            },
+        },
+    }
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={
+            "temperature": 0.0,
+            "max_tokens": 4000,
+            "tools": [tool_schema],
+            "tool_choice": {"type": "function", "function": {"name": "write_file"}},
+        },
+        context={
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {"role": "user", "content": "Materialize the requested file."},
+            ],
+            "_transaction_kernel_forced_tool_definitions": [tool_schema],
+            "_transaction_kernel_forced_tool_choice": {"type": "function", "function": {"name": "write_file"}},
+            "required_tools": ["write_file"],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {"role": "user", "content": "Materialize the requested file."},
+        ],
+        input_text="You are Director.\nMaterialize the requested file.",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    snapshot = build_final_provider_request_snapshot(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    assert snapshot["tool_schema_count"] == 1
+    assert snapshot["tools"][0]["name"] == "write_file"
+    assert {"file", "path", "targetPath", "content", "body", "newText"} <= set(
+        snapshot["tools"][0]["argument_keys"]
+    )
+    assert snapshot["final_request_evidence_coverage"]["missing_required_tools"] == []
+
+
 def test_final_request_context_audit_flags_empty_run_card_message() -> None:
     ai_request = AIRequest(
         task_type=TaskType.DIALOGUE,
@@ -424,6 +489,7 @@ def test_final_request_evidence_tracks_module_interface_contract() -> None:
                     "chief_engineer_blueprint",
                     "target_files_or_declared_scopes",
                     "module_interface_contract",
+                    "actual_sibling_exports",
                 ],
             },
             "director_execution_envelope": {
@@ -431,6 +497,35 @@ def test_final_request_evidence_tracks_module_interface_contract() -> None:
                 "envelope_hash": "envelope-hash",
                 "pm_contract": {"hash": "pm-hash"},
                 "ce_blueprint": {"hash": "ce-hash"},
+            },
+            "ce_blueprint": {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": "ce_TASK-1",
+                "module_interface_contract": {
+                    "schema_version": "chief_engineer.module_interface_contract.v1",
+                    "source": "chief_engineer.generate_task_blueprint",
+                    "authority": "handoff_guidance_not_scope_authority",
+                    "language": "python",
+                    "actual_interface_snapshot_sources": ["workspace_symbol_index"],
+                    "actual_interface_snapshot_file_count": 1,
+                    "modules": [
+                        {
+                            "path": "src/models/weather.py",
+                            "role": "domain_model",
+                            "actual_public_symbols": ["WeatherReport", "forecast_for"],
+                            "planned_public_symbols": ["WeatherReport", "forecast_for"],
+                            "symbol_source": "actual_export_summary",
+                        },
+                        {
+                            "path": "src/engine/forecast.py",
+                            "role": "core_engine",
+                            "planned_public_symbols": ["ForecastEngine"],
+                        },
+                    ],
+                    "rules": [
+                        "Every symbol imported from a sibling target module must be defined by that module."
+                    ],
+                },
             },
         },
     )
@@ -441,9 +536,7 @@ def test_final_request_evidence_tracks_module_interface_contract() -> None:
                 "content": (
                     "PM Task Contract / 任务合同: TASK-1 target_files src/models/weather.py, "
                     "src/engine/forecast.py. Chief Engineer Blueprint / CE 蓝图交接: "
-                    "blueprint_id ce_TASK-1 construction_plan. "
-                    "public_symbols: WeatherReport, forecast_for. "
-                    "consumes_symbols: src/models/weather.py -> WeatherReport, forecast_for."
+                    "blueprint_id ce_TASK-1 construction_plan."
                 ),
             }
         ],
@@ -464,8 +557,90 @@ def test_final_request_evidence_tracks_module_interface_contract() -> None:
     evidence_coverage = audit["final_request_evidence_coverage"]
     assert "module_interface_contract" in evidence_coverage["required_refs"]
     assert "module_interface_contract" in evidence_coverage["included_refs"]
+    assert "actual_sibling_exports" in evidence_coverage["required_refs"]
+    assert "actual_sibling_exports" in evidence_coverage["included_refs"]
+    assert evidence_coverage["structured_evidence"]["module_interface_contract"] is True
+    assert evidence_coverage["structured_evidence"]["actual_sibling_exports"] is True
     assert evidence_coverage["missing_required_refs"] == []
     assert evidence_coverage["pass"] is True
+    metadata = audit["request_metadata_summary"]
+    assert metadata["module_interface_contract_summary"]["actual_export_module_count"] == 1
+    assert metadata["actual_sibling_exports_summary"]["actual_interface_snapshot_file_count"] == 1
+
+
+def test_final_request_evidence_tracks_direct_actual_sibling_exports_payload() -> None:
+    direct_exports = {
+        "schema_version": "polaris.actual_sibling_exports.evidence.v1",
+        "source": "roles.adapters.director.workspace_symbol_index",
+        "modules": [
+            {
+                "path": "src/models/stall.ts",
+                "symbols": ["Stall", "createStall"],
+                "symbol_source": "workspace_symbol_index",
+            }
+        ],
+        "module_count": 1,
+        "actual_interface_snapshot_sources": ["workspace_symbol_index"],
+        "actual_interface_snapshot_file_count": 1,
+    }
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 48000},
+        context={
+            "director_execution_strategy": {
+                "schema_version": "task.execution_strategy.v1",
+                "evidence_requirements": [
+                    "pm_task_contract",
+                    "chief_engineer_blueprint",
+                    "target_files_or_declared_scopes",
+                    "actual_sibling_exports",
+                ],
+            },
+            "ce_blueprint": {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": "ce_TASK-2",
+            },
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+                "pm_contract": {"hash": "pm-hash"},
+                "ce_blueprint": {"hash": "ce-hash"},
+            },
+            "actual_sibling_exports": direct_exports,
+            "metadata": {"actual_sibling_exports": direct_exports},
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "PM Task Contract / 任务合同: TASK-2 target_files src/main.ts. "
+                    "Chief Engineer Blueprint / CE 蓝图交接: blueprint_id ce_TASK-2."
+                ),
+            }
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert audit["coverage"]["has_actual_sibling_exports"] is True
+    assert "actual_sibling_exports" in evidence_coverage["included_refs"]
+    assert evidence_coverage["structured_evidence"]["actual_sibling_exports"] is True
+    assert evidence_coverage["missing_required_refs"] == []
+    assert audit["request_metadata_summary"]["actual_sibling_exports_summary"] == direct_exports
 
 
 def test_final_request_evidence_reports_missing_module_interface_contract() -> None:
@@ -578,7 +753,78 @@ def test_final_request_evidence_aliases_verification_failure_and_architecture_pl
     assert evidence_coverage["pass"] is True
     assert "failed_gate_evidence" in evidence_coverage["included_refs"]
     assert "ce_blueprint" in evidence_coverage["included_refs"]
+    assert "architecture_or_file_plan" in evidence_coverage["required_refs"]
+    assert "architecture_or_file_plan" in evidence_coverage["included_refs"]
     assert audit["coverage"]["has_workspace_quality_evidence"] is True
+    assert audit["coverage"]["has_architecture_or_file_plan"] is True
+
+
+def test_final_request_evidence_accepts_structured_architecture_plan_without_keywords() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "director_execution_strategy": {
+                "schema_version": "task.execution_strategy.v1",
+                "evidence_requirements": [
+                    "pm_task_contract",
+                    "chief_engineer_blueprint",
+                    "target_files_or_declared_scopes",
+                    "architecture_or_file_plan",
+                ],
+            },
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+                "pm_contract": {"hash": "pm-hash"},
+                "ce_blueprint": {"hash": "ce-hash"},
+            },
+            "ce_blueprint": {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": "ce_TASK-1",
+                "target_files": ["src/main.ts"],
+                "execution_checklist": ["Implement src/main.ts against the PM contract."],
+                "architecture_decisions": [
+                    {
+                        "concern": "entrypoint",
+                        "decision": "Keep CLI wiring in src/main.ts and domain logic in src/models.",
+                    }
+                ],
+            },
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "PM Task Contract / 任务合同: TASK-1 target_files src/main.ts. "
+                    "Chief Engineer Blueprint / CE 蓝图交接: blueprint_id ce_TASK-1."
+                ),
+            }
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert audit["has_architecture_or_file_plan"] is True
+    assert audit["coverage"]["has_architecture_or_file_plan"] is True
+    assert "architecture_or_file_plan" in evidence_coverage["included_refs"]
+    assert evidence_coverage["structured_evidence"]["architecture_or_file_plan"] is True
+    assert evidence_coverage["missing_required_refs"] == []
+    assert evidence_coverage["pass"] is True
 
 
 def test_final_request_evidence_coverage_is_ref_based_and_redacted_when_underutilized() -> None:
@@ -732,6 +978,50 @@ def test_final_request_context_audit_tracks_receipt_store_refs() -> None:
         "chief_engineer_blueprint",
     ]
     assert "receipt_store_refs" in evidence_coverage["included_refs"]
+
+
+def test_final_request_context_audit_reads_nested_run_ledger_evidence_policy() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 48000},
+        context={
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {"role": "user", "content": "Continue the task-boundary repair."},
+            ],
+            "run_ledger_projection": {
+                "ref": "runtime/run-ledger/latest.json",
+                "evidence_policy": {
+                    "missing_required_modalities": ["browser"],
+                    "failed_required_modalities": ["task_boundary"],
+                },
+            },
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {"role": "user", "content": "Continue the task-boundary repair."},
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    ledger_evidence = audit["final_request_evidence_coverage"]["ledger_evidence"]
+    assert ledger_evidence["run_ledger_ref"] == "runtime/run-ledger/latest.json"
+    assert ledger_evidence["missing_required_modalities"] == ["browser"]
+    assert ledger_evidence["failed_required_modalities"] == ["task_boundary"]
 
 
 def test_final_request_evidence_enforcement_is_opt_in_without_envelope() -> None:
@@ -1048,6 +1338,156 @@ def test_final_request_evidence_coverage_tracks_delivery_plan_and_depth_contract
     enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)
 
 
+def test_final_request_evidence_coverage_tracks_interface_discrepancy_context() -> None:
+    interface_delta = {
+        "schema_version": "director.interface_delta.v1",
+        "task_id": "TASK-2",
+        "contract_present": True,
+        "diagnostic_paths": ["src/engine/forecast.py"],
+        "requested_symbols": ["WeatherKind"],
+        "actual_public_symbols_by_path": {"src/models/weather.py": ["WeatherReport"]},
+        "diagnostic_count": 1,
+    }
+    triage_summary = {
+        "schema_version": "director.interface_discrepancy_triage.v1",
+        "recommended_owner": "director",
+        "recommended_route": "director_retry_with_interface_discrepancy_context",
+        "director_retry_allowed": True,
+        "llm_fallback_blocked": False,
+        "macro_blueprint_regeneration_allowed": False,
+    }
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+                "audit_policy": {
+                    "final_provider_request_required": True,
+                    "required_evidence": ["interface_discrepancy_context"],
+                },
+            },
+            "director_interface_discrepancy_retry": {
+                "authorized": True,
+                "recommended_owner": "director",
+                "recommended_route": "director_retry_with_interface_discrepancy_context",
+                "interface_discrepancy_evidence": {
+                    "schema_version": "director.interface_discrepancy_receipt.v1",
+                    "plan_probe_status": "coverage_matched_but_unplannable",
+                    "recommended_owner": "director",
+                    "recommended_route": "director_retry_with_interface_discrepancy_context",
+                    "director_retry_allowed": True,
+                    "llm_fallback_blocked": False,
+                    "interface_delta": interface_delta,
+                    "triage_summary": triage_summary,
+                    "diagnostics": [{"code": "unresolved_import_symbol"}],
+                    "source_tools": ["deterministic_unresolved_import_symbol_repair"],
+                },
+            },
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {"role": "user", "content": "Repair the current task boundary."},
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {"role": "user", "content": "Repair the current task boundary."},
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    metadata_summary = audit["request_metadata_summary"]
+    assert metadata_summary["has_interface_discrepancy_context"] is True
+    discrepancy_summary = metadata_summary["interface_discrepancy_context_summary"]
+    assert discrepancy_summary["interface_delta_available"] is True
+    assert discrepancy_summary["triage_summary_available"] is True
+    assert discrepancy_summary["recommended_route"] == "director_retry_with_interface_discrepancy_context"
+    assert discrepancy_summary["diagnostic_count"] == 1
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert "interface_discrepancy_context" in evidence_coverage["required_refs"]
+    assert "interface_discrepancy_context" in evidence_coverage["included_refs"]
+    assert evidence_coverage["structured_evidence"]["interface_discrepancy_context"] is True
+    source = next(
+        item for item in evidence_coverage["coverage_sources"] if item["ref_type"] == "interface_discrepancy_context"
+    )
+    assert source["confidence"] == "structured_metadata"
+    assert source["hash"]
+    assert evidence_coverage["missing_required_refs"] == []
+    assert evidence_coverage["pass"] is True
+    enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)
+
+
+def test_final_request_evidence_coverage_blocks_missing_required_interface_discrepancy_context() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+                "audit_policy": {
+                    "final_provider_request_required": True,
+                    "required_evidence": ["interface_discrepancy_context"],
+                },
+            },
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {"role": "user", "content": "Repair the current task boundary."},
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {"role": "user", "content": "Repair the current task boundary."},
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert "interface_discrepancy_context" in evidence_coverage["required_refs"]
+    assert "interface_discrepancy_context" in evidence_coverage["missing_required_refs"]
+    assert evidence_coverage["pass"] is False
+    violation = final_request_evidence_coverage_violation(ai_request=ai_request, audit=audit)
+    assert violation is not None
+    assert violation["missing_required_refs"] == ["interface_discrepancy_context"]
+
+    try:
+        enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)
+    except FinalRequestEvidenceCoverageError as exc:
+        assert exc.violation["missing_required_refs"] == ["interface_discrepancy_context"]
+    else:
+        raise AssertionError("expected FinalRequestEvidenceCoverageError")
+
+
 def test_final_request_context_audit_flags_required_tool_pruning() -> None:
     ai_request = AIRequest(
         task_type=TaskType.DIALOGUE,
@@ -1091,6 +1531,140 @@ def test_final_request_context_audit_flags_required_tool_pruning() -> None:
     assert evidence_coverage["missing_required_tools"] == ["repo_tree", "read_file"]
     assert evidence_coverage["pass"] is False
     assert "missing_required_final_request_tools" in finding_codes
+
+
+def test_final_request_context_audit_does_not_treat_allowed_tools_as_required() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.2, "max_tokens": 2000, "tools": []},
+        context={
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {"role": "user", "content": "Explain the current workspace status."},
+            ],
+            "allowed_tools": ["read_file", "repo_tree"],
+            "tool_policy": {"allowed_tools": ["search_code"]},
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {"role": "user", "content": "Explain the current workspace status."},
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    coverage = audit["final_request_evidence_coverage"]
+    assert coverage["required_tools"] == []
+    assert coverage["missing_required_tools"] == []
+    assert coverage["allowed_tools"] == ["read_file", "repo_tree", "repo_rg"]
+    assert coverage["tool_surface"]["required_tool_source"] == "explicit_required_tool_fields_only"
+    assert "missing_required_final_request_tools" not in {item["code"] for item in audit["context_quality"]["findings"]}
+
+
+def test_final_request_context_audit_keeps_tool_contract_allowed_and_required_separate() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.2, "max_tokens": 2000, "tools": []},
+        context={
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {"role": "user", "content": "Repair the target file."},
+            ],
+            "tool_contract": {
+                "allowed_tools": ["read_file", "repo_tree"],
+                "required_tools": ["write_file"],
+            },
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {"role": "user", "content": "Repair the target file."},
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    coverage = audit["final_request_evidence_coverage"]
+    assert coverage["required_tools"] == ["write_file"]
+    assert coverage["allowed_tools"] == ["read_file", "repo_tree"]
+    assert coverage["missing_required_tools"] == ["write_file"]
+    assert "write_file" not in coverage["removed_allowed_tools"]
+
+
+def test_final_request_context_audit_canonicalizes_required_tool_aliases() -> None:
+    repo_rg_schema = {
+        "type": "function",
+        "function": {
+            "name": "repo_rg",
+            "parameters": {
+                "type": "object",
+                "properties": {"pattern": {"type": "string"}},
+                "required": ["pattern"],
+            },
+        },
+    }
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.2, "max_tokens": 2000, "tools": [repo_rg_schema]},
+        context={
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {"role": "user", "content": "Search the repository."},
+            ],
+            "required_tools": ["search_code"],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {"role": "user", "content": "Search the repository."},
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    coverage = audit["final_request_evidence_coverage"]
+    assert coverage["required_tools"] == ["repo_rg"]
+    assert coverage["available_tools"] == ["repo_rg"]
+    assert coverage["missing_required_tools"] == []
+    assert coverage["tool_surface"]["canonicalized"] is True
+    assert "missing_required_final_request_tools" not in {item["code"] for item in audit["context_quality"]["findings"]}
 
 
 def test_pm_route_probe_final_provider_request_has_no_tools() -> None:

@@ -468,6 +468,7 @@ def build_javascript_missing_export_plan(
                     symbol=symbol,
                     importer_text=importer_text,
                     exporter_rel_path=exporter_path,
+                    base_files=normalized_base,
                     diagnostic=diagnostic,
                 )
             else:
@@ -484,9 +485,32 @@ def build_javascript_missing_export_plan(
                         symbol=symbol,
                         diagnostic=diagnostic,
                     )
+                if operation is None:
+                    operation = _append_javascript_contract_function_operation(
+                        path=exporter_path,
+                        text=exporter_text,
+                        symbol=symbol,
+                        importer_text=importer_text,
+                        exporter_rel_path=exporter_path,
+                        base_files=normalized_base,
+                        diagnostic=diagnostic,
+                    )
+            dependency_operation = _append_javascript_contract_dependency_operation(
+                path=exporter_path,
+                text=exporter_text,
+                symbol=symbol,
+                importer_text=importer_text,
+                base_files=normalized_base,
+                diagnostic=diagnostic,
+            )
             if operation is None:
-                continue
-            operations.append(operation)
+                if dependency_operation is None:
+                    continue
+                operations.append(dependency_operation)
+            else:
+                operations.append(operation)
+                if dependency_operation is not None:
+                    operations.append(dependency_operation)
             matched.append(diagnostic)
     operations = _coalesce_javascript_append_operations(operations)
     if not operations:
@@ -1604,6 +1628,7 @@ def _replace_exported_function_contract_operation(
     symbol: str,
     importer_text: str,
     exporter_rel_path: str,
+    base_files: Mapping[str, str],
     diagnostic: RepairDiagnostic,
 ) -> RepairOperation | None:
     replacement = _javascript_contract_function_replacement(
@@ -1611,7 +1636,7 @@ def _replace_exported_function_contract_operation(
         symbol=symbol,
         importer_text=importer_text,
         exporter_rel_path=exporter_rel_path,
-        base_files={},
+        base_files=base_files,
     )
     if replacement is None:
         return None
@@ -1631,6 +1656,152 @@ def _replace_exported_function_contract_operation(
             "edit_file_preferred": True,
         },
     )
+
+
+def _append_javascript_contract_function_operation(
+    *,
+    path: str,
+    text: str,
+    symbol: str,
+    importer_text: str,
+    exporter_rel_path: str,
+    base_files: Mapping[str, str],
+    diagnostic: RepairDiagnostic,
+) -> RepairOperation | None:
+    if not _JS_IDENTIFIER_RE.match(symbol):
+        return None
+    body = _build_javascript_contract_function_body(
+        symbol=symbol,
+        importer_text=importer_text,
+        exporter_rel_path=exporter_rel_path,
+        base_files=base_files,
+    )
+    if "return undefined;" in body:
+        return None
+    prefix = "" if not text or text.endswith("\n") else "\n"
+    append_text = f"{prefix}\nexport function {symbol}(...args) {{\n{body}\n}}\n"
+    context = _unique_javascript_eof_context(text)
+    if not context:
+        return RepairOperation(
+            kind="write_file",
+            path=path,
+            content=append_text,
+            before_hash=sha256_text(text),
+            metadata={
+                "repair_kind": "javascript_missing_named_export_contract_facade",
+                "symbol": symbol,
+                "diagnostic_id": diagnostic.diagnostic_id,
+                "write_file_allowed_category": "fallback",
+                "write_file_policy_decision": "allowed_fallback",
+                "write_file_reason": "empty_file_contract_facade_creation",
+                "facade_contract_source": "importer_test_contract",
+            },
+        )
+    return RepairOperation(
+        kind="text_replace",
+        path=path,
+        span_start=len(text),
+        span_end=len(text),
+        expected="",
+        replacement=append_text,
+        before_hash=sha256_text(text),
+        metadata={
+            "repair_kind": "javascript_missing_named_export_contract_facade",
+            "symbol": symbol,
+            "diagnostic_id": diagnostic.diagnostic_id,
+            "edit_file_preferred": True,
+            "facade_contract_source": "importer_test_contract",
+            "expected_context_before": context,
+            "unique_context": context,
+        },
+    )
+
+
+def _append_javascript_contract_dependency_operation(
+    *,
+    path: str,
+    text: str,
+    symbol: str,
+    importer_text: str,
+    base_files: Mapping[str, str],
+    diagnostic: RepairDiagnostic,
+) -> RepairOperation | None:
+    declarations = _javascript_contract_dependency_declarations(
+        symbol=symbol,
+        importer_text=importer_text,
+        base_files=base_files,
+    )
+    declarations = [declaration for declaration in declarations if declaration and declaration not in text]
+    if not declarations:
+        return None
+    context = _unique_javascript_eof_context(text)
+    append_text = ("\n" if text and not text.endswith("\n") else "") + "\n".join(declarations) + "\n"
+    if not context:
+        return RepairOperation(
+            kind="write_file",
+            path=path,
+            content=f"{text}{append_text}",
+            before_hash=sha256_text(text),
+            metadata={
+                "repair_kind": "javascript_contract_dependency_exports",
+                "symbol": symbol,
+                "diagnostic_id": diagnostic.diagnostic_id,
+                "write_file_allowed_category": "fallback",
+                "write_file_policy_decision": "allowed_fallback",
+                "write_file_reason": "empty_file_contract_dependency_exports",
+            },
+        )
+    return RepairOperation(
+        kind="text_replace",
+        path=path,
+        span_start=len(text),
+        span_end=len(text),
+        expected="",
+        replacement=append_text,
+        before_hash=sha256_text(text),
+        metadata={
+            "repair_kind": "javascript_contract_dependency_exports",
+            "symbol": symbol,
+            "symbols": [declaration.split()[2] for declaration in declarations],
+            "diagnostic_id": diagnostic.diagnostic_id,
+            "edit_file_preferred": True,
+            "expected_context_before": context,
+            "unique_context": context,
+        },
+    )
+
+
+def _javascript_contract_dependency_declarations(
+    *,
+    symbol: str,
+    importer_text: str,
+    base_files: Mapping[str, str],
+) -> list[str]:
+    declarations: list[str] = []
+    if _javascript_symbol_contract_links_version_constant(importer_text, symbol):
+        declarations.append(f'export const VERSION = {json.dumps(_javascript_contract_constant_literal("VERSION", base_files, importer_text=importer_text))};')
+    if _javascript_symbol_contract_requires_app_info(importer_text, symbol):
+        for constant in ("APP_NAME", "APP_VERSION", "APP_DESCRIPTION"):
+            declarations.append(
+                f"export const {constant} = "
+                f"{json.dumps(_javascript_contract_constant_literal(constant, base_files, importer_text=importer_text), ensure_ascii=False)};"
+            )
+    if _javascript_symbol_contract_requires_string_value(importer_text, symbol):
+        declarations.append(
+            f"export const {symbol} = "
+            f"{json.dumps(_javascript_contract_constant_literal(symbol, base_files, importer_text=importer_text), ensure_ascii=False)};"
+        )
+    return declarations
+
+
+def _unique_javascript_eof_context(text: str) -> str:
+    if not text:
+        return ""
+    for size in (512, 384, 256, 160, 96, 64, 40, 24, 12):
+        suffix = text[-min(size, len(text)) :]
+        if suffix and text.count(suffix) == 1:
+            return suffix
+    return text if text.count(text) == 1 else ""
 
 
 def repair_javascript_export_contract_placeholders(

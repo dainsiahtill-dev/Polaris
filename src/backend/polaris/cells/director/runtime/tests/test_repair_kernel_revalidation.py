@@ -117,6 +117,16 @@ def test_run_director_repair_revalidator_success_makes_receipt_authoritative(tmp
     assert result.error_code is None
     assert len(result.receipts) == 1
     assert len(requests) == 1
+    authority_policy = result.metadata["receipt_authority_policy"]
+    assert authority_policy["schema_version"] == "director.repair_receipt_authority_policy.v1"
+    assert authority_policy["authoritative_success"] is True
+    assert authority_policy["authoritative_receipt_count"] == 1
+    assert authority_policy["non_authoritative_receipt_count"] == 0
+    assert authority_policy["missing_evidence_receipt_count"] == 0
+    assert authority_policy["failed_evidence_receipt_count"] == 0
+    assert authority_policy["resolved_evidence_receipt_count"] == 1
+    assert authority_policy["requires_revalidation"] is False
+    assert authority_policy["result_ok_is_write_success_only"] is False
     assert requests[0].task_id == "task-native-revalidation"
     assert requests[0].source_tool == _SOURCE_TOOL
     assert requests[0].files_changed == (_RELATIVE_PATH,)
@@ -156,6 +166,14 @@ def test_run_director_repair_revalidator_failure_marks_failed_revalidation(tmp_p
     assert result.error_message == "Repair revalidation failed."
     assert len(result.receipts) == 1
     assert len(result.residual_diagnostics) == 1
+    authority_policy = result.metadata["receipt_authority_policy"]
+    assert authority_policy["authoritative_success"] is False
+    assert authority_policy["authoritative_receipt_count"] == 0
+    assert authority_policy["non_authoritative_receipt_count"] == 1
+    assert authority_policy["missing_evidence_receipt_count"] == 0
+    assert authority_policy["failed_evidence_receipt_count"] == 1
+    assert authority_policy["requires_revalidation"] is False
+    assert authority_policy["result_ok_is_write_success_only"] is True
 
     receipt = result.receipts[0]
     evidence = _assert_receipt_evidence_material(receipt)
@@ -178,6 +196,15 @@ def test_run_director_repair_without_revalidator_still_requires_revalidation(tmp
     assert result.ok is True
     assert result.error_code is None
     assert len(result.receipts) == 1
+    authority_policy = result.metadata["receipt_authority_policy"]
+    assert authority_policy["authoritative_success"] is False
+    assert authority_policy["authoritative_receipt_count"] == 0
+    assert authority_policy["non_authoritative_receipt_count"] == 1
+    assert authority_policy["missing_evidence_receipt_count"] == 1
+    assert authority_policy["failed_evidence_receipt_count"] == 0
+    assert authority_policy["requires_revalidation"] is True
+    assert authority_policy["result_ok_is_write_success_only"] is True
+    assert authority_policy["ledger_consumers_must_check_authoritative_success"] is True
 
     receipt = result.receipts[0]
     assert receipt.status == "applied"

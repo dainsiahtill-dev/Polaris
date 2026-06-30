@@ -402,6 +402,78 @@ def _director_actual_interface_injection_enabled() -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
+def _build_director_actual_sibling_exports_payload(workspace: str) -> dict[str, Any]:
+    """Build structured evidence for actual exports already present in the workspace."""
+
+    try:
+        from polaris.kernelone.quality.cross_artifact_interfaces import build_symbol_index_snapshot
+
+        snapshot = build_symbol_index_snapshot(workspace)
+    except (OSError, RuntimeError, ValueError, TypeError, ImportError):
+        return {}
+    exports = getattr(snapshot, "physical_exports", {}) or {}
+    if not isinstance(exports, dict) or not exports:
+        return {}
+    modules: list[dict[str, Any]] = []
+    for path in sorted(exports):
+        symbols = exports.get(path) or ()
+        rendered: list[str] = []
+        symbol_kinds: dict[str, str] = {}
+        signatures: dict[str, str] = {}
+        for sym in symbols[:32]:
+            name = str(getattr(sym, "name", "") or "").strip()
+            if not name:
+                continue
+            rendered.append(name)
+            kind = str(getattr(sym, "symbol_kind", "") or "").strip()
+            signature = str(getattr(sym, "signature", "") or "").strip()
+            if kind:
+                symbol_kinds[name] = kind
+            if signature:
+                signatures[name] = signature
+        if not rendered:
+            continue
+        module: dict[str, Any] = {
+            "path": str(path),
+            "symbols": rendered,
+            "symbol_source": "workspace_symbol_index",
+        }
+        if symbol_kinds:
+            module["symbol_kinds"] = symbol_kinds
+        if signatures:
+            module["signatures"] = signatures
+        modules.append(module)
+        if len(modules) >= 50:
+            break
+    if not modules:
+        return {}
+    return {
+        "schema_version": "polaris.actual_sibling_exports.evidence.v1",
+        "source": "roles.adapters.director.workspace_symbol_index",
+        "modules": modules,
+        "module_count": len(modules),
+        "actual_interface_snapshot_sources": ["workspace_symbol_index"],
+        "actual_interface_snapshot_file_count": len(exports),
+    }
+
+
+def _inject_director_actual_sibling_exports(context: dict[str, Any], *, workspace: str) -> None:
+    """Promote actual sibling exports into structured context and metadata."""
+
+    if not _director_actual_interface_injection_enabled():
+        return
+    if isinstance(context.get("actual_sibling_exports"), dict):
+        return
+    payload = _build_director_actual_sibling_exports_payload(workspace)
+    if not payload:
+        return
+    context["actual_sibling_exports"] = payload
+    metadata_raw = context.get("metadata")
+    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+    metadata.setdefault("actual_sibling_exports", payload)
+    context["metadata"] = metadata
+
+
 def _build_director_workspace_interface_lines(workspace: str) -> list[str]:
     """Inject the ACTUAL exported symbols of already-generated workspace files.
 
@@ -1102,6 +1174,7 @@ class DirectorAdapter(BaseRoleAdapter):
         from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
         context_payload = dict(context) if isinstance(context, dict) else {}
+        _inject_director_actual_sibling_exports(context_payload, workspace=str(self.workspace))
         self._ensure_director_verification_commands(
             message=message,
             context=context_payload,

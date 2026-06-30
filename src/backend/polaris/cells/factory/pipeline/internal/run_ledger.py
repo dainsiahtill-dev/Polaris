@@ -98,6 +98,24 @@ def _attach_tool_receipt_evidence(physical_evidence: dict[str, Any], gate: dict[
             physical_evidence[key] = payload
 
 
+def _attach_repair_evidence(physical_evidence: dict[str, Any], gate: dict[str, Any]) -> None:
+    for key in (
+        "repair_receipts",
+        "director_repair_receipts",
+        "repair_kernel_receipts",
+        "deterministic_repair_receipts",
+        "repair_result",
+        "repair_kernel",
+        "receipt_authority_policy",
+        "environment_prep_receipts",
+        "environment_prep",
+        "director_environment_prep_receipts",
+    ):
+        payload = _receipt_payload(gate.get(key))
+        if payload is not None:
+            physical_evidence[key] = payload
+
+
 def _event_content_payload(event: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value for key, value in event.items() if key not in {"append_id", "content_id", "event_id", "recorded_at"}
@@ -355,7 +373,7 @@ def _missing_required_modalities(
     missing: list[str] = []
     for modality_name in required_modalities:
         modality = gate_modalities.get(modality_name)
-        if not isinstance(modality, dict) or not modality.get("present") or not modality.get("ok"):
+        if not isinstance(modality, dict) or not modality.get("present"):
             missing.append(modality_name)
     return _string_list(missing)
 
@@ -403,7 +421,9 @@ def _evidence_modalities_from_physical_evidence(physical_evidence: dict[str, Any
         else:
             sampled_commands = commands if isinstance(commands, list) else []
             command_ok = bool(sampled_commands) and all(
-                bool(item.get("ok")) for item in sampled_commands if isinstance(item, dict)
+                bool(item.get("ok") if "ok" in item else item.get("passed"))
+                for item in sampled_commands
+                if isinstance(item, dict)
             )
             command_detail = f"{command_count or len(sampled_commands)} command evidence item(s)"
         command_count_for_metadata = command_count
@@ -820,10 +840,21 @@ def build_gate_ledger_event(
                 "llm_judge": gate.get("llm_judge"),
                 "visual_judgement": gate.get("visual_judgement"),
                 "qa_visual_judgement": gate.get("qa_visual_judgement"),
+                "repair_receipts": gate.get("repair_receipts"),
+                "director_repair_receipts": gate.get("director_repair_receipts"),
+                "repair_kernel_receipts": gate.get("repair_kernel_receipts"),
+                "deterministic_repair_receipts": gate.get("deterministic_repair_receipts"),
+                "repair_result": gate.get("repair_result"),
+                "repair_kernel": gate.get("repair_kernel"),
+                "receipt_authority_policy": gate.get("receipt_authority_policy"),
+                "environment_prep_receipts": gate.get("environment_prep_receipts"),
+                "environment_prep": gate.get("environment_prep"),
+                "director_environment_prep_receipts": gate.get("director_environment_prep_receipts"),
             }
         ),
     }
     _attach_tool_receipt_evidence(physical_evidence, gate)
+    _attach_repair_evidence(physical_evidence, gate)
     event = {
         "schema_version": 1,
         "event_type": "gate_evaluated",

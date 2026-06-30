@@ -374,6 +374,7 @@ def build_single_batch_task_contract_hint(
     if any(marker in latest_user for marker in _SUPER_READONLY_STAGE_MARKERS):
         return "", {}
     platform_tool_contract = extract_platform_tool_contract(context)
+    mixed_read_write_batch_allowed = platform_tool_contract_bypasses_read_write_barrier(context)
     single_quality_repair_target = _extract_single_target_quality_repair_path(latest_user)
 
     target_file_tokens = [
@@ -555,7 +556,7 @@ def build_single_batch_task_contract_hint(
         ]
         required_any_groups_from_contract = []
         required_any_groups_resolved = []
-        min_calls_required = max(1, min_calls_required)
+        min_calls_required = 1
 
     # 如果契约中显式要求写/验证工具，提升意图标记
     if required_tools_from_contract:
@@ -643,6 +644,11 @@ def build_single_batch_task_contract_hint(
             )
             if single_quality_repair_target:
                 lines.append("VALID pattern: emit exactly one write/edit tool call for the named target.")
+            elif mixed_read_write_batch_allowed:
+                lines.append(
+                    "VALID pattern: emit [search/read tool] then [write tool] in the same batch "
+                    "(all steps must complete in this single tool-call batch)."
+                )
             else:
                 # BUG-01 compound fix: removed the self-contradicting
                 # "MULTI-TURN WORKFLOW: first turn read_file" paragraph.
@@ -650,13 +656,18 @@ def build_single_batch_task_contract_hint(
                 # directly contradicting the HARD GATE "no write = rejected" rule
                 # that immediately precedes it.  In single-batch contract mode
                 # there is no later turn, so the paragraph caused silent failures.
+                # The transaction kernel still enforces the read/write barrier
+                # unless the platform tool contract explicitly bypasses it, so
+                # the positive example must not instruct models to mix read and
+                # write tools in one parallel batch by default.
                 lines.append(
-                    "VALID pattern: emit [search/read tool] then [write tool] in the same batch "
-                    "(all steps must complete in this single tool-call batch)."
+                    "VALID pattern: use the provided context to emit write/edit tool calls now. "
+                    "Do not mix read/search tools with write/edit tools in one parallel batch unless "
+                    "the platform tool contract explicitly allows mixed read/write batches."
                 )
         else:
             lines.append("This request requires mutation. Do not stop after read-only tools.")
-        if dedup_target_files:
+        if dedup_target_files and not single_quality_repair_target:
             lines.append(
                 "Mutation target files detected from user request: "
                 + ", ".join(dedup_target_files[:6])
@@ -690,10 +701,14 @@ def build_single_batch_task_contract_hint(
     if sequence_template:
         lines.append(sequence_template)
 
-    recovery_protocol = build_recovery_protocol(
-        required_tools=required_tools_from_contract,
-        required_any_groups=required_any_groups_from_contract,
-        available_write_tools=selected_write,
+    recovery_protocol = (
+        ""
+        if single_quality_repair_target
+        else build_recovery_protocol(
+            required_tools=required_tools_from_contract,
+            required_any_groups=required_any_groups_from_contract,
+            available_write_tools=selected_write,
+        )
     )
     if recovery_protocol:
         lines.append(recovery_protocol)

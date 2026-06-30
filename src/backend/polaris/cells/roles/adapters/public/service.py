@@ -120,12 +120,37 @@ def run_director_materialization_quality_repair_schedule(
     return results, public_summary
 
 
-def run_director_cpp_post_execution_repairs(workspace: str | Path) -> list[dict[str, Any]]:
-    """Run Director C++ post-execution repairs through the roles.adapters public boundary."""
+class _PublicPostExecutionRepairAdapter:
+    """Minimal adapter surface for public post-execution schedule callers."""
 
-    from ..internal.director.post_execution_repair_bridge import run_cpp_post_repairs_as_tool_results
+    def __init__(self, workspace: str | Path) -> None:
+        self.workspace = str(Path(workspace))
+        self._execution = None
 
-    return run_cpp_post_repairs_as_tool_results(Path(workspace))
+    def _update_task_progress(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+def run_director_post_execution_repair_schedule(
+    workspace: str | Path,
+    *,
+    task_id: str = "roles-adapters-post-execution-repair",
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Run the runtime-owned Director post-execution repair schedule.
+
+    Public callers may request post-execution repair convergence, but must not
+    call language-specific helpers. Language dispatch stays inside the
+    runtime-owned schedule and the adapter bridge.
+    """
+
+    from ..internal.director.post_execution_repair_bridge import (
+        run_post_execution_language_repairs,
+    )
+
+    return run_post_execution_language_repairs(
+        _PublicPostExecutionRepairAdapter(workspace),
+        task_id=task_id,
+    )
 
 
 def register_all_adapters(service: object) -> None:
@@ -215,7 +240,7 @@ __all__ = [
     "get_schema_for_role",
     "get_supported_roles",
     "register_all_adapters",
-    "run_director_cpp_post_execution_repairs",
     "run_director_materialization_quality_repair",
     "run_director_materialization_quality_repair_schedule",
+    "run_director_post_execution_repair_schedule",
 ]

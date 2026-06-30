@@ -210,8 +210,8 @@ class SchemaDrivenNormalizer:
                     break
 
         # 调用 escape hatch（如有）- 用于无法用别名映射表达的复杂转换
-        if tool_name in self._escape_hatches:
-            normalized = self._escape_hatches[tool_name](normalized)
+        if canonical_tool in self._escape_hatches:
+            normalized = self._escape_hatches[canonical_tool](normalized)
 
         # 清理所有别名键（确保不残留）
         all_aliases: set[str] = set()
@@ -253,18 +253,16 @@ class SchemaDrivenNormalizer:
         return _normalize_workspace_alias_path(path)
 
 
-# 全局实例（惰性初始化）
-_normalizer_instance: SchemaDrivenNormalizer | None = None
-
-
 def get_schema_normalizer() -> SchemaDrivenNormalizer:
-    """获取全局 SchemaDrivenNormalizer 实例。"""
-    global _normalizer_instance
-    if _normalizer_instance is None:
-        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+    """Return a normalizer backed by the current ToolSpecRegistry context.
 
-        _normalizer_instance = SchemaDrivenNormalizer(ToolSpecRegistry.get_all_specs())
-    return _normalizer_instance
+    ToolSpecRegistry is ContextVar-backed so tests, runtime connectors, and
+    plugin-provided tools can alter the active tool surface per execution
+    context. A module-global normalizer would keep stale aliases and schemas.
+    """
+    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+    return SchemaDrivenNormalizer(ToolSpecRegistry.get_all_specs())
 
 
 def normalize_with_schema(tool_name: str, tool_args: dict[str, Any]) -> dict[str, Any]:

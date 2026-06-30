@@ -19,6 +19,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.cells.director.runtime.public.service import (
     AttachDirectorRepairRevalidationEvidenceV1,
     project_director_repair_revalidation_evidence,
@@ -33,7 +34,6 @@ from polaris.kernelone.fs.materialization import materialized_file_paths
 from polaris.kernelone.quality import (
     scan_workspace_artifact_quality as scan_workspace_artifact_quality,
 )
-from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 from .contract_verify import resolve_contract_step_verify_command
 from .execution_tools import (
@@ -450,6 +450,10 @@ def _empty_write_retry_tool_definition(
     *,
     pin_file_enum: bool = False,
 ) -> dict[str, Any]:
+    if tool_name == "write_file":
+        registered = _registered_tool_definition("write_file")
+        if registered is not None:
+            return _pin_file_schema_to_declared_targets(registered, target_files) if pin_file_enum else registered
     file_schema: dict[str, Any] = {"type": "string"}
     if len(target_files) == 1:
         file_schema["enum"] = [target_files[0]]
@@ -510,18 +514,39 @@ def _pin_file_schema_to_declared_targets(definition: dict[str, Any], target_file
     properties = parameters.get("properties")
     if not isinstance(properties, dict):
         return pinned
-    file_schema = properties.get("file")
-    if not isinstance(file_schema, dict):
-        return pinned
-    file_schema["enum"] = list(dict.fromkeys(target_files[:32]))
+    enum_values = list(dict.fromkeys(target_files[:32]))
+    for property_name in (
+        "file",
+        "path",
+        "filepath",
+        "filePath",
+        "file_path",
+        "filename",
+        "target",
+        "target_file",
+        "targetFile",
+        "target_path",
+        "targetPath",
+    ):
+        property_schema = properties.get(property_name)
+        if isinstance(property_schema, dict):
+            property_schema["enum"] = enum_values
     return pinned
 
 
 def _registered_tool_definition(tool_name: str) -> dict[str, Any] | None:
-    spec = ToolSpecRegistry.get(tool_name)
-    if spec is None:
+    try:
+        from polaris.kernelone.llm.toolkit.definitions import create_default_registry
+    except (ImportError, RuntimeError, ValueError):
         return None
-    return spec.to_openai_function()
+    definition = create_default_registry().get(str(tool_name or "").strip())
+    if definition is None:
+        return None
+    try:
+        schema = definition.to_openai_function()
+    except (RuntimeError, TypeError, ValueError):
+        return None
+    return dict(schema) if isinstance(schema, dict) else None
 
 
 def _no_write_materialization_retry_tool_definitions(
@@ -3310,6 +3335,56 @@ def _materialization_task_boundary_triage_summary(
 ) -> dict[str, Any]:
     plan_probe = summary.get("plan_probe_preaudit")
     plan_probe_payload = dict(plan_probe) if isinstance(plan_probe, dict) else {}
+    raw_evidence = summary.get("interface_discrepancy_evidence")
+    existing_evidence: dict[str, Any] = raw_evidence if isinstance(raw_evidence, dict) else {}
+    source_tools = [
+        str(item)
+        for item in plan_probe_payload.get(
+            "covered_unplannable_source_tools",
+            existing_evidence.get("covered_unplannable_source_tools", []),
+        )
+        if str(item or "").strip()
+    ]
+    covered_count = int(plan_probe_payload.get("covered_unplannable_diagnostic_count") or len(artifact_quality_errors))
+    coverage_gap_count = int(plan_probe_payload.get("coverage_gap_count") or 0)
+    existing_director_retry_allowed = bool(
+        existing_evidence.get("director_retry_allowed")
+        or summary.get("task_boundary_interface_discrepancy_retry_authorized")
+    )
+    existing_metadata = existing_evidence.get("metadata")
+    receipt_metadata = dict(existing_metadata) if isinstance(existing_metadata, dict) else {}
+    receipt_metadata.update(
+        {
+            "route": "task_boundary_quality_loop",
+            "coverage_gap_count": coverage_gap_count,
+            "repair_attempt": repair_attempt,
+        }
+    )
+    receipt = DirectorInterfaceDiscrepancyReceiptV1.from_mapping(
+        {
+            **existing_evidence,
+            "task_id": str(summary.get("task_id") or summary.get("target_task_id") or "materialization-task"),
+            "source": existing_evidence.get("source")
+            or "roles.adapters.execute_method.materialization_quality_loop",
+            "plan_probe_status": plan_probe_payload.get("status") or existing_evidence.get("plan_probe_status"),
+            "covered_unplannable_source_tools": source_tools,
+            "diagnostics": existing_evidence.get("diagnostics")
+            or [{"message": str(item)} for item in artifact_quality_errors[:20]],
+            "recommended_owner": existing_evidence.get("recommended_owner") or "chief_engineer",
+            "recommended_route": existing_evidence.get("recommended_route") or "pending_design_interface_contract",
+            "llm_fallback_blocked": not existing_director_retry_allowed,
+            "director_retry_allowed": existing_director_retry_allowed,
+            "reason": "coverage_matched_but_unplannable",
+            "metadata": receipt_metadata,
+        }
+    ).to_dict()
+    receipt.update(
+        {
+            "route": "task_boundary_quality_loop",
+            "coverage_gap_count": coverage_gap_count,
+            "covered_unplannable_diagnostic_count": covered_count,
+        }
+    )
     return {
         **dict(summary or {}),
         "stage": "runtime_plan_probe_unplannable",
@@ -3319,20 +3394,11 @@ def _materialization_task_boundary_triage_summary(
         "success_reason": "task_boundary_interface_discrepancy_required",
         "tool_results": 0,
         "write_tool_evidence": False,
-        "llm_fallback_blocked": True,
+        "llm_fallback_blocked": not existing_director_retry_allowed,
+        "director_retry_allowed": existing_director_retry_allowed,
+        "task_boundary_interface_discrepancy_retry_authorized": existing_director_retry_allowed,
         "residual_error_count": len(artifact_quality_errors),
-        "interface_discrepancy_evidence": {
-            "schema_version": "director.task_boundary.interface_discrepancy.v1",
-            "route": "task_boundary_quality_loop",
-            "plan_probe_status": plan_probe_payload.get("status"),
-            "covered_unplannable_source_tools": plan_probe_payload.get("covered_unplannable_source_tools", []),
-            "covered_unplannable_diagnostic_count": plan_probe_payload.get(
-                "covered_unplannable_diagnostic_count",
-                0,
-            ),
-            "coverage_gap_count": plan_probe_payload.get("coverage_gap_count", 0),
-            "reason": "coverage_matched_but_unplannable",
-        },
+        "interface_discrepancy_evidence": receipt,
     }
 
 

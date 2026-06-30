@@ -43,6 +43,19 @@ _SMALL_EXECUTION_CONTEXT_WINDOW_TOKENS = 32_768
 _TOOL_SCHEMA_PRESSURE_MIN_TOKENS = 1_500
 _TOOL_SCHEMA_PRESSURE_MIN_COUNT = 8
 _TOOL_SCHEMA_PRESSURE_RATIO = 0.18
+_FALLBACK_FILE_PARAM_PROPERTY_NAMES = (
+    "file",
+    "path",
+    "filepath",
+    "filePath",
+    "file_path",
+    "filename",
+    "target",
+    "target_file",
+    "targetFile",
+    "target_path",
+    "targetPath",
+)
 
 
 def resolve_tool_call_provider(*, provider_id: str, model: str) -> str:
@@ -379,6 +392,36 @@ def _append_required_tools_from_text(
                 _append_required_tool(required, tool_name, known_tool_map)
 
 
+def extract_structured_required_tool_names(
+    messages: list[dict[str, Any]],
+    known_tool_names: list[str],
+) -> list[str]:
+    known_tool_map = {name.lower(): name for name in known_tool_names if str(name or "").strip()}
+    required: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        metadata = message.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        _append_required_tools_from_contract(required, metadata.get("tool_contract"), known_tool_map)
+        _append_required_tools_from_contract(required, metadata.get("platform_tool_contract"), known_tool_map)
+    return required
+
+
+def extract_text_required_tool_names(
+    messages: list[dict[str, Any]],
+    known_tool_names: list[str],
+) -> list[str]:
+    known_tool_map = {name.lower(): name for name in known_tool_names if str(name or "").strip()}
+    required: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        _append_required_tools_from_text(required, message.get("content"), known_tool_names, known_tool_map)
+    return required
+
+
 def extract_prompt_required_tool_names(
     messages: list[dict[str, Any]],
     known_tool_names: list[str],
@@ -390,17 +433,14 @@ def extract_prompt_required_tool_names(
     line uses explicit required/must-call wording.
     """
 
-    known_tool_map = {name.lower(): name for name in known_tool_names if str(name or "").strip()}
-    required: list[str] = []
-    for message in messages:
-        if not isinstance(message, dict):
-            continue
-        metadata = message.get("metadata")
-        if isinstance(metadata, dict):
-            _append_required_tools_from_contract(required, metadata.get("tool_contract"), known_tool_map)
-            _append_required_tools_from_contract(required, metadata.get("platform_tool_contract"), known_tool_map)
-        _append_required_tools_from_text(required, message.get("content"), known_tool_names, known_tool_map)
-    return required
+    return list(
+        dict.fromkeys(
+            [
+                *extract_structured_required_tool_names(messages, known_tool_names),
+                *extract_text_required_tool_names(messages, known_tool_names),
+            ]
+        )
+    )
 
 
 def build_tool_filter_audit(
@@ -416,23 +456,40 @@ def build_tool_filter_audit(
     filtered_tool_names = tool_definition_names(filtered_tool_definitions)
     filtered_set = {name.lower() for name in filtered_tool_names}
     removed_tool_names = [name for name in original_tool_names if name.lower() not in filtered_set]
+    known_names = sorted(set(original_tool_names) | set(filtered_tool_names))
+    contract_required_tool_names = extract_structured_required_tool_names(
+        messages,
+        known_names,
+    )
+    text_required_tool_names = extract_text_required_tool_names(
+        messages,
+        known_names,
+    )
     prompt_required_tool_names = extract_prompt_required_tool_names(
         messages,
-        sorted(set(original_tool_names) | set(filtered_tool_names)),
+        known_names,
     )
     removed_prompt_required_tool_names = [
         name for name in prompt_required_tool_names if name.lower() not in filtered_set
     ]
+    removed_contract_required_tool_names = [
+        name for name in contract_required_tool_names if name.lower() not in filtered_set
+    ]
+    removed_text_required_tool_names = [name for name in text_required_tool_names if name.lower() not in filtered_set]
     return {
         "schema_version": "roles.kernel.tool_filter_audit.v1",
         "filter_reason": filter_reason,
-        "status": "conflict" if removed_prompt_required_tool_names else "pass",
+        "status": "conflict" if removed_contract_required_tool_names else "pass",
         "original_tool_names": original_tool_names,
         "filtered_tool_names": filtered_tool_names,
         "removed_tool_names": removed_tool_names,
+        "contract_required_tool_names": contract_required_tool_names,
+        "text_required_tool_names": text_required_tool_names,
         "prompt_required_tool_names": prompt_required_tool_names,
         "removed_prompt_required_tool_names": removed_prompt_required_tool_names,
-        "fail_closed": bool(removed_prompt_required_tool_names),
+        "removed_contract_required_tool_names": removed_contract_required_tool_names,
+        "removed_text_required_tool_names": removed_text_required_tool_names,
+        "fail_closed": bool(removed_contract_required_tool_names),
     }
 
 
@@ -709,7 +766,9 @@ def pin_write_tool_file_param_to_targets(
     """
     if not declared_targets:
         return tool_definitions
-    file_property_names = ("file", "path", "filepath", "file_path")
+    file_property_names_by_tool = {
+        tool_name: _file_param_property_names_for_tool(tool_name) for tool_name in _FILE_PARAM_WRITE_TOOLS
+    }
     pinned: list[dict[str, Any]] = []
     for definition in tool_definitions:
         if not isinstance(definition, dict):
@@ -733,13 +792,34 @@ def pin_write_tool_file_param_to_targets(
             pinned.append(definition)
             continue
         new_properties = dict(properties)
-        for property_name in file_property_names:
+        for property_name in file_property_names_by_tool.get(name, _FALLBACK_FILE_PARAM_PROPERTY_NAMES):
             property_schema = new_properties.get(property_name)
             if isinstance(property_schema, dict):
                 new_properties[property_name] = {**property_schema, "enum": list(declared_targets)}
         new_parameters = {**parameters, "properties": new_properties}
         pinned.append({**definition, "function": {**function_payload, "parameters": new_parameters}})
     return pinned
+
+
+def _file_param_property_names_for_tool(tool_name: str) -> tuple[str, ...]:
+    """Return canonical file parameter plus registry aliases that normalize to it."""
+
+    names = list(_FALLBACK_FILE_PARAM_PROPERTY_NAMES)
+    try:
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        spec = ToolSpecRegistry.get_all_specs().get(str(tool_name or ""))
+    except (ImportError, RuntimeError, ValueError):
+        spec = None
+    if isinstance(spec, dict):
+        arg_aliases = spec.get("arg_aliases")
+        if isinstance(arg_aliases, dict):
+            for alias_name, canonical_name in arg_aliases.items():
+                if str(canonical_name) == "file":
+                    alias_text = str(alias_name or "").strip()
+                    if alias_text and alias_text not in names:
+                        names.append(alias_text)
+    return tuple(names)
 
 
 # CCR consumer-loop offering gate (Headroom T1-A). Offering context_retrieve to a

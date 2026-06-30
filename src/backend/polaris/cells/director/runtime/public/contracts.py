@@ -552,6 +552,31 @@ class DirectorRepairEnvironmentPrepReceiptV1:
         }
 
 
+def _to_environment_prep_receipt_tuple_from_any(value: Any) -> tuple[DirectorRepairEnvironmentPrepReceiptV1, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, DirectorRepairEnvironmentPrepReceiptV1 | Mapping):
+        items = (value,)
+    else:
+        try:
+            items = tuple(value)
+        except TypeError:
+            return ()
+
+    receipts: list[DirectorRepairEnvironmentPrepReceiptV1] = []
+    for item in items:
+        if isinstance(item, DirectorRepairEnvironmentPrepReceiptV1):
+            receipts.append(item)
+        elif isinstance(item, Mapping):
+            allowed_fields = DirectorRepairEnvironmentPrepReceiptV1.__dataclass_fields__.keys()
+            receipts.append(
+                DirectorRepairEnvironmentPrepReceiptV1(
+                    **{key: value for key, value in dict(item).items() if key in allowed_fields}
+                )
+            )
+    return tuple(receipts)
+
+
 @dataclass(frozen=True)
 class DirectorRepairEnvironmentRefreshRequirementsResultV1:
     """Runtime-owned read-only projection of environment prep requirements."""
@@ -693,6 +718,7 @@ class DirectorRepairVerifierSnapshotInputV1:
     command: tuple[str, ...] = ()
     exit_code: int | None = None
     raw_output_ref: str | None = None
+    environment_prep_receipts: tuple[DirectorRepairEnvironmentPrepReceiptV1, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -704,6 +730,11 @@ class DirectorRepairVerifierSnapshotInputV1:
         object.__setattr__(self, "command", _to_tuple_str(list(self.command)))
         object.__setattr__(self, "exit_code", None if self.exit_code is None else int(self.exit_code))
         object.__setattr__(self, "raw_output_ref", str(self.raw_output_ref or "").strip() or None)
+        object.__setattr__(
+            self,
+            "environment_prep_receipts",
+            _to_environment_prep_receipt_tuple_from_any(self.environment_prep_receipts),
+        )
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
 
     def to_dict(self) -> dict[str, Any]:
@@ -712,6 +743,8 @@ class DirectorRepairVerifierSnapshotInputV1:
             "command": list(self.command),
             "exit_code": self.exit_code,
             "raw_output_ref": self.raw_output_ref,
+            "environment_prep_receipt_count": len(self.environment_prep_receipts),
+            "environment_prep_receipts": [receipt.to_dict() for receipt in self.environment_prep_receipts],
             "metadata": dict(self.metadata),
         }
 
@@ -1549,6 +1582,8 @@ class DirectorRepairPostExecutionStepV1:
     phase: str
     priority: int
     source_tool: str
+    source_tool_kind: str = "executable_runtime"
+    executable_runtime_source_tool: bool = True
     depends_on: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -1557,6 +1592,9 @@ class DirectorRepairPostExecutionStepV1:
         object.__setattr__(self, "phase", _require_non_empty("phase", self.phase))
         object.__setattr__(self, "priority", max(0, int(self.priority)))
         object.__setattr__(self, "source_tool", _require_non_empty("source_tool", self.source_tool))
+        source_tool_kind = _require_non_empty("source_tool_kind", self.source_tool_kind)
+        object.__setattr__(self, "source_tool_kind", source_tool_kind)
+        object.__setattr__(self, "executable_runtime_source_tool", source_tool_kind == "executable_runtime")
         object.__setattr__(self, "depends_on", _to_tuple_str(list(self.depends_on)))
 
     def to_dict(self) -> dict[str, Any]:
@@ -1566,6 +1604,8 @@ class DirectorRepairPostExecutionStepV1:
             "phase": self.phase,
             "priority": self.priority,
             "source_tool": self.source_tool,
+            "source_tool_kind": self.source_tool_kind,
+            "executable_runtime_source_tool": self.executable_runtime_source_tool,
             "depends_on": list(self.depends_on),
         }
 
@@ -1632,6 +1672,8 @@ class DirectorRepairCallbackReceiptProjectionV1:
     step_id: str | None = None
     source_tool: str | None = None
     scheduled_source_tool: str | None = None
+    scheduled_source_tool_kind: str | None = None
+    scheduled_source_tool_executable_runtime: bool = False
     callback_source_tool: str | None = None
     adapter_source_tool: str | None = None
     round_number: int | None = None
@@ -1667,6 +1709,12 @@ class DirectorRepairCallbackReceiptProjectionV1:
         object.__setattr__(self, "step_id", _optional_non_empty_str(self.step_id))
         object.__setattr__(self, "source_tool", _optional_non_empty_str(self.source_tool))
         object.__setattr__(self, "scheduled_source_tool", _optional_non_empty_str(self.scheduled_source_tool))
+        object.__setattr__(self, "scheduled_source_tool_kind", _optional_non_empty_str(self.scheduled_source_tool_kind))
+        object.__setattr__(
+            self,
+            "scheduled_source_tool_executable_runtime",
+            bool(self.scheduled_source_tool_executable_runtime),
+        )
         object.__setattr__(self, "callback_source_tool", _optional_non_empty_str(self.callback_source_tool))
         adapter_source_tool = _optional_non_empty_str(self.adapter_source_tool) or _optional_non_empty_str(
             self.callback_source_tool
@@ -1718,6 +1766,8 @@ class DirectorRepairCallbackReceiptProjectionV1:
             "step_id": self.step_id,
             "source_tool": self.source_tool,
             "scheduled_source_tool": self.scheduled_source_tool,
+            "scheduled_source_tool_kind": self.scheduled_source_tool_kind,
+            "scheduled_source_tool_executable_runtime": self.scheduled_source_tool_executable_runtime,
             "callback_source_tool": self.callback_source_tool,
             "adapter_source_tool": self.adapter_source_tool,
             "round_number": self.round_number,
@@ -1854,6 +1904,8 @@ class DirectorRepairMaterializationQualityStepV1:
     phase: str
     priority: int
     source_tool: str
+    source_tool_kind: str = "callback_schedule_label"
+    executable_runtime_source_tool: bool = False
     depends_on: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -1862,6 +1914,9 @@ class DirectorRepairMaterializationQualityStepV1:
         object.__setattr__(self, "phase", _require_non_empty("phase", self.phase))
         object.__setattr__(self, "priority", max(0, int(self.priority)))
         object.__setattr__(self, "source_tool", _require_non_empty("source_tool", self.source_tool))
+        source_tool_kind = _require_non_empty("source_tool_kind", self.source_tool_kind)
+        object.__setattr__(self, "source_tool_kind", source_tool_kind)
+        object.__setattr__(self, "executable_runtime_source_tool", source_tool_kind == "executable_runtime")
         object.__setattr__(self, "depends_on", _to_tuple_str(list(self.depends_on)))
 
     def to_dict(self) -> dict[str, Any]:
@@ -1871,6 +1926,8 @@ class DirectorRepairMaterializationQualityStepV1:
             "phase": self.phase,
             "priority": self.priority,
             "source_tool": self.source_tool,
+            "source_tool_kind": self.source_tool_kind,
+            "executable_runtime_source_tool": self.executable_runtime_source_tool,
             "depends_on": list(self.depends_on),
         }
 
@@ -2758,6 +2815,140 @@ class DirectorRepairPlanProbeResultV1:
 
 
 @dataclass(frozen=True)
+class DirectorInterfaceDiscrepancyReceiptV1:
+    """Canonical receipt for task-boundary interface discrepancies."""
+
+    task_id: str
+    status: str = "semantic_discrepancy_triage_required"
+    source: str = "director.runtime.interface_discrepancy"
+    plan_probe_status: str = ""
+    diagnostics: tuple[Mapping[str, Any], ...] = ()
+    source_tools: tuple[str, ...] = ()
+    recommended_owner: str = "chief_engineer"
+    recommended_route: str = "pending_design_interface_contract"
+    triage_policy: str = "ce_contract_if_missing_else_director_local_repair"
+    macro_blueprint_regeneration_allowed: bool = False
+    task_interface_contract_present: bool = False
+    llm_fallback_blocked: bool = True
+    director_retry_allowed: bool = False
+    reason: str = "coverage_matched_but_unplannable"
+    interface_delta: Mapping[str, Any] = field(default_factory=dict)
+    triage_summary: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    schema_version: str = "director.interface_discrepancy_receipt.v1"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        object.__setattr__(self, "status", _require_non_empty("status", self.status))
+        object.__setattr__(self, "source", _require_non_empty("source", self.source))
+        object.__setattr__(self, "plan_probe_status", str(self.plan_probe_status or "").strip())
+        object.__setattr__(
+            self,
+            "diagnostics",
+            tuple(dict(item) for item in self.diagnostics if isinstance(item, Mapping)),
+        )
+        object.__setattr__(self, "source_tools", _to_tuple_str(list(self.source_tools)))
+        object.__setattr__(
+            self,
+            "recommended_owner",
+            str(self.recommended_owner or "chief_engineer").strip() or "chief_engineer",
+        )
+        object.__setattr__(
+            self,
+            "recommended_route",
+            str(self.recommended_route or "pending_design_interface_contract").strip()
+            or "pending_design_interface_contract",
+        )
+        object.__setattr__(self, "triage_policy", str(self.triage_policy or "").strip())
+        object.__setattr__(
+            self,
+            "macro_blueprint_regeneration_allowed",
+            bool(self.macro_blueprint_regeneration_allowed),
+        )
+        object.__setattr__(
+            self,
+            "task_interface_contract_present",
+            bool(self.task_interface_contract_present),
+        )
+        object.__setattr__(self, "director_retry_allowed", bool(self.director_retry_allowed))
+        object.__setattr__(
+            self,
+            "llm_fallback_blocked",
+            bool(self.llm_fallback_blocked) and not bool(self.director_retry_allowed),
+        )
+        object.__setattr__(self, "reason", str(self.reason or "").strip())
+        object.__setattr__(self, "interface_delta", _to_dict_copy(self.interface_delta))
+        object.__setattr__(self, "triage_summary", _to_dict_copy(self.triage_summary))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+
+    @classmethod
+    def from_mapping(
+        cls,
+        value: Mapping[str, Any],
+        *,
+        task_id: str = "",
+    ) -> DirectorInterfaceDiscrepancyReceiptV1:
+        task = str(value.get("task_id") or task_id or "unknown-task").strip()
+        source_tools = value.get("source_tools") or value.get("covered_unplannable_source_tools") or ()
+        diagnostics = value.get("diagnostics") or value.get("covered_unplannable_diagnostics") or ()
+        return cls(
+            task_id=task,
+            status=str(value.get("status") or "semantic_discrepancy_triage_required"),
+            source=str(value.get("source") or value.get("route") or "director.runtime.interface_discrepancy"),
+            plan_probe_status=str(value.get("plan_probe_status") or ""),
+            diagnostics=tuple(item for item in diagnostics if isinstance(item, Mapping))
+            if isinstance(diagnostics, (list, tuple))
+            else (),
+            source_tools=(
+                _to_tuple_str(list(source_tools))
+                if isinstance(source_tools, (list, tuple))
+                else ()
+            ),
+            recommended_owner=str(value.get("recommended_owner") or "chief_engineer"),
+            recommended_route=str(value.get("recommended_route") or "pending_design_interface_contract"),
+            triage_policy=str(value.get("triage_policy") or "ce_contract_if_missing_else_director_local_repair"),
+            macro_blueprint_regeneration_allowed=bool(value.get("macro_blueprint_regeneration_allowed")),
+            task_interface_contract_present=bool(value.get("task_interface_contract_present")),
+            llm_fallback_blocked=bool(value.get("llm_fallback_blocked", True)),
+            director_retry_allowed=bool(value.get("director_retry_allowed")),
+            reason=str(value.get("reason") or "coverage_matched_but_unplannable"),
+            interface_delta=_to_dict_copy(
+                value.get("interface_delta") if isinstance(value.get("interface_delta"), Mapping) else {}
+            ),
+            triage_summary=_to_dict_copy(
+                value.get("triage_summary") if isinstance(value.get("triage_summary"), Mapping) else {}
+            ),
+            metadata=_to_dict_copy(value.get("metadata") if isinstance(value.get("metadata"), Mapping) else {}),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "task_id": self.task_id,
+            "status": self.status,
+            "source": self.source,
+            "plan_probe_status": self.plan_probe_status,
+            "covered_unplannable": self.reason == "coverage_matched_but_unplannable",
+            "diagnostics": [dict(item) for item in self.diagnostics],
+            "source_tools": list(self.source_tools),
+            "covered_unplannable_source_tools": list(self.source_tools),
+            "covered_unplannable_diagnostic_count": len(self.diagnostics),
+            "recommended_owner": self.recommended_owner,
+            "recommended_route": self.recommended_route,
+            "triage_policy": self.triage_policy,
+            "macro_blueprint_regeneration_allowed": self.macro_blueprint_regeneration_allowed,
+            "task_interface_contract_present": self.task_interface_contract_present,
+            "llm_fallback_blocked": self.llm_fallback_blocked,
+            "director_retry_allowed": self.director_retry_allowed,
+            "reason": self.reason,
+            "interface_delta": dict(self.interface_delta),
+            "triage_summary": dict(self.triage_summary),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class RunDirectorTaskBoundaryQualityLoopCommandV1:
     """Command shape for validating a complete CE task boundary through runtime repair convergence."""
 
@@ -2854,6 +3045,7 @@ class DirectorRuntimeError(RuntimeError):
 __all__ = [
     "AttachDirectorRepairRevalidationEvidenceV1",
     "CompareDirectorRepairShadowRunV1",
+    "DirectorInterfaceDiscrepancyReceiptV1",
     "DirectorRepairAdvisoryPolicyResultV1",
     "DirectorRepairAdvisoryValidationResultV1",
     "DirectorRepairCallbackReceiptProjectionV1",

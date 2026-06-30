@@ -16,6 +16,8 @@ CORE_EVIDENCE_MODALITIES = (
     "code",
     "command",
     "tool_receipt",
+    "repair",
+    "environment_prep",
     "verifier",
     "domain",
     "api_contract",

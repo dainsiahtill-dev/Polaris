@@ -1138,6 +1138,60 @@ class TestChiefEngineerBlueprintPublicService:
         assert meteor_module["symbol_source"] == "heuristic_path_guess_with_actual_owner_conflict"
         assert meteor_module["interface_conflict"]["actual_public_symbols"] == ["createMeteor", "advanceMeteor"]
 
+    def test_generate_task_blueprint_uses_workspace_symbol_index_when_context_lacks_existing_exports(
+        self, tmp_path
+    ) -> None:
+        source = tmp_path / "src" / "meteor.js"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(
+            "export function createMeteor(options = {}) { return options; }\n"
+            "export function advanceMeteor(meteor, target) { return { meteor, target }; }\n",
+            encoding="utf-8",
+        )
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-JS-METEOR-MODELS",
+            workspace=str(tmp_path),
+            objective="Implement meteor wish queue JavaScript model mirror",
+            context={
+                "task_title": "Meteor wish queue model mirror",
+                "language": "javascript",
+                "target_files": ["src/models/meteor.js"],
+                "acceptance_criteria": ["verify src/models/meteor.js exists"],
+                "execution_checklist": ["Implement source module", "Run npm test"],
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "language": "javascript",
+                    "product_summary": {
+                        "intent": "Deliver a meteor wish queue with observable behavior.",
+                        "core_terms": ["meteor", "wish"],
+                    },
+                },
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        assert any(item["path"] == "src/meteor.js" for item in result.existing_target_files)
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert persisted["handoff_ready"] is False
+        interface_contract = persisted["module_interface_contract"]
+        assert interface_contract["actual_interface_snapshot_sources"] == ["workspace_symbol_index"]
+        assert interface_contract["actual_interface_snapshot_file_count"] >= 1
+        assert interface_contract["interface_conflicts"][0]["actual_owner_path"] == "src/meteor.js"
+        assert interface_contract["interface_conflicts"][0]["actual_public_symbols"] == [
+            "createMeteor",
+            "advanceMeteor",
+        ]
+
+        status = get_blueprint_status(
+            GetBlueprintStatusQueryV1(task_id="TASK-JS-METEOR-MODELS", workspace=str(tmp_path))
+        )
+        assert status.ok is True
+        assert any(item["path"] == "src/meteor.js" for item in status.existing_target_files)
+        assert status.module_interface_contract["interface_conflicts"][0]["actual_owner_path"] == "src/meteor.js"
+
     def test_query_missing_task_blueprint(self, tmp_path) -> None:
         status = get_blueprint_status(
             GetBlueprintStatusQueryV1(

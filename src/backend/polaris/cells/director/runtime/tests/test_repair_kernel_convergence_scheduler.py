@@ -356,6 +356,12 @@ def test_callback_schedule_to_dict_and_annotations_mark_migration_envelope() -> 
         "convergence_status",
         "stopped_reason",
     ]
+    assert summary["source_tool_kind_counts"] == {
+        "callback_schedule_label": 1,
+        "executable_runtime": 4,
+    }
+    assert summary["callback_schedule_label_source_tools"] == ["deterministic_rust_post_repair"]
+    assert "deterministic_rust_post_repair" not in summary["executable_runtime_source_tools"]
     assert summary["produces_tool_results_only"] is True
     assert summary["final_typed_receipt_path"] == "run_runtime_repair_convergence"
     assert summary["receipt_projection_count"] == 1
@@ -391,6 +397,9 @@ def test_callback_schedule_to_dict_and_annotations_mark_migration_envelope() -> 
     assert receipt_projection["schedule_kind"] == "post_execution"
     assert receipt_projection["step_id"] == "rust.dependency_resolution"
     assert receipt_projection["source_tool"] == "deterministic_rust_dependency_repair"
+    assert receipt_projection["scheduled_source_tool"] == "deterministic_rust_dependency_repair"
+    assert receipt_projection["scheduled_source_tool_kind"] == "executable_runtime"
+    assert receipt_projection["scheduled_source_tool_executable_runtime"] is True
     assert receipt_projection["adapter_source_tool"] == "deterministic_rust_dependency_repair"
     assert receipt_projection["round_number"] == 1
     assert receipt_projection["tool_name"] == "write_file"
@@ -467,6 +476,11 @@ def test_materialization_callback_schedule_to_dict_projects_non_authoritative_re
     assert summary["adapter_runner_self_loop_allowed"] is False
     assert summary["callback_runner_self_loop_allowed"] is False
     assert summary["receipt_projection_count"] == 1
+    assert summary["source_tool_kind_counts"] == {
+        "callback_schedule_label": len(runner_step_ids),
+    }
+    assert summary["executable_runtime_source_tools"] == []
+    assert summary["callback_schedule_label_source_tools"] == summary["source_tools"]
     assert summary["post_check_evidence_complete"] is False
     assert summary["missing_native_revalidation_evidence"] is True
     assert summary["non_authoritative_projection"] is True
@@ -480,6 +494,9 @@ def test_materialization_callback_schedule_to_dict_projects_non_authoritative_re
     assert receipt_projection["schedule_kind"] == "materialization_quality"
     assert receipt_projection["step_id"] == "materialization.typescript_compiler"
     assert receipt_projection["source_tool"] == "deterministic_typescript_materialization_repair"
+    assert receipt_projection["scheduled_source_tool"] == "deterministic_typescript_materialization_repair"
+    assert receipt_projection["scheduled_source_tool_kind"] == "callback_schedule_label"
+    assert receipt_projection["scheduled_source_tool_executable_runtime"] is False
     assert receipt_projection["adapter_source_tool"] == "deterministic_typescript_materialization_repair"
     assert receipt_projection["round_number"] == 1
     assert receipt_projection["tool_name"] == "edit_file"
@@ -605,6 +622,8 @@ def test_public_post_execution_schedule_run_result_exposes_summary_and_receipts(
     assert payload["receipt_projections"][0]["typed_receipt_path_available"] is False
     assert payload["receipt_projections"][0]["authoritative"] is False
     assert payload["receipt_projections"][0]["step_id"] == "rust.dependency_resolution"
+    assert payload["receipt_projections"][0]["scheduled_source_tool_kind"] == "executable_runtime"
+    assert payload["receipt_projections"][0]["scheduled_source_tool_executable_runtime"] is True
     assert payload["tool_results"][0]["result"]["source_tool"] == "deterministic_rust_dependency_repair"
     assert [step["step_id"] for step in payload["ordered_steps"]] == list(runner_step_ids)
     assert isinstance(baseline_tool_results, list)
@@ -725,6 +744,8 @@ def test_public_materialization_schedule_run_result_exposes_summary_and_receipts
     assert payload["receipt_projections"][0]["typed_receipt_path_available"] is False
     assert payload["receipt_projections"][0]["authoritative"] is False
     assert payload["receipt_projections"][0]["step_id"] == "materialization.typescript_compiler"
+    assert payload["receipt_projections"][0]["scheduled_source_tool_kind"] == "callback_schedule_label"
+    assert payload["receipt_projections"][0]["scheduled_source_tool_executable_runtime"] is False
     assert payload["tool_results"][0]["result"]["source_tool"] == "deterministic_typescript_materialization_repair"
     assert [step["step_id"] for step in payload["ordered_steps"]] == list(runner_step_ids)
     assert isinstance(baseline_tool_results, list)

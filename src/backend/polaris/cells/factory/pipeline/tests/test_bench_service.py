@@ -271,6 +271,9 @@ class TestFactoryBenchService(unittest.TestCase):
         projection = snapshot["control_plane_projection"]
         project = projection["projects"][0]
         self.assertFalse(projection["ok"])
+        self.assertEqual(projection["projected"], 1)
+        self.assertEqual(projection["missing"], 0)
+        self.assertEqual(projection["failed"], 1)
         self.assertFalse(project["ok"])
         self.assertTrue(project["integrity_ok"])
         self.assertFalse(project["outcome_ok"])
@@ -279,8 +282,10 @@ class TestFactoryBenchService(unittest.TestCase):
         self.assertEqual(project["detail"], "run ledger projection required evidence failed: command")
         self.assertEqual(project["evidence_policy"]["missing_required_modalities"], [])
         self.assertEqual(project["evidence_policy"]["failed_required_modalities"], ["command"])
+        self.assertFalse(project["evidence_policy"]["ok"])
         self.assertEqual(projection["evidence_policy"]["missing_required_modalities"], [])
         self.assertEqual(projection["evidence_policy"]["failed_required_modalities"], ["command"])
+        self.assertFalse(projection["evidence_policy"]["ok"])
 
     def test_read_events_from_returns_all_events_from_offset(self) -> None:
         sid = self.svc.register_session(work_dir="/tmp/ws", project_ids=["L1-01"], total=1)

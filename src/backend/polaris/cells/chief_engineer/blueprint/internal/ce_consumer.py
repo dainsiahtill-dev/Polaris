@@ -59,6 +59,16 @@ from polaris.kernelone.quality.interface_ledger import (
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CE_FISSION_MAX_OUTPUT_TOKENS = 128_000
+_CE_REQUEUE_CONTEXT_KEYS = frozenset(
+    {
+        "amendment_request",
+        "director_interface_discrepancy_retry",
+        "interface_discrepancy_context",
+        "requeue_context",
+        "task_boundary_discrepancy_evidence",
+        "task_boundary_interface_discrepancy_retry",
+    }
+)
 
 
 def _ce_fission_max_output_tokens() -> int:
@@ -300,6 +310,16 @@ def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _ce_requeue_context_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    context: dict[str, Any] = {}
+    for key in _CE_REQUEUE_CONTEXT_KEYS:
+        value = payload.get(key)
+        if value is None:
+            continue
+        context[key] = value
+    return context
+
+
 def _first_string_list(*values: Any) -> list[str]:
     for value in values:
         rows = _string_list(value)
@@ -517,6 +537,7 @@ class CEConsumer:
 
         try:
             payload: dict[str, Any] = dict(claim.payload) if claim.payload else {}
+            requeue_context_payload = _ce_requeue_context_payload(payload)
             blueprint_result = self._run_ce_preflight(task_id, payload)
 
             blueprint_id = str(blueprint_result.get("blueprint_id", f"bp-{task_id}"))
@@ -573,6 +594,7 @@ class CEConsumer:
             )
             profile_metadata = {
                 **payload,
+                **requeue_context_payload,
                 "contract_hash": contract_hash,
                 "pm_contract_hash": contract_hash,
                 "target_files": target_files,
@@ -630,6 +652,7 @@ class CEConsumer:
                 "handoff_ready": bool(contract_completeness["handoff_ready"]),
                 "guardrails": blueprint_result.get("guardrails", []),
                 "no_touch_zones": blueprint_result.get("no_touch_zones", []),
+                **requeue_context_payload,
             }
             blueprint_hash = _payload_hash(blueprint_record)
             blueprint_record["blueprint_hash"] = blueprint_hash
@@ -697,6 +720,7 @@ class CEConsumer:
                 "route": "chief_blueprint_required",
                 "task_market_route": "chief_blueprint_required",
                 "blueprint_required": True,
+                **requeue_context_payload,
             }
 
             if self._enable_director_pool and self._adr_store is not None:
@@ -746,6 +770,9 @@ class CEConsumer:
                 # never materialized → dead_letter). Cross-parent edit targets (already
                 # owned by an earlier parent) are skipped — they are small edits, not
                 # creations. Adopt only a gate-clean split (fail-open to the original).
+                from polaris.cells.chief_engineer.blueprint.internal.step_boundary import (
+                    harden_task_boundary_steps,
+                )
                 from polaris.cells.chief_engineer.blueprint.internal.step_splitter import (
                     split_oversize_steps,
                 )
@@ -763,6 +790,17 @@ class CEConsumer:
                         )
                     else:
                         steps = split_steps
+                boundary_steps = harden_task_boundary_steps(steps)
+                if boundary_steps is not steps:
+                    boundary_errors = validate_construction_steps(boundary_steps, parent_pm_task=task_id)
+                    if boundary_errors:
+                        logger.warning(
+                            "task-boundary hardening re-gate failed for %s, keeping original steps: %s",
+                            task_id,
+                            "; ".join(boundary_errors[:3]),
+                        )
+                    else:
+                        steps = boundary_steps
                 record_file_owners(self._workspace, _cache_root, steps, task_id)
                 steps_contract = build_blueprint_tasks_contract(
                     parent_pm_task=task_id,

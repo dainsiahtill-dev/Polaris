@@ -2249,6 +2249,8 @@ def _build_typescript_missing_member_plan(
         usage_text = str(base_files.get(usage_path) or "")
         line_number = _to_positive_int(item.get("line"))
         member_is_call = _typescript_member_usage_is_call(usage_text, line_number, member)
+        if member_is_call and _typescript_declared_type_kind(base_files=base_files, type_name=type_name) != "class":
+            continue
         declared_type = _typescript_missing_member_declared_type(
             usage_text,
             line_number,
@@ -5088,6 +5090,20 @@ def _missing_export_operation(
         exported = _export_existing_typescript_declaration(original, symbol)
         declaration_kind = "export_existing"
     if exported == original:
+        importer_text = str(base_files.get(importer) or "")
+        declaration_kind, declaration = _build_typescript_missing_export_declaration(
+            symbol=symbol,
+            importer_text=importer_text,
+        )
+        operation = _append_typescript_missing_export_declaration_operation(
+            path=exporter,
+            original=original,
+            declaration=declaration,
+            symbol=symbol,
+            declaration_kind=declaration_kind,
+        )
+        if operation is not None:
+            return operation, {"file": exporter, "symbol": symbol, "kind": declaration_kind}
         return None, {
             "file": exporter,
             "symbol": symbol,
@@ -5105,6 +5121,95 @@ def _missing_export_operation(
         },
     )
     return (ops[0], {"file": exporter, "symbol": symbol, "kind": declaration_kind}) if len(ops) == 1 else (None, {})
+
+
+def _build_typescript_missing_export_declaration(*, symbol: str, importer_text: str) -> tuple[str, str]:
+    if not _TS_IDENTIFIER_RE.fullmatch(symbol):
+        return "", ""
+    if _typescript_symbol_is_constructed(importer_text, symbol):
+        if not _typescript_symbol_has_named_constructor_binding(importer_text, symbol):
+            return "", ""
+        return "class", _build_typescript_missing_export_class_declaration(symbol=symbol, importer_text=importer_text)
+    if _typescript_symbol_is_called(importer_text, symbol):
+        return "function", f"export function {symbol}(..._args: unknown[]): any {{\n  return undefined;\n}}"
+    if symbol[:1].isupper():
+        return "type", f"export type {symbol} = any;"
+    return "const", f"export const {symbol}: unknown = undefined;"
+
+
+def _typescript_symbol_is_constructed(text: str, symbol: str) -> bool:
+    return bool(re.search(rf"\bnew\s+{re.escape(symbol)}\s*\(", str(text or "")))
+
+
+def _typescript_symbol_is_called(text: str, symbol: str) -> bool:
+    token = str(text or "")
+    call_re = re.compile(rf"(?<!new\s)\b{re.escape(symbol)}\s*\(")
+    return bool(call_re.search(token))
+
+
+def _typescript_symbol_has_named_constructor_binding(text: str, symbol: str) -> bool:
+    token = str(text or "")
+    escaped = re.escape(symbol)
+    return bool(
+        re.search(
+            rf"\b(?:const|let|var)\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*new\s+{escaped}\s*\(",
+            token,
+        )
+        or re.search(
+            rf"\b(?:public|private|protected)?\s*(?:readonly\s+)?[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*new\s+{escaped}\s*\(",
+            token,
+        )
+    )
+
+
+def _build_typescript_missing_export_class_declaration(*, symbol: str, importer_text: str) -> str:
+    methods = _typescript_methods_used_on_constructed_symbol(importer_text, symbol)
+    lines = [
+        f"export class {symbol} {{",
+        "  public constructor(..._args: unknown[]) {}",
+    ]
+    for method in methods:
+        return_type = "string" if method in {"report", "render", "toString"} else "any"
+        return_value = f'"{symbol} ready"' if return_type == "string" else "undefined"
+        lines.extend(
+            [
+                f"  public {method}(..._args: unknown[]): {return_type} {{",
+                f"    return {return_value};",
+                "  }",
+            ]
+        )
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _typescript_methods_used_on_constructed_symbol(text: str, symbol: str) -> list[str]:
+    token = str(text or "")
+    variables: list[str] = []
+    constructed_var_re = re.compile(
+        rf"\b(?:const|let|var)\s+(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*new\s+{re.escape(symbol)}\s*\("
+    )
+    for match in constructed_var_re.finditer(token):
+        variables.append(str(match.group("name") or ""))
+
+    methods: list[str] = []
+    for variable in _dedupe_preserve_order([name for name in variables if name]):
+        for match in re.finditer(rf"\b{re.escape(variable)}\.(?P<method>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(", token):
+            methods.append(str(match.group("method") or ""))
+    direct_re = re.compile(rf"\bnew\s+{re.escape(symbol)}\s*\([^)]*\)\s*\.\s*(?P<method>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(")
+    for match in direct_re.finditer(token):
+        methods.append(str(match.group("method") or ""))
+    return _dedupe_preserve_order([method for method in methods if method and method != "constructor"])
+
+
+def _typescript_declared_type_kind(*, base_files: Mapping[str, str], type_name: str) -> str:
+    if not _TS_IDENTIFIER_RE.fullmatch(type_name):
+        return ""
+    escaped = re.escape(type_name)
+    for content in base_files.values():
+        match = re.search(rf"(?P<kind>interface|class)\s+{escaped}\b[^{{]*{{", str(content or ""))
+        if match:
+            return str(match.group("kind") or "")
+    return ""
 
 
 def _normalize_typescript_module_ref(raw: object) -> str:
@@ -5215,7 +5320,7 @@ def _typescript_member_usage_is_call(text: str, line_number: int, member: str) -
 
 def _typescript_missing_member_declared_type(text: str, line_number: int, member: str, *, member_is_call: bool) -> str:
     if member_is_call:
-        return ""
+        return "any"
     return _typescript_usage_compatible_member_type(_typescript_line_at(text, line_number), member) or "unknown"
 
 

@@ -120,19 +120,42 @@ class RoleToolGateway:
         """设置当前 turn 内的工具调用轮次（用于日志审计）。"""
         self.iteration = max(0, int(iteration))
 
-    def _get_allowed_tools_for_executor(self) -> frozenset[str] | None:
+    def _canonical_tool_whitelist(self) -> frozenset[str]:
+        """Return the canonical, executor-enforceable role tool whitelist.
+
+        Missing or empty whitelists are fail-closed. An explicit wildcard remains
+        possible, but it is expanded against registered canonical tools before it
+        reaches the executor so ``None`` never means "allow everything".
+        """
+        whitelist = getattr(self.policy, "whitelist", None) or ()
+        if not whitelist:
+            return frozenset()
+
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        registered = tuple(ToolSpecRegistry.get_all_canonical_names())
+        allowed: set[str] = set()
+        for item in whitelist:
+            raw = str(item or "").strip()
+            if not raw:
+                continue
+            canonical = self._normalize_tool_name(raw).strip().lower()
+            if not canonical:
+                continue
+            if any(char in canonical for char in ("*", "?", "[")):
+                allowed.update(name for name in registered if self._match_wildcard(name, canonical))
+                continue
+            allowed.add(canonical)
+        return frozenset(allowed)
+
+    def _get_allowed_tools_for_executor(self) -> frozenset[str]:
         """Extract the canonical tool whitelist for executor-level enforcement.
 
-        Returns None when no whitelist is configured (all tools allowed),
-        or a frozenset of canonical tool names.
+        Missing or empty whitelists return an empty set, causing executor-level
+        enforcement to reject every tool. This keeps provider schema, gateway
+        policy, and runtime execution aligned when a profile is misconfigured.
         """
-        whitelist = getattr(self.policy, "whitelist", None)
-        if not whitelist:
-            return None
-        # Resolve aliases in whitelist to canonical names
-        from polaris.kernelone.tool_execution.contracts import canonicalize_tool_name
-
-        return frozenset(canonicalize_tool_name(t, keep_unknown=True) for t in whitelist)
+        return self._canonical_tool_whitelist()
 
     def close(self) -> None:
         close = getattr(self.session_memory_provider, "close", None)
@@ -171,22 +194,16 @@ class RoleToolGateway:
         canonical_tool_name = self._normalize_tool_name(requested_tool_name)
 
         # 1. 检查白名单（空白名单=禁止所有）。工具别名必须先归一化，再授权。
-        if self.policy.whitelist:
-            whitelist_lower = [self._normalize_tool_name(w).lower() for w in self.policy.whitelist]
-            if canonical_tool_name.lower() not in whitelist_lower:
-                allowed = any(
-                    self._match_wildcard(canonical_tool_name.lower(), self._normalize_tool_name(w).lower())
-                    for w in self.policy.whitelist
-                )
-                if not allowed:
-                    tool_label = (
-                        f"{requested_tool_name} (canonical: {canonical_tool_name})"
-                        if requested_tool_name != canonical_tool_name
-                        else requested_tool_name
-                    )
-                    return False, self._format_refusal_message(
-                        f"工具 '{tool_label}' 不在角色白名单中", requested_tool_name
-                    )
+        whitelist = self._canonical_tool_whitelist()
+        if canonical_tool_name.lower() not in whitelist:
+            tool_label = (
+                f"{requested_tool_name} (canonical: {canonical_tool_name})"
+                if requested_tool_name != canonical_tool_name
+                else requested_tool_name
+            )
+            return False, self._format_refusal_message(
+                f"工具 '{tool_label}' 不在角色白名单中", requested_tool_name
+            )
 
         # 2. 检查黑名单
         blacklist_lower = [self._normalize_tool_name(b).lower() for b in self.policy.blacklist]

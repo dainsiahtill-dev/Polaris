@@ -40,6 +40,16 @@ def _dict_value(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _first_dict_value(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            if isinstance(item, dict):
+                return item
+    return {}
+
+
 def _int_value(value: Any) -> int:
     try:
         return int(value or 0)
@@ -187,6 +197,14 @@ def _receipt_entries(value: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _mapping_entries(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list | tuple):
+        return [dict(item) for item in value if isinstance(item, dict)]
+    return []
+
+
 def _tool_receipts_from_physical_evidence(physical_evidence: dict[str, Any]) -> list[dict[str, Any]]:
     receipts: list[dict[str, Any]] = []
     for key in (
@@ -201,6 +219,209 @@ def _tool_receipts_from_physical_evidence(physical_evidence: dict[str, Any]) -> 
     ):
         receipts.extend(_receipt_entries(physical_evidence.get(key)))
     return receipts
+
+
+def _repair_receipts_from_physical_evidence(physical_evidence: dict[str, Any]) -> list[dict[str, Any]]:
+    receipts: list[dict[str, Any]] = []
+    for key in (
+        "repair_receipts",
+        "director_repair_receipts",
+        "repair_kernel_receipts",
+        "deterministic_repair_receipts",
+    ):
+        receipts.extend(_mapping_entries(physical_evidence.get(key)))
+    repair_result = physical_evidence.get("repair_result")
+    if isinstance(repair_result, dict):
+        receipts.extend(_mapping_entries(repair_result.get("receipts")))
+    repair_kernel = physical_evidence.get("repair_kernel")
+    if isinstance(repair_kernel, dict):
+        receipts.extend(_mapping_entries(repair_kernel.get("receipts")))
+    return receipts
+
+
+def _receipt_authority_policy_from_physical_evidence(physical_evidence: dict[str, Any]) -> dict[str, Any]:
+    direct = physical_evidence.get("receipt_authority_policy")
+    if isinstance(direct, dict):
+        return direct
+    repair_result = physical_evidence.get("repair_result")
+    if isinstance(repair_result, dict) and isinstance(repair_result.get("receipt_authority_policy"), dict):
+        return dict(repair_result["receipt_authority_policy"])
+    metadata = repair_result.get("metadata") if isinstance(repair_result, dict) else None
+    if isinstance(metadata, dict) and isinstance(metadata.get("receipt_authority_policy"), dict):
+        return dict(metadata["receipt_authority_policy"])
+    repair_kernel = physical_evidence.get("repair_kernel")
+    if isinstance(repair_kernel, dict) and isinstance(repair_kernel.get("receipt_authority_policy"), dict):
+        return dict(repair_kernel["receipt_authority_policy"])
+    return {}
+
+
+def _repair_modality(physical_evidence: dict[str, Any]) -> dict[str, Any] | None:
+    receipts = _repair_receipts_from_physical_evidence(physical_evidence)
+    policy = _receipt_authority_policy_from_physical_evidence(physical_evidence)
+    if not receipts and not policy:
+        return None
+
+    authoritative_success = bool(policy.get("authoritative_success")) if policy else bool(receipts) and all(
+        bool(receipt.get("authoritative"))
+        and _clean_string(receipt.get("status")) == "applied"
+        and _clean_string(receipt.get("evidence_status")) == "resolved_evidence"
+        for receipt in receipts
+    )
+    missing_evidence_count = _int_value(policy.get("missing_evidence_receipt_count")) if policy else sum(
+        1 for receipt in receipts if _clean_string(receipt.get("evidence_status")) == "missing_evidence"
+    )
+    failed_evidence_count = _int_value(policy.get("failed_evidence_receipt_count")) if policy else sum(
+        1 for receipt in receipts if _clean_string(receipt.get("evidence_status")) == "failed_evidence"
+    )
+    non_authoritative_count = _int_value(policy.get("non_authoritative_receipt_count")) if policy else sum(
+        1
+        for receipt in receipts
+        if not bool(receipt.get("authoritative"))
+        or _clean_string(receipt.get("status")) != "applied"
+        or _clean_string(receipt.get("evidence_status")) != "resolved_evidence"
+    )
+    blocker = ""
+    if missing_evidence_count:
+        blocker = "repair_missing_revalidation_evidence"
+    elif failed_evidence_count:
+        blocker = "repair_failed_revalidation_evidence"
+    elif non_authoritative_count:
+        blocker = "repair_non_authoritative_receipt"
+    detail = (
+        f"{len(receipts)} authoritative repair receipt(s)"
+        if authoritative_success
+        else blocker or "repair receipt authority policy failed"
+    )
+    return {
+        "present": True,
+        "ok": authoritative_success,
+        "detail": detail,
+        "metadata": {
+            "receipt_count": len(receipts) or _int_value(policy.get("receipt_count")),
+            "authoritative_success": authoritative_success,
+            "missing_evidence_receipt_count": missing_evidence_count,
+            "failed_evidence_receipt_count": failed_evidence_count,
+            "non_authoritative_receipt_count": non_authoritative_count,
+            "blocker": blocker,
+            "source_tools": _string_list([receipt.get("source_tool") for receipt in receipts]),
+            "receipt_ids": _string_list([receipt.get("receipt_id") for receipt in receipts]),
+            "policy": policy,
+        },
+    }
+
+
+def _task_boundary_modality(physical_evidence: dict[str, Any]) -> dict[str, Any] | None:
+    repair = physical_evidence.get("repair")
+    repair_map: dict[str, Any] = repair if isinstance(repair, dict) else {}
+    plan_probe = repair_map.get("plan_probe_preaudit") or physical_evidence.get("plan_probe_preaudit")
+    plan_probe_map: dict[str, Any] = plan_probe if isinstance(plan_probe, dict) else {}
+    evidence = repair_map.get("interface_discrepancy_evidence") or physical_evidence.get(
+        "interface_discrepancy_evidence"
+    )
+    evidence_map: dict[str, Any] = evidence if isinstance(evidence, dict) else {}
+    receipt_map = _first_dict_value(
+        repair_map.get("interface_discrepancy_receipts")
+        or physical_evidence.get("interface_discrepancy_receipts")
+        or repair_map.get("interface_discrepancy_receipt")
+        or physical_evidence.get("interface_discrepancy_receipt")
+    )
+    if receipt_map:
+        evidence_map = {**evidence_map, **receipt_map}
+    status = _clean_string(plan_probe_map.get("status") or evidence_map.get("plan_probe_status"))
+    reason = _clean_string(evidence_map.get("reason"))
+    has_task_boundary_evidence = bool(status or reason or evidence_map)
+    if not has_task_boundary_evidence:
+        return None
+
+    blocked = (
+        status == "coverage_matched_but_unplannable"
+        or reason == "coverage_matched_but_unplannable"
+        or bool(evidence_map.get("llm_fallback_blocked"))
+    )
+    director_retry_allowed = bool(evidence_map.get("director_retry_allowed"))
+    ok = bool(status in {"already_clean", "covered_plannable"} and not blocked)
+    detail = status or reason or "task_boundary_evidence"
+    if blocked and not director_retry_allowed:
+        detail = "task_boundary_interface_discrepancy_required"
+    diagnostic_count = _int_value(
+        plan_probe_map.get("covered_unplannable_diagnostic_count")
+        or evidence_map.get("covered_unplannable_diagnostic_count")
+    )
+    if not diagnostic_count and isinstance(evidence_map.get("diagnostics"), (list, tuple)):
+        diagnostic_count = len(evidence_map.get("diagnostics") or [])
+    interface_delta = evidence_map.get("interface_delta")
+    interface_delta_map = interface_delta if isinstance(interface_delta, dict) else {}
+    triage_summary = evidence_map.get("triage_summary")
+    triage_summary_map = triage_summary if isinstance(triage_summary, dict) else {}
+    return {
+        "present": True,
+        "ok": ok,
+        "detail": detail,
+        "metadata": {
+            "plan_probe_status": status,
+            "reason": reason,
+            "covered_unplannable_source_tools": _string_list(
+                plan_probe_map.get("covered_unplannable_source_tools")
+                or evidence_map.get("covered_unplannable_source_tools")
+                or evidence_map.get("source_tools")
+            ),
+            "covered_unplannable_diagnostic_count": diagnostic_count,
+            "recommended_owner": _clean_string(evidence_map.get("recommended_owner")),
+            "recommended_route": _clean_string(evidence_map.get("recommended_route")),
+            "director_retry_allowed": director_retry_allowed,
+            "llm_fallback_blocked": bool(evidence_map.get("llm_fallback_blocked")),
+            "interface_discrepancy_schema_version": _clean_string(evidence_map.get("schema_version")),
+            "interface_delta_available": bool(interface_delta_map),
+            "interface_delta": dict(interface_delta_map),
+            "triage_summary_available": bool(triage_summary_map),
+            "triage_summary": dict(triage_summary_map),
+        },
+    }
+
+
+def _environment_prep_receipts_from_physical_evidence(physical_evidence: dict[str, Any]) -> list[dict[str, Any]]:
+    receipts: list[dict[str, Any]] = []
+    for key in (
+        "environment_prep_receipts",
+        "environment_prep",
+        "director_environment_prep_receipts",
+    ):
+        receipts.extend(_mapping_entries(physical_evidence.get(key)))
+    repair_result = physical_evidence.get("repair_result")
+    if isinstance(repair_result, dict):
+        metadata = repair_result.get("metadata")
+        if isinstance(metadata, dict):
+            receipts.extend(_mapping_entries(metadata.get("environment_prep_receipts")))
+    repair_kernel = physical_evidence.get("repair_kernel")
+    if isinstance(repair_kernel, dict):
+        receipts.extend(_mapping_entries(repair_kernel.get("environment_prep_receipts")))
+    return receipts
+
+
+def _environment_prep_modality(physical_evidence: dict[str, Any]) -> dict[str, Any] | None:
+    receipts = _environment_prep_receipts_from_physical_evidence(physical_evidence)
+    if not receipts:
+        return None
+    failed = [
+        receipt
+        for receipt in receipts
+        if _clean_string(receipt.get("status")) not in {"succeeded", "skipped_fresh"}
+    ]
+    ok = not failed
+    return {
+        "present": True,
+        "ok": ok,
+        "detail": f"{len(receipts)} environment prep receipt(s)" if ok else "environment prep failed",
+        "metadata": {
+            "receipt_count": len(receipts),
+            "failed_receipt_count": len(failed),
+            "plan_ids": _string_list([receipt.get("plan_id") for receipt in receipts]),
+            "ecosystems": _string_list([receipt.get("ecosystem") for receipt in receipts]),
+            "manifests": _string_list([receipt.get("manifest") for receipt in receipts]),
+            "statuses": _string_list([receipt.get("status") for receipt in receipts]),
+            "error_codes": _string_list([receipt.get("error_code") for receipt in failed]),
+        },
+    }
 
 
 def _receipt_capability_token(receipt: dict[str, Any]) -> dict[str, Any]:
@@ -284,6 +505,36 @@ def _evidence_modalities_from_physical_evidence(physical_evidence: dict[str, Any
             ok=all(bool(item.get("ok")) for item in code_requirements),
             detail=", ".join(name for name in code_requirement_names if name in requirement_map),
         )
+    repair_modality = _repair_modality(physical_evidence)
+    if repair_modality is not None:
+        _merge_evidence_modality(
+            modalities,
+            "repair",
+            present=bool(repair_modality.get("present")),
+            ok=bool(repair_modality.get("ok")),
+            detail=_clean_string(repair_modality.get("detail")),
+            metadata=_dict_value(repair_modality.get("metadata")),
+        )
+    task_boundary_modality = _task_boundary_modality(physical_evidence)
+    if task_boundary_modality is not None:
+        _merge_evidence_modality(
+            modalities,
+            "task_boundary",
+            present=bool(task_boundary_modality.get("present")),
+            ok=bool(task_boundary_modality.get("ok")),
+            detail=_clean_string(task_boundary_modality.get("detail")),
+            metadata=_dict_value(task_boundary_modality.get("metadata")),
+        )
+    environment_prep_modality = _environment_prep_modality(physical_evidence)
+    if environment_prep_modality is not None:
+        _merge_evidence_modality(
+            modalities,
+            "environment_prep",
+            present=bool(environment_prep_modality.get("present")),
+            ok=bool(environment_prep_modality.get("ok")),
+            detail=_clean_string(environment_prep_modality.get("detail")),
+            metadata=_dict_value(environment_prep_modality.get("metadata")),
+        )
     entrypoint = physical_evidence.get("entrypoint")
     entrypoint_map: dict[str, Any] = entrypoint if isinstance(entrypoint, dict) else {}
     entrypoint_kind = _clean_string(entrypoint_map.get("kind"))
@@ -299,7 +550,9 @@ def _evidence_modalities_from_physical_evidence(physical_evidence: dict[str, Any
         else:
             sampled_commands = commands if isinstance(commands, list) else []
             command_ok = bool(sampled_commands) and all(
-                bool(item.get("ok")) for item in sampled_commands if isinstance(item, dict)
+                bool(item.get("ok") if "ok" in item else item.get("passed"))
+                for item in sampled_commands
+                if isinstance(item, dict)
             )
             command_detail = f"{command_count or len(sampled_commands)} command evidence item(s)"
         command_count_for_metadata = command_count
@@ -728,7 +981,8 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
         return {
             "ok": False,
             "detail": "run ledger projection tool lifecycle failed: " + failure,
-            "missing": [failure],
+            "missing": [],
+            "failed_control_plane_events": [failure],
             "capability": capability_map,
             "tool_lifecycle": tool_lifecycle_map,
         }
@@ -741,7 +995,8 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
         return {
             "ok": False,
             "detail": "run ledger projection task boundary failed: " + failure,
-            "missing": [failure],
+            "missing": [],
+            "failed_control_plane_events": [failure],
             "capability": capability_map,
             "task_boundary": task_boundary_map,
         }
@@ -754,6 +1009,7 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
             "ok": False,
             "detail": "run ledger projection missing required evidence: " + ", ".join(missing_list),
             "missing": missing_list,
+            "failed_control_plane_events": [],
             "capability": capability_map,
             "evidence_policy": evidence_policy_map,
         }
@@ -767,6 +1023,7 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
             "detail": "run ledger projection required evidence failed: " + ", ".join(failed_required_list),
             "missing": [],
             "failed_required_modalities": failed_required_list,
+            "failed_control_plane_events": [],
             "outcome_ok": bool(value.get("outcome_ok")),
             "failed_gate_count": failed_gate_count,
             "capability": capability_map,
@@ -777,6 +1034,7 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
             "ok": False,
             "detail": f"run ledger projection has {failed_gate_count} failed gate(s)",
             "missing": ["failed_gates"] if failed_gate_count else ["projection_ok"],
+            "failed_control_plane_events": ["failed_gates"] if failed_gate_count else ["projection_ok"],
             "outcome_ok": bool(value.get("outcome_ok")),
             "failed_gate_count": failed_gate_count,
             "capability": capability_map,
@@ -786,6 +1044,7 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
         "ok": True,
         "detail": f"run ledger projection ready ({int(value.get('gate_count') or 0)} gate event(s))",
         "missing": [],
+        "failed_control_plane_events": [],
         "outcome_ok": bool(value.get("outcome_ok")),
         "failed_gate_count": failed_gate_count,
         "capability": capability_map,

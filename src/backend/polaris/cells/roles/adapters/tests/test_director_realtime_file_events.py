@@ -223,8 +223,18 @@ async def test_write_only_tool_fallback_rejects_read_calls_and_patch_blocks(tmp_
         allow_patch_fallback=False,
     )
 
-    assert [item["tool"] for item in results] == ["write_file"]
-    assert (tmp_path / "src" / "api" / "weatherApi.ts").read_text(encoding="utf-8") == "export const ok = true;\n"
+    assert results == [
+        {
+            "tool": "text_tool_protocol",
+            "success": False,
+            "ok": False,
+            "error": "legacy_text_tool_protocol_disabled",
+            "failure_class": "tool_text_protocol_disabled",
+            "protocol_violation": "legacy_text_tool_protocol_disabled",
+            "task_id": "task-write-only",
+        }
+    ]
+    assert not (tmp_path / "src" / "api" / "weatherApi.ts").exists()
     assert not (tmp_path / "src" / "ignored.ts").exists()
 
 

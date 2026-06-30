@@ -25,6 +25,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
+
 from . import execute_method as _em
 from .artifact_quality_diagnostics import (
     _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE,
@@ -95,7 +97,22 @@ def _safe_int(value: Any) -> int:
         return 0
 
 
-def _quality_repair_write_file_tool_definition() -> dict[str, Any]:
+def _provider_tool_definition(tool_name: str) -> dict[str, Any] | None:
+    try:
+        from polaris.kernelone.llm.toolkit.definitions import create_default_registry
+    except (ImportError, RuntimeError, ValueError):
+        return None
+    definition = create_default_registry().get(str(tool_name or "").strip())
+    if definition is None:
+        return None
+    try:
+        schema = definition.to_openai_function()
+    except (RuntimeError, TypeError, ValueError):
+        return None
+    return json.loads(json.dumps(schema, ensure_ascii=False)) if isinstance(schema, dict) else None
+
+
+def _fallback_quality_repair_write_file_tool_definition() -> dict[str, Any]:
     return {
         "type": "function",
         "function": {
@@ -113,7 +130,14 @@ def _quality_repair_write_file_tool_definition() -> dict[str, Any]:
     }
 
 
-def _quality_repair_edit_file_tool_definition() -> dict[str, Any]:
+def _quality_repair_write_file_tool_definition() -> dict[str, Any]:
+    definition = _provider_tool_definition("write_file")
+    if definition is None:
+        return _fallback_quality_repair_write_file_tool_definition()
+    return definition
+
+
+def _fallback_quality_repair_edit_file_tool_definition() -> dict[str, Any]:
     return {
         "type": "function",
         "function": {
@@ -133,6 +157,76 @@ def _quality_repair_edit_file_tool_definition() -> dict[str, Any]:
             },
         },
     }
+
+
+def _quality_repair_edit_file_tool_definition() -> dict[str, Any]:
+    definition = _provider_tool_definition("edit_file")
+    if definition is None:
+        return _fallback_quality_repair_edit_file_tool_definition()
+    function_payload = definition.get("function")
+    if not isinstance(function_payload, dict):
+        return _fallback_quality_repair_edit_file_tool_definition()
+    parameters = function_payload.get("parameters")
+    if not isinstance(parameters, dict):
+        return _fallback_quality_repair_edit_file_tool_definition()
+    properties = parameters.get("properties")
+    if not isinstance(properties, dict):
+        return _fallback_quality_repair_edit_file_tool_definition()
+    allowed = {
+        "file",
+        "path",
+        "filepath",
+        "filePath",
+        "file_path",
+        "filename",
+        "target",
+        "target_file",
+        "targetFile",
+        "target_path",
+        "targetPath",
+        "old",
+        "old_text",
+        "oldText",
+        "old_string",
+        "oldString",
+        "search",
+        "search_text",
+        "searchText",
+        "find",
+        "SEARCH",
+        "Search",
+        "new",
+        "new_text",
+        "newText",
+        "new_code",
+        "newCode",
+        "new_string",
+        "newString",
+        "replace",
+        "replace_text",
+        "replaceText",
+        "replacement_text",
+        "replacementText",
+        "REPLACE",
+        "Replace",
+        "regex",
+    }
+    narrowed_properties = {
+        name: schema for name, schema in properties.items() if name in allowed and isinstance(schema, dict)
+    }
+    if not {"file", "search", "replace"} <= set(narrowed_properties):
+        return _fallback_quality_repair_edit_file_tool_definition()
+    narrowed_properties["search"] = {**narrowed_properties["search"], "minLength": 1}
+    function_payload["description"] = (
+        "Replace one exact UTF-8 search string in an existing file. "
+        "Use this for compiler/test repair when preserving the rest of the file."
+    )
+    function_payload["parameters"] = {
+        **parameters,
+        "properties": narrowed_properties,
+        "required": ["file", "search", "replace"],
+    }
+    return definition
 
 
 def _quality_repair_execute_command_tool_definition() -> dict[str, Any]:
@@ -2012,10 +2106,32 @@ async def _run_materialization_quality_repair_retry(
         repair_context["director_quality_repair"]["task_boundary_scope_filter"] = task_scope_filter_evidence
     if task_boundary_discrepancy_evidence:
         repair_context["director_quality_repair"]["interface_discrepancy_evidence"] = task_boundary_discrepancy_evidence
-        repair_context["task_boundary_interface_discrepancy_retry"] = {
+        interface_retry_context = {
             "authorized": True,
+            "recommended_owner": task_boundary_discrepancy_evidence.get("recommended_owner"),
+            "recommended_route": task_boundary_discrepancy_evidence.get("recommended_route"),
+            "reason": task_boundary_discrepancy_evidence.get("reason"),
             "interface_discrepancy_evidence": task_boundary_discrepancy_evidence,
         }
+        repair_context["director_interface_discrepancy_retry"] = interface_retry_context
+        repair_context["task_boundary_interface_discrepancy_retry"] = interface_retry_context
+    if (
+        task_boundary_discrepancy_evidence
+        or isinstance(repair_context.get("director_interface_discrepancy_retry"), dict)
+        or isinstance(repair_context.get("task_boundary_interface_discrepancy_retry"), dict)
+    ):
+        required_evidence = [
+            str(item)
+            for item in (
+                repair_context.get("required_evidence")
+                if isinstance(repair_context.get("required_evidence"), list)
+                else []
+            )
+            if str(item or "").strip()
+        ]
+        if "interface_discrepancy_context" not in required_evidence:
+            required_evidence.append("interface_discrepancy_context")
+        repair_context["required_evidence"] = required_evidence
     if repair_target_files:
         repair_context["repair_target_files"] = repair_target_files[:12]
     repair_metadata = repair_context.get("metadata")
@@ -2295,12 +2411,7 @@ def _materialization_plan_probe_requires_task_boundary_triage(summary: dict[str,
     covered_unplannable_source_tools = [
         str(item or "") for item in plan_probe.get("covered_unplannable_source_tools") or []
     ]
-    return any(
-        source_tool.startswith("deterministic_typescript_")
-        or source_tool.startswith("deterministic_html_typescript")
-        or source_tool.startswith("deterministic_typeorm")
-        for source_tool in covered_unplannable_source_tools
-    )
+    return bool(covered_unplannable_source_tools or plan_probe.get("covered_unplannable_diagnostic_count"))
 
 
 def _materialization_interface_discrepancy_evidence(
@@ -2317,25 +2428,61 @@ def _materialization_interface_discrepancy_evidence(
         if recommended_owner == "director"
         else "pending_design_interface_contract"
     )
-    return {
-        "schema_version": "director.task_boundary.interface_discrepancy.v1",
-        "route": "task_boundary_quality_loop",
-        "plan_probe_status": str(plan_probe.get("status") or ""),
-        "covered_unplannable_source_tools": list(plan_probe.get("covered_unplannable_source_tools") or []),
-        "covered_unplannable_diagnostic_count": int(plan_probe.get("covered_unplannable_diagnostic_count") or 0),
-        "covered_unplannable_diagnostics": list(plan_probe.get("covered_unplannable_diagnostics") or [])[:20],
-        "coverage_gap_count": int(plan_probe.get("coverage_gap_count") or 0),
-        "repair_target_files": repair_target_files[:12],
+    director_retry_allowed = recommended_owner == "director"
+    interface_delta = {
+        "schema_version": "director.interface_delta.v1",
+        "contract_present": bool(task_interface_contract),
+        "contract_keys": sorted(str(key) for key in task_interface_contract),
+        "diagnostic_paths": repair_target_files[:12],
         "artifact_quality_errors": artifact_quality_errors[:8],
+        "diagnostic_count": len(plan_probe.get("covered_unplannable_diagnostics") or []),
+    }
+    triage_summary = {
+        "schema_version": "director.interface_discrepancy_triage.v1",
         "recommended_owner": recommended_owner,
         "recommended_route": recommended_route,
-        "triage_policy": "ce_contract_if_missing_else_director_local_repair",
+        "contract_present": bool(task_interface_contract),
+        "director_retry_allowed": director_retry_allowed,
+        "llm_fallback_blocked": not director_retry_allowed,
         "macro_blueprint_regeneration_allowed": False,
-        "task_interface_contract_present": bool(task_interface_contract),
-        "task_interface_contract_keys": sorted(str(key) for key in task_interface_contract),
-        "llm_fallback_blocked": True,
-        "reason": "coverage_matched_but_unplannable",
+        "triage_policy": "ce_contract_if_missing_else_director_local_repair",
+        "reason": "director_local_retry_with_interface_delta"
+        if director_retry_allowed
+        else "task_interface_contract_missing",
     }
+    receipt = DirectorInterfaceDiscrepancyReceiptV1(
+        task_id=str(task.get("id") or task.get("task_id") or task.get("external_task_id") or "materialization-task"),
+        source="roles.adapters.materialization_quality_gate",
+        plan_probe_status=str(plan_probe.get("status") or ""),
+        diagnostics=tuple(
+            item for item in list(plan_probe.get("covered_unplannable_diagnostics") or [])[:20] if isinstance(item, dict)
+        ),
+        source_tools=tuple(str(item) for item in plan_probe.get("covered_unplannable_source_tools") or []),
+        recommended_owner=recommended_owner,
+        recommended_route=recommended_route,
+        task_interface_contract_present=bool(task_interface_contract),
+        llm_fallback_blocked=not director_retry_allowed,
+        director_retry_allowed=director_retry_allowed,
+        interface_delta=interface_delta,
+        triage_summary=triage_summary,
+        metadata={
+            "route": "task_boundary_quality_loop",
+            "coverage_gap_count": int(plan_probe.get("coverage_gap_count") or 0),
+            "repair_target_files": repair_target_files[:12],
+            "artifact_quality_errors": artifact_quality_errors[:8],
+            "task_interface_contract_keys": sorted(str(key) for key in task_interface_contract),
+        },
+    ).to_dict()
+    receipt.update(
+        {
+            "route": "task_boundary_quality_loop",
+            "coverage_gap_count": int(plan_probe.get("coverage_gap_count") or 0),
+            "repair_target_files": repair_target_files[:12],
+            "artifact_quality_errors": artifact_quality_errors[:8],
+            "task_interface_contract_keys": sorted(str(key) for key in task_interface_contract),
+        }
+    )
+    return receipt
 
 
 def _materialization_interface_discrepancy_retry_authorized(
@@ -2352,6 +2499,8 @@ def _materialization_interface_discrepancy_retry_authorized(
     """
 
     raw_authorization = context.get("director_interface_discrepancy_retry")
+    if not isinstance(raw_authorization, dict):
+        raw_authorization = context.get("task_boundary_interface_discrepancy_retry")
     if not isinstance(raw_authorization, dict) or not bool(raw_authorization.get("authorized")):
         return False
     raw_authorized_evidence = raw_authorization.get("interface_discrepancy_evidence")
@@ -2380,6 +2529,7 @@ def _extract_task_interface_contract(task: dict[str, Any]) -> dict[str, Any]:
     candidates: list[Any] = [
         task.get("interface_contract"),
         task.get("task_interface_contract"),
+        task.get("module_interface_contract"),
         task.get("execution_interface_contract"),
     ]
     metadata = task.get("metadata")
@@ -2388,6 +2538,7 @@ def _extract_task_interface_contract(task: dict[str, Any]) -> dict[str, Any]:
             [
                 metadata.get("interface_contract"),
                 metadata.get("task_interface_contract"),
+                metadata.get("module_interface_contract"),
                 metadata.get("execution_interface_contract"),
             ]
         )
@@ -4789,6 +4940,43 @@ def _build_full_verifier_diagnostics_block(
     )
 
 
+def _bounded_interface_discrepancy_prompt_payload(evidence: dict[str, Any]) -> str:
+    """Return compact JSON evidence for interface-discrepancy Director retry."""
+
+    def _scrub(value: Any, *, depth: int = 0) -> Any:
+        if depth > 4:
+            return "<truncated-depth>"
+        if isinstance(value, str):
+            text = value.strip()
+            return text if len(text) <= 500 else f"{text[:500]}...<truncated>"
+        if isinstance(value, (int, float, bool)) or value is None:
+            return value
+        if isinstance(value, dict):
+            result: dict[str, Any] = {}
+            for index, (key, item) in enumerate(value.items()):
+                if index >= 24:
+                    result["<truncated_keys>"] = len(value) - index
+                    break
+                result[str(key)] = _scrub(item, depth=depth + 1)
+            return result
+        if isinstance(value, (list, tuple)):
+            return [_scrub(item, depth=depth + 1) for item in list(value)[:8]]
+        return str(value)
+
+    payload = {
+        "schema_version": "director.interface_discrepancy.prompt_context.v1",
+        "recommended_owner": evidence.get("recommended_owner"),
+        "recommended_route": evidence.get("recommended_route"),
+        "director_retry_allowed": evidence.get("director_retry_allowed"),
+        "llm_fallback_blocked": evidence.get("llm_fallback_blocked"),
+        "source_tools": evidence.get("source_tools") or evidence.get("covered_unplannable_source_tools") or [],
+        "interface_delta": evidence.get("interface_delta") if isinstance(evidence.get("interface_delta"), dict) else {},
+        "triage_summary": evidence.get("triage_summary") if isinstance(evidence.get("triage_summary"), dict) else {},
+        "diagnostics": evidence.get("diagnostics") or evidence.get("covered_unplannable_diagnostics") or [],
+    }
+    return json.dumps(_scrub(payload), ensure_ascii=False, indent=2, sort_keys=True)
+
+
 def _build_materialization_quality_repair_message(
     *,
     original_message: str,
@@ -5020,6 +5208,7 @@ def _build_materialization_quality_repair_message(
             f"- {item}" for item in interface_discrepancy_evidence.get("repair_target_files", [])[:12]
         )
         source_tool_line = ", ".join(source_tools[:8]) if source_tools else "none"
+        discrepancy_context_json = _bounded_interface_discrepancy_prompt_payload(interface_discrepancy_evidence)
         interface_discrepancy_block = (
             "TASK BOUNDARY INTERFACE DISCREPANCY REPAIR:\n"
             "- Runtime coverage matched these diagnostics, but plan probe could not safely compose a patch.\n"
@@ -5028,6 +5217,8 @@ def _build_materialization_quality_repair_message(
             "- Repair only the existing failed target file(s) named for this quality turn.\n"
             "- Do not invent new public contracts, placeholder members, or empty compatibility stubs.\n"
             "- Make the implementation consistent with the existing task contract and verifier diagnostics.\n"
+            "INTERFACE DISCREPANCY CONTEXT JSON:\n"
+            f"{discrepancy_context_json}\n"
         )
         if target_lines:
             interface_discrepancy_block += f"Authorized repair targets:\n{target_lines}\n"

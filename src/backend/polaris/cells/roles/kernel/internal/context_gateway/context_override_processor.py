@@ -21,10 +21,29 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
+from polaris.kernelone.context.prompt_safety import prompt_safe_tool_failure_summary
+
 from .gateway_helpers import _CONTROL_PLANE_CONTEXT_KEYS, _context_override_value_char_cap
 from .security import SecuritySanitizer
 
 logger = logging.getLogger(__name__)
+
+
+_CONTEXT_OVERRIDE_TOOL_FAILURE_KEYS = frozenset(
+    {
+        "artifact",
+        "artifacts",
+        "history",
+        "last_event",
+        "last_outcome",
+        "recent_decisions",
+        "recent_episodes",
+        "tool",
+        "tool_result",
+        "tool_results",
+        "transcript",
+    }
+)
 
 
 class ContextOverrideProcessor:
@@ -61,6 +80,7 @@ class ContextOverrideProcessor:
                 continue
 
             str_value = str(value) if value is not None else ""
+            str_value = self._prompt_safe_context_value(normalized_key, str_value)
             # Bound each value so no single oversized payload can blow the window
             # (order-4): the weak model cannot use multi-thousand-token metadata.
             if len(str_value) > value_char_cap:
@@ -123,7 +143,12 @@ class ContextOverrideProcessor:
                 continue
 
             if role == "tool":
-                tool_messages.append({"role": "tool", "content": content})
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "content": self._prompt_safe_tool_content(content),
+                    }
+                )
         return tool_messages
 
     def process_tool_messages_for_fallback(
@@ -142,15 +167,30 @@ class ContextOverrideProcessor:
         """
         processed: list[dict[str, Any]] = []
         for msg in tool_messages:
-            content = str(msg.get("content", ""))
+            role = msg.get("role", "tool")
+            content = self._prompt_safe_tool_content(msg.get("content", ""))
             if len(content) > max_chars:
                 truncated_content = content[:max_chars]
                 new_content = (
                     f"{truncated_content}\n\n"
                     f"[CONTEXT_TRUNCATED: Original {len(content)} chars, truncated to {max_chars} chars]"
                 )
-                processed.append({"role": "tool", "content": new_content})
+                processed.append({"role": role, "content": new_content})
             else:
                 # Always return a copy to avoid mutation of the original object
-                processed.append({"role": msg.get("role", "tool"), "content": content})
+                processed.append({"role": role, "content": content})
         return processed
+
+    @staticmethod
+    def _prompt_safe_tool_content(content: Any) -> str:
+        text = str(content or "")
+        return prompt_safe_tool_failure_summary("tool", text) or text
+
+    @staticmethod
+    def _prompt_safe_context_value(normalized_key: str, value: str) -> str:
+        key_parts = {part for part in normalized_key.replace("-", "_").split("_") if part}
+        if normalized_key not in _CONTEXT_OVERRIDE_TOOL_FAILURE_KEYS and not key_parts.intersection(
+            _CONTEXT_OVERRIDE_TOOL_FAILURE_KEYS
+        ):
+            return value
+        return prompt_safe_tool_failure_summary("tool", value) or value

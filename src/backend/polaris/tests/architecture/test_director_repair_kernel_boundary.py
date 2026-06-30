@@ -9,6 +9,7 @@ internal repair-kernel package, or restore the old strategy catalog fact source.
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,9 @@ ROLES_ADAPTERS_PUBLIC_SERVICE_PATH = ROLES_ADAPTERS_PUBLIC_ROOT / "service.py"
 ROLES_ADAPTERS_PUBLIC_INIT_PATH = ROLES_ADAPTERS_PUBLIC_ROOT / "__init__.py"
 ROLES_ADAPTERS_TESTS_ROOT = BACKEND_ROOT / "polaris" / "cells" / "roles" / "adapters" / "tests"
 ROLES_ADAPTERS_STRATEGY_CATALOG_TEST_PATH = ROLES_ADAPTERS_TESTS_ROOT / "test_deterministic_repair_strategy_catalog.py"
+ROLES_ADAPTERS_DESCRIPTOR_PACK_PATH = (
+    BACKEND_ROOT / "polaris" / "cells" / "roles" / "adapters" / "generated" / "descriptor.pack.json"
+)
 QA_ROOT = BACKEND_ROOT / "polaris" / "cells" / "qa"
 EXECUTE_METHOD_PATH = ROLES_DIRECTOR_ROOT / "execute_method.py"
 EXECUTE_METHOD_REPAIR_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "execute_method_repair_bridge.py"
@@ -64,6 +68,9 @@ DIRECTOR_RUNTIME_INTERNAL_REPAIR_KERNEL_ROOT = (
 )
 FACTORY_STAGE_EXECUTOR_PATH = (
     BACKEND_ROOT / "polaris" / "cells" / "factory" / "pipeline" / "internal" / "factory_stage_executor.py"
+)
+FACTORY_WORKSPACE_QUALITY_PATH = (
+    BACKEND_ROOT / "polaris" / "cells" / "factory" / "pipeline" / "internal" / "factory_workspace_quality.py"
 )
 REPAIR_BOUNDARY_FAILURE_HINT = (
     "Director repair boundary violation: use polaris.cells.director.runtime.public "
@@ -137,6 +144,7 @@ MIGRATED_EXECUTE_METHOD_COMPAT_HELPERS_FORBIDDEN = {
     "_apply_deterministic_unresolved_import_symbol_repair",
 }
 ALLOWED_EXECUTE_METHOD_LEGACY_DETERMINISTIC_REPAIR_CALLS: set[str] = set()
+FACTORY_WORKSPACE_QUALITY_DIRECT_WRITE_MIGRATION_DEBT: set[str] = set()
 
 
 def _read_text(path: Path) -> str:
@@ -515,6 +523,26 @@ def _repair_named_helper_write_primitives(path: Path) -> list[str]:
     return violations
 
 
+def _factory_workspace_quality_repair_write_primitives() -> dict[str, list[str]]:
+    write_call_names = {
+        "open",
+        "write_bytes",
+        "write_file",
+        "write_text",
+    }
+    violations: dict[str, list[str]] = {}
+    for function in _function_definitions(FACTORY_WORKSPACE_QUALITY_PATH):
+        if not function.name.startswith("repair"):
+            continue
+        for node in ast.walk(function):
+            if not isinstance(node, ast.Call):
+                continue
+            call_name = _call_name(node)
+            if call_name in write_call_names or _is_write_mode_open_call(node):
+                violations.setdefault(function.name, []).append(call_name or "open(write-mode)")
+    return violations
+
+
 def _is_write_mode_open_call(node: ast.Call) -> bool:
     call_name = _call_name(node)
     if call_name != "open":
@@ -537,6 +565,49 @@ def test_roles_adapters_does_not_own_director_repair_kernel_package() -> None:
 
     assert payload_files == []
     assert not (ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "strategy_catalog.py").exists()
+
+
+def test_factory_workspace_quality_repair_helpers_do_not_direct_write_files() -> None:
+    direct_write_repairs = _factory_workspace_quality_repair_write_primitives()
+
+    assert set(direct_write_repairs) <= FACTORY_WORKSPACE_QUALITY_DIRECT_WRITE_MIGRATION_DEBT
+    assert set(direct_write_repairs) == FACTORY_WORKSPACE_QUALITY_DIRECT_WRITE_MIGRATION_DEBT
+
+
+def test_director_runtime_repair_public_contract_exports_are_in_graph_catalog() -> None:
+    cells = _load_catalog_cells()
+    director_runtime = cells["director.runtime"]
+    contracts = director_runtime.get("public_contracts")
+    assert isinstance(contracts, dict)
+    catalog_names = {
+        str(item)
+        for key in ("commands", "queries", "results", "errors")
+        for item in contracts.get(key, [])
+    }
+    public_repair_contracts = {
+        name
+        for name in _module_literal_string_list(DIRECTOR_RUNTIME_PUBLIC_INIT_PATH, "__all__")
+        if name and name[0].isupper() and ("Repair" in name or name.startswith("PlanDirectorRepair"))
+    }
+
+    assert public_repair_contracts <= catalog_names
+
+
+def test_roles_adapters_graph_catalog_exposes_only_generic_repair_schedule_boundary() -> None:
+    cells = _load_catalog_cells()
+    roles_adapters = cells["roles.adapters"]
+    contracts = roles_adapters.get("public_contracts")
+    assert isinstance(contracts, dict)
+    catalog_names = {
+        str(item)
+        for key in ("commands", "queries", "results", "events", "errors")
+        for item in contracts.get(key, [])
+    }
+
+    assert "run_director_materialization_quality_repair_schedule" in catalog_names
+    assert "run_director_post_execution_repair_schedule" in catalog_names
+    assert "run_director_cpp_post_execution_repairs" not in catalog_names
+    assert "apply_deterministic_cpp_post_repairs" not in catalog_names
 
 
 def test_roles_adapters_never_imports_director_runtime_internal_repair_kernel() -> None:
@@ -841,6 +912,30 @@ def test_deterministic_repairs_package_all_does_not_export_concrete_repair_funct
     ]
 
     assert concrete_exports == []
+
+
+def test_roles_adapters_descriptor_pack_does_not_publish_concrete_repair_mutators() -> None:
+    payload = json.loads(_read_text(ROLES_ADAPTERS_DESCRIPTOR_PACK_PATH))
+    capabilities = payload.get("capabilities")
+    assert isinstance(capabilities, list)
+    concrete_entries = [
+        {
+            "name": str(item.get("name") or ""),
+            "defined_in": str(item.get("defined_in") or ""),
+        }
+        for item in capabilities
+        if isinstance(item, dict)
+        and (
+            str(item.get("name") or "").startswith("_apply_deterministic_")
+            or str(item.get("name") or "").startswith("repair_rust_")
+            or (
+                str(item.get("name") or "").startswith("run_all_")
+                and str(item.get("name") or "").endswith("_post_repairs")
+            )
+        )
+    ]
+
+    assert concrete_entries == []
 
 
 def test_execute_method_does_not_reexport_migrated_runtime_repairs() -> None:
@@ -1262,14 +1357,17 @@ def test_materialization_quality_repairs_stay_behind_bridge_and_public_boundary(
         assert shim_name not in factory_calls
         assert shim_name not in factory_source
     assert "run_director_materialization_quality_repair_schedule" in factory_calls
-    assert "run_director_cpp_post_execution_repairs" in factory_calls
+    assert "run_director_post_execution_repair_schedule" in factory_calls
+    assert "run_director_cpp_post_execution_repairs" not in factory_calls
+    assert "run_director_cpp_post_execution_repairs" not in factory_source
 
 
 def test_roles_adapters_public_legacy_repair_wrappers_are_removed_after_hard_cut() -> None:
     public_source = _read_text(ROLES_ADAPTERS_PUBLIC_SERVICE_PATH)
 
     assert "def run_director_materialization_quality_repair_schedule(" in public_source
-    assert "def run_director_cpp_post_execution_repairs(" in public_source
+    assert "def run_director_post_execution_repair_schedule(" in public_source
+    assert "def run_director_cpp_post_execution_repairs(" not in public_source
     assert "def apply_deterministic_materialization_quality_repairs(" not in public_source
     assert "def apply_deterministic_cpp_post_repairs(" not in public_source
     assert "Deprecated migration-only shim" not in public_source

@@ -26,6 +26,7 @@ from polaris.cells.roles.kernel.internal.turn_transaction_controller import (
     TransactionConfig,
     TurnTransactionController,
 )
+from polaris.kernelone.context.prompt_safety import format_tool_failure_summary, parse_tool_failure_summary
 
 
 def _make_controller() -> TurnTransactionController:
@@ -164,6 +165,34 @@ def test_build_decision_messages_quality_repair_removes_read_first_templates() -
     assert "Step 1: read_file" not in control_text
     assert "TOOL FAILURE RECOVERY PROTOCOL" not in control_text
     assert "Immediately call read_file" not in control_text
+
+
+def test_build_decision_messages_compacts_repeated_tool_failure_summaries() -> None:
+    controller = _make_controller()
+    failure = format_tool_failure_summary(
+        {
+            "tool": "write_file",
+            "error_type": "tool_failure",
+            "reason": "write_file failed",
+            "prompt_safe": True,
+            "receipt_detail": "omitted; see runtime tool_result event for audit evidence",
+        }
+    )
+    context = [{"role": "tool", "content": failure} for _ in range(10)] + [
+        {"role": "user", "content": "Continue with the targeted repair."}
+    ]
+    tool_definitions = [{"type": "function", "function": {"name": "write_file"}}]
+
+    messages = controller._build_decision_messages(context, tool_definitions)
+
+    failure_messages = [message for message in messages if parse_tool_failure_summary(message.get("content"))]
+    assert len(failure_messages) == 1
+    digest = parse_tool_failure_summary(failure_messages[0]["content"])
+    assert digest is not None
+    assert digest["schema_version"] == "tool_failure_summary_digest.v1"
+    assert digest["failure_count"] == 10
+    assert digest["failures"][0]["count"] == 10
+    assert any(message.get("role") == "user" and "targeted repair" in message.get("content", "") for message in messages)
 
 
 def test_build_decision_messages_excludes_control_plane_from_data_plane() -> None:

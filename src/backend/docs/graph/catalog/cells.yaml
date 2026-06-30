@@ -1615,8 +1615,11 @@ cells:
     public_contracts:
       modules:
         - polaris.cells.roles.adapters.public.contracts
+        - polaris.cells.roles.adapters.public.service
       commands:
         - CreateRoleAdapterCommandV1
+        - run_director_materialization_quality_repair_schedule
+        - run_director_post_execution_repair_schedule
       queries:
         - ListSupportedRoleAdaptersQueryV1
       events:
@@ -2795,9 +2798,12 @@ cells:
     stateful: false
     owner: engineering
     purpose: >
-      Code/patch application, file application, existence gate, and repair loop
-      for Director tasks. Owns PatchApplyEngine, FileApplyService, ExistenceGate, RepairService,
-      and the KernelOne tool chain execution capability.
+      Code/patch application, file application, existence gate, environment prep,
+      and deterministic repair convergence loop for Director tasks. Owns
+      PatchApplyEngine, FileApplyService, ExistenceGate, RepairService, the
+      repair-kernel strategy catalog, coverage/plan-probe read models,
+      materialization/post-execution schedules, task-boundary quality loop, and
+      the KernelOne tool chain execution capability.
     current_modules:
       - polaris.cells.director.runtime.public.contracts
       - polaris.cells.director.runtime.public.service
@@ -2812,31 +2818,64 @@ cells:
       commands:
         - AttachDirectorRepairRevalidationEvidenceV1
         - CompareDirectorRepairShadowRunV1
+        - EvaluateDirectorRepairCutoverReadinessV1
         - ProjectDirectorRepairKernelSummaryV1
+        - ProjectDirectorRepairMetricsV1
         - PlanDirectorRepairCommandV1
         - RunDirectorRepairCommandV1
+        - RunDirectorRepairConvergenceCommandV1
       queries:
         - QueryDirectorRepairAdvisoryPolicyV1
         - QueryDirectorRepairAdvisoryValidationV1
         - QueryDirectorRepairCoverageV1
+        - QueryDirectorRepairEnvironmentPrepCatalogV1
+        - QueryDirectorRepairEnvironmentRefreshRequirementsV1
         - QueryDirectorRepairLanguageSlotsV1
+        - QueryDirectorRepairMaterializationQualityScheduleV1
+        - QueryDirectorRepairPlanProbeV1
         - QueryDirectorRepairPostExecutionScheduleV1
         - QueryDirectorRepairStrategyCatalogV1
       events: []
       results:
         - DirectorRepairAdvisoryPolicyResultV1
         - DirectorRepairAdvisoryValidationResultV1
+        - DirectorRepairCallbackReceiptProjectionV1
+        - DirectorRepairCompositionIssueV1
+        - DirectorRepairCompositionSummaryV1
+        - DirectorRepairConvergenceResultV1
+        - DirectorRepairConvergenceVerifierFn
+        - DirectorRepairConvergenceVerifierRequestV1
+        - DirectorRepairConvergenceRoundResultV1
+        - DirectorRepairCutoverReadinessResultV1
+        - DirectorRepairEnvironmentPrepCatalogResultV1
+        - DirectorRepairEnvironmentPrepPlanV1
+        - DirectorRepairEnvironmentPrepReceiptV1
+        - DirectorRepairEnvironmentRefreshRequirementV1
+        - DirectorRepairEnvironmentRefreshRequirementsResultV1
         - DirectorRepairKernelSummaryProjectionResultV1
+        - DirectorRepairMaterializationQualityScheduleResultV1
+        - DirectorRepairMaterializationQualityScheduleRunResultV1
+        - DirectorRepairMaterializationQualityStepV1
+        - DirectorRepairMetricsResultV1
+        - DirectorRepairPatchSummaryV1
+        - DirectorRepairPlanProbeItemV1
+        - DirectorRepairPlanProbeResultV1
+        - DirectorRepairPlanSummaryV1
         - DirectorRepairRevalidationProjectionResultV1
+        - DirectorRepairRevalidationInputV1
+        - DirectorRepairRevalidationRequestV1
+        - DirectorRepairRevalidatorFn
         - DirectorRepairResultV1
         - DirectorRepairCoverageReportV1
         - DirectorRepairDiagnosticCoverageV1
         - DirectorRepairLanguageSlotV1
         - DirectorRepairLanguageSlotsResultV1
         - DirectorRepairPostExecutionScheduleResultV1
+        - DirectorRepairPostExecutionScheduleRunResultV1
         - DirectorRepairPostExecutionStepV1
         - DirectorRepairShadowComparisonResultV1
         - DirectorRepairStrategyCatalogResultV1
+        - DirectorRepairVerifierSnapshotInputV1
         - DirectorRepairPlanningResultV1
         - RepairDiagnosticV1
         - RepairReceiptV1
@@ -2856,13 +2895,15 @@ cells:
       - fs.write:workspace/**
     verification:
       gaps:
-        - 'Migration in progress: Repair Kernel contracts and composition primitives
-          are owned by director.runtime and exposed cross-cell only through
+        - 'Repair Kernel contracts, schedule metadata, composition primitives,
+          coverage, plan probe, environment prep, convergence, and receipts are
+          owned by director.runtime and exposed cross-cell only through
           director.runtime.public. The director.runtime/internal/repair_kernel package
-          is cell-private implementation. Legacy deterministic strategy functions
-          still reside in roles.adapters/internal/director/deterministic_repairs
-          pending full runtime cutover. Other implementation remains in director.execution/internal
-          and polaris/kernelone/tools/ pending Cell extraction.'
+          is cell-private implementation. roles.adapters may bind runtime-declared
+          runner steps during migration, but it must not own repair catalog,
+          schedule metadata, policy, receipt, shadow comparison, or advisory facts.
+          Other implementation remains in director.execution/internal and
+          polaris/kernelone/tools/ pending Cell extraction.'
 
   - id: director.delivery
     title: Director Delivery

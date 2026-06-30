@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Sequence
 from typing import Any, Mapping
 
@@ -61,6 +62,7 @@ from polaris.cells.director.runtime.internal.repair_kernel.strategy_catalog impo
 from polaris.cells.director.runtime.public.contracts import (
     AttachDirectorRepairRevalidationEvidenceV1,
     CompareDirectorRepairShadowRunV1,
+    DirectorInterfaceDiscrepancyReceiptV1,
     DirectorRepairAdvisoryPolicyResultV1,
     DirectorRepairAdvisoryValidationResultV1,
     DirectorRepairCompositionIssueV1,
@@ -1027,10 +1029,12 @@ def query_director_repair_plan_probe(query: QueryDirectorRepairPlanProbeV1) -> D
         )
         composition = planning.composition_summary.to_dict()
         patch_count = int(composition.get("patch_count") or 0)
+        changed_paths = tuple(str(path) for path in composition.get("changed_paths") or ())
         status = _plan_probe_item_status(
             planning=planning,
             matched_diagnostic_count=len(matched_items),
             patch_count=patch_count,
+            changed_paths=changed_paths,
         )
         probe_items.append(
             DirectorRepairPlanProbeItemV1(
@@ -1039,12 +1043,15 @@ def query_director_repair_plan_probe(query: QueryDirectorRepairPlanProbeV1) -> D
                 matched_diagnostic_ids=tuple(str(item.diagnostic.get("diagnostic_id") or "") for item in matched_items),
                 matched_diagnostic_count=len(matched_items),
                 patch_count=patch_count,
-                changed_paths=tuple(str(path) for path in composition.get("changed_paths") or ()),
+                changed_paths=changed_paths,
                 planning_result=planning,
                 error_code=planning.error_code,
                 error_message=planning.error_message,
                 metadata={
                     "coverage_status": "matched" if matched_items else "not_covered_by_source_tool",
+                    "changed_patch_count": len(changed_paths),
+                    "no_op_patch_count": max(0, patch_count - len(changed_paths)),
+                    "plannable_requires_changed_patch": True,
                     "read_only_plan_probe": True,
                 },
             )
@@ -1149,10 +1156,11 @@ def _plan_probe_item_status(
     planning: DirectorRepairPlanningResultV1,
     matched_diagnostic_count: int,
     patch_count: int,
+    changed_paths: Sequence[str],
 ) -> str:
     if matched_diagnostic_count <= 0:
         return "not_covered_by_source_tool"
-    if planning.planned and planning.ok and patch_count > 0:
+    if planning.planned and planning.ok and patch_count > 0 and changed_paths:
         return "covered_plannable"
     if planning.error_code == "unsupported_repair_source_tool":
         return "unsupported_repair_source_tool"
@@ -1353,6 +1361,10 @@ def query_director_repair_post_execution_schedule(
     languages = sorted({step.language for step in ordered_steps})
     phases = sorted({step.phase for step in ordered_steps})
     priorities = sorted({step.priority for step in ordered_steps})
+    executable_runtime_source_tools = [step.source_tool for step in ordered_steps if step.executable_runtime_source_tool]
+    callback_schedule_label_source_tools = [
+        step.source_tool for step in ordered_steps if not step.executable_runtime_source_tool
+    ]
     return DirectorRepairPostExecutionScheduleResultV1(
         schema_version="director.repair_post_execution_schedule.v1",
         source="director.runtime.repair_kernel.scheduler",
@@ -1365,6 +1377,13 @@ def query_director_repair_post_execution_schedule(
             "priorities": priorities,
             "ordered_step_ids": [step.step_id for step in ordered_steps],
             "source_tools": [step.source_tool for step in ordered_steps],
+            "source_tool_kinds": [step.source_tool_kind for step in ordered_steps],
+            "source_tool_kind_counts": {
+                "callback_schedule_label": len(callback_schedule_label_source_tools),
+                "executable_runtime": len(executable_runtime_source_tools),
+            },
+            "executable_runtime_source_tools": executable_runtime_source_tools,
+            "callback_schedule_label_source_tools": callback_schedule_label_source_tools,
             "target_scheduler": "director.runtime.repair_kernel.scheduler",
             "runner_binding_owner": "roles.adapters",
             "adapter_projection_bridge": True,
@@ -1432,6 +1451,10 @@ def query_director_repair_materialization_quality_schedule(
     languages = sorted({step.language for step in ordered_steps})
     phases = sorted({step.phase for step in ordered_steps})
     priorities = sorted({step.priority for step in ordered_steps})
+    executable_runtime_source_tools = [step.source_tool for step in ordered_steps if step.executable_runtime_source_tool]
+    callback_schedule_label_source_tools = [
+        step.source_tool for step in ordered_steps if not step.executable_runtime_source_tool
+    ]
     return DirectorRepairMaterializationQualityScheduleResultV1(
         schema_version="director.repair_materialization_quality_schedule.v1",
         source="director.runtime.repair_kernel.scheduler",
@@ -1444,6 +1467,13 @@ def query_director_repair_materialization_quality_schedule(
             "priorities": priorities,
             "ordered_step_ids": [step.step_id for step in ordered_steps],
             "source_tools": [step.source_tool for step in ordered_steps],
+            "source_tool_kinds": [step.source_tool_kind for step in ordered_steps],
+            "source_tool_kind_counts": {
+                "callback_schedule_label": len(callback_schedule_label_source_tools),
+                "executable_runtime": len(executable_runtime_source_tools),
+            },
+            "executable_runtime_source_tools": executable_runtime_source_tools,
+            "callback_schedule_label_source_tools": callback_schedule_label_source_tools,
             "target_scheduler": "director.runtime.repair_kernel.scheduler",
             "runner_binding_owner": "roles.adapters",
             "adapter_projection_bridge": True,
@@ -1507,6 +1537,8 @@ def _public_post_execution_step(step: PostExecutionRepairScheduleStep) -> Direct
         phase=step.phase,
         priority=step.priority,
         source_tool=step.source_tool,
+        source_tool_kind=step.source_tool_kind,
+        executable_runtime_source_tool=step.executable_runtime_source_tool,
         depends_on=step.depends_on,
     )
 
@@ -1520,6 +1552,8 @@ def _public_materialization_quality_step(
         phase=step.phase,
         priority=step.priority,
         source_tool=step.source_tool,
+        source_tool_kind=step.source_tool_kind,
+        executable_runtime_source_tool=step.executable_runtime_source_tool,
         depends_on=step.depends_on,
     )
 
@@ -1622,6 +1656,7 @@ def run_director_repair(
         metadata["rolled_back"] = internal_run.execution_result.rolled_back
 
     if internal_run.execution_result is None:
+        metadata["receipt_authority_policy"] = _repair_receipt_authority_policy(())
         return DirectorRepairResultV1(
             ok=False,
             error_code=internal_run.error_code,
@@ -1640,6 +1675,7 @@ def run_director_repair(
         )
 
     receipt = _to_public_repair_receipt(internal_receipt)
+    metadata["receipt_authority_policy"] = _repair_receipt_authority_policy((receipt,))
     revalidation_failed = revalidator is not None and receipt.status == "failed_revalidation"
     error_code = internal_run.error_code
     error_message = internal_run.error_message
@@ -1654,6 +1690,55 @@ def run_director_repair(
         error_message=error_message,
         metadata=metadata,
     )
+
+
+def _repair_receipt_authority_policy(receipts: Sequence[RepairReceiptV1]) -> dict[str, Any]:
+    receipt_list = tuple(receipts or ())
+    evidence_status_counts: dict[str, int] = {}
+    receipt_status_counts: dict[str, int] = {}
+    for receipt in receipt_list:
+        evidence_status = str(receipt.evidence_status or "missing_evidence")
+        receipt_status = str(receipt.status or "unknown")
+        evidence_status_counts[evidence_status] = evidence_status_counts.get(evidence_status, 0) + 1
+        receipt_status_counts[receipt_status] = receipt_status_counts.get(receipt_status, 0) + 1
+
+    authoritative_receipt_ids = tuple(
+        receipt.receipt_id
+        for receipt in receipt_list
+        if receipt.authoritative and receipt.status == "applied" and receipt.evidence_status == "resolved_evidence"
+    )
+    non_authoritative_receipt_ids = tuple(
+        receipt.receipt_id
+        for receipt in receipt_list
+        if not receipt.authoritative or receipt.evidence_status != "resolved_evidence" or receipt.status != "applied"
+    )
+    missing_evidence_receipt_ids = tuple(
+        receipt.receipt_id for receipt in receipt_list if receipt.evidence_status == "missing_evidence"
+    )
+    failed_evidence_receipt_ids = tuple(
+        receipt.receipt_id for receipt in receipt_list if receipt.evidence_status == "failed_evidence"
+    )
+    authoritative_success = bool(receipt_list) and len(authoritative_receipt_ids) == len(receipt_list)
+    return {
+        "schema_version": "director.repair_receipt_authority_policy.v1",
+        "policy": "authoritative_success_requires_applied_resolved_evidence",
+        "authoritative_success": authoritative_success,
+        "receipt_count": len(receipt_list),
+        "authoritative_receipt_count": len(authoritative_receipt_ids),
+        "non_authoritative_receipt_count": len(non_authoritative_receipt_ids),
+        "missing_evidence_receipt_count": len(missing_evidence_receipt_ids),
+        "failed_evidence_receipt_count": len(failed_evidence_receipt_ids),
+        "resolved_evidence_receipt_count": evidence_status_counts.get("resolved_evidence", 0),
+        "receipt_status_counts": receipt_status_counts,
+        "evidence_status_counts": evidence_status_counts,
+        "authoritative_receipt_ids": list(authoritative_receipt_ids),
+        "non_authoritative_receipt_ids": list(non_authoritative_receipt_ids),
+        "missing_evidence_receipt_ids": list(missing_evidence_receipt_ids),
+        "failed_evidence_receipt_ids": list(failed_evidence_receipt_ids),
+        "requires_revalidation": bool(missing_evidence_receipt_ids),
+        "result_ok_is_write_success_only": not authoritative_success,
+        "ledger_consumers_must_check_authoritative_success": True,
+    }
 
 
 def run_director_repair_convergence(
@@ -1728,13 +1813,23 @@ def run_director_repair_convergence(
 
         _validate_public_convergence_verifier_evidence(verifier_input, round_number=round_number)
         diagnostics = tuple(normalize_artifact_quality_errors(list(verifier_input.residual_artifact_quality_errors)))
+        environment_prep_receipts = tuple(receipt.to_dict() for receipt in verifier_input.environment_prep_receipts)
+        verifier_metadata = dict(verifier_input.metadata)
+        if environment_prep_receipts:
+            verifier_metadata["environment_prep_receipts"] = list(environment_prep_receipts)
+            verifier_metadata["environment_prep_receipt_count"] = len(environment_prep_receipts)
+            verifier_metadata["environment_prep_failed_receipt_count"] = sum(
+                1
+                for receipt in environment_prep_receipts
+                if str(receipt.get("status") or "") not in {"succeeded", "skipped_fresh"}
+            )
         return RepairVerifierSnapshot(
             diagnostics=diagnostics,
             command=verifier_input.command,
             exit_code=verifier_input.exit_code,
             raw_output_ref=verifier_input.raw_output_ref,
             metadata={
-                **dict(verifier_input.metadata),
+                **verifier_metadata,
                 "public_entrypoint": "run_director_repair_convergence",
                 "effect_boundary": "adapter_supplied_verifier_callback_no_command_execution",
                 "environment_prep_required": bool(public_environment_plans),
@@ -1943,28 +2038,208 @@ def _interface_discrepancy_receipts_from_plan_probe(
     diagnostics = [dict(item) for item in plan_probe.covered_unplannable_diagnostics]
     if not diagnostics:
         return []
-    recommended_owner = "chief_engineer" if not command.task_interface_contract else "director"
+    interface_delta = _interface_delta_from_task_boundary(command, diagnostics)
+    triage_summary = _interface_discrepancy_triage_summary(
+        command=command,
+        plan_probe=plan_probe,
+        interface_delta=interface_delta,
+    )
+    recommended_owner = str(triage_summary["recommended_owner"])
     recommended_route = (
         "pending_design_interface_contract"
         if recommended_owner == "chief_engineer"
         else "director_retry_with_interface_discrepancy_context"
     )
     return [
-        {
-            "schema_version": "director.interface_discrepancy_receipt.v1",
-            "task_id": command.task_id,
-            "status": "semantic_discrepancy_triage_required",
-            "source": "director.runtime.task_boundary_quality_loop",
-            "covered_unplannable": True,
-            "diagnostics": diagnostics,
-            "source_tools": list(plan_probe.covered_unplannable_source_tools),
-            "recommended_owner": recommended_owner,
-            "recommended_route": recommended_route,
-            "triage_policy": "ce_contract_if_missing_else_director_local_repair",
-            "macro_blueprint_regeneration_allowed": False,
-            "task_interface_contract_present": bool(command.task_interface_contract),
-        }
+        DirectorInterfaceDiscrepancyReceiptV1(
+            task_id=command.task_id,
+            source="director.runtime.task_boundary_quality_loop",
+            plan_probe_status=plan_probe.status,
+            diagnostics=tuple(diagnostics),
+            source_tools=tuple(plan_probe.covered_unplannable_source_tools),
+            recommended_owner=recommended_owner,
+            recommended_route=recommended_route,
+            task_interface_contract_present=bool(command.task_interface_contract),
+            llm_fallback_blocked=recommended_owner != "director",
+            director_retry_allowed=recommended_owner == "director",
+            interface_delta=interface_delta,
+            triage_summary=triage_summary,
+            metadata={
+                "public_entrypoint": "run_director_task_boundary_quality_loop",
+                "coverage_gap_count": len(plan_probe.uncovered_diagnostics),
+                "interface_delta_available": bool(interface_delta),
+            },
+        ).to_dict()
     ]
+
+
+def _interface_delta_from_task_boundary(
+    command: RunDirectorTaskBoundaryQualityLoopCommandV1,
+    diagnostics: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    contract = dict(command.task_interface_contract)
+    diagnostic_paths = _diagnostic_paths(diagnostics)
+    requested_symbols = _diagnostic_symbols(diagnostics)
+    actual_exports, planned_exports, consumed_symbols = _interface_contract_symbol_maps(contract)
+    interface_conflicts = [
+        dict(item)
+        for item in contract.get("interface_conflicts", ())
+        if isinstance(item, Mapping)
+    ][:20]
+    return {
+        "schema_version": "director.interface_delta.v1",
+        "task_id": command.task_id,
+        "contract_present": bool(contract),
+        "contract_schema_version": str(contract.get("schema_version") or ""),
+        "contract_keys": sorted(str(key) for key in contract),
+        "diagnostic_paths": diagnostic_paths,
+        "diagnostic_codes": _diagnostic_codes(diagnostics),
+        "requested_symbols": requested_symbols,
+        "actual_public_symbols_by_path": actual_exports,
+        "planned_public_symbols_by_path": planned_exports,
+        "consumed_symbols_by_path": consumed_symbols,
+        "interface_conflicts": interface_conflicts,
+        "interface_conflict_count": len(interface_conflicts),
+        "actual_export_file_count": len(actual_exports),
+        "planned_export_file_count": len(planned_exports),
+        "diagnostic_count": len(diagnostics),
+    }
+
+
+def _interface_discrepancy_triage_summary(
+    *,
+    command: RunDirectorTaskBoundaryQualityLoopCommandV1,
+    plan_probe: DirectorRepairPlanProbeResultV1,
+    interface_delta: Mapping[str, Any],
+) -> dict[str, Any]:
+    contract_present = bool(command.task_interface_contract)
+    has_contract_conflicts = bool(interface_delta.get("interface_conflicts"))
+    recommended_owner = "director" if contract_present and not has_contract_conflicts else "chief_engineer"
+    recommended_route = (
+        "director_retry_with_interface_discrepancy_context"
+        if recommended_owner == "director"
+        else "pending_design_interface_contract"
+    )
+    return {
+        "schema_version": "director.interface_discrepancy_triage.v1",
+        "plan_probe_status": plan_probe.status,
+        "recommended_owner": recommended_owner,
+        "recommended_route": recommended_route,
+        "contract_present": contract_present,
+        "contract_conflict_count": int(interface_delta.get("interface_conflict_count") or 0),
+        "director_retry_allowed": recommended_owner == "director",
+        "llm_fallback_blocked": recommended_owner != "director",
+        "macro_blueprint_regeneration_allowed": False,
+        "triage_policy": "ce_contract_if_missing_or_conflicting_else_director_local_repair",
+        "reason": (
+            "task_interface_contract_conflict"
+            if has_contract_conflicts
+            else "task_interface_contract_missing"
+            if not contract_present
+            else "director_local_retry_with_interface_delta"
+        ),
+    }
+
+
+def _interface_contract_symbol_maps(
+    contract: Mapping[str, Any],
+) -> tuple[dict[str, list[str]], dict[str, list[str]], dict[str, list[str]]]:
+    actual_exports: dict[str, list[str]] = {}
+    planned_exports: dict[str, list[str]] = {}
+    consumed_symbols: dict[str, list[str]] = {}
+    raw_modules = contract.get("modules")
+    if isinstance(raw_modules, (list, tuple)):
+        for raw_module in raw_modules:
+            if not isinstance(raw_module, Mapping):
+                continue
+            path = str(raw_module.get("path") or "").strip()
+            if not path:
+                continue
+            actual = _interface_string_list(raw_module.get("actual_public_symbols"))
+            planned = _interface_string_list(raw_module.get("planned_public_symbols"))
+            consumed = _interface_string_list(raw_module.get("consumed_symbols"))
+            if actual:
+                actual_exports[path] = actual
+            if planned:
+                planned_exports[path] = planned
+            if consumed:
+                consumed_symbols[path] = consumed
+    for key, target in (
+        ("exports", actual_exports),
+        ("public_symbols", actual_exports),
+        ("actual_public_symbols", actual_exports),
+        ("planned_public_symbols", planned_exports),
+        ("consumes", consumed_symbols),
+        ("consumes_symbols", consumed_symbols),
+        ("consumed_symbols", consumed_symbols),
+    ):
+        raw = contract.get(key)
+        if isinstance(raw, Mapping):
+            for raw_path, raw_symbols in raw.items():
+                path = str(raw_path or "").strip()
+                symbols = _interface_string_list(raw_symbols)
+                if path and symbols:
+                    target[path] = symbols
+        elif raw:
+            symbols = _interface_string_list(raw)
+            if symbols:
+                target.setdefault("<contract>", symbols)
+    return actual_exports, planned_exports, consumed_symbols
+
+
+def _diagnostic_paths(diagnostics: Sequence[Mapping[str, Any]]) -> list[str]:
+    paths: list[str] = []
+    for diagnostic in diagnostics:
+        for key in ("path", "file", "file_path", "source_path", "target_path"):
+            value = str(diagnostic.get(key) or "").strip()
+            if value:
+                paths.append(value)
+    return list(_ordered_unique(paths))
+
+
+def _diagnostic_codes(diagnostics: Sequence[Mapping[str, Any]]) -> list[str]:
+    codes: list[str] = []
+    for diagnostic in diagnostics:
+        for key in ("code", "diagnostic_code", "error_code"):
+            value = str(diagnostic.get(key) or "").strip()
+            if value:
+                codes.append(value)
+    return list(_ordered_unique(codes))
+
+
+_DIAGNOSTIC_SYMBOL_PATTERNS = (
+    re.compile(r"has no exported member ['`\"](?P<symbol>[A-Za-z_$][\w$]*)['`\"]"),
+    re.compile(r"no exported member ['`\"](?P<symbol>[A-Za-z_$][\w$]*)['`\"]"),
+    re.compile(r"unresolved import symbol ['`\"](?P<symbol>[A-Za-z_$][\w$]*)['`\"]"),
+    re.compile(r"undefined: (?P<symbol>[A-Za-z_][\w]*)"),
+    re.compile(r"cannot find (?:name|symbol|type) ['`\"]?(?P<symbol>[A-Za-z_$][\w$]*)['`\"]?"),
+    re.compile(r"no [`'\"](?P<symbol>[A-Za-z_$][\w$]*)[`'\"] in"),
+)
+
+
+def _diagnostic_symbols(diagnostics: Sequence[Mapping[str, Any]]) -> list[str]:
+    symbols: list[str] = []
+    for diagnostic in diagnostics:
+        text = " ".join(
+            str(diagnostic.get(key) or "")
+            for key in ("message", "raw", "detail", "stderr", "diagnostic")
+        )
+        for pattern in _DIAGNOSTIC_SYMBOL_PATTERNS:
+            for match in pattern.finditer(text):
+                symbol = str(match.group("symbol") or "").strip()
+                if symbol:
+                    symbols.append(symbol)
+    return list(_ordered_unique(symbols))
+
+
+def _interface_string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, Mapping):
+        return [str(key) for key in value if str(key or "").strip()]
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [str(item) for item in value if str(item or "").strip()]
+    return []
 
 
 def _to_public_convergence_result(

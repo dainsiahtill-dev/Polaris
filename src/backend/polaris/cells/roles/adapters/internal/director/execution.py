@@ -82,6 +82,13 @@ _ENTRYPOINT_CONTENT_SIGNALS = (
     "let ",
     "var ",
 )
+_TEXTUAL_TOOL_PROTOCOL_PATTERN = re.compile(
+    r"\[/?TOOL_CALLS?\]"
+    r"|<\s*/?\s*tool_calls?\s*>"
+    r"|\[(?:READ_FILE|WRITE_FILE|APPEND_TO_FILE|REPLACE_IN_FILE|LIST_FILES|RUN_COMMAND|"
+    r"SEARCH_CODE|GLOB|LIST_DIRECTORY|FILE_EXISTS|EDIT_FILE|SEARCH_REPLACE|EXECUTE_COMMAND)\]",
+    re.IGNORECASE,
+)
 
 
 class DirectorPatchExecutor:
@@ -195,37 +202,30 @@ class DirectorPatchExecutor:
         allowed_tool_names: set[str] | None = None,
         allow_patch_fallback: bool = True,
     ) -> list[dict[str, Any]]:
-        """解析并执行工具调用
+        """Execute only non-native fallback formats that remain intentionally enabled.
 
-        支持两种格式:
-        1. [工具名]...[/工具名] 格式 (通过 parse_tool_calls)
-        2. PATCH_FILE 格式 (通过 parse_file_blocks)
+        Native provider tool calls are handled before this adapter path. Textual
+        tool protocols such as ``[TOOL_CALL]`` and ``[WRITE_FILE]`` are no
+        longer executable because they bypass the tool lifecycle receipt chain.
+        ``PATCH_FILE`` fallback remains governed by ``allow_patch_fallback`` and
+        is tracked separately in the legacy convergence ledger.
         """
-        from polaris.kernelone.llm.toolkit import parse_tool_calls
-
-        tool_calls = parse_tool_calls(
-            response,
-            allowed_tool_names=allowed_tool_names
-            if allowed_tool_names is not None
-            else {
-                "write_file",
-                "read_file",
-                "edit_file",
-                "execute_command",
-                "run_command",
-                "search_code",
-            },
-        )
-        if not tool_calls:
-            if not allow_patch_fallback:
-                return []
-            return await self._execute_patch_file_format(response, task_id, update_task_progress_fn)
-
-        results = []
-        for call in tool_calls:
-            result = await self._execute_single_tool_call(call, task_id, update_task_progress_fn)
-            results.append(result)
-        return results
+        del allowed_tool_names  # Textual tool parsing is disabled in this path.
+        if _TEXTUAL_TOOL_PROTOCOL_PATTERN.search(str(response or "")):
+            return [
+                {
+                    "tool": "text_tool_protocol",
+                    "success": False,
+                    "ok": False,
+                    "error": "legacy_text_tool_protocol_disabled",
+                    "failure_class": "tool_text_protocol_disabled",
+                    "protocol_violation": "legacy_text_tool_protocol_disabled",
+                    "task_id": task_id,
+                }
+            ]
+        if not allow_patch_fallback:
+            return []
+        return await self._execute_patch_file_format(response, task_id, update_task_progress_fn)
 
     async def _execute_single_tool_call(
         self,

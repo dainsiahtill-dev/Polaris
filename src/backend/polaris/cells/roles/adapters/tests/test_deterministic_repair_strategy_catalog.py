@@ -24,7 +24,9 @@ from polaris.cells.roles.adapters.internal.director.repair_profile_projection im
     summarize_deterministic_repair_source_tools,
 )
 from polaris.cells.roles.adapters.public import service as role_adapter_service
-from polaris.cells.roles.adapters.public.service import run_director_cpp_post_execution_repairs
+from polaris.cells.roles.adapters.public.service import (
+    run_director_post_execution_repair_schedule,
+)
 
 _SOURCE_TOOL_RE = re.compile(r"[\"'](?P<tool>deterministic_[A-Za-z0-9_]+)[\"']")
 _NON_STRATEGY_TOKENS = {"deterministic_repair_profiles"}
@@ -489,7 +491,7 @@ def test_rust_dependency_resolution_bridge_routes_runtime_repair(
     assert calls[0]["use_editor"] is False
 
 
-def test_cpp_post_repairs_public_wrapper_uses_catalog_source_tool(
+def test_post_execution_repair_schedule_public_wrapper_uses_catalog_source_tool(
     tmp_path: Path,
 ) -> None:
     header = tmp_path / "src" / "models" / "postcard.hpp"
@@ -499,7 +501,10 @@ def test_cpp_post_repairs_public_wrapper_uses_catalog_source_tool(
     header.write_text("#pragma once\n", encoding="utf-8")
     target.write_text('#include "src/models/postcard.hpp"\n', encoding="utf-8")
 
-    results = run_director_cpp_post_execution_repairs(tmp_path)
+    results, summary = run_director_post_execution_repair_schedule(
+        tmp_path,
+        task_id="test-post-execution-repair",
+    )
 
     assert len(results) == 1
     assert results[0]["tool"] == "write_file"
@@ -509,6 +514,8 @@ def test_cpp_post_repairs_public_wrapper_uses_catalog_source_tool(
     assert results[0]["result"]["source_tool"] == "deterministic_cpp_include_path_repair"
     assert results[0]["result"]["file"] == "src/engine/generator.cpp"
     assert results[0]["result"]["repair_kernel"]["owner_cell"] == "director.runtime"
+    assert summary is not None
+    assert summary["schema_version"] == "director.post_execution_repair_kernel.v1"
     assert '#include "../models/postcard.hpp"' in target.read_text(encoding="utf-8")
     assert results[0]["result"]["source_tool"] in {str(item.get("source_tool") or "") for item in _catalog_items()}
 
@@ -726,7 +733,8 @@ def test_legacy_public_repair_wrappers_are_hard_cut() -> None:
     assert "apply_deterministic_materialization_quality_repairs" not in role_adapter_service.__all__
     assert "apply_deterministic_cpp_post_repairs" not in role_adapter_service.__all__
     assert "run_director_materialization_quality_repair_schedule" in role_adapter_service.__all__
-    assert "run_director_cpp_post_execution_repairs" in role_adapter_service.__all__
+    assert "run_director_post_execution_repair_schedule" in role_adapter_service.__all__
+    assert "run_director_cpp_post_execution_repairs" not in role_adapter_service.__all__
 
 
 def test_legacy_materialization_quality_facade_is_hard_cut() -> None:

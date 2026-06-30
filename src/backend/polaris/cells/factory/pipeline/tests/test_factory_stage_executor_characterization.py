@@ -34,6 +34,7 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
+from polaris.cells.factory.pipeline.internal.run_ledger import load_run_ledger_projection
 from polaris.cells.roles.adapters.internal.director import quality_gate as director_quality_gate
 from polaris.cells.roles.adapters.public import extract_workspace_quality_summary
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
@@ -85,6 +86,101 @@ def test_workspace_quality_diagnostic_targets_include_language_neutral_manifests
     )
 
     assert targets == ["go.mod", "pyproject.toml", "CMakeLists.txt"]
+
+
+def test_workspace_quality_plan_probe_reads_relevant_base_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("export const value = 1;\n", encoding="utf-8")
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / "main.js").write_text("compiled\n", encoding="utf-8")
+    executor = _executor(tmp_path)
+    captured: dict[str, Any] = {}
+
+    def fake_query(query: Any) -> SimpleNamespace:
+        captured["artifact_quality_errors"] = query.artifact_quality_errors
+        captured["base_files"] = dict(query.base_files)
+        captured["metadata"] = dict(query.metadata)
+        return SimpleNamespace(
+            to_dict=lambda: {
+                "schema_version": "director.repair_plan_probe_result.v1",
+                "status": "coverage_matched_but_unplannable",
+                "coverage_is_not_planning": True,
+            }
+        )
+
+    monkeypatch.setattr(
+        "polaris.cells.director.runtime.public.query_director_repair_plan_probe",
+        fake_query,
+    )
+
+    result = executor._workspace_quality_repair_plan_probe_report(
+        ["src/main.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'."]
+    )
+
+    assert result["status"] == "coverage_matched_but_unplannable"
+    assert captured["base_files"] == {"src/main.ts": "export const value = 1;\n"}
+    assert captured["metadata"]["coverage_is_not_planning"] is True
+
+
+def test_quality_gate_failure_stage_does_not_add_qa_llm_warning_for_deterministic_blocker(
+    tmp_path: Path,
+) -> None:
+    executor = _executor(tmp_path)
+    run = FactoryRun(
+        id="run-deterministic-failure",
+        config=FactoryConfig(name="demo"),
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-06-30T00:00:00Z",
+    )
+
+    result = executor._build_quality_gate_failure_stage(
+        run,
+        reason_code="workspace_quality_gate_failed",
+        detail="npm test failed",
+        context={},
+    )
+
+    assert result.status == "failed"
+    report = json.loads(executor._artifact_path("runtime/qa/report.json").read_text(encoding="utf-8"))
+    assert report["warnings"] == ["workspace_quality_gate_failed"]
+    assert "qa_llm_judgement_unavailable" not in report["warnings"]
+
+def test_workspace_validation_artifact_writes_run_ledger_command_evidence(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    run = FactoryRun(
+        id="run-workspace-validation",
+        config=FactoryConfig(name="demo"),
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-06-30T00:00:00Z",
+    )
+
+    artifact = executor._write_workspace_validation_artifact(
+        run,
+        {"project_id": "L1-ledger", "target_files": ["src/index.js"]},
+        {
+            "schema_version": "factory.workspace_quality_checks.v1",
+            "factory_run_id": run.id,
+            "passed": True,
+            "commands": [
+                {
+                    "command": ["npm", "test"],
+                    "passed": True,
+                    "exit_code": 0,
+                }
+            ],
+            "repair": {"attempted": False},
+        },
+    )
+
+    projection = load_run_ledger_projection(tmp_path, run_id=run.id)
+    assert artifact == "runtime/qa/workspace-validation.json"
+    assert projection["gate_count"] == 1
+    assert projection["evidence_policy"]["missing_required_modalities"] == []
+    assert projection["evidence_policy"]["failed_required_modalities"] == []
+    assert projection["evidence_modalities"]["command"]["ok"] == 1
 
 
 def test_pm_plan_validation_contract_hygiene_defers_test_acceptance_to_validation_task() -> None:
@@ -1197,6 +1293,37 @@ class TestWorkspaceQualityRepairEvidence:
         )
         assert "repair_hash:file=src/simulation.ts;before=aaaaaaaaaaaaaaaa;after=bbbbbbbbbbbbbbbb" in evidence
         assert any("export type GardenConfig" in item for item in evidence)
+
+    def test_interface_discrepancy_evidence_recognizes_cross_language_symbol_mismatches(self) -> None:
+        cases = (
+            "go test ./... :: src/main.go:17: undefined: NewCapsule",
+            "cargo check :: error[E0432]: unresolved import `crate::engine::Forecast`",
+            "cargo check :: error[E0583]: file not found for module `engine`",
+            "g++ :: fatal error: engine/forecast.hpp: No such file or directory",
+            "ld :: undefined reference to `ForecastEngine::run()`",
+        )
+
+        for diagnostic in cases:
+            evidence = OrchestrationStageExecutor._workspace_quality_interface_discrepancy_evidence(
+                {
+                    "plan_probe_preaudit": {
+                        "status": "coverage_matched_but_unplannable",
+                        "plannable_source_tools": [],
+                        "covered_unplannable_source_tools": ["deterministic_cross_language_symbol_repair"],
+                        "covered_unplannable_diagnostic_count": 1,
+                    }
+                },
+                [diagnostic],
+            )
+
+            assert evidence["recommended_owner"] == "chief_engineer"
+            assert evidence["recommended_route"] == "pending_design_interface_contract"
+            assert evidence["cross_artifact_route"] == "contract_amendment_request"
+            assert evidence["schema_version"] == "director.interface_discrepancy_receipt.v1"
+            assert evidence["source"] == "factory.pipeline.workspace_quality"
+            assert evidence["reason"] == "coverage_matched_but_unplannable"
+            assert evidence["director_retry_allowed"] is False
+            assert evidence["llm_fallback_blocked"] is True
 
     def test_applies_javascript_esm_commonjs_entrypoint_repair(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -3721,7 +3848,7 @@ class TestRunWorkspaceQualityChecks:
                         "covered_unplannable_source_tools": ["deterministic_typescript_missing_export_repair"],
                     },
                     "interface_discrepancy_evidence": {
-                        "schema_version": "director.task_boundary.interface_discrepancy.v1",
+                        "schema_version": "director.interface_discrepancy_receipt.v1",
                         "reason": "coverage_matched_but_unplannable",
                         "recommended_owner": "chief_engineer",
                         "recommended_route": "pending_design_interface_contract",

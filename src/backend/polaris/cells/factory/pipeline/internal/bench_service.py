@@ -107,7 +107,7 @@ def _merge_project_evidence_policy(projects: list[dict[str, Any]]) -> dict[str, 
     missing = list(dict.fromkeys(missing))
     failed = list(dict.fromkeys(failed))
     return {
-        "ok": has_policy and not missing,
+        "ok": has_policy and not missing and not failed,
         "enabled_modalities": enabled,
         "required_modalities": required,
         "missing_required_modalities": missing,
@@ -167,7 +167,7 @@ def _normalize_legacy_evidence_policy(
     normalized = dict(evidence_policy)
     normalized["missing_required_modalities"] = list(dict.fromkeys(normalized_missing))
     normalized["failed_required_modalities"] = list(dict.fromkeys(failed))
-    normalized["ok"] = not normalized["missing_required_modalities"]
+    normalized["ok"] = not normalized["missing_required_modalities"] and not normalized["failed_required_modalities"]
     return normalized
 
 
@@ -199,11 +199,13 @@ def _control_plane_projection_from_audit(status: dict[str, Any]) -> dict[str, An
 
     projects: list[dict[str, Any]] = []
     projected = 0
+    ready_count = 0
     failed = 0
     for index, item in enumerate(records):
         record: dict[str, Any] = item if isinstance(item, dict) else {}
         projection = record.get("run_ledger_projection")
         projection_map: dict[str, Any] = projection if isinstance(projection, dict) else {}
+        has_projection = bool(projection_map)
         capability = projection_map.get("capability")
         capability_map: dict[str, Any] = capability if isinstance(capability, dict) else {}
         evidence_policy = projection_map.get("evidence_policy")
@@ -215,17 +217,19 @@ def _control_plane_projection_from_audit(status: dict[str, Any]) -> dict[str, An
         if evidence_policy_map:
             projection_for_summary["evidence_policy"] = evidence_policy_map
             if int(projection_for_summary.get("gate_count") or 0) > 0:
-                projection_for_summary["integrity_ok"] = bool(capability_map.get("ok")) and bool(
-                    evidence_policy_map.get("ok")
+                projection_for_summary["integrity_ok"] = bool(capability_map.get("ok")) and not bool(
+                    evidence_policy_map.get("missing_required_modalities")
                 )
                 if evidence_policy_map.get("failed_required_modalities"):
                     projection_for_summary["outcome_ok"] = False
                     projection_for_summary["ok"] = False
         projection_status = summarize_run_ledger_projection(projection_for_summary)
         ok = bool(projection_status.get("ok"))
-        if ok:
+        if has_projection:
             projected += 1
-        else:
+        if ok:
+            ready_count += 1
+        elif has_projection:
             failed += 1
         projects.append(
             {
@@ -255,7 +259,7 @@ def _control_plane_projection_from_audit(status: dict[str, Any]) -> dict[str, An
 
     total = len(records)
     missing = max(0, total - projected)
-    ready = total > 0 and projected == total and failed == 0
+    ready = total > 0 and ready_count == total and missing == 0 and failed == 0
     goal_audit = payload.get("goal_audit") if isinstance(payload, dict) else {}
     goal_ledger = goal_audit.get("run_ledger") if isinstance(goal_audit, dict) else None
     return {
@@ -271,7 +275,7 @@ def _control_plane_projection_from_audit(status: dict[str, Any]) -> dict[str, An
         "failed": failed,
         "projects": projects,
         "goal_audit": goal_ledger if isinstance(goal_ledger, dict) else {},
-        "detail": f"run ledger projection {projected}/{total} project(s) ready",
+        "detail": f"run ledger projection {ready_count}/{total} project(s) ready",
         "evidence_policy": _merge_project_evidence_policy(projects),
         "evidence_modalities": _merge_project_evidence_modalities(projects),
     }

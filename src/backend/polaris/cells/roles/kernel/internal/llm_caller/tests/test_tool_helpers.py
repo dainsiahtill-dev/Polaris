@@ -52,6 +52,7 @@ from pathlib import Path  # noqa: E402
 
 import pytest  # noqa: E402
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (  # noqa: E402
+    build_tool_filter_audit,
     resolve_from_scratch_write_target,
     restrict_tool_definitions_to_write,
     should_use_weak_director_slim_tool_schema,
@@ -60,6 +61,46 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (  # noq
 
 def _tools(*names: str) -> list[dict]:
     return [{"type": "function", "function": {"name": n}} for n in names]
+
+
+class TestToolFilterAudit:
+    def test_structured_contract_required_tool_removal_fails_closed(self) -> None:
+        audit = build_tool_filter_audit(
+            filter_reason="weak_director_slim_tool_schema",
+            original_tool_definitions=_tools("read_file", "repo_rg", "write_file"),
+            filtered_tool_definitions=_tools("write_file"),
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Required tools: repo_rg",
+                    "metadata": {"tool_contract": {"required_tools": ["repo_rg"]}},
+                }
+            ],
+        )
+
+        assert audit["status"] == "conflict"
+        assert audit["fail_closed"] is True
+        assert audit["removed_contract_required_tool_names"] == ["repo_rg"]
+        assert audit["removed_prompt_required_tool_names"] == ["repo_rg"]
+
+    def test_text_only_required_tool_removal_is_audit_only(self) -> None:
+        audit = build_tool_filter_audit(
+            filter_reason="weak_director_slim_tool_schema",
+            original_tool_definitions=_tools("read_file", "repo_rg", "write_file"),
+            filtered_tool_definitions=_tools("write_file"),
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Required tools (at least once): repo_rg\nCreate the target file.",
+                }
+            ],
+        )
+
+        assert audit["status"] == "pass"
+        assert audit["fail_closed"] is False
+        assert audit["removed_contract_required_tool_names"] == []
+        assert audit["removed_text_required_tool_names"] == ["repo_rg"]
+        assert audit["removed_prompt_required_tool_names"] == ["repo_rg"]
 
 
 class TestResolveFromScratchWriteTarget:

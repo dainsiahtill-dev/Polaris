@@ -37,6 +37,13 @@ class TestNpmDependencyRepair:
         pkg = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
         assert "alchemist" not in pkg["dependencies"]
         assert "express" in pkg["dependencies"]
+        receipts = runner.consume_repair_receipts()
+        assert len(receipts) == 1
+        assert receipts[0]["source_tool"] == "factory_workspace_quality.hallucinated_npm_dependency"
+        assert receipts[0]["path"] == "package.json"
+        assert receipts[0]["metadata"]["removed_dependencies"] == ["alchemist"]
+        assert receipts[0]["runtime_migration_required"] is True
+        assert runner.consume_repair_receipts() == []
 
     def test_remove_nonexistent_dependency_404(self, tmp_path: Path) -> None:
         """npm E404 error -> remove the hallucinated package."""
@@ -157,3 +164,47 @@ class TestNpmDependencyRepair:
         self._write_package_json(tmp_path, {"name": "test", "dependencies": {"a": "1.0"}})
         runner = WorkspaceQualityRunner(tmp_path)
         assert runner.repair_hallucinated_npm_dependencies("") == []
+
+    def test_cjs_export_import_mismatch_uses_controlled_patch_receipt(self, tmp_path: Path) -> None:
+        """CJS direct export mismatch -> controlled patch with receipt evidence."""
+        (tmp_path / "src" / "models").mkdir(parents=True)
+        (tmp_path / "src" / "models" / "Dream.js").write_text(
+            "class Dream {}\nmodule.exports = Dream;\n",
+            encoding="utf-8",
+        )
+        consumer = tmp_path / "src" / "main.js"
+        consumer.write_text(
+            'const { Dream } = require("./models/Dream");\nmodule.exports = new Dream();\n',
+            encoding="utf-8",
+        )
+        runner = WorkspaceQualityRunner(tmp_path)
+
+        repairs = runner.repair_cjs_export_import_mismatch()
+
+        assert repairs == [{"file": "src/main.js", "fix": "destructure_to_direct:Dream"}]
+        assert consumer.read_text(encoding="utf-8").startswith('const Dream = require("./models/Dream");')
+        receipts = runner.consume_repair_receipts()
+        assert len(receipts) == 1
+        assert receipts[0]["source_tool"] == "factory_workspace_quality.cjs_export_import_mismatch"
+        assert receipts[0]["path"] == "src/main.js"
+        assert receipts[0]["before_hash"] != receipts[0]["after_hash"]
+
+    def test_trim_mismatch_uses_controlled_patch_receipt(self, tmp_path: Path) -> None:
+        """Whitespace assertion mismatch -> controlled test patch with receipt evidence."""
+        (tmp_path / "tests").mkdir()
+        test_file = tmp_path / "tests" / "behavior.test.js"
+        test_file.write_text(
+            'const assert = require("assert");\nassert.strictEqual(result.name, "Tide");\n',
+            encoding="utf-8",
+        )
+        runner = WorkspaceQualityRunner(tmp_path)
+
+        patched = runner.repair_test_trim_mismatch("AssertionError: ' Tide ' !== 'Tide'")
+
+        assert patched == ["tests/behavior.test.js"]
+        assert "result.name.trim()" in test_file.read_text(encoding="utf-8")
+        receipts = runner.consume_repair_receipts()
+        assert len(receipts) == 1
+        assert receipts[0]["source_tool"] == "factory_workspace_quality.test_trim_mismatch"
+        assert receipts[0]["path"] == "tests/behavior.test.js"
+        assert receipts[0]["metadata"]["stderr_pattern"] == "whitespace_only_assertion_diff"

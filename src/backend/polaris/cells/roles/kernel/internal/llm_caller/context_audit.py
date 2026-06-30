@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from polaris.kernelone.context.projection_engine import is_empty_run_card_message
+from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 from .response_types import PreparedLLMRequest
 
@@ -21,10 +22,20 @@ _REF_BASED_SUPERSEDED_FINDING_CODES = frozenset(
         "underutilized_with_missing_context",
     }
 )
+_OPTIONAL_CONTEXT_QUALITY_FLAGS = frozenset(
+    {
+        # Only tasks with prior sibling modules can provide actual export evidence.
+        # Explicit evidence requirements still fail closed through
+        # final_request_evidence_coverage.
+        "has_actual_sibling_exports",
+    }
+)
 _COVERAGE_FLAG_TO_REF = {
     "has_pm_contract": "pm_contract",
     "has_chief_engineer_blueprint": "ce_blueprint",
     "has_module_interface_contract": "module_interface_contract",
+    "has_actual_sibling_exports": "actual_sibling_exports",
+    "has_architecture_or_file_plan": "architecture_or_file_plan",
     "has_target_files": "target_files",
     "has_failure_feedback": "failed_gate_evidence",
     "has_workspace_quality_evidence": "workspace_quality_evidence",
@@ -51,6 +62,22 @@ _EVIDENCE_REQUIREMENT_TO_REF = {
     "cross_artifact.interface_contract.v1": "module_interface_contract",
     "public_symbols": "module_interface_contract",
     "consumes_symbols": "module_interface_contract",
+    "actual_sibling_exports": "actual_sibling_exports",
+    "actual_export_summary": "actual_sibling_exports",
+    "actual_public_symbols": "actual_sibling_exports",
+    "existing_target_files": "actual_sibling_exports",
+    "interface_discrepancy_context": "interface_discrepancy_context",
+    "interface_discrepancy_evidence": "interface_discrepancy_context",
+    "interface_discrepancy_receipt": "interface_discrepancy_context",
+    "interface_discrepancy_receipts": "interface_discrepancy_context",
+    "interface_delta": "interface_discrepancy_context",
+    "interface_delta_receipt": "interface_discrepancy_context",
+    "interface_discrepancy_triage": "interface_discrepancy_context",
+    "task_boundary_interface_discrepancy": "interface_discrepancy_context",
+    "task_boundary_interface_discrepancy_retry": "interface_discrepancy_context",
+    "director_interface_discrepancy_retry": "interface_discrepancy_context",
+    "pending_design_interface_contract": "interface_discrepancy_context",
+    "director_retry_with_interface_discrepancy_context": "interface_discrepancy_context",
     "target_files_or_declared_scopes": "target_files",
     "target_files": "target_files",
     "declared_scopes": "target_files",
@@ -66,9 +93,11 @@ _EVIDENCE_REQUIREMENT_TO_REF = {
     "failed_gate_or_verification_evidence": "failed_gate_evidence",
     "verification_evidence": "failed_gate_evidence",
     "verification_failure_evidence": "failed_gate_evidence",
-    "architecture_or_file_plan": "ce_blueprint",
-    "architecture_plan": "ce_blueprint",
-    "file_plan": "ce_blueprint",
+    "architecture_or_file_plan": "architecture_or_file_plan",
+    "architecture_plan": "architecture_or_file_plan",
+    "file_plan": "architecture_or_file_plan",
+    "construction_plan": "architecture_or_file_plan",
+    "scope_for_apply": "architecture_or_file_plan",
 }
 
 
@@ -359,6 +388,13 @@ def _resident_agi_coverage_flags(text: str, ai_request: Any | None) -> dict[str,
 
 def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bool]:
     lowered = _trusted_coverage_text(text).lower()
+    module_interface_contract = _module_interface_contract_payload(ai_request) if ai_request is not None else {}
+    actual_sibling_exports = (
+        _actual_sibling_exports_payload(ai_request, module_interface_contract)
+        if ai_request is not None
+        else {}
+    )
+    architecture_or_file_plan = _architecture_or_file_plan_payload(ai_request) if ai_request is not None else {}
     blueprint_absent = any(
         marker in lowered
         for marker in (
@@ -403,7 +439,8 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
             )
         ),
         "has_chief_engineer_blueprint": has_chief_engineer_blueprint,
-        "has_module_interface_contract": any(
+        "has_module_interface_contract": bool(module_interface_contract)
+        or any(
             needle in lowered
             for needle in (
                 "module_interface_contract",
@@ -416,6 +453,34 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
                 "interface_names",
                 "本文件必须定义/导出",
                 "跨文件导入/调用必须逐字匹配",
+            )
+        ),
+        "has_actual_sibling_exports": bool(actual_sibling_exports)
+        or any(
+            needle in lowered
+            for needle in (
+                "actual_exports",
+                "actual_public_symbols",
+                "actual exported interface",
+                "actual export summary",
+                "已生成文件的实际导出接口",
+                "真实接口",
+            )
+        ),
+        "has_architecture_or_file_plan": bool(architecture_or_file_plan)
+        or any(
+            needle in lowered
+            for needle in (
+                "architecture_or_file_plan",
+                "architecture plan",
+                "file plan",
+                "construction_plan",
+                "scope_for_apply",
+                "architecture guidance/decisions",
+                "implementation_phases",
+                "module_boundaries",
+                "施工计划",
+                "文件计划",
             )
         ),
         "has_target_files": any(
@@ -478,7 +543,7 @@ def _context_quality_findings(
     execution_contract: dict[str, Any],
     message_projection_findings: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    missing = [key for key, ok in coverage.items() if not ok]
+    missing = [key for key, ok in coverage.items() if not ok and key not in _OPTIONAL_CONTEXT_QUALITY_FLAGS]
     findings: list[dict[str, Any]] = []
     findings.extend(message_projection_findings)
     if missing:
@@ -842,6 +907,433 @@ def _task_metadata(ai_request: Any) -> dict[str, Any]:
     return {}
 
 
+_MODULE_INTERFACE_CONTRACT_KEYS = (
+    "module_interface_contract",
+    "cross_file_interface_contract",
+    "cross_artifact_interface_contract",
+    "interface_contract",
+)
+
+_ARCHITECTURE_OR_FILE_PLAN_KEYS = (
+    "architecture_or_file_plan",
+    "architecture_plan",
+    "file_plan",
+    "construction_plan",
+    "scope_for_apply",
+    "architecture_decisions",
+    "implementation_phases",
+    "module_boundaries",
+    "scope_for_apply_advisory",
+)
+
+_INTERFACE_DISCREPANCY_CONTEXT_KEYS = (
+    "interface_discrepancy_context",
+    "interface_discrepancy_evidence",
+    "interface_discrepancy_receipt",
+    "interface_discrepancy_receipts",
+    "director_interface_discrepancy_receipt",
+    "director_interface_discrepancy_receipts",
+    "task_boundary_interface_discrepancy",
+    "task_boundary_interface_discrepancy_retry",
+    "director_interface_discrepancy_retry",
+)
+
+
+def _looks_like_module_interface_contract(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    schema_version = str(value.get("schema_version") or "").strip()
+    if schema_version == "chief_engineer.module_interface_contract.v1":
+        return True
+    modules = value.get("modules")
+    if not isinstance(modules, (list, tuple)):
+        return False
+    for module in modules:
+        if not isinstance(module, dict):
+            continue
+        if module.get("path") and (
+            module.get("actual_public_symbols")
+            or module.get("planned_public_symbols")
+            or module.get("consumes_symbols")
+        ):
+            return True
+    return False
+
+
+def _find_module_interface_contract(value: Any, *, depth: int = 0) -> dict[str, Any]:
+    if depth > 5:
+        return {}
+    if isinstance(value, dict):
+        for key in _MODULE_INTERFACE_CONTRACT_KEYS:
+            candidate = value.get(key)
+            if _looks_like_module_interface_contract(candidate):
+                return dict(candidate)
+        if _looks_like_module_interface_contract(value):
+            return dict(value)
+        for key in (
+            "ce_blueprint",
+            "chief_engineer_blueprint",
+            "blueprint",
+            "blueprint_payload",
+            "task_blueprint",
+            "task",
+            "metadata",
+            "context",
+            "delivery_contract",
+            "quality_contract",
+        ):
+            found = _find_module_interface_contract(value.get(key), depth=depth + 1)
+            if found:
+                return found
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            found = _find_module_interface_contract(item, depth=depth + 1)
+            if found:
+                return found
+    return {}
+
+
+def _module_interface_contract_payload(ai_request: Any | None) -> dict[str, Any]:
+    if ai_request is None:
+        return {}
+    context_payload = _request_context(ai_request)
+    for payload in (
+        context_payload,
+        _execution_contract(ai_request),
+        _task_metadata(ai_request),
+    ):
+        found = _find_module_interface_contract(payload)
+        if found:
+            return found
+    return {}
+
+
+def _module_interface_contract_summary(contract: dict[str, Any]) -> dict[str, Any]:
+    if not contract:
+        return {}
+    modules = contract.get("modules")
+    module_rows = [item for item in modules if isinstance(item, dict)] if isinstance(modules, (list, tuple)) else []
+    actual_export_module_count = sum(1 for item in module_rows if _string_list(item.get("actual_public_symbols")))
+    planned_export_module_count = sum(1 for item in module_rows if _string_list(item.get("planned_public_symbols")))
+    return {
+        "schema_version": str(contract.get("schema_version") or ""),
+        "source": str(contract.get("source") or ""),
+        "authority": str(contract.get("authority") or ""),
+        "language": str(contract.get("language") or ""),
+        "module_count": len(module_rows),
+        "actual_export_module_count": actual_export_module_count,
+        "planned_export_module_count": planned_export_module_count,
+        "actual_interface_snapshot_sources": _string_list(contract.get("actual_interface_snapshot_sources")),
+        "actual_interface_snapshot_file_count": _int_value(contract.get("actual_interface_snapshot_file_count")),
+        "interface_conflict_count": len(contract.get("interface_conflicts") or [])
+        if isinstance(contract.get("interface_conflicts"), list)
+        else 0,
+    }
+
+
+def _looks_like_actual_sibling_exports(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    schema_version = str(value.get("schema_version") or "").strip()
+    if schema_version == "polaris.actual_sibling_exports.evidence.v1":
+        return True
+    return isinstance(value.get("modules"), (list, tuple)) or _int_value(
+        value.get("actual_interface_snapshot_file_count")
+    ) > 0
+
+
+def _direct_actual_sibling_exports_payload(ai_request: Any | None) -> dict[str, Any]:
+    if ai_request is None:
+        return {}
+    context_payload = _request_context(ai_request)
+    for container in (
+        context_payload,
+        _mapping(context_payload.get("metadata")),
+        _task_metadata(ai_request),
+        _mapping(context_payload.get("ce_blueprint")),
+        _mapping(context_payload.get("chief_engineer_blueprint")),
+        _mapping(context_payload.get("blueprint")),
+    ):
+        candidate = container.get("actual_sibling_exports")
+        if _looks_like_actual_sibling_exports(candidate):
+            return dict(candidate)
+    return {}
+
+
+def _actual_sibling_exports_payload(
+    ai_request: Any | None,
+    module_interface_contract: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if ai_request is None:
+        return {}
+    direct_payload = _direct_actual_sibling_exports_payload(ai_request)
+    if direct_payload:
+        return direct_payload
+    contract = module_interface_contract or _module_interface_contract_payload(ai_request)
+    modules = contract.get("modules") if isinstance(contract, dict) else None
+    rows: list[dict[str, Any]] = []
+    if isinstance(modules, (list, tuple)):
+        for module in modules:
+            if not isinstance(module, dict):
+                continue
+            symbols = _string_list(module.get("actual_public_symbols"))
+            if not symbols:
+                continue
+            rows.append(
+                {
+                    "path": str(module.get("path") or "").strip(),
+                    "symbols": symbols,
+                    "symbol_source": str(module.get("symbol_source") or "").strip(),
+                }
+            )
+    context_payload = _request_context(ai_request)
+    existing_target_files: list[dict[str, Any]] = []
+    for container in (
+        context_payload,
+        _mapping(context_payload.get("ce_blueprint")),
+        _mapping(context_payload.get("chief_engineer_blueprint")),
+        _mapping(context_payload.get("blueprint")),
+        _task_metadata(ai_request),
+    ):
+        raw_rows = container.get("existing_target_files")
+        if isinstance(raw_rows, (list, tuple)):
+            existing_target_files.extend(dict(item) for item in raw_rows if isinstance(item, dict))
+    snapshot_file_count = _int_value(contract.get("actual_interface_snapshot_file_count")) if isinstance(contract, dict) else 0
+    if not rows and not existing_target_files and snapshot_file_count <= 0:
+        return {}
+    return {
+        "schema_version": "polaris.actual_sibling_exports.evidence.v1",
+        "modules": rows[:20],
+        "module_count": len(rows),
+        "existing_target_file_count": len(existing_target_files),
+        "actual_interface_snapshot_sources": _string_list(contract.get("actual_interface_snapshot_sources"))
+        if isinstance(contract, dict)
+        else [],
+        "actual_interface_snapshot_file_count": snapshot_file_count,
+    }
+
+
+def _looks_like_interface_discrepancy_payload(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    schema_version = str(value.get("schema_version") or "").strip()
+    if "interface_discrepancy" in schema_version or schema_version == "director.interface_delta.v1":
+        return True
+    if isinstance(value.get("interface_delta"), dict) or isinstance(value.get("triage_summary"), dict):
+        return True
+    if str(value.get("recommended_route") or "").strip() in {
+        "pending_design_interface_contract",
+        "director_retry_with_interface_discrepancy_context",
+        "task_boundary_interface_discrepancy",
+    }:
+        return True
+    if str(value.get("plan_probe_status") or value.get("reason") or "").strip() == "coverage_matched_but_unplannable":
+        return True
+    return bool(value.get("interface_delta_available") or value.get("triage_summary_available"))
+
+
+def _first_interface_discrepancy_mapping(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            if isinstance(item, dict):
+                return dict(item)
+    return {}
+
+
+def _find_interface_discrepancy_context(value: Any, *, depth: int = 0) -> dict[str, Any]:
+    if depth > 5:
+        return {}
+    if isinstance(value, dict):
+        for key in _INTERFACE_DISCREPANCY_CONTEXT_KEYS:
+            found = _first_interface_discrepancy_mapping(value.get(key))
+            if _looks_like_interface_discrepancy_payload(found):
+                return found
+        if _looks_like_interface_discrepancy_payload(value):
+            return dict(value)
+        for key in (
+            "metadata",
+            "context",
+            "repair",
+            "run_ledger",
+            "run_ledger_projection",
+            "evidence",
+            "physical_evidence",
+            "task_boundary",
+            "task_boundary_quality",
+            "plan_probe_preaudit",
+            "task_metadata",
+        ):
+            found = _find_interface_discrepancy_context(value.get(key), depth=depth + 1)
+            if found:
+                return found
+        modalities = value.get("modalities")
+        if isinstance(modalities, dict):
+            for modality in modalities.values():
+                found = _find_interface_discrepancy_context(modality, depth=depth + 1)
+                if found:
+                    return found
+        elif isinstance(modalities, (list, tuple)):
+            for modality in modalities:
+                found = _find_interface_discrepancy_context(modality, depth=depth + 1)
+                if found:
+                    return found
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            found = _find_interface_discrepancy_context(item, depth=depth + 1)
+            if found:
+                return found
+    return {}
+
+
+def _interface_discrepancy_context_payload(ai_request: Any | None) -> dict[str, Any]:
+    if ai_request is None:
+        return {}
+    context_payload = _request_context(ai_request)
+    payload = _find_interface_discrepancy_context(context_payload)
+    if not payload:
+        payload = _find_interface_discrepancy_context(_task_metadata(ai_request))
+    if not payload:
+        payload = _find_interface_discrepancy_context(_execution_contract(ai_request))
+    if not payload:
+        payload = _find_interface_discrepancy_context(_execution_envelope(ai_request))
+    if not payload:
+        return {}
+    nested_evidence = _find_interface_discrepancy_context(payload.get("interface_discrepancy_evidence"))
+    if nested_evidence:
+        payload = {**nested_evidence, **payload}
+
+    metadata = _mapping(payload.get("metadata"))
+    interface_delta = payload.get("interface_delta")
+    if not isinstance(interface_delta, dict):
+        interface_delta = metadata.get("interface_delta")
+    triage_summary = payload.get("triage_summary")
+    if not isinstance(triage_summary, dict):
+        triage_summary = metadata.get("triage_summary")
+    interface_delta_map = dict(interface_delta) if isinstance(interface_delta, dict) else {}
+    triage_summary_map = dict(triage_summary) if isinstance(triage_summary, dict) else {}
+    diagnostic_count = _int_value(
+        payload.get("covered_unplannable_diagnostic_count")
+        or payload.get("diagnostic_count")
+        or metadata.get("covered_unplannable_diagnostic_count")
+        or interface_delta_map.get("diagnostic_count")
+    )
+    diagnostics = payload.get("diagnostics")
+    if diagnostic_count <= 0 and isinstance(diagnostics, (list, tuple)):
+        diagnostic_count = len(diagnostics)
+    return {
+        "schema_version": "polaris.interface_discrepancy_context.evidence.v1",
+        "source_schema_version": str(payload.get("schema_version") or ""),
+        "source": str(payload.get("source") or payload.get("modality") or "interface_discrepancy_context"),
+        "plan_probe_status": str(payload.get("plan_probe_status") or metadata.get("plan_probe_status") or ""),
+        "reason": str(payload.get("reason") or metadata.get("reason") or ""),
+        "recommended_owner": str(
+            payload.get("recommended_owner")
+            or metadata.get("recommended_owner")
+            or triage_summary_map.get("recommended_owner")
+            or ""
+        ),
+        "recommended_route": str(
+            payload.get("recommended_route")
+            or metadata.get("recommended_route")
+            or triage_summary_map.get("recommended_route")
+            or ""
+        ),
+        "director_retry_allowed": _bool_value(
+            payload.get("director_retry_allowed")
+            if payload.get("director_retry_allowed") is not None
+            else metadata.get("director_retry_allowed")
+            if metadata.get("director_retry_allowed") is not None
+            else triage_summary_map.get("director_retry_allowed")
+        ),
+        "llm_fallback_blocked": _bool_value(
+            payload.get("llm_fallback_blocked")
+            if payload.get("llm_fallback_blocked") is not None
+            else metadata.get("llm_fallback_blocked")
+            if metadata.get("llm_fallback_blocked") is not None
+            else triage_summary_map.get("llm_fallback_blocked")
+        ),
+        "interface_delta_available": bool(interface_delta_map),
+        "interface_delta": interface_delta_map,
+        "interface_delta_hash": _stable_digest(interface_delta_map) if interface_delta_map else "",
+        "triage_summary_available": bool(triage_summary_map),
+        "triage_summary": triage_summary_map,
+        "triage_summary_hash": _stable_digest(triage_summary_map) if triage_summary_map else "",
+        "diagnostic_count": diagnostic_count,
+        "source_tools": _string_list(payload.get("source_tools") or metadata.get("source_tools")),
+    }
+
+
+def _architecture_payload_from_blueprint(value: Any) -> dict[str, Any]:
+    blueprint = _mapping(value)
+    if not blueprint:
+        return {}
+    payload: dict[str, Any] = {
+        key: blueprint.get(key)
+        for key in (
+            "construction_plan",
+            "scope_for_apply",
+            "architecture_decisions",
+            "execution_checklist",
+            "target_files",
+            "scope_paths",
+        )
+        if blueprint.get(key) not in (None, "", [])
+    }
+    llm_blueprint = _mapping(blueprint.get("llm_blueprint"))
+    for key in (
+        "implementation_phases",
+        "module_boundaries",
+        "verification_steps",
+        "scope_for_apply_advisory",
+        "risk_flags",
+    ):
+        if llm_blueprint.get(key) not in (None, "", []):
+            payload[f"llm_blueprint.{key}"] = llm_blueprint.get(key)
+    return payload
+
+
+def _architecture_or_file_plan_payload(ai_request: Any | None) -> dict[str, Any]:
+    if ai_request is None:
+        return {}
+    context_payload = _request_context(ai_request)
+    for key in _ARCHITECTURE_OR_FILE_PLAN_KEYS:
+        raw = context_payload.get(key)
+        if raw not in (None, "", []):
+            return {"source": f"context.{key}", "payload": raw}
+    for key in ("ce_blueprint", "chief_engineer_blueprint", "blueprint", "blueprint_payload", "task_blueprint"):
+        payload = _architecture_payload_from_blueprint(context_payload.get(key))
+        if payload:
+            return {"source": f"context.{key}", "payload": payload}
+    task_metadata = _task_metadata(ai_request)
+    for key in ("architecture_decisions", "execution_checklist", "implementation_plan", "file_plan"):
+        raw = task_metadata.get(key)
+        if raw not in (None, "", []):
+            return {"source": f"task_metadata.{key}", "payload": raw}
+    execution_profile = _execution_profile(ai_request)
+    raw_decisions = execution_profile.get("architecture_decisions")
+    if raw_decisions not in (None, "", []):
+        return {"source": "execution_profile.architecture_decisions", "payload": raw_decisions}
+    return {}
+
+
+def _architecture_or_file_plan_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    if not payload:
+        return {}
+    plan_payload = payload.get("payload")
+    plan_mapping = _mapping(plan_payload)
+    return {
+        "source": str(payload.get("source") or ""),
+        "construction_plan_present": bool(plan_mapping.get("construction_plan")),
+        "scope_for_apply_count": len(_string_list(plan_mapping.get("scope_for_apply"))),
+        "architecture_decision_count": len(_string_list(plan_mapping.get("architecture_decisions"))),
+        "execution_checklist_count": len(_string_list(plan_mapping.get("execution_checklist"))),
+        "target_files_count": len(_string_list(plan_mapping.get("target_files"))),
+        "payload_hash": _stable_digest(plan_payload),
+    }
+
+
 def _resident_agi_audit_context_summary(ai_request: Any) -> dict[str, Any]:
     audit_context = _resident_agi_audit_context(ai_request)
     if not audit_context:
@@ -876,6 +1368,10 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
     delivery_plan_document = _delivery_contract_payload(ai_request, "delivery_plan_document")
     delivery_depth_contract = _delivery_contract_payload(ai_request, "delivery_depth_contract")
     task_metadata = _task_metadata(ai_request)
+    module_interface_contract = _module_interface_contract_payload(ai_request)
+    actual_sibling_exports = _actual_sibling_exports_payload(ai_request, module_interface_contract)
+    interface_discrepancy_context = _interface_discrepancy_context_payload(ai_request)
+    architecture_or_file_plan = _architecture_or_file_plan_payload(ai_request)
     resident_agi_audit_context = _resident_agi_audit_context_summary(ai_request)
     summary: dict[str, Any] = {
         "schema_version": "llm.request_metadata_summary.v1",
@@ -921,6 +1417,24 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
         "has_task_metadata": bool(task_metadata),
         "task_metadata_keys": sorted(str(key) for key in task_metadata),
         "task_metadata_hash": _stable_digest(task_metadata) if task_metadata else "",
+        "has_module_interface_contract": bool(module_interface_contract),
+        "module_interface_contract_summary": _module_interface_contract_summary(module_interface_contract),
+        "module_interface_contract_hash": _stable_digest(module_interface_contract)
+        if module_interface_contract
+        else "",
+        "has_actual_sibling_exports": bool(actual_sibling_exports),
+        "actual_sibling_exports_summary": actual_sibling_exports,
+        "actual_sibling_exports_hash": _stable_digest(actual_sibling_exports) if actual_sibling_exports else "",
+        "has_interface_discrepancy_context": bool(interface_discrepancy_context),
+        "interface_discrepancy_context_summary": interface_discrepancy_context,
+        "interface_discrepancy_context_hash": _stable_digest(interface_discrepancy_context)
+        if interface_discrepancy_context
+        else "",
+        "has_architecture_or_file_plan": bool(architecture_or_file_plan),
+        "architecture_or_file_plan_summary": _architecture_or_file_plan_summary(architecture_or_file_plan),
+        "architecture_or_file_plan_hash": _stable_digest(architecture_or_file_plan)
+        if architecture_or_file_plan
+        else "",
         "has_resident_agi_audit_context": bool(resident_agi_audit_context),
         "resident_agi_audit_context": resident_agi_audit_context,
         "resident_agi_audit_context_hash": _stable_digest(resident_agi_audit_context)
@@ -1040,24 +1554,88 @@ def _tool_names_from_payload(value: Any) -> list[str]:
     return []
 
 
+def _canonical_tool_name(name: Any) -> str:
+    token = str(name or "").strip()
+    if not token:
+        return ""
+    try:
+        return str(ToolSpecRegistry.get_canonical(token) or token).strip()
+    except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+        return token
+
+
+def _canonical_tool_names(values: Any) -> list[str]:
+    return _unique_strings([canonical for value in _tool_names_from_payload(values) if (canonical := _canonical_tool_name(value))])
+
+
+def _required_tool_names_from_payload(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return _canonical_tool_names(value)
+    if isinstance(value, dict):
+        names: list[str] = []
+        for key in (
+            "required_tools",
+            "task_required_tools",
+            "must_call_tools",
+            "mandatory_tools",
+            "contract_required_tools",
+            "tool_requirements",
+        ):
+            names.extend(_required_tool_names_from_payload(value.get(key)))
+        return _unique_strings(names)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        names: list[str] = []
+        for item in value:
+            names.extend(_required_tool_names_from_payload(item))
+        return _unique_strings(names)
+    return []
+
+
+def _allowed_tool_names_from_payload(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return _canonical_tool_names(value)
+    if isinstance(value, dict):
+        names: list[str] = []
+        direct_name = str(value.get("name") or "").strip()
+        if direct_name:
+            names.append(direct_name)
+        function_payload = value.get("function")
+        if isinstance(function_payload, dict):
+            function_name = str(function_payload.get("name") or "").strip()
+            if function_name:
+                names.append(function_name)
+        for key in ("allowed_tools", "available_tools", "offered_tools", "tools"):
+            names.extend(_allowed_tool_names_from_payload(value.get(key)))
+        return _unique_strings([canonical for name in names if (canonical := _canonical_tool_name(name))])
+    if isinstance(value, (list, tuple, set, frozenset)):
+        names: list[str] = []
+        for item in value:
+            names.extend(_allowed_tool_names_from_payload(item))
+        return _unique_strings(names)
+    return []
+
+
 def _available_tool_names(tool_schema_payload: Any) -> list[str]:
     if not isinstance(tool_schema_payload, list):
         return []
-    return _unique_strings([name for tool in tool_schema_payload if (name := _tool_name_from_schema(tool))])
+    return _unique_strings(
+        [canonical for tool in tool_schema_payload if (canonical := _canonical_tool_name(_tool_name_from_schema(tool)))]
+    )
 
 
 def _required_tool_names(ai_request: Any) -> list[str]:
     context_payload = _request_context(ai_request)
     names: list[str] = []
-    for key in (
-        "required_tools",
-        "task_required_tools",
-        "tool_requirements",
-        "allowed_tools",
-        "tool_policy",
-        "tool_contract",
-    ):
-        names.extend(_tool_names_from_payload(context_payload.get(key)))
+    for key in ("required_tools", "task_required_tools", "tool_requirements", "tool_contract"):
+        names.extend(_required_tool_names_from_payload(context_payload.get(key)))
+    return _unique_strings(names)
+
+
+def _allowed_tool_names(ai_request: Any) -> list[str]:
+    context_payload = _request_context(ai_request)
+    names: list[str] = []
+    for key in ("allowed_tools", "available_tools", "offered_tools", "tool_policy", "tool_contract"):
+        names.extend(_allowed_tool_names_from_payload(context_payload.get(key)))
     return _unique_strings(names)
 
 
@@ -1127,7 +1705,11 @@ def _required_evidence_refs(
         elif normalized_role == "pm":
             refs.extend(["pm_raw_intent"])
         else:
-            refs.extend(ref for flag, ref in _COVERAGE_FLAG_TO_REF.items() if flag in coverage)
+            refs.extend(
+                ref
+                for flag, ref in _COVERAGE_FLAG_TO_REF.items()
+                if flag in coverage and flag not in _OPTIONAL_CONTEXT_QUALITY_FLAGS
+            )
     if request_metadata_summary.get("has_execution_profile"):
         refs.append("execution_profile")
     if request_metadata_summary.get("has_execution_strategy"):
@@ -1137,6 +1719,8 @@ def _required_evidence_refs(
         refs.append("execution_envelope")
     context_payload = _request_context(ai_request)
     refs.extend(_mapped_evidence_requirements(context_payload.get("required_evidence")))
+    if any(key in context_payload for key in _INTERFACE_DISCREPANCY_CONTEXT_KEYS):
+        refs.append("interface_discrepancy_context")
     return _unique_strings(refs)
 
 
@@ -1166,6 +1750,14 @@ def _included_evidence_refs(
         refs.append("output_contract")
     if request_metadata_summary.get("has_task_metadata"):
         refs.append("task_metadata")
+    if request_metadata_summary.get("has_module_interface_contract"):
+        refs.append("module_interface_contract")
+    if request_metadata_summary.get("has_actual_sibling_exports"):
+        refs.append("actual_sibling_exports")
+    if request_metadata_summary.get("has_interface_discrepancy_context"):
+        refs.append("interface_discrepancy_context")
+    if request_metadata_summary.get("has_architecture_or_file_plan"):
+        refs.append("architecture_or_file_plan")
     if receipt_refs:
         refs.append("receipt_store_refs")
     return _unique_strings(refs)
@@ -1258,6 +1850,11 @@ def _coverage_source(
         "ce_blueprint": workflow_chain.get("ce_blueprint_hash", ""),
         "handoff_decision": workflow_chain.get("handoff_decision_hash", ""),
         "module_interface_contract": str(request_metadata_summary.get("module_interface_contract_hash") or ""),
+        "actual_sibling_exports": str(request_metadata_summary.get("actual_sibling_exports_hash") or ""),
+        "interface_discrepancy_context": str(
+            request_metadata_summary.get("interface_discrepancy_context_hash") or ""
+        ),
+        "architecture_or_file_plan": str(request_metadata_summary.get("architecture_or_file_plan_hash") or ""),
         "execution_profile": workflow_chain.get("execution_profile_hash", ""),
         "execution_envelope": workflow_chain.get("execution_envelope_hash", ""),
         "execution_contract": str(request_metadata_summary.get("execution_contract_hash") or ""),
@@ -1274,7 +1871,14 @@ def _coverage_source(
     }
     source = "final_provider_request"
     confidence = "absent"
-    if present and ref_type in structured_refs:
+    structured_metadata_flags = {
+        "module_interface_contract": "has_module_interface_contract",
+        "actual_sibling_exports": "has_actual_sibling_exports",
+        "interface_discrepancy_context": "has_interface_discrepancy_context",
+        "architecture_or_file_plan": "has_architecture_or_file_plan",
+    }
+    structured_flag = structured_metadata_flags.get(ref_type)
+    if (structured_flag and request_metadata_summary.get(structured_flag)) or (present and ref_type in structured_refs):
         confidence = "structured_metadata"
     elif present:
         confidence = "text_heuristic"
@@ -1294,6 +1898,7 @@ def _coverage_source(
 def _ledger_evidence(ai_request: Any, *, receipt_refs: list[str] | None = None) -> dict[str, Any]:
     context_payload = _request_context(ai_request)
     ledger = _mapping(context_payload.get("run_ledger")) or _mapping(context_payload.get("run_ledger_projection"))
+    ledger_policy = _mapping(ledger.get("evidence_policy"))
     merged_receipt_refs: list[str] = []
     merged_receipt_refs.extend(_string_list(context_payload.get("receipt_refs")))
     merged_receipt_refs.extend(_string_list(ledger.get("receipt_refs")))
@@ -1306,10 +1911,14 @@ def _ledger_evidence(ai_request: Any, *, receipt_refs: list[str] | None = None) 
             or ""
         ),
         "failed_required_modalities": _string_list(
-            context_payload.get("failed_required_modalities") or ledger.get("failed_required_modalities")
+            context_payload.get("failed_required_modalities")
+            or ledger.get("failed_required_modalities")
+            or ledger_policy.get("failed_required_modalities")
         ),
         "missing_required_modalities": _string_list(
-            context_payload.get("missing_required_modalities") or ledger.get("missing_required_modalities")
+            context_payload.get("missing_required_modalities")
+            or ledger.get("missing_required_modalities")
+            or ledger_policy.get("missing_required_modalities")
         ),
         "receipt_refs": _unique_strings(merged_receipt_refs),
     }
@@ -1372,7 +1981,9 @@ def _final_request_evidence_coverage(
     missing_required_refs = [ref for ref in required_refs if ref not in included_refs]
     available_tools = _available_tool_names(tool_schema_payload)
     required_tools = _required_tool_names(ai_request)
+    allowed_tools = _allowed_tool_names(ai_request)
     missing_required_tools = [tool for tool in required_tools if tool not in available_tools]
+    removed_allowed_tools = [tool for tool in allowed_tools if available_tools and tool not in available_tools]
     workflow_chain = _workflow_chain(
         ai_request=ai_request,
         request_metadata_summary=request_metadata_summary,
@@ -1408,8 +2019,20 @@ def _final_request_evidence_coverage(
             for ref in coverage_source_refs
         ],
         "required_tools": required_tools,
+        "allowed_tools": allowed_tools,
         "available_tools": available_tools,
         "missing_required_tools": missing_required_tools,
+        "removed_allowed_tools": removed_allowed_tools,
+        "tool_surface": {
+            "required_tools": required_tools,
+            "allowed_tools": allowed_tools,
+            "offered_tools": available_tools,
+            "missing_required_tools": missing_required_tools,
+            "removed_allowed_tools": removed_allowed_tools,
+            "required_tool_source": "explicit_required_tool_fields_only",
+            "allowed_tool_source": "allowed_available_policy_contract_fields",
+            "canonicalized": True,
+        },
         "unexpected_tool_pruning": [
             {
                 "tool": tool,
@@ -1424,6 +2047,15 @@ def _final_request_evidence_coverage(
             "arg_aliases_present": bool(_request_context(ai_request).get("tool_arg_aliases")),
             "schema_hash": _stable_digest(tool_schema_payload) if tool_schema_payload else "",
             "missing_schema_tools": missing_required_tools,
+        },
+        "structured_evidence": {
+            "execution_envelope": bool(request_metadata_summary.get("has_execution_envelope")),
+            "module_interface_contract": bool(request_metadata_summary.get("has_module_interface_contract")),
+            "actual_sibling_exports": bool(request_metadata_summary.get("has_actual_sibling_exports")),
+            "interface_discrepancy_context": bool(
+                request_metadata_summary.get("has_interface_discrepancy_context")
+            ),
+            "architecture_or_file_plan": bool(request_metadata_summary.get("has_architecture_or_file_plan")),
         },
         "workflow_chain": workflow_chain,
         "ledger_evidence": _ledger_evidence(ai_request, receipt_refs=receipt_refs),
@@ -1664,6 +2296,12 @@ def build_final_request_context_audit_for_request(
         "has_execution_envelope": bool(request_metadata_summary.get("has_execution_envelope")),
         "has_language_guidance": bool(request_metadata_summary.get("has_language_guidance")),
         "has_output_contract": bool(request_metadata_summary.get("has_output_contract")),
+        "has_module_interface_contract": bool(request_metadata_summary.get("has_module_interface_contract")),
+        "has_actual_sibling_exports": bool(request_metadata_summary.get("has_actual_sibling_exports")),
+        "has_interface_discrepancy_context": bool(
+            request_metadata_summary.get("has_interface_discrepancy_context")
+        ),
+        "has_architecture_or_file_plan": bool(request_metadata_summary.get("has_architecture_or_file_plan")),
         "prompt_profile_selection": prompt_profile_selection,
         "selected_prompt_profile_ids": prompt_profile_selection.get("selected_prompt_profile_ids", []),
     }

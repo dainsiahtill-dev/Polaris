@@ -905,6 +905,87 @@ def test_scope_conflict_requeue_does_not_consume_retry_budget(tmp_path: Path) ->
     assert status.counts.get("dead_letter", 0) == 0
 
 
+def test_fail_requeue_preserves_interface_discrepancy_context_for_ce_claim(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskMarketService()
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="trace-interface-requeue",
+            run_id="run-interface-requeue",
+            task_id="task-interface-requeue",
+            stage="pending_exec",
+            source_role="chief_engineer",
+            payload={"title": "Repair cross-file contract"},
+            max_attempts=3,
+        )
+    )
+    claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_exec",
+            worker_id="director-1",
+            worker_role="director",
+            visibility_timeout_seconds=60,
+        )
+    )
+    assert claim.ok is True
+
+    amendment_request = {
+        "schema_version": "cross_artifact.contract_amendment_request.v1",
+        "task_id": "task-interface-requeue",
+        "requested_by": "director",
+        "reason": "consumer imports symbols the owner task never exported",
+    }
+    interface_context = {
+        "schema_version": "interface_discrepancy.context.v1",
+        "recommended_owner": "chief_engineer",
+        "interface_delta": [
+            {
+                "owner_file": "src/models/weather.py",
+                "consumer_file": "src/engine/forecast.py",
+                "missing_symbols": ["Weather", "WeatherKind"],
+            }
+        ],
+    }
+    failed = service.fail_task_stage(
+        FailTaskStageCommandV1(
+            workspace=str(workspace),
+            task_id="task-interface-requeue",
+            lease_token=claim.lease_token,
+            error_code="INTERFACE_CONTRACT_AMENDMENT_REQUIRED",
+            error_message="cross-artifact interface contract is missing",
+            requeue_stage="pending_design",
+            metadata={
+                "amendment_request": amendment_request,
+                "interface_discrepancy_context": interface_context,
+                "internal_debug_blob": {"should_not": "reach_claim_payload"},
+            },
+        )
+    )
+    assert failed.ok is True
+    assert failed.status == "pending_design"
+
+    ce_claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_design",
+            worker_id="chief-engineer-1",
+            worker_role="chief_engineer",
+            visibility_timeout_seconds=60,
+        )
+    )
+    assert ce_claim.ok is True
+    assert ce_claim.payload["amendment_request"] == amendment_request
+    assert ce_claim.payload["interface_discrepancy_context"] == interface_context
+    assert ce_claim.payload["requeue_context"] == {
+        "schema_version": "task_market.requeue_context.v1",
+        "keys": ["amendment_request", "interface_discrepancy_context"],
+    }
+    assert "internal_debug_blob" not in ce_claim.payload
+
+
 def test_claim_with_task_id_filter_respects_stage_param(tmp_path: Path) -> None:
     """A1: _select_claim_candidate must call is_claimable(stage, ...) not is_claimable(item.stage, ...)."""
     workspace = tmp_path / "workspace"

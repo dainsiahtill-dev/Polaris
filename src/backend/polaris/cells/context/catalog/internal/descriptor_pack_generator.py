@@ -197,6 +197,14 @@ class FunctionalAnalyzer(ast.NodeVisitor):
         self.functions: list[dict[str, Any]] = []
         self._current_class: dict[str, Any] | None = None
 
+    @staticmethod
+    def _should_publish_function(func_name: str) -> bool:
+        if func_name.startswith("_apply_deterministic_"):
+            return False
+        if func_name.startswith("repair_rust_"):
+            return False
+        return not (func_name.startswith("run_all_") and func_name.endswith("_post_repairs"))
+
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         doc = ast.get_docstring(node) or ""
         cls_info: dict[str, Any] = {
@@ -217,6 +225,8 @@ class FunctionalAnalyzer(ast.NodeVisitor):
 
         # Skip dunder methods except __init__
         if func_name.startswith("__") and func_name.endswith("__") and func_name != "__init__":
+            return
+        if not self._should_publish_function(func_name):
             return
 
         if self._current_class:

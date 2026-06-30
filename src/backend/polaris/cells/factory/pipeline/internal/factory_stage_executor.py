@@ -30,6 +30,7 @@ from polaris.cells.chief_engineer.blueprint.public import (
     generate_task_blueprint,
     validate_director_handoff_from_payload,
 )
+from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
 from polaris.cells.roles.kernel.public.service import QualityChecker
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleTaskCommandV1
@@ -5332,6 +5333,61 @@ class OrchestrationStageExecutor:
                 "coverage_gaps": [],
             }
 
+    def _workspace_quality_repair_plan_probe_report(self, artifact_quality_errors: list[str]) -> dict[str, Any]:
+        if not artifact_quality_errors:
+            return {}
+        try:
+            from polaris.cells.director.runtime.public import (
+                QueryDirectorRepairPlanProbeV1,
+                query_director_repair_plan_probe,
+            )
+
+            return query_director_repair_plan_probe(
+                QueryDirectorRepairPlanProbeV1(
+                    artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+                    base_files=self._workspace_quality_repair_plan_probe_base_files(artifact_quality_errors),
+                    metadata={
+                        "source": "factory_stage_executor.workspace_quality",
+                        "coverage_is_not_planning": True,
+                    },
+                )
+            ).to_dict()
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            return {
+                "schema_version": "factory.workspace_quality_repair_plan_probe_query_error.v1",
+                "source": "factory_stage_executor",
+                "access": "read_only",
+                "plan_probe_query_failed": True,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "total_diagnostics": len(artifact_quality_errors),
+                "status": "plan_probe_unavailable",
+                "coverage_is_not_planning": True,
+            }
+
+    def _workspace_quality_repair_plan_probe_base_files(self, artifact_quality_errors: list[str]) -> dict[str, str]:
+        workspace_root = self.workspace.resolve()
+        candidates: list[str] = []
+        candidates.extend(self._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors))
+        candidates.extend(self._workspace_quality_repair_target_files())
+        base_files: dict[str, str] = {}
+        for raw_candidate in candidates:
+            normalized = os.path.normpath(str(raw_candidate or "").strip().replace("\\", "/")).replace("\\", "/")
+            if not normalized or normalized in base_files or not _is_workspace_quality_repair_path(normalized):
+                continue
+            path = (workspace_root / normalized).resolve()
+            try:
+                if not path.is_relative_to(workspace_root) or not path.is_file():
+                    continue
+                if path.stat().st_size > 256_000:
+                    continue
+                base_files[normalized] = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError, ValueError):
+                continue
+            if len(base_files) >= 64:
+                break
+        return base_files
+
     def _apply_workspace_quality_repairs(
         self,
         *,
@@ -5394,10 +5450,14 @@ class OrchestrationStageExecutor:
             return []
         try:
             from polaris.cells.roles.adapters.public.service import (
-                run_director_cpp_post_execution_repairs,
+                run_director_post_execution_repair_schedule,
             )
 
-            return run_director_cpp_post_execution_repairs(self.workspace)
+            results, _summary = run_director_post_execution_repair_schedule(
+                self.workspace,
+                task_id="factory-workspace-quality-post-execution-repair",
+            )
+            return results
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return [
                 {
@@ -5810,7 +5870,7 @@ class OrchestrationStageExecutor:
         ]
         if not evidence:
             evidence = {
-                "schema_version": "director.task_boundary.interface_discrepancy.v1",
+                "schema_version": "director.interface_discrepancy_receipt.v1",
                 "route": "task_boundary_quality_loop",
                 "plan_probe_status": str(plan_probe_payload.get("status") or ""),
                 "covered_unplannable_source_tools": covered_unplannable_source_tools,
@@ -5836,10 +5896,28 @@ class OrchestrationStageExecutor:
             "does not provide an export",
             "sibling module does not define",
             "is not exported",
+            "undefined:",
+            "undefined symbol",
+            "unresolved external symbol",
+            "undefined reference",
+            "cannot find symbol",
+            "cannot find type",
+            "could not find",
+            "no such file or directory",
+            "file not found for module",
+            "unresolved import `",
+            "no `",
+            "not found in",
+            "was not declared in this scope",
+            "no member named",
+            "has no member named",
             "ts2305",
             "ts2306",
             "ts2307",
             "ts2459",
+            "e0432",
+            "e0583",
+            "e0761",
         )
         local_implementation_markers = (
             "ts2322",
@@ -5871,21 +5949,55 @@ class OrchestrationStageExecutor:
         director_retry_allowed = (
             recommended_owner == "director" and recommended_route == "director_retry_with_interface_discrepancy_context"
         )
-        evidence.update(
+        plan_probe_status = str(evidence.get("plan_probe_status") or plan_probe_payload.get("status") or "")
+        covered_unplannable_diagnostic_count = int(
+            plan_probe_payload.get(
+                "covered_unplannable_diagnostic_count",
+                evidence.get("covered_unplannable_diagnostic_count") or 0,
+            )
+            or 0
+        )
+        coverage_gap_count = int(
+            plan_probe_payload.get("coverage_gap_count", evidence.get("coverage_gap_count") or 0) or 0
+        )
+        metadata_raw = evidence.get("metadata")
+        metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+        metadata.update(
             {
-                "schema_version": "director.task_boundary.interface_discrepancy.v1",
                 "route": "task_boundary_quality_loop",
-                "plan_probe_status": str(evidence.get("plan_probe_status") or plan_probe_payload.get("status") or ""),
+                "cross_artifact_route": cross_artifact_route,
+                "coverage_gap_count": coverage_gap_count,
+            }
+        )
+        canonical = DirectorInterfaceDiscrepancyReceiptV1.from_mapping(
+            {
+                **evidence,
+                "task_id": str(
+                    summary.get("task_id")
+                    or summary.get("target_task_id")
+                    or summary.get("run_id")
+                    or "workspace-quality"
+                ),
+                "source": evidence.get("source") or "factory.pipeline.workspace_quality",
+                "plan_probe_status": plan_probe_status,
                 "covered_unplannable_source_tools": covered_unplannable_source_tools,
                 "recommended_owner": recommended_owner,
                 "recommended_route": recommended_route,
-                "cross_artifact_route": cross_artifact_route,
                 "director_retry_allowed": director_retry_allowed,
                 "llm_fallback_blocked": not director_retry_allowed,
                 "reason": "coverage_matched_but_unplannable",
+                "metadata": metadata,
+            },
+        ).to_dict()
+        canonical.update(
+            {
+                "route": "task_boundary_quality_loop",
+                "cross_artifact_route": cross_artifact_route,
+                "coverage_gap_count": coverage_gap_count,
+                "covered_unplannable_diagnostic_count": covered_unplannable_diagnostic_count,
             }
         )
-        return evidence
+        return canonical
 
     @staticmethod
     def _workspace_quality_interface_discrepancy_allows_director_retry(evidence: dict[str, Any]) -> bool:
@@ -5967,6 +6079,7 @@ class OrchestrationStageExecutor:
                     removed = self._workspace_quality.repair_hallucinated_npm_dependencies(stderr_text)
                     if removed:
                         result["repair"] = {"action": "remove_hallucinated_deps", "removed": removed}
+                        result["repair_receipts"] = self._workspace_quality.consume_repair_receipts()
                         retry_result = await asyncio.to_thread(
                             self._run_workspace_quality_command, command, timeout_seconds
                         )
@@ -6038,8 +6151,7 @@ class OrchestrationStageExecutor:
                     "source": context.get("factory_run_deadline_source"),
                 },
             }
-            artifact = "runtime/qa/workspace-validation.json"
-            self._write_json_artifact(artifact, payload)
+            artifact = self._write_workspace_validation_artifact(run, context, payload)
             return False, artifact
 
         def workspace_repair_deadline_blocker(phase: str) -> str:
@@ -6073,6 +6185,7 @@ class OrchestrationStageExecutor:
             has_deterministic_repairs = bool(cjs_repairs or trim_repairs)
             if has_deterministic_repairs:
                 repair_summary["deterministic_repairs"] = deterministic_repairs
+                repair_summary["deterministic_repair_receipts"] = self._workspace_quality.consume_repair_receipts()
                 # Re-run check commands after deterministic repairs
                 det_rerun: list[dict[str, Any]] = []
                 for command in run_commands:
@@ -6101,8 +6214,7 @@ class OrchestrationStageExecutor:
                         "commands": results,
                         "repair": repair_summary,
                     }
-                    artifact = "runtime/qa/workspace-validation.json"
-                    self._write_json_artifact(artifact, payload)
+                    artifact = self._write_workspace_validation_artifact(run, context, payload)
                     return True, artifact
 
             max_rounds = int(context.get("workspace_quality_repair_max_rounds") or _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS)
@@ -6129,6 +6241,7 @@ class OrchestrationStageExecutor:
                     "director_runtime_repair_coverage": self._workspace_quality_repair_coverage_report(
                         residual_errors or []
                     ),
+                    "plan_probe_preaudit": self._workspace_quality_repair_plan_probe_report(residual_errors or []),
                     "source_tools": list(dict.fromkeys(source_tools)),
                     "tool_results": len(repair_results),
                     "write_tool_evidence": write_tool_evidence,
@@ -6290,6 +6403,7 @@ class OrchestrationStageExecutor:
                     "attempted": True,
                     "artifact_quality_errors": repair_errors[:10],
                     "director_runtime_repair_coverage": self._workspace_quality_repair_coverage_report(repair_errors),
+                    "plan_probe_preaudit": self._workspace_quality_repair_plan_probe_report(repair_errors),
                     "tool_results": len(round_repair_results),
                     "source_tools": round_source_tools,
                     "write_tool_evidence": round_write_tool_evidence,
@@ -6358,6 +6472,7 @@ class OrchestrationStageExecutor:
                 "residual_error_count": len(residual_failures),
                 "residual_errors": residual_errors[:10],
                 "director_runtime_repair_coverage": residual_coverage_report,
+                "plan_probe_preaudit": self._workspace_quality_repair_plan_probe_report(residual_errors),
                 "source_tools": list(dict.fromkeys(source_tools)),
                 "tool_results": len(repair_results),
                 "write_tool_evidence": write_tool_evidence,
@@ -6398,9 +6513,76 @@ class OrchestrationStageExecutor:
         }
         if payload_warnings:
             payload["warnings"] = payload_warnings
+        artifact = self._write_workspace_validation_artifact(run, context, payload)
+        return bool(payload["passed"]), artifact
+
+    def _write_workspace_validation_artifact(
+        self,
+        run: FactoryRun,
+        context: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> str:
         artifact = "runtime/qa/workspace-validation.json"
         self._write_json_artifact(artifact, payload)
-        return bool(payload["passed"]), artifact
+        self._persist_workspace_validation_ledger(run, context, payload)
+        return artifact
+
+    def _persist_workspace_validation_ledger(
+        self,
+        run: FactoryRun,
+        context: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> None:
+        raw_commands = payload.get("commands")
+        commands = [dict(item) for item in raw_commands if isinstance(item, dict)] if isinstance(raw_commands, list) else []
+        for command in commands:
+            if "ok" not in command and "passed" in command:
+                command["ok"] = bool(command.get("passed"))
+        passed = bool(payload.get("passed"))
+        detail = str(payload.get("error") or ("workspace validation passed" if passed else "workspace validation failed"))
+        target_files = self._merge_string_list(
+            context.get("target_files")
+            or context.get("declared_source_targets")
+            or context.get("code_files")
+            or context.get("scope_paths")
+        )
+        scope_paths = self._merge_string_list(context.get("scope_paths") or target_files)
+        record = {
+            "id": str(context.get("project_id") or context.get("requested_project_id") or run.id),
+            "project_id": str(context.get("project_id") or context.get("requested_project_id") or run.id),
+            "run_id": run.id,
+            "target_files": target_files,
+            "scope_paths": scope_paths,
+            "acceptance_criteria": self._merge_string_list(
+                context.get("acceptance_criteria") or context.get("acceptance") or context.get("qa_contract")
+            ),
+            "required_evidence_modalities": ["command"] if commands else [],
+            "enabled_evidence_modalities": ["command"] if commands else [],
+            "chain": {"run_id": run.id},
+            "factory_workspace_quality_repair": payload.get("repair") if isinstance(payload.get("repair"), dict) else {},
+        }
+        gate = {
+            "ok": passed,
+            "summary": detail,
+            "command_count_total": len(commands),
+            "commands": commands,
+            "requirements": {"workspace_validation": {"ok": passed, "detail": detail}},
+            "repair_result": payload.get("repair") if isinstance(payload.get("repair"), dict) else {},
+        }
+        try:
+            from .run_ledger import persist_real_run_gate_ledger
+
+            persist_real_run_gate_ledger(
+                self.workspace,
+                record,
+                gate,
+                run_id=run.id,
+                project_id=str(record["project_id"]),
+                stage="workspace_validation",
+                gate_name="workspace_validation",
+            )
+        except Exception as exc:  # noqa: BLE001 - ledger evidence must not mask the validation verdict.
+            logger.debug("workspace validation ledger persistence failed for %s: %s", run.id, exc)
 
     @staticmethod
     def _qa_report_has_warning(payload: dict[str, Any], warning: str) -> bool:
@@ -6445,8 +6627,6 @@ class OrchestrationStageExecutor:
         target = str(context.get("qa_target") or "Quality gate")
         remaining_seconds = self._factory_deadline_remaining_seconds(context)
         warnings = [reason_code]
-        if reason_code != _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING:
-            warnings.append(_QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING)
         payload: dict[str, Any] = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source": "factory_stage_executor",

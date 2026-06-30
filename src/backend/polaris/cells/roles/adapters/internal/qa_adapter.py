@@ -896,11 +896,25 @@ class QAAdapter(BaseRoleAdapter):
                 )
         else:
             # LLM 审查输出是增强信息，不应成为单点致死条件。
-            # 当确定性静态门禁已通过时，仅将其记录为 warning，
-            # 避免因为模型格式漂移导致 quality_gate 假阴性失败。
-            merged["warnings"] = self._dedupe_list(
-                [*list(cast("list", merged["warnings"])), _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING]
-            )
+            # 当确定性门禁已经给出 hard blocker 时，不再把 LLM
+            # JSON 漂移投影成 QA route 异常；它只是附属证据。
+            deterministic_blocked = bool(merged["critical_issues"]) or str(merged["verdict"]).upper() in {
+                "FAIL",
+                "BLOCKED",
+            }
+            if deterministic_blocked:
+                merged["evidence"] = self._dedupe_list(
+                    [
+                        *list(cast("list", merged["evidence"])),
+                        "qa_llm_judgement_unavailable_suppressed=deterministic_gate_blocked",
+                    ]
+                )
+            else:
+                # 当确定性静态门禁已通过时，仅将其记录为 warning，
+                # 避免因为模型格式漂移导致 quality_gate 假阴性失败。
+                merged["warnings"] = self._dedupe_list(
+                    [*list(cast("list", merged["warnings"])), _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING]
+                )
             excerpt = str(llm.get("raw_excerpt") or "").strip()
             if excerpt:
                 merged["evidence"] = self._dedupe_list(

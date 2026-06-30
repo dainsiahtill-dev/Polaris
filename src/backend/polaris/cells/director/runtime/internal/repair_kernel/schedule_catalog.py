@@ -21,12 +21,27 @@ _CALLBACK_RECEIPT_PROJECTION_MIGRATION_BLOCKER = _ADAPTER_RECEIPT_PROJECTION_MIG
 _CANONICAL_CONVERGENCE_EXECUTOR = "RepairConvergenceScheduler"
 _FINAL_TYPED_RECEIPT_ENTRYPOINT = "run_runtime_repair_convergence"
 _CALLBACK_ROUND_ACCOUNTING_FIELDS = ("max_rounds", "rounds_run", "convergence_status", "stopped_reason")
+_SOURCE_TOOL_KIND_EXECUTABLE_RUNTIME = "executable_runtime"
+_SOURCE_TOOL_KIND_CALLBACK_SCHEDULE_LABEL = "callback_schedule_label"
+_ALLOWED_SOURCE_TOOL_KINDS = frozenset(
+    {
+        _SOURCE_TOOL_KIND_EXECUTABLE_RUNTIME,
+        _SOURCE_TOOL_KIND_CALLBACK_SCHEDULE_LABEL,
+    }
+)
 
 
 def _non_empty(value: str) -> str:
     normalized = str(value or "").strip()
     if not normalized:
         raise ValueError("repair schedule field must be non-empty")
+    return normalized
+
+
+def _source_tool_kind(value: str) -> str:
+    normalized = _non_empty(value)
+    if normalized not in _ALLOWED_SOURCE_TOOL_KINDS:
+        raise ValueError(f"repair schedule source_tool_kind must be one of {sorted(_ALLOWED_SOURCE_TOOL_KINDS)}")
     return normalized
 
 
@@ -39,6 +54,7 @@ class PostExecutionRepairScheduleStep:
     phase: str
     priority: int
     source_tool: str
+    source_tool_kind: str = _SOURCE_TOOL_KIND_EXECUTABLE_RUNTIME
     depends_on: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -47,7 +63,12 @@ class PostExecutionRepairScheduleStep:
         object.__setattr__(self, "phase", _non_empty(self.phase))
         object.__setattr__(self, "priority", max(0, int(self.priority)))
         object.__setattr__(self, "source_tool", _non_empty(self.source_tool))
+        object.__setattr__(self, "source_tool_kind", _source_tool_kind(self.source_tool_kind))
         object.__setattr__(self, "depends_on", tuple(str(item) for item in self.depends_on if str(item or "").strip()))
+
+    @property
+    def executable_runtime_source_tool(self) -> bool:
+        return self.source_tool_kind == _SOURCE_TOOL_KIND_EXECUTABLE_RUNTIME
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -56,6 +77,8 @@ class PostExecutionRepairScheduleStep:
             "phase": self.phase,
             "priority": self.priority,
             "source_tool": self.source_tool,
+            "source_tool_kind": self.source_tool_kind,
+            "executable_runtime_source_tool": self.executable_runtime_source_tool,
             "depends_on": list(self.depends_on),
         }
 
@@ -69,6 +92,7 @@ class MaterializationQualityRepairScheduleStep:
     phase: str
     priority: int
     source_tool: str
+    source_tool_kind: str = _SOURCE_TOOL_KIND_CALLBACK_SCHEDULE_LABEL
     depends_on: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -77,7 +101,12 @@ class MaterializationQualityRepairScheduleStep:
         object.__setattr__(self, "phase", _non_empty(self.phase))
         object.__setattr__(self, "priority", max(0, int(self.priority)))
         object.__setattr__(self, "source_tool", _non_empty(self.source_tool))
+        object.__setattr__(self, "source_tool_kind", _source_tool_kind(self.source_tool_kind))
         object.__setattr__(self, "depends_on", tuple(str(item) for item in self.depends_on if str(item or "").strip()))
+
+    @property
+    def executable_runtime_source_tool(self) -> bool:
+        return self.source_tool_kind == _SOURCE_TOOL_KIND_EXECUTABLE_RUNTIME
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,6 +115,8 @@ class MaterializationQualityRepairScheduleStep:
             "phase": self.phase,
             "priority": self.priority,
             "source_tool": self.source_tool,
+            "source_tool_kind": self.source_tool_kind,
+            "executable_runtime_source_tool": self.executable_runtime_source_tool,
             "depends_on": list(self.depends_on),
         }
 
@@ -215,6 +246,7 @@ _POST_EXECUTION_REPAIR_SCHEDULE: tuple[PostExecutionRepairScheduleStep, ...] = (
         phase="multi_phase_convergence",
         priority=0,
         source_tool="deterministic_rust_post_repair",
+        source_tool_kind=_SOURCE_TOOL_KIND_CALLBACK_SCHEDULE_LABEL,
     ),
     PostExecutionRepairScheduleStep(
         step_id="cpp.post_execution",
@@ -332,6 +364,15 @@ def _callback_schedule_summary(
     receipt_projections: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     evidence_summary = _callback_projection_evidence_summary(receipt_projections)
+    source_tool_kind_counts: dict[str, int] = {}
+    executable_runtime_source_tools: list[str] = []
+    callback_schedule_label_source_tools: list[str] = []
+    for step in ordered_steps:
+        source_tool_kind_counts[step.source_tool_kind] = source_tool_kind_counts.get(step.source_tool_kind, 0) + 1
+        if step.executable_runtime_source_tool:
+            executable_runtime_source_tools.append(step.source_tool)
+        else:
+            callback_schedule_label_source_tools.append(step.source_tool)
     return {
         **convergence_envelope_metadata(
             preferred_entrypoint="run_runtime_repair_convergence",
@@ -342,6 +383,10 @@ def _callback_schedule_summary(
         "step_count": len(tuple(ordered_steps or ())),
         "ordered_step_ids": [step.step_id for step in ordered_steps],
         "source_tools": [step.source_tool for step in ordered_steps],
+        "source_tool_kinds": [step.source_tool_kind for step in ordered_steps],
+        "source_tool_kind_counts": dict(sorted(source_tool_kind_counts.items())),
+        "executable_runtime_source_tools": executable_runtime_source_tools,
+        "callback_schedule_label_source_tools": callback_schedule_label_source_tools,
         "max_rounds": _coerce_max_rounds(max_rounds),
         "rounds_run": max(0, int(rounds_run)),
         "convergence_status": convergence_status,
@@ -460,6 +505,8 @@ def _project_callback_schedule_receipts(
         )
         step = steps_by_id.get(step_id or "")
         scheduled_source_tool = step.source_tool if step is not None else None
+        scheduled_source_tool_kind = step.source_tool_kind if step is not None else None
+        scheduled_source_tool_executable_runtime = step.executable_runtime_source_tool if step is not None else False
         callback_source_tool = _first_non_empty(payload.get("source_tool"), tool_result.get("source_tool"))
         source_tool = callback_source_tool or scheduled_source_tool
         round_number = _first_int(payload.get("round_number"), payload.get("scheduler_round_number"))
@@ -480,6 +527,8 @@ def _project_callback_schedule_receipts(
                 "step_id": step_id,
                 "source_tool": source_tool,
                 "scheduled_source_tool": scheduled_source_tool,
+                "scheduled_source_tool_kind": scheduled_source_tool_kind,
+                "scheduled_source_tool_executable_runtime": scheduled_source_tool_executable_runtime,
                 "callback_source_tool": callback_source_tool,
                 "adapter_source_tool": callback_source_tool,
                 "round_number": round_number,
@@ -831,6 +880,11 @@ def _annotate_tool_result(
     payload.setdefault("language", step.language)
     payload.setdefault("phase", step.phase)
     payload.setdefault("priority", step.priority)
+    payload.setdefault("scheduled_source_tool", step.source_tool)
+    payload.setdefault("scheduled_source_tool_kind", step.source_tool_kind)
+    payload.setdefault("scheduled_source_tool_executable_runtime", step.executable_runtime_source_tool)
+    payload.setdefault("schedule_source_tool_kind", step.source_tool_kind)
+    payload.setdefault("schedule_source_tool_is_runtime_executable", step.executable_runtime_source_tool)
     payload.setdefault("depends_on", list(step.depends_on))
     payload.setdefault("round_number", round_number)
     payload.setdefault("max_rounds", max_rounds)
