@@ -1278,14 +1278,14 @@ def test_run_factory_chain_director_resume_uses_existing_pm_ce_evidence(
         backend_token="",
         timeout_s=30,
         log_path=tmp_path / "L2-07.chain.log",
-        start_from="director",
+        start_from="director_resume",
     )
 
     assert result["exit_code"] == 0
-    assert result["start_from"] == "director"
+    assert result["start_from"] == "director_resume"
     assert result["factory_api_start_from"] == "director_resume"
     assert _LAST_FACTORY_START_PAYLOAD["start_from"] == "director_resume"
-    assert _LAST_FACTORY_START_PAYLOAD["metadata"]["factory_bench_start_from"] == "director"
+    assert _LAST_FACTORY_START_PAYLOAD["metadata"]["factory_bench_start_from"] == "director_resume"
     assert _LAST_FACTORY_START_PAYLOAD["metadata"]["factory_bench_api_start_from"] == "director_resume"
     assert _LAST_FACTORY_START_PAYLOAD["metadata"]["factory_bench_requested_project_id"] == "L2-07"
     assert _LAST_FACTORY_START_PAYLOAD["metadata"]["factory_bench_canonical_project_id"] == "L2-07"

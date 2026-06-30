@@ -1919,7 +1919,7 @@ def required_llm_roles_for_factory_record(
     director_evidence = False
     if isinstance(director_result, dict):
         director_evidence = any(value not in (None, "", 0) for value in director_result.values())
-    if start_from == "director":
+    if start_from == "director_resume":
         resume_roles = []
         if "director" in stage_hint or exit_class in {"director_partial", "qa_failed", "clean"} or director_evidence:
             resume_roles.append("director")
@@ -2705,10 +2705,10 @@ def run_factory_chain(
 ) -> dict[str, Any]:
     """Start a /v2/factory/runs for the project workspace and wait for completion."""
     normalized_start_from = str(start_from or "pm").strip().lower()
-    if normalized_start_from not in {"pm", "director", "director_resume"}:
+    if normalized_start_from not in {"pm", "director_resume"}:
         raise ValueError(f"unsupported factory bench start_from: {start_from!r}")
     requested_start_from = normalized_start_from
-    api_start_from = "director_resume" if normalized_start_from in {"director", "director_resume"} else normalized_start_from
+    api_start_from = "director_resume" if normalized_start_from == "director_resume" else normalized_start_from
     if api_start_from == "director_resume":
         _prepare_director_resume_workspace(workspace)
     else:
@@ -3101,12 +3101,9 @@ def main() -> int:
     )
     ap.add_argument(
         "--start-from",
-        choices=("pm", "director", "director_resume"),
+        choices=("pm", "director_resume"),
         default="pm",
-        help=(
-            "Factory bench stage to start from; director is a bench CLI alias for "
-            "director_resume, which reuses trusted PM/CE evidence and pre-Director snapshot"
-        ),
+        help="Factory bench stage to start from; director_resume reuses trusted PM/CE evidence and pre-Director snapshot",
     )
     ap.add_argument(
         "--use-legacy-chain",
@@ -3308,7 +3305,7 @@ def main() -> int:
         # Purge project directory completely to prevent stale contamination
         import shutil as _shutil
 
-        resume_director = str(args.start_from or "pm").strip().lower() == "director"
+        resume_director = str(args.start_from or "pm").strip().lower() == "director_resume"
         if workspace.exists() and not resume_director:
             _shutil.rmtree(workspace, ignore_errors=True)
         workspace.mkdir(parents=True, exist_ok=True)

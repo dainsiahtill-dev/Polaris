@@ -125,7 +125,7 @@ _FACTORY_RUN_DEADLINE_METADATA_KEYS = (
     "deadline_epoch_seconds",
 )
 _RETRY_START_POLICY_AFTER_CHECKPOINT = "after_checkpoint"
-FactoryStartFrom: TypeAlias = Literal["auto", "architect", "pm", "director", "director_resume"]
+FactoryStartFrom: TypeAlias = Literal["auto", "architect", "pm", "director_resume"]
 StageSequenceStatus: TypeAlias = Literal["completed", "cancelled", "quality_rework_requested"]
 _TASK_BOUNDARY_REWORK_REASON = "task_boundary_interface_discrepancy_required"
 _PLAN_PROBE_UNPLANNABLE_STATUS = "coverage_matched_but_unplannable"
@@ -298,10 +298,9 @@ def _build_retry_start_request(run: FactoryRun, workspace: str) -> FactoryStartR
     raw_start_payload = run.metadata.get("factory_start_request")
     start_payload = dict(raw_start_payload) if isinstance(raw_start_payload, dict) else {}
 
-    start_from = str(start_payload.get("start_from") or _infer_start_from_stages(configured_stages)).strip().lower()
-    if start_from == "director" and _infer_start_from_stages(configured_stages) == "director_resume":
-        start_from = "director_resume"
-    if start_from not in {"auto", "architect", "pm", "director", "director_resume"}:
+    stored_start_from = str(start_payload.get("start_from") or "").strip().lower()
+    start_from = stored_start_from if stored_start_from in {"auto", "architect", "pm", "director_resume"} else ""
+    if not start_from:
         start_from = _infer_start_from_stages(configured_stages)
 
     directive_value = _coerce_optional_string(start_payload.get("directive"))
@@ -798,7 +797,7 @@ def _normalize_start_from(start_from: str, workspace: str) -> str:
     normalized = str(start_from or "auto").strip().lower()
     if normalized in {"resume_director", "director-only", "director_only"}:
         normalized = "director_resume"
-    if normalized not in {"auto", "architect", "pm", "director", "director_resume"}:
+    if normalized not in {"auto", "architect", "pm", "director_resume"}:
         normalized = "auto"
     if normalized != "auto":
         return normalized
@@ -816,7 +815,7 @@ def _build_stage_list(start_from: str, run_director: bool) -> list[str]:
             "director_dispatch",
             "quality_gate",
         ]
-    if normalized in {"director", "pm"}:
+    if normalized == "pm":
         return [
             "pm_planning",
             "chief_engineer_review",

@@ -85,11 +85,10 @@ class FactoryStartRequest(BaseModel):
     """Factory 启动请求"""
 
     workspace: str = Field(..., description="工作区路径")
-    start_from: Literal["auto", "architect", "pm", "director", "director_resume"] = Field(
+    start_from: Literal["auto", "architect", "pm", "director_resume"] = Field(
         default="auto",
         description=(
             "入口策略: auto=自动判定, architect=从架构开始, pm=从规划开始, "
-            "director=旧兼容别名，按 PM→Chief Engineer→Director 全链路执行, "
             "director_resume=仅在已有 PM/CE/TaskBoard 证据时恢复 Director→QA"
         ),
     )

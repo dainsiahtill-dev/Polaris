@@ -394,9 +394,8 @@ def test_stream_route_is_not_registered(
     assert "text/event-stream" not in response.headers.get("content-type", "")
 
 
-def test_start_from_director_alias_builds_full_pm_chief_engineer_director_chain(
+def test_start_from_director_is_rejected_as_removed_legacy_alias(
     client: TestClient,
-    service: FactoryRunService,
     temp_workspace: Path,
 ) -> None:
     response = client.post(
@@ -409,19 +408,7 @@ def test_start_from_director_alias_builds_full_pm_chief_engineer_director_chain(
         },
     )
 
-    assert response.status_code == 200
-    payload = response.json()
-    run_id = str(payload.get("run_id") or "")
-    assert run_id
-
-    run = asyncio.run(service.get_run(run_id))
-    assert run is not None
-    assert list(run.config.stages) == [
-        "pm_planning",
-        "chief_engineer_review",
-        "director_dispatch",
-        "quality_gate",
-    ]
+    assert response.status_code == 422
 
 
 def test_start_from_pm_builds_pm_chief_engineer_director_chain(
@@ -704,7 +691,7 @@ def test_execute_run_reenters_director_when_quality_gate_requests_rework(temp_wo
     asyncio.run(service.start_run(run.id))
     payload = FactoryStartRequest(
         workspace=str(temp_workspace),
-        start_from="director",
+        start_from="director_resume",
         directive="Repair QA findings",
         run_director=True,
     )
@@ -737,7 +724,7 @@ def test_execute_run_reenters_director_when_quality_gate_reports_task_boundary_t
     asyncio.run(service.start_run(run.id))
     payload = FactoryStartRequest(
         workspace=str(temp_workspace),
-        start_from="director",
+        start_from="director_resume",
         directive="Repair task boundary discrepancy",
         run_director=True,
     )

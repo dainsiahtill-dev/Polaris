@@ -122,9 +122,11 @@ class TestFactoryStartRequest:
             FactoryStartRequest(workspace="/tmp/ws", director_iterations=11)
 
     def test_start_from_values(self) -> None:
-        for value in ("auto", "architect", "pm", "director", "director_resume"):
+        for value in ("auto", "architect", "pm", "director_resume"):
             req = FactoryStartRequest(workspace="/tmp/ws", start_from=value)  # type: ignore[arg-type]
             assert req.start_from == value
+        with pytest.raises(ValidationError):
+            FactoryStartRequest(workspace="/tmp/ws", start_from="director")  # type: ignore[arg-type]
 
     def test_rejects_legacy_director_dispatch_driver(self) -> None:
         with pytest.raises(ValidationError):
