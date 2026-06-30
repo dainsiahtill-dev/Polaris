@@ -219,7 +219,6 @@ class CanonicalDirectorAdapter(DirectorInterface):
             {
                 "pm_task_id": task.task_id,
                 "source": "pm.director_interface",
-                "delivery_compat": True,
             }
         )
         return {

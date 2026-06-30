@@ -250,7 +250,6 @@ class DirectorOrchestrator:
                         "workspace": self._workspace,
                         "metadata": {
                             "source": "application.director_orchestrator",
-                            "delivery_compat": True,
                         },
                     },
                 )

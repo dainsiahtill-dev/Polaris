@@ -73,7 +73,7 @@ async def test_director_orchestrator_execute_task_uses_canonical_adapter(
     call_task_id, input_data, context = fake_adapter.calls[-1]
     assert call_task_id == "1"
     assert input_data["metadata"]["source"] == "application.director_orchestrator"
-    assert context["metadata"]["delivery_compat"] is True
+    assert context["metadata"] == {"source": "application.director_orchestrator"}
     assert board.updates
     task_id, update = board.updates[-1]
     assert task_id == 1
