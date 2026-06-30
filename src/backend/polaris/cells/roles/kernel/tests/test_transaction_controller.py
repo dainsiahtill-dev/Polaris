@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from polaris.cells.roles.kernel.internal.kernel.turn_execution import _director_task_boundary_verdict
 from polaris.cells.roles.kernel.internal.metrics import MetricsCollector
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
@@ -47,6 +48,53 @@ def _native_tool_call(
             "arguments": json.dumps(arguments, ensure_ascii=False),
         },
     }
+
+
+def test_director_task_boundary_verdict_reports_missing_target(tmp_path: Path) -> None:
+    verdict = _director_task_boundary_verdict(
+        role="director",
+        workspace=str(tmp_path),
+        task_id="TASK-1",
+        run_id="run-1",
+        context_override={"target_files": ["src/index.js"]},
+        tool_results=[],
+    )
+
+    assert verdict is not None
+    assert verdict["status"] == "incomplete_materialization"
+    assert verdict["failure_class"] == "INCOMPLETE_MATERIALIZATION"
+    assert verdict["missing_target_files"] == ["src/index.js"]
+
+
+def test_director_task_boundary_verdict_reports_dropped_dispatch(tmp_path: Path) -> None:
+    verdict = _director_task_boundary_verdict(
+        role="director",
+        workspace=str(tmp_path),
+        task_id="TASK-1",
+        run_id="run-1",
+        context_override={},
+        tool_results=[],
+        tool_dispatch={"status": "dropped", "dropped": True},
+    )
+
+    assert verdict is not None
+    assert verdict["status"] == "tool_dispatch_dropped"
+    assert verdict["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert verdict["responsible_layer"] == "execution_control_plane"
+
+
+def test_director_task_boundary_verdict_skips_non_director(tmp_path: Path) -> None:
+    assert (
+        _director_task_boundary_verdict(
+            role="pm",
+            workspace=str(tmp_path),
+            task_id="TASK-1",
+            run_id="run-1",
+            context_override={"target_files": ["src/index.js"]},
+            tool_results=[],
+        )
+        is None
+    )
 
 
 # ============ Fixtures ============
