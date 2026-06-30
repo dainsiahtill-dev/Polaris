@@ -26,7 +26,7 @@ class _KernelStub:
         self._output_parser = OutputParser()
         self.parser_calls: list[dict[str, object]] = []
 
-    def _get_llm_caller(self) -> object:
+    def _get_llm_invoker(self) -> object:
         return SimpleNamespace(call=lambda **kwargs: None)
 
     def _get_output_parser(self) -> OutputParser:

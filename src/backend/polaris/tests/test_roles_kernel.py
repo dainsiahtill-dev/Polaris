@@ -902,7 +902,7 @@ class TestRoleExecutionKernel:
                     metadata={},
                 )
 
-        kernel.inject_llm_caller(_FakeLLMCaller())
+        kernel.inject_llm_invoker(_FakeLLMCaller())
 
         request = RoleTurnRequest(
             mode=RoleExecutionMode.CHAT,
@@ -945,7 +945,7 @@ class TestRoleExecutionKernel:
             def validate_output(self, *args, **kwargs):
                 raise AssertionError("validate_output should not run after thinking-only rejection")
 
-        kernel.inject_llm_caller(_FakeLLMCaller())
+        kernel.inject_llm_invoker(_FakeLLMCaller())
         kernel._injected_quality_checker = _FakeQualityChecker()
 
         request = RoleTurnRequest(
@@ -1018,7 +1018,7 @@ class TestRoleExecutionKernel:
                 captured["tool"] = tool_name
                 return {"tool": captured["tool"], "success": True, "result": {"exists": True}}
 
-        kernel.inject_llm_caller(_FakeLLMCaller())
+        kernel.inject_llm_invoker(_FakeLLMCaller())
         kernel.inject_tool_executor(_FakeToolExecutorWithCapture())
 
         request = RoleTurnRequest(
@@ -1070,7 +1070,7 @@ class TestRoleExecutionKernel:
     ):
         """开启 structured_output 时应把 response_model 透传给 LLM 调用。"""
         pytest.skip(
-            "RoleExecutionKernel no longer exposes the legacy private _llm_caller path; covered by runtime tests"
+            "RoleExecutionKernel no longer exposes the legacy private _llm_invoker path; covered by runtime tests"
         )
         structured_kernel = RoleExecutionKernel(
             workspace=temp_workspace,
@@ -1128,7 +1128,7 @@ class TestRoleExecutionKernel:
             captured["tool"] = str(getattr(call, "tool", "") or "")
             return {"tool": captured["tool"], "success": True, "result": {"exists": True}}
 
-        monkeypatch.setattr(structured_kernel._llm_caller, "call", fake_call)
+        monkeypatch.setattr(structured_kernel._llm_invoker, "call", fake_call)
         monkeypatch.setattr(
             structured_kernel._output_parser,
             "parse_execution_tool_calls",
@@ -1176,7 +1176,7 @@ class TestRoleExecutionKernel:
                 "error": "mock_tool_error",
             }
 
-        monkeypatch.setattr(kernel._llm_caller, "call", fake_call)
+        monkeypatch.setattr(kernel._llm_invoker, "call", fake_call)
         monkeypatch.setattr(
             kernel._quality_checker,
             "validate_output",

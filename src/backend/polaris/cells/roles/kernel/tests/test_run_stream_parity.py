@@ -162,7 +162,7 @@ def _make_request(message: str = "hello") -> RoleTurnRequest:
     )
 
 
-def _make_mock_llm_caller(
+def _make_mock_llm_invoker(
     ns_call_fn: Any | None = None,
     st_stream_fn: Any | None = None,
 ) -> Any:
@@ -255,7 +255,7 @@ async def test_run_and_stream_produce_equivalent_content() -> None:
         return {"success": True, "tool": tool_name, "result": {"path": "README.md"}}
 
     # Build engine with DI
-    mock_llm = _make_mock_llm_caller(ns_call_fn=ns_call, st_stream_fn=st_stream)
+    mock_llm = _make_mock_llm_invoker(ns_call_fn=ns_call, st_stream_fn=st_stream)
     engine = _build_engine(kernel, llm_caller=mock_llm)
     kernel._execute_single_tool = exec_tool  # type: ignore
 
@@ -340,7 +340,7 @@ async def test_run_and_stream_reuse_tool_receipt_context_for_finalization() -> N
     async def exec_tool(tool_name, args, context):
         return {"success": True, "tool": tool_name, "result": {"path": "README.md"}}
 
-    mock_llm = _make_mock_llm_caller(ns_call_fn=ns_call, st_stream_fn=st_stream)
+    mock_llm = _make_mock_llm_invoker(ns_call_fn=ns_call, st_stream_fn=st_stream)
     engine = _build_engine(kernel, llm_caller=mock_llm)
     kernel._execute_single_tool = exec_tool  # type: ignore
 
@@ -395,7 +395,7 @@ async def test_run_and_stream_emit_turn_envelope_metadata() -> None:
         yield {"type": "reasoning_chunk", "content": "Processing continue request"}
         yield {"type": "chunk", "content": "Done."}
 
-    mock_llm = _make_mock_llm_caller(ns_call_fn=ns_call, st_stream_fn=st_stream)
+    mock_llm = _make_mock_llm_invoker(ns_call_fn=ns_call, st_stream_fn=st_stream)
     engine = _build_engine(kernel, llm_caller=mock_llm)
 
     run_result = await engine.run(request=request, role="pm")
@@ -459,7 +459,7 @@ async def test_run_and_stream_produce_equivalent_tool_results() -> None:
     async def exec_tool(tool_name, args, context):
         return {"success": True, "tool": tool_name, "result": {"path": "README.md"}}
 
-    mock_llm = _make_mock_llm_caller(ns_call_fn=ns_call, st_stream_fn=st_stream)
+    mock_llm = _make_mock_llm_invoker(ns_call_fn=ns_call, st_stream_fn=st_stream)
     engine = _build_engine(kernel, llm_caller=mock_llm)
     kernel._execute_single_tool = exec_tool  # type: ignore
 
@@ -514,7 +514,7 @@ async def test_run_and_stream_surface_workflow_handoff_for_repeated_tool_failure
             "result": {"ok": False, "error": "File not found"},
         }
 
-    mock_llm = _make_mock_llm_caller(ns_call_fn=ns_call, st_stream_fn=st_stream)
+    mock_llm = _make_mock_llm_invoker(ns_call_fn=ns_call, st_stream_fn=st_stream)
     engine = _build_engine(kernel, llm_caller=mock_llm)
     kernel._execute_single_tool = exec_tool  # type: ignore
 
@@ -580,7 +580,7 @@ async def test_run_and_stream_code_block_examples_not_executed() -> None:
         # But we track if it gets called
         return {"success": True, "tool": tool_name, "result": {}}
 
-    mock_llm = _make_mock_llm_caller(ns_call_fn=ns_call, st_stream_fn=st_stream)
+    mock_llm = _make_mock_llm_invoker(ns_call_fn=ns_call, st_stream_fn=st_stream)
     engine = _build_engine(kernel, llm_caller=mock_llm)
 
     # For this test, we need to track tool executions
@@ -656,8 +656,8 @@ async def test_safety_state_is_not_used_in_run_or_run_stream() -> None:
                 metadata={},
             )
 
-        mock_llm = _make_mock_llm_caller(ns_call_fn=ns_call)
-        engine._llm_caller = mock_llm  # Inject mock directly
+        mock_llm = _make_mock_llm_invoker(ns_call_fn=ns_call)
+        engine._llm_invoker = mock_llm  # Inject mock directly
 
         ctrl = ToolLoopController.from_request(request=request, profile=kernel.registry.get_profile_or_raise("pm"))
         await engine.run(request=request, role="pm", controller=ctrl)
