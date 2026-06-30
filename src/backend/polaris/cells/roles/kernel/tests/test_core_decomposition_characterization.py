@@ -1,10 +1,10 @@
 """Characterization tests for RoleExecutionKernel core.py decomposition.
 
-These tests pin the CURRENT observable behavior of the four large in-class
-bodies in ``core.py`` BEFORE they are extracted into sibling collaborator
-modules (blueprint REMAINING_01). They are behavior-preserving guards:
+These tests pin the CURRENT observable behavior of the core run/stream
+coordinators after extraction into sibling collaborator modules. They are
+behavior-preserving guards:
 
-- ``_execute_transaction_kernel_stream`` event-translation matrix
+- ``execute_transaction_kernel_stream`` event-translation matrix
   (TurnPhaseEvent / ContentChunkEvent / ToolBatchEvent / CompletionEvent /
   ErrorEvent -> emitted dicts), including the failed-completion early-return
   and the finalization-chunk reset semantics.
@@ -13,7 +13,7 @@ modules (blueprint REMAINING_01). They are behavior-preserving guards:
 
 They intentionally drive the real coordinator methods while stubbing only the
 TransactionKernel boundary (``_create_transaction_kernel`` / the
-RoleContextGateway), so the extraction must keep the mapping byte-stable.
+RoleContextGateway), so the mapping stays byte-stable.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.turn_execution import execute_transaction_kernel_stream
 from polaris.cells.roles.kernel.public.turn_events import (
     CompletionEvent,
     ContentChunkEvent,
@@ -100,7 +101,7 @@ async def _drive_stream(kernel: RoleExecutionKernel, events: list[Any]) -> list[
         ),
     ):
         collected: list[dict[str, Any]] = []
-        async for event_dict in kernel._execute_transaction_kernel_stream(
+        async for event_dict in execute_transaction_kernel_stream(kernel,
             role="pm",
             profile=_MockProfile(),
             request=_MockRequest(),
@@ -275,7 +276,7 @@ class TestRunRetryQualityLoop:
         turn_mock = AsyncMock(return_value=te_result)
         with (
             patch.object(kernel, "_build_context", return_value=MagicMock()),
-            patch.object(kernel, "_execute_transaction_kernel_turn", new=turn_mock),
+            patch("polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn", new=turn_mock),
         ):
             result = await kernel.run("pm", _MockRequest(max_retries=3, validate_output=True))
         assert result.error == "kernel exploded"
@@ -297,7 +298,10 @@ class TestRunRetryQualityLoop:
         )
         with (
             patch.object(kernel, "_build_context", return_value=MagicMock()),
-            patch.object(kernel, "_execute_transaction_kernel_turn", new=AsyncMock(return_value=te_result)),
+            patch(
+                "polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn",
+                new=AsyncMock(return_value=te_result),
+            ),
         ):
             result = await kernel.run("pm", _MockRequest(validate_output=True))
         assert result.error is None
@@ -325,7 +329,7 @@ class TestRunRetryQualityLoop:
         turn_mock = AsyncMock(return_value=te_result)
         with (
             patch.object(kernel, "_build_context", return_value=MagicMock()),
-            patch.object(kernel, "_execute_transaction_kernel_turn", new=turn_mock),
+            patch("polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn", new=turn_mock),
             patch.object(kernel, "_get_quality_checker", lambda: quality_checker),
             patch.object(kernel, "_emit_event"),
         ):
@@ -357,7 +361,10 @@ class TestRunRetryQualityLoop:
         quality_checker = SimpleNamespace(validate_output=lambda *_a, **_k: passing_quality)
         with (
             patch.object(kernel, "_build_context", return_value=MagicMock()),
-            patch.object(kernel, "_execute_transaction_kernel_turn", new=AsyncMock(return_value=te_result)),
+            patch(
+                "polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn",
+                new=AsyncMock(return_value=te_result),
+            ),
             patch.object(kernel, "_get_quality_checker", lambda: quality_checker),
             patch.object(kernel, "_emit_event"),
         ):

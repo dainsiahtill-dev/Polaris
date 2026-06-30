@@ -189,7 +189,7 @@ def test_stream_avoids_per_chunk_full_rematerialization(monkeypatch) -> None:
 
     monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
 
-    # New architecture: stream is handled directly in RoleExecutionKernel._execute_transaction_kernel_stream
+    # New architecture: stream is handled directly in execute_transaction_kernel_stream
     # via StreamEventHandler.process_stream, not through TurnEngine._materialize_stream_visible_turn.
     from polaris.cells.roles.kernel.internal.turn_engine.stream_handler import StreamEventHandler
 

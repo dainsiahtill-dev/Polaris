@@ -12,6 +12,7 @@ from polaris.cells.roles.kernel.internal.kernel.context_assembly import build_co
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
 from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import request_forces_no_transaction_tools
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import _apply_forced_transaction_tool_definitions
+from polaris.cells.roles.kernel.internal.kernel.turn_execution import execute_transaction_kernel_turn
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.finalization import FinalizationHandler
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
@@ -676,7 +677,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=context_gateway,
             ),
         ):
-            result = await kernel._execute_transaction_kernel_turn(
+            result = await execute_transaction_kernel_turn(kernel,
                 role="director",
                 profile=profile,
                 request=request,
@@ -744,7 +745,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=read_only_tools,
             ),
         ):
-            result = await kernel._execute_transaction_kernel_turn(
+            result = await execute_transaction_kernel_turn(kernel,
                 role="director",
                 profile=profile,
                 request=request,
@@ -820,7 +821,7 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            result = await kernel._execute_transaction_kernel_turn(
+            result = await execute_transaction_kernel_turn(kernel,
                 role="director",
                 profile=profile,
                 request=request,
@@ -910,7 +911,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=full_tool_definitions,
             ),
         ):
-            result = await kernel._execute_transaction_kernel_turn(
+            result = await execute_transaction_kernel_turn(kernel,
                 role="director",
                 profile=profile,
                 request=request,
@@ -997,7 +998,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=full_tool_definitions,
             ),
         ):
-            result = await kernel._execute_transaction_kernel_turn(
+            result = await execute_transaction_kernel_turn(kernel,
                 role="director",
                 profile=profile,
                 request=request,
@@ -1053,7 +1054,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=context_gateway,
             ),
         ):
-            result = await kernel._execute_transaction_kernel_turn(
+            result = await execute_transaction_kernel_turn(kernel,
                 role="pm",
                 profile=profile,
                 request=request,
@@ -1121,7 +1122,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
             ),
         ):
-            result = await kernel._execute_transaction_kernel_turn(
+            result = await execute_transaction_kernel_turn(kernel,
                 role="pm",
                 profile=profile,
                 request=request,
@@ -1191,7 +1192,7 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            result = await kernel._execute_transaction_kernel_turn(
+            result = await execute_transaction_kernel_turn(kernel,
                 role="director",
                 profile=profile,
                 request=request,
@@ -1239,9 +1240,8 @@ class TestExecuteTransactionKernelTurn:
 
         with (
             patch.object(kernel, "_build_context", return_value=MagicMock()),
-            patch.object(
-                kernel,
-                "_execute_transaction_kernel_turn",
+            patch(
+                "polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn",
                 new=AsyncMock(return_value=transaction_result),
             ),
         ):
@@ -1287,7 +1287,7 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            result = await kernel._execute_transaction_kernel_turn(
+            result = await execute_transaction_kernel_turn(kernel,
                 role="director",
                 profile=profile,
                 request=request,
@@ -1351,7 +1351,7 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            result = await kernel._execute_transaction_kernel_turn(
+            result = await execute_transaction_kernel_turn(kernel,
                 role="pm",
                 profile=profile,
                 request=request,
@@ -1398,7 +1398,7 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            await kernel._execute_transaction_kernel_turn(
+            await execute_transaction_kernel_turn(kernel,
                 role="director",
                 profile=profile,
                 request=request,
@@ -1450,7 +1450,7 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            await kernel._execute_transaction_kernel_turn(
+            await execute_transaction_kernel_turn(kernel,
                 role="director",
                 profile=profile,
                 request=request,
@@ -1497,7 +1497,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
             ),
         ):
-            result = await kernel._execute_transaction_kernel_turn(
+            result = await execute_transaction_kernel_turn(kernel,
                 role="director",
                 profile=profile,
                 request=request,
@@ -1544,7 +1544,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
             ),
         ):
-            result = await kernel._execute_transaction_kernel_turn(
+            result = await execute_transaction_kernel_turn(kernel,
                 role="director",
                 profile=profile,
                 request=request,
@@ -1597,7 +1597,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
             ),
         ):
-            result = await kernel._execute_transaction_kernel_turn(
+            result = await execute_transaction_kernel_turn(kernel,
                 role="director",
                 profile=profile,
                 request=request,
@@ -1631,7 +1631,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
             ),
         ):
-            result = await kernel._execute_transaction_kernel_turn(
+            result = await execute_transaction_kernel_turn(kernel,
                 role="pm",
                 profile=profile,
                 request=request,

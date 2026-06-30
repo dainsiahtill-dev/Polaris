@@ -19,6 +19,10 @@ from polaris.cells.factory.cognitive_runtime.public.contracts import (
 )
 from polaris.cells.roles.kernel.internal.kernel.context_assembly import build_context_handoff_pack
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.turn_execution import (
+    execute_transaction_kernel_stream,
+    execute_transaction_kernel_turn,
+)
 from polaris.cells.roles.kernel.public import turn_contracts
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
 from polaris.domain.cognitive_runtime.models import ContextHandoffPack, TurnEnvelope
@@ -230,7 +234,7 @@ class TestTransactionKernelHandoffIntegration:
                 return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
             ),
         ):
-            result = await kernel._execute_transaction_kernel_turn(
+            result = await execute_transaction_kernel_turn(kernel,
                 role="director",
                 profile=cast(Any, profile),
                 request=cast(Any, request),
@@ -290,7 +294,7 @@ class TestTransactionKernelHandoffIntegration:
             ),
         ):
             events = []
-            async for event in kernel._execute_transaction_kernel_stream(
+            async for event in execute_transaction_kernel_stream(kernel,
                 role="director",
                 profile=cast(Any, profile),
                 request=cast(Any, request),

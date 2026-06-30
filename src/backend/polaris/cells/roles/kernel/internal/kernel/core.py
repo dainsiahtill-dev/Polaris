@@ -318,58 +318,6 @@ class RoleExecutionKernel:
         """
         return create_transaction_kernel(self, role, profile, request)
 
-    async def _execute_transaction_kernel_turn(
-        self,
-        role: str,
-        profile: RoleProfile,
-        request: RoleTurnRequest,
-        system_prompt: str,
-        fingerprint: Any,
-        observer_run_id: str,
-        response_schema: type | None,
-    ) -> RoleTurnResult:
-        """Execute a single turn via TransactionKernel and map to RoleTurnResult.
-
-        Delegates to
-        :mod:`polaris.cells.roles.kernel.internal.kernel.turn_execution`.
-        """
-        return await execute_transaction_kernel_turn(
-            self,
-            role,
-            profile,
-            request,
-            system_prompt,
-            fingerprint,
-            observer_run_id,
-            response_schema,
-        )
-
-    def _execute_transaction_kernel_stream(
-        self,
-        role: str,
-        profile: RoleProfile,
-        request: RoleTurnRequest,
-        system_prompt: str,
-        fingerprint: Any,
-        stream_run_id: str,
-        uep_publisher: UEPEventPublisher,
-    ) -> AsyncGenerator[dict[str, Any], None]:
-        """Stream execution via TransactionKernel (compatibility shim).
-
-        Delegates to
-        :mod:`polaris.cells.roles.kernel.internal.kernel.turn_execution`.
-        """
-        return execute_transaction_kernel_stream(
-            self,
-            role,
-            profile,
-            request,
-            system_prompt,
-            fingerprint,
-            stream_run_id,
-            uep_publisher,
-        )
-
     # ═══════════════════════════════════════════════════════════════════════════
     # 服务层访问器（懒加载 + 依赖注入支持）
     # ═══════════════════════════════════════════════════════════════════════════
@@ -560,7 +508,8 @@ class RoleExecutionKernel:
                 tags={"role": role, "attempt": attempt, "model": profile.model},
             ) as span:
                 llm_start_time = time.monotonic()
-                te_result = await self._execute_transaction_kernel_turn(
+                te_result = await execute_transaction_kernel_turn(
+                    self,
                     role=role,
                     profile=profile,
                     request=request,
@@ -864,7 +813,8 @@ class RoleExecutionKernel:
             system_prompt = self._build_system_prompt_for_request(profile, request, prompt_appendix)
 
             try:
-                async for event in self._execute_transaction_kernel_stream(
+                async for event in execute_transaction_kernel_stream(
+                    self,
                     role=role,
                     profile=profile,
                     request=request,

@@ -1,9 +1,9 @@
-"""Single-turn and streaming TransactionKernel execution for RoleExecutionKernel.
+"""Single-turn and streaming TransactionKernel execution.
 
-Holds the bodies of ``RoleExecutionKernel._execute_transaction_kernel_turn`` and
-``RoleExecutionKernel._execute_transaction_kernel_stream`` extracted verbatim
-(behavior-preserving) into free functions. The class methods become thin
-delegating shims.
+Owns the canonical free-function execution paths consumed by
+``RoleExecutionKernel.run`` and ``RoleExecutionKernel.run_stream``. The public
+kernel facade delegates to these functions directly so transaction execution has
+one implementation surface.
 
 Behavior notes:
 - The turn body and the stream body share the tool-definitions preamble shape
