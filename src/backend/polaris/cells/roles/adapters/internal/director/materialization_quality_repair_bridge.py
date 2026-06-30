@@ -14,15 +14,15 @@ from typing import Any
 from polaris.cells.director.runtime.public.service import (
     CompareDirectorRepairShadowRunV1,
     DirectorRepairMaterializationQualityStepV1,
-    PlanDirectorRepairCommandV1,
     QueryDirectorRepairCoverageV1,
+    QueryDirectorRepairMaterializationAllowedPathsV1,
     QueryDirectorRepairMaterializationQualityScheduleV1,
     QueryDirectorRepairPlanProbeV1,
     QueryDirectorRepairStrategyCatalogV1,
     RepairReceiptV1,
     compare_director_repair_shadow_run,
-    plan_director_repair,
     query_director_repair_coverage,
+    query_director_repair_materialization_allowed_paths,
     query_director_repair_materialization_quality_schedule,
     query_director_repair_plan_probe,
     query_director_repair_strategy_catalog,
@@ -827,27 +827,22 @@ def _collect_materialization_target_runtime_base_files(
     return base_files
 
 
-def _materialization_allowed_paths_from_runtime_shadow_plan(
+def _materialization_allowed_paths_from_runtime_public_plan(
     *,
     source_tool: str,
     base_files: Mapping[str, str],
     artifact_quality_errors: list[str],
 ) -> tuple[str, ...]:
-    allowed_paths: list[str] = [str(path) for path in base_files]
-    planning = plan_director_repair(
-        PlanDirectorRepairCommandV1(
+    result = query_director_repair_materialization_allowed_paths(
+        QueryDirectorRepairMaterializationAllowedPathsV1(
             source_tool=source_tool,
             base_files=base_files,
             artifact_quality_errors=tuple(artifact_quality_errors),
             mode="shadow",
+            metadata={"adapter_bridge": "materialization_quality_repair_bridge"},
         )
-    ).to_dict()
-    composition = planning.get("composition_summary")
-    if isinstance(composition, Mapping):
-        changed_paths = composition.get("changed_paths")
-        if isinstance(changed_paths, list | tuple | set):
-            allowed_paths.extend(str(path) for path in changed_paths if str(path or "").strip())
-    return tuple(dict.fromkeys(allowed_paths))
+    )
+    return result.allowed_paths
 
 
 def _add_bounded_workspace_materialization_base_files(
@@ -1021,7 +1016,7 @@ def _run_materialization_target_runtime(
                 executor_factory=DirectorToolExecutor,
                 base_files=base_files,
                 artifact_quality_errors=artifact_quality_errors,
-                allowed_paths=_materialization_allowed_paths_from_runtime_shadow_plan(
+                allowed_paths=_materialization_allowed_paths_from_runtime_public_plan(
                     source_tool=source_tool,
                     base_files=base_files,
                     artifact_quality_errors=artifact_quality_errors,

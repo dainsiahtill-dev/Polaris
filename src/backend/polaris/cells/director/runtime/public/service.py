@@ -80,6 +80,7 @@ from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairKernelSummaryProjectionResultV1,
     DirectorRepairLanguageSlotsResultV1,
     DirectorRepairLanguageSlotV1,
+    DirectorRepairMaterializationAllowedPathsResultV1,
     DirectorRepairMaterializationQualityScheduleResultV1,
     DirectorRepairMaterializationQualityScheduleRunResultV1,
     DirectorRepairMaterializationQualityStepV1,
@@ -110,6 +111,7 @@ from polaris.cells.director.runtime.public.contracts import (
     QueryDirectorRepairEnvironmentPrepCatalogV1,
     QueryDirectorRepairEnvironmentRefreshRequirementsV1,
     QueryDirectorRepairLanguageSlotsV1,
+    QueryDirectorRepairMaterializationAllowedPathsV1,
     QueryDirectorRepairMaterializationQualityScheduleV1,
     QueryDirectorRepairPlanProbeV1,
     QueryDirectorRepairPostExecutionScheduleV1,
@@ -1097,6 +1099,44 @@ def query_director_repair_plan_probe(query: QueryDirectorRepairPlanProbeV1) -> D
             "plannable_source_tool_count": len(plannable_source_tools),
             "covered_unplannable_diagnostic_count": len(covered_unplannable_diagnostics),
             "coverage_gap_count": len(uncovered_diagnostics),
+        },
+    )
+
+
+def query_director_repair_materialization_allowed_paths(
+    query: QueryDirectorRepairMaterializationAllowedPathsV1,
+) -> DirectorRepairMaterializationAllowedPathsResultV1:
+    """Return runtime-owned allowed paths for a materialization repair plan."""
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=query.source_tool,
+            base_files=query.base_files,
+            artifact_quality_errors=query.artifact_quality_errors,
+            mode=query.mode,
+            metadata={
+                **dict(query.metadata),
+                "public_entrypoint": "query_director_repair_materialization_allowed_paths",
+                "read_only_allowed_paths_plan": True,
+            },
+        )
+    )
+    composition = planning.composition_summary.to_dict()
+    changed_paths = tuple(str(path) for path in composition.get("changed_paths") or () if str(path or "").strip())
+    base_paths = tuple(str(path) for path in query.base_files if str(path or "").strip())
+    allowed_paths = _ordered_unique((*base_paths, *changed_paths))
+    return DirectorRepairMaterializationAllowedPathsResultV1(
+        source_tool=query.source_tool,
+        planning_result=planning,
+        base_paths=_ordered_unique(base_paths),
+        changed_paths=_ordered_unique(changed_paths),
+        allowed_paths=allowed_paths,
+        metadata={
+            "public_entrypoint": "query_director_repair_materialization_allowed_paths",
+            "read_only_allowed_paths_plan": True,
+            "base_path_count": len(base_paths),
+            "changed_path_count": len(changed_paths),
+            "allowed_path_count": len(allowed_paths),
         },
     )
 

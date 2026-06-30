@@ -2706,6 +2706,72 @@ class QueryDirectorRepairPlanProbeV1:
 
 
 @dataclass(frozen=True)
+class QueryDirectorRepairMaterializationAllowedPathsV1:
+    """Read-only materialization helper for repair execution allowed paths."""
+
+    source_tool: str
+    base_files: Mapping[str, str] = field(default_factory=dict)
+    artifact_quality_errors: tuple[str, ...] = ()
+    mode: str = "shadow"
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_tool", _require_non_empty("source_tool", self.source_tool))
+        object.__setattr__(self, "base_files", dict(self.base_files or {}))
+        object.__setattr__(self, "artifact_quality_errors", _to_tuple_str(list(self.artifact_quality_errors)))
+        object.__setattr__(self, "mode", str(self.mode or "shadow").strip() or "shadow")
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class DirectorRepairMaterializationAllowedPathsResultV1:
+    """Read-only runtime projection of materialization repair allowed paths."""
+
+    source_tool: str
+    planning_result: DirectorRepairPlanningResultV1
+    base_paths: tuple[str, ...] = ()
+    changed_paths: tuple[str, ...] = ()
+    allowed_paths: tuple[str, ...] = ()
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    schema_version: str = "director.materialization_allowed_paths_plan.v1"
+    owner_cell: str = "director.runtime"
+    execution_boundary: str = "read_only_materialization_allowed_paths_no_writes"
+    agi_execution_authority: bool = False
+    director_tool_execution_required: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_tool", _require_non_empty("source_tool", self.source_tool))
+        object.__setattr__(self, "base_paths", _to_tuple_str(list(self.base_paths)))
+        object.__setattr__(self, "changed_paths", _to_tuple_str(list(self.changed_paths)))
+        object.__setattr__(self, "allowed_paths", _to_tuple_str(list(self.allowed_paths)))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(
+            self,
+            "execution_boundary",
+            _require_non_empty("execution_boundary", self.execution_boundary),
+        )
+        object.__setattr__(self, "agi_execution_authority", False)
+        object.__setattr__(self, "director_tool_execution_required", False)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "source_tool": self.source_tool,
+            "owner_cell": self.owner_cell,
+            "execution_boundary": self.execution_boundary,
+            "agi_execution_authority": False,
+            "director_tool_execution_required": False,
+            "base_paths": list(self.base_paths),
+            "changed_paths": list(self.changed_paths),
+            "allowed_paths": list(self.allowed_paths),
+            "planning_result": self.planning_result.to_dict(),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class DirectorRepairPlanProbeItemV1:
     """One source-tool planning probe result for a covered diagnostic subset."""
 

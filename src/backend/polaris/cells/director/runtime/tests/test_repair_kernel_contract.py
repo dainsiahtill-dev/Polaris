@@ -121,6 +121,7 @@ from polaris.cells.director.runtime.public import (
     DirectorRepairKernelSummaryProjectionResultV1,
     DirectorRepairLanguageSlotsResultV1,
     DirectorRepairLanguageSlotV1,
+    DirectorRepairMaterializationAllowedPathsResultV1,
     DirectorRepairMaterializationQualityScheduleResultV1,
     DirectorRepairMetricsResultV1,
     DirectorRepairPlanningResultV1,
@@ -135,6 +136,7 @@ from polaris.cells.director.runtime.public import (
     QueryDirectorRepairAdvisoryValidationV1,
     QueryDirectorRepairCoverageV1,
     QueryDirectorRepairLanguageSlotsV1,
+    QueryDirectorRepairMaterializationAllowedPathsV1,
     QueryDirectorRepairMaterializationQualityScheduleV1,
     QueryDirectorRepairPlanProbeV1,
     QueryDirectorRepairPostExecutionScheduleV1,
@@ -153,6 +155,7 @@ from polaris.cells.director.runtime.public import (
     query_director_repair_advisory_policy,
     query_director_repair_coverage,
     query_director_repair_language_slots,
+    query_director_repair_materialization_allowed_paths,
     query_director_repair_materialization_quality_schedule,
     query_director_repair_plan_probe,
     query_director_repair_post_execution_schedule,
@@ -476,6 +479,43 @@ def test_javascript_module_error_with_unquoted_export_name_stays_javascript() ->
     assert probe.status == "covered_plannable"
     assert "deterministic_javascript_esm_commonjs_entrypoint_repair" in probe.plannable_source_tools
     assert no_stack_probe.status == "covered_plannable"
+
+
+def test_materialization_allowed_paths_query_merges_base_and_runtime_changed_paths() -> None:
+    error = (
+        "Artifact quality scan failed: workspace validation command failed (npm run start): "
+        "file:///tmp/project/src/index.js:1\n"
+        "SyntaxError: The requested module ./engine/AlchemyEngine.js "
+        "does not provide an export named default"
+    )
+    base_files = {
+        "package.json": '{"type":"module","scripts":{"start":"node src/index.js"}}',
+        "src/index.js": 'import AlchemyEngine from "./engine/AlchemyEngine.js";\n',
+        "src/engine/AlchemyEngine.js": (
+            "class AlchemyEngine {}\n"
+            "function buildDefaultEngine() { return {}; }\n"
+            "module.exports = AlchemyEngine;\n"
+            "module.exports.buildDefaultEngine = buildDefaultEngine;\n"
+        ),
+    }
+
+    result = query_director_repair_materialization_allowed_paths(
+        QueryDirectorRepairMaterializationAllowedPathsV1(
+            source_tool="deterministic_javascript_esm_commonjs_entrypoint_repair",
+            base_files=base_files,
+            artifact_quality_errors=(error,),
+        )
+    )
+
+    assert isinstance(result, DirectorRepairMaterializationAllowedPathsResultV1)
+    assert result.owner_cell == "director.runtime"
+    assert result.execution_boundary == "read_only_materialization_allowed_paths_no_writes"
+    assert result.director_tool_execution_required is False
+    assert result.planning_result.ok is True
+    assert "package.json" in result.allowed_paths
+    assert result.changed_paths
+    assert set(result.changed_paths).issubset(set(result.allowed_paths))
+    assert result.to_dict()["metadata"]["read_only_allowed_paths_plan"] is True
 
 
 def test_javascript_missing_export_without_declaration_is_covered_unplannable() -> None:
