@@ -80,9 +80,6 @@ from .generic_repairs import (
 from .npm_repairs import (
     _is_repairable_npm_test_script_error as _is_repairable_npm_test_script_error,
 )
-from .python_repairs import (
-    _build_unresolved_import_symbol_repair_block as _build_unresolved_import_symbol_repair_block,
-)
 from .typeorm_repairs import (
     _normalize_ts_class_field_initialization as _normalize_ts_class_field_initialization,
     _normalize_undeclared_typeorm_model_source as _normalize_undeclared_typeorm_model_source,
@@ -124,7 +121,6 @@ __all__ = [
     "_UNDECLARED_RUNTIME_IMPORT_ERROR_RE",
     "_UNRESOLVED_IMPORT_SYMBOL_ERROR_RE",
     "_UNRESOLVED_RELATIVE_IMPORT_ERROR_RE",
-    "_build_unresolved_import_symbol_repair_block",
     "_dedupe_paths",
     "_dependency_root_name",
     "_filter_pre_materialization_declared_target_errors",

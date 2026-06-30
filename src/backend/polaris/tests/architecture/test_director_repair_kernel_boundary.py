@@ -56,6 +56,7 @@ DETERMINISTIC_REPAIRS_ROOT = ROLES_DIRECTOR_ROOT / "deterministic_repairs"
 GENERIC_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "generic_repairs.py"
 RUNTIME_REPAIR_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "runtime_repair_tool_adapter.py"
 RUST_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "rust_repairs.py"
+PYTHON_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "python_repairs.py"
 GO_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "go_repairs.py"
 CPP_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "cpp_repairs.py"
 JAVA_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "java_repairs.py"
@@ -1222,6 +1223,7 @@ def test_materialization_quality_runtime_ports_consume_runtime_owned_schedule() 
     runtime_ports_source = _read_text(MATERIALIZATION_QUALITY_RUNTIME_PORTS_PATH)
     callback_ports_source = _read_text(MATERIALIZATION_QUALITY_CALLBACK_PORTS_PATH)
     evidence_ports_source = _read_text(MATERIALIZATION_QUALITY_EVIDENCE_PORTS_PATH)
+    deterministic_repairs_init_source = _read_text(DETERMINISTIC_REPAIRS_INIT_PATH)
     runner_step_ids = _module_level_dict_keys(
         MATERIALIZATION_QUALITY_CALLBACK_PORTS_PATH, "_MATERIALIZATION_QUALITY_REPAIR_RUNNERS"
     )
@@ -1260,6 +1262,8 @@ def test_materialization_quality_runtime_ports_consume_runtime_owned_schedule() 
     assert "materialization.quality_repair_host" not in callback_ports_source
     assert "materialization.typescript_compiler" in callback_ports_source
     assert "_apply_deterministic_materialization_quality_repairs" not in callback_ports_source
+    assert not PYTHON_REPAIRS_PATH.exists()
+    assert "python_repairs" not in deterministic_repairs_init_source
 
 
 def test_bridge_runner_keys_match_runtime_schedule_run_items_exactly() -> None:
