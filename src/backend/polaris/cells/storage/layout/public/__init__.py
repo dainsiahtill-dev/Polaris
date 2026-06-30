@@ -7,7 +7,6 @@ from polaris.cells.storage.layout.public.service import (
     ResolveRuntimePathQueryV1,
     ResolveStorageLayoutQueryV1,
     ResolveWorkspacePathQueryV1,
-    StorageLayoutError,
     StorageLayoutErrorV1,
     StorageLayoutResolvedEventV1,
     StorageLayoutResultV1,
@@ -32,7 +31,6 @@ __all__ = [
     "ResolveRuntimePathQueryV1",
     "ResolveStorageLayoutQueryV1",
     "ResolveWorkspacePathQueryV1",
-    "StorageLayoutError",
     "StorageLayoutErrorV1",
     "StorageLayoutResolvedEventV1",
     "StorageLayoutResultV1",
@@ -50,10 +48,3 @@ __all__ = [
     "save_persisted_settings",
     "sync_process_settings_environment",
 ]
-
-# Backward compatibility imports
-PolarisStorageLayout = PolarisStorageLayout
-PolarisStorageRoots = PolarisStorageRoots
-default_polaris_cache_base = default_polaris_cache_base
-polaris_home = polaris_home
-resolve_polaris_roots = resolve_polaris_roots

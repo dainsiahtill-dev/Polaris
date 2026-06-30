@@ -42,7 +42,6 @@ Resolve global, workspace and runtime persistence layout and path policies as a 
   - `message: str` (required)
   - `code: str` — error code (default: `"storage_layout_error"`)
   - `details: dict` — additional context
-  - `StorageLayoutError` — backward-compat alias (prefer `StorageLayoutErrorV1`)
 
 ## Public API (Business Layer)
 

@@ -99,17 +99,11 @@ class StorageLayoutErrorV1(RuntimeError):  # noqa: N818
         self.code = _require_non_empty("code", code)
         self.details = _to_dict_copy(details)
 
-
-# Backward-compat alias — prefer StorageLayoutErrorV1 in new code.
-StorageLayoutError = StorageLayoutErrorV1
-
-
 __all__ = [
     "RefreshStorageLayoutCommandV1",
     "ResolveRuntimePathQueryV1",
     "ResolveStorageLayoutQueryV1",
     "ResolveWorkspacePathQueryV1",
-    "StorageLayoutError",
     "StorageLayoutErrorV1",
     "StorageLayoutResolvedEventV1",
     "StorageLayoutResultV1",

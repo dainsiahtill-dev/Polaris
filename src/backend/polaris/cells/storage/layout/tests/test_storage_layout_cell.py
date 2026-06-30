@@ -32,7 +32,6 @@ from polaris.cells.storage.layout import (
     ResolveRuntimePathQueryV1,
     ResolveStorageLayoutQueryV1,
     ResolveWorkspacePathQueryV1,
-    StorageLayoutError,
     StorageLayoutErrorV1,
     StorageLayoutResultV1,
     default_polaris_cache_base,
@@ -234,12 +233,6 @@ class TestStorageLayoutErrorV1:
         assert err.code == "path_escape_rejected"
         assert err.details["path"] == "/etc/passwd"
         assert isinstance(err, RuntimeError)
-
-    def test_backward_compat_alias(self) -> None:
-        # StorageLayoutError must still work for existing consumers
-        err = StorageLayoutError("legacy message")
-        assert str(err) == "legacy message"
-        assert isinstance(err, StorageLayoutErrorV1)
 
 
 # ─── polaris_home() ───────────────────────────────────────────────────────
@@ -520,6 +513,7 @@ class TestResolvePolarisRoots:
         ramdisk = tmp_path / "ramdisk"
         ramdisk.mkdir()
         monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "1")
+        monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
         roots = resolve_polaris_roots(str(ws), ramdisk_root=str(ramdisk))
         assert roots.runtime_mode == "ramdisk"
 
