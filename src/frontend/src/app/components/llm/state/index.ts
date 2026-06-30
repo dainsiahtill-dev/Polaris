@@ -78,10 +78,10 @@ export type {
 } from './UnifiedLlmDataManagerV2';
 
 // ============================================================================
-// Legacy Exports (Backward Compatibility)
+// Provider reducer state exports
 // ============================================================================
 
-// Re-export from legacy modules for compatibility during migration
+// Re-export reducer types used by provider settings components.
 export type { ConnectivityStatus } from './providerReducer';
 
 // Re-export hooks from ProviderContext
@@ -89,10 +89,11 @@ export {
   ProviderContextProvider,
   useProviderState,
   useProviderActions,
-  useProviderContext,
   useSelectedRole,
   useSelectedProvider,
+  useSelectedMethod,
   useActiveTab,
+  useConfigView,
   useTestPanelState,
   useInterviewPanelState,
   useConnectivityStatus,
@@ -126,7 +127,6 @@ export {
   initialProviderState,
 } from './providerReducer';
 
-// Legacy exports removed
 
 
 // ============================================================================

@@ -143,7 +143,7 @@ interface ProviderActionsContextValue {
   setDeepView: (view: 'hall' | 'session') => void;
   setInterviewMode: (mode: 'interactive' | 'auto') => void;
 
-  // Actions - Provider Edit (Legacy)
+  // Actions - Provider Card Editing
   startEditProvider: (id: string) => void;
   stopEditProvider: () => void;
   toggleExpandProvider: (id: string) => void;
@@ -192,18 +192,12 @@ interface ProviderActionsContextValue {
   dispatch: React.Dispatch<ProviderAction>;
 }
 
-/** Legacy combined context (backward compatibility) */
-interface ProviderContextValue extends ProviderStateContextValue, ProviderActionsContextValue {}
-
 // ============================================================================
 // Context Creation
 // ============================================================================
 
 const ProviderStateContext = createContext<ProviderStateContextValue | null>(null);
 const ProviderActionsContext = createContext<ProviderActionsContextValue | null>(null);
-
-/** @deprecated Use split contexts or selector hooks instead */
-const ProviderContext = createContext<ProviderContextValue | null>(null);
 
 // ============================================================================
 // Provider Component
@@ -271,7 +265,7 @@ export function ProviderContextProvider({
   }, []);
 
   // ==========================================================================
-  // Provider Edit Actions (Legacy)
+  // Provider Card Edit Actions
   // ==========================================================================
   const startEditProvider = useCallback((id: string) => {
     dispatch(ProviderActions.startEditProvider(id));
@@ -508,21 +502,10 @@ export function ProviderContextProvider({
     ]
   );
 
-  // Legacy combined value (backward compatibility)
-  const legacyValue = useMemo<ProviderContextValue>(
-    () => ({
-      ...stateValue,
-      ...actionsValue,
-    }),
-    [stateValue, actionsValue]
-  );
-
   return (
     <ProviderStateContext.Provider value={stateValue}>
       <ProviderActionsContext.Provider value={actionsValue}>
-        <ProviderContext.Provider value={legacyValue}>
-          {children}
-        </ProviderContext.Provider>
+        {children}
       </ProviderActionsContext.Provider>
     </ProviderStateContext.Provider>
   );
@@ -550,15 +533,6 @@ export function useProviderActions(): ProviderActionsContextValue {
   return context;
 }
 
-/** @deprecated Use useProviderState + useProviderActions or selector hooks instead */
-export function useProviderContext(): ProviderContextValue {
-  const context = useContext(ProviderContext);
-  if (!context) {
-    throw new Error('useProviderContext must be used within ProviderContextProvider');
-  }
-  return context;
-}
-
 // ============================================================================
 // Selectors (for performance) - use split contexts internally
 // ============================================================================
@@ -573,9 +547,19 @@ export function useSelectedProvider(): string | null {
   return state.selectedProviderId;
 }
 
+export function useSelectedMethod(): 'sdk' | 'api' | 'cli' {
+  const { state } = useProviderState();
+  return state.selectedMethod;
+}
+
 export function useActiveTab(): 'config' | 'deepTest' {
   const { state } = useProviderState();
   return state.activeTab;
+}
+
+export function useConfigView(): 'list' | 'visual' {
+  const { state } = useProviderState();
+  return state.configView;
 }
 
 export function useTestPanelState(): { selectedProviderId: string | null; status: TestStatus } {

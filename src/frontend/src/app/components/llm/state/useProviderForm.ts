@@ -8,7 +8,8 @@
 import { useCallback, useMemo } from 'react';
 import type { ProviderConfig } from '../types';
 import {
-  useProviderContext,
+  useProviderActions,
+  useProviderState,
   useEditingProviderId,
   useEditFormState,
   useHasPendingChanges,
@@ -105,7 +106,7 @@ export function useProviderForm(options: UseProviderFormOptions): UseProviderFor
     saveEditFailure,
     cancelEdit,
     clearProviderError,
-  } = useProviderContext();
+  } = useProviderActions();
   
   // 从 Context 获取状态
   const editingProviderId = useEditingProviderId();
@@ -213,7 +214,7 @@ export function useProviderForm(options: UseProviderFormOptions): UseProviderFor
  * 用于管理多个 Provider 表单的列表场景
  */
 export function useProviderFormList() {
-  const { state } = useProviderContext();
+  const { state } = useProviderState();
   
   return {
     // 全局未保存更改数量

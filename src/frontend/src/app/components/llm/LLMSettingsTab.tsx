@@ -15,7 +15,9 @@ import { Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
 
 import {
   ProviderContextProvider,
-  useProviderContext,
+  useActiveTab,
+  useProviderActions,
+  useProviderState,
   useSelectedRole,
   useConnectivityStore,
   type RoleId,
@@ -290,8 +292,8 @@ function TabNavigation({
   factoryUnsupportedRoles: string[];
   blockedRoleDiagnostics: BlockedRoleDiagnostic[];
 }) {
-  const { state, switchTab } = useProviderContext();
-  const { activeTab } = state;
+  const activeTab = useActiveTab();
+  const { switchTab } = useProviderActions();
   const hasBlock =
     globalReadiness.state === "BLOCKED" || factoryReadiness.state === "BLOCKED";
   const statusLabel =
@@ -476,8 +478,8 @@ function DeepTestPanel({
   addTestEvent: (event: TestEvent) => void;
   resetTestEvents: () => void;
 }) {
+  const { state } = useProviderState();
   const {
-    state,
     setInterviewMode,
     setDeepView,
     selectRole,
@@ -485,7 +487,7 @@ function DeepTestPanel({
     openTestPanel,
     startTest,
     completeTest,
-  } = useProviderContext();
+  } = useProviderActions();
   const {
     interviewMode,
     deepView,
@@ -731,14 +733,14 @@ function LLMSettingsTabInner({
   onCancelTestProvider,
   onCancelInterview: _onCancelInterview,
 }: LLMSettingsTabProps) {
+  const { state } = useProviderState();
   const {
-    state,
     switchTab,
     startTest,
     completeTest,
     closeTestPanel,
     setConfigView,
-  } = useProviderContext();
+  } = useProviderActions();
   const { activeTab, configView, testPanel } = state;
 
   const { events, addEvent, resetEvents } = useTestEvents();

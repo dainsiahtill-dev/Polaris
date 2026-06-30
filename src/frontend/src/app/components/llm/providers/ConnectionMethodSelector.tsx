@@ -4,7 +4,7 @@
  */
 
 import React, { useMemo } from 'react';
-import { useProviderContext } from '../state';
+import { useProviderActions, useSelectedMethod } from '../state';
 import type { ConnectionMethodId } from '../state';
 
 interface ConnectionMethodMeta {
@@ -60,8 +60,8 @@ interface ConnectionMethodSelectorProps {
 }
 
 export function ConnectionMethodSelector({ availableMethods }: ConnectionMethodSelectorProps) {
-  const { state, selectMethod } = useProviderContext();
-  const { selectedMethod } = state;
+  const selectedMethod = useSelectedMethod();
+  const { selectMethod } = useProviderActions();
 
   const methods = useMemo(() => {
     if (!availableMethods || availableMethods.length === 0) {

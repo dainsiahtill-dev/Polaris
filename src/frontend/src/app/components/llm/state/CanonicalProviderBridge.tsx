@@ -209,7 +209,7 @@ function mapCanonicalToLegacyState(
     // Unified config (converted from entities) - will be refactored in Phase 5
     unifiedConfig: {} as UnifiedLlmConfig,
     
-    // Legacy edit state
+    // Provider card editing state
     editingProvider: canonical.asyncOps.savingProviderId || null,
     
     // New edit state (from canonical async ops)
@@ -297,7 +297,7 @@ export function CanonicalBridgeProvider({
 
   }, []);
   
-  // Provider Edit Actions (Legacy)
+  // Provider Card Edit Actions
   const startEditProvider = useCallback((id: string) => {
     manager.updateAsyncOps({ savingProviderId: id });
   }, [manager]);
@@ -323,13 +323,11 @@ export function CanonicalBridgeProvider({
   // New Edit Actions
   const startEdit = useCallback((providerId: string, initialConfig: ProviderConfig) => {
     manager.updateAsyncOps({ savingProviderId: providerId });
-    // Store form state in legacy format for compatibility
-    // Store form state in legacy format for compatibility
+    // Form state is owned by the active provider editor.
   }, [manager]);
   
   const updateEditForm = useCallback((providerId: string, updates: Partial<ProviderConfig>) => {
-    // Form updates handled locally in component during edit
-    // Form updates handled locally in component during edit
+    // Form updates are handled locally in the active provider editor.
   }, []);
   
   const saveEditStart = useCallback((providerId: string) => {

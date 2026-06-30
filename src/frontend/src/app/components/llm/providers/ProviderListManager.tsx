@@ -6,7 +6,12 @@
 import React, { useCallback, useMemo } from 'react';
 import { Plus, Settings, PlayCircle } from 'lucide-react';
 import type { ProviderConfig, ProviderSettingsProps } from '../types';
-import { useConnectivityStore, useProviderContext } from '../state';
+import {
+  useConnectivityStore,
+  useProviderActions,
+  useProviderState,
+  useSelectedMethod,
+} from '../state';
 import { ProviderCard } from './ProviderCard';
 import { ConnectionMethodSelector } from './ConnectionMethodSelector';
 import type { ProviderInfo } from '../types';
@@ -89,8 +94,9 @@ export function ProviderListManager({
   onTestProvider,
   onEnterDeepTest,
 }: ProviderListManagerProps) {
-  const { state, selectMethod, openTestPanel } = useProviderContext();
-  const { selectedMethod } = state;
+  const { state } = useProviderState();
+  const selectedMethod = useSelectedMethod();
+  const { openTestPanel } = useProviderActions();
   const providerTestStatusMap = state.providerTestStatus;
   const { getLatestProviderConnectivity } = useConnectivityStore();
 

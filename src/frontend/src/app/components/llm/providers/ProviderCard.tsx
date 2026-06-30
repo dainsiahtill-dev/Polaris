@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import type { ProviderConfig, ProviderSettingsProps } from "../types";
 import type { ConnectivityStatus } from "../state";
-import { useProviderContext, useIsProviderExpanded } from "../state";
+import { useProviderActions, useProviderState, useIsProviderExpanded } from "../state";
 import type { SimpleProviderStrict } from "../types/strict";
 import { isCLIProviderType, requiresApiKey } from "../types";
 import {
@@ -94,8 +94,9 @@ export const ProviderCard = memo(function ProviderCard({
   onDelete,
   onTest,
 }: ProviderCardProps) {
-  const { startEditProvider, stopEditProvider, toggleExpandProvider, state } =
-    useProviderContext();
+  const { state } = useProviderState();
+  const { startEditProvider, stopEditProvider, toggleExpandProvider } =
+    useProviderActions();
 
   const isExpanded = useIsProviderExpanded(providerId);
   const isEditing = state.editingProvider === providerId;

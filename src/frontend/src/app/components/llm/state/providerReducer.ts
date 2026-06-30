@@ -67,7 +67,7 @@ export interface ProviderState {
   deepView: DeepView;
   interviewMode: InterviewMode;
   
-  // Provider 编辑状态 (Legacy - 将逐步迁移到新的 editFormState)
+  // Provider card editing state
   editingProvider: string | null;
   expandedProviders: Set<string>;
   
@@ -118,7 +118,7 @@ export type ProviderAction =
   | { type: 'SET_DEEP_VIEW'; payload: DeepView }
   | { type: 'SET_INTERVIEW_MODE'; payload: InterviewMode }
   
-  // Provider 编辑 (Legacy)
+  // Provider card editing
   | { type: 'START_EDIT_PROVIDER'; payload: string }
   | { type: 'STOP_EDIT_PROVIDER' }
   | { type: 'TOGGLE_EXPAND_PROVIDER'; payload: string }
@@ -188,7 +188,7 @@ export const initialProviderState: ProviderState = {
   deepView: 'hall',
   interviewMode: 'interactive',
   
-  // Legacy edit state
+  // Provider card editing state
   editingProvider: null,
   expandedProviders: new Set(),
   
@@ -704,7 +704,7 @@ export const ProviderActions = {
   setDeepView: (view: DeepView): ProviderAction => ({ type: 'SET_DEEP_VIEW', payload: view }),
   setInterviewMode: (mode: InterviewMode): ProviderAction => ({ type: 'SET_INTERVIEW_MODE', payload: mode }),
   
-  // Legacy edit actions
+  // Provider card edit actions
   startEditProvider: (id: string): ProviderAction => ({ type: 'START_EDIT_PROVIDER', payload: id }),
   stopEditProvider: (): ProviderAction => ({ type: 'STOP_EDIT_PROVIDER' }),
   toggleExpandProvider: (id: string): ProviderAction => ({ type: 'TOGGLE_EXPAND_PROVIDER', payload: id }),
