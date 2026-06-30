@@ -93,8 +93,8 @@ describe('statusService', () => {
     await statusService.getAll('C:/Temp/Product');
 
     expect(apiFetchMock).toHaveBeenNthCalledWith(1, '/v2/pm/status?workspace=C%3A%2FTemp%2FProduct');
-    expect(apiFetchMock).toHaveBeenNthCalledWith(2, '/v2/director/status?workspace=C%3A%2FTemp%2FProduct');
+    expect(apiFetchMock).toHaveBeenNthCalledWith(2, '/v2/director/status?source=auto&workspace=C%3A%2FTemp%2FProduct');
     expect(apiFetchMock).toHaveBeenNthCalledWith(3, '/v2/pm/status?workspace=C%3A%2FTemp%2FProduct');
-    expect(apiFetchMock).toHaveBeenNthCalledWith(4, '/v2/director/status?workspace=C%3A%2FTemp%2FProduct');
+    expect(apiFetchMock).toHaveBeenNthCalledWith(4, '/v2/director/status?source=auto&workspace=C%3A%2FTemp%2FProduct');
   });
 });

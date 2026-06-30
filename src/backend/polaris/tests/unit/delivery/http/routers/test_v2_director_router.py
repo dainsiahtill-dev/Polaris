@@ -319,16 +319,47 @@ async def test_director_start_blocks_when_lifecycle_roles_not_ready(client: Asyn
 
 @pytest.mark.asyncio
 async def test_director_status(client: AsyncClient) -> None:
-    """Director status should return local role state via projection."""
+    """Director status should return workflow-aware merged state by default."""
     with patch(
         "polaris.cells.runtime.projection.public.service.RuntimeProjectionService.build_async",
         new_callable=AsyncMock,
     ) as mock_build:
         mock_projection = MagicMock()
         mock_projection.director_local = {"running": True, "status": {"state": "ACTIVE"}}
+        mock_projection.director_merged = {
+            "running": False,
+            "source": "workflow",
+            "status": {"state": "COMPLETED"},
+        }
         mock_build.return_value = mock_projection
 
         response = await client.get("/v2/director/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["projection_source"] == "director_merged"
+        assert data["running"] is False
+        assert data["state"] == "COMPLETED"
+        assert data["status"]["state"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_director_status_local_source_uses_local_projection(client: AsyncClient) -> None:
+    """Director status can still expose local role state when explicitly requested."""
+    with patch(
+        "polaris.cells.runtime.projection.public.service.RuntimeProjectionService.build_async",
+        new_callable=AsyncMock,
+    ) as mock_build:
+        mock_projection = MagicMock()
+        mock_projection.director_local = {"running": True, "status": {"state": "ACTIVE"}}
+        mock_projection.director_merged = {
+            "running": False,
+            "source": "workflow",
+            "status": {"state": "COMPLETED"},
+        }
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/status?source=local")
         assert response.status_code == 200
         data = response.json()
         assert data["ok"] is True

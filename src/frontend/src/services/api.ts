@@ -55,6 +55,13 @@ function workspaceQuerySuffix(workspace = ""): string {
   return workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
 }
 
+function directorStatusQuerySuffix(workspace = ""): string {
+  const workspaceSuffix = workspace
+    ? `&workspace=${encodeURIComponent(workspace)}`
+    : "";
+  return `?source=auto${workspaceSuffix}`;
+}
+
 function extractApiErrorString(value: unknown): string | null {
   if (typeof value === "string" && value.trim()) {
     return value.trim();
@@ -164,7 +171,7 @@ export const statusService = {
 
   async getDirector(workspace = ""): Promise<ApiResult<BackendStatus>> {
     const res = await apiFetch(
-      `/v2/director/status${workspaceQuerySuffix(workspace)}`,
+      `/v2/director/status${directorStatusQuerySuffix(workspace)}`,
     );
     if (!res.ok) {
       return handleResponse(res, "Failed to load Director status");
@@ -183,7 +190,7 @@ export const statusService = {
   }> {
     const [pmRes, directorRes] = await Promise.all([
       apiFetch(`/v2/pm/status${workspaceQuerySuffix(workspace)}`),
-      apiFetch(`/v2/director/status${workspaceQuerySuffix(workspace)}`),
+      apiFetch(`/v2/director/status${directorStatusQuerySuffix(workspace)}`),
     ]);
     let director: ApiResult<BackendStatus>;
     if (!directorRes.ok) {

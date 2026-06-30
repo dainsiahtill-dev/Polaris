@@ -419,13 +419,14 @@ async def stop_director(
 @router.get("/status", dependencies=[Depends(require_auth)])
 async def get_status(
     request: Request,
-    source: Literal["local", "auto"] = "local",
+    source: Literal["local", "auto"] = "auto",
     workspace: str = "",
 ) -> dict[str, Any]:
     """Get director status.
 
-    By default this endpoint preserves the legacy local-only contract. Callers
-    that need PM-workflow-aware status can request ``source=auto``.
+    By default this endpoint returns the workflow-aware RuntimeProjection view.
+    Callers that specifically need local service state can request
+    ``source=local``.
     """
     # Get service from app state
     state = getattr(request.app.state, "app_state", None) or request.app.state
