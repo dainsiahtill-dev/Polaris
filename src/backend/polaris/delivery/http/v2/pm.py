@@ -5,7 +5,7 @@ All business logic is in the service layer.
 
 This is the V2 API - use /v2/pm/* endpoints.
 
-Phase 6 Update: 新增统一编排兼容端点，内部转发到 UnifiedOrchestrationService
+Unified PM orchestration endpoints backed by the governed workflow services.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from polaris.application.health import get_lancedb_status
 
-# Phase 6: 统一编排集成
+# Governed orchestration integration
 from polaris.cells.orchestration.workflow_runtime.public.service import (
     OrchestrationError,
     get_orchestration_service,
@@ -51,7 +51,7 @@ _TERMINAL_ORCHESTRATION_STATUSES = {"completed", "failed", "cancelled", "cancele
 
 
 # ============================================================================
-# Phase 6: 统一编排请求模型
+# Unified orchestration request models
 # ============================================================================
 
 
@@ -61,7 +61,7 @@ class PMRunOrchestrationRequest(BaseModel):
     workspace: str = Field(default=".", description="工作区路径")
     directive: str = Field(default="", description="需求指令")
     stage: str = Field(default="pm", description="阶段: architect 或 pm")
-    run_director: bool = Field(default=False, description="旧兼容字段；启用 PM -> Chief Engineer -> Director 全链路")
+    run_director: bool = Field(default=False, description="启用 PM -> Chief Engineer -> Director 全链路")
     director_iterations: int = Field(default=2, description="Director 迭代次数")
     metadata: dict[str, object] = Field(default_factory=dict, description="可选运行时元数据")
 
@@ -715,7 +715,7 @@ def pm_diagnostics(request: Request, workspace: str = "") -> PMDiagnosticsRespon
 
 
 # ============================================================================
-# Phase 6: 统一编排兼容端点
+# Unified orchestration endpoint
 # ============================================================================
 
 

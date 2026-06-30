@@ -12,9 +12,9 @@ Subcommand map:
   serve    → ServeRoute (start backend HTTP server)
   cell     → CellRoute (cell catalog / info)
   agentic-eval → deterministic benchmark (score + failures + audit + repair)
-  chat     → Legacy alias → RoleRuntimeService interactive/oneshot/server
+  chat     → retired alias with explicit migration response
   status   → Query role runtime status
-  workflow → Polaris workflow management
+  workflow → retired alias with explicit migration response
 
 All handlers return an int exit code (0 = success, non-zero = failure).
 """
@@ -870,21 +870,28 @@ class CliRouter:
         if cmd == "sync":
             return _route_sync(args)
 
-        # Legacy commands (delegate to polaris_cli logic)
+        # Retired command names. Keep parser compatibility, but do not dispatch
+        # through the old polaris_cli host because that preserves a second
+        # executable route surface outside the canonical CLI/router contract.
         if cmd in {"chat", "status", "workflow", "test-window"}:
-            return self._route_legacy(args)
+            return self._route_retired_legacy(args)
 
         # Fallback: unknown command
         print(f"Error: unknown command: {cmd!r}", file=sys.stderr)
         return 1
 
-    def _route_legacy(self, args: argparse.Namespace) -> int:
-        """Delegate legacy commands to the existing polaris_cli main()."""
-        try:
-            from polaris.delivery.cli.polaris_cli import main as legacy_main
-
-            return legacy_main()
-        except (RuntimeError, ValueError) as exc:
-            logger.warning("legacy route failed: %s", exc)
-            print(f"Error in legacy command: {exc}", file=sys.stderr)
-            return 1
+    def _route_retired_legacy(self, args: argparse.Namespace) -> int:
+        """Return a migration response for retired top-level commands."""
+        cmd = str(getattr(args, "command", "") or "").strip().lower()
+        replacements = {
+            "chat": "Use `console` for role interaction, or `/v2/role/{role}/chat` for HTTP role chat.",
+            "status": "Use `/v2/runtime/status` or role-specific `/v2/{role}/status` HTTP projections.",
+            "workflow": "Use `/v2/pm/run` or `/v2/director/run`; workflow execution must remain inside the governed chain.",
+            "test-window": "The legacy test window has been retired; use the canonical console or runtime UI.",
+        }
+        message = replacements.get(cmd, "Use a canonical Polaris CLI or HTTP route.")
+        print(
+            f"Error: command {cmd!r} is retired and will not be dispatched through the old CLI host. {message}",
+            file=sys.stderr,
+        )
+        return 1

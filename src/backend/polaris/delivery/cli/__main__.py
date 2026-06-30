@@ -374,13 +374,13 @@ def create_parser() -> argparse.ArgumentParser:
     cell_info = cell_subparsers.add_parser("info", help="Show info for a specific cell")
     cell_info.add_argument("--cell-id", required=True, help="Cell ID to inspect")
 
-    # ── chat (legacy alias) ─────────────────────────────────────────────────
+    # ── chat (retired alias) ────────────────────────────────────────────────
     chat_parser = subparsers.add_parser(
         "chat",
-        help="Run a role through the canonical Polaris host (legacy)",
+        help="Retired alias for role interaction; use console instead",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description="Legacy entrypoint — equivalent to 'polaris-cli chat' in older releases. "
-        "Prefer the 'console' subcommand for new workflows.",
+        description="Retired entrypoint kept only for parser compatibility. "
+        "Use the 'console' subcommand for role interaction.",
     )
     _add_workspace_argument(chat_parser)
     _add_log_level_argument(chat_parser, default=argparse.SUPPRESS)

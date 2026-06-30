@@ -579,6 +579,32 @@ class TestMainEntryPoint:
         assert exc_info.value.code == 0
 
 
+class TestMainCliRouterRetiredAliases:
+    """Regression tests for retired top-level CLI aliases."""
+
+    def test_router_does_not_delegate_retired_aliases_to_polaris_cli(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Retired aliases must fail closed instead of invoking the legacy host."""
+        from polaris.delivery.cli import polaris_cli
+        from polaris.delivery.cli.router import CliRouter as MainCliRouter
+
+        def _fail_legacy_main(*_args: object, **_kwargs: object) -> int:
+            raise AssertionError("legacy polaris_cli.main must not be called")
+
+        monkeypatch.setattr(polaris_cli, "main", _fail_legacy_main)
+
+        for command in ("chat", "status", "workflow", "test-window"):
+            exit_code = MainCliRouter().route(argparse.Namespace(command=command))
+            assert exit_code == 1
+
+        err = capsys.readouterr().err
+        assert "retired" in err
+        assert "old CLI host" in err
+
+
 # ---------------------------------------------------------------------------
 # Test: router.py dispatch (high-level)
 # ---------------------------------------------------------------------------

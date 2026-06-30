@@ -1,6 +1,6 @@
 """Director API v2 routes.
 
-Phase 6 Update: 新增统一编排兼容端点，内部可转发到 UnifiedOrchestrationService
+Director v2 endpoints backed by the governed workflow services.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-# Phase 6: 统一编排集成
+# Governed orchestration integration
 from polaris.cells.chief_engineer.blueprint.public import (
     BlueprintPersistence,  # patched/dereferenced via director.<name>
 )
@@ -804,7 +804,7 @@ async def get_token_budget_stats() -> dict[str, Any]:
 
 
 # ============================================================================
-# Phase 6: 统一编排兼容端点
+# Unified orchestration endpoint
 # ============================================================================
 
 
