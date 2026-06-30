@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from polaris.bootstrap.legacy_config_audit import record_legacy_config_migration
 from polaris.domain.models.config_snapshot import ConfigSnapshot
 
 logger = logging.getLogger(__name__)
@@ -389,6 +390,11 @@ class ConfigLoader:
         for legacy_key, canonical_key in self.LEGACY_FLAT_KEY_ALIASES.items():
             if legacy_key in result and result[legacy_key] is not None:
                 result[canonical_key] = result.pop(legacy_key)
+                record_legacy_config_migration(
+                    source="ConfigLoader._canonicalize_flat_config",
+                    legacy_key=legacy_key,
+                    canonical_key=canonical_key,
+                )
         return result
 
     def _settings_to_flat_dict(self, settings: Any) -> dict[str, Any]:

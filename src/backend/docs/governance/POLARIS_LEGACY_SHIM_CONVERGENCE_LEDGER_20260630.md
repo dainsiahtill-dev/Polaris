@@ -13,10 +13,10 @@ business wording, React `Suspense fallback`, and accepted config migration code.
 
 | Class | Count | Meaning |
 | --- | ---: | --- |
-| Closed in this convergence pass | 2 | Removed and verified. |
+| Closed in this convergence pass | 3 | Removed, retired, or converted into an audited sunset path and verified. |
 | P1 open | 6 | Still close to execution, LLM/tool, QA, or state projection paths. |
 | P2 open | 4 | Exposed API/UI/CLI compatibility surfaces that should be retired after callers move. |
-| P3 accepted with sunset | 2 | Kept for user config or historical data migration; requires an expiry policy, not immediate deletion. |
+| P3 accepted with sunset | 1 | Kept for user config or historical data migration; requires an expiry policy, not immediate deletion. |
 
 ## Ledger
 
@@ -34,7 +34,7 @@ business wording, React `Suspense fallback`, and accepted config migration code.
 | LS-09 | P2 | Open | CLI/HTTP compatibility aliases still expose old route semantics. | `delivery/cli/__main__.py`; `delivery/cli/router.py`; `delivery/http/v2/pm.py`; `delivery/http/v2/director.py`. | Deprecated aliases return explicit migration responses or are removed; production docs only mention canonical routes; tests assert no PM->Director bypass. | List public callers, then retire aliases behind 410/migration responses. |
 | LS-10 | P2 | Open | Runtime/log pipeline still accepts legacy channel and event field shapes. | `kernelone/runtime/defaults.py`; `domain/director/constants.py`; `infrastructure/log_pipeline/*`; frontend log adapters. | Ingest compatibility is isolated in one anti-corruption adapter; all UI/API projections read canonical runtime.v2 / Run Ledger facts. | Build a single runtime event normalization adapter and block new direct legacy channel reads. |
 | LS-11 | P2 | Open | Frontend dialogue and ContextOS views still carry parser compatibility for multiple historical response shapes. | `src/frontend/src/app/components/ai-dialogue/useRoleChat.ts`; `ContextViewerModal.tsx`; context telemetry parsers. | Backend response contracts are stable enough that UI can drop historical response-shape parsing, or compatibility remains isolated in a named adapter with tests. | Audit current backend response schemas before deleting; avoid breaking user-facing dialogue UI. |
-| LS-12 | P3 | Accepted with sunset required | Config and provider registries keep legacy key migration for existing user settings. | `bootstrap/config.py`; `bootstrap/config_loader.py`; provider `migrate_legacy_config` functions. | Keep migration, but add versioned sunset policy and telemetry for remaining legacy key usage. | Add metric/audit event for migrated keys before any deletion. |
+| LS-12 | P3 | Closed | Config and provider registries keep legacy key migration for existing user settings. | Added `polaris.legacy_config_migration_event.v1` with `legacy-config-sunset.v1` policy, bounded diagnostic records, and structured warning logs from `ConfigSettings.migrate_legacy_inputs` and `ConfigLoader._canonicalize_flat_config`. | Legacy key migration remains for compatibility, but every migrated key now records `source`, `legacy_key`, `canonical_key`, and sunset metadata. | Closed by legacy config audit/sunset pass. Verified with `rtk pytest src/backend/polaris/tests/unit/bootstrap/test_config.py::TestSettings::test_migrate_legacy_inputs src/backend/polaris/tests/unit/bootstrap/test_config_loader.py::TestConfigLoaderLoad::test_load_with_workspace_reads_global_settings -q`, `rtk ruff check ...`, and `rtk mypy ...`. |
 | LS-13 | P3 | Accepted with sunset required | Historical artifact/path aliases remain for old workspace data. | `artifact_store`, `audit/verdict`, ContextOS/history materialization alias code. | Keep read compatibility until a data migration tool exists; all new writes use canonical keys only. | Add write-path fence and migration command; do not delete before migration path exists. |
 
 ## Not Counted As Debt

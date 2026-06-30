@@ -7,6 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from polaris.bootstrap.legacy_config_audit import record_legacy_config_migration
 from polaris.config.director_config import DirectorConfig
 from polaris.config.llm_config import LLMConfig
 from polaris.config.nats_config import NATSConfig
@@ -593,6 +594,11 @@ class Settings(BaseModel):
             llm = _as_dict(data.get("llm"))
             llm.setdefault("model", data.pop("model"))
             data["llm"] = llm
+            record_legacy_config_migration(
+                source="ConfigSettings.migrate_legacy_inputs",
+                legacy_key="model",
+                canonical_key="llm.model",
+            )
 
         pm = _as_dict(data.get("pm"))
         pm_mapped = False
@@ -616,6 +622,11 @@ class Settings(BaseModel):
             if data.get(legacy_key) is not None:
                 pm_mapped = True
                 pm.setdefault(pm_key, data.pop(legacy_key))
+                record_legacy_config_migration(
+                    source="ConfigSettings.migrate_legacy_inputs",
+                    legacy_key=legacy_key,
+                    canonical_key=f"pm.{pm_key}",
+                )
         if pm_mapped:
             data["pm"] = pm
 
@@ -637,6 +648,11 @@ class Settings(BaseModel):
             if data.get(legacy_key) is not None:
                 director_mapped = True
                 director.setdefault(director_key, data.pop(legacy_key))
+                record_legacy_config_migration(
+                    source="ConfigSettings.migrate_legacy_inputs",
+                    legacy_key=legacy_key,
+                    canonical_key=f"director.{director_key}",
+                )
         if director_mapped:
             data["director"] = director
 
@@ -644,9 +660,19 @@ class Settings(BaseModel):
         runtime = _as_dict(data.get("runtime"))
         if data.get("ramdisk_root") not in (None, ""):
             runtime.setdefault("ramdisk_root", data.pop("ramdisk_root"))
+            record_legacy_config_migration(
+                source="ConfigSettings.migrate_legacy_inputs",
+                legacy_key="ramdisk_root",
+                canonical_key="runtime.ramdisk_root",
+            )
         if data.get("ramdisk_root") == "":
             data.pop("ramdisk_root")
             runtime["ramdisk_root"] = None
+            record_legacy_config_migration(
+                source="ConfigSettings.migrate_legacy_inputs",
+                legacy_key="ramdisk_root",
+                canonical_key="runtime.ramdisk_root",
+            )
         if runtime_mapped:
             data["runtime"] = runtime
 
@@ -654,6 +680,11 @@ class Settings(BaseModel):
             logging_cfg = _as_dict(data.get("logging"))
             logging_cfg.setdefault("enable_debug_tracing", data.pop("debug_tracing"))
             data["logging"] = logging_cfg
+            record_legacy_config_migration(
+                source="ConfigSettings.migrate_legacy_inputs",
+                legacy_key="debug_tracing",
+                canonical_key="logging.enable_debug_tracing",
+            )
 
         return data
 
