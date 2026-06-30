@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveProviderAwareRoleModel, resolveProviderConfiguredModel } from '../providerModelResolver';
-import { isConnectivityKeyForProvider } from '../../state/connectivityStore';
-import { extractProviderIdFromConnectivityKey } from '../../state/CanonicalProviderBridge';
+import {
+  extractProviderIdFromConnectivityKey,
+  isConnectivityKeyForProvider,
+} from '../../state/connectivityStore';
 
 describe('providerModelResolver', () => {
   it('resolves provider model with model/model_id/default priority', () => {

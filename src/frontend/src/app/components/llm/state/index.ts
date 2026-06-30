@@ -130,21 +130,6 @@ export {
 
 
 // ============================================================================
-// Bridge Layer (Phase 3)
-// ============================================================================
-
-export {
-  // Bridge Provider
-  CanonicalBridgeProvider,
-  useCanonicalBridge,
-  
-  // Canonical state access
-  useCanonicalState,
-  useListViewData,
-  useVisualGraphViewData,
-} from './CanonicalProviderBridge';
-
-// ============================================================================
 // Version
 // ============================================================================
 

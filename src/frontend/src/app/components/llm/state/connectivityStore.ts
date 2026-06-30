@@ -48,6 +48,14 @@ export function isConnectivityKeyForProvider(
   return key === providerId || key.endsWith(`::${providerId}`);
 }
 
+export function extractProviderIdFromConnectivityKey(key: string): string {
+  if (!key) return "";
+  const separator = "::";
+  const separatorIndex = key.indexOf(separator);
+  if (separatorIndex < 0) return key;
+  return key.slice(separatorIndex + separator.length);
+}
+
 interface UseConnectivityStoreReturn {
   getProviderStatus: (providerId: string) => ConnectivityStatus;
   getConnectivityResult: (key: string) => ConnectivityResult | undefined;
