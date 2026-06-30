@@ -32,6 +32,7 @@ from polaris.kernelone.benchmark.holographic_models import HolographicCase
 from polaris.kernelone.benchmark.holographic_stats import summarize_samples
 from polaris.kernelone.feedback_collector import FeedbackCollector, FeedbackEvent
 from polaris.kernelone.feedback_dataset_pipeline import GoldenDatasetPipeline
+from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.llm.engine.normalizer import ResponseNormalizer
 from polaris.kernelone.llm.engine.resilience import (
     CircuitBreaker,
@@ -428,11 +429,11 @@ async def _exec_tc_ks_002(case: HolographicCase) -> dict[str, float]:
     uninterrupted = 0
     with tempfile.TemporaryDirectory(prefix="holo-ks-002-") as directory:
         prompt_file = Path(directory) / "prompts.yaml"
-        prompt_file.write_text('inbox: "Hello {{name}}"\n', encoding="utf-8")
+        write_text_atomic(str(prompt_file), 'inbox: "Hello {{name}}"\n')
         registry = HotReloadPromptRegistry([prompt_file])
 
         for index in range(iterations):
-            prompt_file.write_text(f'inbox: "Hello {{name}} v{index}"\n', encoding="utf-8")
+            write_text_atomic(str(prompt_file), f'inbox: "Hello {{name}} v{index}"\n')
             os.utime(prompt_file, None)
             reload_result = registry.reload_if_changed()
             latencies_s.append(float(reload_result.get("reload_latency_s", 0.0)))
