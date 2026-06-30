@@ -55,6 +55,7 @@ class PostExecutionRepairScheduleStep:
     priority: int
     source_tool: str
     source_tool_kind: str = _SOURCE_TOOL_KIND_EXECUTABLE_RUNTIME
+    runtime_source_tools: tuple[str, ...] = ()
     depends_on: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -64,6 +65,10 @@ class PostExecutionRepairScheduleStep:
         object.__setattr__(self, "priority", max(0, int(self.priority)))
         object.__setattr__(self, "source_tool", _non_empty(self.source_tool))
         object.__setattr__(self, "source_tool_kind", _source_tool_kind(self.source_tool_kind))
+        runtime_source_tools = tuple(
+            _non_empty(item) for item in self.runtime_source_tools if str(item or "").strip()
+        ) or (self.source_tool,)
+        object.__setattr__(self, "runtime_source_tools", runtime_source_tools)
         object.__setattr__(self, "depends_on", tuple(str(item) for item in self.depends_on if str(item or "").strip()))
 
     @property
@@ -79,6 +84,7 @@ class PostExecutionRepairScheduleStep:
             "source_tool": self.source_tool,
             "source_tool_kind": self.source_tool_kind,
             "executable_runtime_source_tool": self.executable_runtime_source_tool,
+            "runtime_source_tools": list(self.runtime_source_tools),
             "depends_on": list(self.depends_on),
         }
 
@@ -304,6 +310,7 @@ _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
     "deterministic_typescript_sourcefile_diagnostics_repair",
     "deterministic_typescript_too_few_arguments_repair",
     "deterministic_typescript_tsconfig_lib_repair",
+    "deterministic_typescript_unknown_member_access_repair",
     "deterministic_typescript_uninitialized_property_repair",
     "deterministic_typescript_unique_export_import_repair",
     "deterministic_typescript_unresolved_identifier_repair",

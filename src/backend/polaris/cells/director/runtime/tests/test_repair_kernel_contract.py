@@ -132,6 +132,7 @@ from polaris.cells.director.runtime.public import (
     EvaluateDirectorRepairCutoverReadinessV1,
     PlanDirectorRepairCommandV1,
     ProjectDirectorRepairKernelSummaryV1,
+    ProjectDirectorRepairMaterializationBridgeMetadataV1,
     ProjectDirectorRepairMetricsV1,
     QueryDirectorRepairAdvisoryPolicyV1,
     QueryDirectorRepairAdvisoryValidationV1,
@@ -152,6 +153,7 @@ from polaris.cells.director.runtime.public import (
     evaluate_director_repair_cutover_readiness,
     plan_director_repair,
     project_director_repair_kernel_summary,
+    project_director_repair_materialization_bridge_metadata,
     project_director_repair_metrics,
     project_director_repair_revalidation_evidence,
     query_director_repair_advisory_policy,
@@ -557,6 +559,44 @@ def test_materialization_plan_probe_query_owns_candidate_and_plannable_source_to
     assert result.plannable_source_tools == ("deterministic_javascript_esm_commonjs_entrypoint_repair",)
     assert result.plan_probe_result is not None
     assert result.to_dict()["metadata"]["coverage_is_not_planning"] is True
+
+
+def test_materialization_plan_probe_query_uses_runtime_schedule_source_tools() -> None:
+    error = (
+        "Artifact quality scan failed: workspace validation command failed (npm run start): "
+        "file:///tmp/project/src/index.js:1\n"
+        "SyntaxError: The requested module ./engine/AlchemyEngine.js "
+        "does not provide an export named default"
+    )
+    base_files = {
+        "package.json": '{"type":"module","scripts":{"start":"node src/index.js"}}',
+        "src/index.js": 'import AlchemyEngine from "./engine/AlchemyEngine.js";\n',
+        "src/engine/AlchemyEngine.js": (
+            "class AlchemyEngine {}\n"
+            "function buildDefaultEngine() { return {}; }\n"
+            "module.exports = AlchemyEngine;\n"
+            "module.exports.buildDefaultEngine = buildDefaultEngine;\n"
+        ),
+    }
+
+    result = query_director_repair_materialization_plan_probe(
+        QueryDirectorRepairMaterializationPlanProbeV1(
+            artifact_quality_errors=(error,),
+            base_files=base_files,
+            step_id="materialization.typescript_compiler",
+        )
+    )
+
+    assert isinstance(result, DirectorRepairMaterializationPlanProbeResultV1)
+    assert "deterministic_javascript_esm_commonjs_entrypoint_repair" in result.requested_source_tools
+    assert "deterministic_javascript_esm_commonjs_entrypoint_repair" in result.candidate_source_tools
+    assert "deterministic_javascript_esm_commonjs_entrypoint_repair" in result.plannable_source_tools
+    payload = result.to_dict()
+    assert payload["metadata"]["materialization_step_id"] == "materialization.typescript_compiler"
+    assert (
+        "deterministic_javascript_esm_commonjs_entrypoint_repair"
+        in payload["metadata"]["materialization_schedule_source_tools"]
+    )
 
 
 def test_javascript_missing_export_without_declaration_is_covered_unplannable() -> None:
@@ -10795,6 +10835,7 @@ def test_public_materialization_quality_schedule_is_runtime_owned_and_read_only(
         "deterministic_scaffold_marker_cleanup",
         "deterministic_scaffold_marker_quality_cleanup",
     ]
+    assert "deterministic_javascript_esm_commonjs_entrypoint_repair" in payload["items"][2]["runtime_source_tools"]
     assert payload["items"][3]["source_tool"] == "deterministic_html_typescript_module_script_repair"
     assert payload["items"][3]["source_tool_kind"] == "callback_schedule_label"
     assert payload["items"][3]["runtime_source_tools"] == ["deterministic_html_typescript_module_script_repair"]
@@ -10812,12 +10853,82 @@ def test_public_materialization_quality_schedule_is_runtime_owned_and_read_only(
     }
     assert payload["summary"]["executable_runtime_source_tools"] == []
     assert payload["summary"]["callback_schedule_label_source_tools"] == payload["summary"]["source_tools"]
+    assert "deterministic_javascript_esm_commonjs_entrypoint_repair" in payload["summary"]["runtime_source_tools"]
+    assert payload["summary"]["runtime_source_tool_count"] == len(payload["summary"]["runtime_source_tools"])
     assert payload["summary"]["runtime_schedule_authoritative"] is True
     assert payload["summary"]["runner_binding_owner"] == "roles.adapters"
     assert payload["summary"]["target_scheduler"] == "director.runtime.repair_kernel.scheduler"
     assert payload["summary"]["default_max_rounds"] == 1
     assert payload["summary"]["convergence_loop_owned_by"] == "director.runtime.repair_kernel.scheduler"
     assert payload["summary"]["cycle_breaker"] == "repeated_round_fingerprint"
+
+
+def test_public_materialization_bridge_metadata_projection_is_runtime_owned() -> None:
+    schedule = query_director_repair_materialization_quality_schedule(
+        QueryDirectorRepairMaterializationQualityScheduleV1()
+    )
+
+    result = project_director_repair_materialization_bridge_metadata(
+        ProjectDirectorRepairMaterializationBridgeMetadataV1(
+            ordered_steps=schedule.items,
+            repair_kernel={
+                "receipt_count": 2,
+                "coverage_report": {"uncovered_diagnostic_count": 1},
+            },
+            schedule_reconciliation={"runner_step_ids": ["materialization.hygiene_scaffold"]},
+            scheduler_bridge_evidence={
+                "schema_version": "director.materialization_quality_scheduler_bridge.v1",
+                "adapter_projection_bridge": True,
+                "receipt_lifecycle_status_counts": {"missing_evidence": 1},
+            },
+            coverage_preaudit={"uncovered_diagnostic_count": 1, "rule_discovery_required": True},
+            plan_probe_preaudit={
+                "status": "covered_plannable",
+                "covered_unplannable_diagnostic_count": 0,
+                "plannable_source_tools": ["deterministic_scaffold_marker_cleanup"],
+            },
+            repair_kernel_migration_debt={
+                "schema_version": "director.materialization_quality_repair_migration_debt.v1",
+                "adapter_projection_debt": [{"step_id": "materialization.hygiene_scaffold"}],
+            },
+            receipt_lifecycle_by_step={
+                "materialization.hygiene_scaffold": {"receipt_lifecycle_evidence_status": "missing_evidence"},
+            },
+            dark_launch_comparison={
+                "cutover_ready": False,
+                "cutover_blockers": ["adapter_projection_bridge"],
+            },
+            convergence_verifier_present=True,
+        )
+    )
+    payload = result.to_dict()
+    summary = payload["summary"]
+
+    assert payload["schema_version"] == "director.materialization_quality_bridge_metadata_projection.v1"
+    assert payload["owner_cell"] == "director.runtime"
+    assert payload["execution_boundary"] == "read_only_materialization_bridge_metadata_no_writes"
+    assert payload["agi_execution_authority"] is False
+    assert payload["director_tool_execution_required"] is False
+    assert summary["schema_version"] == "director.materialization_quality_repair_bridge.v1"
+    assert summary["runtime_schedule_owner"] == "director.runtime"
+    assert summary["runner_binding_owner"] == "roles.adapters"
+    assert summary["director_runtime_public_summary_entrypoint"] == (
+        "project_director_repair_materialization_bridge_metadata"
+    )
+    assert summary["ordered_step_ids"][0] == "materialization.hygiene_scaffold"
+    assert summary["runner_step_ids"] == ["materialization.hygiene_scaffold"]
+    assert summary["receipt_count"] == 2
+    assert summary["coverage_uncovered_diagnostic_count"] == 1
+    assert summary["scheduler_bridge_summary_owner"] == "director.runtime"
+    assert summary["scheduler_bridge"]["adapter_projection_bridge"] is True
+    assert summary["repair_kernel_migration_debt"]["schema_version"] == (
+        "director.materialization_quality_repair_migration_debt.v1"
+    )
+    assert summary["adapter_projection_debt"] == [{"step_id": "materialization.hygiene_scaffold"}]
+    assert summary["receipt_lifecycle_by_step"]["materialization.hygiene_scaffold"][
+        "receipt_lifecycle_evidence_status"
+    ] == "missing_evidence"
+    assert summary["dark_launch_cutover_blockers"] == ["adapter_projection_bridge"]
 
 
 def test_runtime_materialization_quality_schedule_runs_callbacks_and_injects_step_metadata() -> None:

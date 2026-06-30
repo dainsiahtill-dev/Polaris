@@ -6,6 +6,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from polaris.cells.director.runtime.public import (
+    QueryDirectorRepairMaterializationPlanProbeV1,
+    query_director_repair_materialization_plan_probe,
+)
 from polaris.cells.roles.adapters.internal.director import materialization_quality_repair_bridge
 
 _STEP_ID = "materialization.hygiene_scaffold"
@@ -71,7 +75,7 @@ def _scheduler_bridge(
         "native_receipt_step_ids": [_STEP_ID] if native_receipts else [],
         "callback_projection_step_ids": [_STEP_ID] if callback_projections else [],
     }
-    return materialization_quality_repair_bridge._build_materialization_scheduler_bridge_summary(
+    return materialization_quality_repair_bridge._collect_materialization_scheduler_bridge_evidence(
         tool_results=tool_results,
         repair_kernel={"receipts": native_receipts},
         ordered_steps=(step,),
@@ -165,11 +169,17 @@ def test_typescript_compiler_source_tools_follow_runtime_coverage_for_new_rules(
         "src/main.ts(3,19): error TS18046: 'snap.items' is of type 'unknown'.",
     ]
 
-    source_tools = materialization_quality_repair_bridge._materialization_typescript_compiler_runtime_source_tools(
-        diagnostics
+    result = query_director_repair_materialization_plan_probe(
+        QueryDirectorRepairMaterializationPlanProbeV1(
+            artifact_quality_errors=diagnostics,
+            step_id="materialization.typescript_compiler",
+        )
     )
 
-    assert source_tools == ("deterministic_typescript_unknown_member_access_repair",)
+    assert "deterministic_typescript_unknown_member_access_repair" in result.requested_source_tools
+    assert result.candidate_source_tools == ("deterministic_typescript_unknown_member_access_repair",)
+    assert result.metadata["public_entrypoint"] == "query_director_repair_materialization_plan_probe"
+    assert result.metadata["materialization_step_id"] == "materialization.typescript_compiler"
 
 
 def test_materialization_summary_reports_coverage_matched_but_unplannable_plan_probe(tmp_path: Path) -> None:
@@ -190,10 +200,15 @@ def test_materialization_summary_reports_coverage_matched_but_unplannable_plan_p
     assert tool_results == []
     plan_probe = summary["plan_probe_preaudit"]
     assert plan_probe["schema_version"] == "director.materialization_quality_plan_probe_preaudit.v1"
-    assert plan_probe["runtime_plan_probe"]["schema_version"] == "director.repair_plan_probe_result.v1"
+    assert plan_probe["runtime_plan_probe"]["schema_version"] == "director.materialization_plan_probe_preaudit.v1"
+    assert plan_probe["runtime_plan_probe"]["runtime_plan_probe"]["schema_version"] == "director.repair_plan_probe_result.v1"
     assert plan_probe["status"] == "coverage_matched_but_unplannable"
-    assert plan_probe["covered_unplannable_diagnostic_count"] == 1
-    assert "deterministic_typescript_return_object_semicolon_repair" in plan_probe["covered_unplannable_source_tools"]
+    repair_plan_probe = plan_probe["runtime_plan_probe"]["runtime_plan_probe"]
+    assert repair_plan_probe["covered_unplannable_diagnostic_count"] == 1
+    assert (
+        "deterministic_typescript_return_object_semicolon_repair"
+        in repair_plan_probe["covered_unplannable_source_tools"]
+    )
     bridge = summary["materialization_quality_bridge"]
     assert bridge["plan_probe_status"] == "coverage_matched_but_unplannable"
     assert bridge["plan_probe_covered_unplannable_diagnostic_count"] == 1

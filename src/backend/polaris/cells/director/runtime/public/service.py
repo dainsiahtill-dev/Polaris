@@ -81,6 +81,7 @@ from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairLanguageSlotsResultV1,
     DirectorRepairLanguageSlotV1,
     DirectorRepairMaterializationAllowedPathsResultV1,
+    DirectorRepairMaterializationBridgeMetadataResultV1,
     DirectorRepairMaterializationPlanProbeResultV1,
     DirectorRepairMaterializationQualityScheduleResultV1,
     DirectorRepairMaterializationQualityScheduleRunResultV1,
@@ -105,6 +106,7 @@ from polaris.cells.director.runtime.public.contracts import (
     EvaluateDirectorRepairCutoverReadinessV1,
     PlanDirectorRepairCommandV1,
     ProjectDirectorRepairKernelSummaryV1,
+    ProjectDirectorRepairMaterializationBridgeMetadataV1,
     ProjectDirectorRepairMetricsV1,
     QueryDirectorRepairAdvisoryPolicyV1,
     QueryDirectorRepairAdvisoryValidationV1,
@@ -1260,6 +1262,81 @@ def _materialization_plan_probe_source_tools(*, step_id: str | None = None) -> t
     for step in selected_steps:
         source_tools.extend(step.runtime_source_tools)
     return _ordered_unique(tuple(source_tools))
+
+
+def project_director_repair_materialization_bridge_metadata(
+    command: ProjectDirectorRepairMaterializationBridgeMetadataV1,
+) -> DirectorRepairMaterializationBridgeMetadataResultV1:
+    """Project materialization bridge metadata through the Director Runtime public boundary."""
+
+    repair_kernel = dict(command.repair_kernel)
+    coverage_preaudit = dict(command.coverage_preaudit)
+    plan_probe_preaudit = dict(command.plan_probe_preaudit)
+    materialization_runtime_probe = dict(plan_probe_preaudit.get("runtime_plan_probe") or {})
+    repair_runtime_probe = dict(materialization_runtime_probe.get("runtime_plan_probe") or {})
+    scheduler_bridge_evidence = dict(command.scheduler_bridge_evidence)
+    repair_kernel_migration_debt = dict(command.repair_kernel_migration_debt)
+    receipt_lifecycle_by_step = dict(command.receipt_lifecycle_by_step)
+    dark_launch_comparison = dict(command.dark_launch_comparison)
+    schedule_reconciliation = dict(command.schedule_reconciliation)
+    covered_unplannable_count = _first_mapping_value(
+        (plan_probe_preaudit, materialization_runtime_probe, repair_runtime_probe),
+        key="covered_unplannable_diagnostic_count",
+        default=0,
+    )
+    covered_unplannable_source_tools = _first_mapping_value(
+        (plan_probe_preaudit, materialization_runtime_probe, repair_runtime_probe),
+        key="covered_unplannable_source_tools",
+        default=[],
+    )
+    summary = {
+        "schema_version": "director.materialization_quality_repair_bridge.v1",
+        "mode": "runtime_schedule_step_runner_adapter",
+        "bridge_file": "roles.adapters.internal.director.materialization_quality_repair_bridge",
+        "retired_strategy_host_removed": True,
+        "runtime_schedule_owner": "director.runtime",
+        "runner_binding_owner": "roles.adapters",
+        "ordered_step_ids": [step.step_id for step in command.ordered_steps],
+        "runner_step_ids": list(schedule_reconciliation.get("runner_step_ids") or ()),
+        "runner_binding_reconciliation": schedule_reconciliation,
+        "internal_function_exported": False,
+        "repair_kernel_owner": "director.runtime",
+        "director_runtime_public_summary_required": True,
+        "director_runtime_public_summary_entrypoint": "project_director_repair_materialization_bridge_metadata",
+        "scheduler_bridge_summary_owner": "director.runtime",
+        "scheduler_bridge_evidence_source": "roles.adapters",
+        "convergence_verifier_present": command.convergence_verifier_present,
+        "receipt_count": repair_kernel.get("receipt_count", 0),
+        "scheduler_bridge": scheduler_bridge_evidence,
+        "repair_kernel_migration_debt": repair_kernel_migration_debt,
+        "adapter_projection_debt": list(repair_kernel_migration_debt.get("adapter_projection_debt") or ()),
+        "receipt_lifecycle_by_step": receipt_lifecycle_by_step,
+        "coverage_preaudit_uncovered_diagnostic_count": coverage_preaudit.get("uncovered_diagnostic_count", 0),
+        "coverage_preaudit_rule_discovery_required": coverage_preaudit.get("rule_discovery_required", False),
+        "plan_probe_status": plan_probe_preaudit.get("status"),
+        "plan_probe_covered_unplannable_diagnostic_count": covered_unplannable_count,
+        "plan_probe_plannable_source_tools": plan_probe_preaudit.get("plannable_source_tools", []),
+        "plan_probe_covered_unplannable_source_tools": covered_unplannable_source_tools,
+        "dark_launch_cutover_ready": dark_launch_comparison.get("cutover_ready"),
+        "dark_launch_cutover_blockers": dark_launch_comparison.get("cutover_blockers"),
+        "coverage_uncovered_diagnostic_count": dict(repair_kernel.get("coverage_report") or {}).get(
+            "uncovered_diagnostic_count",
+            0,
+        ),
+    }
+    return DirectorRepairMaterializationBridgeMetadataResultV1(summary=summary)
+
+
+def _first_mapping_value(
+    mappings: Sequence[Mapping[str, Any]],
+    *,
+    key: str,
+    default: Any,
+) -> Any:
+    for mapping in mappings:
+        if key in mapping:
+            return mapping[key]
+    return default
 
 
 def _plan_probe_candidate_source_tools(

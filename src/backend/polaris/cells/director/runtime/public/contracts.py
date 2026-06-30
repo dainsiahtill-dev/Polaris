@@ -1584,6 +1584,7 @@ class DirectorRepairPostExecutionStepV1:
     source_tool: str
     source_tool_kind: str = "executable_runtime"
     executable_runtime_source_tool: bool = True
+    runtime_source_tools: tuple[str, ...] = ()
     depends_on: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -1595,6 +1596,8 @@ class DirectorRepairPostExecutionStepV1:
         source_tool_kind = _require_non_empty("source_tool_kind", self.source_tool_kind)
         object.__setattr__(self, "source_tool_kind", source_tool_kind)
         object.__setattr__(self, "executable_runtime_source_tool", source_tool_kind == "executable_runtime")
+        runtime_source_tools = _to_tuple_str(list(self.runtime_source_tools)) or (self.source_tool,)
+        object.__setattr__(self, "runtime_source_tools", runtime_source_tools)
         object.__setattr__(self, "depends_on", _to_tuple_str(list(self.depends_on)))
 
     def to_dict(self) -> dict[str, Any]:
@@ -1606,6 +1609,7 @@ class DirectorRepairPostExecutionStepV1:
             "source_tool": self.source_tool,
             "source_tool_kind": self.source_tool_kind,
             "executable_runtime_source_tool": self.executable_runtime_source_tool,
+            "runtime_source_tools": list(self.runtime_source_tools),
             "depends_on": list(self.depends_on),
         }
 
@@ -2849,6 +2853,74 @@ class DirectorRepairMaterializationPlanProbeResultV1:
             "coverage_report": self.coverage_report.to_dict(),
             "runtime_plan_probe": plan_probe,
             "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ProjectDirectorRepairMaterializationBridgeMetadataV1:
+    """Project materialization bridge metadata from runtime-owned evidence."""
+
+    ordered_steps: tuple[DirectorRepairMaterializationQualityStepV1, ...]
+    repair_kernel: Mapping[str, Any] = field(default_factory=dict)
+    schedule_reconciliation: Mapping[str, Any] = field(default_factory=dict)
+    scheduler_bridge_evidence: Mapping[str, Any] = field(default_factory=dict)
+    coverage_preaudit: Mapping[str, Any] = field(default_factory=dict)
+    plan_probe_preaudit: Mapping[str, Any] = field(default_factory=dict)
+    repair_kernel_migration_debt: Mapping[str, Any] = field(default_factory=dict)
+    receipt_lifecycle_by_step: Mapping[str, Any] = field(default_factory=dict)
+    dark_launch_comparison: Mapping[str, Any] = field(default_factory=dict)
+    convergence_verifier_present: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "ordered_steps", tuple(self.ordered_steps or ()))
+        object.__setattr__(self, "repair_kernel", _to_dict_copy(self.repair_kernel))
+        object.__setattr__(self, "schedule_reconciliation", _to_dict_copy(self.schedule_reconciliation))
+        object.__setattr__(self, "scheduler_bridge_evidence", _to_dict_copy(self.scheduler_bridge_evidence))
+        object.__setattr__(self, "coverage_preaudit", _to_dict_copy(self.coverage_preaudit))
+        object.__setattr__(self, "plan_probe_preaudit", _to_dict_copy(self.plan_probe_preaudit))
+        object.__setattr__(self, "repair_kernel_migration_debt", _to_dict_copy(self.repair_kernel_migration_debt))
+        object.__setattr__(self, "receipt_lifecycle_by_step", _to_dict_copy(self.receipt_lifecycle_by_step))
+        object.__setattr__(self, "dark_launch_comparison", _to_dict_copy(self.dark_launch_comparison))
+        object.__setattr__(self, "convergence_verifier_present", bool(self.convergence_verifier_present))
+
+
+@dataclass(frozen=True)
+class DirectorRepairMaterializationBridgeMetadataResultV1:
+    """Runtime-owned materialization bridge metadata projection."""
+
+    summary: Mapping[str, Any]
+    schema_version: str = "director.materialization_quality_bridge_metadata_projection.v1"
+    source: str = "director.runtime.repair_kernel.materialization_projection"
+    access: str = "read_only"
+    owner_cell: str = "director.runtime"
+    execution_boundary: str = "read_only_materialization_bridge_metadata_no_writes"
+    agi_execution_authority: bool = False
+    director_tool_execution_required: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "summary", _to_dict_copy(self.summary))
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "source", _require_non_empty("source", self.source))
+        object.__setattr__(self, "access", _require_non_empty("access", self.access))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(
+            self,
+            "execution_boundary",
+            _require_non_empty("execution_boundary", self.execution_boundary),
+        )
+        object.__setattr__(self, "agi_execution_authority", False)
+        object.__setattr__(self, "director_tool_execution_required", False)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "source": self.source,
+            "access": self.access,
+            "owner_cell": self.owner_cell,
+            "execution_boundary": self.execution_boundary,
+            "agi_execution_authority": False,
+            "director_tool_execution_required": False,
+            "summary": dict(self.summary),
         }
 
 

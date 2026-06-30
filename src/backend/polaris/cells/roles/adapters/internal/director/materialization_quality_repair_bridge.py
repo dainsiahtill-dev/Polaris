@@ -14,6 +14,7 @@ from typing import Any
 from polaris.cells.director.runtime.public.service import (
     CompareDirectorRepairShadowRunV1,
     DirectorRepairMaterializationQualityStepV1,
+    ProjectDirectorRepairMaterializationBridgeMetadataV1,
     QueryDirectorRepairCoverageV1,
     QueryDirectorRepairMaterializationAllowedPathsV1,
     QueryDirectorRepairMaterializationPlanProbeV1,
@@ -21,6 +22,7 @@ from polaris.cells.director.runtime.public.service import (
     QueryDirectorRepairStrategyCatalogV1,
     RepairReceiptV1,
     compare_director_repair_shadow_run,
+    project_director_repair_materialization_bridge_metadata,
     query_director_repair_coverage,
     query_director_repair_materialization_allowed_paths,
     query_director_repair_materialization_plan_probe,
@@ -384,12 +386,11 @@ def _run_materialization_typescript_compiler(
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    candidate_source_tools = _materialization_typescript_compiler_runtime_source_tools(artifact_quality_errors)
     source_tools = _materialization_plannable_runtime_source_tools(
         adapter,
         task=task,
         artifact_quality_errors=artifact_quality_errors,
-        candidate_source_tools=candidate_source_tools,
+        materialization_step_id="materialization.typescript_compiler",
         allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".html", ".json"),
         caller="materialization_typescript_compiler",
     )
@@ -407,36 +408,28 @@ def _run_materialization_typescript_compiler(
     return results
 
 
-def _materialization_typescript_compiler_runtime_source_tools(
-    artifact_quality_errors: Sequence[str] | None = None,
-) -> tuple[str, ...]:
-    matched_tools = _runtime_coverage_matched_source_tools(
-        artifact_quality_errors=artifact_quality_errors,
-        source_tool_prefixes=("deterministic_typescript_", "deterministic_javascript_"),
-    )
-    if matched_tools:
-        return matched_tools
-    return _materialization_runtime_source_tools_for_step("materialization.typescript_compiler")
-
-
 def _materialization_plannable_runtime_source_tools(
     adapter: Any,
     *,
     task: Mapping[str, Any] | None,
     artifact_quality_errors: Sequence[str] | None,
-    candidate_source_tools: Sequence[str],
+    candidate_source_tools: Sequence[str] = (),
+    materialization_step_id: str | None = None,
     allowed_suffixes: Sequence[str],
     caller: str,
 ) -> tuple[str, ...]:
     """Return only runtime source tools whose coverage can produce concrete patches."""
 
-    if not artifact_quality_errors or not candidate_source_tools:
+    runtime_source_tools = tuple(candidate_source_tools) or _materialization_runtime_source_tools_for_step(
+        str(materialization_step_id or "")
+    )
+    if not artifact_quality_errors or not runtime_source_tools:
         return ()
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
     base_files = _collect_materialization_runtime_base_files(
         workspace_path,
         artifact_quality_errors=[str(item) for item in artifact_quality_errors],
-        source_tool=str(candidate_source_tools[0]),
+        source_tool=str(runtime_source_tools[0]),
         allowed_suffixes=tuple(allowed_suffixes),
         collect_unmatched_diagnostic_paths=True,
         task=task,
@@ -445,7 +438,8 @@ def _materialization_plannable_runtime_source_tools(
         return ()
     return _materialization_plannable_runtime_source_tools_from_base_files(
         artifact_quality_errors=artifact_quality_errors,
-        candidate_source_tools=candidate_source_tools,
+        candidate_source_tools=tuple(candidate_source_tools),
+        materialization_step_id=materialization_step_id,
         base_files=base_files,
         caller=caller,
     )
@@ -454,22 +448,29 @@ def _materialization_plannable_runtime_source_tools(
 def _materialization_plannable_runtime_source_tools_from_base_files(
     *,
     artifact_quality_errors: Sequence[str] | None,
-    candidate_source_tools: Sequence[str],
+    candidate_source_tools: Sequence[str] = (),
+    materialization_step_id: str | None = None,
     base_files: Mapping[str, str],
     caller: str,
 ) -> tuple[str, ...]:
     """Return source tools proven by runtime plan-probe, not coverage alone."""
 
-    if not candidate_source_tools or not base_files:
+    if not candidate_source_tools and not materialization_step_id:
+        return ()
+    if not base_files:
         return ()
     errors = tuple(str(item) for item in artifact_quality_errors or () if str(item or "").strip())
     if not errors:
-        return tuple(str(item) for item in candidate_source_tools)
+        return tuple(str(item) for item in candidate_source_tools) or _materialization_runtime_source_tools_for_step(
+            str(materialization_step_id or "")
+        )
     plan_probe = query_director_repair_materialization_plan_probe(
         QueryDirectorRepairMaterializationPlanProbeV1(
             artifact_quality_errors=errors,
             base_files=dict(base_files),
             source_tools=tuple(str(item) for item in candidate_source_tools),
+            step_id=materialization_step_id,
+            fallback_to_step_source_tools=materialization_step_id is not None,
             mode="shadow",
             metadata={
                 "caller": caller,
@@ -591,10 +592,9 @@ def _run_materialization_rust_compiler(
     del task
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
     base_files = _collect_materialization_rust_base_files(workspace_path)
-    candidate_source_tools = _materialization_rust_compiler_runtime_source_tools(artifact_quality_errors)
     source_tools = _materialization_plannable_runtime_source_tools_from_base_files(
         artifact_quality_errors=artifact_quality_errors,
-        candidate_source_tools=candidate_source_tools,
+        materialization_step_id="materialization.rust_compiler",
         base_files=base_files,
         caller="materialization_rust_compiler",
     )
@@ -609,22 +609,6 @@ def _run_materialization_rust_compiler(
             )
         )
     return results
-
-
-def _materialization_rust_compiler_runtime_source_tools(
-    artifact_quality_errors: Sequence[str] | None = None,
-) -> tuple[str, ...]:
-    """Return Rust runtime repair candidates; plan-probe decides executability."""
-
-    matched_tools = _runtime_coverage_matched_source_tools(
-        artifact_quality_errors=artifact_quality_errors,
-        source_tool_prefixes=("deterministic_rust_",),
-    )
-    materialization_tools = set(_materialization_runtime_source_tools_for_step("materialization.rust_compiler"))
-    selected = tuple(source_tool for source_tool in matched_tools if source_tool in materialization_tools)
-    if selected:
-        return selected
-    return _materialization_runtime_source_tools_for_step("materialization.rust_compiler")
 
 
 def _collect_materialization_runtime_base_files(
@@ -969,7 +953,7 @@ def _run_materialization_python_import(
     base_files = _collect_materialization_python_base_files(workspace_path)
     source_tools = _materialization_plannable_runtime_source_tools_from_base_files(
         artifact_quality_errors=artifact_quality_errors,
-        candidate_source_tools=_materialization_python_import_runtime_source_tools(artifact_quality_errors),
+        materialization_step_id="materialization.python_import",
         base_files=base_files,
         caller="materialization_python_import",
     )
@@ -991,22 +975,6 @@ def _run_materialization_python_import(
             return [*results, *runtime_results]
         results.extend(runtime_results)
     return results
-
-
-def _materialization_python_import_runtime_source_tools(
-    artifact_quality_errors: Sequence[str] | None = None,
-) -> tuple[str, ...]:
-    """Return Python import repair candidates; plan-probe decides executability."""
-
-    matched_tools = _runtime_coverage_matched_source_tools(
-        artifact_quality_errors=artifact_quality_errors,
-        source_tool_prefixes=("deterministic_python_", "deterministic_unresolved_import_symbol"),
-    )
-    materialization_tools = set(_materialization_runtime_source_tools_for_step("materialization.python_import"))
-    selected = tuple(source_tool for source_tool in matched_tools if source_tool in materialization_tools)
-    if selected:
-        return selected
-    return _materialization_runtime_source_tools_for_step("materialization.python_import")
 
 
 def _collect_materialization_python_base_files(workspace_path: Path) -> dict[str, str]:
@@ -1065,7 +1033,7 @@ def _run_materialization_go_import_repairs(
         return results
     source_tools = _materialization_plannable_runtime_source_tools_from_base_files(
         artifact_quality_errors=artifact_quality_errors,
-        candidate_source_tools=_materialization_go_import_runtime_source_tools(artifact_quality_errors),
+        materialization_step_id="materialization.go_import",
         base_files=base_files,
         caller="materialization_go_import",
     )
@@ -1089,22 +1057,6 @@ def _run_materialization_go_import_repairs(
         results.extend(runtime_results)
 
     return results
-
-
-def _materialization_go_import_runtime_source_tools(
-    artifact_quality_errors: Sequence[str] | None = None,
-) -> tuple[str, ...]:
-    """Return Go import repair candidates; plan-probe decides executability."""
-
-    matched_tools = _runtime_coverage_matched_source_tools(
-        artifact_quality_errors=artifact_quality_errors,
-        source_tool_prefixes=("deterministic_go_",),
-    )
-    materialization_tools = set(_materialization_runtime_source_tools_for_step("materialization.go_import"))
-    selected = tuple(source_tool for source_tool in matched_tools if source_tool in materialization_tools)
-    if selected:
-        return selected
-    return _materialization_runtime_source_tools_for_step("materialization.go_import")
 
 
 def _collect_materialization_go_base_files(workspace_path: Path) -> dict[str, str]:
@@ -1291,8 +1243,6 @@ def _annotate_materialization_quality_summary(
         "materialization_quality_step_summaries": step_summaries,
         "coverage_preaudit": coverage_preaudit,
         "plan_probe_preaudit": dict(plan_probe_preaudit or {}),
-        "repair_kernel_migration_debt": migration_debt,
-        "adapter_projection_debt": migration_debt["adapter_projection_debt"],
     }
     repair_kernel = project_repair_kernel_summary(
         stage="materialization_quality_repairs",
@@ -1301,7 +1251,7 @@ def _annotate_materialization_quality_summary(
         mode="commit",
     )
     bridged_summary["repair_kernel"] = repair_kernel
-    bridged_summary["scheduler_bridge"] = _build_materialization_scheduler_bridge_summary(
+    scheduler_bridge_evidence = _collect_materialization_scheduler_bridge_evidence(
         tool_results=tool_results,
         repair_kernel=repair_kernel,
         ordered_steps=ordered_steps,
@@ -1314,44 +1264,29 @@ def _annotate_materialization_quality_summary(
         tool_results=tool_results,
         repair_kernel=repair_kernel,
     )
-    bridged_summary["materialization_quality_bridge"] = {
-        "schema_version": "director.materialization_quality_repair_bridge.v1",
-        "mode": "runtime_schedule_step_runner_adapter",
-        "bridge_file": "roles.adapters.internal.director.materialization_quality_repair_bridge",
-        "retired_strategy_host_removed": True,
-        "runtime_schedule_owner": "director.runtime",
-        "runner_binding_owner": "roles.adapters",
-        "ordered_step_ids": [step.step_id for step in ordered_steps],
-        "runner_step_ids": list((schedule_reconciliation or {}).get("runner_step_ids") or ()),
-        "runner_binding_reconciliation": dict(schedule_reconciliation or {}),
-        "internal_function_exported": False,
-        "repair_kernel_owner": "director.runtime",
-        "director_runtime_public_summary_required": True,
-        "convergence_verifier_present": convergence_verifier_present,
-        "receipt_count": repair_kernel.get("receipt_count", 0),
-        "coverage_preaudit_uncovered_diagnostic_count": coverage_preaudit.get("uncovered_diagnostic_count", 0),
-        "coverage_preaudit_rule_discovery_required": coverage_preaudit.get("rule_discovery_required", False),
-        "plan_probe_status": dict(plan_probe_preaudit or {}).get("status"),
-        "plan_probe_covered_unplannable_diagnostic_count": dict(plan_probe_preaudit or {}).get(
-            "covered_unplannable_diagnostic_count",
-            0,
-        ),
-        "plan_probe_plannable_source_tools": dict(plan_probe_preaudit or {}).get("plannable_source_tools", []),
-        "plan_probe_covered_unplannable_source_tools": dict(plan_probe_preaudit or {}).get(
-            "covered_unplannable_source_tools",
-            [],
-        ),
-        "dark_launch_cutover_ready": bridged_summary["dark_launch_comparison"]["cutover_ready"],
-        "dark_launch_cutover_blockers": bridged_summary["dark_launch_comparison"]["cutover_blockers"],
-        "coverage_uncovered_diagnostic_count": dict(repair_kernel.get("coverage_report") or {}).get(
-            "uncovered_diagnostic_count",
-            0,
-        ),
-    }
+    bridge_metadata = project_director_repair_materialization_bridge_metadata(
+        ProjectDirectorRepairMaterializationBridgeMetadataV1(
+            ordered_steps=ordered_steps,
+            repair_kernel=repair_kernel,
+            schedule_reconciliation=dict(schedule_reconciliation or {}),
+            scheduler_bridge_evidence=scheduler_bridge_evidence,
+            coverage_preaudit=coverage_preaudit,
+            plan_probe_preaudit=dict(plan_probe_preaudit or {}),
+            repair_kernel_migration_debt=migration_debt,
+            receipt_lifecycle_by_step=receipt_lifecycle_by_step,
+            dark_launch_comparison=bridged_summary["dark_launch_comparison"],
+            convergence_verifier_present=convergence_verifier_present,
+        )
+    )
+    bridge_summary = dict(bridge_metadata.summary)
+    bridged_summary["materialization_quality_bridge"] = bridge_summary
+    bridged_summary["scheduler_bridge"] = dict(bridge_summary.get("scheduler_bridge") or {})
+    bridged_summary["repair_kernel_migration_debt"] = dict(bridge_summary.get("repair_kernel_migration_debt") or {})
+    bridged_summary["adapter_projection_debt"] = list(bridge_summary.get("adapter_projection_debt") or [])
     return bridged_summary
 
 
-def _build_materialization_scheduler_bridge_summary(
+def _collect_materialization_scheduler_bridge_evidence(
     *,
     tool_results: list[dict[str, Any]],
     repair_kernel: dict[str, Any],
@@ -2642,29 +2577,6 @@ def _ordered_unique(values: Any) -> list[str]:
     return unique
 
 
-def _runtime_coverage_matched_source_tools(
-    *,
-    artifact_quality_errors: Sequence[str] | None,
-    source_tool_prefixes: Sequence[str],
-) -> tuple[str, ...]:
-    if not artifact_quality_errors:
-        return ()
-    coverage = _project_coverage_preaudit([str(item) for item in artifact_quality_errors])
-    source_tools: list[str] = []
-    prefixes = tuple(str(prefix or "") for prefix in source_tool_prefixes if str(prefix or ""))
-    for item in coverage.get("items") or ():
-        if not isinstance(item, Mapping):
-            continue
-        if not bool(item.get("executable_runtime_plan_matched")):
-            continue
-        for raw_tool in item.get("matched_source_tools") or ():
-            source_tool = str(raw_tool or "").strip()
-            if not source_tool or not source_tool.startswith(prefixes):
-                continue
-            source_tools.append(source_tool)
-    return tuple(_ordered_unique(source_tools))
-
-
 def _project_coverage_preaudit(artifact_quality_errors: list[str]) -> dict[str, Any]:
     """Project read-only rule coverage before any bridge runner writes."""
 
@@ -2684,6 +2596,7 @@ def _project_materialization_plan_probe_preaudit(
 ) -> dict[str, Any]:
     """Project read-only coverage-vs-planning evidence for the materialization bridge."""
 
+    del coverage_preaudit
     if not artifact_quality_errors:
         return {
             "schema_version": "director.materialization_quality_plan_probe_preaudit.v1",
