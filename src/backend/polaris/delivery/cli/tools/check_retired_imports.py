@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Legacy root import checker.
+"""Retired root import checker.
 
 Scans polaris/ and tests/ for imports from old root directories:
 - app/
@@ -10,7 +10,7 @@ Scans polaris/ and tests/ for imports from old root directories:
 - director_interface.py
 
 Usage:
-    python scripts/check_legacy_imports.py
+    python -m polaris.delivery.cli.tools.check_retired_imports
 
 Exit codes:
     0 - No old root imports found
@@ -23,7 +23,7 @@ import ast
 from collections import defaultdict
 from pathlib import Path
 
-OLD_ROOT_PATTERNS = [
+RETIRED_ROOT_PATTERNS = [
     "app.",
     "core.",
     "api.",
@@ -33,14 +33,14 @@ OLD_ROOT_PATTERNS = [
 ]
 
 
-def is_old_root_import(module_name: str) -> bool:
+def is_retired_root_import(module_name: str) -> bool:
     """Check if a module name is an old root import."""
     if not module_name:
         return False
-    return any(module_name == pattern or module_name.startswith(pattern + ".") for pattern in OLD_ROOT_PATTERNS)
+    return any(module_name == pattern or module_name.startswith(pattern + ".") for pattern in RETIRED_ROOT_PATTERNS)
 
 
-def find_legacy_imports(base_dir: Path, scan_dir: Path) -> dict[str, list[str]]:
+def find_retired_imports(base_dir: Path, scan_dir: Path) -> dict[str, list[str]]:
     """Find all old root imports in Python files under scan_dir."""
     violations: dict[str, list[str]] = defaultdict(list)
 
@@ -58,11 +58,11 @@ def find_legacy_imports(base_dir: Path, scan_dir: Path) -> dict[str, list[str]]:
                 if node.level > 0:
                     continue
                 mod = node.module or ""
-                if is_old_root_import(mod):
+                if is_retired_root_import(mod):
                     violations[rel_path].append(f"from {mod}")
             elif isinstance(node, ast.Import):
                 for alias in node.names:
-                    if is_old_root_import(alias.name):
+                    if is_retired_root_import(alias.name):
                         violations[rel_path].append(f"import {alias.name}")
 
     return dict(violations)
@@ -76,10 +76,10 @@ def main() -> int:
     all_violations: dict[str, list[str]] = {}
 
     if polaris_dir.exists():
-        all_violations.update(find_legacy_imports(backend_dir, polaris_dir))
+        all_violations.update(find_retired_imports(backend_dir, polaris_dir))
 
     if tests_dir.exists():
-        all_violations.update(find_legacy_imports(backend_dir, tests_dir))
+        all_violations.update(find_retired_imports(backend_dir, tests_dir))
 
     if not all_violations:
         print("OK: No old root imports found in polaris/ or tests/")

@@ -106,6 +106,19 @@ def test_director_cli_entrypoint_does_not_use_compat_module_name() -> None:
     assert "polaris.delivery.cli.director.cli_entrypoint" in source
 
 
+def test_retired_import_checker_does_not_use_legacy_module_name() -> None:
+    retired_path = BACKEND_ROOT / "polaris/delivery/cli/tools/check_legacy_imports.py"
+    canonical_path = BACKEND_ROOT / "polaris/delivery/cli/tools/check_retired_imports.py"
+
+    assert not retired_path.exists(), "Retired check_legacy_imports.py module was recreated."
+    assert canonical_path.is_file(), "Retired-root import checker must live in check_retired_imports.py."
+
+    source = _read_text(canonical_path)
+    assert "find_legacy_imports" not in source
+    assert "check_legacy_imports" not in source
+    assert "find_retired_imports" in source
+
+
 @pytest.mark.parametrize("relative_path", DELIVERY_ADAPTERS)
 def test_delivery_adapters_do_not_mutate_sys_path(relative_path: str) -> None:
     full_path = BACKEND_ROOT / relative_path
