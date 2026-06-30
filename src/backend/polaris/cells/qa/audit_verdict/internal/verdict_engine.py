@@ -24,6 +24,7 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     QaFailureClassificationV1,
     QaVerdictEnvelopeV1,
     QaVerdictLineageV1,
+    build_qa_failure_classification_v1,
 )
 from polaris.kernelone.quality.artifact_quality import (
     ArtifactQualityEvidence,
@@ -129,7 +130,7 @@ def _route_classification(
     missing_required = _string_list(evidence_policy.get("missing_required_modalities"))
     failed_required = _string_list(evidence_policy.get("failed_required_modalities"))
     if barrier and not bool(barrier.get("barrier_satisfied", True)):
-        classification = QaFailureClassificationV1(
+        classification = build_qa_failure_classification_v1(
             failure_class="TEST_ENVIRONMENT_FAILURE",
             route="pending_qa",
             reason="Run Ledger projection barrier was not satisfied before QA verdict",
@@ -141,7 +142,7 @@ def _route_classification(
         return "BLOCKED", False, "pending_qa", "", classification
     tool_lifecycle = _mapping(ledger.get("tool_lifecycle"))
     if tool_lifecycle and _int_value(tool_lifecycle.get("dropped_count")) > 0:
-        classification = QaFailureClassificationV1(
+        classification = build_qa_failure_classification_v1(
             failure_class="TOOL_DISPATCH_DROPPED",
             route="waiting_human",
             reason="LLM emitted tool calls but the execution control plane did not commit dispatch receipts",
@@ -159,7 +160,7 @@ def _route_classification(
         latest_failure = failed_events[-1] if failed_events else {}
         failure_class = str(latest_failure.get("failure_class") or "TOOL_LIFECYCLE_FAILED").strip()
         reason = str(latest_failure.get("reason") or "Tool lifecycle receipt failed").strip()
-        classification = QaFailureClassificationV1(
+        classification = build_qa_failure_classification_v1(
             failure_class=failure_class,
             route="waiting_human",
             reason=reason,
@@ -177,7 +178,7 @@ def _route_classification(
         boundary_reason = str(latest_boundary.get("reason") or "Task boundary verdict failed").strip()
         responsible_layer = str(latest_boundary.get("responsible_layer") or "execution_control_plane").strip()
         if boundary_failure_class == "INCOMPLETE_MATERIALIZATION":
-            classification = QaFailureClassificationV1(
+            classification = build_qa_failure_classification_v1(
                 failure_class="INCOMPLETE_MATERIALIZATION",
                 route="pending_exec",
                 reason=boundary_reason,
@@ -188,7 +189,7 @@ def _route_classification(
             )
             return "FAIL", False, "pending_exec", "", classification
         if boundary_failure_class == "DEFERRED_FOLLOWUP_REQUIRED":
-            classification = QaFailureClassificationV1(
+            classification = build_qa_failure_classification_v1(
                 failure_class="DEFERRED_FOLLOWUP_REQUIRED",
                 route="pending_exec",
                 reason=boundary_reason,
@@ -200,7 +201,7 @@ def _route_classification(
             )
             return "FAIL", False, "pending_exec", "", classification
         if boundary_failure_class == "MISSING_ENTRYPOINT_TARGET":
-            classification = QaFailureClassificationV1(
+            classification = build_qa_failure_classification_v1(
                 failure_class="MISSING_ENTRYPOINT_TARGET",
                 route="pending_design",
                 reason=boundary_reason,
@@ -212,7 +213,7 @@ def _route_classification(
             )
             return "FAIL", False, "pending_design", "", classification
         if boundary_failure_class == "TOOL_DISPATCH_DROPPED":
-            classification = QaFailureClassificationV1(
+            classification = build_qa_failure_classification_v1(
                 failure_class="TOOL_DISPATCH_DROPPED",
                 route="waiting_human",
                 reason=boundary_reason,
@@ -224,7 +225,7 @@ def _route_classification(
             )
             return "BLOCKED", False, "waiting_human", "", classification
         if boundary_failure_class == "TASKBOARD_DEADLOCK":
-            classification = QaFailureClassificationV1(
+            classification = build_qa_failure_classification_v1(
                 failure_class="TASKBOARD_DEADLOCK",
                 route="waiting_human",
                 reason=boundary_reason,
@@ -235,7 +236,7 @@ def _route_classification(
                 evidence_refs=evidence_refs,
             )
             return "BLOCKED", False, "waiting_human", "", classification
-        classification = QaFailureClassificationV1(
+        classification = build_qa_failure_classification_v1(
             failure_class=boundary_failure_class,
             route="waiting_human",
             reason=boundary_reason,
@@ -246,7 +247,7 @@ def _route_classification(
         )
         return "BLOCKED", False, "waiting_human", "", classification
     if artifact_quality.get("contract_amendment_request"):
-        classification = QaFailureClassificationV1(
+        classification = build_qa_failure_classification_v1(
             failure_class="BLUEPRINT_SCOPE_MISMATCH",
             route="pending_design",
             reason="Artifact quality requires a CE interface contract amendment",
@@ -258,7 +259,7 @@ def _route_classification(
         )
         return "FAIL", False, "pending_design", "", classification
     if missing_required:
-        classification = QaFailureClassificationV1(
+        classification = build_qa_failure_classification_v1(
             failure_class="EXECUTION_EVIDENCE_MISSING",
             route="pending_exec",
             reason="Missing required QA evidence modalities: " + ", ".join(missing_required),
@@ -269,7 +270,7 @@ def _route_classification(
         )
         return "FAIL", False, "pending_exec", "", classification
     if failed_required:
-        classification = QaFailureClassificationV1(
+        classification = build_qa_failure_classification_v1(
             failure_class="IMPLEMENTATION_DEFECT",
             route="pending_exec",
             reason="Required QA evidence modalities failed: " + ", ".join(failed_required),
@@ -280,7 +281,7 @@ def _route_classification(
         )
         return "FAIL", False, "pending_exec", "", classification
     if "scope mismatch" in text or "outside scope" in text or "scope expansion" in text:
-        classification = QaFailureClassificationV1(
+        classification = build_qa_failure_classification_v1(
             failure_class="BLUEPRINT_SCOPE_MISMATCH",
             route="pending_design",
             reason="QA failure indicates CE scope or blueprint mismatch",
@@ -292,7 +293,7 @@ def _route_classification(
         )
         return "FAIL", False, "pending_design", "", classification
     if "contract ambiguous" in text or "missing acceptance" in text or "clarification" in text:
-        classification = QaFailureClassificationV1(
+        classification = build_qa_failure_classification_v1(
             failure_class="CONTRACT_AMBIGUOUS",
             route="waiting_human",
             reason="QA failure requires PM or human contract clarification",
@@ -304,7 +305,7 @@ def _route_classification(
         )
         return "NEEDS_REVIEW", False, "waiting_human", "", classification
     if "security policy" in text or "policy violation" in text or "path traversal" in text or "unauthorized" in text:
-        classification = QaFailureClassificationV1(
+        classification = build_qa_failure_classification_v1(
             failure_class="SECURITY_POLICY_VIOLATION",
             route="waiting_human",
             reason="QA failure indicates security or authorization policy violation",
@@ -317,7 +318,7 @@ def _route_classification(
         return "BLOCKED", False, "waiting_human", "", classification
     verdict = str(audit_result.get("verdict") or "").strip().upper()
     if bool(audit_result.get("qa_findings_bounce_limit_reached")):
-        classification = QaFailureClassificationV1(
+        classification = build_qa_failure_classification_v1(
             failure_class="IMPLEMENTATION_DEFECT_BOUNCE_LIMIT",
             route="rejected",
             reason="QA findings already exhausted the bounded Director feedback loop",
@@ -329,7 +330,7 @@ def _route_classification(
         )
         return "FAIL", False, "", "rejected", classification
     if verdict in {"REQUEUE_EXEC", "RETRY_EXEC"}:
-        classification = QaFailureClassificationV1(
+        classification = build_qa_failure_classification_v1(
             failure_class="IMPLEMENTATION_DEFECT",
             route="pending_exec",
             reason=gate_summary or "QA requested Director execution repair",
@@ -340,7 +341,7 @@ def _route_classification(
         )
         return "FAIL", False, "pending_exec", "", classification
     if verdict in {"REQUEUE_DESIGN", "RETRY_DESIGN"}:
-        classification = QaFailureClassificationV1(
+        classification = build_qa_failure_classification_v1(
             failure_class="BLUEPRINT_SCOPE_MISMATCH",
             route="pending_design",
             reason=gate_summary or "QA requested Chief Engineer design repair",
@@ -352,7 +353,7 @@ def _route_classification(
         )
         return "FAIL", False, "pending_design", "", classification
     if verdict in {"REQUEUE_QA", "RETRY_QA"}:
-        classification = QaFailureClassificationV1(
+        classification = build_qa_failure_classification_v1(
             failure_class="TEST_ENVIRONMENT_FAILURE",
             route="pending_qa",
             reason=gate_summary or "QA requested verification retry",
@@ -363,7 +364,7 @@ def _route_classification(
         )
         return "BLOCKED", False, "pending_qa", "", classification
     if audit_result.get("ok") is False and verdict not in {"FAIL", "REJECT", "REJECTED", "NEEDS_REVIEW"}:
-        classification = QaFailureClassificationV1(
+        classification = build_qa_failure_classification_v1(
             failure_class="EXECUTION_EVIDENCE_MISSING",
             route="pending_exec",
             reason=gate_summary or f"QA audit result was not ok: {verdict or 'unknown'}",
@@ -375,7 +376,7 @@ def _route_classification(
         return "FAIL", False, "pending_exec", "", classification
     if gate_name or artifact_quality.get("errors") or verdict in {"FAIL", "REJECT", "REJECTED"}:
         if "step verify command rejected" in text:
-            classification = QaFailureClassificationV1(
+            classification = build_qa_failure_classification_v1(
                 failure_class="BLUEPRINT_VERIFY_INVALID",
                 route="pending_design",
                 reason="CE step verify command is invalid or unsafe",
@@ -386,7 +387,7 @@ def _route_classification(
                 evidence_refs=evidence_refs,
             )
             return "FAIL", False, "pending_design", "", classification
-        classification = QaFailureClassificationV1(
+        classification = build_qa_failure_classification_v1(
             failure_class="IMPLEMENTATION_DEFECT",
             route="pending_exec",
             reason=gate_summary or "QA failed with implementation defects",
@@ -397,7 +398,7 @@ def _route_classification(
         )
         return "FAIL", False, "pending_exec", "", classification
     if verdict == "NEEDS_REVIEW":
-        classification = QaFailureClassificationV1(
+        classification = build_qa_failure_classification_v1(
             failure_class="CONTRACT_AMBIGUOUS",
             route="waiting_human",
             reason="QA review requested human judgement",
@@ -408,7 +409,7 @@ def _route_classification(
             evidence_refs=evidence_refs,
         )
         return "NEEDS_REVIEW", False, "waiting_human", "", classification
-    classification = QaFailureClassificationV1(
+    classification = build_qa_failure_classification_v1(
         failure_class="PASSED",
         route="resolved",
         reason="QA evidence accepted",

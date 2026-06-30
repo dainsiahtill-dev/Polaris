@@ -17,6 +17,7 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     TracebackFrameV1,
     VisualAuditFindingV1,
     VisualQaAuditResultV1,
+    build_qa_failure_classification_v1,
 )
 from polaris.cells.qa.audit_verdict.public.service import (
     AuditResult,
@@ -57,6 +58,7 @@ __all__ = [
     "TracebackFrameV1",
     "VisualAuditFindingV1",
     "VisualQaAuditResultV1",
+    "build_qa_failure_classification_v1",
     "get_qa_verdict",
     "get_qa_verdict_envelope",
     "get_quality_service",

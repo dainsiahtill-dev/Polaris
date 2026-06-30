@@ -501,6 +501,14 @@ def test_run_post_dispatch_integration_qa_failure_requeues_director_with_critiqu
     assert metadata["chief_engineer_handoff"]["chain"] == "PM->ChiefEngineer->Director"
     assert metadata["chief_engineer_handoff"]["director_task_id"] == "TASK-A"
     assert metadata["verification_failure_report"]["failure_classification"] == "Director Execution"
+    assert (
+        metadata["verification_failure_report"]["qa_failure_classification"]["schema_version"]
+        == "polaris.qa_failure_classification.v1"
+    )
+    assert metadata["verification_failure_report"]["qa_failure_classification"]["failure_class"] == (
+        "IMPLEMENTATION_DEFECT"
+    )
+    assert metadata["verification_failure_report"]["qa_failure_classification"]["route"] == "pending_design"
     assert row["metadata"]["reopen_count"] == 1
 
 
@@ -613,6 +621,9 @@ def test_integration_qa_failure_requeues_fission_leaf_for_parent_pm_task(
     assert metadata["chief_engineer_handoff"]["pm_task_id"] == "TASK-PARENT"
     assert metadata["chief_engineer_handoff"]["director_task_id"] == "TASK-PARENT::step-1"
     assert metadata["verification_failure_report"]["target_task_id"] == "TASK-PARENT::step-1"
+    assert metadata["verification_failure_report"]["qa_failure_classification"]["responsible_layer"] == (
+        "integration_qa"
+    )
 
 
 def test_integration_qa_last_failure_preserves_string_errors() -> None:

@@ -23,6 +23,7 @@ from polaris.cells.orchestration.pm_dispatch.internal.dispatch._lazy_imports imp
     _get_task_market_requeue_services,
     _get_tasks_utils,
 )
+from polaris.cells.qa.audit_verdict.public.contracts import build_qa_failure_classification_v1
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -804,10 +805,24 @@ def _build_integration_qa_verification_failure_report(
     task_id: str,
     target_task_id: str,
 ) -> dict[str, Any]:
+    qa_failure_classification = build_qa_failure_classification_v1(
+        failure_class="IMPLEMENTATION_DEFECT",
+        route="pending_design",
+        reason=str(result.get("reason") or "integration_qa_failed"),
+        repairable_by_director=False,
+        requires_ce_replan=True,
+        owner="chief_engineer",
+        responsible_layer="integration_qa",
+        evidence_refs=(
+            str(result.get("result_path") or ""),
+            str(result.get("runtime_result_path") or ""),
+        ),
+    ).to_dict()
     return {
         "schema_version": "verification.failure.v1",
         "source": "pm_dispatch.integration_qa",
         "failure_classification": "Director Execution",
+        "qa_failure_classification": qa_failure_classification,
         "gate": "integration_qa",
         "reason": str(result.get("reason") or "integration_qa_failed"),
         "summary": str(result.get("summary") or ""),
@@ -884,7 +899,8 @@ def _generate_integration_qa_rework_blueprint(
                 constraints={
                     "source": "pm_dispatch.integration_qa.rework",
                     "chain": "PM->ChiefEngineer->Director",
-                    "failure_classification": "Director Execution",
+                    "failure_classification": verification_failure_report.get("qa_failure_classification")
+                    or "Director Execution",
                     "must_preserve_pm_contract": True,
                     "target_project_code_must_not_be_hardcoded_in_polaris": True,
                 },

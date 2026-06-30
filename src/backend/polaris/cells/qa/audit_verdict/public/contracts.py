@@ -323,6 +323,68 @@ class QaFailureClassificationV1:
         }
 
 
+_QA_FAILURE_CLASS_ALIASES = {
+    "passed": "PASSED",
+    "incomplete_materialization": "INCOMPLETE_MATERIALIZATION",
+    "missing_entrypoint_target": "MISSING_ENTRYPOINT_TARGET",
+    "tool_dispatch_dropped": "TOOL_DISPATCH_DROPPED",
+    "implementation_defect": "IMPLEMENTATION_DEFECT",
+    "scope_mismatch": "BLUEPRINT_SCOPE_MISMATCH",
+    "blueprint_scope_mismatch": "BLUEPRINT_SCOPE_MISMATCH",
+    "contract_ambiguous": "CONTRACT_AMBIGUOUS",
+    "test_environment_failure": "TEST_ENVIRONMENT_FAILURE",
+    "acceptance_invalid": "ACCEPTANCE_INVALID",
+    "security_policy_violation": "SECURITY_POLICY_VIOLATION",
+    "resource_budget_exhausted": "RESOURCE_BUDGET_EXHAUSTED",
+    "progress_stalled": "PROGRESS_STALLED",
+}
+
+
+def _normalize_qa_failure_class(value: str, *, style: str = "canonical") -> str:
+    token = _require_non_empty("failure_class", value)
+    canonical = _QA_FAILURE_CLASS_ALIASES.get(token.lower(), token.upper())
+    if style == "legacy_lower":
+        if canonical == "BLUEPRINT_SCOPE_MISMATCH":
+            return "scope_mismatch"
+        return canonical.lower()
+    return canonical
+
+
+def build_qa_failure_classification_v1(
+    *,
+    failure_class: str,
+    route: str,
+    reason: str,
+    repairable_by_director: bool,
+    severity: str = "medium",
+    requires_ce_replan: bool = False,
+    requires_pm_revision: bool = False,
+    owner: str = "",
+    responsible_layer: str = "",
+    evidence_refs: tuple[str, ...] | list[str] | set[str] | None = None,
+    failure_class_style: str = "canonical",
+) -> QaFailureClassificationV1:
+    """Build the canonical QA failure classification contract.
+
+    `failure_class_style="legacy_lower"` exists only for compatibility
+    projections that still expose historical lowercase values while consuming
+    the shared contract builder.
+    """
+
+    return QaFailureClassificationV1(
+        failure_class=_normalize_qa_failure_class(failure_class, style=failure_class_style),
+        route=_require_non_empty("route", route),
+        reason=_require_non_empty("reason", reason),
+        repairable_by_director=bool(repairable_by_director),
+        severity=_require_non_empty("severity", severity),
+        requires_ce_replan=bool(requires_ce_replan),
+        requires_pm_revision=bool(requires_pm_revision),
+        owner=str(owner or "").strip(),
+        responsible_layer=str(responsible_layer or "").strip(),
+        evidence_refs=_to_string_tuple(evidence_refs),
+    )
+
+
 @dataclass(frozen=True)
 class QaVerdictLineageV1:
     """Compact verdict history used to prevent QA/CE/Director macro loops."""

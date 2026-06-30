@@ -23,6 +23,7 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     TracebackFrameV1,
     VisualAuditFindingV1,
     VisualQaAuditResultV1,
+    build_qa_failure_classification_v1,
 )
 from polaris.cells.qa.audit_verdict.public.service import (
     get_qa_verdict_envelope,
@@ -89,6 +90,38 @@ class TestGetQaVerdictQueryV1:
     def test_empty_workspace_raises(self) -> None:
         with pytest.raises(ValueError, match="non-empty"):
             GetQaVerdictQueryV1(task_id="t1", workspace="")  # type: ignore[arg-type]
+
+
+class TestQaFailureClassificationBuilder:
+    """Shared QA failure classification builder."""
+
+    def test_builds_canonical_classification(self) -> None:
+        classification = build_qa_failure_classification_v1(
+            failure_class="scope_mismatch",
+            route="pending_design",
+            reason="scope mismatch",
+            repairable_by_director=False,
+            requires_ce_replan=True,
+            evidence_refs=["qa/latest.json", "qa/latest.json", ""],
+        )
+
+        assert classification.failure_class == "BLUEPRINT_SCOPE_MISMATCH"
+        assert classification.route == "pending_design"
+        assert classification.requires_ce_replan is True
+        assert classification.evidence_refs == ("qa/latest.json",)
+
+    def test_builds_legacy_lower_projection(self) -> None:
+        classification = build_qa_failure_classification_v1(
+            failure_class="TOOL_DISPATCH_DROPPED",
+            route="hard_stop",
+            reason="tool calls dropped",
+            repairable_by_director=False,
+            severity="critical",
+            failure_class_style="legacy_lower",
+        )
+
+        assert classification.failure_class == "tool_dispatch_dropped"
+        assert classification.severity == "critical"
 
 
 class TestQaVerdictIssuedEventV1:
