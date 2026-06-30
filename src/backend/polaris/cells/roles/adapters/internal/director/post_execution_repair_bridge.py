@@ -25,6 +25,7 @@ from polaris.cells.director.runtime.public.service import (
     run_director_repair,
     validate_director_repair_advisory,
 )
+from polaris.kernelone.fs.text_ops import write_text_atomic
 
 from .execution_tools import DirectorToolExecutor
 from .repair_profile_projection import project_repair_kernel_summary
@@ -1548,7 +1549,7 @@ def _direct_runtime_writer(workspace: Path, path: str, content: str) -> dict[str
             "error": "repair target path escaped workspace",
         }
     try:
-        target.write_text(content, encoding="utf-8")
+        write_text_atomic(str(target), content)
     except OSError as exc:
         return {
             "ok": False,

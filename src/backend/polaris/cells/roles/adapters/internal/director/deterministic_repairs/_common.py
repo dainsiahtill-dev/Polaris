@@ -13,6 +13,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.fs.text_ops import write_text_atomic
+
 from ..task_scope_paths import (
     _dedupe_preserve_order,
     _normalize_declared_task_path,
@@ -52,7 +54,7 @@ def controlled_legacy_write_text(
     except (OSError, UnicodeDecodeError):
         before = ""
     before_hash = hashlib.sha256(before.encode("utf-8")).hexdigest()
-    target.write_text(content, encoding="utf-8")
+    write_text_atomic(str(target), content)
     after_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
     return {
         "authoritative": False,
@@ -64,6 +66,7 @@ def controlled_legacy_write_text(
         "before_sha256": before_hash,
         "after_sha256": after_hash,
     }
+
 
 _TS_RUNTIME_EXPORT_TEMPLATE = r"(?:export\s+)?(?:enum|class|const|let|var|function)\s+{symbol}\b"
 

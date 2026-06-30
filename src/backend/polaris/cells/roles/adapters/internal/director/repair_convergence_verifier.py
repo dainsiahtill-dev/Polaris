@@ -19,6 +19,7 @@ from polaris.cells.director.runtime.public import (
     DirectorRepairConvergenceVerifierRequestV1,
     DirectorRepairVerifierSnapshotInputV1,
 )
+from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.quality import step_verify as _step_verify_module
 from polaris.kernelone.quality.artifact_quality import scan_workspace_artifact_quality
 from polaris.kernelone.quality.step_verify import run_step_verify
@@ -267,10 +268,7 @@ def build_artifact_quality_convergence_verifier(
             if dropped_paths:
                 residuals = (
                     *residuals,
-                    *(
-                        f"Artifact quality scan failed: unsafe relative path ignored: {path}"
-                        for path in dropped_paths
-                    ),
+                    *(f"Artifact quality scan failed: unsafe relative path ignored: {path}" for path in dropped_paths),
                 )
             exit_code = 0 if not residuals else 1
 
@@ -833,9 +831,9 @@ def _write_raw_output_log(
             resolved_root.mkdir(parents=True, exist_ok=True)
             output_path = (resolved_root / filename).resolve()
             output_path.relative_to(resolved_root)
-            output_path.write_text(
+            write_text_atomic(
+                str(output_path),
                 json.dumps(dict(payload), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
             )
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             metadata["raw_output_write_failed"] = True
