@@ -23,6 +23,7 @@ from polaris.cells.control_plane.verifier_policy.public.contracts import (
     UpdateVerifierPolicyCommandV1,
     VerifierPolicyResultV1,
 )
+from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 
 SCHEMA_VERSION = 1
 POLICY_SOURCE = "control_plane.verifier_policy"
@@ -429,11 +430,12 @@ def compile_evidence_policy(command: CompileEvidencePolicyCommandV1) -> Evidence
     return EvidencePolicyResultV1(policy=policy)
 
 
-def _write_config(path: Path, config: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(config, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    tmp_path.replace(path)
+def _write_config(workspace: Path, config: dict[str, Any]) -> None:
+    fs = KernelFileSystem(str(workspace), get_default_adapter())
+    fs.workspace_write_text_atomic(
+        POLICY_RELATIVE_PATH,
+        json.dumps(config, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    )
 
 
 def read_verifier_policy(query: ReadVerifierPolicyQueryV1) -> VerifierPolicyResultV1:
@@ -467,7 +469,7 @@ def update_verifier_policy(command: UpdateVerifierPolicyCommandV1) -> VerifierPo
     }
     normalized = _normalize_config(next_config)
     _ensure_required_modalities_available(normalized)
-    _write_config(_policy_path(workspace), normalized)
+    _write_config(workspace, normalized)
     return VerifierPolicyResultV1(policy=_policy_payload(workspace, normalized))
 
 
