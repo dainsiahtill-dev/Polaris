@@ -1,4 +1,4 @@
-"""Polaris CLI compatibility shim — emits warnings for deprecated entry points."""
+"""Polaris CLI entrypoint deprecation warnings."""
 
 from __future__ import annotations
 
@@ -9,14 +9,13 @@ from typing import Final
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-# Legacy entry point aliases that emit deprecation warnings
-_LEGACY_ENTRY_POINTS: Final[set[str]] = {
+_DEPRECATED_ENTRY_POINTS: Final[set[str]] = {
     "polaris-director",
     "polaris-pm",
 }
 
 
-def emit_compat_warnings(argv: list[str]) -> None:
+def emit_entrypoint_deprecation_warnings(argv: list[str]) -> None:
     """Emit warnings for deprecated CLI entry points and flag usage.
 
     Args:
@@ -25,7 +24,7 @@ def emit_compat_warnings(argv: list[str]) -> None:
     program = argv[0] if argv else ""
     program_name = program.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].replace(".exe", "")
 
-    if program_name in _LEGACY_ENTRY_POINTS:
+    if program_name in _DEPRECATED_ENTRY_POINTS:
         _warn(
             f"Entry point '{program_name}' is deprecated. Use 'polaris-cli' instead.",
             DeprecationWarning,
@@ -70,11 +69,11 @@ def _warn(message: str, category: type[Warning], stacklevel: int) -> None:
     logger.warning("%s", message)
 
 
-def check_compat(argv: list[str] | None = None) -> None:
-    """Top-level compatibility check to be called at CLI entry points.
+def check_entrypoint_deprecations(argv: list[str] | None = None) -> None:
+    """Top-level entrypoint deprecation check to be called at CLI entry points.
 
     Args:
         argv: Optional override for sys.argv.
     """
     args = argv if argv is not None else (sys.argv if hasattr(sys, "argv") else [])
-    emit_compat_warnings(list(args))
+    emit_entrypoint_deprecation_warnings(list(args))

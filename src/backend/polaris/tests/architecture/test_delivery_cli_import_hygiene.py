@@ -82,6 +82,18 @@ def test_pm_config_stays_import_side_effect_lightweight() -> None:
     assert "os.listdir(base_dir)" not in source, "pm.config must avoid broad directory scans during import"
 
 
+def test_delivery_cli_deprecation_warnings_do_not_use_compat_module_name() -> None:
+    retired_path = BACKEND_ROOT / "polaris/delivery/cli/cli_compat.py"
+    canonical_path = BACKEND_ROOT / "polaris/delivery/cli/entrypoint_warnings.py"
+
+    assert not retired_path.exists(), "Retired cli_compat.py module was recreated."
+    assert canonical_path.is_file(), "CLI entrypoint warnings must live in entrypoint_warnings.py."
+
+    router_source = _read_text(BACKEND_ROOT / "polaris/delivery/cli/cli_router.py")
+    assert "polaris.delivery.cli.cli_compat" not in router_source
+    assert "polaris.delivery.cli.entrypoint_warnings" in router_source
+
+
 @pytest.mark.parametrize("relative_path", DELIVERY_ADAPTERS)
 def test_delivery_adapters_do_not_mutate_sys_path(relative_path: str) -> None:
     full_path = BACKEND_ROOT / relative_path

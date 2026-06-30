@@ -3,7 +3,7 @@
 Tests cover:
   - __main__.py subparsers correctness (unified CLI host)
   - CliRouter.route() dispatch
-  - cli_compat.py deprecation warnings
+  - entrypoint_warnings.py deprecation warnings
   - /role <name> in-app command parsing
   - session list/show/switch/clear in-app command parsing
 
@@ -19,18 +19,18 @@ import warnings
 from pathlib import Path
 
 import pytest
-from polaris.delivery.cli.cli_compat import (
-    _LEGACY_ENTRY_POINTS,
-    check_compat,
-    emit_compat_warnings,
-    warn_if_no_workspace,
-    warn_if_old_runtime_mode,
-)
 from polaris.delivery.cli.cli_router import (
     CliRouter,
     ParsedCommand,
     _resolve_workspace,
     parse_app_command,
+)
+from polaris.delivery.cli.entrypoint_warnings import (
+    _DEPRECATED_ENTRY_POINTS,
+    check_entrypoint_deprecations,
+    emit_entrypoint_deprecation_warnings,
+    warn_if_no_workspace,
+    warn_if_old_runtime_mode,
 )
 
 # ---------------------------------------------------------------------------
@@ -244,19 +244,19 @@ class TestCliRouterDispatch:
 
 
 # ---------------------------------------------------------------------------
-# Test: cli_compat.py warnings
+# Test: entrypoint_warnings.py warnings
 # ---------------------------------------------------------------------------
 
 
-class TestCliCompat:
-    """Test that cli_compat emits the correct deprecation warnings."""
+class TestCliEntrypointWarnings:
+    """Test that entrypoint warnings emit the correct deprecation warnings."""
 
     def test_legacy_entry_point_warning(self) -> None:
         """DeprecationWarning must be raised for each legacy entry point."""
-        for ep in _LEGACY_ENTRY_POINTS:
+        for ep in _DEPRECATED_ENTRY_POINTS:
             with warnings.catch_warnings(record=True) as w:
                 warnings.simplefilter("always")
-                emit_compat_warnings([ep])
+                emit_entrypoint_deprecation_warnings([ep])
                 assert len(w) == 1, f"Expected 1 warning for '{ep}', got {len(w)}"
                 assert issubclass(w[0].category, DeprecationWarning)
                 assert ep in str(w[0].message)
@@ -266,7 +266,7 @@ class TestCliCompat:
         for ep in ("polaris-cli", "polaris-lazy", "python", "/path/to/script.py"):
             with warnings.catch_warnings(record=True) as w:
                 warnings.simplefilter("always")
-                emit_compat_warnings([ep])
+                emit_entrypoint_deprecation_warnings([ep])
                 assert len(w) == 0, f"Unexpected warning for '{ep}': {w}"
 
     def test_warn_if_old_runtime_mode(self) -> None:
@@ -302,18 +302,18 @@ class TestCliCompat:
             warn_if_no_workspace("/some/workspace")
             assert len(w) == 0
 
-    def test_check_compat_top_level(self) -> None:
-        """check_compat() must not raise for a modern entry point."""
+    def test_check_entrypoint_deprecations_top_level(self) -> None:
+        """check_entrypoint_deprecations() must not raise for a modern entry point."""
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            check_compat(["polaris-lazy", "chat"])
+            check_entrypoint_deprecations(["polaris-lazy", "chat"])
             assert len(w) == 0
 
-    def test_check_compat_legacy_entry_point(self) -> None:
-        """check_compat() must emit DeprecationWarning for legacy entry points."""
+    def test_check_entrypoint_deprecations_legacy_entry_point(self) -> None:
+        """check_entrypoint_deprecations() must emit DeprecationWarning for legacy entry points."""
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            check_compat(["polaris-director", "chat"])
+            check_entrypoint_deprecations(["polaris-director", "chat"])
             assert len(w) >= 1
             categories = {warning.category for warning in w}
             assert DeprecationWarning in categories

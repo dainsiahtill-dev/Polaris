@@ -17,7 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
-from polaris.delivery.cli.cli_compat import emit_compat_warnings, warn_if_no_workspace
+from polaris.delivery.cli.entrypoint_warnings import emit_entrypoint_deprecation_warnings, warn_if_no_workspace
 from polaris.delivery.cli.logging_policy import CLI_LOG_LEVEL_CHOICES, configure_cli_logging
 from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
 
@@ -224,7 +224,7 @@ class CliRouter:
         Returns:
             Exit code (0 = success, non-zero = failure).
         """
-        emit_compat_warnings(argv)
+        emit_entrypoint_deprecation_warnings(argv)
 
         try:
             args = self._parser.parse_args(argv)
