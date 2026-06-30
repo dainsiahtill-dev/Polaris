@@ -1799,7 +1799,6 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
         (typeorm_repairs, "_apply_deterministic_typeorm_model_normalization_repair"),
         (javascript_repairs, "_apply_deterministic_javascript_missing_export_repair"),
         (javascript_repairs, "_apply_deterministic_javascript_esm_commonjs_entrypoint_repair"),
-        (javascript_repairs, "_apply_deterministic_javascript_missing_method_runtime_repair"),
     )
 
     def fail_if_legacy_called(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
@@ -1811,6 +1810,7 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
     assert not hasattr(javascript_repairs, "_apply_deterministic_javascript_typescript_annotation_repair")
     assert not hasattr(javascript_repairs, "_apply_deterministic_javascript_missing_export_repair")
     assert not hasattr(javascript_repairs, "_apply_deterministic_javascript_esm_commonjs_entrypoint_repair")
+    assert not hasattr(javascript_repairs, "_apply_deterministic_javascript_missing_method_runtime_repair")
     for module, helper_name in legacy_helpers:
         if hasattr(module, helper_name):
             monkeypatch.setattr(module, helper_name, fail_if_legacy_called)

@@ -2890,6 +2890,17 @@ def _singularize_js_identifier(identifier: str) -> str:
     return text
 
 
+def _pluralize_js_identifier(identifier: str) -> str:
+    text = str(identifier or "").strip()
+    if not text:
+        return text
+    if text.endswith("y"):
+        return f"{text[:-1]}ies"
+    if text.endswith("s"):
+        return text
+    return f"{text}s"
+
+
 def _upper_camel_identifier(identifier: str) -> str:
     text = str(identifier or "").strip()
     if not text:
@@ -2960,6 +2971,11 @@ def _missing_method_alias_operation(
             continue
         alias_args = _alias_arguments_from_call_arguments(call_site.get("arguments", ""), member)
         expected_fields = _expected_return_fields_for_call(entry_text, object_name, member)
+        add_field = _collection_field_for_add_method(class_body, member)
+        if add_field and not expected_fields:
+            method_replacements.append(_collection_add_method_replacement(member, add_field))
+            aliased_methods.append(member)
+            continue
         collection_field = _collection_field_for_list_method(class_body, member)
         if collection_field and not alias_args and not expected_fields:
             method_replacements.append(_collection_list_method_replacement(member, collection_field))
@@ -3358,6 +3374,21 @@ def _collection_field_for_list_method(class_body: str, method_name: str) -> str:
     return matches[0] if len(matches) == 1 else ""
 
 
+def _collection_field_for_add_method(class_body: str, method_name: str) -> str:
+    if not _JS_IDENTIFIER_RE.match(method_name):
+        return ""
+    match = re.match(r"add(?P<tail>[A-Z][A-Za-z0-9_$]*)$", method_name)
+    if not match:
+        return ""
+    singular = _lower_camel_identifier(match.group("tail"))
+    requested = _pluralize_js_identifier(singular)
+    fields = _class_collection_fields(class_body)
+    if requested in fields:
+        return requested
+    matches = [field for field in fields if _singularize_js_identifier(field) == singular]
+    return matches[0] if len(matches) == 1 else ""
+
+
 def _class_collection_fields(class_body: str) -> tuple[str, ...]:
     fields: list[str] = []
     for match in re.finditer(r"\bthis\.(?P<field>[A-Za-z_$][\w$]*)\s*=", class_body):
@@ -3372,6 +3403,14 @@ def _collection_list_method_replacement(method_name: str, collection_field: str)
         f"\n  {method_name}() {{\n"
         f"    return Array.isArray(this.{collection_field}) ? [...this.{collection_field}] : [];\n"
         "  }\n"
+    )
+
+
+def _collection_add_method_replacement(method_name: str, collection_field: str) -> str:
+    match = re.match(r"add(?P<tail>[A-Z][A-Za-z0-9_$]*)$", method_name)
+    param_name = _lower_camel_identifier(match.group("tail")) if match else "item"
+    return (
+        f"\n  {method_name}({param_name}) {{\n    this.{collection_field}.push({param_name});\n    return this;\n  }}\n"
     )
 
 

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from polaris.cells.director.runtime.internal.repair_kernel import (
     PatchComposer,
+    RepairOperation,
     normalize_artifact_quality_errors,
     run_runtime_repair,
 )
@@ -41,8 +42,295 @@ def _workspace_writer(workspace: Path, writes: list[str]):
     return writer
 
 
+def _workspace_editor(workspace: Path, edits: list[str]):
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        path = str(operation.path)
+        expected = str(operation.expected)
+        replacement = str(operation.replacement)
+        edits.append(path)
+        target = workspace / path
+        current = target.read_text(encoding="utf-8")
+        if expected not in current:
+            return {"ok": False, "error": "expected text not found"}
+        target.write_text(current.replace(expected, replacement, 1), encoding="utf-8")
+        return {"ok": True}
+
+    return editor
+
+
 def _read_base_files(workspace: Path, paths: tuple[str, ...]) -> dict[str, str]:
     return {path: (workspace / path).read_text(encoding="utf-8") for path in paths}
+
+
+def _run_js_missing_method_runtime(
+    workspace: Path,
+    *,
+    paths: tuple[str, ...],
+    artifact_quality_errors: tuple[str, ...],
+    allowed_paths: tuple[str, ...],
+):
+    writes: list[str] = []
+    edits: list[str] = []
+    result = run_runtime_repair(
+        source_tool="deterministic_javascript_missing_method_runtime_repair",
+        workspace=workspace,
+        base_files=_read_base_files(workspace, paths),
+        artifact_quality_errors=artifact_quality_errors,
+        writer=_workspace_writer(workspace, writes),
+        editor=_workspace_editor(workspace, edits),
+        allowed_paths=allowed_paths,
+    )
+    return result, writes, edits
+
+
+def test_javascript_missing_method_runtime_adds_aliases_with_precise_edit(tmp_path: Path) -> None:
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "index.js").write_text(
+        'import { AlchemyEngine } from "./engine/AlchemyEngine.js";\n'
+        "function main() {\n"
+        "  const engine = new AlchemyEngine();\n"
+        "  const notes = [{ id: 'n1' }];\n"
+        "  engine.addRecipe({ name: 'moon' });\n"
+        "  const { dreamCards, rituals } = engine.transmute(notes);\n"
+        "  return { dreamCards, rituals };\n"
+        "}\n"
+        "main();\n",
+        encoding="utf-8",
+    )
+    class_path = tmp_path / "src" / "engine" / "AlchemyEngine.js"
+    class_path.write_text(
+        "export class AlchemyEngine {\n"
+        "  constructor({ recipes = [] } = {}) {\n"
+        "    this.recipes = recipes;\n"
+        "  }\n\n"
+        "  refine(notes) {\n"
+        "    return { dreamCards: notes, unconsumed: [] };\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    result, writes, edits = _run_js_missing_method_runtime(
+        tmp_path,
+        paths=("src/index.js", "src/engine/AlchemyEngine.js"),
+        artifact_quality_errors=(
+            "Artifact quality scan failed: workspace validation command failed (npm run start): "
+            f"file://{tmp_path}/src/index.js:4\n"
+            "  engine.addRecipe({ name: 'moon' });\n"
+            "         ^\n\n"
+            "TypeError: engine.addRecipe is not a function",
+        ),
+        allowed_paths=("src/engine/AlchemyEngine.js",),
+    )
+
+    assert result.ok is True
+    assert writes == []
+    assert edits == ["src/engine/AlchemyEngine.js"]
+    repaired = class_path.read_text(encoding="utf-8")
+    assert "addRecipe(recipe)" in repaired
+    assert "this.recipes.push(recipe);" in repaired
+    assert "transmute(notes)" in repaired
+    assert "const result = this.refine(notes);" in repaired
+    assert "dreamCards: result.dreamCards ?? result.cards ?? []" in repaired
+    assert "rituals: result.rituals ?? []" in repaired
+    assert result.execution_result is not None
+    record = result.execution_result.receipt.metadata["execution_records"][0]
+    assert record["operation"] == "edit_file"
+
+
+def test_javascript_missing_method_runtime_aliases_collection_and_refine_shape(tmp_path: Path) -> None:
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "index.js").write_text(
+        'import { AlchemyEngine } from "./engine/AlchemyEngine.js";\n'
+        "function main() {\n"
+        "  const engine = new AlchemyEngine({ recipes: [] });\n"
+        "  const notes = [{ id: 'n1' }];\n"
+        "  engine.listRecipes().length;\n"
+        "  const { dreamCards, unmatched } = engine.transmute(notes);\n"
+        "  return { dreamCards, unmatched };\n"
+        "}\n"
+        "main();\n",
+        encoding="utf-8",
+    )
+    class_path = tmp_path / "src" / "engine" / "AlchemyEngine.js"
+    class_path.write_text(
+        "export class AlchemyEngine {\n"
+        "  constructor({ recipes = [] } = {}) {\n"
+        "    this.recipes = recipes;\n"
+        "  }\n\n"
+        "  registerRecipe(recipe) {\n"
+        "    this.recipes.push(recipe);\n"
+        "    return recipe;\n"
+        "  }\n\n"
+        "  refine(notes) {\n"
+        "    return { cards: notes, unmatched: [] };\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    result, writes, edits = _run_js_missing_method_runtime(
+        tmp_path,
+        paths=("src/index.js", "src/engine/AlchemyEngine.js"),
+        artifact_quality_errors=(
+            "Artifact quality scan failed: workspace validation command failed (npm run start): "
+            f"file://{tmp_path}/src/index.js:5\n"
+            "  engine.listRecipes().length;\n"
+            "         ^\n\n"
+            "TypeError: engine.listRecipes is not a function",
+        ),
+        allowed_paths=("src/engine/AlchemyEngine.js",),
+    )
+
+    assert result.ok is True
+    assert writes == []
+    assert edits == ["src/engine/AlchemyEngine.js"]
+    repaired = class_path.read_text(encoding="utf-8")
+    assert "listRecipes()" in repaired
+    assert "return Array.isArray(this.recipes) ? [...this.recipes] : [];" in repaired
+    assert "transmute(notes)" in repaired
+    assert "const result = this.refine(notes);" in repaired
+    assert "dreamCards: result.dreamCards ?? result.cards ?? []" in repaired
+    assert "unmatched: result.unmatched ?? result.unconsumed ?? []" in repaired
+
+
+def test_javascript_missing_method_runtime_repairs_imported_loop_variable_class(tmp_path: Path) -> None:
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "models").mkdir(parents=True)
+    (tmp_path / "src" / "index.js").write_text(
+        'import { Recipe } from "./models/Recipe.js";\n'
+        'import { AlchemyEngine } from "./engine/AlchemyEngine.js";\n'
+        "const recipes = [new Recipe({ name: 'moon', keywords: ['moon'], absurdityBoost: 4, ritual: 'hum' })];\n"
+        "new AlchemyEngine({ recipes }).transmute([{ content: 'moon', matchesAllTags: () => true, intensity: 1 }]);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+        'import { Recipe } from "../models/Recipe.js";\n'
+        "export class AlchemyEngine {\n"
+        "  constructor({ recipes = [] } = {}) { this.recipes = recipes; }\n"
+        "  pickRecipeFor(notes) {\n"
+        "    for (const recipe of this.recipes) {\n"
+        "      if (recipe.matchesAll(notes)) return recipe;\n"
+        "    }\n"
+        "    return null;\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    recipe_path = tmp_path / "src" / "models" / "Recipe.js"
+    recipe_path.write_text(
+        "export class Recipe {\n"
+        "  constructor({ name, requiredTags = [] } = {}) {\n"
+        "    this.name = name;\n"
+        "    this.requiredTags = requiredTags;\n"
+        "  }\n"
+        "  isSatisfiedBy(notes) { return Array.isArray(notes); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    result, writes, edits = _run_js_missing_method_runtime(
+        tmp_path,
+        paths=("src/index.js", "src/engine/AlchemyEngine.js", "src/models/Recipe.js"),
+        artifact_quality_errors=(
+            "Artifact quality scan failed: workspace validation command failed (npm run start): "
+            "TypeError: recipe.matchesAll is not a function\n"
+            f"    at AlchemyEngine.pickRecipeFor (file://{tmp_path}/src/engine/AlchemyEngine.js:6:18)",
+        ),
+        allowed_paths=("src/models/Recipe.js",),
+    )
+
+    assert result.ok is True
+    assert writes == []
+    assert edits == ["src/models/Recipe.js"]
+    repaired = recipe_path.read_text(encoding="utf-8")
+    assert "matchesAll(notes)" in repaired
+    assert "return this.isSatisfiedBy(notes);" in repaired
+    assert "keywords," in repaired
+    assert "absurdityBoost," in repaired
+    assert "ritual" in repaired
+    assert "this.keywords = Array.isArray(keywords) ? keywords.map(String) : [];" in repaired
+    assert "this.absurdityBoost = Number.isFinite(absurdityBoost) ? absurdityBoost : 0;" in repaired
+    assert "this.ritual = ritual;" in repaired
+
+
+def test_javascript_missing_method_runtime_repairs_constructor_object_contract(tmp_path: Path) -> None:
+    (tmp_path / "src" / "models").mkdir(parents=True)
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    card_path = tmp_path / "src" / "models" / "DreamCard.js"
+    card_path.write_text(
+        "export class DreamCard {\n"
+        "  constructor({ id, title, narrative, sourceNoteIds = [] } = {}) {\n"
+        '    if (!id) throw new Error("DreamCard requires an id");\n'
+        '    if (!title) throw new Error("DreamCard requires a title");\n'
+        '    if (!narrative) throw new Error("DreamCard requires a narrative");\n'
+        "    this.id = id;\n"
+        "    this.title = title;\n"
+        "    this.narrative = narrative;\n"
+        "    this.sourceNoteIds = sourceNoteIds;\n"
+        "  }\n"
+        "  toJSON() {\n"
+        "    return {\n"
+        "      id: this.id,\n"
+        "      title: this.title,\n"
+        "      narrative: this.narrative,\n"
+        "    };\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests" / "smoke.test.js").write_text(
+        'import { DreamCard } from "../src/models/DreamCard.js";\n'
+        "new DreamCard({\n"
+        '  title: "Library of Forgotten Names",\n'
+        '  body: "Each book whispered a name I almost remembered.",\n'
+        '  tags: ["memory", "library"],\n'
+        "  createdAt: new Date(),\n"
+        "});\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+        'import * as DreamCard from "../models/DreamCard.js";\n'
+        "DreamCard.composeTitle(0.42);\n"
+        "new DreamCard.DreamCard({ title: 'x', fragments: ['a'], absurdity: 4, ritual: 'hum' });\n",
+        encoding="utf-8",
+    )
+
+    result, writes, edits = _run_js_missing_method_runtime(
+        tmp_path,
+        paths=("src/models/DreamCard.js", "tests/smoke.test.js", "src/engine/AlchemyEngine.js"),
+        artifact_quality_errors=(
+            "Artifact quality scan failed: workspace validation command failed (npm test): "
+            "Error: DreamCard requires an id\n"
+            f"    at new DreamCard (file://{tmp_path}/src/models/DreamCard.js:3:20)",
+        ),
+        allowed_paths=("src/models/DreamCard.js",),
+    )
+
+    assert result.ok is True
+    assert writes == []
+    assert edits == ["src/models/DreamCard.js"]
+    repaired = card_path.read_text(encoding="utf-8")
+    assert "body," in repaired
+    assert "tags," in repaired
+    assert "createdAt," in repaired
+    assert "fragments," in repaired
+    assert "absurdity," in repaired
+    assert "ritual," in repaired
+    assert "const normalizedId" in repaired
+    assert "const normalizedNarrative" in repaired
+    assert "this.id = normalizedId;" in repaired
+    assert "this.narrative = normalizedNarrative;" in repaired
+    assert "this.body =" in repaired
+    assert "this.tags = Array.isArray(tags) ? tags.map(String) : [];" in repaired
+    assert "createdAt: this.createdAt instanceof Date ? this.createdAt.toISOString() : this.createdAt" in repaired
+    assert "body: this.body" in repaired
+    assert "tags: this.tags" in repaired
+    assert "this.fragments = Array.isArray(fragments) ? fragments.map(String) : [];" in repaired
+    assert "this.absurdity = Number.isFinite(absurdity) ? absurdity : 0;" in repaired
+    assert "this.ritual = ritual;" in repaired
+    assert "export function composeTitle" in repaired
 
 
 def test_python_unresolved_import_symbol_declines_empty_placeholder_stub() -> None:
@@ -203,8 +491,7 @@ def test_python_package_shadow_bridge_runtime_exports_sibling_module_symbol(tmp_
             ("src/engine.py", "src/engine/__init__.py"),
         ),
         artifact_quality_errors=(
-            "ImportError: cannot import name 'run' from 'src.engine' "
-            f"({(package_dir / '__init__.py').as_posix()})",
+            f"ImportError: cannot import name 'run' from 'src.engine' ({(package_dir / '__init__.py').as_posix()})",
         ),
         writer=_workspace_writer(tmp_path, writes),
         allowed_paths=("src/engine/__init__.py",),
@@ -288,8 +575,7 @@ def test_python_package_child_reexport_runtime_exports_child_symbol(tmp_path: Pa
             ),
         ),
         artifact_quality_errors=(
-            "ImportError: cannot import name 'Engine' from 'src.engine' "
-            f"({(package_dir / '__init__.py').as_posix()})",
+            f"ImportError: cannot import name 'Engine' from 'src.engine' ({(package_dir / '__init__.py').as_posix()})",
         ),
         writer=_workspace_writer(tmp_path, writes),
         allowed_paths=("src/engine/__init__.py",),
