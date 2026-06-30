@@ -61,7 +61,7 @@ def test_post_llm_materialization_guard_routes_runtime_covered_errors(monkeypatc
 
     monkeypatch.setattr(quality_gate, "_collect_materialization_quality_errors", _collect_errors)
     monkeypatch.setattr(quality_gate, "has_materialization_quality_runtime_repair_coverage", lambda errors: True)
-    monkeypatch.setattr(quality_gate, "run_materialization_quality_repairs", _run_runtime_repair)
+    monkeypatch.setattr(quality_gate, "_run_materialization_quality_public_boundary", _run_runtime_repair)
 
     results, summary = quality_gate._run_post_llm_materialization_runtime_guard(
         _Adapter(str(tmp_path)),
@@ -101,7 +101,7 @@ def test_post_llm_materialization_guard_does_not_repair_uncovered_errors(monkeyp
         calls["runtime"] += 1
         return [], {}
 
-    monkeypatch.setattr(quality_gate, "run_materialization_quality_repairs", _unexpected_runtime_repair)
+    monkeypatch.setattr(quality_gate, "_run_materialization_quality_public_boundary", _unexpected_runtime_repair)
 
     results, summary = quality_gate._run_post_llm_materialization_runtime_guard(
         _Adapter(str(tmp_path)),

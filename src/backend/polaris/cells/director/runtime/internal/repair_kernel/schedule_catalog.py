@@ -296,6 +296,7 @@ _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
     "deterministic_typescript_entrypoint_repair",
     "deterministic_typescript_enum_member_separator_repair",
     "deterministic_typescript_escaped_newline_repair",
+    "deterministic_typescript_hyphenated_identifier_repair",
     "deterministic_typescript_member_alias_repair",
     "deterministic_typescript_missing_closing_brace_repair",
     "deterministic_typescript_missing_export_repair",

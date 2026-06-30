@@ -3,7 +3,7 @@
 Patch-residue/scaffold-marker cleanup, declared-target repairs, the prompt
 repair block were carved verbatim from the original ``deterministic_repairs``
 module. Materialization orchestration is hard-cut to
-``materialization_quality_repair_bridge.run_materialization_quality_repairs``.
+``roles.adapters.public.run_director_materialization_quality_repair_schedule``.
 
 Cross-module calls that must honor a test ``monkeypatch`` on the
 ``execute_method`` module namespace (``scan_workspace_artifact_quality`` and

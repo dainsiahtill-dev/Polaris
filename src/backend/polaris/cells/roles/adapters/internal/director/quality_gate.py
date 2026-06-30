@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
+from polaris.cells.roles.adapters.public.contracts import RunDirectorMaterializationQualityRepairScheduleCommandV1
 
 from . import execute_method as _em
 from .artifact_quality_diagnostics import (
@@ -39,11 +40,7 @@ from .artifact_quality_diagnostics import (
 from .contract_verify import resolve_contract_step_verify_command
 from .execution_tools import DirectorToolExecutor
 from .helpers import has_successful_write_tool
-from .materialization_quality_repair_bridge import (
-    has_materialization_quality_runtime_repair_coverage,
-    run_materialization_quality_repairs,
-    run_typescript_semantic_quality_repairs,
-)
+from .materialization_quality_repair_bridge import has_materialization_quality_runtime_repair_coverage
 from .repair_profile_projection import project_repair_kernel_summary
 from .task_scope_paths import (
     _dedupe_preserve_order,
@@ -57,6 +54,32 @@ from .task_scope_paths import (
     _task_text_blob,
     _workspace_path_exists_case_insensitive,
 )
+
+
+def _run_materialization_quality_public_boundary(
+    adapter: Any,
+    *,
+    task: dict[str, Any],
+    task_id: str,
+    artifact_quality_errors: list[str],
+    convergence_verifier: Any = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Execute materialization-quality repair via the typed roles public boundary."""
+
+    from polaris.cells.roles.adapters.public.service import (
+        run_director_materialization_quality_repair_schedule_result,
+    )
+
+    result = run_director_materialization_quality_repair_schedule_result(
+        RunDirectorMaterializationQualityRepairScheduleCommandV1(
+            adapter_port=adapter,
+            task=task,
+            task_id=task_id,
+            artifact_quality_errors=tuple(artifact_quality_errors),
+            convergence_verifier=convergence_verifier,
+        )
+    )
+    return result.to_legacy_tuple()
 
 
 def _summarize_llm_stage_result(result: dict[str, Any], *, stage: str) -> dict[str, Any]:
@@ -1728,7 +1751,7 @@ def _run_post_llm_materialization_runtime_guard(
             "reason": "post_llm_errors_not_runtime_covered",
             "artifact_quality_errors": post_repair_errors[:20],
         }
-    guard_tool_results, guard_summary = run_materialization_quality_repairs(
+    guard_tool_results, guard_summary = _run_materialization_quality_public_boundary(
         adapter,
         task=task,
         task_id=target_task_id,
@@ -1946,11 +1969,13 @@ async def _run_materialization_quality_repair_retry(
         _has_scaffold_marker_quality_error(repair_quality_errors)
         or has_materialization_quality_runtime_repair_coverage(repair_quality_errors)
     ):
-        deterministic_quality_tool_results, deterministic_quality_summary = run_materialization_quality_repairs(
-            adapter,
-            task=task,
-            task_id=target_task_id,
-            artifact_quality_errors=repair_quality_errors,
+        deterministic_quality_tool_results, deterministic_quality_summary = (
+            _run_materialization_quality_public_boundary(
+                adapter,
+                task=task,
+                task_id=target_task_id,
+                artifact_quality_errors=repair_quality_errors,
+            )
         )
     deterministic_quality_write_paths = _extract_successful_write_paths(deterministic_quality_tool_results)
     missing_targets_repaired_by_deterministic_quality = all(
@@ -2037,39 +2062,6 @@ async def _run_materialization_quality_repair_retry(
             }
         )
         return deterministic_quality_tool_results, summary
-    deterministic_semantic_tool_results = run_typescript_semantic_quality_repairs(
-        adapter,
-        task=task,
-        task_id=target_task_id,
-        artifact_quality_errors=repair_quality_errors,
-    )
-    if deterministic_semantic_tool_results and has_successful_write_tool(deterministic_semantic_tool_results):
-        source_tools: list[str] = []
-        for item in deterministic_semantic_tool_results:
-            result = item.get("result")
-            if isinstance(result, dict):
-                source_tools.append(str(result.get("source_tool") or ""))
-        return deterministic_semantic_tool_results, {
-            "stage": "deterministic_semantic_quality_repair",
-            "attempted": True,
-            "attempt": repair_attempt,
-            "success": False,
-            "success_reason": "repair_actions_require_quality_gate_rerun",
-            "tool_results": len(deterministic_semantic_tool_results),
-            "write_tool_evidence": True,
-            "missing_target_files": missing_target_files[:12],
-            "runtime_smoke_target_files": runtime_smoke_target_files[:12],
-            "semantic_quality_target_files": semantic_quality_target_files[:12],
-            "explicit_quality_target_files": explicit_quality_target_files[:12],
-            "repair_target_files": repair_target_files[:12],
-            "rotated_repair_targets": rotate_repair_targets,
-            "source_tools": source_tools,
-            "repair_kernel": project_repair_kernel_summary(
-                stage="deterministic_semantic_quality_repair",
-                tool_results=deterministic_semantic_tool_results,
-                artifact_quality_errors=repair_quality_errors,
-            ),
-        }
     prompt_artifact_quality_errors = _filter_materialization_quality_errors_for_repair_targets(
         artifact_quality_errors,
         repair_target_files,
@@ -2120,15 +2112,9 @@ async def _run_materialization_quality_repair_retry(
         or isinstance(repair_context.get("director_interface_discrepancy_retry"), dict)
         or isinstance(repair_context.get("task_boundary_interface_discrepancy_retry"), dict)
     ):
-        required_evidence = [
-            str(item)
-            for item in (
-                repair_context.get("required_evidence")
-                if isinstance(repair_context.get("required_evidence"), list)
-                else []
-            )
-            if str(item or "").strip()
-        ]
+        raw_required_evidence = repair_context.get("required_evidence")
+        required_evidence_source = raw_required_evidence if isinstance(raw_required_evidence, list) else []
+        required_evidence = [str(item) for item in required_evidence_source if str(item or "").strip()]
         if "interface_discrepancy_context" not in required_evidence:
             required_evidence.append("interface_discrepancy_context")
         repair_context["required_evidence"] = required_evidence
@@ -2455,7 +2441,9 @@ def _materialization_interface_discrepancy_evidence(
         source="roles.adapters.materialization_quality_gate",
         plan_probe_status=str(plan_probe.get("status") or ""),
         diagnostics=tuple(
-            item for item in list(plan_probe.get("covered_unplannable_diagnostics") or [])[:20] if isinstance(item, dict)
+            item
+            for item in list(plan_probe.get("covered_unplannable_diagnostics") or [])[:20]
+            if isinstance(item, dict)
         ),
         source_tools=tuple(str(item) for item in plan_probe.get("covered_unplannable_source_tools") or []),
         recommended_owner=recommended_owner,
@@ -4963,7 +4951,7 @@ def _bounded_interface_discrepancy_prompt_payload(evidence: dict[str, Any]) -> s
             return [_scrub(item, depth=depth + 1) for item in list(value)[:8]]
         return str(value)
 
-    payload = {
+    payload: dict[str, Any] = {
         "schema_version": "director.interface_discrepancy.prompt_context.v1",
         "recommended_owner": evidence.get("recommended_owner"),
         "recommended_route": evidence.get("recommended_route"),

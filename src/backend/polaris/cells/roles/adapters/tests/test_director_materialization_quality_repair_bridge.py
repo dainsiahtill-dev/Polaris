@@ -11,6 +11,7 @@ from polaris.cells.director.runtime.public import (
     query_director_repair_materialization_plan_probe,
 )
 from polaris.cells.roles.adapters.internal.director import materialization_quality_repair_bridge
+from polaris.cells.roles.adapters.public import service as roles_adapters_public_service
 
 _STEP_ID = "materialization.hygiene_scaffold"
 _SOURCE_TOOL = "deterministic_materialization_hygiene_repair"
@@ -187,7 +188,7 @@ def test_materialization_summary_reports_coverage_matched_but_unplannable_plan_p
         "TypeScript syntax check failed: src/models/Flight.ts(6,47): error TS1005: ',' expected.",
     ]
 
-    tool_results, summary = materialization_quality_repair_bridge.run_materialization_quality_repairs(
+    tool_results, summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
         SimpleNamespace(workspace=str(tmp_path), _execution=SimpleNamespace(_message_bus=None)),
         task={
             "id": "task-materialization-unplannable",
@@ -201,7 +202,10 @@ def test_materialization_summary_reports_coverage_matched_but_unplannable_plan_p
     plan_probe = summary["plan_probe_preaudit"]
     assert plan_probe["schema_version"] == "director.materialization_quality_plan_probe_preaudit.v1"
     assert plan_probe["runtime_plan_probe"]["schema_version"] == "director.materialization_plan_probe_preaudit.v1"
-    assert plan_probe["runtime_plan_probe"]["runtime_plan_probe"]["schema_version"] == "director.repair_plan_probe_result.v1"
+    assert (
+        plan_probe["runtime_plan_probe"]["runtime_plan_probe"]["schema_version"]
+        == "director.repair_plan_probe_result.v1"
+    )
     assert plan_probe["status"] == "coverage_matched_but_unplannable"
     repair_plan_probe = plan_probe["runtime_plan_probe"]["runtime_plan_probe"]
     assert repair_plan_probe["covered_unplannable_diagnostic_count"] == 1
@@ -209,6 +213,7 @@ def test_materialization_summary_reports_coverage_matched_but_unplannable_plan_p
         "deterministic_typescript_return_object_semicolon_repair"
         in repair_plan_probe["covered_unplannable_source_tools"]
     )
-    bridge = summary["materialization_quality_bridge"]
-    assert bridge["plan_probe_status"] == "coverage_matched_but_unplannable"
-    assert bridge["plan_probe_covered_unplannable_diagnostic_count"] == 1
+    assert "materialization_quality_bridge" not in summary
+    assert (
+        summary["public_boundary"]["runtime_facade_entrypoint"] == "run_director_materialization_quality_repair_facade"
+    )

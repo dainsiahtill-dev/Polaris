@@ -28,7 +28,6 @@ from polaris.cells.director.runtime.public.service import (
     query_director_repair_materialization_plan_probe,
     query_director_repair_materialization_quality_schedule,
     query_director_repair_strategy_catalog,
-    run_director_materialization_quality_repair_facade,
 )
 
 from .execution_tools import DirectorToolExecutor
@@ -55,11 +54,6 @@ _NON_AUTHORITATIVE_CALLBACK_RECEIPT_AUTHORITIES = {
     "non_authoritative_callback_receipt_projection",
     "non_authoritative_callback_tool_result_projection",
 }
-_SEMANTIC_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
-    "deterministic_typescript_missing_export_repair",
-    "deterministic_typescript_hyphenated_identifier_repair",
-    "deterministic_typescript_zod_type_class_collision_repair",
-)
 
 
 def has_materialization_quality_runtime_repair_coverage(artifact_quality_errors: list[str]) -> bool:
@@ -114,65 +108,6 @@ def _coverage_has_materialization_runtime_source_tool(
     return False
 
 
-def run_materialization_quality_repairs(
-    adapter: Any,
-    *,
-    task: dict[str, Any],
-    task_id: str,
-    artifact_quality_errors: list[str],
-    convergence_verifier: Callable[[Any], Any] | None = None,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Run materialization-quality repairs through the migration bridge."""
-
-    plan_probe_preaudit = _project_materialization_plan_probe_preaudit(
-        adapter,
-        task=task,
-        artifact_quality_errors=artifact_quality_errors,
-        coverage_preaudit={},
-    )
-    convergence_verifier_present = convergence_verifier is not None
-    runner_step_ids = tuple(_MATERIALIZATION_QUALITY_REPAIR_RUNNERS)
-
-    def _run_step(step: DirectorRepairMaterializationQualityStepV1) -> list[dict[str, Any]]:
-        tool_results = _run_materialization_quality_repair_step(
-            step.step_id,
-            adapter,
-            task=task,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-            convergence_verifier=convergence_verifier,
-        )
-        return tool_results
-
-    facade_result = run_director_materialization_quality_repair_facade(
-        artifact_quality_errors=artifact_quality_errors,
-        runner_step_ids=runner_step_ids,
-        runner=_run_step,
-        plan_probe_preaudit=plan_probe_preaudit,
-        convergence_verifier_present=convergence_verifier_present,
-    )
-    ordered_steps = facade_result.ordered_steps
-    receipt_projections = [dict(item) for item in facade_result.receipt_projections]
-    tool_results = [dict(item) for item in facade_result.tool_results]
-    step_summaries = _summarize_materialization_schedule_steps(
-        ordered_steps=ordered_steps,
-        tool_results=tool_results,
-    )
-    bridged_summary = _annotate_materialization_quality_summary(
-        step_summaries=step_summaries,
-        tool_results=tool_results,
-        artifact_quality_errors=artifact_quality_errors,
-        ordered_steps=ordered_steps,
-        coverage_preaudit=dict(facade_result.coverage_preaudit),
-        plan_probe_preaudit=plan_probe_preaudit,
-        schedule_summary=dict(facade_result.schedule_summary),
-        receipt_projections=receipt_projections,
-        schedule_reconciliation=dict(facade_result.schedule_reconciliation),
-        convergence_verifier_present=convergence_verifier_present,
-    )
-    return tool_results, bridged_summary
-
-
 def build_materialization_quality_step_runner(
     adapter: Any,
     *,
@@ -215,37 +150,39 @@ def project_materialization_quality_plan_probe_preaudit(
     )
 
 
-def run_typescript_semantic_quality_repairs(
-    adapter: Any,
+def project_materialization_quality_facade_summary(
     *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-    task: Mapping[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    """Run TypeScript semantic quality repairs behind the materialization bridge boundary."""
+    ordered_steps: Sequence[DirectorRepairMaterializationQualityStepV1],
+    tool_results: Sequence[Mapping[str, Any]],
+    artifact_quality_errors: Sequence[str],
+    coverage_preaudit: Mapping[str, Any],
+    plan_probe_preaudit: Mapping[str, Any] | None = None,
+    schedule_summary: Mapping[str, Any] | None = None,
+    receipt_projections: Sequence[Mapping[str, Any]] | None = None,
+    schedule_reconciliation: Mapping[str, Any] | None = None,
+    convergence_verifier_present: bool = False,
+) -> dict[str, Any]:
+    """Project adapter-side materialization summary without executing repairs."""
 
-    results: list[dict[str, Any]] = []
-    candidate_source_tools = _semantic_typescript_compiler_runtime_source_tools()
-    source_tools = _materialization_plannable_runtime_source_tools(
-        adapter,
-        task=task,
-        artifact_quality_errors=artifact_quality_errors,
-        candidate_source_tools=candidate_source_tools,
-        allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".html", ".json"),
-        caller="typescript_semantic_quality",
+    ordered_step_tuple = tuple(ordered_steps)
+    tool_result_dicts = [dict(item) for item in tool_results]
+    receipt_projection_dicts = [dict(item) for item in (receipt_projections or ())]
+    step_summaries = _summarize_materialization_schedule_steps(
+        ordered_steps=ordered_step_tuple,
+        tool_results=tool_result_dicts,
     )
-    for source_tool in source_tools:
-        results.extend(
-            _run_materialization_typescript_runtime_repair(
-                adapter,
-                task=task,
-                task_id=task_id,
-                artifact_quality_errors=artifact_quality_errors,
-                source_tool=source_tool,
-                collect_unmatched_diagnostic_paths=True,
-            )
-        )
-    return results
+    return _annotate_materialization_quality_summary(
+        step_summaries=step_summaries,
+        tool_results=tool_result_dicts,
+        artifact_quality_errors=[str(item) for item in artifact_quality_errors],
+        ordered_steps=ordered_step_tuple,
+        coverage_preaudit=dict(coverage_preaudit),
+        plan_probe_preaudit=dict(plan_probe_preaudit or {}),
+        schedule_summary=dict(schedule_summary or {}),
+        receipt_projections=receipt_projection_dicts,
+        schedule_reconciliation=dict(schedule_reconciliation or {}),
+        convergence_verifier_present=convergence_verifier_present,
+    )
 
 
 def _run_materialization_quality_repair_step(
@@ -532,10 +469,6 @@ def _run_materialization_html_entrypoint(
             )
         )
     return results
-
-
-def _semantic_typescript_compiler_runtime_source_tools() -> tuple[str, ...]:
-    return _SEMANTIC_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS
 
 
 def _run_materialization_typescript_runtime_repair(
@@ -2566,6 +2499,23 @@ def _project_materialization_plan_probe_preaudit(
             },
         )
     ).to_dict()
+    repair_plan_probe = dict(plan_probe.get("runtime_plan_probe") or {})
+    covered_unplannable_source_tools = list(
+        plan_probe.get("covered_unplannable_source_tools")
+        or repair_plan_probe.get("covered_unplannable_source_tools")
+        or ()
+    )
+    covered_unplannable_diagnostics = list(
+        plan_probe.get("covered_unplannable_diagnostics")
+        or repair_plan_probe.get("covered_unplannable_diagnostics")
+        or ()
+    )
+    covered_unplannable_diagnostic_count = int(
+        plan_probe.get("covered_unplannable_diagnostic_count")
+        or repair_plan_probe.get("covered_unplannable_diagnostic_count")
+        or len(covered_unplannable_diagnostics)
+        or 0
+    )
     return {
         **plan_probe,
         "schema_version": "director.materialization_quality_plan_probe_preaudit.v1",
@@ -2573,6 +2523,9 @@ def _project_materialization_plan_probe_preaudit(
         "runtime_public_entrypoint": "query_director_repair_materialization_plan_probe",
         "read_only": True,
         "candidate_source_tools": list(plan_probe.get("candidate_source_tools") or ()),
+        "covered_unplannable_source_tools": covered_unplannable_source_tools,
+        "covered_unplannable_diagnostic_count": covered_unplannable_diagnostic_count,
+        "covered_unplannable_diagnostics": covered_unplannable_diagnostics,
         "base_file_count": len(base_files),
         "runtime_plan_probe": plan_probe,
     }
@@ -2681,7 +2634,6 @@ def _source_tools(tool_results: list[dict[str, Any]]) -> list[str]:
 
 __all__ = [
     "build_materialization_quality_step_runner",
+    "project_materialization_quality_facade_summary",
     "project_materialization_quality_plan_probe_preaudit",
-    "run_materialization_quality_repairs",
-    "run_typescript_semantic_quality_repairs",
 ]

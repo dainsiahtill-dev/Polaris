@@ -100,6 +100,7 @@ def run_director_materialization_quality_repair_schedule(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    convergence_verifier: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Run Director materialization-quality repair schedule through the legacy tuple boundary."""
 
@@ -109,6 +110,7 @@ def run_director_materialization_quality_repair_schedule(
             task=task,
             task_id=task_id,
             artifact_quality_errors=tuple(artifact_quality_errors),
+            convergence_verifier=convergence_verifier,
         )
     )
     return result.to_legacy_tuple()
@@ -127,6 +129,7 @@ def run_director_materialization_quality_repair_schedule_result(
 
     from ..internal.director.materialization_quality_repair_bridge import (
         build_materialization_quality_step_runner,
+        project_materialization_quality_facade_summary,
         project_materialization_quality_plan_probe_preaudit,
     )
 
@@ -148,15 +151,30 @@ def run_director_materialization_quality_repair_schedule_result(
             task=task,
             task_id=command.task_id,
             artifact_quality_errors=artifact_quality_errors,
+            convergence_verifier=command.convergence_verifier,
         ),
         plan_probe_preaudit=plan_probe_preaudit,
+        convergence_verifier_present=command.convergence_verifier is not None,
     )
     results = [dict(item) for item in facade_result.tool_results]
-    public_summary = dict(facade_result.summary)
-    public_summary["repair_kernel"] = _project_public_materialization_repair_kernel_summary(
-        results,
+    public_summary = project_materialization_quality_facade_summary(
+        ordered_steps=facade_result.ordered_steps,
+        tool_results=results,
+        artifact_quality_errors=artifact_quality_errors,
         coverage_preaudit=dict(facade_result.coverage_preaudit),
+        plan_probe_preaudit=dict(facade_result.plan_probe_preaudit),
+        schedule_summary=dict(facade_result.schedule_summary),
+        receipt_projections=facade_result.receipt_projections,
+        schedule_reconciliation=dict(facade_result.schedule_reconciliation),
+        convergence_verifier_present=command.convergence_verifier is not None,
     )
+    for legacy_key in (
+        "materialization_quality_bridge",
+        "repair_kernel_migration_debt",
+        "adapter_projection_debt",
+    ):
+        public_summary.pop(legacy_key, None)
+    public_summary["runtime_facade_summary"] = dict(facade_result.summary)
     public_summary["coverage_preaudit"] = dict(facade_result.coverage_preaudit)
     public_summary["plan_probe_preaudit"] = dict(facade_result.plan_probe_preaudit)
     public_summary["schedule_reconciliation"] = dict(facade_result.schedule_reconciliation)

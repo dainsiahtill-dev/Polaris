@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import pytest
+import polaris.cells.director.runtime.public as director_runtime_public
 from polaris.cells.director.runtime.internal.repair_kernel.contracts import FILE_ABSENT_HASH, sha256_text
 from polaris.cells.director.runtime.internal.repair_kernel.rust_syntax import (
     RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL,
@@ -125,6 +125,83 @@ def _patch_post_execution_schedule_result_as_dicts(monkeypatch: Any) -> None:
     )
 
 
+def _patch_materialization_facade_from_schedule(monkeypatch: Any, fake_schedule_result: Any) -> None:
+    def fake_facade(
+        *,
+        artifact_quality_errors: tuple[str, ...] | list[str],
+        runner_step_ids: tuple[str, ...],
+        runner: Any,
+        plan_probe_preaudit: dict[str, Any] | None = None,
+        convergence_verifier_present: bool = False,
+        max_rounds: int = 1,
+    ) -> SimpleNamespace:
+        schedule_result = fake_schedule_result(
+            runner_step_ids=runner_step_ids,
+            runner=runner,
+            max_rounds=max_rounds,
+        )
+        ordered_steps = tuple(schedule_result.ordered_steps)
+        runtime_step_ids = [step.step_id for step in ordered_steps]
+        step_by_id = {step.step_id: step for step in ordered_steps}
+        tool_results: list[dict[str, Any]] = []
+        for item in schedule_result.tool_results:
+            payload = dict(item)
+            result = dict(payload.get("result") or {}) if isinstance(payload.get("result"), dict) else {}
+            step_id = str(result.get("bridge_step_id") or payload.get("runtime_step_id") or "").strip()
+            step = step_by_id.get(step_id)
+            if step is not None:
+                payload["runtime_step_id"] = step.step_id
+                payload["runtime_step_phase"] = step.phase
+                payload["runtime_step_priority"] = step.priority
+                payload["runtime_step_depends_on"] = list(step.depends_on)
+                result.setdefault("runtime_step_id", step.step_id)
+                result.setdefault("phase", step.phase)
+                result.setdefault("priority", step.priority)
+                result.setdefault("depends_on", list(step.depends_on))
+                result.setdefault("evidence_status", "missing_evidence")
+                payload["result"] = result
+                payload.setdefault("evidence_status", "missing_evidence")
+            tool_results.append(payload)
+        return SimpleNamespace(
+            schema_version="director.materialization_quality_repair_facade_result.v1",
+            source="director.runtime.repair_kernel.materialization_quality_facade",
+            owner_cell="director.runtime",
+            execution_boundary="runtime_materialization_quality_facade_no_direct_writes",
+            ordered_steps=ordered_steps,
+            tool_results=tuple(tool_results),
+            receipt_projections=tuple(dict(item) for item in schedule_result.receipt_projections),
+            coverage_preaudit={
+                "schema_version": "director.repair_coverage_report.v1",
+                "total_diagnostics": len(tuple(artifact_quality_errors)),
+                "items": [],
+            },
+            plan_probe_preaudit=dict(plan_probe_preaudit or {}),
+            schedule_summary=dict(schedule_result.summary),
+            schedule_reconciliation={
+                "schema_version": "director.materialization_quality_schedule_reconciliation.v1",
+                "runtime_schedule_owner": "director.runtime",
+                "runner_binding_owner": "roles.adapters",
+                "runtime_step_ids": runtime_step_ids,
+                "runner_step_ids": list(runner_step_ids),
+                "schedule_result_step_ids": runtime_step_ids,
+                "exact_match": True,
+            },
+            summary={
+                "schema_version": "director.materialization_quality_repair_facade_summary.v1",
+                "stage": "deterministic_quality_repair",
+                "attempted": bool(schedule_result.tool_results),
+                "tool_results": len(schedule_result.tool_results),
+                "convergence_verifier_present": bool(convergence_verifier_present),
+            },
+            max_rounds=max_rounds,
+            rounds_run=int(schedule_result.summary.get("rounds_run", 0)),
+            convergence_status="completed",
+            stopped_reason="schedule_complete",
+        )
+
+    monkeypatch.setattr(director_runtime_public, "run_director_materialization_quality_repair_facade", fake_facade)
+
+
 def _patch_materialization_schedule_result_as_dicts(monkeypatch: Any) -> None:
     def fake_schedule_result(
         *,
@@ -157,11 +234,7 @@ def _patch_materialization_schedule_result_as_dicts(monkeypatch: Any) -> None:
             },
         )
 
-    monkeypatch.setattr(
-        materialization_quality_repair_bridge,
-        "run_director_materialization_quality_repair_schedule_result",
-        fake_schedule_result,
-    )
+    _patch_materialization_facade_from_schedule(monkeypatch, fake_schedule_result)
 
 
 def _materialization_runtime_schedule_steps() -> tuple[Any, ...]:
@@ -218,6 +291,7 @@ def _patch_materialization_runtime_schedule_query(
         "query_director_repair_materialization_quality_schedule",
         fake_query,
     )
+    monkeypatch.setattr(director_runtime_public, "query_director_repair_materialization_quality_schedule", fake_query)
 
 
 def _assert_non_authoritative_callback_projection_boundary(
@@ -1565,7 +1639,7 @@ def test_materialization_bridge_passes_verifier_to_runtime_bound_go_bare_import(
     assert not hasattr(materialization_quality_repair_bridge, "repair_go_duplicate_declarations")
     _patch_materialization_schedule_result_as_dicts(monkeypatch)
 
-    results, summary = materialization_quality_repair_bridge.run_materialization_quality_repairs(
+    results, summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
         _FakeAdapter(tmp_path),
         task={"target_files": ["main.go"]},
         task_id="task-go-materialization",
@@ -1805,10 +1879,34 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
     )
 
     assert [call["source_tool"] for call in runtime_calls] == [
-        *materialization_quality_repair_bridge._MATERIALIZATION_HYGIENE_RUNTIME_SOURCE_TOOLS,
-        *materialization_quality_repair_bridge._MATERIALIZATION_TYPESCRIPT_SCAFFOLD_RUNTIME_SOURCE_TOOLS,
-        *materialization_quality_repair_bridge._MATERIALIZATION_NODE_MANIFEST_RUNTIME_SOURCE_TOOLS,
-        *materialization_quality_repair_bridge._MATERIALIZATION_TARGET_RUNTIME_SOURCE_TOOLS,
+        *next(
+            step.runtime_source_tools
+            for step in director_runtime_public.query_director_repair_materialization_quality_schedule(
+                director_runtime_public.QueryDirectorRepairMaterializationQualityScheduleV1(include_items=True)
+            ).items
+            if step.step_id == "materialization.hygiene_scaffold"
+        ),
+        *next(
+            step.runtime_source_tools
+            for step in director_runtime_public.query_director_repair_materialization_quality_schedule(
+                director_runtime_public.QueryDirectorRepairMaterializationQualityScheduleV1(include_items=True)
+            ).items
+            if step.step_id == "materialization.typescript_scaffold"
+        ),
+        *next(
+            step.runtime_source_tools
+            for step in director_runtime_public.query_director_repair_materialization_quality_schedule(
+                director_runtime_public.QueryDirectorRepairMaterializationQualityScheduleV1(include_items=True)
+            ).items
+            if step.step_id == "materialization.node_manifest"
+        ),
+        *next(
+            step.runtime_source_tools
+            for step in director_runtime_public.query_director_repair_materialization_quality_schedule(
+                director_runtime_public.QueryDirectorRepairMaterializationQualityScheduleV1(include_items=True)
+            ).items
+            if step.step_id == "materialization.target_runtime"
+        ),
     ]
     assert all(call["workspace_path"] == tmp_path.resolve() for call in runtime_calls)
     assert all(call["task_id"] == "task-materialization-hard-cut" for call in runtime_calls)
@@ -1832,11 +1930,13 @@ def test_materialization_target_runtime_allowed_paths_include_runtime_planned_ne
     }
     artifact_quality_errors = ["workspace validation command failed (npm test): Could not find 'dist-test'"]
 
-    allowed_paths = materialization_quality_repair_bridge._materialization_allowed_paths_from_runtime_shadow_plan(
-        source_tool="deterministic_javascript_test_missing_target_repair",
-        base_files=base_files,
-        artifact_quality_errors=artifact_quality_errors,
-    )
+    allowed_paths = director_runtime_public.query_director_repair_materialization_allowed_paths(
+        director_runtime_public.QueryDirectorRepairMaterializationAllowedPathsV1(
+            source_tool="deterministic_javascript_test_missing_target_repair",
+            base_files=base_files,
+            artifact_quality_errors=tuple(artifact_quality_errors),
+        )
+    ).allowed_paths
 
     assert "package.json" in allowed_paths
     assert "src/main.ts" in allowed_paths
@@ -1935,11 +2035,6 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     monkeypatch.setattr(runtime_repair_tool_adapter, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
     monkeypatch.setattr(
         materialization_quality_repair_bridge,
-        "_runtime_coverage_matched_source_tools",
-        lambda **_kwargs: (),
-    )
-    monkeypatch.setattr(
-        materialization_quality_repair_bridge,
         "_materialization_plannable_runtime_source_tools_from_base_files",
         lambda **_kwargs: tuple(expected_source_tools),
     )
@@ -1956,7 +2051,7 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
         monkeypatch.setattr(materialization_quality_repair_bridge, runner_name, lambda *args, **kwargs: [])
     _patch_materialization_schedule_result_as_dicts(monkeypatch)
 
-    results, summary = materialization_quality_repair_bridge.run_materialization_quality_repairs(
+    results, summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
         _FakeAdapter(tmp_path),
         task={"target_files": ["src/lib.rs"]},
         task_id="task-rust-materialization",
@@ -1991,10 +2086,6 @@ def test_materialization_rust_compiler_executes_only_plan_probe_plannable_tools(
     source.parent.mkdir(parents=True)
     source.write_text("use serde::Serialize;\npub struct Demo;\n", encoding="utf-8")
     artifact_quality_errors = ["error[E0432]: unresolved import `serde`"]
-    candidate_source_tools = (
-        "deterministic_rust_missing_module_file_repair",
-        "deterministic_rust_dependency_repair",
-    )
     plannable_source_tools = ("deterministic_rust_dependency_repair",)
     probe_calls: list[dict[str, Any]] = []
     runtime_calls: list[str] = []
@@ -2014,11 +2105,6 @@ def test_materialization_rust_compiler_executes_only_plan_probe_plannable_tools(
             }
         ]
 
-    monkeypatch.setattr(
-        materialization_quality_repair_bridge,
-        "_materialization_rust_compiler_runtime_source_tools",
-        lambda _errors: candidate_source_tools,
-    )
     monkeypatch.setattr(
         materialization_quality_repair_bridge,
         "_materialization_plannable_runtime_source_tools_from_base_files",
@@ -2042,7 +2128,7 @@ def test_materialization_rust_compiler_executes_only_plan_probe_plannable_tools(
     assert probe_calls == [
         {
             "artifact_quality_errors": artifact_quality_errors,
-            "candidate_source_tools": candidate_source_tools,
+            "materialization_step_id": "materialization.rust_compiler",
             "base_files": {
                 "Cargo.toml": '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2021"\n',
                 "src/lib.rs": "use serde::Serialize;\npub struct Demo;\n",
@@ -2052,25 +2138,15 @@ def test_materialization_rust_compiler_executes_only_plan_probe_plannable_tools(
     ]
 
 
-def test_materialization_rust_compiler_uses_runtime_coverage_matched_tools(monkeypatch: Any) -> None:
-    monkeypatch.setattr(
-        materialization_quality_repair_bridge,
-        "_runtime_coverage_matched_source_tools",
-        lambda **_kwargs: (
-            "deterministic_rust_missing_module_file_repair",
-            "deterministic_rust_dependency_repair",
-            "deterministic_rust_post_repair",
-        ),
+def test_materialization_rust_compiler_uses_runtime_schedule_source_tools() -> None:
+    schedule = director_runtime_public.query_director_repair_materialization_quality_schedule(
+        director_runtime_public.QueryDirectorRepairMaterializationQualityScheduleV1(include_items=True)
     )
+    rust_step = next(step for step in schedule.items if step.step_id == "materialization.rust_compiler")
 
-    selected = materialization_quality_repair_bridge._materialization_rust_compiler_runtime_source_tools(
-        ["error[E0583]: file not found for module `models`"]
-    )
-
-    assert selected == (
-        "deterministic_rust_missing_module_file_repair",
-        "deterministic_rust_dependency_repair",
-    )
+    assert "deterministic_rust_missing_module_file_repair" in rust_step.runtime_source_tools
+    assert "deterministic_rust_dependency_repair" in rust_step.runtime_source_tools
+    assert "deterministic_rust_post_repair" not in rust_step.runtime_source_tools
 
 
 def test_materialization_runtime_coverage_detects_rust_line_suggestion() -> None:
@@ -2110,7 +2186,7 @@ def test_materialization_runtime_coverage_detects_rust_line_suggestion() -> None
     )
 
 
-def test_materialization_bridge_schedule_drift_fails_closed(
+def test_materialization_public_boundary_ignores_bridge_runner_map_drift(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
@@ -2124,17 +2200,18 @@ def test_materialization_bridge_schedule_drift_fails_closed(
         drifted_runners,
     )
 
-    with pytest.raises(RuntimeError, match="runner bindings drift from runtime schedule") as exc_info:
-        materialization_quality_repair_bridge.run_materialization_quality_repairs(
-            _FakeAdapter(tmp_path),
-            task={"target_files": ["main.go"]},
-            task_id="task-materialization-drift",
-            artifact_quality_errors=["Go syntax check failed: main.go:3:1: expected declaration"],
-        )
+    results, summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
+        _FakeAdapter(tmp_path),
+        task={"target_files": ["main.go"]},
+        task_id="task-materialization-drift",
+        artifact_quality_errors=["Go syntax check failed: main.go:3:1: expected declaration"],
+    )
 
-    message = str(exc_info.value)
-    assert "materialization.go_import" in message
-    assert "missing_runner_step_ids" in message
+    assert results == []
+    reconciliation = summary["schedule_reconciliation"]
+    assert reconciliation["runtime_step_ids"] == [step.step_id for step in runtime_steps]
+    assert reconciliation["runner_step_ids"] == [step.step_id for step in runtime_steps]
+    assert reconciliation["exact_match"] is True
 
 
 def test_materialization_bridge_projects_runtime_step_metadata_and_missing_evidence(
@@ -2178,13 +2255,9 @@ def test_materialization_bridge_projects_runtime_step_metadata_and_missing_evide
             },
         )
 
-    monkeypatch.setattr(
-        materialization_quality_repair_bridge,
-        "run_director_materialization_quality_repair_schedule_result",
-        fake_schedule_result,
-    )
+    _patch_materialization_facade_from_schedule(monkeypatch, fake_schedule_result)
 
-    results, summary = materialization_quality_repair_bridge.run_materialization_quality_repairs(
+    results, summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
         _FakeAdapter(tmp_path),
         task={"target_files": ["main.go"]},
         task_id="task-materialization-metadata",
@@ -3276,13 +3349,9 @@ def test_materialization_scheduler_bridge_keeps_callback_projection_non_authorit
             },
         )
 
-    monkeypatch.setattr(
-        materialization_quality_repair_bridge,
-        "run_director_materialization_quality_repair_schedule_result",
-        fake_schedule_result,
-    )
+    _patch_materialization_facade_from_schedule(monkeypatch, fake_schedule_result)
 
-    _, summary = materialization_quality_repair_bridge.run_materialization_quality_repairs(
+    _, summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
         FakeAdapter(),
         task={"target_files": ["main.go"]},
         task_id="task-materialization-public-projection",
@@ -3454,13 +3523,9 @@ def test_materialization_scheduler_bridge_separates_native_receipts_from_callbac
             },
         )
 
-    monkeypatch.setattr(
-        materialization_quality_repair_bridge,
-        "run_director_materialization_quality_repair_schedule_result",
-        fake_schedule_result,
-    )
+    _patch_materialization_facade_from_schedule(monkeypatch, fake_schedule_result)
 
-    _, summary = materialization_quality_repair_bridge.run_materialization_quality_repairs(
+    _, summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
         FakeAdapter(),
         task={"target_files": ["main.go"]},
         task_id="task-materialization-native-vs-callback",
@@ -3622,13 +3687,9 @@ def test_materialization_hygiene_native_receipt_cutover_evidence_projects_ready_
             },
         )
 
-    monkeypatch.setattr(
-        materialization_quality_repair_bridge,
-        "run_director_materialization_quality_repair_schedule_result",
-        fake_schedule_result,
-    )
+    _patch_materialization_facade_from_schedule(monkeypatch, fake_schedule_result)
 
-    _, summary = materialization_quality_repair_bridge.run_materialization_quality_repairs(
+    _, summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
         FakeAdapter(),
         task={"target_files": ["README.md"]},
         task_id="task-materialization-hygiene-native-ready",

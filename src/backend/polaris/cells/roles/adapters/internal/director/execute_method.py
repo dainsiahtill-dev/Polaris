@@ -24,6 +24,7 @@ from polaris.cells.director.runtime.public.service import (
     AttachDirectorRepairRevalidationEvidenceV1,
     project_director_repair_revalidation_evidence,
 )
+from polaris.cells.roles.adapters.public.contracts import RunDirectorMaterializationQualityRepairScheduleCommandV1
 from polaris.kernelone.fs.materialization import materialized_file_paths
 
 # ``scan_workspace_artifact_quality`` MUST stay a name on THIS module: the test
@@ -45,7 +46,6 @@ from .helpers import (
     has_successful_write_tool,
     taskboard_snapshot_brief,
 )
-from .materialization_quality_repair_bridge import run_materialization_quality_repairs
 from .post_execution_repair_bridge import run_post_execution_language_repairs
 from .repair_convergence_verifier import (
     build_artifact_quality_convergence_verifier,
@@ -54,6 +54,33 @@ from .repair_convergence_verifier import (
 from .repair_profile_projection import summarize_deterministic_repair_source_tools
 
 logger = logging.getLogger(__name__)
+
+
+def _run_materialization_quality_public_boundary(
+    adapter: Any,
+    *,
+    task: dict[str, Any],
+    task_id: str,
+    artifact_quality_errors: list[str],
+    convergence_verifier: Callable[[Any], Any] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Execute materialization-quality repair via the typed roles public boundary."""
+
+    from polaris.cells.roles.adapters.public.service import (
+        run_director_materialization_quality_repair_schedule_result,
+    )
+
+    result = run_director_materialization_quality_repair_schedule_result(
+        RunDirectorMaterializationQualityRepairScheduleCommandV1(
+            adapter_port=adapter,
+            task=task,
+            task_id=task_id,
+            artifact_quality_errors=tuple(artifact_quality_errors),
+            convergence_verifier=convergence_verifier,
+        )
+    )
+    return result.to_legacy_tuple()
+
 
 _TRANSIENT_LLM_PROVIDER_ERROR_MARKERS = (
     "connection aborted",
@@ -2949,18 +2976,20 @@ def _phase_pre_materialization_quality(
             workspace_name=workspace_name,
             context=context,
         )
-        deterministic_quality_tool_results, deterministic_quality_summary = run_materialization_quality_repairs(
-            adapter,
-            task=task,
-            task_id=target_task_id,
-            artifact_quality_errors=pre_materialization_quality_errors,
-            convergence_verifier=_build_post_execution_repair_convergence_verifier(
+        deterministic_quality_tool_results, deterministic_quality_summary = (
+            _run_materialization_quality_public_boundary(
                 adapter,
+                task=task,
                 task_id=target_task_id,
-                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-                context=context,
                 artifact_quality_errors=pre_materialization_quality_errors,
-            ),
+                convergence_verifier=_build_post_execution_repair_convergence_verifier(
+                    adapter,
+                    task_id=target_task_id,
+                    all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+                    context=context,
+                    artifact_quality_errors=pre_materialization_quality_errors,
+                ),
+            )
         )
         if deterministic_quality_tool_results:
             tool_results.extend(deterministic_quality_tool_results)
@@ -3141,18 +3170,20 @@ async def _phase_quality_repair_loop(
         prev_error_count = current_error_count
         prev_error_signature = current_error_signature
         deterministic_quality_made_progress = False
-        deterministic_quality_tool_results, deterministic_quality_summary = run_materialization_quality_repairs(
-            adapter,
-            task=task,
-            task_id=target_task_id,
-            artifact_quality_errors=artifact_quality_errors,
-            convergence_verifier=_build_post_execution_repair_convergence_verifier(
+        deterministic_quality_tool_results, deterministic_quality_summary = (
+            _run_materialization_quality_public_boundary(
                 adapter,
+                task=task,
                 task_id=target_task_id,
-                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-                context=context,
                 artifact_quality_errors=artifact_quality_errors,
-            ),
+                convergence_verifier=_build_post_execution_repair_convergence_verifier(
+                    adapter,
+                    task_id=target_task_id,
+                    all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+                    context=context,
+                    artifact_quality_errors=artifact_quality_errors,
+                ),
+            )
         )
         if _materialization_plan_probe_requires_task_boundary_triage(deterministic_quality_summary):
             quality_repair_summary = _materialization_task_boundary_triage_summary(
@@ -3253,18 +3284,20 @@ async def _phase_quality_repair_loop(
             )
             _mark_quality_repair_summary_revalidated(quality_repair_summary, artifact_quality_errors)
             if artifact_quality_errors:
-                deterministic_quality_tool_results, deterministic_quality_summary = run_materialization_quality_repairs(
-                    adapter,
-                    task=task,
-                    task_id=target_task_id,
-                    artifact_quality_errors=artifact_quality_errors,
-                    convergence_verifier=_build_post_execution_repair_convergence_verifier(
+                deterministic_quality_tool_results, deterministic_quality_summary = (
+                    _run_materialization_quality_public_boundary(
                         adapter,
+                        task=task,
                         task_id=target_task_id,
-                        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-                        context=context,
                         artifact_quality_errors=artifact_quality_errors,
-                    ),
+                        convergence_verifier=_build_post_execution_repair_convergence_verifier(
+                            adapter,
+                            task_id=target_task_id,
+                            all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+                            context=context,
+                            artifact_quality_errors=artifact_quality_errors,
+                        ),
+                    )
                 )
                 if _materialization_plan_probe_requires_task_boundary_triage(deterministic_quality_summary):
                     quality_repair_summary = _materialization_task_boundary_triage_summary(
@@ -3364,8 +3397,7 @@ def _materialization_task_boundary_triage_summary(
         {
             **existing_evidence,
             "task_id": str(summary.get("task_id") or summary.get("target_task_id") or "materialization-task"),
-            "source": existing_evidence.get("source")
-            or "roles.adapters.execute_method.materialization_quality_loop",
+            "source": existing_evidence.get("source") or "roles.adapters.execute_method.materialization_quality_loop",
             "plan_probe_status": plan_probe_payload.get("status") or existing_evidence.get("plan_probe_status"),
             "covered_unplannable_source_tools": source_tools,
             "diagnostics": existing_evidence.get("diagnostics")

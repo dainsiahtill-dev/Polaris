@@ -637,128 +637,31 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         "extra_schedule_result_step_ids": [],
         "exact_match": True,
     }
-    bridge = summary["materialization_quality_bridge"]
-    reconciliation = bridge["runner_binding_reconciliation"]
+    reconciliation = summary["schedule_reconciliation"]
     assert reconciliation["exact_match"] is True
     assert reconciliation["runtime_step_ids"] == expected_step_ids
     assert reconciliation["runner_step_ids"] == reconciliation["runtime_step_ids"]
     assert reconciliation["schedule_result_step_ids"] == reconciliation["runtime_step_ids"]
     assert reconciliation == expected_reconciliation
-    assert bridge == {
-        "schema_version": "director.materialization_quality_repair_bridge.v1",
-        "mode": "runtime_schedule_step_runner_adapter",
-        "bridge_file": "roles.adapters.internal.director.materialization_quality_repair_bridge",
-        "retired_strategy_host_removed": True,
-        "runtime_schedule_owner": "director.runtime",
-        "runner_binding_owner": "roles.adapters",
-        "ordered_step_ids": expected_step_ids,
-        "runner_step_ids": expected_step_ids,
-        "runner_binding_reconciliation": expected_reconciliation,
-        "internal_function_exported": False,
-        "repair_kernel_owner": "director.runtime",
-        "director_runtime_public_summary_required": True,
-        "convergence_verifier_present": False,
-        "receipt_count": 0,
-        "coverage_preaudit_uncovered_diagnostic_count": 1,
-        "coverage_preaudit_rule_discovery_required": True,
-        "plan_probe_status": "coverage_gap_uncovered_diagnostics",
-        "plan_probe_plannable_source_tools": [],
-        "plan_probe_covered_unplannable_source_tools": [],
-        "plan_probe_covered_unplannable_diagnostic_count": 0,
-        "dark_launch_cutover_ready": False,
-        "dark_launch_cutover_blockers": [
-            "independent_shadow_required",
-            "missing_before_after_hash_evidence",
-            "missing_revalidation_evidence",
-            "non_authoritative_kernel_receipt",
-        ],
-        "coverage_uncovered_diagnostic_count": 1,
+    assert summary["runtime_facade_summary"]["runtime_facade_owner"] == "director.runtime"
+    assert summary["runtime_materialization_facade"] == {
+        "schema_version": "director.materialization_quality_repair_facade_result.v1",
+        "source": "director.runtime.repair_kernel.materialization_quality_facade",
+        "owner_cell": "director.runtime",
+        "execution_boundary": "runtime_materialization_quality_facade_no_direct_writes",
     }
-    debt = summary["repair_kernel_migration_debt"]
-    assert debt["schema_version"] == "director.materialization_quality_repair_migration_debt.v1"
-    assert debt["adapter_projection_bridge"] is True
-    assert debt["adapter_callback_bridge"] is False
-    assert debt["convergence_verifier_present"] is False
-    assert debt["cutover_ready"] is False
-    assert debt["step_count"] == len(expected_step_ids)
-    assert debt["blocked_step_count"] == len(expected_step_ids)
-    assert debt["authoritative_receipts_allowed"] is False
-    assert debt["native_receipt_present_step_count"] == 0
-    assert debt["adapter_projection_present_step_count"] == 0
-    assert debt["callback_projection_present_step_count"] == 0
-    assert debt["adapter_projection_only_step_count"] == 0
-    assert debt["callback_only_step_count"] == 0
-    assert debt["native_receipt_step_ids"] == []
-    assert debt["adapter_projection_step_ids"] == []
-    assert debt["callback_projection_step_ids"] == []
-    assert debt["remaining_adapter_projection_only_step_ids"] == []
-    assert debt["remaining_callback_only_step_ids"] == []
-    assert summary["adapter_projection_debt"] == debt["adapter_projection_debt"]
-    assert "legacy_callback_debt" not in summary
-    assert "legacy_callback_debt" not in debt
-    assert [item["step_id"] for item in debt["adapter_projection_debt"]] == expected_step_ids
-    for item in debt["adapter_projection_debt"]:
-        assert {
-            "step_id",
-            "language",
-            "phase",
-            "priority",
-            "declared_source_tool",
-            "actual_source_tools",
-            "runtime_executable_source_tools",
-            "adapter_only_source_tools",
-            "native_receipt_present",
-            "native_repair_kernel_receipt_count",
-            "adapter_projection_present",
-            "callback_projection_present",
-            "adapter_receipt_projection_count",
-            "callback_receipt_projection_count",
-            "adapter_projection_only",
-            "callback_only",
-            "projection_only",
-            "authoritative_receipts_allowed",
-            "write_tool_evidence",
-            "convergence_path_available",
-            "convergence_verifier_present",
-            "verifier_evidence_required",
-            "verifier_evidence_present",
-            "native_verifier_evidence_present",
-            "adapter_verifier_evidence_present",
-            "callback_verifier_evidence_present",
-            "cutover_ready",
-            "cutover_blockers",
-            "blockers",
-        } <= set(item)
-        assert item["actual_source_tools"] == []
-        assert item["runtime_executable_source_tools"] == []
-        assert item["adapter_only_source_tools"] == []
-        assert item["native_receipt_present"] is False
-        assert item["native_repair_kernel_receipt_count"] == 0
-        assert item["adapter_projection_present"] is False
-        assert item["callback_projection_present"] is False
-        assert item["adapter_receipt_projection_count"] == 0
-        assert item["callback_receipt_projection_count"] == 0
-        assert item["adapter_projection_only"] is False
-        assert item["callback_only"] is False
-        assert item["projection_only"] is False
-        assert item["authoritative_receipts_allowed"] is False
-        assert item["convergence_verifier_present"] is False
-        assert item["verifier_evidence_required"] is True
-        assert item["verifier_evidence_present"] is False
-        assert item["native_verifier_evidence_present"] is False
-        assert item["adapter_verifier_evidence_present"] is False
-        assert item["callback_verifier_evidence_present"] is False
-        assert item["cutover_ready"] is False
-        assert item["cutover_blockers"] == item["blockers"]
-        assert "adapter_schedule_runner" in item["blockers"]
-        assert "missing_revalidation_evidence" in item["blockers"]
-        assert "independent_shadow_required" in item["blockers"]
+    assert "materialization_quality_bridge" not in summary
+    assert "repair_kernel_migration_debt" not in summary
+    assert "adapter_projection_debt" not in summary
     assert summary["public_boundary"] == {
         "schema_version": "roles.adapters.materialization_quality_repair_boundary.v1",
         "mode": "runtime_owned_schedule_public_boundary",
         "internal_function_exported": False,
         "repair_kernel_owner": "director.runtime",
         "director_runtime_public_summary_required": True,
+        "runtime_facade_entrypoint": "run_director_materialization_quality_repair_facade",
+        "typed_contract": "RunDirectorMaterializationQualityRepairScheduleCommandV1",
+        "typed_result": "DirectorMaterializationQualityRepairScheduleResultV1",
     }
 
 
@@ -816,7 +719,7 @@ def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
         fake_materialization_repair_step,
     )
 
-    results, summary = materialization_quality_repair_bridge.run_materialization_quality_repairs(
+    results, summary = role_adapter_service.run_director_materialization_quality_repair_schedule(
         {"workspace": "/tmp/demo"},
         task={"target_files": ["package.json"]},
         task_id="task-1",
@@ -826,11 +729,9 @@ def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
 
     assert len(results) == 1
     assert summary["convergence_verifier_present"] is True
-    assert summary["materialization_quality_bridge"]["convergence_verifier_present"] is True
-    assert summary["repair_kernel_migration_debt"]["convergence_verifier_present"] is True
-    debt_by_step = {
-        item["step_id"]: item for item in summary["repair_kernel_migration_debt"]["adapter_projection_debt"]
-    }
+    migration_debt = summary["scheduler_bridge"]["repair_kernel_migration_debt"]
+    assert migration_debt["convergence_verifier_present"] is True
+    debt_by_step = {item["step_id"]: item for item in migration_debt["adapter_projection_debt"]}
     assert len(debt_by_step) == 9
     node_manifest_debt = debt_by_step["materialization.node_manifest"]
     assert node_manifest_debt["declared_source_tool"] == "deterministic_node_manifest_materialization_repair"

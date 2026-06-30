@@ -93,6 +93,7 @@ class RunDirectorMaterializationQualityRepairScheduleCommandV1:
     task: Mapping[str, Any]
     task_id: str
     artifact_quality_errors: tuple[str, ...] = ()
+    convergence_verifier: Any = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "task", _to_dict_copy(self.task))
