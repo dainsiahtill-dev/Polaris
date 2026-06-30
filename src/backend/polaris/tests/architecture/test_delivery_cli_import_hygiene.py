@@ -31,6 +31,11 @@ DELIVERY_ADAPTERS = [
     "polaris/delivery/http/adapters/scripts_pm.py",
 ]
 
+CANONICAL_RUNTIME_ROOTS = [
+    "polaris/delivery",
+    "polaris/cells",
+]
+
 RETIRED_SCRIPT_SHIMS = [
     "scripts/benchmark_iterative_loop.py",
     "scripts/check_cell_imports.py",
@@ -140,3 +145,23 @@ def test_delivery_adapters_do_not_mutate_sys_path(relative_path: str) -> None:
     source = _read_text(full_path)
 
     assert "sys.path.insert(" not in source, f"{relative_path} must not mutate sys.path at runtime"
+
+
+@pytest.mark.parametrize("relative_root", CANONICAL_RUNTIME_ROOTS)
+def test_runtime_production_code_does_not_import_application_orchestration(relative_root: str) -> None:
+    root = BACKEND_ROOT / relative_root
+    assert root.is_dir(), f"missing runtime root: {relative_root}"
+
+    offenders: list[str] = []
+    for path in root.rglob("*.py"):
+        relative = path.relative_to(BACKEND_ROOT).as_posix()
+        if "/tests/" in relative or relative.endswith("/tests.py"):
+            continue
+        source = _read_text(path)
+        if "polaris.application.orchestration" in source:
+            offenders.append(relative)
+
+    assert not offenders, (
+        "Runtime production code must use public Cell contracts instead of "
+        f"polaris.application.orchestration: {offenders}"
+    )
