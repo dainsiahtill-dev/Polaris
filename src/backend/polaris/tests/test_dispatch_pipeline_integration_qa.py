@@ -500,7 +500,7 @@ def test_run_post_dispatch_integration_qa_failure_requeues_director_with_critiqu
     assert Path(resolve_logical_path(str(workspace), metadata["ce_rework_blueprint_path"])).is_file()
     assert metadata["chief_engineer_handoff"]["chain"] == "PM->ChiefEngineer->Director"
     assert metadata["chief_engineer_handoff"]["director_task_id"] == "TASK-A"
-    assert metadata["verification_failure_report"]["failure_classification"] == "Director Execution"
+    assert metadata["verification_failure_report"]["failure_classification"] == "IMPLEMENTATION_DEFECT"
     assert (
         metadata["verification_failure_report"]["qa_failure_classification"]["schema_version"]
         == "polaris.qa_failure_classification.v1"

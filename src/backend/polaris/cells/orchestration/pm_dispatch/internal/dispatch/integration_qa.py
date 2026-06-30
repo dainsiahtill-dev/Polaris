@@ -821,7 +821,7 @@ def _build_integration_qa_verification_failure_report(
     return {
         "schema_version": "verification.failure.v1",
         "source": "pm_dispatch.integration_qa",
-        "failure_classification": "Director Execution",
+        "failure_classification": str(qa_failure_classification.get("failure_class") or "IMPLEMENTATION_DEFECT"),
         "qa_failure_classification": qa_failure_classification,
         "gate": "integration_qa",
         "reason": str(result.get("reason") or "integration_qa_failed"),
@@ -900,7 +900,7 @@ def _generate_integration_qa_rework_blueprint(
                     "source": "pm_dispatch.integration_qa.rework",
                     "chain": "PM->ChiefEngineer->Director",
                     "failure_classification": verification_failure_report.get("qa_failure_classification")
-                    or "Director Execution",
+                    or {"failure_class": "IMPLEMENTATION_DEFECT"},
                     "must_preserve_pm_contract": True,
                     "target_project_code_must_not_be_hardcoded_in_polaris": True,
                 },
