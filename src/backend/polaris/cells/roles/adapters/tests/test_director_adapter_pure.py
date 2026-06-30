@@ -9143,68 +9143,6 @@ def test_typescript_missing_closing_brace_repair_fixes_ts1005_brace_expected(tmp
     assert repaired.count("{") == repaired.count("}")
 
 
-def test_typescript_unresolved_identifier_repair_uses_function_parameter_alias(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
-    )
-
-    engine_dir = tmp_path / "src" / "engine"
-    engine_dir.mkdir(parents=True)
-    simulation = engine_dir / "simulation.ts"
-    simulation.write_text(
-        "\n".join(
-            [
-                "export interface GardenState { moonPhase: number; humidity: number; tick: number; }",
-                "",
-                "export function tickGarden(state: GardenState): GardenState {",
-                "  const newState = { ...state, tick: state.tick + 1 };",
-                "  return newState;",
-                "}",
-                "",
-                "export function getGardenSummary(state: GardenState): string {",
-                "  return [",
-                "    `${newState.moonPhase}`;",
-                "    `${newState.humidity}`;",
-                "    `${newState.tick}`;",
-                "  ].join('\\n');",
-                "}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    adapter = SimpleNamespace(
-        workspace=str(tmp_path),
-        _execution=SimpleNamespace(_message_bus=None),
-        _update_task_progress=lambda *args, **kwargs: None,
-    )
-
-    results, summary = run_materialization_quality_repair_schedule(
-        adapter,
-        task={"target_files": ["src/engine/simulation.ts"]},
-        task_id="task-1",
-        artifact_quality_errors=[
-            "Artifact quality scan failed: TypeScript project typecheck failed: "
-            "src/engine/simulation.ts(10,8): error TS2304: Cannot find name 'newState'.",
-            "src/engine/simulation.ts(11,8): error TS2304: Cannot find name 'newState'.",
-            "src/engine/simulation.ts(12,8): error TS2304: Cannot find name 'newState'.",
-        ],
-    )
-
-    repaired = simulation.read_text(encoding="utf-8")
-    assert summary["attempted"] is True
-    assert any(
-        (item.get("result") or {}).get("source_tool") == "deterministic_typescript_unresolved_identifier_repair"
-        for item in results
-        if isinstance(item, dict)
-    )
-    assert "const newState = { ...state" in repaired
-    assert "return newState;" in repaired
-    assert "`${state.moonPhase}`;" in repaired
-    assert "`${state.humidity}`;" in repaired
-    assert "`${state.tick}`;" in repaired
-
-
 def test_typescript_comma_expected_repair_accepts_plain_tsc_error_format(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.public.service import (
         run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,

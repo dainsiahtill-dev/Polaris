@@ -109,11 +109,6 @@ _TS_UNINITIALIZED_PROPERTY_ERROR_RE = re.compile(
     r"Property\s+['\"](?P<member>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+has\s+no\s+initializer",
     re.IGNORECASE,
 )
-_TS_CANNOT_FIND_NAME_ERROR_RE = re.compile(
-    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2304:\s*"
-    r"Cannot\s+find\s+name\s+['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]",
-    re.IGNORECASE,
-)
 _TS_UNKNOWN_VALUE_ERROR_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS18046:\s*"
     r"['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+is\s+of\s+type\s+['\"]unknown['\"]",
@@ -139,13 +134,6 @@ _TS_ENUM_MEMBER_SEPARATOR_ERROR_RE = re.compile(
 _TS_ENUM_DECLARATION_LINE_RE = re.compile(r"\benum\s+[A-Za-z_$][A-Za-z0-9_$]*\b[^{}]*{")
 _TS_ENUM_MEMBER_LINE_RE = re.compile(
     r"^(?P<prefix>\s*[A-Za-z_$][A-Za-z0-9_$]*(?:\s*=\s*[^,;{}]+?)?)(?P<separator>[;,]?)(?P<space>\s*)(?P<comment>//.*)?$"
-)
-_TS_FUNCTION_DECLARATION_LINE_RE = re.compile(
-    r"^\s*(?:export\s+)?(?:async\s+)?function\s+[A-Za-z_$][A-Za-z0-9_$]*\s*\((?P<params>[^)]*)\)[^{]*{"
-)
-_TS_ARROW_FUNCTION_DECLARATION_LINE_RE = re.compile(
-    r"^\s*(?:export\s+)?(?:const|let|var)\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*"
-    r"(?:async\s*)?\((?P<params>[^)]*)\)\s*=>\s*{"
 )
 _TS_CANVAS_CONTEXT_DECLARATION_LINE_RE = re.compile(
     r"^(?P<indent>\s*)(?:const|let|var)\s+(?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)"
@@ -927,25 +915,6 @@ def _parse_typescript_missing_closing_brace_errors(errors: list[str]) -> list[di
             }
             key = (item["file"], item["line"], item["col"])
             if not item["file"] or not item["line"] or not item["col"] or key in seen:
-                continue
-            seen.add(key)
-            parsed.append(item)
-    return parsed
-
-
-def _parse_typescript_cannot_find_name_errors(errors: list[str]) -> list[dict[str, str]]:
-    parsed: list[dict[str, str]] = []
-    seen: set[tuple[str, str, str]] = set()
-    for error in errors:
-        for match in _TS_CANNOT_FIND_NAME_ERROR_RE.finditer(str(error or "")):
-            item = {
-                "file": _normalize_declared_task_path(match.group("file")),
-                "line": str(match.group("line") or "").strip(),
-                "col": str(match.group("col") or "").strip(),
-                "symbol": str(match.group("symbol") or "").strip(),
-            }
-            key = (item["file"], item["line"], item["symbol"])
-            if not item["file"] or not item["line"] or not _TS_IDENTIFIER_RE.fullmatch(item["symbol"]) or key in seen:
                 continue
             seen.add(key)
             parsed.append(item)
@@ -2909,147 +2878,6 @@ def _repair_typescript_missing_closing_braces(source: str) -> str:
     repaired = source.rstrip() + "\n"
     repaired += "\n".join("}" for _ in range(missing_count))
     return repaired + "\n"
-
-
-def _apply_deterministic_typescript_unresolved_identifier_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> list[dict[str, Any]]:
-    unresolved = _parse_typescript_cannot_find_name_errors(artifact_quality_errors)
-    if not unresolved:
-        return []
-
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-
-    updated_by_path: dict[Path, str] = {}
-    replacements: list[dict[str, str]] = []
-    for item in unresolved:
-        relative_path = item["file"]
-        full_path = (workspace_path / relative_path).resolve()
-        if not _path_inside_workspace(full_path, workspace_path) or not full_path.is_file():
-            continue
-        try:
-            original = updated_by_path.get(full_path) or full_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        try:
-            line_number = int(item["line"])
-        except ValueError:
-            continue
-        repaired, replacement = _repair_typescript_unresolved_identifier_lines(
-            original,
-            target_line_number=line_number,
-            missing_symbol=item["symbol"],
-        )
-        if repaired == original or not replacement:
-            continue
-        updated_by_path[full_path] = repaired
-        replacements.append(
-            {
-                "file": relative_path,
-                "line": item["line"],
-                "col": item["col"],
-                "symbol": item["symbol"],
-                "replacement": replacement,
-            }
-        )
-
-    return _write_typescript_repair_results(
-        adapter,
-        workspace_path=workspace_path,
-        task_id=task_id,
-        updated_by_path=updated_by_path,
-        source_tool="deterministic_typescript_unresolved_identifier_repair",
-        metadata_key="identifiers",
-        metadata_value=replacements,
-    )
-
-
-def _repair_typescript_unresolved_identifier_lines(
-    text: str,
-    *,
-    target_line_number: int,
-    missing_symbol: str,
-) -> tuple[str, str]:
-    if target_line_number <= 0 or not _TS_IDENTIFIER_RE.fullmatch(missing_symbol):
-        return str(text or ""), ""
-    lines = str(text or "").splitlines(keepends=True)
-    target_index = target_line_number - 1
-    if target_index < 0 or target_index >= len(lines):
-        return str(text or ""), ""
-    replacement = _select_typescript_unresolved_identifier_replacement(lines, target_index, missing_symbol)
-    if not replacement:
-        return str(text or ""), ""
-
-    line = lines[target_index]
-    repaired_line = re.sub(rf"\b{re.escape(missing_symbol)}\b", replacement, line)
-    if repaired_line == line:
-        return str(text or ""), ""
-    lines[target_index] = repaired_line
-    return "".join(lines), replacement
-
-
-def _select_typescript_unresolved_identifier_replacement(
-    lines: list[str],
-    target_index: int,
-    missing_symbol: str,
-) -> str:
-    params = _typescript_function_param_names_for_line(lines, target_index)
-    for param in params:
-        if _typescript_identifier_alias_matches(missing_symbol, param):
-            return param
-    return ""
-
-
-def _typescript_function_param_names_for_line(lines: list[str], target_index: int) -> list[str]:
-    for start_index in range(target_index, -1, -1):
-        line_body = lines[start_index].rstrip("\r\n")
-        match = _TS_FUNCTION_DECLARATION_LINE_RE.match(line_body) or _TS_ARROW_FUNCTION_DECLARATION_LINE_RE.match(
-            line_body
-        )
-        if not match:
-            continue
-        if not _typescript_line_is_inside_scope(lines, start_index, target_index):
-            continue
-        return _parse_typescript_param_names(str(match.group("params") or ""))
-    return []
-
-
-def _typescript_line_is_inside_scope(lines: list[str], start_index: int, target_index: int) -> bool:
-    depth = 0
-    for index in range(start_index, target_index + 1):
-        line_body = lines[index].rstrip("\r\n")
-        depth += line_body.count("{")
-        depth -= line_body.count("}")
-        if index < target_index and depth <= 0:
-            return False
-    return depth > 0
-
-
-def _parse_typescript_param_names(params_text: str) -> list[str]:
-    names: list[str] = []
-    for raw_param in params_text.split(","):
-        param = raw_param.strip()
-        if not param:
-            continue
-        param = param.split("=", 1)[0].split(":", 1)[0].strip()
-        param = param.removeprefix("...").strip()
-        if _TS_IDENTIFIER_RE.fullmatch(param):
-            names.append(param)
-    return names
-
-
-def _typescript_identifier_alias_matches(missing_symbol: str, candidate: str) -> bool:
-    missing_lower = missing_symbol.lower()
-    candidate_lower = candidate.lower()
-    if not candidate_lower or missing_lower == candidate_lower:
-        return False
-    prefixes = ("new", "next", "updated", "current", "previous", "prev")
-    return any(missing_lower == f"{prefix}{candidate_lower}" for prefix in prefixes)
 
 
 def _repair_typescript_enum_member_separator_lines(text: str, target_line_numbers: set[int]) -> str:

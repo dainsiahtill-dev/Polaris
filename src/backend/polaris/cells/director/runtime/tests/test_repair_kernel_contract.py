@@ -5004,6 +5004,46 @@ def test_public_typescript_unresolved_identifier_repairs_array_length_type_asser
     assert "(snap.history as unknown[]).length = 0;" in content_after
 
 
+def test_public_typescript_unresolved_identifier_repairs_parameter_alias() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL
+    diagnostic = "src/engine/simulation.ts(10,8): error TS2304: Cannot find name 'newState'."
+    content = "\n".join(
+        [
+            "export interface GardenState { moonPhase: number; humidity: number; tick: number; }",
+            "",
+            "export function tickGarden(state: GardenState): GardenState {",
+            "  const newState = { ...state, tick: state.tick + 1 };",
+            "  return newState;",
+            "}",
+            "",
+            "export function getGardenSummary(state: GardenState): string {",
+            "  return [",
+            "    `${newState.moonPhase}`;",
+            "    `${newState.humidity}`;",
+            "    `${newState.tick}`;",
+            "  ].join('\\n');",
+            "}",
+            "",
+        ]
+    )
+
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={"src/engine/simulation.ts": content},
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning_result["ok"] is True
+    assert planning_result["planned"] is True
+    assert planning_result["composition_summary"]["patch_count"] == 1
+    content_after = planning_result["composition_summary"]["patches"][0]["content_after"]
+    assert "`${state.moonPhase}`;" in content_after
+    assert "`${newState.humidity}`;" in content_after
+
+
 def test_public_typescript_expect_error_placement_moves_comment_to_error_line() -> None:
     source_tool = ts_syntax.TYPESCRIPT_EXPECT_ERROR_PLACEMENT_SOURCE_TOOL
     diagnostics = (

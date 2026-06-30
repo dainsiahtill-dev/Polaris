@@ -1818,6 +1818,7 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
     assert not hasattr(typescript_repairs, "_apply_deterministic_typescript_reexported_type_binding_repair")
     assert not hasattr(typescript_repairs, "_looks_like_typescript_reexport_failure")
     assert not hasattr(typescript_repairs, "_apply_deterministic_typescript_tsconfig_lib_repair")
+    assert not hasattr(typescript_repairs, "_apply_deterministic_typescript_unresolved_identifier_repair")
     for module, helper_name in legacy_helpers:
         if hasattr(module, helper_name):
             monkeypatch.setattr(module, helper_name, fail_if_legacy_called)
