@@ -402,16 +402,18 @@ async def execute_transaction_kernel_turn(
                 )
 
                 native_count = 1
+                provider_response_hash = ""
                 for flag in error_metadata.get("anomaly_flags", []):
                     if isinstance(flag, dict) and str(flag.get("type") or "") == "TOOL_DISPATCH_DROPPED":
                         native_count = max(1, int(flag.get("native_tool_calls_count") or 1))
+                        provider_response_hash = str(flag.get("provider_response_hash") or "").strip()
                         break
                 lifecycle = build_tool_call_lifecycle_receipt(
                     run_id=str(request.run_id or turn_id),
                     task_id=str(request.task_id or ""),
                     turn_id=turn_id,
                     role=str(profile.role_id or ""),
-                    provider_response_hash="",
+                    provider_response_hash=provider_response_hash,
                     native_tool_calls_count=native_count,
                     decoded_tool_calls_count=0,
                     dispatched_tool_calls_count=0,

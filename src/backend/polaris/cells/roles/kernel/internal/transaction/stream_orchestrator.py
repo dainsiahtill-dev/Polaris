@@ -25,6 +25,10 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import restrict
 from polaris.cells.roles.kernel.internal.speculation.cancel import CancellationCoordinator
 from polaris.cells.roles.kernel.internal.speculation.task_group import TurnScopedTaskGroup
 from polaris.cells.roles.kernel.internal.stream_shadow_engine import StreamShadowEngine
+from polaris.cells.roles.kernel.internal.transaction.decision_pipeline import (
+    _native_tool_call_count,
+    _provider_response_hash,
+)
 from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
     build_corrective_context,
     evaluate_decode_corrective,
@@ -1302,6 +1306,28 @@ class StreamOrchestrator:
         # Reuse the probe decision when no corrective retry replaced the response
         # (decode is pure — identical input yields an identical decision).
         decision = probe_decision if corrective_ask is None else self.decoder.decode(llm_response, TurnId(turn_id))
+        native_tool_call_count = _native_tool_call_count(llm_response)
+        provider_response_hash = _provider_response_hash(llm_response)
+        decision_metadata = dict(decision.get("metadata") or {})
+        decision_metadata.setdefault("provider_response_hash", provider_response_hash)
+        decision_metadata.setdefault("native_tool_calls_count", native_tool_call_count)
+        decision = dict(decision)
+        decision["metadata"] = decision_metadata
+        if native_tool_call_count > 0 and tool_definitions and not decision.get("tool_batch"):
+            ledger.anomaly_flags.append(
+                {
+                    "type": "TOOL_DISPATCH_DROPPED",
+                    "turn_id": turn_id,
+                    "native_tool_calls_count": native_tool_call_count,
+                    "provider_response_hash": provider_response_hash,
+                    "reason": "provider_emitted_tool_calls_but_no_decoded_tool_batch",
+                    "streaming": True,
+                }
+            )
+            raise RuntimeError(
+                "tool_dispatch_dropped: provider emitted "
+                f"{native_tool_call_count} tool call(s), but no executable tool batch was decoded"
+            )
 
         # PROPOSE_PATCH / ANALYZE_ONLY 边界保护：过滤 write tools（与 run 模式一致）。
         # 必须在 record_decision / TOOL_BATCH 执行之前应用，否则只读/提案契约下

@@ -244,16 +244,28 @@ class TestFinalAnswerPath:
             tool_runtime=mock_tool_runtime,
             config=TransactionConfig(domain="code"),
         )
+        state_machine = TurnStateMachine(turn_id="turn_bad_native_tool")
+        ledger = TurnLedger(turn_id="turn_bad_native_tool")
 
         with pytest.raises(RuntimeError, match="tool_dispatch_dropped"):
-            await controller.execute(
+            await controller._execute_turn(
                 turn_id="turn_bad_native_tool",
                 context=[{"role": "user", "content": "Read main.py"}],
                 tool_definitions=[{"type": "function", "function": {"name": "read_file"}}],
+                state_machine=state_machine,
+                ledger=ledger,
+                stream=False,
             )
 
         assert mock_llm_provider.call_count == 2
         assert mock_tool_runtime.call_count == 0
+        dropped_flags = [
+            item
+            for item in ledger.anomaly_flags
+            if isinstance(item, dict) and item.get("type") == "TOOL_DISPATCH_DROPPED"
+        ]
+        assert len(dropped_flags) == 1
+        assert dropped_flags[0]["provider_response_hash"]
 
     @pytest.mark.asyncio
     async def test_final_answer_no_llm_continuation(

@@ -27,7 +27,7 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
     build_corrective_context,
@@ -67,6 +67,17 @@ def _provider_response_hash(response: RawLLMResponse) -> str:
 
 
 def _with_decision_metadata(decision: TurnDecision, metadata: dict[str, Any]) -> TurnDecision:
+    required_fields = (
+        "turn_id",
+        "kind",
+        "visible_message",
+        "finalize_mode",
+        "domain",
+    )
+    if not isinstance(decision, dict) or not all(field in decision for field in required_fields):
+        partial_decision = dict(decision)
+        partial_decision["metadata"] = metadata
+        return cast(TurnDecision, partial_decision)
     return TurnDecision(
         turn_id=decision["turn_id"],
         kind=decision["kind"],
@@ -143,6 +154,7 @@ async def run_decision_pipeline(
                 "type": "TOOL_DISPATCH_DROPPED",
                 "turn_id": turn_id,
                 "native_tool_calls_count": native_tool_call_count,
+                "provider_response_hash": decision_metadata.get("provider_response_hash"),
                 "reason": "provider_emitted_tool_calls_but_no_decoded_tool_batch",
             }
         )

@@ -2597,6 +2597,79 @@ async def test_execute_turn_stream_passes_narrowed_tool_names_to_direct_batch_ex
 
 
 @pytest.mark.asyncio
+async def test_execute_turn_stream_fails_closed_when_native_tool_call_decodes_without_batch(monkeypatch) -> None:
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(return_value={}),
+        tool_runtime=AsyncMock(return_value={}),
+        config=TransactionConfig(domain="code"),
+        llm_provider_stream=AsyncMock(),
+    )
+    state_machine = TurnStateMachine(turn_id="turn_stream_dropped_tool")
+    ledger = TurnLedger(turn_id="turn_stream_dropped_tool")
+    context = [{"role": "user", "content": "请读取 README.md"}]
+    tool_definitions = [{"type": "function", "function": {"name": "repo_read_slice"}}]
+
+    async def _fake_call_llm_for_decision_stream(
+        ctx,
+        tool_definitions,
+        llm_ledger,
+        shadow_engine=None,
+        *,
+        tool_choice_override=None,
+        model_override=None,
+        temperature_override=None,
+        max_tokens_floor=None,
+    ):
+        del ctx, tool_definitions, llm_ledger, shadow_engine
+        del tool_choice_override, model_override, temperature_override, max_tokens_floor
+        yield {
+            "type": "_internal_materialize",
+            "response": RawLLMResponse(
+                content="",
+                native_tool_calls=[
+                    {
+                        "id": "call_stream_drop",
+                        "function": {
+                            "name": "repo_read_slice",
+                            "arguments": "{\"file\":\"README.md\",\"start\":1,\"end\":20}",
+                        },
+                    }
+                ],
+            ),
+        }
+
+    def _fake_decode(_response, _turn_id):
+        return {
+            "kind": TurnDecisionKind.FINAL_ANSWER,
+            "turn_id": "turn_stream_dropped_tool",
+            "visible_message": "",
+            "finalize_mode": "answer",
+            "domain": "code",
+        }
+
+    monkeypatch.setattr(controller, "_call_llm_for_decision_stream", _fake_call_llm_for_decision_stream)
+    monkeypatch.setattr(controller._stream_orchestrator.decoder, "decode", _fake_decode)
+
+    with pytest.raises(RuntimeError, match="tool_dispatch_dropped"):
+        async for _event in controller._execute_turn_stream(
+            turn_id="turn_stream_dropped_tool",
+            context=context,
+            tool_definitions=tool_definitions,
+            state_machine=state_machine,
+            ledger=ledger,
+        ):
+            pass
+
+    dropped_flags = [
+        item for item in ledger.anomaly_flags if isinstance(item, dict) and item.get("type") == "TOOL_DISPATCH_DROPPED"
+    ]
+    assert len(dropped_flags) == 1
+    assert dropped_flags[0]["native_tool_calls_count"] == 1
+    assert dropped_flags[0]["streaming"] is True
+    assert dropped_flags[0]["provider_response_hash"]
+
+
+@pytest.mark.asyncio
 async def test_execute_stream_yields_completion_after_mutation_contract_retry_real_path(monkeypatch) -> None:
     """End-to-end: TransactionKernel.execute_stream must yield CompletionEvent after retry.
 
