@@ -122,7 +122,7 @@ class TestFactoryStartRequest:
             FactoryStartRequest(workspace="/tmp/ws", director_iterations=11)
 
     def test_start_from_values(self) -> None:
-        for value in ("auto", "architect", "pm", "director"):
+        for value in ("auto", "architect", "pm", "director", "director_resume"):
             req = FactoryStartRequest(workspace="/tmp/ws", start_from=value)  # type: ignore[arg-type]
             assert req.start_from == value
 

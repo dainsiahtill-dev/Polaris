@@ -578,7 +578,7 @@ async def test_start_factory_run_from_architect_requires_architect_readiness(
 
 
 @pytest.mark.asyncio
-async def test_start_factory_run_from_director_uses_director_only_stage_graph(
+async def test_start_factory_run_from_director_resume_uses_director_only_stage_graph(
     client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -618,7 +618,7 @@ async def test_start_factory_run_from_director_uses_director_only_stage_graph(
             "/v2/factory/runs",
             json={
                 "workspace": str(workspace),
-                "start_from": "director",
+                "start_from": "director_resume",
                 "directive": "Resume Director from trusted PM/CE evidence",
                 "run_director": True,
                 "director_iterations": 1,
@@ -629,7 +629,7 @@ async def test_start_factory_run_from_director_uses_director_only_stage_graph(
 
     assert response.status_code == 200
     config = mock_svc.create_run.call_args.args[0]
-    assert config.name == "Factory Run - director"
+    assert config.name == "Factory Run - director_resume"
     assert config.stages == ["director_dispatch", "quality_gate"]
     assert mock_roles_ready.call_args.kwargs["default_roles"] == ["director", "qa"]
     assert mock_roles_ready.call_args.kwargs["force_roles"] == ["director", "qa"]
@@ -638,7 +638,7 @@ async def test_start_factory_run_from_director_uses_director_only_stage_graph(
 
 
 @pytest.mark.asyncio
-async def test_start_factory_run_from_director_fails_closed_without_resume_evidence(
+async def test_start_factory_run_from_director_resume_fails_closed_without_resume_evidence(
     client: AsyncClient,
     tmp_path: Path,
 ) -> None:
@@ -662,7 +662,7 @@ async def test_start_factory_run_from_director_fails_closed_without_resume_evide
             "/v2/factory/runs",
             json={
                 "workspace": str(workspace),
-                "start_from": "director",
+                "start_from": "director_resume",
                 "directive": "Resume Director",
                 "run_director": True,
                 "director_iterations": 1,

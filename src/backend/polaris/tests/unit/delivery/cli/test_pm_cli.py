@@ -516,9 +516,13 @@ class TestPmThinCli:
 
     def test_pm_thin_parser_has_start_from(self, pm_thin_parser: argparse.ArgumentParser) -> None:
         """pm-thin parser must accept --start-from with choices."""
-        for role in ("pm", "architect", "director", "qa"):
+        for role in ("pm", "architect"):
             args = pm_thin_parser.parse_args(["--start-from", role])
             assert args.start_from == role
+
+        for role in ("director", "qa"):
+            with pytest.raises(SystemExit):
+                pm_thin_parser.parse_args(["--start-from", role])
 
     def test_pm_thin_parser_default_values(self, pm_thin_parser: argparse.ArgumentParser) -> None:
         """pm-thin parser defaults must be correct."""

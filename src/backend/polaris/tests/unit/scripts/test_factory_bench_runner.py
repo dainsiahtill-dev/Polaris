@@ -1282,8 +1282,11 @@ def test_run_factory_chain_director_resume_uses_existing_pm_ce_evidence(
     )
 
     assert result["exit_code"] == 0
-    assert _LAST_FACTORY_START_PAYLOAD["start_from"] == "director"
+    assert result["start_from"] == "director"
+    assert result["factory_api_start_from"] == "director_resume"
+    assert _LAST_FACTORY_START_PAYLOAD["start_from"] == "director_resume"
     assert _LAST_FACTORY_START_PAYLOAD["metadata"]["factory_bench_start_from"] == "director"
+    assert _LAST_FACTORY_START_PAYLOAD["metadata"]["factory_bench_api_start_from"] == "director_resume"
     snapshot_manifest = workspace / ".polaris" / "factory_snapshots" / "pre_director" / "manifest.json"
     assert json.loads(snapshot_manifest.read_text(encoding="utf-8"))["snapshot_kind"] == "pre_director_workspace"
     reset_task = json.loads(task_path.read_text(encoding="utf-8"))

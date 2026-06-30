@@ -2704,9 +2704,11 @@ def run_factory_chain(
 ) -> dict[str, Any]:
     """Start a /v2/factory/runs for the project workspace and wait for completion."""
     normalized_start_from = str(start_from or "pm").strip().lower()
-    if normalized_start_from not in {"pm", "director"}:
+    if normalized_start_from not in {"pm", "director", "director_resume"}:
         raise ValueError(f"unsupported factory bench start_from: {start_from!r}")
-    if normalized_start_from == "director":
+    requested_start_from = normalized_start_from
+    api_start_from = "director_resume" if normalized_start_from in {"director", "director_resume"} else normalized_start_from
+    if api_start_from == "director_resume":
         _prepare_director_resume_workspace(workspace)
     else:
         purge_project_runtime(workspace)
@@ -2720,7 +2722,7 @@ def run_factory_chain(
     feature_keywords = _extract_feature_keywords(project)
     requirements_doc = build_requirements_doc(project)
     level_contract = build_factory_bench_level_contract(project.get("level"), project=project)
-    if normalized_start_from != "director":
+    if api_start_from != "director_resume":
         requirements_path = workspace / "requirements.md"
         requirements_path.write_text(requirements_doc, encoding="utf-8")
         ws_requirements = workspace / ".polaris" / "docs" / "product" / "requirements.md"
@@ -2765,7 +2767,7 @@ def run_factory_chain(
 
     payload = {
         "workspace": str(workspace),
-        "start_from": normalized_start_from,
+        "start_from": api_start_from,
         "directive": requirements_doc,
         "run_director": True,
         "director_iterations": 0,
@@ -2780,7 +2782,8 @@ def run_factory_chain(
             "factory_bench_level": int(project.get("level") or 0),
             "factory_bench_title": str(project.get("title") or "").strip(),
             "factory_bench_project_workspace": str(workspace.resolve()),
-            "factory_bench_start_from": normalized_start_from,
+            "factory_bench_start_from": requested_start_from,
+            "factory_bench_api_start_from": api_start_from,
             "factory_run_timeout_seconds": float(timeout_s),
             "factory_run_started_epoch_seconds": started,
             "factory_run_deadline_epoch_seconds": factory_deadline_epoch_seconds,
@@ -2875,7 +2878,8 @@ def run_factory_chain(
         )
         audit_bundle = _fallback_audit_bundle_from_workspace(workspace)
     chain_results = map_factory_run_to_chain_results(terminal_status, audit_bundle)
-    chain_results["factory_bench_start_from"] = normalized_start_from
+    chain_results["factory_bench_start_from"] = requested_start_from
+    chain_results["factory_api_start_from"] = api_start_from
 
     # Read contract_goal from workspace tasks/plan.json if available
     plan_path = workspace / ".polaris" / "docs" / "product" / "plan.json"
@@ -2890,7 +2894,8 @@ def run_factory_chain(
         "exit_code": 0 if str(terminal_status.get("status") or "").lower() == "completed" else 1,
         "duration_s": round(time.time() - started, 1),
         "run_id": run_id,
-        "start_from": normalized_start_from,
+        "start_from": requested_start_from,
+        "factory_api_start_from": api_start_from,
         "factory_terminal_status": terminal_status,
         "chain_results": chain_results,
         "audit_bundle": audit_bundle,
@@ -3083,9 +3088,12 @@ def main() -> int:
     )
     ap.add_argument(
         "--start-from",
-        choices=("pm", "director"),
+        choices=("pm", "director", "director_resume"),
         default="pm",
-        help="Factory stage to start from; director reuses trusted PM/CE evidence and pre-Director snapshot",
+        help=(
+            "Factory bench stage to start from; director is a bench CLI alias for "
+            "director_resume, which reuses trusted PM/CE evidence and pre-Director snapshot"
+        ),
     )
     ap.add_argument(
         "--use-legacy-chain",

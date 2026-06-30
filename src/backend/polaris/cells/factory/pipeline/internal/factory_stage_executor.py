@@ -4090,9 +4090,7 @@ class OrchestrationStageExecutor:
         raw_start_metadata = context.get("metadata")
         start_metadata: dict[str, Any] = dict(raw_start_metadata) if isinstance(raw_start_metadata, dict) else {}
         start_from_hint = str(context.get("factory_start_from") or start_metadata.get("factory_start_from") or "")
-        director_only_resume = start_from_hint.strip().lower() == "director" or str(run.config.name or "") == (
-            "Factory Run - director"
-        )
+        director_only_resume = start_from_hint.strip().lower() == "director_resume"
         if director_only_resume:
             try:
                 restore_payload = self._restore_pre_director_snapshot()

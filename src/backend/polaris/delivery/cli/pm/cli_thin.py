@@ -74,9 +74,9 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--start-from",
         type=str,
-        choices=["pm", "architect", "director", "qa"],
+        choices=["pm", "architect"],
         default="pm",
-        help="Starting role",
+        help="Governed PM entry point; Director resume uses Factory start_from=director_resume",
     )
     return parser
 
