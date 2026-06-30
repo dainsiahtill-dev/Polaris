@@ -173,11 +173,11 @@ Compatibility facade mounting the migrated `audit_router` under `/v2/audit`.
 |------------------|-------------|----------|
 | `/pm/start_loop` | `/v2/pm/start` | `polaris/delivery/http/v2/pm.py` |
 | `_merge_director_status` re-export | `merge_director_status` from `polaris.cells.runtime.projection.public.service` | `polaris/delivery/http/v2/director.py` |
-| `scripts/contextos_gate_checker.py` | `polaris.delivery.cli.tools.contextos_gate_checker` | `scripts/` |
-| `scripts/dev-tools.py` | `polaris.delivery.cli.tools.dev_tools` | `scripts/` |
-| `scripts/check_legacy_imports.py` | `polaris.delivery.cli.tools.check_legacy_imports` | `scripts/` |
-| `scripts/check_cell_imports.py` | `polaris.delivery.cli.tools.check_cell_imports` | `scripts/` |
-| `scripts/benchmark_iterative_loop.py` | `polaris.delivery.cli.tools.benchmark_iterative_loop` | `scripts/` |
+| `scripts/contextos_gate_checker.py` | `python -m polaris.delivery.cli.tools.contextos_gate_checker` | Direct script shim retired |
+| `scripts/dev-tools.py` | `python -m polaris.delivery.cli.tools.dev_tools` | Direct script shim retired |
+| `scripts/check_legacy_imports.py` | `python -m polaris.delivery.cli.tools.check_retired_imports` | Broken direct shim retired |
+| `scripts/check_cell_imports.py` | `python -m polaris.delivery.cli.tools.check_cell_imports` | Direct script shim retired |
+| `scripts/benchmark_iterative_loop.py` | `python -m polaris.delivery.cli.tools.benchmark_iterative_loop` | Direct script shim retired |
 
 ---
 

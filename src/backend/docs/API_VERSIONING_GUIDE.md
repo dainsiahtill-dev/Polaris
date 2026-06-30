@@ -196,23 +196,13 @@ async def pm_start_loop(
     return await pm_service.start_loop(resume=resume)
 ```
 
-### 3.2 Shim Layer for Migrated Modules
+### 3.2 Retired Direct Script Shims
 
-For modules that have been moved to new locations, create a compatibility shim:
+For modules that have been moved to new locations, do not create or keep a direct
+`scripts/*.py` compatibility shim. Update callers to the canonical module entrypoint:
 
-```python
-# scripts/contextos_gate_checker.py
-"""DEPRECATED: Use polaris.delivery.cli.tools.contextos_gate_checker instead."""
-from polaris.delivery.cli.tools.contextos_gate_checker import main
-
-if __name__ == "__main__":
-    import warnings
-    warnings.warn(
-        "This script is deprecated. Use polaris.delivery.cli.tools.contextos_gate_checker instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    main()
+```bash
+python -m polaris.delivery.cli.tools.contextos_gate_checker
 ```
 
 ### 3.3 Marking Code with `# DEPRECATED`

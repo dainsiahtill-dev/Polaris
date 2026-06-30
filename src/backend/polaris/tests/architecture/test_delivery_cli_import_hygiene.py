@@ -31,6 +31,14 @@ DELIVERY_ADAPTERS = [
     "polaris/delivery/http/adapters/scripts_pm.py",
 ]
 
+RETIRED_SCRIPT_SHIMS = [
+    "scripts/benchmark_iterative_loop.py",
+    "scripts/check_cell_imports.py",
+    "scripts/check_legacy_imports.py",
+    "scripts/contextos_gate_checker.py",
+    "scripts/dev-tools.py",
+]
+
 
 def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
@@ -117,6 +125,12 @@ def test_retired_import_checker_does_not_use_legacy_module_name() -> None:
     assert "find_legacy_imports" not in source
     assert "check_legacy_imports" not in source
     assert "find_retired_imports" in source
+
+
+@pytest.mark.parametrize("relative_path", RETIRED_SCRIPT_SHIMS)
+def test_retired_backend_script_shims_are_removed(relative_path: str) -> None:
+    full_path = BACKEND_ROOT / relative_path
+    assert not full_path.exists(), f"Retired backend script shim was recreated: {relative_path}"
 
 
 @pytest.mark.parametrize("relative_path", DELIVERY_ADAPTERS)

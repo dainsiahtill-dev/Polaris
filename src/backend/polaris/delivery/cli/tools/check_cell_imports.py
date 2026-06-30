@@ -6,7 +6,7 @@ According to ACGA 2.0, Cells should communicate via public contracts,
 not by importing from other Cells' internal modules.
 
 Usage:
-    python scripts/check_cell_imports.py [file1.py file2.py ...]
+    python -m polaris.delivery.cli.tools.check_cell_imports [file1.py file2.py ...]
 
     If no files specified, checks all staged files from git.
 
@@ -176,8 +176,8 @@ def main() -> int:
         for v in all_violations:
             by_file.setdefault(v.file_path, []).append(v)
 
-        for file_path, violations in by_file.items():
-            print(f"File: {file_path}")
+        for violation_file, violations in by_file.items():
+            print(f"File: {violation_file}")
             print("-" * 80)
             for v in violations:
                 print(f"  Line {v.line_number}: {v.violation_type}")

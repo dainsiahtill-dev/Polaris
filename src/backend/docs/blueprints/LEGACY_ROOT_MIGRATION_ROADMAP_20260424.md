@@ -161,8 +161,8 @@ Multiple scripts import polaris/ internal modules, violating Cell boundary rules
 |---|---|---|---|
 | Delete 15 one-off analysis scripts | 1h | None | These are disposable |
 | Migrate run_helpers to polaris/delivery/cli/ | 4h | Low | Consolidate test runners |
-| Migrate dev-tools.py to polaris/delivery/cli/ | 2h | Low | Evaluate if still needed |
-| Migrate benchmark_iterative_loop.py | 2h | Low | Move to evaluation cell |
+| Migrate dev-tools.py to polaris/delivery/cli/ | Done | Low | Canonical module exists; direct script shim removed |
+| Migrate benchmark_iterative_loop.py | Done | Low | Canonical module exists; direct script shim removed |
 
 ### P3: Low (Archive/Evaluate)
 
@@ -256,10 +256,10 @@ Multiple scripts import polaris/ internal modules, violating Cell boundary rules
 | run_pytest.py | 24 | Migrate | polaris/delivery/cli/tools/run_tests.py |
 | run_pytest2.py | 31 | Migrate | polaris/delivery/cli/tools/run_tests.py |
 | run_quick_tests.py | 87 | Migrate | polaris/delivery/cli/tools/run_tests.py |
-| benchmark_iterative_loop.py | 187 | Migrate | polaris/cells/llm/evaluation/tools/benchmark.py |
-| check_cell_imports.py | 210 | Migrate | polaris/delivery/cli/tools/check_imports.py |
-| contextos_gate_checker.py | 257 | Migrate | polaris/delivery/cli/tools/contextos_gate.py |
-| dev-tools.py | 326 | Evaluate | TBD |
+| benchmark_iterative_loop.py | 187 | Closed | polaris/delivery/cli/tools/benchmark_iterative_loop.py |
+| check_cell_imports.py | 210 | Closed | polaris/delivery/cli/tools/check_cell_imports.py |
+| contextos_gate_checker.py | 257 | Closed | polaris/delivery/cli/tools/contextos_gate_checker.py |
+| dev-tools.py | 326 | Closed | polaris/delivery/cli/tools/dev_tools.py |
 | lancedb_store.py | 111 | Evaluate | TBD |
 | add_session_tool.py | 62 | Delete | - |
 | audit_markers.py | 23 | Delete | - |

@@ -5,7 +5,7 @@ Cross-platform development utility script for running linting,
 type checking, and tests.
 
 Usage:
-    python scripts/dev-tools.py <command>
+    python -m polaris.delivery.cli.tools.dev_tools <command>
 
 Commands:
     lint         Run Ruff linter (check only)
@@ -248,9 +248,9 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python scripts/dev-tools.py lint
-    python scripts/dev-tools.py verify
-    python scripts/dev-tools.py fix
+    python -m polaris.delivery.cli.tools.dev_tools lint
+    python -m polaris.delivery.cli.tools.dev_tools verify
+    python -m polaris.delivery.cli.tools.dev_tools fix
         """,
     )
 

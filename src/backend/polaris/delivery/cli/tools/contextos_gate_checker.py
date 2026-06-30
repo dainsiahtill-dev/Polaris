@@ -2,7 +2,7 @@
 """ContextOS Engineering Gates - Automated Compliance Checker.
 
 Usage:
-    python -m scripts.contextos_gate_checker [paths...]
+    python -m polaris.delivery.cli.tools.contextos_gate_checker [paths...]
 
 Returns:
     0 if all gates pass

@@ -235,7 +235,7 @@ repos:
     hooks:
       - id: cell-internal-imports
         name: Block Cell internal imports
-        entry: python scripts/check_cell_imports.py
+        entry: python -m polaris.delivery.cli.tools.check_cell_imports
         language: system
         types: [python]
 ```

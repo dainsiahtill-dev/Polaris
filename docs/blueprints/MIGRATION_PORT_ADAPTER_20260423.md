@@ -98,7 +98,7 @@ normalize_role_alias = RoleProviderAdapter().normalize_role_alias
 
 | File | Description |
 |------|-------------|
-| `scripts/check_cell_imports.py` | Pre-commit hook to detect Cell internal imports |
+| `polaris.delivery.cli.tools.check_cell_imports` | Pre-commit hook to detect Cell internal imports |
 
 ---
 
@@ -223,10 +223,10 @@ if self._enable_value_alignment:
 
 ```bash
 # Check staged files
-python scripts/check_cell_imports.py
+python -m polaris.delivery.cli.tools.check_cell_imports
 
 # Check specific files
-python scripts/check_cell_imports.py file1.py file2.py
+python -m polaris.delivery.cli.tools.check_cell_imports file1.py file2.py
 ```
 
 ### 7.2 Integration
@@ -239,7 +239,7 @@ repos:
     hooks:
       - id: cell-internal-imports
         name: Block Cell internal imports
-        entry: python scripts/check_cell_imports.py
+        entry: python -m polaris.delivery.cli.tools.check_cell_imports
         language: system
         types: [python]
         pass_filenames: true
@@ -296,6 +296,6 @@ polaris/
 │           ├── bus_adapter.py
 │           └── alignment_adapter.py
 └── backend/
-    └── scripts/
+    └── polaris/delivery/cli/tools/
         └── check_cell_imports.py
 ```

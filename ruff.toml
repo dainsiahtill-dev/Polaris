@@ -35,7 +35,6 @@ exclude = [
     "src/backend/polaris/cells/llm/evaluation/fixtures/**",
     "src/backend/run_*_test.py",
     "src/backend/scripts/archive/**",
-    "src/backend/scripts/dev-tools.py",
     "src/backend/scripts/test_intent.py",
     # Squad B Wave 1 baseline: archive snapshots / generated artefacts.
     "**/_archived/**",
