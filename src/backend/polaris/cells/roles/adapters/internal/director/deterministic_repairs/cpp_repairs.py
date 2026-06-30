@@ -14,6 +14,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ._common import controlled_legacy_write_text
+
 logger = logging.getLogger(__name__)
 
 
@@ -148,7 +150,7 @@ def repair_cpp_include_paths(workspace: Path) -> list[dict[str, str]]:
                         modified = True
 
             if modified:
-                src_file.write_text(content, encoding="utf-8")
+                controlled_legacy_write_text(src_file, content, workspace=workspace)
                 repairs.append({"file": str(src_file.relative_to(workspace)), "action": "fixed_include_paths"})
 
     if repairs:
@@ -188,7 +190,7 @@ def repair_cpp_missing_standard_includes(workspace: Path) -> list[dict[str, str]
             ):
                 insert_at = idx + 1
         new_lines = [*lines[:insert_at], *additions, *lines[insert_at:]]
-        source_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+        controlled_legacy_write_text(source_file, "\n".join(new_lines) + "\n", workspace=workspace)
         repairs.append({"file": str(source_file.relative_to(workspace)), "action": "added_missing_standard_includes"})
     return repairs
 
@@ -209,7 +211,7 @@ def repair_cpp_invalid_placeholder_declarations(workspace: Path) -> list[dict[st
         new_content = placeholder_line_re.sub("", content)
         if new_content == content:
             continue
-        source_file.write_text(new_content, encoding="utf-8")
+        controlled_legacy_write_text(source_file, new_content, workspace=workspace)
         repairs.append({"file": str(source_file.relative_to(workspace)), "action": "removed_invalid_placeholders"})
     return repairs
 
@@ -251,7 +253,7 @@ def repair_cpp_missing_private_members(workspace: Path) -> list[dict[str, str]]:
                 replacement = class_block.replace("\n};", "\nprivate:\n" + "\n".join(declarations) + "\n};", 1)
             content = content.replace(class_block, replacement, 1)
         if content != original:
-            header.write_text(content, encoding="utf-8")
+            controlled_legacy_write_text(header, content, workspace=workspace)
             repairs.append({"file": str(header.relative_to(workspace)), "action": "added_missing_private_members"})
     return repairs
 
@@ -299,7 +301,7 @@ def repair_cpp_struct_getter_field_access(workspace: Path) -> list[dict[str, str
             content = re.sub(rf"\.{re.escape(field_name)}\s*\(\s*\)", f".{field_name}", content)
         if content == original:
             continue
-        source_file.write_text(content, encoding="utf-8")
+        controlled_legacy_write_text(source_file, content, workspace=workspace)
         repairs.append(
             {"file": str(source_file.relative_to(workspace)), "action": "rewrote_struct_getter_field_access"}
         )
@@ -348,6 +350,6 @@ def repair_cpp_failing_smoke_translation_units(workspace: Path) -> list[dict[str
                     "",
                 ]
             )
-        source_file.write_text("\n".join(smoke), encoding="utf-8")
+        controlled_legacy_write_text(source_file, "\n".join(smoke), workspace=workspace)
         repairs.append({"file": rel, "action": "rewrote_failing_cpp_compile_smoke"})
     return repairs

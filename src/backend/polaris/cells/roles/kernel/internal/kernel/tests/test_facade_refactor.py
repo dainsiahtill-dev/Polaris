@@ -129,15 +129,17 @@ class TestDependencyInjection:
         assert kernel._injected_quality_checker is not None
         assert kernel._injected_event_emitter is not None
 
-    def test_internal_llm_caller_adapter_is_silent(self) -> None:
-        """Kernel-owned LLMCaller is a compatibility adapter, not public legacy use."""
+    def test_internal_llm_caller_accessor_returns_invoker_without_deprecation(self) -> None:
+        """Kernel compatibility accessor returns canonical LLMInvoker."""
+        from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
+
         kernel = RoleExecutionKernel(workspace=".")
 
         with warnings.catch_warnings(record=True) as captured:
             warnings.simplefilter("always")
             caller = kernel._get_llm_caller()
 
-        assert caller._emit_deprecation_warning is False
+        assert isinstance(caller, LLMInvoker)
         assert not any("LLMCaller is deprecated" in str(item.message) for item in captured)
 
     def test_llm_caller_is_not_public_kernel_export(self) -> None:
@@ -160,10 +162,7 @@ class TestDependencyInjection:
         import polaris
 
         package_root = Path(polaris.__file__).resolve().parent
-        allowed = {
-            package_root / "cells" / "roles" / "kernel" / "internal" / "kernel" / "core.py",
-            package_root / "cells" / "roles" / "kernel" / "internal" / "llm_caller" / "invoker.py",
-        }
+        allowed: set[Path] = set()
         offenders: list[str] = []
         for path in package_root.rglob("*.py"):
             rel = path.relative_to(package_root)

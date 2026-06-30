@@ -848,7 +848,7 @@ class RepairDiagnosticCoverage:
                 metadata_only_match=self.metadata_only_match,
             ),
             "coverage_status": _coverage_status(self),
-            "runtime_blocker_reasons": [blocker["reason"] for blocker in runtime_blockers],
+            "runtime_blocker_reasons": list(dict.fromkeys(str(blocker["reason"]) for blocker in runtime_blockers)),
             "runtime_blockers": runtime_blockers,
         }
 
@@ -1277,11 +1277,10 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 raw_terms=("src/",),
                 risk_level="medium",
                 description=(
-                    "Creates a missing declared target only by copying an existing nearby "
-                    "declared source file through runtime policy-gated write_file."
+                    "Classifies missing declared target materialization gaps for TaskBoundary; "
+                    "repair-kernel file fabrication is not allowed."
                 ),
-                runtime_plan_available=True,
-                metadata=_executable_runtime_metadata(scope="generic_missing_declared_target_write_file"),
+                runtime_plan_available=False,
             ),
             RepairRuleDefinition(
                 rule_id="generic.declared_target_contract",
@@ -1310,11 +1309,10 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 raw_terms=("src/",),
                 risk_level="medium",
                 description=(
-                    "Creates a pre-materialization declared target only for allowlisted "
-                    "target classes and only from an existing nearby source file."
+                    "Classifies pre-materialization declared target gaps for TaskBoundary; "
+                    "missing files must be created by orchestration, not repair."
                 ),
-                runtime_plan_available=True,
-                metadata=_executable_runtime_metadata(scope="generic_pre_materialization_declared_target_write_file"),
+                runtime_plan_available=False,
             ),
             RepairRuleDefinition(
                 rule_id="generic.runtime_dependency",

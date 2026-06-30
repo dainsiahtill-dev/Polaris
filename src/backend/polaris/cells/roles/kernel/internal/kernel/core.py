@@ -75,7 +75,7 @@ from polaris.cells.roles.kernel.internal.kernel.turn_execution import (
     execute_transaction_kernel_stream,
     execute_transaction_kernel_turn,
 )
-from polaris.cells.roles.kernel.internal.llm_caller.caller import LLMCaller
+from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
 from polaris.cells.roles.kernel.internal.metrics import get_metrics_collector
 from polaris.cells.roles.kernel.internal.output_parser import OutputParser, ToolCallResult
 from polaris.cells.roles.kernel.internal.prompt_builder import PromptBuilder
@@ -193,7 +193,7 @@ class RoleExecutionKernel:
 
         # 保存注入的服务（可能为 None，由 _get_* 方法处理）
         self._injected_llm_invoker = llm_invoker
-        self._injected_llm_caller: LLMCaller | None = None  # Compatibility LLMCaller DI
+        self._injected_llm_caller: Any | None = None  # Compatibility accessor DI
         self._injected_tool_executor = tool_executor
         self._injected_prompt_builder = prompt_builder
         self._injected_output_parser = output_parser
@@ -225,7 +225,7 @@ class RoleExecutionKernel:
         self._prompt_builder: PromptBuilder | None = None
         self._output_parser: OutputParser | None = None
         self._quality_checker: QualityChecker | None = None
-        self._llm_caller: LLMCaller | None = None
+        self._llm_caller: Any | None = None
         self._event_emitter: KernelEventEmitter | None = None
 
         # 状态管理
@@ -681,11 +681,11 @@ class RoleExecutionKernel:
     # 公共 DI 注入方法（用于测试和扩展）
     # ─────────────────────────────────────────────────────────────────────────────
 
-    def inject_llm_caller(self, caller: LLMCaller | None) -> None:
-        """注入 LLM Caller（支持测试和扩展）
+    def inject_llm_caller(self, caller: Any | None) -> None:
+        """注入 LLM 调用器（兼容旧方法名，支持测试和扩展）
 
         Args:
-            caller: LLM Caller 实例，传入 None 可清除注入
+            caller: LLM 调用器实例，传入 None 可清除注入
         """
         self._injected_llm_caller = caller
 
@@ -721,14 +721,14 @@ class RoleExecutionKernel:
         """
         self._injected_event_emitter = emitter
 
-    def _get_llm_caller(self) -> LLMCaller:
-        """获取LLM调用器（支持依赖注入 + 懒加载）"""
-        # 1. 优先使用注入的 LLMCaller
+    def _get_llm_caller(self) -> Any:
+        """获取 canonical LLM 调用器（兼容旧方法名）"""
+        # 1. 优先使用注入的兼容调用器
         if self._injected_llm_caller is not None:
             return self._injected_llm_caller
-        # 2. 默认懒加载创建 canonical LLM caller
+        # 2. 默认懒加载创建 canonical LLMInvoker
         if self._llm_caller is None:
-            self._llm_caller = LLMCaller(self.workspace, emit_deprecation_warning=False)
+            self._llm_caller = LLMInvoker(self.workspace)
         return self._llm_caller
 
     # ═══════════════════════════════════════════════════════════════════════════

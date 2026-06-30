@@ -8,6 +8,8 @@ from typing import Any
 
 import tomllib
 
+from ._common import controlled_legacy_write_text
+
 _RUST_UNRESOLVED_CRATE_RE = re.compile(
     r"(?:cannot find (?:module or )?crate|use of unresolved module or unlinked crate) "
     r"[`'\"](?P<crate>[A-Za-z_][A-Za-z0-9_]*)[`'\"]",
@@ -582,7 +584,7 @@ def _ensure_external_rust_module_declarations(lib_path: Path, requested_modules:
             repaired = next_repaired
             declarations.append(decl)
     if repaired != original:
-        lib_path.write_text(repaired, encoding="utf-8")
+        controlled_legacy_write_text(lib_path, repaired)
     return declarations
 
 
@@ -643,7 +645,7 @@ def _rewrite_rust_lib_root_paths(workspace: Path, canonical_crate: str) -> int:
         repaired, relative_count = crate_relative_pattern.subn("crate::", repaired)
         if repaired == original:
             continue
-        rust_file.write_text(repaired, encoding="utf-8")
+        controlled_legacy_write_text(rust_file, repaired, workspace=workspace)
         rewrites += crate_count + relative_count
     return rewrites
 
@@ -672,7 +674,7 @@ def _ensure_rust_lib_root_exports(lib_path: Path, workspace: Path, requested_sym
             repaired = _append_rust_root_decl(repaired, export_decl)
             exports.append(export_decl)
     if repaired != original:
-        lib_path.write_text(repaired, encoding="utf-8")
+        controlled_legacy_write_text(lib_path, repaired, workspace=workspace)
     return exports
 
 
@@ -923,7 +925,7 @@ def repair_rust_unused_imports(workspace: Path, stderr: str = "") -> list[dict[s
                 lines[idx] = f"// [repair-unused] {line_text.strip()}"
             modified = True
         if modified:
-            target.write_text("\n".join(lines), encoding="utf-8")
+            controlled_legacy_write_text(target, "\n".join(lines), workspace=workspace)
             repairs.append(
                 {
                     "file": rel_path,
@@ -986,7 +988,7 @@ def repair_rust_missing_fields(workspace: Path, stderr: str = "") -> list[dict[s
                 # Insert before closing brace
                 end = sm.end() - 1  # position of '}'
                 new_content = content[:end] + new_field + content[end:]
-                rs_file.write_text(new_content, encoding="utf-8")
+                controlled_legacy_write_text(rs_file, new_content, workspace=workspace)
                 repairs.append(
                     {
                         "file": str(rs_file.relative_to(workspace)),
@@ -1122,7 +1124,7 @@ def repair_rust_field_rename_suggestions(workspace: Path, stderr: str = "") -> l
         new_line = old_line.replace(f".{wrong_field}", f".{correct_field}")
         if new_line != old_line:
             lines[idx] = new_line
-            target.write_text("\n".join(lines), encoding="utf-8")
+            controlled_legacy_write_text(target, "\n".join(lines), workspace=workspace)
             repairs.append(
                 {
                     "file": rel_path,
@@ -1178,7 +1180,7 @@ def repair_rust_wrong_crate_paths(workspace: Path, stderr: str = "") -> list[dic
         if not old_line.startswith("use "):
             continue
         lines[idx] = suggestion
-        target.write_text("\n".join(lines), encoding="utf-8")
+        controlled_legacy_write_text(target, "\n".join(lines), workspace=workspace)
         repairs.append(
             {
                 "file": rel_path,
@@ -1222,7 +1224,7 @@ def repair_rust_incompatible_copy_derives(workspace: Path, stderr: str = "") -> 
                 new_line = re.sub(r"\bCopy\b", "", new_line)
                 if new_line != line:
                     lines[idx] = new_line
-                    target.write_text("\n".join(lines), encoding="utf-8")
+                    controlled_legacy_write_text(target, "\n".join(lines), workspace=workspace)
                     repairs.append({"file": rel_path, "action": f"removed_copy_derive_line_{idx + 1}"})
                 break
     return repairs
@@ -1271,7 +1273,7 @@ def repair_rust_method_self_signatures(workspace: Path, stderr: str = "") -> lis
             lines[idx] = re.sub(r"\(\s*&mut\s*\)", "(&mut self)", line)
             fixed = True
         if fixed:
-            target.write_text("\n".join(lines), encoding="utf-8")
+            controlled_legacy_write_text(target, "\n".join(lines), workspace=workspace)
             repairs.append(
                 {
                     "file": rel_path,
@@ -1366,7 +1368,7 @@ def repair_rust_missing_derives(workspace: Path, stderr: str = "") -> list[dict[
                     modified = True
 
         if modified:
-            rs_file.write_text(content, encoding="utf-8")
+            controlled_legacy_write_text(rs_file, content, workspace=workspace)
             repairs.append(
                 {
                     "file": str(rs_file.relative_to(workspace)),
@@ -1403,7 +1405,7 @@ def repair_rust_missing_binary_entrypoint(workspace: Path) -> list[dict[str, Any
                 f'    println!("{lib_name} binary entry point");\n'
                 f"}}\n"
             )
-            full_path.write_text(stub, encoding="utf-8")
+            controlled_legacy_write_text(full_path, stub, workspace=workspace)
             repairs.append(
                 {
                     "file": bin_path,
@@ -1578,7 +1580,7 @@ def repair_rust_missing_module_files(workspace: Path) -> list[dict[str, Any]]:
             existing = ""
         if new_content == existing:
             continue
-        module_file.write_text(new_content, encoding="utf-8")
+        controlled_legacy_write_text(module_file, new_content, workspace=workspace)
         action = f"updated_stub_module_{module_name}" if existing else f"created_missing_module_{module_name}"
         repairs.append(
             {
@@ -1605,7 +1607,7 @@ def _replace_rust_crate_prefix(workspace: Path, missing_crate: str, canonical_cr
         replacements = prefix_count + extern_count
         if repaired == original or replacements <= 0:
             continue
-        rust_file.write_text(repaired, encoding="utf-8")
+        controlled_legacy_write_text(rust_file, repaired, workspace=workspace)
         repairs.append(
             {
                 "file": str(rust_file.relative_to(workspace)),

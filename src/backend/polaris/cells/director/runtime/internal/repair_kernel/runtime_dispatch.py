@@ -63,10 +63,7 @@ from .generic_hygiene_runtime import (
     run_patch_residue_cleanup_repair,
 )
 from .generic_hygiene_syntax import (
-    DECLARED_TARGET_CONTRACT_SOURCE_TOOL,
-    MISSING_DECLARED_TARGET_SOURCE_TOOL,
     PATCH_RESIDUE_CLEANUP_SOURCE_TOOL,
-    PRE_MATERIALIZATION_DECLARED_TARGET_SOURCE_TOOL,
     QUALITY_REPAIR_SOURCE_TOOL,
     RUNTIME_DEPENDENCY_SOURCE_TOOL,
     SCAFFOLD_MARKER_CLEANUP_SOURCE_TOOL,
@@ -4075,27 +4072,6 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         rule_id="generic.patch_residue_cleanup",
         planner=_plan_patch_residue_cleanup,
         runner=_run_patch_residue_cleanup,
-    ),
-    MISSING_DECLARED_TARGET_SOURCE_TOOL: RuntimeRepairBinding(
-        source_tool=MISSING_DECLARED_TARGET_SOURCE_TOOL,
-        language="generic",
-        rule_id="generic.missing_declared_target",
-        planner=_plan_generic_hygiene(MISSING_DECLARED_TARGET_SOURCE_TOOL),
-        runner=_run_generic_hygiene(MISSING_DECLARED_TARGET_SOURCE_TOOL),
-    ),
-    DECLARED_TARGET_CONTRACT_SOURCE_TOOL: RuntimeRepairBinding(
-        source_tool=DECLARED_TARGET_CONTRACT_SOURCE_TOOL,
-        language="generic",
-        rule_id="generic.declared_target_contract",
-        planner=_plan_generic_hygiene(DECLARED_TARGET_CONTRACT_SOURCE_TOOL),
-        runner=_run_generic_hygiene(DECLARED_TARGET_CONTRACT_SOURCE_TOOL),
-    ),
-    PRE_MATERIALIZATION_DECLARED_TARGET_SOURCE_TOOL: RuntimeRepairBinding(
-        source_tool=PRE_MATERIALIZATION_DECLARED_TARGET_SOURCE_TOOL,
-        language="generic",
-        rule_id="generic.pre_materialization_declared_target",
-        planner=_plan_generic_hygiene(PRE_MATERIALIZATION_DECLARED_TARGET_SOURCE_TOOL),
-        runner=_run_generic_hygiene(PRE_MATERIALIZATION_DECLARED_TARGET_SOURCE_TOOL),
     ),
     QUALITY_REPAIR_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=QUALITY_REPAIR_SOURCE_TOOL,

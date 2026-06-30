@@ -9,13 +9,11 @@ from __future__ import annotations
 
 import contextlib
 import difflib
-import hashlib
 import os
 import re
 from pathlib import Path
 from typing import Any
 
-from ..execution_tools import DirectorToolExecutor
 from ..task_scope_paths import (
     _dedupe_preserve_order,
     _normalize_declared_task_path,
@@ -29,6 +27,7 @@ from ._common import (
     _TS_RUNTIME_EXPORT_TEMPLATE,
     _path_inside_workspace,
     _relative_import_suffix_order,
+    controlled_legacy_write_text,
 )
 
 _TS_MISSING_PROPERTY_ERROR_RE = re.compile(
@@ -464,8 +463,6 @@ def _write_typescript_repair_results(
 ) -> list[dict[str, Any]]:
     if not updated_by_path:
         return []
-    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-    executor = DirectorToolExecutor(str(workspace_path), message_bus=message_bus, worker_id="director")
     writes: list[dict[str, Any]] = []
     for path, content in updated_by_path.items():
         rel_path = path.relative_to(workspace_path).as_posix()
@@ -473,15 +470,14 @@ def _write_typescript_repair_results(
             before_content = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             before_content = ""
-        before_hash = hashlib.sha256(before_content.encode("utf-8")).hexdigest()
-        after_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         diff_excerpt = _typescript_repair_diff_excerpt(rel_path, before_content, content)
-        write_result = executor.execute_tool(
-            "write_file",
-            {"file": rel_path, "content": content},
-            task_id=task_id,
+        write_result = controlled_legacy_write_text(
+            path,
+            content,
+            workspace=workspace_path,
+            source_tool=source_tool,
         )
-        if not bool(write_result.get("ok")):
+        if not write_result:
             continue
         with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
             adapter._update_task_progress(task_id, "executing", current_file=rel_path)
@@ -497,11 +493,14 @@ def _write_typescript_repair_results(
                     metadata_key: [item for item in metadata_value if item.get("file") == rel_path],
                     "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
                     "operation": str(write_result.get("operation") or "modify"),
-                    "before_sha256": before_hash,
-                    "after_sha256": after_hash,
+                    "before_sha256": write_result.get("before_sha256"),
+                    "after_sha256": write_result.get("after_sha256"),
                     "diff_excerpt": diff_excerpt,
-                    "broadcast_ok": bool(write_result.get("broadcast_ok")),
-                    "director_policy": write_result.get("director_policy"),
+                    "broadcast_ok": False,
+                    "director_policy": {
+                        "runtime_authoritative": False,
+                        "legacy_controlled_bridge": True,
+                    },
                 },
             }
         )

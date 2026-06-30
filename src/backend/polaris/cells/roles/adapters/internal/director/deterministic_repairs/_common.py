@@ -8,6 +8,7 @@ orchestrator in :mod:`generic_repairs`).
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,47 @@ _TS_NAMED_IMPORT_RE = re.compile(
     r"import\s*\{(?P<symbols>[^}]+)\}\s*from\s*['\"](?P<module>\.{1,2}/[^'\"]+)['\"]",
     re.DOTALL,
 )
+
+
+def controlled_legacy_write_text(
+    path: Path,
+    content: str,
+    *,
+    workspace: Path | None = None,
+    source_tool: str = "legacy_strategy_host_controlled_write",
+) -> dict[str, Any] | None:
+    """Write text through the legacy-strategy-host controlled bridge.
+
+    This helper is intentionally non-authoritative: it exists only to collapse
+    migration-era adapter writes behind one audited UTF-8/path-guarded surface
+    while the remaining postpass repairs are moved to runtime patch plans.
+    """
+    target = path.resolve()
+    workspace_root = workspace.resolve() if workspace is not None else None
+    if workspace_root is not None:
+        try:
+            rel_path = target.relative_to(workspace_root).as_posix()
+        except ValueError:
+            return None
+    else:
+        rel_path = target.as_posix()
+    try:
+        before = target.read_text(encoding="utf-8") if target.exists() else ""
+    except (OSError, UnicodeDecodeError):
+        before = ""
+    before_hash = hashlib.sha256(before.encode("utf-8")).hexdigest()
+    target.write_text(content, encoding="utf-8")
+    after_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return {
+        "authoritative": False,
+        "legacy_controlled_bridge": True,
+        "source_tool": source_tool,
+        "file": rel_path,
+        "operation": "create" if not before else "modify",
+        "bytes_written": len(content.encode("utf-8")),
+        "before_sha256": before_hash,
+        "after_sha256": after_hash,
+    }
 
 _TS_RUNTIME_EXPORT_TEMPLATE = r"(?:export\s+)?(?:enum|class|const|let|var|function)\s+{symbol}\b"
 

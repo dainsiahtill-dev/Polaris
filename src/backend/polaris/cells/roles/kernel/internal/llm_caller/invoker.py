@@ -59,6 +59,7 @@ from .helpers import (
     resolve_tool_call_provider,
 )
 from .invoker_phases import FallbackLadderResult, read_response_status
+from .request_preparer import LLMRequestPreparer
 from .response_types import LLMResponse, PreparedLLMRequest, StructuredLLMResponse
 from .stream_engine import StreamEngine
 from .stream_handler import (
@@ -1300,19 +1301,13 @@ class LLMInvoker:
         active_request: Any | None = None
 
         try:
-            # Import here to avoid circular dependency
-            from .caller import LLMCaller
-
             profile = self._profile_for_healthy_binding(role_id, profile)
             model = str(getattr(profile, "model", "") or model)
-            caller = LLMCaller(
+            caller = LLMRequestPreparer(
                 workspace=self.workspace,
-                enable_cache=self._enable_cache,
-                executor=self._executor,
-                emit_deprecation_warning=False,
+                formatter=self._formatter,
+                model_catalog=self._model_catalog,
             )
-            caller._model_catalog = self._model_catalog
-            caller._formatter = self._formatter
 
             prepared = await caller._prepare_llm_request(
                 profile=profile,
@@ -2111,17 +2106,11 @@ class LLMInvoker:
         prepared: PreparedLLMRequest | None = None
 
         try:
-            # Import here to avoid circular dependency
-            from .caller import LLMCaller
-
-            caller = LLMCaller(
+            caller = LLMRequestPreparer(
                 workspace=self.workspace,
-                enable_cache=self._enable_cache,
-                executor=self._executor,
-                emit_deprecation_warning=False,
+                formatter=self._formatter,
+                model_catalog=self._model_catalog,
             )
-            caller._model_catalog = self._model_catalog
-            caller._formatter = self._formatter
 
             prepared = await caller._prepare_llm_request(
                 profile=profile,
@@ -2436,17 +2425,11 @@ class LLMInvoker:
             return
 
         try:
-            # Import here to avoid circular dependency
-            from .caller import LLMCaller
-
-            caller = LLMCaller(
+            caller = LLMRequestPreparer(
                 workspace=self.workspace,
-                enable_cache=self._enable_cache,
-                executor=self._executor,
-                emit_deprecation_warning=False,
+                formatter=self._formatter,
+                model_catalog=self._model_catalog,
             )
-            caller._model_catalog = self._model_catalog
-            caller._formatter = self._formatter
 
             prepared = await caller._prepare_llm_request(
                 profile=profile,

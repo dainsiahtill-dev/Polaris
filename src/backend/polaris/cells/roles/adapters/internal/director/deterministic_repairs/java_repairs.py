@@ -11,6 +11,8 @@ import logging
 import re
 from pathlib import Path
 
+from ._common import controlled_legacy_write_text
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,7 +58,7 @@ def repair_java_common_accessor_aliases(workspace: Path) -> list[dict[str, str]]
         updated = _insert_java_methods_before_final_class_brace(content, additions)
         if updated == content:
             continue
-        java_file.write_text(updated, encoding="utf-8")
+        controlled_legacy_write_text(java_file, updated, workspace=workspace)
         repairs.append(
             {
                 "file": str(java_file.relative_to(workspace)),
@@ -156,7 +158,7 @@ def repair_java_test_dependencies(workspace: Path) -> list[dict[str, str]]:
             new_content = re.sub(r"^\s*import\s+static\s+org\..*?;\s*$", "", new_content, flags=re.MULTILINE)
 
             if new_content != content:
-                java_file.write_text(new_content, encoding="utf-8")
+                controlled_legacy_write_text(java_file, new_content, workspace=workspace)
                 repairs.append(
                     {
                         "file": str(java_file.relative_to(workspace)),

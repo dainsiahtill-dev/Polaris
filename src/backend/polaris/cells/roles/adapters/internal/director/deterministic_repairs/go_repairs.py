@@ -6,6 +6,8 @@ import logging
 import re
 from pathlib import Path
 
+from ._common import controlled_legacy_write_text
+
 logger = logging.getLogger(__name__)
 
 _GO_MOD_MODULE_RE = re.compile(r"^module\s+(\S+)", re.MULTILINE)
@@ -146,7 +148,7 @@ def repair_go_module_imports(workspace: Path) -> list[dict[str, str]]:
             repaired = original.replace(f'"{wrong_prefix}/', f'"{module}/')
             repaired = repaired.replace(f"'{wrong_prefix}/", f"'{module}/")
             if repaired != original:
-                go_file.write_text(repaired, encoding="utf-8")
+                controlled_legacy_write_text(go_file, repaired, workspace=workspace)
                 repairs.append(
                     {
                         "file": str(go_file.relative_to(workspace)),
@@ -164,7 +166,7 @@ def repair_go_module_imports(workspace: Path) -> list[dict[str, str]]:
                 continue
             repaired = original.replace(f"{wrong_prefix}/", f"{module}/")
             if repaired != original:
-                go_mod.write_text(repaired, encoding="utf-8")
+                controlled_legacy_write_text(go_mod, repaired, workspace=workspace)
     logger.info("Go module import repair: %d file(s) fixed, drift=%s", len(repairs), drift)
     return repairs
 
@@ -212,7 +214,7 @@ def repair_go_bare_local_imports(workspace: Path) -> list[dict[str, str]]:
                         repaired = repaired.replace(f'"{imp}"', f'"{new_imp}"')
                         break
         if repaired != original:
-            go_file.write_text(repaired, encoding="utf-8")
+            controlled_legacy_write_text(go_file, repaired, workspace=workspace)
             repairs.append(
                 {
                     "file": str(go_file.relative_to(workspace)),
@@ -289,7 +291,7 @@ def repair_go_bare_import_strings(workspace: Path) -> list[dict[str, str]]:
 
         if modified:
             repaired = "\n".join(lines)
-            go_file.write_text(repaired, encoding="utf-8")
+            controlled_legacy_write_text(go_file, repaired, workspace=workspace)
             repairs.append(
                 {
                     "file": str(go_file.relative_to(workspace)),
@@ -355,7 +357,7 @@ def repair_go_nested_import_keyword(workspace: Path) -> list[dict[str, str]]:
                     modified = True
         if modified:
             repaired = "\n".join(lines)
-            go_file.write_text(repaired, encoding="utf-8")
+            controlled_legacy_write_text(go_file, repaired, workspace=workspace)
             repairs.append(
                 {
                     "file": str(go_file.relative_to(workspace)),
@@ -428,7 +430,7 @@ def repair_go_import_subpaths(workspace: Path) -> list[dict[str, str]]:
                 new_imp = f"{module}/{best}"
                 repaired = repaired.replace(f'"{imp}"', f'"{new_imp}"')
         if repaired != original:
-            go_file.write_text(repaired, encoding="utf-8")
+            controlled_legacy_write_text(go_file, repaired, workspace=workspace)
             repairs.append(
                 {
                     "file": str(go_file.relative_to(workspace)),
@@ -545,7 +547,7 @@ def _dedup_within_single_file(go_file: Path) -> bool:
             modified = True
 
     if modified:
-        go_file.write_text("\n".join(lines), encoding="utf-8")
+        controlled_legacy_write_text(go_file, "\n".join(lines))
     return modified
 
 
@@ -699,7 +701,7 @@ def repair_go_duplicate_declarations(workspace: Path) -> list[dict[str, str]]:
         new_text = f"{pkg_decl}\n{import_block}\n{owner_body}\n\n"
         new_text += "\n\n".join(merged_sections) + "\n"
 
-        owner.write_text(new_text, encoding="utf-8")
+        controlled_legacy_write_text(owner, new_text, workspace=workspace)
         for src in files_to_remove:
             src.unlink()
             repairs.append({"file": str(src.relative_to(workspace)), "action": "merged_into_owner"})

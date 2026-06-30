@@ -52,6 +52,7 @@ MATERIALIZATION_QUALITY_CALLBACK_PORTS_PATH = ROLES_DIRECTOR_ROOT / "materializa
 MATERIALIZATION_QUALITY_EVIDENCE_PORTS_PATH = ROLES_DIRECTOR_ROOT / "materialization_quality_evidence_ports.py"
 MATERIALIZATION_QUALITY_RUNTIME_PORTS_PATH = ROLES_DIRECTOR_ROOT / "materialization_quality_runtime_ports.py"
 DETERMINISTIC_REPAIRS_INIT_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "__init__.py"
+DETERMINISTIC_REPAIRS_ROOT = ROLES_DIRECTOR_ROOT / "deterministic_repairs"
 GENERIC_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "generic_repairs.py"
 RUNTIME_REPAIR_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "runtime_repair_tool_adapter.py"
 RUST_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "rust_repairs.py"
@@ -594,6 +595,33 @@ def _repair_named_helper_write_primitives(path: Path) -> list[str]:
     return violations
 
 
+def _legacy_strategy_host_write_primitives() -> list[str]:
+    write_call_names = {
+        "open",
+        "write_bytes",
+        "write_file",
+        "write_text",
+    }
+    allowed = {
+        DETERMINISTIC_REPAIRS_ROOT / "_common.py": {"controlled_legacy_write_text"},
+    }
+    violations: list[str] = []
+    for path in _production_python_source_files(DETERMINISTIC_REPAIRS_ROOT):
+        rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+        allowed_functions = allowed.get(path, set())
+        for function in _function_definitions(path):
+            for node in ast.walk(function):
+                if not isinstance(node, ast.Call):
+                    continue
+                call_name = _call_name(node)
+                if call_name not in write_call_names and not _is_write_mode_open_call(node):
+                    continue
+                if function.name in allowed_functions:
+                    continue
+                violations.append(f"{rel_path}:{function.name}:{call_name or 'open(write-mode)'}")
+    return violations
+
+
 def _factory_workspace_quality_repair_write_primitives() -> dict[str, list[str]]:
     write_call_names = {
         "open",
@@ -735,6 +763,17 @@ def test_execute_method_does_not_import_specific_deterministic_repair_modules() 
         f"{REPAIR_BOUNDARY_FAILURE_HINT} execute_method.py must import controlled bridge/public service, "
         f"not deterministic_repairs directly. Violations: {deterministic_repair_imports}"
     )
+
+
+def test_legacy_strategy_host_has_single_controlled_write_surface() -> None:
+    imports = {
+        reference
+        for path in _production_python_source_files(DETERMINISTIC_REPAIRS_ROOT)
+        for reference in _import_references(path)
+    }
+    assert "polaris.cells.roles.adapters.internal.director.execution_tools.DirectorToolExecutor" not in imports
+    assert not any(reference.endswith(".execution_tools") for reference in imports)
+    assert _legacy_strategy_host_write_primitives() == []
 
 
 def test_execute_method_does_not_own_repair_tool_execution() -> None:

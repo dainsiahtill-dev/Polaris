@@ -1362,7 +1362,7 @@ def _coverage_items_for_source_tool(
     return tuple(
         item
         for item in coverage.items
-        if source_tool in item.matched_source_tools and item.executable_runtime_plan_matched
+        if source_tool in item.matched_source_tools
     )
 
 
@@ -1408,10 +1408,11 @@ def _coverage_item_is_covered_unplannable(
     candidate_source_tools: Sequence[str],
     plannable_source_tools: set[str],
 ) -> bool:
-    if not item.known_rule_matched or not item.executable_runtime_plan_matched:
+    if not item.known_rule_matched:
         return False
+    candidate_set = set(candidate_source_tools)
     selected_matched = {
-        source_tool for source_tool in item.matched_source_tools if source_tool in set(candidate_source_tools)
+        source_tool for source_tool in item.matched_source_tools if source_tool in candidate_set
     }
     return bool(selected_matched) and selected_matched.isdisjoint(plannable_source_tools)
 
