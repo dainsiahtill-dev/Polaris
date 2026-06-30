@@ -1812,6 +1812,7 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
     assert not hasattr(javascript_repairs, "_apply_deterministic_javascript_missing_export_repair")
     assert not hasattr(javascript_repairs, "_apply_deterministic_javascript_esm_commonjs_entrypoint_repair")
     assert not hasattr(javascript_repairs, "_apply_deterministic_javascript_missing_method_runtime_repair")
+    assert not hasattr(typescript_repairs, "_apply_deterministic_html_typescript_module_script_repair")
     assert not hasattr(typescript_repairs, "_apply_deterministic_typescript_member_alias_repair")
     assert not hasattr(typescript_repairs, "_apply_deterministic_typescript_reexport_repair")
     assert not hasattr(typescript_repairs, "_apply_deterministic_typescript_reexported_type_binding_repair")
