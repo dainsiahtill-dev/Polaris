@@ -1,9 +1,9 @@
-"""TurnEngine result builders - RoleTurnResult construction helpers.
+"""TransactionKernel result builders - RoleTurnResult construction helpers.
 
 # -*- coding: utf-8 -*-
 UTF-8 编码验证: 本文所有文本使用 UTF-8
 
-Blueprint: §10 TurnEngine - Wave 3 Results Extraction
+Blueprint: §10 TransactionKernel turn components - Wave 3 Results Extraction
 
 职责：
     提供 RoleTurnResult 构造辅助函数，供 run() / run_stream() 使用。

@@ -610,44 +610,6 @@ class TestBudgetMaxTurnsZeroUnlimited:
         assert len(approved) == 1
 
 
-class TestRunStreamSignatureHasAttempt:
-    """M-3: run_stream signature matches run() for API consistency.
-
-    run_stream now has attempt and response_model parameters matching run().
-    """
-
-    def test_run_stream_has_attempt_and_response_model_params(self) -> None:
-        """Test that run_stream has attempt and response_model parameters matching run()."""
-        # Check that run_stream method signature
-        import inspect
-
-        from polaris.cells.roles.kernel.internal.turn_engine.engine import TurnEngine
-
-        sig = inspect.signature(TurnEngine.run_stream)
-        params = list(sig.parameters.keys())
-
-        # M-3 Fix: run_stream now has attempt and response_model to match run()
-        assert "attempt" in params, "run_stream should have attempt parameter matching run()"
-        assert "response_model" in params, "run_stream should have response_model parameter matching run()"
-        # These were already present
-        assert "controller" in params
-        assert "system_prompt" in params
-        assert "fingerprint" in params
-
-    def test_run_accepts_attempt_parameter(self) -> None:
-        """Test that run accepts attempt parameter."""
-        # Check that run method signature includes attempt parameter
-        import inspect
-
-        from polaris.cells.roles.kernel.internal.turn_engine.engine import TurnEngine
-
-        sig = inspect.signature(TurnEngine.run)
-        params = list(sig.parameters.keys())
-
-        # run should accept attempt parameter
-        assert "attempt" in params
-
-
 class TestAtomicWriteUsesFsync:
     """L-1: Atomic write should use fsync for durability.
 

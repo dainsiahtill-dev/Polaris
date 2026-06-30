@@ -72,7 +72,7 @@ class BudgetPolicy:
 
     @classmethod
     def from_env(cls) -> BudgetPolicy:
-        """从环境变量构造（与 TurnEngineConfig 保持一致）。"""
+        """从环境变量构造（与 turn runtime config 保持一致）。"""
 
         def _int(
             name: str,

@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
+from polaris.cells.roles.kernel.internal.transaction.recon_policy import resolve_recon_required
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TransactionConfig
 
@@ -497,6 +498,7 @@ def create_transaction_kernel(
             role_id=role,
             workspace=str(request.workspace or "").strip(),
             mutation_guard_mode="strict" if role == "director" else "warn",
+            recon_required=resolve_recon_required(role, provider_profile),
         ),
         workflow_runtime=workflow_runtime,
         llm_provider_stream=llm_provider_stream,

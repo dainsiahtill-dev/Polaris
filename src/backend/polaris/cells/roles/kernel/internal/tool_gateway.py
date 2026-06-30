@@ -201,9 +201,7 @@ class RoleToolGateway:
                 if requested_tool_name != canonical_tool_name
                 else requested_tool_name
             )
-            return False, self._format_refusal_message(
-                f"工具 '{tool_label}' 不在角色白名单中", requested_tool_name
-            )
+            return False, self._format_refusal_message(f"工具 '{tool_label}' 不在角色白名单中", requested_tool_name)
 
         # 2. 检查黑名单
         blacklist_lower = [self._normalize_tool_name(b).lower() for b in self.policy.blacklist]
@@ -518,7 +516,7 @@ class RoleToolGateway:
 
             # Extract error context from tool result for unified error handling
             # This propagates error_type/retryable/blocked_tools/loop_break from tool executor through
-            # to TurnEngine so Workflow can make decisions based on error semantics
+            # to TransactionKernel so workflow can make decisions based on error semantics.
             error_type: str | None = None
             retryable = True
             blocked_tools: tuple[str, ...] = ()

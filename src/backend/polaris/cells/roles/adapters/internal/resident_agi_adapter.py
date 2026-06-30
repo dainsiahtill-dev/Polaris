@@ -225,7 +225,7 @@ class ResidentAgiAdapter(BaseRoleAdapter):
         return {
             "schema_version": "resident.agi_decision_contract.v1",
             "role_id": "resident_agi",
-            "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+            "runtime_foundation": "roles.runtime + ContextOS + TransactionKernel",
             "decision_type": decision_type,
             "objective": objective,
             "decision_capability_id": decision_capability_id,

@@ -26,7 +26,7 @@ class ApprovalPolicy:
 
     审批行为：
         - requires_approval 的调用被标记为 requires_approval=True，
-          不直接 blocked，而是返回给上层（TurnEngine）暂停等待人工确认。
+          不直接 blocked，而是返回给上层（TransactionKernel）暂停等待人工确认。
         - 上层通过 ApprovalPolicy.approve() / reject() 注册审批结果。
     """
 

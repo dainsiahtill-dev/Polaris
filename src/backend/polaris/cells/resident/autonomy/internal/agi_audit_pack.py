@@ -505,7 +505,7 @@ def resident_agi_decision_profile(audit_pack: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": "resident.agi_decision_profile.v1",
         "role_id": "resident_agi",
-        "runtime_foundation": audit_pack.get("runtime_foundation") or "roles.runtime + ContextOS + TurnEngine",
+        "runtime_foundation": audit_pack.get("runtime_foundation") or "roles.runtime + ContextOS + TransactionKernel",
         "role_turn_allowed": hard_rule_passed,
         "downstream_precheck": downstream_precheck,
         "recommended_verdict": recommended_verdict,
@@ -514,7 +514,7 @@ def resident_agi_decision_profile(audit_pack: dict[str, Any]) -> dict[str, Any]:
         "required_constraints": [
             "resident_agi_role_runtime_required",
             "contextos_expected",
-            "turn_engine_expected",
+            "transaction_kernel_expected",
             "preserve_pm_chief_engineer_director_qa_chain",
             "hard_platform_invariants_non_overridable",
             "resident_tick_is_deterministic_evidence_only",
@@ -579,7 +579,8 @@ def build_resident_agi_audit_pack(
         "schema_version": "resident.agi_audit_pack.v1",
         "workspace": workspace,
         "role_id": "resident_agi",
-        "runtime_foundation": capability_surface.get("runtime_foundation") or "roles.runtime + ContextOS + TurnEngine",
+        "runtime_foundation": capability_surface.get("runtime_foundation")
+        or "roles.runtime + ContextOS + TransactionKernel",
         "truth_sources": [
             "resident.status",
             "resident.agi_capability_surface",

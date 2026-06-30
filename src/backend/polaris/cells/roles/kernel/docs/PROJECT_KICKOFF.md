@@ -37,7 +37,7 @@ Mypy错误:     0
 │   ├── Team Beta (Carol + David) [P0] 流式工具循环
 │   └── Team Gamma (Eve + Frank) [P0] Stream一致性
 ├── Senior Engineer
-│   ├── Team Delta (Grace + Henry) [P1] TurnEngine核心
+│   ├── Team Delta (Grace + Henry) [P1] TransactionKernel核心
 │   └── Team Epsilon (Ivy) [P1] Context压缩
 ├── Engineer
 │   ├── Team Zeta (Jack) [P1] 兼容性
@@ -297,14 +297,13 @@ pytest --version  # >= 7.0.0
 ### 项目文档
 - `KERNELONE_KERNEL_TEST_FIX_PROJECT.md` - 项目总览
 - `TEAM_ASSIGNMENTS.md` - 团队详细任务分配
-- `TURN_ENGINE_BUG_ANALYSIS.md` - 历史Bug分析
-- `TURN_ENGINE_DI_GUIDE.md` - 依赖注入指南
+- `TRANSACTION_KERNEL_EXECUTION_GUIDE.md` - 当前执行边界指南
 - `MIGRATION_KERNEL_SERVICES.md` - 服务迁移文档
 
 ### 代码位置
 - 测试代码: `polaris/cells/roles/kernel/tests/`
 - 内核核心: `polaris/cells/roles/kernel/internal/kernel/core.py`
-- TurnEngine: `polaris/cells/roles/kernel/internal/turn_engine/`
+- TransactionKernel: `polaris/cells/roles/kernel/internal/transaction_kernel.py`
 - 服务层: `polaris/cells/roles/kernel/internal/services/`
 
 ---

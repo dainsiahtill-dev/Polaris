@@ -117,7 +117,7 @@
 - [ ] `test_stream_continues_after_tool_results_with_transcript_context`
 - [ ] `test_run_continues_after_tool_results_with_transcript_context`
 
-**根因**: TurnEngine工具循环控制器状态传递
+**根因**: TransactionKernel/ToolLoopController 工具循环状态传递
 **修复策略**: 确保工具结果正确追加到transcript
 
 #### 2. Native Tool Calls执行 (2 tests)
@@ -257,7 +257,7 @@
 
 ---
 
-## Team Delta - TurnEngine核心修复
+## Team Delta - TransactionKernel核心修复
 
 ### 成员
 - **队长**: Senior Backend Engineer (Grace)
@@ -283,12 +283,12 @@
 - [ ] `test_parse_tool_calls_from_turn_uses_clean_content_contract`
 - [ ] `test_thinking_with_tool_wrapper_does_not_leak_into_clean_content`
 
-**根因**: TurnEngine语义阶段处理逻辑变更
+**根因**: TransactionKernel语义阶段处理逻辑变更
 **修复策略**: 统一内容清洗和工具解析
 
 ### 交付检查清单
 - [ ] 35个测试全部通过
-- [ ] TurnEngine语义阶段文档更新
+- [ ] TransactionKernel语义阶段文档更新
 
 ---
 

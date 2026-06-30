@@ -780,7 +780,7 @@ class RoleExecutionKernel:
         except (RuntimeError, ValueError) as e:
             return RoleTurnResult(error=f"系统提示词构建失败: {e}", is_complete=True)
 
-        # 5. 构建上下文（验证可用性，结果由 TurnEngine 使用）
+        # 5. 构建上下文（验证可用性，结果由 TransactionKernel 使用）
         try:
             _ = self._build_context(profile, request)
         except (RuntimeError, ValueError) as e:
@@ -808,7 +808,7 @@ class RoleExecutionKernel:
         # 获取 run_id
         task_id = str(getattr(request, "task_id", None) or "").strip()
         observer_run_id = self._get_event_emitter().resolve_observer_run_id(role, getattr(request, "run_id", None))
-        # 将 resolved run_id 写回 request，确保下游（TurnEngine/RoleToolGateway）能获取到
+        # 将 resolved run_id 写回 request，确保下游（TransactionKernel/RoleToolGateway）能获取到
         if request.run_id is None:
             request.run_id = observer_run_id
 
@@ -1085,7 +1085,7 @@ class RoleExecutionKernel:
             流式事件字典
         """
         stream_run_id = self._resolve_stream_run_id(request.run_id)
-        # 将 resolved run_id 写回 request，确保下游（TurnEngine/RoleToolGateway）能获取到
+        # 将 resolved run_id 写回 request，确保下游（TransactionKernel/RoleToolGateway）能获取到
         # 只有当 request.run_id 为 None 且 stream_run_id 非空时才设置
         original_run_id = request.run_id
         if original_run_id is None and stream_run_id:

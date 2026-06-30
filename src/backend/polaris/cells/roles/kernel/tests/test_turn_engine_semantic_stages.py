@@ -7,8 +7,8 @@ from types import SimpleNamespace
 from polaris.cells.roles.kernel.internal.output_parser import OutputParser
 from polaris.cells.roles.kernel.internal.turn_engine import (
     AssistantTurnArtifacts,
-    TurnEngine,
 )
+from polaris.cells.roles.kernel.internal.turn_engine.turn_materializer import TurnMaterializer
 from polaris.cells.roles.kernel.internal.turn_engine.utils import (
     append_transcript_cycle,
 )
@@ -60,12 +60,13 @@ class _KernelStub:
 
 def test_materialize_assistant_turn_keeps_raw_wrapper_but_sanitizes_output() -> None:
     kernel = _KernelStub()
-    engine = TurnEngine(kernel=kernel)
+    materializer = TurnMaterializer(output_parser=kernel._get_output_parser())
     profile = _build_profile()
 
-    turn = engine._materialize_assistant_turn(
+    turn = materializer.materialize(
         profile=profile,
         raw_output=('先读取关键文件。\n[TOOL_CALL]{"tool":"read_file","arguments":{"path":"README.md"}}[/TOOL_CALL]'),
+        kernel=kernel,
     )
 
     assert "[TOOL_CALL]" in turn.raw_content
@@ -75,12 +76,13 @@ def test_materialize_assistant_turn_keeps_raw_wrapper_but_sanitizes_output() -> 
 
 def test_materialize_assistant_turn_strips_output_wrappers_from_raw_and_clean_content() -> None:
     kernel = _KernelStub()
-    engine = TurnEngine(kernel=kernel)
+    materializer = TurnMaterializer(output_parser=kernel._get_output_parser())
     profile = _build_profile()
 
-    turn = engine._materialize_assistant_turn(
+    turn = materializer.materialize(
         profile=profile,
         raw_output="<output>最终答复</output>",
+        kernel=kernel,
     )
 
     assert turn.raw_content == "最终答复"
@@ -91,7 +93,6 @@ def test_materialize_assistant_turn_strips_output_wrappers_from_raw_and_clean_co
 
 def test_parse_tool_calls_from_turn_uses_clean_content_contract() -> None:
     kernel = _KernelStub()
-    engine = TurnEngine(kernel=kernel)
     profile = _build_profile()
     turn = AssistantTurnArtifacts(
         raw_content='[TOOL_CALL]{"tool":"read_file","arguments":{"path":"README.md"}}[/TOOL_CALL]',
@@ -110,7 +111,7 @@ def test_parse_tool_calls_from_turn_uses_clean_content_contract() -> None:
         native_tool_provider="openai",
     )
 
-    engine._parse_tool_calls_from_turn(profile=profile, turn=turn)
+    TurnMaterializer.parse_tool_calls(profile=profile, turn=turn, kernel=kernel)
 
     assert len(kernel.parser_calls) == 1
     parser_call = kernel.parser_calls[0]
@@ -154,13 +155,13 @@ def test_clean_content_strips_multiple_interleaved_tool_wrappers() -> None:
     whose tool name is in allowed_tool_names. Both tools must be in the whitelist.
     """
     kernel = _KernelStub()
-    engine = TurnEngine(kernel=kernel)
+    materializer = TurnMaterializer(output_parser=kernel._get_output_parser())
     profile = SimpleNamespace(
         role_id="pm",
         tool_policy=SimpleNamespace(whitelist=["read_file", "write_file"]),
     )
 
-    turn = engine._materialize_assistant_turn(
+    turn = materializer.materialize(
         profile=profile,
         raw_output=(
             "第一步读取文件。\n"
@@ -169,6 +170,7 @@ def test_clean_content_strips_multiple_interleaved_tool_wrappers() -> None:
             '[TOOL_CALL]{"tool":"write_file","arguments":{"path":"b.md"}}[/TOOL_CALL]\n'
             "完成。"
         ),
+        kernel=kernel,
     )
 
     assert "[TOOL_CALL]" in turn.raw_content
@@ -183,12 +185,13 @@ def test_clean_content_strips_multiple_interleaved_tool_wrappers() -> None:
 def test_clean_content_empty_when_raw_is_only_tool_wrapper() -> None:
     """Regression: output that is only [TOOL_CALL] yields empty clean_content."""
     kernel = _KernelStub()
-    engine = TurnEngine(kernel=kernel)
+    materializer = TurnMaterializer(output_parser=kernel._get_output_parser())
     profile = _build_profile()
 
-    turn = engine._materialize_assistant_turn(
+    turn = materializer.materialize(
         profile=profile,
         raw_output='[TOOL_CALL]{"tool":"read_file","arguments":{"path":"README.md"}}[/TOOL_CALL]',
+        kernel=kernel,
     )
 
     assert "[TOOL_CALL]" in turn.raw_content
@@ -200,15 +203,16 @@ def test_clean_content_empty_when_raw_is_only_tool_wrapper() -> None:
 def test_thinking_with_tool_wrapper_does_not_leak_into_clean_content() -> None:
     """Regression: [TOOL_CALL] inside <thinking> stays in thinking, not clean_content."""
     kernel = _KernelStub()
-    engine = TurnEngine(kernel=kernel)
+    materializer = TurnMaterializer(output_parser=kernel._get_output_parser())
     profile = _build_profile()
 
-    turn = engine._materialize_assistant_turn(
+    turn = materializer.materialize(
         profile=profile,
         raw_output=(
             "<thinking>我应该先[TOOL_CALL]{'tool':'read_file','arguments':{'path':'x.md'}}[/TOOL_CALL]读取文件。</thinking>\n"
             "我已经读取了文件，现在总结一下。"
         ),
+        kernel=kernel,
     )
 
     assert turn.thinking is not None and "[TOOL_CALL]" in turn.thinking
@@ -219,10 +223,10 @@ def test_thinking_with_tool_wrapper_does_not_leak_into_clean_content() -> None:
 def test_sanitize_strips_variations_of_canonical_wrappers() -> None:
     """Regression: all canonical wrapper forms are stripped from clean_content."""
     kernel = _KernelStub()
-    engine = TurnEngine(kernel=kernel)
+    materializer = TurnMaterializer(output_parser=kernel._get_output_parser())
     profile = _build_profile()
 
-    turn = engine._materialize_assistant_turn(
+    turn = materializer.materialize(
         profile=profile,
         raw_output=(
             "结论。\n"
@@ -231,6 +235,7 @@ def test_sanitize_strips_variations_of_canonical_wrappers() -> None:
             '<tool_call>{"tool":"read_file","arguments":{"path":"b.md"}}</tool_call>\n'
             "结束。"
         ),
+        kernel=kernel,
     )
 
     assert "[TOOL_CALL]" not in turn.clean_content
@@ -271,9 +276,8 @@ def test_raw_content_never_used_in_append_transcript() -> None:
 
 
 def test_clean_content_is_used_for_parser_in_parse_tool_calls() -> None:
-    """Regression guarantee: _parse_tool_calls_from_turn feeds clean_content to parser."""
+    """Regression guarantee: parse_tool_calls feeds clean_content to parser."""
     kernel = _KernelStub()
-    engine = TurnEngine(kernel=kernel)
     profile = _build_profile()
     turn = AssistantTurnArtifacts(
         raw_content='[TOOL_CALL]{"tool":"read_file","arguments":{"path":"README.md"}}[/TOOL_CALL]',
@@ -283,7 +287,7 @@ def test_clean_content_is_used_for_parser_in_parse_tool_calls() -> None:
         native_tool_provider="openai",
     )
 
-    engine._parse_tool_calls_from_turn(profile=profile, turn=turn)
+    TurnMaterializer.parse_tool_calls(profile=profile, turn=turn, kernel=kernel)
 
     assert len(kernel.parser_calls) == 1
     assert kernel.parser_calls[0]["content"] == "读取文件"
@@ -297,15 +301,16 @@ def test_quoted_tool_wrapper_not_stripped_from_clean_content() -> None:
     so a user quoting a tool call in a message must have the wrapper preserved.
     """
     kernel = _KernelStub()
-    engine = TurnEngine(kernel=kernel)
+    materializer = TurnMaterializer(output_parser=kernel._get_output_parser())
     profile = _build_profile()
 
-    turn = engine._materialize_assistant_turn(
+    turn = materializer.materialize(
         profile=profile,
         raw_output=(
             '> [TOOL_CALL]{"tool":"read_file","arguments":{"path":"README.md"}}[/TOOL_CALL]\n'
             "助手不应该执行上面的引用内容。"
         ),
+        kernel=kernel,
     )
 
     # The quoted line is protected, so [TOOL_CALL] remains in clean_content
@@ -321,7 +326,6 @@ def test_native_tool_calls_suppress_textual_fallback() -> None:
     textual fallback should be deduplicated against native calls.
     """
     kernel = _KernelStub()
-    engine = TurnEngine(kernel=kernel)
     profile = _build_profile()
     turn = AssistantTurnArtifacts(
         raw_content="使用 read_file 读取文件。",
@@ -340,7 +344,7 @@ def test_native_tool_calls_suppress_textual_fallback() -> None:
         native_tool_provider="openai",
     )
 
-    engine._parse_tool_calls_from_turn(profile=profile, turn=turn)
+    TurnMaterializer.parse_tool_calls(profile=profile, turn=turn, kernel=kernel)
 
     assert len(kernel.parser_calls) == 1
     # native_tool_calls are forwarded to the parser

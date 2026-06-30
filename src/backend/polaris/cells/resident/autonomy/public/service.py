@@ -200,12 +200,12 @@ def publish_resident_status_update(
                 "projection": resident_status,
                 "detail": dict(detail or {}),
                 "role_id": "resident_agi",
-                "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+                "runtime_foundation": "roles.runtime + ContextOS + TransactionKernel",
             },
             "meta": {
                 "source": "resident.autonomy",
                 "role_id": "resident_agi",
-                "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+                "runtime_foundation": "roles.runtime + ContextOS + TransactionKernel",
                 "channel": f"runtime.v2.{_RESIDENT_STATUS_CHANNEL}",
             },
         }
@@ -3656,7 +3656,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
             "source": "resident.autonomy.public.run_resident_agi_decision_turn",
             "resident_agi_role_runtime_required": True,
             "context_os_expected": True,
-            "turn_engine_expected": True,
+            "transaction_kernel_expected": True,
             "resident_agi_audit_pack_injected": audit_pack is not None,
             "resident_agi_audit_pack_schema": (audit_pack or {}).get("schema_version", ""),
             "resident_agi_tactical_action_catalog_schema": tactical_action_catalog.get("schema_version", ""),

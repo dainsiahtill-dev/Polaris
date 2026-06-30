@@ -49,7 +49,7 @@ async def test_execute_enters_shared_role_runtime(tmp_path: Any, monkeypatch: py
         "candidate_actions": ["block", "request_evidence", "escalate", "continue"],
         "hard_constraints": [
             "contextos_expected",
-            "turn_engine_expected",
+            "transaction_kernel_expected",
             "failed_quality_gate_cannot_be_marked_passed_by_agi",
         ],
         "output_contract": "resident.agi_decision_turn",
@@ -116,7 +116,7 @@ async def test_execute_enters_shared_role_runtime(tmp_path: Any, monkeypatch: py
     decision_boundary_policy = {
         "schema_version": "resident.agi_decision_boundary_policy.v1",
         "role_id": "resident_agi",
-        "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+        "runtime_foundation": "roles.runtime + ContextOS + TransactionKernel",
         "chain": "PM → Chief Engineer → Director",
         "decision_modes": {
             "platform_hard_rule": {
@@ -222,7 +222,7 @@ async def test_execute_enters_shared_role_runtime(tmp_path: Any, monkeypatch: py
                     "decision_capability_registry": {
                         "schema_version": "resident.agi_decision_capability_registry.v1",
                         "role_id": "resident_agi",
-                        "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+                        "runtime_foundation": "roles.runtime + ContextOS + TransactionKernel",
                         "counts": {"decisions": 2},
                     },
                     "decision_capabilities": [

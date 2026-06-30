@@ -115,7 +115,7 @@ class RoleContextGateway:
     - StateOwner 唯一性保证
 
     主链路径:
-        TurnEngine/RoleExecution
+        TransactionKernel/RoleExecution
             |
             v
         RoleContextGateway.build_context()

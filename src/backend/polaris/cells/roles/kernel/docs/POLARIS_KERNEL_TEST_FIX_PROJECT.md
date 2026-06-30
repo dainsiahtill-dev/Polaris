@@ -125,7 +125,7 @@
 
 ---
 
-### Team Delta - TurnEngine核心修复 (2人)
+### Team Delta - TransactionKernel核心修复 (2人)
 **队长**: Senior Backend Engineer
 **成员**: Backend Engineer
 
@@ -136,14 +136,14 @@
 - `test_turn_engine_thinking_persistence.py`
 
 **核心问题**:
-- TurnEngine语义阶段处理
+- TransactionKernel语义阶段处理
 - 内容清洗和工具包装器剥离
 - Thinking内容持久化
 - 事件契约变更
 
 **交付物**:
 1. 修复35个测试
-2. 更新TurnEngine文档
+2. 更新TransactionKernel文档
 3. 语义阶段流程图
 
 **时间**: 3天
@@ -422,8 +422,7 @@ pytest --cov=polaris/cells/roles/kernel --cov-report=html
 - QA负责人: [待指定]
 
 ### C. 参考文档
-- `TURN_ENGINE_BUG_ANALYSIS.md`
-- `TURN_ENGINE_DI_GUIDE.md`
+- `TRANSACTION_KERNEL_EXECUTION_GUIDE.md`
 - `MIGRATION_KERNEL_SERVICES.md`
 
 ---

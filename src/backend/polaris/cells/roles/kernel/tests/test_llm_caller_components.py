@@ -95,7 +95,7 @@ def test_final_request_context_audit_counts_tools_and_coverage() -> None:
             "content": (
                 "TASK-1 target_files src/index.ts tests/verify.test.ts retry after stderr exit_code failure "
                 "Resident AGI 能力面 schema_version: resident.agi_capability_surface.v1 "
-                "runtime_foundation: roles.runtime + ContextOS + TurnEngine "
+                "runtime_foundation: roles.runtime + ContextOS + TransactionKernel "
                 "decision_boundary_schema: resident.agi_decision_boundary.v1 "
                 "platform_hard_rule agi_decision_scope agi_governed_execution"
             ),
@@ -273,7 +273,7 @@ def test_final_request_context_audit_marks_complete_context_as_reasonable() -> N
                 "resident_agi_decision_trace resident.agi_decision_trace_signal.v1 "
                 "workspace/meta/resident/decision_trace.jsonl "
                 "resident_agi_capability_surface resident.agi_capability_surface.v1 "
-                "runtime_foundation: roles.runtime + ContextOS + TurnEngine "
+                "runtime_foundation: roles.runtime + ContextOS + TransactionKernel "
                 "resident.agi_decision_boundary.v1 decision_boundaries platform_hard_rule agi_decision_scope "
                 "public_symbols: buildPlanetWeatherReport consumes_symbols: src/models/weather.ts"
             ),

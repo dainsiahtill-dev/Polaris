@@ -593,7 +593,7 @@ def build_resident_agi_decision_capabilities() -> list[ResidentAgiDecisionCapabi
     shared_constraints = (
         "resident_agi_role_runtime_required",
         "contextos_expected",
-        "turn_engine_expected",
+        "transaction_kernel_expected",
         "preserve_pm_chief_engineer_director_qa_chain",
     )
     return [
@@ -835,7 +835,7 @@ def build_resident_agi_decision_capability_registry(
     return {
         "schema_version": "resident.agi_decision_capability_registry.v1",
         "role_id": "resident_agi",
-        "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+        "runtime_foundation": "roles.runtime + ContextOS + TransactionKernel",
         "platform_owned_decisions": platform_owned,
         "agi_owned_decisions": agi_owned,
         "governed_execution_decisions": governed_execution,
@@ -972,7 +972,7 @@ def build_resident_agi_capability_access_registry(
         "schema_version": "resident.agi_capability_access_registry.v1",
         "role_id": "resident_agi",
         "source": "resident.autonomy.capability_surface",
-        "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+        "runtime_foundation": "roles.runtime + ContextOS + TransactionKernel",
         "access_semantics": {
             "read_only": "AGI may inspect evidence through public read contracts.",
             "advisory_only": "AGI may recommend or explain; it cannot execute, register, patch, or override.",
@@ -1235,7 +1235,7 @@ def build_resident_agi_authority_matrix(
     chain_required = chain_required or bool(governed_execution_boundaries)
     return {
         "schema_version": "resident.agi_authority_matrix.v1",
-        "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+        "runtime_foundation": "roles.runtime + ContextOS + TransactionKernel",
         "role_id": "resident_agi",
         "chain": "PM → Chief Engineer → Director",
         "chain_required": chain_required,
@@ -1352,7 +1352,7 @@ def build_resident_agi_decision_boundary_policy(
         "schema_version": "resident.agi_decision_boundary_policy.v1",
         "role_id": "resident_agi",
         "source": "resident.autonomy.capability_surface",
-        "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+        "runtime_foundation": "roles.runtime + ContextOS + TransactionKernel",
         "chain": "PM → Chief Engineer → Director",
         "decision_modes": decision_modes,
         "boundary_policies": boundary_policies,
@@ -1415,7 +1415,7 @@ def resident_agi_capability_surface_payload() -> dict[str, object]:
         "capability_access_registry_schema": "resident.agi_capability_access_registry.v1",
         "evidence_interface_contract_schema": "resident.agi_evidence_interface_contract.v1",
         "role_id": "resident_agi",
-        "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+        "runtime_foundation": "roles.runtime + ContextOS + TransactionKernel",
         "implementation_cell": "resident.autonomy",
         "product_role": "embedded_agi_supervisor",
         "unattended_factory_role": "replace_human_supervision",

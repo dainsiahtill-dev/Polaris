@@ -7,7 +7,7 @@
 4. 成功侦察执行后正常 finalize
 5. 失败的侦察调用不构成落地证据
 6. 拒绝响应豁免（REFUSAL_MARKERS，与写侧门禁一致）
-7. TurnEngine._resolve_recon_required 信号派生（profile 档位 + env 灰度）
+7. transaction.recon_policy.resolve_recon_required 信号派生（profile 档位 + env 灰度）
 """
 
 from typing import Any, cast
@@ -19,7 +19,7 @@ from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
 )
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import BlockedReason
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
-from polaris.cells.roles.kernel.internal.turn_engine.engine import TurnEngine
+from polaris.cells.roles.kernel.internal.transaction.recon_policy import resolve_recon_required
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import (
     TransactionConfig,
@@ -214,21 +214,21 @@ async def test_non_recon_config_takes_prechange_path() -> None:
 
 
 def test_resolve_recon_required_from_profile_policy() -> None:
-    assert TurnEngine._resolve_recon_required("scout", _StubProfile(recon_mode=True)) is True
-    assert TurnEngine._resolve_recon_required("scout", _StubProfile(recon_mode=False)) is False
-    assert TurnEngine._resolve_recon_required("director", _StubProfile(recon_mode=False)) is False
+    assert resolve_recon_required("scout", _StubProfile(recon_mode=True)) is True
+    assert resolve_recon_required("scout", _StubProfile(recon_mode=False)) is False
+    assert resolve_recon_required("director", _StubProfile(recon_mode=False)) is False
 
 
 def test_resolve_recon_required_env_is_scout_scoped(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KERNELONE_SCOUT_RECON_MODE", "1")
-    assert TurnEngine._resolve_recon_required("scout", _StubProfile(recon_mode=False)) is True
-    assert TurnEngine._resolve_recon_required("director", _StubProfile(recon_mode=False)) is False
+    assert resolve_recon_required("scout", _StubProfile(recon_mode=False)) is True
+    assert resolve_recon_required("director", _StubProfile(recon_mode=False)) is False
     monkeypatch.setenv("KERNELONE_SCOUT_RECON_MODE", "off")
-    assert TurnEngine._resolve_recon_required("scout", _StubProfile(recon_mode=False)) is False
+    assert resolve_recon_required("scout", _StubProfile(recon_mode=False)) is False
 
 
 def test_resolve_recon_required_handles_missing_context_policy() -> None:
     class _Bare:
         pass
 
-    assert TurnEngine._resolve_recon_required("scout", _Bare()) is False
+    assert resolve_recon_required("scout", _Bare()) is False

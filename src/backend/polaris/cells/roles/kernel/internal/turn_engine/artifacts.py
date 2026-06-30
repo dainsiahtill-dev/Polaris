@@ -1,9 +1,9 @@
-"""TurnEngine artifacts - assistant turn parsing and sanitization.
+"""Turn processing artifacts - assistant turn parsing and sanitization.
 
 # -*- coding: utf-8 -*-
 UTF-8 编码验证: 本文所有文本使用 UTF-8
 
-Blueprint: §10 TurnEngine - Wave 2 Artifacts Extraction
+Blueprint: §10 TransactionKernel turn components - Wave 2 Artifacts Extraction
 
 职责：
     提供 assistant turn 解析和流式文本过滤的 artifacts 类型。

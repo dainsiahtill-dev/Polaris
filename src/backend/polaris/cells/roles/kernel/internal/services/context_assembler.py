@@ -368,7 +368,7 @@ class ContextAssembler:
         mode: str,
         metrics: AssemblyMetrics,
     ) -> TurnEngineContextResult:
-        """Build context for TurnEngine."""
+        """Build context for role turn execution."""
         messages: list[dict[str, str]] = []
         sources: list[str] = []
 

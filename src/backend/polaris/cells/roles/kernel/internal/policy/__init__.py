@@ -32,7 +32,7 @@ policy/
 - ConstitutionRules (constitution_rules.py): 宪法级禁止规则 → ApprovalPolicy 读取并强制执行
 - RoleTurnResult.needs_confirmation: 已有字段 → ApprovalPolicy.evaluate() 写入此字段
 
-与 Task #3 (TurnEngine) 的契约
+与 TransactionKernel turn policy 的契约
 ──────────────────────────────────
 Task #3 完成后，ConversationState 将被具体化为 RoleTurnRequest + RuntimeState。
 本层的所有 evaluate() / filter() / requires_approval() 方法签名在 Task #3 完成后

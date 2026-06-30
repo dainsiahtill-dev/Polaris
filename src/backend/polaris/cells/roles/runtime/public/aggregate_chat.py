@@ -265,7 +265,7 @@ _AGGREGATE_RUNTIME_INTEGRATION_SPECS: tuple[dict[str, Any], ...] = (
         "priority": "p0",
         "production_entrypoints": (
             "roles.runtime.stream_chat_turn",
-            "roles.kernel.internal.turn_engine",
+            "roles.kernel.internal.transaction_kernel",
             "roles.kernel.internal.transaction.ledger",
         ),
         "trigger_keys": ("execution_mode=single_turn", "tool_call"),
@@ -525,7 +525,7 @@ _ENTRYPOINT_MODULE_ALIASES: dict[str, str] = {
     "roles.kernel.internal.transaction.write_authority": (
         "polaris.cells.roles.kernel.internal.transaction.write_authority"
     ),
-    "roles.kernel.internal.turn_engine": "polaris.cells.roles.kernel.internal.turn_engine",
+    "roles.kernel.internal.transaction_kernel": "polaris.cells.roles.kernel.internal.transaction_kernel",
 }
 
 

@@ -12,7 +12,7 @@ import logging
 import time
 from collections.abc import AsyncIterator, Callable
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, TypeAlias
 
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
@@ -27,6 +27,8 @@ from polaris.cells.roles.kernel.public.turn_events import (
 from polaris.domain.cognitive_runtime.models import ContextHandoffPack, TurnEnvelope
 
 logger = logging.getLogger(__name__)
+
+DecisionLike: TypeAlias = TurnDecision | dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +68,7 @@ def _safe_mapping(value: Any) -> dict[str, Any]:
 
 def _build_context_handoff_pack(
     *,
-    decision: TurnDecision,
+    decision: DecisionLike,
     workflow_context: dict[str, Any],
     handoff_reason: str,
 ) -> ContextHandoffPack:
@@ -126,10 +128,10 @@ def _build_context_handoff_pack(
 
 
 def _with_context_handoff_pack(
-    decision: TurnDecision,
+    decision: DecisionLike,
     workflow_context: dict[str, Any],
     handoff_reason: str,
-) -> TurnDecision:
+) -> DecisionLike:
     metadata = _safe_mapping(decision.get("metadata", {}))
     existing_pack = ContextHandoffPack.from_mapping(
         metadata.get("context_handoff_pack") if isinstance(metadata.get("context_handoff_pack"), dict) else None
@@ -145,7 +147,11 @@ def _with_context_handoff_pack(
     recoverable_context = workflow_context.get("recoverable_context")
     if isinstance(recoverable_context, dict):
         recoverable_context["context_handoff_pack"] = handoff_payload
-    return decision.model_copy(update={"metadata": metadata})
+    if isinstance(decision, TurnDecision):
+        return decision.model_copy(update={"metadata": metadata})
+    decision_payload = dict(decision)
+    decision_payload["metadata"] = metadata
+    return decision_payload
 
 
 def build_workflow_handoff_context(

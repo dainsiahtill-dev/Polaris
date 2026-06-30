@@ -408,7 +408,7 @@ class TestBuildContext:
     """Test main build_context method."""
 
     def test_build_turn_engine_context_basic(self) -> None:
-        """Test building TurnEngine context."""
+        """Test building role turn context."""
         from polaris.kernelone.context.contracts import TurnEngineContextResult
 
         assembler = ContextAssembler()

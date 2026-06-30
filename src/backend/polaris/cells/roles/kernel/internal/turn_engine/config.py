@@ -1,17 +1,17 @@
-"""TurnEngine 配置与安全状态模块。
+"""Turn processing 配置与安全状态模块。
 
 # -*- coding: utf-8 -*-
 UTF-8 编码验证: 本文所有文本使用 UTF-8
 
-Blueprint: §10 TurnEngine - Wave 1 Config Extraction
+Blueprint: §10 TransactionKernel turn components - Wave 1 Config Extraction
 
 职责：
-    从 turn_engine.py 提取配置与安全状态相关类，支持模块化重构。
-    保持向后兼容，TurnEngine 通过导入使用。
+    提供 TransactionKernel / TurnTransactionController 使用的 turn 配置与安全状态类型。
+    `TurnEngineConfig` 名称保留为配置契约兼容层；它不代表旧执行门面仍存在。
 
 设计原则：
     1. 单一职责：配置与状态管理独立模块。
-    2. 向后兼容：不修改现有 TurnEngine 行为。
+    2. 向后兼容：保留配置字段语义，不保留旧执行 facade。
     3. 类型安全：完整的类型注解和 docstring。
 
 提取内容：

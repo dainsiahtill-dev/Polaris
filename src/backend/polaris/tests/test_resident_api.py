@@ -1457,7 +1457,7 @@ def test_resident_api_stages_and_runs_goals_through_pm_bridge(tmp_path: Path, mo
         assert capabilities["schema_version"] == "resident.agi_capability_surface.v1"
         assert capabilities["decision_boundary_schema"] == "resident.agi_decision_boundary.v1"
         assert capabilities["authority_matrix_schema"] == "resident.agi_authority_matrix.v1"
-        assert capabilities["runtime_foundation"] == "roles.runtime + ContextOS + TurnEngine"
+        assert capabilities["runtime_foundation"] == "roles.runtime + ContextOS + TransactionKernel"
         assert capabilities["authority_matrix"]["chain"] == "PM → Chief Engineer → Director"
         assert capabilities["authority_matrix"]["decision_policy"]["code_changes"] == "director_authorized_tools_only"
         assert capabilities["decision_boundary_policy"]["schema_version"] == "resident.agi_decision_boundary_policy.v1"
@@ -1499,7 +1499,7 @@ def test_resident_api_stages_and_runs_goals_through_pm_bridge(tmp_path: Path, mo
         audit_pack = audit_pack_response.json()
         assert audit_pack["schema_version"] == "resident.agi_audit_pack.v1"
         assert audit_pack["role_id"] == "resident_agi"
-        assert audit_pack["runtime_foundation"] == "roles.runtime + ContextOS + TurnEngine"
+        assert audit_pack["runtime_foundation"] == "roles.runtime + ContextOS + TransactionKernel"
         assert audit_pack["role_registry"]["resident_agi_available"] is True
         assert audit_pack["hard_rule_gate"]["status"] == "pass"
         assert audit_pack["authority_matrix"]["schema_version"] == "resident.agi_authority_matrix.v1"

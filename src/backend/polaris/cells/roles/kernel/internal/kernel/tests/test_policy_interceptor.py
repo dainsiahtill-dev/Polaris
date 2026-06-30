@@ -1,7 +1,7 @@
-"""Tests for TurnEngine pre-execution policy gate.
+"""Tests for RoleExecutionKernel pre-execution policy gate.
 
 Verifies that RoleToolGateway.check_tool_permission() is enforced inside
-TurnEngine._execute_single_tool() BEFORE calling the kernel executor,
+RoleExecutionKernel._execute_single_tool() BEFORE calling the injected executor,
 closing the stream-transport bypass where injected_tool_executor skipped
 KernelToolExecutor's permission check entirely.
 """
@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
-from polaris.cells.roles.kernel.internal.turn_engine.engine import TurnEngine
+from polaris.cells.roles.kernel.internal.tool_gateway import ToolAuthorizationError
 
 
 def _make_mock_profile(
@@ -46,7 +46,8 @@ class TestPolicyInterceptor:
 
         This is the primary regression test for the stream-transport bypass:
         kernel._injected_tool_executor was skipping KernelToolExecutor's permission check.
-        The pre-execution gate in TurnEngine._execute_single_tool() closes this gap.
+        The pre-execution gate in RoleExecutionKernel._execute_single_tool()
+        closes this gap.
         """
         kernel = RoleExecutionKernel(workspace=".")
         # Simulate stream transport: injected executor bypasses KernelToolExecutor
@@ -59,17 +60,14 @@ class TestPolicyInterceptor:
         request = MagicMock()
         request.metadata = {}
 
-        engine = TurnEngine(kernel=kernel)
+        with pytest.raises(ToolAuthorizationError) as exc_info:
+            await kernel._execute_single_tool(
+                tool_name="execute_command",
+                args={"command": "echo $API_KEY"},
+                context={"profile": profile, "request": request},
+            )
 
-        call = {"tool": "execute_command", "args": {"command": "echo $API_KEY"}}
-        result = await engine._execute_single_tool(profile=profile, request=request, call=call)
-
-        # Pre-check must block the tool
-        assert result["success"] is False, "Forbidden tool should be blocked"
-        assert result["authorized"] is False, "Tool should be marked unauthorized"
-        assert result["policy"] == "ToolPolicy", "Policy layer should be ToolPolicy"
-        assert "TOOL_BLOCKED" in result["error"], f"Error should contain TOOL_BLOCKED marker: {result['error']}"
-        assert "execute_command" in result["error"], f"Error should mention tool name: {result['error']}"
+        assert "execute_command" in str(exc_info.value)
 
         # Injected executor must NEVER be called
         kernel._injected_tool_executor.execute_single.assert_not_called()
@@ -84,18 +82,19 @@ class TestPolicyInterceptor:
         request = MagicMock()
         request.metadata = {}
 
-        engine = TurnEngine(kernel=kernel)
+        with pytest.raises(ToolAuthorizationError) as exc_info:
+            await kernel._execute_single_tool(
+                tool_name="delete_file",
+                args={"path": "important.py"},
+                context={"profile": profile, "request": request},
+            )
 
-        call = {"tool": "delete_file", "args": {"path": "important.py"}}
-        result = await engine._execute_single_tool(profile=profile, request=request, call=call)
-
-        assert result["policy"] == "ToolPolicy"
-        assert "TOOL_BLOCKED" in result["error"]
+        assert "delete_file" in str(exc_info.value)
         kernel._injected_tool_executor.execute_single.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_fallback_kerneltool_executor_still_works(self) -> None:
-        """When no injected executor is set, KernelToolExecutor path still works."""
+    async def test_fallback_path_enforces_precheck_before_kerneltool_executor(self) -> None:
+        """When no injected executor is set, the fallback path still enforces precheck."""
         kernel = RoleExecutionKernel(workspace=".")
         # Ensure no injected executor (non-stream transport)
         kernel._injected_tool_executor = None
@@ -104,11 +103,11 @@ class TestPolicyInterceptor:
         request = MagicMock()
         request.metadata = {}
 
-        engine = TurnEngine(kernel=kernel)
+        with pytest.raises(ToolAuthorizationError) as exc_info:
+            await kernel._execute_single_tool(
+                tool_name="execute_command",
+                args={"command": "ls"},
+                context={"profile": profile, "request": request},
+            )
 
-        call = {"tool": "execute_command", "args": {"command": "ls"}}
-        result = await engine._execute_single_tool(profile=profile, request=request, call=call)
-
-        # Should be blocked at pre-check (redundant with KernelToolExecutor but not harmful)
-        assert result["success"] is False
-        assert "TOOL_BLOCKED" in result["error"]
+        assert "execute_command" in str(exc_info.value)

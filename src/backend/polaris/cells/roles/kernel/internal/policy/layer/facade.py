@@ -6,7 +6,7 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 Blueprint: §11 PolicyLayer
 
 组合 ToolPolicy + BudgetPolicy + ApprovalPolicy + SandboxPolicy +
-RedactionPolicy + ExplorationToolPolicy，提供单一 evaluate() 接口供 TurnEngine 调用。
+RedactionPolicy + ExplorationToolPolicy，提供单一 evaluate() 接口供 TransactionKernel 调用。
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ class PolicyLayer:
 
     Phase 3: 组合 ToolPolicy + BudgetPolicy + ApprovalPolicy + SandboxPolicy +
               RedactionPolicy + ExplorationToolPolicy。
-    提供单一 evaluate() 接口供 TurnEngine 调用。
+    提供单一 evaluate() 接口供 TransactionKernel 调用。
 
     设计约束：
         1. 所有子策略按固定顺序评估：
@@ -107,7 +107,7 @@ class PolicyLayer:
         """从 RoleExecutionKernel 构造 PolicyLayer。
 
         从 kernel._tool_gateways 或 profile 提取策略配置。
-        这是 TurnEngine.__init__ 中构造 PolicyLayer 的标准方式。
+        这是 RoleExecutionKernel/TransactionKernel 构造 PolicyLayer 的标准方式。
 
         Args:
             kernel: RoleExecutionKernel 实例。

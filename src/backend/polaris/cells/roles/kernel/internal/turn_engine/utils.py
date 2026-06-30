@@ -1,12 +1,12 @@
-"""TurnEngine utility functions - standalone helpers for turn processing.
+"""Turn processing utility functions - standalone helpers for TransactionKernel.
 
 # -*- coding: utf-8 -*-
 UTF-8 编码验证: 本文所有文本使用 UTF-8
 
-Blueprint: §10 TurnEngine - Wave 3 Utils Extraction
+Blueprint: §10 TransactionKernel turn components - Wave 3 Utils Extraction
 
 职责：
-    提供静态工具函数，供 TurnEngine.run() / run_stream() 使用。
+    提供静态工具函数，供 TransactionKernel / TurnTransactionController 使用。
     这些函数不依赖实例状态，可独立调用。
 
 Wave 3 提取内容:
@@ -136,7 +136,7 @@ def dedupe_parsed_tool_calls(calls: list[Any]) -> list[Any]:
         signature = tool_call_signature_from_parsed(call)
         if signature in seen:
             logger.info(
-                "[TurnEngine] Skip duplicate parsed tool call in same round: %s",
+                "[TransactionKernel] Skip duplicate parsed tool call in same round: %s",
                 signature,
             )
             continue

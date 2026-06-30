@@ -37,8 +37,8 @@ if TYPE_CHECKING:
 class CanonicalToolCall:
     """策略层工具调用描述符。
 
-    从 TurnEngine 传入 PolicyLayer 的规范化工件。
-    由 TurnEngine._parse_content_and_thinking_tool_calls() 产生，
+    从 TransactionKernel 传入 PolicyLayer 的规范化工件。
+    由 turn materialization / tool-call normalization 产生，
     或从流式解析产生。
 
     Attributes:

@@ -55,7 +55,7 @@ def test_resident_pm_bridge_stages_and_promotes_governed_goal(tmp_path: Path) ->
     assert staged["artifacts"]["pm_contract_path"]
     assert staged["artifacts"]["backup_manifest_path"]
 
-    resident_contract = artifacts.read_json("RESIDENT_GOAL_CONTRACT")
+    resident_contract = artifacts.read_json("contract.resident_goal")
     pm_contract = artifacts.read_task_contract()
     pm_state = artifacts.read_pm_state()
     plan_text = artifacts.read_plan()

@@ -31,7 +31,7 @@ class TurnRunner:
     """回合执行器
 
     负责：
-    - TurnEngine 执行
+    - TransactionKernel 执行
     - 质量验证
     - 重试逻辑
     - 结果构建
@@ -117,7 +117,7 @@ class TurnRunner:
                 span.set_tag("has_content", bool(te_result.content))
                 span.set_tag("has_tool_calls", bool(te_result.tool_calls))
 
-            # TurnEngine 返回错误
+            # TransactionKernel 返回错误
             if te_result.error:
                 return self._build_error_result(
                     te_result,

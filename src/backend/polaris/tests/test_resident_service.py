@@ -438,11 +438,11 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert capability_surface["decision_boundary_schema"] == "resident.agi_decision_boundary.v1"
     assert capability_surface["authority_matrix_schema"] == "resident.agi_authority_matrix.v1"
     assert capability_surface["role_id"] == "resident_agi"
-    assert capability_surface["runtime_foundation"] == "roles.runtime + ContextOS + TurnEngine"
+    assert capability_surface["runtime_foundation"] == "roles.runtime + ContextOS + TransactionKernel"
     assert capability_surface["count"] >= 1
     authority_matrix = capability_surface["authority_matrix"]
     assert authority_matrix["schema_version"] == "resident.agi_authority_matrix.v1"
-    assert authority_matrix["runtime_foundation"] == "roles.runtime + ContextOS + TurnEngine"
+    assert authority_matrix["runtime_foundation"] == "roles.runtime + ContextOS + TransactionKernel"
     assert authority_matrix["chain"] == "PM → Chief Engineer → Director"
     assert authority_matrix["chain_required"] is True
     assert authority_matrix["platform_enforced"] is True
@@ -665,7 +665,7 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     decision_profile = audit_pack["decision_profile"]
     assert decision_profile["schema_version"] == "resident.agi_decision_profile.v1"
     assert decision_profile["role_id"] == "resident_agi"
-    assert decision_profile["runtime_foundation"] == "roles.runtime + ContextOS + TurnEngine"
+    assert decision_profile["runtime_foundation"] == "roles.runtime + ContextOS + TransactionKernel"
     assert decision_profile["role_turn_allowed"] is True
     assert decision_profile["downstream_precheck"] in {
         "ready_for_agi_judgement",
@@ -2256,7 +2256,7 @@ def test_public_goal_command_publishes_resident_status_update(
     assert meta == {
         "source": "resident.autonomy",
         "role_id": "resident_agi",
-        "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+        "runtime_foundation": "roles.runtime + ContextOS + TransactionKernel",
         "channel": "runtime.v2.status.resident",
     }
     event_payload = payload["payload"]

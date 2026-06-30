@@ -453,7 +453,7 @@ class ResidentAgiCapabilitySurfaceSignal:
 
     role-bound（仅 resident_agi）+ default-ON + must-have。Resident AGI 不是旁路
     agent，也不是第二套调度系统；它与 PM/CE/Director/QA 一样走 RoleRuntime /
-    ContextOS / TurnEngine，只是职责和权限更高，需要在每次决策 turn 中明确看到
+    ContextOS / TransactionKernel，只是职责和权限更高，需要在每次决策 turn 中明确看到
     可读审计面、可执行边界、证据契约和禁止绕过的主链。
     """
 

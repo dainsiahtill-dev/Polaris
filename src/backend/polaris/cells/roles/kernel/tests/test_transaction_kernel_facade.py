@@ -2729,7 +2729,7 @@ async def test_execute_turn_stream_fails_closed_when_native_tool_call_decodes_wi
                         "id": "call_stream_drop",
                         "function": {
                             "name": "repo_read_slice",
-                            "arguments": "{\"file\":\"README.md\",\"start\":1,\"end\":20}",
+                            "arguments": '{"file":"README.md","start":1,"end":20}',
                         },
                     }
                 ],
@@ -3259,7 +3259,8 @@ class TestVoidBatchDoesNotConsumeBudget:
         import re
         from pathlib import Path
 
-        source = Path("polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py").read_text(
+        backend_root = Path(__file__).resolve().parents[5]
+        source = (backend_root / "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py").read_text(
             encoding="utf-8"
         )
         block = re.search(

@@ -94,7 +94,7 @@ class TestResidentAgiCapabilitySurfaceSignal:
             get_project_structure=lambda: None,
             get_task_history=lambda _tid: None,
             get_resident_agi_capabilities=lambda: (
-                "runtime_foundation: roles.runtime + ContextOS + TurnEngine\n"
+                "runtime_foundation: roles.runtime + ContextOS + TransactionKernel\n"
                 "decision_boundary_schema: resident.agi_decision_boundary.v1\n"
                 "capabilities:\n"
                 "- contextos.final_request_audit.read\n"
@@ -107,7 +107,7 @@ class TestResidentAgiCapabilitySurfaceSignal:
         block = signal.build(ctx)
         assert block is not None
         assert "Resident AGI 能力面" in block.content
-        assert "roles.runtime + ContextOS + TurnEngine" in block.content
+        assert "roles.runtime + ContextOS + TransactionKernel" in block.content
         assert "resident.agi_decision_boundary.v1" in block.content
         assert "platform_hard_rule" in block.content
         assert "agi_decision_scope" in block.content
@@ -183,7 +183,7 @@ class TestResidentAgiCapabilitySurfaceSignal:
             resident_agi_capability_provider=lambda _workspace: {
                 "schema_version": "resident.agi_capability_surface.v1",
                 "role_id": "resident_agi",
-                "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+                "runtime_foundation": "roles.runtime + ContextOS + TransactionKernel",
                 "implementation_cell": "resident.autonomy",
                 "items": [
                     {
@@ -222,7 +222,7 @@ class TestResidentAgiCapabilitySurfaceSignal:
         rendered = source.get_resident_agi_capabilities()
 
         assert rendered is not None
-        assert "roles.runtime + ContextOS + TurnEngine" in rendered
+        assert "roles.runtime + ContextOS + TransactionKernel" in rendered
         assert "resident.agi_decision_boundary.v1" in rendered
         assert "architecture.options" in rendered
         assert "platform_hard_rule" in rendered

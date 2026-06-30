@@ -5,10 +5,10 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 
 ## 职责边界（P0-012）
 
-ToolLoopController 是 **Transcript 状态管理者**，被 TurnEngine 和
-TurnTransactionController 共享使用：
+ToolLoopController 是 **Transcript 状态管理者**，被 TransactionKernel 和
+TurnTransactionController 的 turn 处理链路共享使用：
 
-| 方法 | TurnEngine 使用 | TurnTransactionController 使用 |
+| 方法 | TransactionKernel 使用 | TurnTransactionController 使用 |
 |------|----------------|------------------------------|
 | build_context_request() | 每次 LLM 调用前 | 不使用（有自己的 context 构建） |
 | append_tool_result() | 增量工具执行后 | 不使用（有 ToolBatchRuntime） |
@@ -21,9 +21,9 @@ TurnTransactionController 共享使用：
 - Success loop 检测
 
 **不负责**：
-- 循环控制（TurnEngine 负责）
+- 循环控制（TransactionKernel / orchestration 负责）
 - 状态机转换（TurnTransactionController 负责）
-- LLM 调用决策（TurnEngine 负责）
+- LLM 调用决策（TransactionKernel 负责）
 
 This module centralizes the dialogue transcript and loop-safety policy used by
 streaming role execution. The controller itself does not decide *what* the LLM

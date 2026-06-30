@@ -1,12 +1,12 @@
-"""TurnEngine 模块化重构子包。
+"""Turn processing component package.
 
 # -*- coding: utf-8 -*-
 UTF-8 编码验证: 本文所有文本使用 UTF-8
 
-Blueprint: §10 TurnEngine - Wave 3 Modular Extraction
-
 职责：
-    提供模块化 TurnEngine 组件的统一入口。
+    提供非执行类的 turn 组件入口。执行入口已收敛到
+    TransactionKernel / TurnTransactionController；本包不得重新导出
+    TurnEngine 执行门面。
 
 Wave 1 完成状态:
     - config.py: TurnEngineConfig, SafetyState ✓
@@ -21,8 +21,8 @@ Wave 3 完成状态:
 已收敛:
     - compat.py / TurnEngineCompatMixin 已移除。旧 Phase 3/4 helper API
       不再作为执行面存在；新行为必须进入 TransactionKernel/RoleExecutionKernel。
-    - 包根只导出 canonical TurnEngine facade、真实 ConversationState 和真实
-      RoleTurnResult 构造 helper；不得重新添加空 stub。
+    - engine.py / TurnEngine 执行门面已移除。包根只导出真实组件，不得重新添加
+      execution facade 或空 stub。
 """
 
 from polaris.cells.roles.kernel.internal.conversation_state import ConversationState
@@ -34,7 +34,6 @@ from polaris.cells.roles.kernel.internal.turn_engine.config import (
     SafetyState,
     TurnEngineConfig,
 )
-from polaris.cells.roles.kernel.internal.turn_engine.engine import TurnEngine
 from polaris.cells.roles.kernel.internal.turn_engine.results import (
     build_stream_complete_result,
     make_error_result,
@@ -57,8 +56,6 @@ __all__ = [
     "AssistantTurnArtifacts",
     "ConversationState",
     "SafetyState",
-    # Core classes
-    "TurnEngine",
     "TurnEngineConfig",
     # Private classes (for testing)
     "_BracketToolWrapperFilter",

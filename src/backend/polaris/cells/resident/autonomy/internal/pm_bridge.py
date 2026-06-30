@@ -45,8 +45,8 @@ class ResidentPMBridge:
         staged_contract = self._build_staged_contract(goal, contract, staged_at=now)
         staged_plan = self._render_plan_block(goal, staged_contract, staged_at=now)
 
-        resident_contract_path = self.artifacts.write_json("RESIDENT_GOAL_CONTRACT", staged_contract)
-        resident_plan_path = self.artifacts.write_text("RESIDENT_GOAL_PLAN", staged_plan)
+        resident_contract_path = self.artifacts.write_json("contract.resident_goal", staged_contract)
+        resident_plan_path = self.artifacts.write_text("contract.resident_goal_plan", staged_plan)
 
         result: dict[str, Any] = {
             "goal_id": goal.goal_id,

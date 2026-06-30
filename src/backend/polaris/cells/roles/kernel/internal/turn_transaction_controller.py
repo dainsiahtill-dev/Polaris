@@ -6,16 +6,17 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 
 ## 职责边界（P0-012 明确化）
 
-TurnTransactionController 是**新架构**的事务化执行器，与 TurnEngine（旧架构）职责边界：
+TurnTransactionController 是**新架构**的事务化执行器。旧 TurnEngine 执行门面已经退休，
+当前外部入口由 TransactionKernel / RoleExecutionKernel 统一承载：
 
-| 方法 | TurnEngine（旧） | TurnTransactionController（新） |
+| 方法 | TransactionKernel 外部入口 | TurnTransactionController 内部事务 |
 |------|-----------------|-------------------------------|
 | 执行入口 | `run()` / `run_stream()` | `execute()` / `execute_stream()` |
-| 执行模式 | while循环直到停止 | 单次事务化执行 |
-| 状态管理 | ConversationState + PolicyLayer | TurnStateMachine + TurnLedger |
-| 工具执行 | `kernel._execute_single_tool()` | `self.tool_runtime()` |
-| 停止条件 | PolicyLayer.evaluate() | State Machine 状态转换 |
-| LLM调用 | `self._llm_caller.call()` | `self.llm_provider()` |
+| 执行模式 | 显式 turn 编排 | 单次事务化执行 |
+| 状态管理 | TransactionConfig + runtime evidence | TurnStateMachine + TurnLedger |
+| 工具执行 | ToolBatchRuntime/RoleToolGateway | `self.tool_runtime()` |
+| 停止条件 | TransactionKernel finalization policy | State Machine 状态转换 |
+| LLM调用 | Role LLM provider adapters | `self.llm_provider()` |
 
 **执行路径**：
 - TransactionKernel is the canonical execution path.
@@ -176,14 +177,14 @@ class TurnTransactionController:
     - LLM_ONCE 收口强制 tool_choice=none
     - Workflow handoff 处理
 
-    **与 TurnEngine 区别**：
-    - TurnEngine: 循环引擎，while True 直到停止
+    **与旧 TurnEngine 执行门面区别**：
+    - 旧执行门面: 循环引擎，while True 直到停止
     - Controller: 单次事务，状态机驱动流程
 
     **不负责**：
-    - 循环控制（TurnEngine 负责）
-    - PolicyLayer 评估（TurnEngine 负责）
-    - ConversationState 管理（TurnEngine 负责）
+    - 循环控制（TransactionKernel / orchestration 负责）
+    - PolicyLayer 评估（TransactionKernel 负责）
+    - ConversationState 管理（TransactionKernel 负责）
 
     核心方法：
     - execute(): 执行完整turn（run模式）

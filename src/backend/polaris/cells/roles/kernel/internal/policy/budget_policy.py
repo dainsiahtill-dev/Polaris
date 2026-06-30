@@ -18,7 +18,7 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 - ToolLoopController.register_cycle(): 已在 tool_loop_controller.py 中实现
   类似逻辑 → 本类提供更全面的预算状态管理
 
-与 Task #3 (TurnEngine) 的契约
+与 TransactionKernel turn policy 的契约
 ──────────────────────────────────
 BudgetState 作为独立的确定性状态，不依赖模型推理。
 """

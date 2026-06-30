@@ -94,7 +94,7 @@ class TransactionConfig:
     effect_policy_mode: str = "default"
 
     # === 读侧落地不变量 (ADR-0091) ===
-    # recon_required 是角色级属性（非每轮意图）：由 TurnEngine 在构建内核时
+    # recon_required 是角色级属性（非每轮意图）：由 transaction.recon_policy
     # 从 profile.context_policy.recon_mode 一次性派生（scout 专属，默认 False）。
     # True 时，零侦察工具执行的 FINAL_ANSWER 在 finalize 阶段被阻断为
     # BlockedReason.NO_RECON_PERFORMED（拒绝响应豁免，与 must_materialize 对称）。

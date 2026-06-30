@@ -44,7 +44,7 @@ class BudgetTracker:
         """构建执行统计信息
 
         Args:
-            te_result_stats: TurnEngine 返回的原始统计
+            te_result_stats: TransactionKernel 返回的原始统计
             exhausted: 是否已耗尽重试次数
 
         Returns:
@@ -65,10 +65,10 @@ class BudgetTracker:
         fingerprint: Any,
         last_validation: QualityResult | None,
     ) -> Any:
-        """构建错误结果（从 TurnEngine 错误构建 RoleTurnResult）
+        """构建错误结果（从 TransactionKernel 错误构建 RoleTurnResult）
 
         Args:
-            te_result: TurnEngine 结果
+            te_result: TransactionKernel 结果
             profile: 角色配置
             fingerprint: 提示词指纹
             last_validation: 最后一次验证结果
@@ -111,7 +111,7 @@ class BudgetTracker:
         """构建成功结果
 
         Args:
-            te_result: TurnEngine 结果
+            te_result: TransactionKernel 结果
             profile: 角色配置
             fingerprint: 提示词指纹
             last_validation: 最后一次验证结果

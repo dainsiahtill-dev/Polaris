@@ -6,10 +6,10 @@
 UTF-8 编码验证: 本文所有文本使用 UTF-8
 
 Blueprint: §11 ConversationState
-本文档定义 TurnEngine 的统一状态容器。
+本文档定义角色 turn 事务的统一状态容器。
 
 职责：
-    ConversationState 是 TurnEngine 所有入口的唯一状态容器。
+    ConversationState 是 TransactionKernel / TurnTransactionController turn 处理链路的状态容器。
     它包含：
     - transcript: 完整执行历史（Typed Transcript IR）
     - loaded_tools: 当前已加载的工具
