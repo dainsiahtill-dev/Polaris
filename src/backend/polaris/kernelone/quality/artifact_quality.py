@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import contextlib
 import json
 import os
 import py_compile
@@ -11,7 +10,6 @@ import re
 import shlex
 import shutil
 import subprocess
-import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -945,23 +943,21 @@ def _check_javascript_snippet_syntax(source: str) -> str:
     node = shutil.which("node")
     if not node:
         return ""
-    temp_path = ""
+    input_source = source if source.endswith("\n") else f"{source}\n"
     try:
-        fd, temp_path = tempfile.mkstemp(prefix="polaris-node-eval-", suffix=".js")
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(source)
-            if not source.endswith("\n"):
-                handle.write("\n")
-        proc = subprocess.run([node, "--check", temp_path], capture_output=True, text=True, timeout=20, check=False)
+        proc = subprocess.run(
+            [node, "--check", "-"],
+            input=input_source,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
     except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
         return f"syntax check could not run: {exc}"
-    finally:
-        if temp_path:
-            with contextlib.suppress(OSError):
-                os.unlink(temp_path)
     if proc.returncode == 0:
         return ""
-    return _compress_node_syntax_error(proc.stderr or proc.stdout, temp_path)
+    return _compress_node_syntax_error(proc.stderr or proc.stdout, "[stdin]")
 
 
 def _placeholder_package_script_reason(script_name: str, command: str, tokens: list[str]) -> str:

@@ -39,6 +39,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
+from polaris.kernelone.fs.text_ops import write_text_atomic
+
 logger = logging.getLogger(__name__)
 
 SWEEP_STATE_FILENAME = ".sweep_state.json"
@@ -228,7 +230,7 @@ class ContextStoreRetention:
                             exc,
                         )
                         continue
-        except OSError as exc:
+        except (OSError, TimeoutError) as exc:
             logger.debug(
                 "context_retention: top-level scan failed for %s: %s",
                 self._contexts_root,
@@ -289,32 +291,25 @@ class ContextStoreRetention:
     def _write_sweep_state(self, last_sweep_at: float, last_gate_state: dict[str, Any]) -> None:
         """Persist ``last_sweep_at`` and ``last_gate_state`` atomically.
 
-        Uses the same temp-file + ``os.replace`` pattern as the context
-        store itself, so a crash mid-write never leaves a half-written
-        counter file. All errors are swallowed (logged at debug) — the
-        gate is best-effort, not load-bearing.
+        Uses the KernelOne FS atomic text helper, so a crash mid-write never
+        leaves a half-written counter file. All errors are swallowed (logged at
+        debug) — the gate is best-effort, not load-bearing.
         """
         payload = {
             "last_sweep_at": last_sweep_at,
             "last_gate_state": last_gate_state,
         }
-        tmp_path = self._sweep_state_path + ".tmp"
         try:
-            with open(tmp_path, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
-            os.replace(tmp_path, self._sweep_state_path)
+            write_text_atomic(
+                self._sweep_state_path,
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            )
         except OSError as exc:
             logger.debug(
                 "context_retention: failed to write sweep state %s: %s",
                 self._sweep_state_path,
                 exc,
             )
-            # Best-effort cleanup of the temp file.
-            try:
-                if os.path.isfile(tmp_path):
-                    os.remove(tmp_path)
-            except OSError:
-                pass
 
     # ------------------------------------------------------------------
     # Public surface

@@ -439,9 +439,9 @@ class TestStoreContextMessagesIntegration:
             assert isinstance(hash_key, str)
             assert len(hash_key) == 24
             # File exists.
-            layout = StorageLayout(workspace=str(tmp_path), runtime_base=build_cache_root("", tmp_path))
             shard = hash_key[:2]
-            file_path = layout.get_path("runtime", f"contexts/{shard}/{hash_key}")
+            runtime_root = Path(resolve_storage_roots(str(tmp_path)).runtime_root)
+            file_path = runtime_root / "contexts" / shard / hash_key
             assert file_path.is_file()
             # Note: counter file is only written when a sweep actually runs.
             # Without caps exceeded, sweep_if_needed returns None and

@@ -17,6 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
+from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.trace import get_trace_id
 
 from .._timeout_config import get_invoke_timeout, get_max_concurrency
@@ -1198,15 +1199,7 @@ class AIExecutor:
         shard = hash_key[:2]
         dir_path = os.path.join(runtime_root, "contexts", shard)
         file_path = os.path.join(dir_path, hash_key)
-        os.makedirs(dir_path, exist_ok=True)
-
-        # Atomic write-then-rename to avoid partial reads. The .tmp sibling
-        # is the standard pattern; the round-trip test asserts no .tmp is
-        # left behind after a successful write.
-        tmp_path = file_path + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        os.replace(tmp_path, file_path)
+        write_text_atomic(file_path, content)
         # Opportunistic retention sweep — cheap gate first, full sweep only
         # when the gate says it's needed and the throttle has elapsed.
         # This call MUST never raise to the caller; on_read_gate() is fail-closed.
