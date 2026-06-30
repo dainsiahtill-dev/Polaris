@@ -1,4 +1,4 @@
-"""Deterministic JavaScript repair generators (frontend smoke + node test script).
+"""Deterministic JavaScript repair generators.
 
 Carved verbatim from the original ``deterministic_repairs`` module.
 """
@@ -11,10 +11,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ..execution_tools import DirectorToolExecutor
 from ..task_scope_paths import (
     _dedupe_preserve_order,
-    _extract_task_target_path_candidates,
     _normalize_declared_task_path,
 )
 from ._common import (
@@ -1052,149 +1050,3 @@ def _find_matching_javascript_brace(text: str, open_brace: int) -> int:
             if depth == 0:
                 return index
     return -1
-
-
-def _is_overstrict_node_test_script_contract(script_text: str) -> bool:
-    """Return true for historical generated test scripts with false-negative export checks."""
-
-    text = str(script_text or "")
-    if "missing validation contract" in text and "validate[A-Za-z]+Record" in text:
-        return True
-    return (
-        "missing export in" in text
-        and "export\\s+(class|function|const|interface|type)" in text
-        and "export\\s*\\{" not in text
-    )
-
-
-def _apply_deterministic_node_test_script_contract_repair(
-    adapter: Any,
-    *,
-    task: dict[str, Any],
-    task_id: str,
-) -> list[dict[str, Any]]:
-    """Replace an over-strict generated Node test contract with substantive checks."""
-
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-
-    declared_paths = {
-        _normalize_declared_task_path(candidate, workspace_name=workspace_path.name)
-        for candidate in _extract_task_target_path_candidates(task)
-    }
-    if "scripts/test.mjs" not in declared_paths:
-        return []
-
-    script_path = workspace_path / "scripts" / "test.mjs"
-    if not script_path.exists() or not script_path.is_file():
-        return []
-    try:
-        script_text = script_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return []
-    if not _is_overstrict_node_test_script_contract(script_text):
-        return []
-
-    new_text = _build_substantive_node_test_script()
-    if script_text == new_text:
-        return []
-    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-    write_result = DirectorToolExecutor(
-        str(workspace_path),
-        message_bus=message_bus,
-        worker_id="director",
-    ).execute_tool(
-        "write_file",
-        {"file": "scripts/test.mjs", "content": new_text},
-        task_id=task_id,
-    )
-    if not bool(write_result.get("ok")):
-        return []
-    with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-        adapter._update_task_progress(task_id, "executing", current_file="scripts/test.mjs")
-    return [
-        {
-            "tool": "write_file",
-            "tool_name": "write_file",
-            "success": True,
-            "result": {
-                "ok": True,
-                "source_tool": "deterministic_node_test_script_contract_repair",
-                "file": "scripts/test.mjs",
-                "bytes_written": int(write_result.get("bytes_written") or len(new_text.encode("utf-8"))),
-                "operation": str(write_result.get("operation") or "modify"),
-                "broadcast_ok": bool(write_result.get("broadcast_ok")),
-                "director_policy": write_result.get("director_policy"),
-            },
-        }
-    ]
-
-
-def _build_substantive_node_test_script() -> str:
-    return """import { readFileSync, readdirSync } from 'node:fs';
-import path from 'node:path';
-
-function walk(dir) {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const p = path.join(dir, entry.name);
-    return entry.isDirectory() ? walk(p) : [p];
-  });
-}
-
-const sourceFiles = walk('src').filter((file) => file.endsWith('.ts'));
-const testFiles = walk('tests').filter((file) => file.endsWith('.ts'));
-const seedMarkerPattern = new RegExp('audit-' + 'seed|planning ' + 'scenario', 'i');
-const requiredTestFiles = [
-  'tests/unit/card-rules.test.ts',
-  'tests/unit/deck-builder.test.ts',
-  'tests/integration/multiplayer-flow.test.ts',
-  'tests/integration/realtime-sync.test.ts',
-  'tests/e2e/card-table-3d.test.ts',
-];
-
-if (sourceFiles.length < 18) {
-  throw new Error('expected at least 18 source modules');
-}
-if (testFiles.length < requiredTestFiles.length) {
-  throw new Error('expected required test files');
-}
-for (const file of requiredTestFiles) {
-  if (!testFiles.includes(file)) {
-    throw new Error('missing required test file ' + file);
-  }
-}
-
-for (const file of sourceFiles) {
-  const text = readFileSync(file, 'utf8');
-  const moduleExportPattern =
-    /(?:^|\\n)\\s*export\\s+(?:async\\s+)?(?:class|function|const|let|var|interface|type|enum|default)\\b|(?:^|\\n)\\s*export\\s*\\{/;
-  if (!moduleExportPattern.test(text)) {
-    throw new Error('missing export in ' + file);
-  }
-  if (seedMarkerPattern.test(text)) {
-    throw new Error('seed marker retained in ' + file);
-  }
-}
-
-for (const file of testFiles) {
-  const text = readFileSync(file, 'utf8');
-  if (!/from ['"]..\\/..\\/src\\//.test(text)) {
-    throw new Error('test file lacks src import ' + file);
-  }
-  if (!/run[A-Za-z0-9]+Checks/.test(text) || !/failures/.test(text)) {
-    throw new Error('test file lacks executable check contract ' + file);
-  }
-  if (/expect\\(\\s*\\d+\\s*(?:[+\\-*/])\\s*\\d+\\s*\\)\\.to(?:Be|Equal)\\(\\s*\\d+\\s*\\)/.test(text)) {
-    throw new Error('trivial arithmetic test ' + file);
-  }
-}
-
-console.log(
-  'card3d behavior checks passed across ' +
-    sourceFiles.length +
-    ' source files and ' +
-    testFiles.length +
-    ' test files'
-);
-"""

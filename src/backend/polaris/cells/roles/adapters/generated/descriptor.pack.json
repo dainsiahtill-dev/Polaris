@@ -507,12 +507,6 @@
     },
     {
       "type": "function",
-      "name": "_is_overstrict_node_test_script_contract",
-      "description": "Return true for historical generated test scripts with false-negative export checks.",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
       "name": "_remove_patch_residue_lines",
       "description": "Remove generated patch protocol markers that leaked into source files.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
@@ -526,12 +520,6 @@
     {
       "type": "function",
       "name": "_replace_deterministic_scaffold_markers",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_substantive_node_test_script",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
@@ -640,12 +628,6 @@
     {
       "type": "function",
       "name": "_replace_escaped_newline",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_repair_typescript_zod_type_class_collision",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },

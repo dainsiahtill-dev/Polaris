@@ -15,6 +15,7 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
 )
 from polaris.cells.director.runtime.internal.repair_kernel.javascript_syntax import (
     build_npm_script_contract_plan,
+    build_substantive_node_test_script,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.python_syntax import (
     build_python_unresolved_import_symbol_plan,
@@ -920,3 +921,39 @@ def test_node_test_script_contract_run_fails_closed_without_content_match(tmp_pa
     assert result.error_code == "repair_not_planned"
     assert result.execution_result is None
     assert writes == []
+
+
+def test_node_test_script_contract_run_replaces_overstrict_script(tmp_path: Path) -> None:
+    legacy_script = (
+        "import { readFileSync } from 'node:fs';\n"
+        "const text = readFileSync('src/analytics/match-analytics.ts', 'utf8');\n"
+        "if (!/validate[A-Za-z]+Record/.test(text)) {\n"
+        "  throw new Error('missing validation contract in src/analytics/match-analytics.ts');\n"
+        "}\n"
+    )
+    script_path = tmp_path / "scripts" / "test.mjs"
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    script_path.write_text(legacy_script, encoding="utf-8")
+    written: dict[str, str] = {}
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        written[path] = content
+        return {"ok": True, "operation": "modify"}
+
+    result = run_runtime_repair(
+        source_tool="deterministic_node_test_script_contract_repair",
+        workspace=tmp_path,
+        base_files={"scripts/test.mjs": legacy_script},
+        artifact_quality_errors=("scripts/test.mjs missing validation contract",),
+        writer=writer,
+        allowed_paths=("scripts/test.mjs",),
+    )
+
+    assert result.ok is True
+    assert result.error_code is None
+    assert result.execution_result is not None
+    assert written == {"scripts/test.mjs": build_substantive_node_test_script()}
+    receipt = result.execution_result.receipt
+    assert receipt.source_tool == "deterministic_node_test_script_contract_repair"
+    assert receipt.files_changed == ("scripts/test.mjs",)
+    assert receipt.metadata["legacy_transform_migrated"] is True

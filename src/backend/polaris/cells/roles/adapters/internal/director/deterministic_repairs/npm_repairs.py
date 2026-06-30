@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import re
 from pathlib import Path
 from typing import Any
-
-from ..execution_tools import DirectorToolExecutor
 
 
 def _is_repairable_npm_test_script_error(error: Any) -> bool:
@@ -262,129 +259,3 @@ def _workspace_has_typescript_context(workspace_path: Path, payload: dict[str, A
         if root.is_dir() and any(path.suffix == ".ts" for path in root.rglob("*.ts")):
             return True
     return False
-
-
-def _apply_deterministic_typescript_scaffold_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> list[dict[str, Any]]:
-    """Generate missing package.json and tsconfig.json for TypeScript projects.
-
-    When a Director produces TypeScript source files but forgets the scaffolding,
-    this repair creates minimal package.json (with build/test/start scripts)
-    and tsconfig.json so the project becomes runnable.
-    """
-    joined_errors = "\n".join(str(e) for e in artifact_quality_errors).lower()
-    needs_package = "package.json" in joined_errors and ("missing" in joined_errors or "not found" in joined_errors)
-    needs_tsconfig = "tsconfig.json" in joined_errors and ("missing" in joined_errors or "not found" in joined_errors)
-    if not needs_package and not needs_tsconfig:
-        return []
-
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-
-    # Detect project name from directory
-    project_name = workspace_path.name or "typescript-application"
-    writes: list[dict[str, Any]] = []
-    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-
-    if needs_package and not (workspace_path / "package.json").is_file():
-        dist_entry = "dist/index.js"
-        package_payload: dict[str, Any] = {
-            "name": project_name,
-            "version": "1.0.0",
-            "description": "TypeScript application",
-            "main": dist_entry,
-            "scripts": {
-                "build": "tsc",
-                "test": "npm run build",
-                "start": f"node {dist_entry}",
-            },
-            "devDependencies": {
-                "typescript": "^5.0.0",
-            },
-        }
-        content = json.dumps(package_payload, ensure_ascii=False, indent=2) + "\n"
-        write_result = DirectorToolExecutor(
-            str(workspace_path),
-            message_bus=message_bus,
-            worker_id="director",
-        ).execute_tool(
-            "write_file",
-            {"file": "package.json", "content": content},
-            task_id=task_id,
-        )
-        if bool(write_result.get("ok")):
-            with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-                adapter._update_task_progress(task_id, "executing", current_file="package.json")
-            writes.append(
-                {
-                    "tool": "write_file",
-                    "tool_name": "write_file",
-                    "success": True,
-                    "result": {
-                        "ok": True,
-                        "source_tool": "deterministic_typescript_scaffold_repair",
-                        "file": "package.json",
-                        "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
-                        "operation": str(write_result.get("operation") or "create"),
-                        "broadcast_ok": bool(write_result.get("broadcast_ok")),
-                        "director_policy": write_result.get("director_policy"),
-                    },
-                }
-            )
-
-    if needs_tsconfig and not (workspace_path / "tsconfig.json").is_file():
-        tsconfig_payload: dict[str, Any] = {
-            "compilerOptions": {
-                "target": "ES2020",
-                "module": "ESNext",
-                "moduleResolution": "node",
-                "outDir": "dist",
-                "rootDir": "src",
-                "strict": True,
-                "esModuleInterop": True,
-                "skipLibCheck": True,
-                "forceConsistentCasingInFileNames": True,
-                "resolveJsonModule": True,
-                "declaration": True,
-                "declarationMap": True,
-                "sourceMap": True,
-            },
-            "include": ["src/**/*.ts"],
-            "exclude": ["node_modules", "dist"],
-        }
-        ts_content = json.dumps(tsconfig_payload, ensure_ascii=False, indent=2) + "\n"
-        ts_write_result = DirectorToolExecutor(
-            str(workspace_path),
-            message_bus=message_bus,
-            worker_id="director",
-        ).execute_tool(
-            "write_file",
-            {"file": "tsconfig.json", "content": ts_content},
-            task_id=task_id,
-        )
-        if bool(ts_write_result.get("ok")):
-            with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-                adapter._update_task_progress(task_id, "executing", current_file="tsconfig.json")
-            writes.append(
-                {
-                    "tool": "write_file",
-                    "tool_name": "write_file",
-                    "success": True,
-                    "result": {
-                        "ok": True,
-                        "source_tool": "deterministic_typescript_scaffold_repair",
-                        "file": "tsconfig.json",
-                        "bytes_written": int(ts_write_result.get("bytes_written") or len(ts_content.encode("utf-8"))),
-                        "operation": str(ts_write_result.get("operation") or "create"),
-                        "broadcast_ok": bool(ts_write_result.get("broadcast_ok")),
-                        "director_policy": ts_write_result.get("director_policy"),
-                    },
-                }
-            )
-
-    return writes

@@ -77,10 +77,6 @@ from .generic_repairs import (
     _replace_deterministic_scaffold_markers as _replace_deterministic_scaffold_markers,
     _task_allows_scaffold_marker_cleanup as _task_allows_scaffold_marker_cleanup,
 )
-from .javascript_repairs import (
-    _build_substantive_node_test_script as _build_substantive_node_test_script,
-    _is_overstrict_node_test_script_contract as _is_overstrict_node_test_script_contract,
-)
 from .npm_repairs import (
     _is_repairable_npm_test_script_error as _is_repairable_npm_test_script_error,
 )
@@ -92,14 +88,9 @@ from .typeorm_repairs import (
     _normalize_undeclared_typeorm_model_source as _normalize_undeclared_typeorm_model_source,
 )
 from .typescript_repairs import (
-    _build_typescript_reexport_line as _build_typescript_reexport_line,
-    _extract_relative_import_refs as _extract_relative_import_refs,
-    _find_typescript_runtime_symbol_source as _find_typescript_runtime_symbol_source,
     _iter_typescript_files as _iter_typescript_files,
     _relative_import_specifier_for_actual_path as _relative_import_specifier_for_actual_path,
     _resolve_case_variant_relative_path as _resolve_case_variant_relative_path,
-    _resolve_relative_ts_module as _resolve_relative_ts_module,
-    _typescript_file_declares_runtime_export as _typescript_file_declares_runtime_export,
     _typescript_module_runtime_exports_symbol as _typescript_module_runtime_exports_symbol,
     _typescript_relative_import_without_suffix as _typescript_relative_import_without_suffix,
 )
@@ -133,17 +124,12 @@ __all__ = [
     "_UNDECLARED_RUNTIME_IMPORT_ERROR_RE",
     "_UNRESOLVED_IMPORT_SYMBOL_ERROR_RE",
     "_UNRESOLVED_RELATIVE_IMPORT_ERROR_RE",
-    "_build_substantive_node_test_script",
-    "_build_typescript_reexport_line",
     "_build_unresolved_import_symbol_repair_block",
     "_dedupe_paths",
     "_dependency_root_name",
-    "_extract_relative_import_refs",
     "_filter_pre_materialization_declared_target_errors",
     "_filter_satisfied_declared_target_missing_errors",
     "_find_nearby_declared_target_source",
-    "_find_typescript_runtime_symbol_source",
-    "_is_overstrict_node_test_script_contract",
     "_is_repairable_npm_test_script_error",
     "_iter_typescript_files",
     "_missing_unresolved_relative_import_target_files",
@@ -167,9 +153,7 @@ __all__ = [
     "_remove_patch_residue_lines",
     "_replace_deterministic_scaffold_markers",
     "_resolve_case_variant_relative_path",
-    "_resolve_relative_ts_module",
     "_task_allows_scaffold_marker_cleanup",
-    "_typescript_file_declares_runtime_export",
     "_typescript_module_runtime_exports_symbol",
     "_typescript_relative_import_without_suffix",
     "summarize_deterministic_repair_source_tools",

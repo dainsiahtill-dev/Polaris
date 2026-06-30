@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -3087,6 +3088,40 @@ def _typescript_conservative_planner_safe_cases() -> dict[str, tuple[dict[str, s
     }
 
 
+def test_typescript_scaffold_public_planner_generates_package_and_tsconfig() -> None:
+    diagnostics = (
+        "package.json not found in workspace",
+        "tsconfig.json missing in workspace root",
+    )
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_SCAFFOLD_SOURCE_TOOL,
+            base_files={},
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.scaffold"
+    assert planning["composition_summary"]["changed_paths"] == ["package.json", "tsconfig.json"]
+
+    patches = {patch["path"]: patch["content_after"] for patch in planning["composition_summary"]["patches"]}
+    package_payload = json.loads(patches["package.json"])
+    tsconfig_payload = json.loads(patches["tsconfig.json"])
+    assert package_payload["main"] == "dist/index.js"
+    assert package_payload["scripts"]["build"] == "tsc"
+    assert package_payload["scripts"]["test"] == "npm run build"
+    assert package_payload["scripts"]["start"] == "node dist/index.js"
+    assert package_payload["devDependencies"]["typescript"] == "^5.0.0"
+    assert tsconfig_payload["compilerOptions"]["target"] == "ES2020"
+    assert tsconfig_payload["compilerOptions"]["module"] == "ESNext"
+    assert tsconfig_payload["compilerOptions"]["rootDir"] == "src"
+    assert tsconfig_payload["include"] == ["src/**/*.ts"]
+
+
 def test_typescript_conservative_planner_recognizes_all_legacy_ts_html_source_tools() -> None:
     cases = _typescript_conservative_planner_safe_cases()
     expected_source_tools = {
@@ -3137,6 +3172,38 @@ def test_typescript_conservative_planner_recognizes_all_legacy_ts_html_source_to
     operation_kinds = {operation.kind for plan in plans for operation in plan.operations}
     assert "text_replace" in operation_kinds
     assert "json_set" in operation_kinds
+
+
+def test_typescript_zod_type_class_collision_rewrites_inferred_data_type() -> None:
+    diagnostics = ("TypeScript zod inferred type collides with class TaskDefinition in src/models/task_definition.ts",)
+    base_files = {
+        "src/models/task_definition.ts": (
+            "import { z } from 'zod';\n"
+            "export const TaskDefinitionSchema = z.object({ title: z.string() });\n"
+            "export type TaskDefinition = z.infer<typeof TaskDefinitionSchema>;\n"
+            "export class TaskDefinition {\n"
+            "  constructor(public data: TaskDefinition) {}\n"
+            "  public payload: TaskDefinition;\n"
+            "}\n"
+        )
+    }
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_ZOD_TYPE_CLASS_COLLISION_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.zod_type_class_collision"
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "export type TaskDefinitionData = z.infer<typeof TaskDefinitionSchema>;" in repaired
+    assert "constructor(public data: TaskDefinitionData)" in repaired
+    assert "export type TaskDefinition = z.infer<typeof TaskDefinitionSchema>;" not in repaired
 
 
 def test_typescript_reexport_runtime_repairs_missing_runtime_barrel_symbol(tmp_path: Path) -> None:
