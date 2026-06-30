@@ -5753,6 +5753,89 @@ def test_typescript_missing_export_without_declaration_is_covered_unplannable() 
     assert probe.covered_unplannable_source_tools == (ts_syntax.TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,)
 
 
+def test_typescript_missing_export_uses_ts2724_suggestion_alias() -> None:
+    diagnostics = (
+        "src/index.ts(1,10): error TS2724: '\"./models/humidity\"' has no exported member named "
+        "'IHumidityState'. Did you mean 'HumidityState'?",
+    )
+    base_files = {
+        "src/index.ts": (
+            "import { IHumidityState } from './models/humidity';\n"
+            "const state: IHumidityState = new IHumidityState();\n"
+            "export { state };\n"
+        ),
+        "src/models/humidity.ts": "export class HumidityState {\n  public level = 60;\n}\n",
+    }
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.missing_export"
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "export { HumidityState as IHumidityState };" in repaired
+    assert "export type IHumidityState = any;" not in repaired
+
+
+def test_typescript_missing_export_aliases_similar_function_from_unresolved_symbol() -> None:
+    diagnostics = (
+        "Artifact quality scan failed: unresolved import symbol 'runAllChecks' "
+        "from '../src/verify' in tests/verify.test.ts (sibling module does not define it)",
+    )
+    base_files = {
+        "tests/verify.test.ts": 'import { runAllChecks } from "../src/verify";\nconst result = runAllChecks();\n',
+        "src/verify.ts": "function runAll(): string[] {\n  return [];\n}\n",
+    }
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "export { runAll as runAllChecks };" in repaired
+
+
+def test_typescript_missing_export_does_not_alias_constructed_symbol_to_enum() -> None:
+    diagnostics = (
+        "src/index.ts(1,10): error TS2305: Module '\"./models/moonphase\"' has no exported member 'MoonPhaseModel'.",
+    )
+    base_files = {
+        "src/index.ts": (
+            "import { MoonPhaseModel } from './models/moonphase';\n"
+            "const moon = new MoonPhaseModel();\n"
+            "moon.getState();\n"
+        ),
+        "src/models/moonphase.ts": "export enum MoonPhase {\n  New,\n  Full,\n}\n",
+    }
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is False
+    assert planning["planned"] is False
+    assert planning["composition_summary"]["patch_count"] == 0
+
+
 def test_typescript_ts2459_declares_locally_reexports_imported_type() -> None:
     diagnostics = (
         "src/index.ts(7,8): error TS2459: Module '\"./models/Fairy\"' declares "

@@ -5101,12 +5101,37 @@ def _missing_export_operation(
     original = str(base_files.get(exporter) or "")
     if _typescript_module_exports_symbol(original, symbol):
         return None, {}
+    importer_text = str(base_files.get(importer) or "")
+    suggestion = str(item.get("suggestion") or "").strip()
+    if not suggestion:
+        suggestion = _find_typescript_similar_runtime_declaration(original, symbol)
+    if suggestion:
+        declaration_kind, declaration = _build_typescript_suggested_export_alias_declaration(
+            symbol=symbol,
+            suggestion=suggestion,
+            importer_text=importer_text,
+            module_text=original,
+        )
+        operation = _append_typescript_missing_export_declaration_operation(
+            path=exporter,
+            original=original,
+            declaration=declaration,
+            symbol=symbol,
+            declaration_kind=declaration_kind,
+        )
+        if operation is not None:
+            return operation, {"file": exporter, "symbol": symbol, "kind": declaration_kind}
+        return None, {
+            "file": exporter,
+            "symbol": symbol,
+            "kind": "unsafe_alias_rejected",
+            "blocked_reason": "missing_export_alias_candidate_not_type_compatible",
+        }
     exported, declaration_kind = _reexport_imported_typescript_symbol(original, symbol)
     if exported == original:
         exported = _export_existing_typescript_declaration(original, symbol)
         declaration_kind = "export_existing"
     if exported == original:
-        importer_text = str(base_files.get(importer) or "")
         declaration_kind, declaration = _build_typescript_missing_export_declaration(
             symbol=symbol,
             importer_text=importer_text,
@@ -5151,6 +5176,33 @@ def _build_typescript_missing_export_declaration(*, symbol: str, importer_text: 
     if symbol[:1].isupper():
         return "type", f"export type {symbol} = any;"
     return "const", f"export const {symbol}: unknown = undefined;"
+
+
+def _build_typescript_suggested_export_alias_declaration(
+    *,
+    symbol: str,
+    suggestion: str,
+    importer_text: str,
+    module_text: str,
+) -> tuple[str, str]:
+    if not _TS_IDENTIFIER_RE.fullmatch(symbol) or not _TS_IDENTIFIER_RE.fullmatch(suggestion):
+        return "", ""
+    if symbol == suggestion or not _typescript_module_declares_symbol(module_text, suggestion):
+        return "", ""
+    suggestion_kind = _typescript_module_declared_symbol_kind(module_text, suggestion)
+    if _typescript_symbol_is_constructed(importer_text, symbol):
+        if suggestion_kind == "class":
+            return "runtime_alias", f"export {{ {suggestion} as {symbol} }};"
+        return "", ""
+    if _typescript_symbol_is_called(importer_text, symbol):
+        if suggestion_kind in {"const", "function", "let", "var"}:
+            return "runtime_alias", f"export {{ {suggestion} as {symbol} }};"
+        return "", ""
+    if suggestion_kind in {"class", "enum", "interface", "type"}:
+        return "type_alias", f"export type {symbol} = {suggestion};"
+    if suggestion_kind in {"const", "let", "var", "function"}:
+        return "runtime_alias", f"export {{ {suggestion} as {symbol} }};"
+    return "", ""
 
 
 def _typescript_symbol_is_constructed(text: str, symbol: str) -> bool:
@@ -5215,6 +5267,61 @@ def _typescript_methods_used_on_constructed_symbol(text: str, symbol: str) -> li
     for match in direct_re.finditer(token):
         methods.append(str(match.group("method") or ""))
     return _dedupe_preserve_order([method for method in methods if method and method != "constructor"])
+
+
+def _typescript_module_declares_symbol(module_text: str, symbol: str) -> bool:
+    return bool(_typescript_module_declared_symbol_kind(module_text, symbol))
+
+
+def _typescript_module_declared_symbol_kind(module_text: str, symbol: str) -> str:
+    if not _TS_IDENTIFIER_RE.fullmatch(symbol):
+        return ""
+    escaped = re.escape(symbol)
+    declaration_re = re.compile(
+        rf"^(?:export\s+)?(?:abstract\s+)?(?:async\s+)?"
+        rf"(?P<kind>enum|class|interface|type|const|let|var|function)\s+{escaped}\b",
+        re.MULTILINE,
+    )
+    match = declaration_re.search(module_text)
+    return str(match.group("kind") or "").strip() if match else ""
+
+
+def _find_typescript_similar_runtime_declaration(module_text: str, symbol: str) -> str:
+    wanted = _normalize_typescript_identifier_for_similarity(symbol)
+    if not wanted:
+        return ""
+    declaration_re = re.compile(
+        r"^(?:export\s+)?(?:async\s+)?(?:function|class|const|let|var|enum)\s+"
+        r"(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\b",
+        re.MULTILINE,
+    )
+    best = ""
+    best_score = 0
+    for match in declaration_re.finditer(module_text):
+        name = str(match.group("name") or "").strip()
+        if name == symbol:
+            continue
+        candidate = _normalize_typescript_identifier_for_similarity(name)
+        if not candidate:
+            continue
+        score = 0
+        if wanted.startswith(candidate):
+            score = len(candidate)
+        elif candidate.startswith(wanted):
+            score = len(wanted)
+        if score > best_score and score >= min(4, len(wanted)):
+            best = name
+            best_score = score
+    return best
+
+
+def _normalize_typescript_identifier_for_similarity(symbol: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9]+", "", str(symbol or "")).lower()
+    for suffix in ("checks", "check", "results", "result", "items", "item"):
+        if normalized.endswith(suffix) and len(normalized) > len(suffix) + 2:
+            normalized = normalized[: -len(suffix)]
+            break
+    return normalized
 
 
 def _typescript_declared_type_kind(*, base_files: Mapping[str, str], type_name: str) -> str:
@@ -6153,9 +6260,15 @@ def _typescript_named_specifier_indent(symbols: str) -> str:
 
 def _typescript_module_exports_symbol(module_text: str, symbol: str) -> bool:
     escaped = re.escape(symbol)
-    return bool(
-        re.search(rf"\bexport\s+(?:type|interface|enum|class|const|let|var|function)\s+{escaped}\b", module_text)
-    )
+    if re.search(rf"\bexport\s+(?:type|interface|enum|class|const|let|var|function)\s+{escaped}\b", module_text):
+        return True
+    for match in re.finditer(r"\bexport\s+(?:type\s+)?\{(?P<symbols>[^}]+)\}", module_text):
+        for token in str(match.group("symbols") or "").split(","):
+            parts = re.split(r"\s+as\s+", token.strip(), maxsplit=1)
+            exported = parts[-1].strip()
+            if exported == symbol:
+                return True
+    return False
 
 
 def _typescript_exported_symbol_is_type_only(module_text: str, symbol: str) -> bool:
