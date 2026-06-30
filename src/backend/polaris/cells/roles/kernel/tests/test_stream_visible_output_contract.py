@@ -42,8 +42,8 @@ def _build_kernel() -> RoleExecutionKernel:
         ),
     )
 
-    # 创建 mock LLM caller 用于测试
-    class _MockLLMCaller:
+    # 创建 mock LLM invoker 用于测试
+    class _MockLLMInvoker:
         async def call(self, **kwargs: Any) -> Any:
             return SimpleNamespace(content="mock response", error=None, metadata={})
 
@@ -51,7 +51,7 @@ def _build_kernel() -> RoleExecutionKernel:
             yield {"type": "chunk", "content": "mock stream"}
 
     kernel = RoleExecutionKernel(workspace=".", registry=_StubRegistry(profile))  # type: ignore[arg-type]
-    kernel._injected_llm_invoker = _MockLLMCaller()  # type: ignore[assignment]
+    kernel._injected_llm_invoker = _MockLLMInvoker()  # type: ignore[assignment]
     return kernel
 
 

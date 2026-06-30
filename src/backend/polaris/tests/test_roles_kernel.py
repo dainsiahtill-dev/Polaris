@@ -892,7 +892,7 @@ class TestRoleExecutionKernel:
     async def test_kernel_director_empty_output_with_validation_reports_error(self, kernel, monkeypatch):
         """Director 空输出在 validate_output=True 时必须失败，不能误判成功。"""
 
-        class _FakeLLMCaller:
+        class _FakeLLMInvoker:
             async def call(self, *args, **kwargs):
                 return SimpleNamespace(
                     content="",
@@ -902,7 +902,7 @@ class TestRoleExecutionKernel:
                     metadata={},
                 )
 
-        kernel.inject_llm_invoker(_FakeLLMCaller())
+        kernel.inject_llm_invoker(_FakeLLMInvoker())
 
         request = RoleTurnRequest(
             mode=RoleExecutionMode.CHAT,
@@ -924,7 +924,7 @@ class TestRoleExecutionKernel:
     async def test_kernel_tool_only_thinking_turn_reports_empty_visible_output(self, kernel, monkeypatch):
         """当工具调用仅出现在 <thinking> 中时，内核必须拒绝把 thinking 当成可执行工具。"""
 
-        class _FakeLLMCaller:
+        class _FakeLLMInvoker:
             async def call(self, *args, **kwargs):
                 return SimpleNamespace(
                     content=(
@@ -945,7 +945,7 @@ class TestRoleExecutionKernel:
             def validate_output(self, *args, **kwargs):
                 raise AssertionError("validate_output should not run after thinking-only rejection")
 
-        kernel.inject_llm_invoker(_FakeLLMCaller())
+        kernel.inject_llm_invoker(_FakeLLMInvoker())
         kernel._injected_quality_checker = _FakeQualityChecker()
 
         request = RoleTurnRequest(
@@ -972,7 +972,7 @@ class TestRoleExecutionKernel:
         """当模型返回原生 tool_calls 且文本为空时，内核应直接执行工具。"""
         call_count = {"value": 0}
 
-        class _FakeLLMCaller:
+        class _FakeLLMInvoker:
             async def call(self, *args, **kwargs):
                 nonlocal call_count
                 call_count["value"] += 1
@@ -1018,7 +1018,7 @@ class TestRoleExecutionKernel:
                 captured["tool"] = tool_name
                 return {"tool": captured["tool"], "success": True, "result": {"exists": True}}
 
-        kernel.inject_llm_invoker(_FakeLLMCaller())
+        kernel.inject_llm_invoker(_FakeLLMInvoker())
         kernel.inject_tool_executor(_FakeToolExecutorWithCapture())
 
         request = RoleTurnRequest(

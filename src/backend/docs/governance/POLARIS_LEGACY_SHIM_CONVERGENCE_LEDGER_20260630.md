@@ -40,7 +40,7 @@ business wording, React `Suspense fallback`, and accepted config migration code.
 ## Open Gap Subledger
 
 The remaining parent gaps break down into 3 open concrete closure cuts, plus
-closed cuts LS-03A, LS-03B, LS-03C, LS-03D1, LS-03D, LS-03E, LS-03F, LS-03G, LS-03H, LS-03I, LS-04A, LS-04B, LS-04C1, LS-04C2, LS-04C3, LS-04C4, LS-04C5, LS-04C6, LS-04C7, LS-04C8, LS-04C9, LS-04C10, LS-04C11, LS-04C12, LS-04C13, LS-04C14, LS-04C15, LS-04C16, LS-04C17, LS-04C18, LS-04C19, LS-04C20, LS-04C21, LS-04C22, LS-04C23, LS-04C24, LS-04C25, LS-04C26, LS-04C27, LS-04C28, LS-04D1, LS-04D2, LS-04D3, LS-04D4, LS-04D5, LS-04D6, LS-04D7, LS-04D8, LS-04E, LS-05C, LS-06A, LS-06B, LS-06C, LS-06D, LS-06E, LS-06F, LS-10A, and LS-10B below. Close open items in this order unless a
+closed cuts LS-03A, LS-03B, LS-03C, LS-03D1, LS-03D, LS-03E, LS-03F, LS-03G, LS-03H, LS-03I, LS-04A, LS-04B, LS-04C1, LS-04C2, LS-04C3, LS-04C4, LS-04C5, LS-04C6, LS-04C7, LS-04C8, LS-04C9, LS-04C10, LS-04C11, LS-04C12, LS-04C13, LS-04C14, LS-04C15, LS-04C16, LS-04C17, LS-04C18, LS-04C19, LS-04C20, LS-04C21, LS-04C22, LS-04C23, LS-04C24, LS-04C25, LS-04C26, LS-04C27, LS-04C28, LS-04D1, LS-04D2, LS-04D3, LS-04D4, LS-04D5, LS-04D6, LS-04D7, LS-04D8, LS-04E, LS-05C, LS-06A, LS-06B, LS-06C, LS-06D, LS-06E, LS-06F, LS-06G, LS-10A, and LS-10B below. Close open items in this order unless a
 production/bench incident gives a narrower safe cut.
 
 | Sub-ID | Parent | Priority | Owner Layer | Concrete Remaining Gap | Closure Cut |

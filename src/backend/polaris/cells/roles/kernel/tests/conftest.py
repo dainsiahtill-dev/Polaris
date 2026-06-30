@@ -143,21 +143,21 @@ def _build_kernel(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Mock LLM Caller Factory
+# Mock LLM Invoker Factory
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class MockLLMCaller:
-    """Mock LLM caller for testing with configurable responses.
+class MockLLMInvoker:
+    """Mock LLM invoker for testing with configurable responses.
 
     Example:
-        caller = MockLLMCaller()
-        caller.add_response(content="Hello!", tool_calls=[])
-        caller.add_response(content="Done", tool_calls=[
+        invoker = MockLLMInvoker()
+        invoker.add_response(content="Hello!", tool_calls=[])
+        invoker.add_response(content="Done", tool_calls=[
             {"id": "call_1", "name": "read_file", "arguments": '{"path": "a.py"}'}
         ])
 
-        kernel = _build_kernel(llm_invoker=caller)
+        kernel = _build_kernel(llm_invoker=invoker)
     """
 
     def __init__(self) -> None:
@@ -215,9 +215,9 @@ class MockLLMCaller:
 
 
 @pytest.fixture
-def mock_llm_caller() -> MockLLMCaller:
-    """Create a MockLLMCaller for tests."""
-    return MockLLMCaller()
+def mock_llm_caller() -> MockLLMInvoker:
+    """Create a MockLLMInvoker for tests."""
+    return MockLLMInvoker()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -284,9 +284,9 @@ def mock_model_catalog() -> Any:
 
 @pytest.fixture
 def isolated_kernel(
-    mock_llm_caller: MockLLMCaller,
+    mock_llm_caller: MockLLMInvoker,
 ) -> RoleExecutionKernel:
-    """Create an isolated kernel with a mock LLM caller.
+    """Create an isolated kernel with a mock LLM invoker.
 
     This is the preferred way to create test kernels as it provides
     a fresh mock LLM caller for each test.
