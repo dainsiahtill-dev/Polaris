@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import Self
 from unittest.mock import patch
 
-import polaris.infrastructure.llm.providers.openai_compat_provider as openai_provider_module
+import polaris.infrastructure.llm.providers.openai_provider as openai_provider_module
 import pytest
-from polaris.infrastructure.llm.providers.openai_compat_provider import OpenAICompatProvider
+from polaris.infrastructure.llm.providers.openai_provider import OpenAIProvider
 from polaris.kernelone.llm.providers import THINKING_PREFIX
 
 
@@ -58,7 +58,7 @@ class _FakeSession:
 
 @pytest.fixture
 def provider():
-    return OpenAICompatProvider()
+    return OpenAIProvider()
 
 
 @pytest.fixture

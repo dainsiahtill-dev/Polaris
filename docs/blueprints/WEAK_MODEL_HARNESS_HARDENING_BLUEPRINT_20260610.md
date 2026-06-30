@@ -76,7 +76,7 @@ LLM 传输层:
 **W1.5 结构化 messages 直通(openai_compat/ollama)**
 - `caller.py _prepare_llm_request`:原始 messages 数组经 `AIRequest.context["chat_messages"]` 透传;
 - `kernelone/llm/engine/stream/executor.py` 把它放进 invoke_cfg;
-- `openai_compat_provider.invoke/invoke_stream_events`:存在 `chat_messages` 时按真实角色构造 `messages`(system/user/assistant 直通;tool→user 加【工具结果】前缀;连续同角色合并),否则回退现行展平。弱模型重获 chat template 锚定。
+- `openai_provider.invoke/invoke_stream_events`:存在 `chat_messages` 时按真实角色构造 `messages`(system/user/assistant 直通;tool→user 加【工具结果】前缀;连续同角色合并),否则回退现行展平。弱模型重获 chat template 锚定。
 
 **W1.6 gemma 文本恢复统一**:`tool_helpers._extract_gemma_inline_tool_calls_from_text` 委托 `textual_tool_recovery.recover_textual_tool_calls`(消除严格/宽容双实现漂移)。
 

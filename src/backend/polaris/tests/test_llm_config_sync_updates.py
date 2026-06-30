@@ -48,7 +48,7 @@ class TestComputeLlMConfigSyncUpdates:
         updates = compute_llm_config_sync_updates(config)
         assert updates.get("director_model") == "claude-3-5"
 
-    def test_maps_openai_compat_provider_with_base_url(self):
+    def test_maps_openai_provider_with_base_url(self):
         config = {
             "roles": {
                 "architect": {

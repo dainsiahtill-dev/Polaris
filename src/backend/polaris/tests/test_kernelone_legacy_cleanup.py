@@ -62,6 +62,8 @@ def test_removed_legacy_modules_are_no_longer_importable() -> None:
     removed_modules = (
         "polaris.kernelone.audit.unified_audit_core",
         "polaris.kernelone.policy.runtime_policy",
+        "polaris.infrastructure.llm.providers.openai_compat_provider",
+        "polaris.infrastructure.llm.providers.anthropic_compat_provider",
     )
 
     for module_name in removed_modules:
@@ -70,3 +72,16 @@ def test_removed_legacy_modules_are_no_longer_importable() -> None:
         except ModuleNotFoundError:
             continue
         raise AssertionError(f"legacy module still importable: {module_name}")
+
+
+def test_provider_implementation_modules_use_canonical_names() -> None:
+    providers_dir = Path("src/backend/polaris/infrastructure/llm/providers")
+
+    assert not (providers_dir / "openai_compat_provider.py").exists()
+    assert not (providers_dir / "anthropic_compat_provider.py").exists()
+
+    openai_module = importlib.import_module("polaris.infrastructure.llm.providers.openai_provider")
+    anthropic_module = importlib.import_module("polaris.infrastructure.llm.providers.anthropic_provider")
+
+    assert hasattr(openai_module, "OpenAIProvider")
+    assert hasattr(anthropic_module, "AnthropicProvider")

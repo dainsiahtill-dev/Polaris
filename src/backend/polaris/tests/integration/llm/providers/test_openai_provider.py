@@ -1,4 +1,4 @@
-"""Integration tests for OpenAICompatProvider.
+"""Integration tests for OpenAIProvider.
 
 Covers:
 - Happy path: invoke(), health(), list_models()
@@ -12,34 +12,34 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from polaris.infrastructure.llm.providers.openai_compat_provider import (
-    OpenAICompatProvider,
+from polaris.infrastructure.llm.providers.openai_provider import (
+    OpenAIProvider,
 )
 from polaris.kernelone.llm.providers import THINKING_PREFIX
 from polaris.kernelone.llm.types import InvokeResult
 
 
-class TestOpenAICompatProviderHappyPath:
+class TestOpenAIProviderHappyPath:
     """Tests for the normal successful execution paths."""
 
     def test_get_provider_info(self) -> None:
-        info = OpenAICompatProvider.get_provider_info()
+        info = OpenAIProvider.get_provider_info()
         assert info.type == "openai_compat"
         assert "health_check" in info.supported_features
 
     def test_get_default_config(self) -> None:
-        defaults = OpenAICompatProvider.get_default_config()
+        defaults = OpenAIProvider.get_default_config()
         assert defaults["base_url"] == "https://api.example.com/v1"
         assert defaults["api_path"] == "/v1/chat/completions"
 
     def test_validate_config_valid(self, openai_compat_config: dict[str, Any]) -> None:
-        result = OpenAICompatProvider.validate_config(openai_compat_config)
+        result = OpenAIProvider.validate_config(openai_compat_config)
         assert result.valid is True
         assert not result.errors
 
     def test_validate_config_missing_api_path(self) -> None:
         config = {"base_url": "https://api.example.com"}
-        result = OpenAICompatProvider.validate_config(config)
+        result = OpenAIProvider.validate_config(config)
         # api_path is required; missing it makes validation invalid
         assert result.valid is False
         assert any("api_path" in e.lower() for e in result.errors)
@@ -61,7 +61,7 @@ class TestOpenAICompatProviderHappyPath:
             lambda _url, _headers, _payload, _timeout: mock_resp,
         )
 
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         result = provider.invoke("Say hello", "gpt-4", openai_compat_config)
 
         assert isinstance(result, InvokeResult)
@@ -104,7 +104,7 @@ class TestOpenAICompatProviderHappyPath:
             fake_post,
         )
 
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         config = {
             **openai_compat_config,
             "api_path": "/v1/responses",
@@ -160,7 +160,7 @@ class TestOpenAICompatProviderHappyPath:
             fake_post,
         )
 
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         config = {
             **openai_compat_config,
             "max_completion_tokens": 123,
@@ -200,7 +200,7 @@ class TestOpenAICompatProviderHappyPath:
             lambda _url, _headers, _payload, _timeout: mock_resp,
         )
 
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         result = provider.health(openai_compat_config)
 
         assert result.ok is True
@@ -230,7 +230,7 @@ class TestOpenAICompatProviderHappyPath:
             lambda _url, _headers, _timeout: mock_resp,
         )
 
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         result = provider.list_models(openai_compat_config)
 
         assert result.ok is True
@@ -238,7 +238,7 @@ class TestOpenAICompatProviderHappyPath:
         assert result.models[0].id == "gpt-4"
 
 
-class TestOpenAICompatProviderEdgeCases:
+class TestOpenAIProviderEdgeCases:
     """Tests for edge cases and boundary conditions."""
 
     def test_invoke_empty_response(
@@ -260,7 +260,7 @@ class TestOpenAICompatProviderEdgeCases:
             lambda _url, _headers, _payload, _timeout: mock_resp,
         )
 
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         result = provider.invoke("Say nothing", "gpt-4", openai_compat_config)
 
         assert result.ok is True
@@ -268,7 +268,7 @@ class TestOpenAICompatProviderEdgeCases:
 
     def test_invoke_missing_api_key(self, openai_compat_config: dict[str, Any]) -> None:
         config = {k: v for k, v in openai_compat_config.items() if k != "api_key"}
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         result = provider.invoke("Hello", "gpt-4", config)
 
         # invoke_with_retry should still attempt the call; if server rejects it,
@@ -281,7 +281,7 @@ class TestOpenAICompatProviderEdgeCases:
             "api_path": "/v1/chat/completions",
             "temperature": 5.0,
         }
-        result = OpenAICompatProvider.validate_config(config)
+        result = OpenAIProvider.validate_config(config)
         assert result.valid is True
         assert any("temperature" in w.lower() for w in result.warnings)
         assert result.normalized_config is not None
@@ -293,7 +293,7 @@ class TestOpenAICompatProviderEdgeCases:
             "api_path": "/v1/chat/completions",
             "timeout": -10,
         }
-        result = OpenAICompatProvider.validate_config(config)
+        result = OpenAIProvider.validate_config(config)
         assert result.valid is True
         assert any("timeout" in w.lower() for w in result.warnings)
         assert result.normalized_config is not None
@@ -315,14 +315,14 @@ class TestOpenAICompatProviderEdgeCases:
             lambda _url, _headers, _timeout: mock_resp,
         )
 
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         result = provider.list_models(openai_compat_config)
 
         assert result.ok is True
         assert result.models == []
 
 
-class TestOpenAICompatProviderExceptions:
+class TestOpenAIProviderExceptions:
     """Tests for error and exception handling paths."""
 
     def test_invoke_http_401(
@@ -344,7 +344,7 @@ class TestOpenAICompatProviderExceptions:
             lambda _url, _headers, _payload, _timeout: mock_resp,
         )
 
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         result = provider.invoke("Hello", "gpt-4", openai_compat_config)
 
         assert result.ok is False
@@ -374,7 +374,7 @@ class TestOpenAICompatProviderExceptions:
             lambda _seconds: None,
         )
 
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         result = provider.invoke("Hello", "gpt-4", openai_compat_config)
 
         assert result.ok is False
@@ -399,7 +399,7 @@ class TestOpenAICompatProviderExceptions:
             lambda _url, _headers, _payload, _timeout: mock_resp,
         )
 
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         result = provider.health(openai_compat_config)
 
         # health_check_post maps 404 to a specific message
@@ -424,7 +424,7 @@ class TestOpenAICompatProviderExceptions:
             lambda _url, _headers, _timeout: mock_resp,
         )
 
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         result = provider.list_models(openai_compat_config)
 
         assert result.ok is False
@@ -452,7 +452,7 @@ class TestOpenAICompatProviderExceptions:
             lambda _seconds: None,
         )
 
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         chunks: list[str] = []
         async for chunk in provider.invoke_stream("Hello", "gpt-4", openai_compat_config):
             chunks.append(chunk)
@@ -475,11 +475,11 @@ class TestOpenAICompatProviderExceptions:
             )
 
         monkeypatch.setattr(
-            "polaris.infrastructure.llm.providers.openai_compat_provider.get_stream_session",
+            "polaris.infrastructure.llm.providers.openai_provider.get_stream_session",
             _mock_get_stream_session,
         )
 
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         chunks: list[str] = []
         async for chunk in provider.invoke_stream("Hello", "gpt-4", openai_compat_config):
             chunks.append(chunk)
@@ -506,11 +506,11 @@ class TestOpenAICompatProviderExceptions:
             )
 
         monkeypatch.setattr(
-            "polaris.infrastructure.llm.providers.openai_compat_provider.get_stream_session",
+            "polaris.infrastructure.llm.providers.openai_provider.get_stream_session",
             _mock_get_stream_session,
         )
 
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         chunks: list[str] = []
         async for chunk in provider.invoke_stream(
             "Hello", "gpt-4.1", {**openai_compat_config, "api_path": "/v1/responses"}
@@ -521,7 +521,7 @@ class TestOpenAICompatProviderExceptions:
         assert "".join(chunk for chunk in chunks if not chunk.startswith(THINKING_PREFIX)) == "Hello world"
 
 
-class TestOpenAICompatProviderModelResolution:
+class TestOpenAIProviderModelResolution:
     """Tests specific to model name resolution and validation."""
 
     def test_invoke_invalid_model_name(
@@ -545,7 +545,7 @@ class TestOpenAICompatProviderModelResolution:
             ),
         )
 
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         result = provider.invoke("Hello", "", openai_compat_config)
 
         # resolve_model_name returns empty model as valid, but validate_model_name
@@ -554,7 +554,7 @@ class TestOpenAICompatProviderModelResolution:
 
     def test_invoke_model_resolution_with_role_model(self, openai_compat_config: dict[str, Any]) -> None:
         _config = {**openai_compat_config, "role_model": "gpt-4-turbo"}
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         # We only verify that config merging doesn't crash; actual HTTP is mocked elsewhere.
         assert provider is not None
         assert _config.get("role_model") == "gpt-4-turbo"

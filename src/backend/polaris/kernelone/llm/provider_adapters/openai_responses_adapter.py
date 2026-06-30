@@ -7,7 +7,7 @@ Blueprint: §7 ProviderAdapter
 
 职责：
     在 ConversationState (typed transcript) 与 OpenAI Chat Completions 格式之间做双向转换。
-    依赖底层 BaseProvider (polaris.infrastructure.llm.providers.OpenAICompatProvider)
+    依赖底层 BaseProvider (polaris.infrastructure.llm.providers.OpenAIProvider)
     处理 HTTP/流式通信和工具格式。
 
 设计约束：

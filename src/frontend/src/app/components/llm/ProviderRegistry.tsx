@@ -94,11 +94,11 @@ class ProviderRegistryClass {
         const { OllamaProviderSettings } = await import('./providers/OllamaProviderSettings');
         return OllamaProviderSettings;
       case 'openai_compat':
-        const { OpenAICompatProviderSettings } = await import('./providers/OpenAICompatProviderSettings');
-        return OpenAICompatProviderSettings;
+        const { OpenAIProviderSettings } = await import('./providers/OpenAIProviderSettings');
+        return OpenAIProviderSettings;
       case 'anthropic_compat':
-        const { AnthropicCompatProviderSettings } = await import('./providers/AnthropicCompatProviderSettings');
-        return AnthropicCompatProviderSettings;
+        const { AnthropicProviderSettings } = await import('./providers/AnthropicProviderSettings');
+        return AnthropicProviderSettings;
       default:
         const { DefaultProviderSettings } = await import('./providers/DefaultProviderSettings');
         return DefaultProviderSettings;

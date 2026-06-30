@@ -510,12 +510,12 @@ class TestProviderManagerDefaultProviders:
         for expected_type in expected:
             assert expected_type in types, f"Expected provider {expected_type} not registered"
 
-    def test_get_openai_compat_provider_info(self) -> None:
+    def test_get_openai_provider_info(self) -> None:
         info = provider_manager.get_provider_info("openai_compat")
         assert info is not None
         assert info.type == "openai_compat"
 
-    def test_get_anthropic_compat_provider_info(self) -> None:
+    def test_get_anthropic_provider_info(self) -> None:
         info = provider_manager.get_provider_info("anthropic_compat")
         assert info is not None
         assert info.type == "anthropic_compat"

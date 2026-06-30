@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import importlib
+import importlib.util
 import inspect
 import logging
 import os
@@ -16,7 +17,7 @@ from polaris.kernelone.llm.providers.registry import (
     get_provider_registry,
 )
 
-from .anthropic_compat_provider import AnthropicCompatProvider
+from .anthropic_provider import AnthropicProvider
 from .async_ollama_provider import AsyncOllamaProvider
 from .async_provider_adapter import AsyncProviderClassAdapter
 from .codex_cli_provider import CodexCLIProvider
@@ -25,7 +26,7 @@ from .gemini_api_provider import GeminiAPIProvider
 from .gemini_cli_provider import GeminiCLIProvider
 from .kimi_provider import KimiProvider
 from .minimax_provider import MiniMaxProvider
-from .openai_compat_provider import OpenAICompatProvider
+from .openai_provider import OpenAIProvider
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +66,10 @@ class ProviderManager:
         ollama_async_adapter = AsyncProviderClassAdapter.create(AsyncOllamaProvider)
         self.register_provider("ollama", ollama_async_adapter)
 
-        self.register_provider("openai_compat", OpenAICompatProvider)
-        self.register_provider("anthropic_compat", AnthropicCompatProvider)
-
-        # Legacy function-based providers remain available for backward compatibility.
+        # The provider type strings are stable user configuration identifiers.
+        # The implementation classes and modules use canonical provider names.
+        self.register_provider("openai_compat", OpenAIProvider)
+        self.register_provider("anthropic_compat", AnthropicProvider)
 
     def register_provider(self, provider_type: str, provider_class: type[BaseProvider]) -> None:
         """Register a provider class"""
@@ -415,7 +416,7 @@ class ProviderManager:
         """Reset for test isolation. Clears instance cache and failure tracking."""
         instance = cls._instance
         if instance is not None:
-            with cls._global_lock:
+            with instance._global_lock:
                 instance._provider_instances.clear()
                 instance._instance_timestamps.clear()
                 instance._instance_failures.clear()

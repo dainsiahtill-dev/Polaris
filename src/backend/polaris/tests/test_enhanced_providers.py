@@ -5,17 +5,17 @@ Tests for enhanced LLM providers with thinking extraction and CLI behavior
 import sys
 from types import SimpleNamespace
 
-import polaris.infrastructure.llm.providers.anthropic_compat_provider as anthropic_provider_module
+import polaris.infrastructure.llm.providers.anthropic_provider as anthropic_provider_module
 import polaris.infrastructure.llm.providers.ollama_provider as ollama_provider_module
-import polaris.infrastructure.llm.providers.openai_compat_provider as openai_provider_module
+import polaris.infrastructure.llm.providers.openai_provider as openai_provider_module
 import pytest
-from polaris.infrastructure.llm.providers.anthropic_compat_provider import AnthropicCompatProvider
+from polaris.infrastructure.llm.providers.anthropic_provider import AnthropicProvider
 from polaris.infrastructure.llm.providers.codex_cli_provider import CodexCLIProvider
 from polaris.infrastructure.llm.providers.gemini_api_provider import GeminiAPIProvider
 from polaris.infrastructure.llm.providers.gemini_cli_provider import GeminiCLIProvider
 from polaris.infrastructure.llm.providers.minimax_provider import MiniMaxProvider
 from polaris.infrastructure.llm.providers.ollama_provider import OllamaProvider
-from polaris.infrastructure.llm.providers.openai_compat_provider import OpenAICompatProvider
+from polaris.infrastructure.llm.providers.openai_provider import OpenAIProvider
 from polaris.infrastructure.llm.providers.provider_registry import provider_manager
 from polaris.kernelone.llm.provider_adapters.factory import get_adapter, get_adapter_class
 from polaris.kernelone.llm.provider_adapters.ollama_chat_adapter import OllamaChatAdapter
@@ -188,17 +188,17 @@ class TestGeminiAPIProvider:
         assert thinking.confidence >= 0.4
 
 
-class TestOpenAICompatProvider:
+class TestOpenAIProvider:
     """Test OpenAI-compatible provider"""
 
     def test_provider_info(self):
-        info = OpenAICompatProvider.get_provider_info()
+        info = OpenAIProvider.get_provider_info()
         assert info.type == "openai_compat"
         assert info.provider_category == "LLM"
         assert "chat_completions" in info.supported_features
 
     def test_default_config(self):
-        config = OpenAICompatProvider.get_default_config()
+        config = OpenAIProvider.get_default_config()
         assert "base_url" in config
         assert "api_path" in config
         # models_path is deprecated and removed from default config
@@ -211,15 +211,15 @@ class TestOpenAICompatProvider:
             "timeout": 30,
             "retries": 1,
         }
-        result = OpenAICompatProvider.validate_config(valid_config)
+        result = OpenAIProvider.validate_config(valid_config)
         assert result.valid is True
 
         invalid_config = {"base_url": "https://api.example.com/v1"}
-        result = OpenAICompatProvider.validate_config(invalid_config)
+        result = OpenAIProvider.validate_config(invalid_config)
         assert result.valid is False
 
     def test_invoke_passes_native_tools_payload(self, monkeypatch):
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         captured = {}
 
         def _fake_invoke_with_retry(url, headers, payload, *args, **kwargs):
@@ -257,17 +257,17 @@ class TestOpenAICompatProvider:
         assert payload.get("parallel_tool_calls") is False
 
 
-class TestAnthropicCompatProvider:
+class TestAnthropicProvider:
     """Test Anthropic-compatible provider"""
 
     def test_provider_info(self):
-        info = AnthropicCompatProvider.get_provider_info()
+        info = AnthropicProvider.get_provider_info()
         assert info.type == "anthropic_compat"
         assert info.provider_category == "LLM"
         assert "messages_api" in info.supported_features
 
     def test_default_config(self):
-        config = AnthropicCompatProvider.get_default_config()
+        config = AnthropicProvider.get_default_config()
         assert "api_path" in config
         assert "anthropic_version" in config
 
@@ -277,15 +277,15 @@ class TestAnthropicCompatProvider:
             "timeout": 30,
             "retries": 1,
         }
-        result = AnthropicCompatProvider.validate_config(valid_config)
+        result = AnthropicProvider.validate_config(valid_config)
         assert result.valid is True
 
         invalid_config = {"timeout": 30}
-        result = AnthropicCompatProvider.validate_config(invalid_config)
+        result = AnthropicProvider.validate_config(invalid_config)
         assert result.valid is False
 
     def test_invoke_converts_openai_tools_to_anthropic(self, monkeypatch):
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         captured = {}
 
         def _fake_invoke_with_retry(url, headers, payload, *args, **kwargs):

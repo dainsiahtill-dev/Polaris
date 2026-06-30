@@ -8,7 +8,7 @@ system/user/assistant roles reach the provider payload.
 
 from __future__ import annotations
 
-from polaris.infrastructure.llm.providers.openai_compat_provider import (
+from polaris.infrastructure.llm.providers.openai_provider import (
     _build_chat_messages_payload,
 )
 

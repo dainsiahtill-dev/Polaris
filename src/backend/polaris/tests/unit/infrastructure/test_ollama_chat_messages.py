@@ -86,7 +86,7 @@ class TestOllamaChatMessagesPassThrough:
 
 class TestSharedBuilderParity:
     def test_shared_helper_is_the_openai_compat_implementation(self) -> None:
-        from polaris.infrastructure.llm.providers.openai_compat_provider import (
+        from polaris.infrastructure.llm.providers.openai_provider import (
             _build_chat_messages_payload,
         )
 

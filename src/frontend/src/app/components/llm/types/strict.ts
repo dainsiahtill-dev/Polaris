@@ -112,7 +112,7 @@ export interface GeminiCLIProviderConfig extends BaseProviderConfig {
 }
 
 /** OpenAI Compatible Provider */
-export interface OpenAICompatProviderConfig extends BaseProviderConfig {
+export interface OpenAIProviderConfig extends BaseProviderConfig {
   type: "openai_compat";
   baseUrl: string;
   apiKey?: string;
@@ -127,7 +127,7 @@ export interface OpenAICompatProviderConfig extends BaseProviderConfig {
 }
 
 /** Anthropic Compatible Provider */
-export interface AnthropicCompatProviderConfig extends BaseProviderConfig {
+export interface AnthropicProviderConfig extends BaseProviderConfig {
   type: "anthropic_compat";
   baseUrl: string;
   apiKey?: string;
@@ -190,8 +190,8 @@ export type ProviderConfigStrict =
   | CodexSDKProviderConfig
   | CodexCLIProviderConfig
   | GeminiCLIProviderConfig
-  | OpenAICompatProviderConfig
-  | AnthropicCompatProviderConfig
+  | OpenAIProviderConfig
+  | AnthropicProviderConfig
   | GeminiAPIProviderConfig
   | OllamaProviderConfig
   | MiniMaxProviderConfig
@@ -565,8 +565,8 @@ export function isHTTPProviderConfig(
   config: ProviderConfigStrict,
 ): config is
   | CodexSDKProviderConfig
-  | OpenAICompatProviderConfig
-  | AnthropicCompatProviderConfig
+  | OpenAIProviderConfig
+  | AnthropicProviderConfig
   | GeminiAPIProviderConfig
   | OllamaProviderConfig
   | MiniMaxProviderConfig

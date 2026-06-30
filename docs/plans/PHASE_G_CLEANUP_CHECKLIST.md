@@ -2,12 +2,21 @@
 
 ## 清理任务清单
 
+### 0. Provider 实现命名收敛
+
+- [x] 后端 OpenAI / Anthropic provider 实现文件从 `*_compat_provider.py` 收敛到 canonical provider module。
+- [x] 后端 provider 实现类从旧 Compat 命名收敛到 `OpenAIProvider` / `AnthropicProvider`。
+- [x] 前端 OpenAI / Anthropic provider 设置组件文件从 `*CompatProviderSettings` 收敛到 canonical provider settings。
+- [x] 保留 `openai_compat` / `anthropic_compat` provider type 作为稳定用户配置标识；该字符串表示协议兼容 API，不再映射到 legacy implementation module。
+- [x] 增加回归测试，禁止旧 provider module path 重新变为可导入模块。
+
 ### 1. 删除旧协议解析分支
 
 由于 V2 协议已实现，以下旧代码可以标记为废弃 (deprecated)：
 
 - [ ] `src/frontend/src/hooks/useWebSocket.ts` - 标记 @deprecated，指向新的 Runtime Store
 - [ ] 移除 snapshot/line + channel text parsing 的直接解析逻辑
+- [ ] 删除 `src/frontend/src/runtime/projectionCompat.ts` 的旧 runtime response 格式转换；完成前必须确认所有产品状态接口都只返回 canonical runtime projection。
 
 ### 2. 删除重复的 status 映射逻辑
 

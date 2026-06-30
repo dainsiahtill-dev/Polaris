@@ -18,7 +18,7 @@ class TokenTrackingWrapper:
     to the TokenService for budget tracking and cost management.
 
     Usage:
-        provider = OpenAICompatProvider()
+        provider = OpenAIProvider()
         wrapped = TokenTrackingWrapper(provider)
         result = wrapped.invoke(prompt, model, config)
         # Token usage is automatically tracked

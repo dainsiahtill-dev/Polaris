@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { OpenAICompatProviderSettings } from './OpenAICompatProviderSettings';
+import { OpenAIProviderSettings } from './OpenAIProviderSettings';
 import type { ProviderConfig } from '../types';
 
 const baseProvider: ProviderConfig = {
@@ -17,11 +17,11 @@ const validateOk = () => ({
   warnings: [],
 });
 
-describe('OpenAICompatProviderSettings', () => {
+describe('OpenAIProviderSettings', () => {
   it('updates headers from valid JSON input', () => {
     const onUpdate = vi.fn();
     render(
-      <OpenAICompatProviderSettings provider={baseProvider} onUpdate={onUpdate} onValidate={validateOk} />
+      <OpenAIProviderSettings provider={baseProvider} onUpdate={onUpdate} onValidate={validateOk} />
     );
 
     fireEvent.change(screen.getByTestId('openai-custom-headers-input'), {
@@ -39,7 +39,7 @@ describe('OpenAICompatProviderSettings', () => {
   it('updates headers from key-value line format', () => {
     const onUpdate = vi.fn();
     render(
-      <OpenAICompatProviderSettings provider={baseProvider} onUpdate={onUpdate} onValidate={validateOk} />
+      <OpenAIProviderSettings provider={baseProvider} onUpdate={onUpdate} onValidate={validateOk} />
     );
 
     fireEvent.change(screen.getByTestId('openai-custom-headers-input'), {
@@ -57,7 +57,7 @@ describe('OpenAICompatProviderSettings', () => {
   it('does not update headers for invalid input', () => {
     const onUpdate = vi.fn();
     render(
-      <OpenAICompatProviderSettings provider={baseProvider} onUpdate={onUpdate} onValidate={validateOk} />
+      <OpenAIProviderSettings provider={baseProvider} onUpdate={onUpdate} onValidate={validateOk} />
     );
 
     fireEvent.change(screen.getByTestId('openai-custom-headers-input'), {

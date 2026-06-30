@@ -3,7 +3,7 @@ import { BaseProviderSettings } from './BaseProviderSettings';
 import { type ProviderConfig, type ProviderValidateFn } from '../types';
 import { cyberInputClasses, cyberTextareaClasses } from '@/app/components/ui/cyber-input-classes';
 
-interface OpenAICompatProviderSettingsProps {
+interface OpenAIProviderSettingsProps {
   provider: ProviderConfig;
   onUpdate: (updates: Partial<ProviderConfig>) => void;
   onValidate: ProviderValidateFn;
@@ -58,11 +58,11 @@ const parseCustomHeadersInput = (rawValue: string): Record<string, string> | nul
   return parsedHeaders;
 };
 
-export function OpenAICompatProviderSettings({
+export function OpenAIProviderSettings({
   provider,
   onUpdate,
   onValidate
-}: OpenAICompatProviderSettingsProps) {
+}: OpenAIProviderSettingsProps) {
   const handleFieldChange = (field: string, value: unknown) => {
     onUpdate({ [field]: value });
   };

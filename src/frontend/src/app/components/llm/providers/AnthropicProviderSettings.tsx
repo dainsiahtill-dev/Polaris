@@ -6,7 +6,7 @@ import { cyberInputClasses, cyberTextareaCompactClasses } from '@/app/components
 
 const cyberTextareaClasses = cyberTextareaCompactClasses;
 
-interface AnthropicCompatProviderSettingsProps {
+interface AnthropicProviderSettingsProps {
   provider: ProviderConfig;
   onUpdate: (updates: Partial<ProviderConfig>) => void;
   onValidate: ProviderValidateFn;
@@ -62,11 +62,11 @@ const parseCustomHeadersInput = (rawValue: string): Record<string, string> | nul
   return parsedHeaders;
 };
 
-export function AnthropicCompatProviderSettings({
+export function AnthropicProviderSettings({
   provider,
   onUpdate,
   onValidate
-}: AnthropicCompatProviderSettingsProps) {
+}: AnthropicProviderSettingsProps) {
   const handleFieldChange = (field: string, value: unknown) => {
     onUpdate({ [field]: value });
   };

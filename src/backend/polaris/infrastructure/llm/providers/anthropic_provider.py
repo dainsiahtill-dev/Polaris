@@ -439,7 +439,7 @@ def _apply_anthropic_tools(payload: dict[str, Any], config: dict[str, Any], mode
             payload["tool_choice"] = tool_choice
 
 
-class AnthropicCompatProvider(BaseProvider):
+class AnthropicProvider(BaseProvider):
     """Anthropic-compatible API provider"""
 
     @classmethod
@@ -700,7 +700,7 @@ class AnthropicCompatProvider(BaseProvider):
             yield payload_obj
 
 
-_provider = AnthropicCompatProvider()
+_provider = AnthropicProvider()
 
 
 def health(config: dict[str, Any], api_key: str | None) -> HealthResult:
@@ -735,5 +735,5 @@ def _usage_from_response(prompt: str, output: str, data: dict[str, Any]) -> Usag
                 completion_chars=len(output or ""),
             )
     except (RuntimeError, ValueError):
-        logger.debug("DEBUG: anthropic_compat_provider.py:{592} {exc} (swallowed)")
+        logger.debug("DEBUG: anthropic_provider.py:{592} {exc} (swallowed)")
     return estimate_usage(prompt, output)

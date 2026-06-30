@@ -417,7 +417,7 @@ def _headers(config: dict[str, Any], api_key: str | None) -> dict[str, str]:
     return headers
 
 
-class OpenAICompatProvider(BaseProvider):
+class OpenAIProvider(BaseProvider):
     """OpenAI-compatible API provider"""
 
     def __init__(
@@ -737,7 +737,7 @@ class OpenAICompatProvider(BaseProvider):
                     yield payload_obj
 
 
-_provider = OpenAICompatProvider()
+_provider = OpenAIProvider()
 
 
 def health(config: dict[str, Any], api_key: str | None) -> HealthResult:

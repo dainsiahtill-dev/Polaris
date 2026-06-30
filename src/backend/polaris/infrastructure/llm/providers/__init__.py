@@ -7,7 +7,7 @@ from typing import Any
 
 __all__ = [
     "THINKING_PREFIX",
-    "AnthropicCompatProvider",
+    "AnthropicProvider",
     "BaseProvider",
     "CodexCLIProvider",
     "CodexSDKProvider",
@@ -15,7 +15,7 @@ __all__ = [
     "GeminiCLIProvider",
     "MiniMaxProvider",
     "OllamaProvider",
-    "OpenAICompatProvider",
+    "OpenAIProvider",
     "ProviderAdapter",
     "ProviderInfo",
     "ProviderManager",
@@ -61,10 +61,10 @@ def __getattr__(name: str) -> Any:
             "ValidationResult": module.ValidationResult,
             "WorkingDirConfig": module.WorkingDirConfig,
         }[name]
-    if name in {"AnthropicCompatProvider", "anthropic_health", "anthropic_invoke", "anthropic_list_models"}:
-        module = import_module("polaris.infrastructure.llm.providers.anthropic_compat_provider")
+    if name in {"AnthropicProvider", "anthropic_health", "anthropic_invoke", "anthropic_list_models"}:
+        module = import_module("polaris.infrastructure.llm.providers.anthropic_provider")
         return {
-            "AnthropicCompatProvider": module.AnthropicCompatProvider,
+            "AnthropicProvider": module.AnthropicProvider,
             "anthropic_health": module.health,
             "anthropic_invoke": module.invoke,
             "anthropic_list_models": module.list_models,
@@ -92,10 +92,10 @@ def __getattr__(name: str) -> Any:
             "ollama_invoke": module.invoke,
             "ollama_list_models": module.list_models,
         }[name]
-    if name in {"OpenAICompatProvider", "openai_health", "openai_invoke", "openai_list_models"}:
-        module = import_module("polaris.infrastructure.llm.providers.openai_compat_provider")
+    if name in {"OpenAIProvider", "openai_health", "openai_invoke", "openai_list_models"}:
+        module = import_module("polaris.infrastructure.llm.providers.openai_provider")
         return {
-            "OpenAICompatProvider": module.OpenAICompatProvider,
+            "OpenAIProvider": module.OpenAIProvider,
             "openai_health": module.health,
             "openai_invoke": module.invoke,
             "openai_list_models": module.list_models,

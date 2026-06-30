@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import polaris.infrastructure.llm.providers.anthropic_compat_provider as anthropic_provider_module
+import polaris.infrastructure.llm.providers.anthropic_provider as anthropic_provider_module
 import pytest
-from polaris.infrastructure.llm.providers.anthropic_compat_provider import AnthropicCompatProvider
+from polaris.infrastructure.llm.providers.anthropic_provider import AnthropicProvider
 
 
 @pytest.fixture
 def provider():
-    return AnthropicCompatProvider()
+    return AnthropicProvider()
 
 
 @pytest.fixture

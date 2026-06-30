@@ -221,7 +221,7 @@ polaris/kernelone/llm/
 
 3. **修复Adapter层被绕过**
    ```python
-   # anthropic_compat_provider.py
+   # anthropic_provider.py
    # BEFORE: 忽略config中的messages
    "messages": [{"role": "user", "content": prompt}]
 

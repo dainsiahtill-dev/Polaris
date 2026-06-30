@@ -38,7 +38,7 @@
 |---|---|---|---|
 | `infrastructure/di/factories.py` → `kernel/internal/metrics` | 直接导入 `MetricsCollector` 并操作私有属性 `_instance` | 改为通过 `kernel.public.service` 导入，使用已暴露的 `reset_metrics_collector_for_test()` | 低 |
 | `infrastructure/di/factories.py` → `kernel/internal/constitution_adaptor` | 直接导入私有 `_global_registry` | 改为调用 `kernel.public.service.reset_role_action_registry_for_test()` | 低 |
-| `infrastructure/llm/providers/openai_compat_provider.py` → `kernel/internal/context_gateway` | 内部实例化 `RoleContextGateway` | **短期**：改为 lazy import `kernel.public.service.RoleContextGateway`；**长期**：通过 DI 注入 `ContextBuilderPort`（需另开 ADR） | 中 |
+| `infrastructure/llm/providers/openai_provider.py` → `kernel/internal/context_gateway` | 内部实例化 `RoleContextGateway` | **短期**：改为 lazy import `kernel.public.service.RoleContextGateway`；**长期**：通过 DI 注入 `ContextBuilderPort`（需另开 ADR） | 中 |
 | `delivery/http/middleware/metrics.py` → `kernel/internal/metrics` | 导入未公开的 `get_metrics_collector` | 在 `kernel.public.service` 新增 `get_kernel_metrics_collector()`，middleware 改为 public 导入 | 低 |
 | `bootstrap/assembly.py` → `archive/run_archive/internal/archive_sink` | 直接实例化 `ArchiveSink` | 在 `archive.run_archive.public.service` 新增 `create_archive_sink(bus)` factory，bootstrap 调用 factory | 低 |
 
@@ -78,7 +78,7 @@
    - 改为 `from polaris.cells.roles.kernel.public.service import MetricsCollector, reset_metrics_collector_for_test, reset_role_action_registry_for_test`
    - 删除对 `_global_registry` 和 `_instance` 的私有属性访问
 
-2. **Violation 3（openai_compat_provider.py）**
+2. **Violation 3（openai_provider.py）**
    - 将 `RoleContextGateway` 的实例化改为从 `kernel.public.service` lazy import
    - 添加 TODO 注释，指向未来 DI Port 注入方案
 

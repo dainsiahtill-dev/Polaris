@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { AnthropicCompatProviderSettings } from './AnthropicCompatProviderSettings';
+import { AnthropicProviderSettings } from './AnthropicProviderSettings';
 import type { ProviderConfig } from '../types';
 
 const baseProvider: ProviderConfig = {
@@ -17,11 +17,11 @@ const validateOk = () => ({
   warnings: [],
 });
 
-describe('AnthropicCompatProviderSettings', () => {
+describe('AnthropicProviderSettings', () => {
   it('updates headers from valid JSON input', () => {
     const onUpdate = vi.fn();
     render(
-      <AnthropicCompatProviderSettings provider={baseProvider} onUpdate={onUpdate} onValidate={validateOk} />
+      <AnthropicProviderSettings provider={baseProvider} onUpdate={onUpdate} onValidate={validateOk} />
     );
 
     fireEvent.change(screen.getByTestId('anthropic-custom-headers-input'), {
@@ -39,7 +39,7 @@ describe('AnthropicCompatProviderSettings', () => {
   it('updates headers from key-value line format', () => {
     const onUpdate = vi.fn();
     render(
-      <AnthropicCompatProviderSettings provider={baseProvider} onUpdate={onUpdate} onValidate={validateOk} />
+      <AnthropicProviderSettings provider={baseProvider} onUpdate={onUpdate} onValidate={validateOk} />
     );
 
     fireEvent.change(screen.getByTestId('anthropic-custom-headers-input'), {
@@ -57,7 +57,7 @@ describe('AnthropicCompatProviderSettings', () => {
   it('does not update headers for invalid input', () => {
     const onUpdate = vi.fn();
     render(
-      <AnthropicCompatProviderSettings provider={baseProvider} onUpdate={onUpdate} onValidate={validateOk} />
+      <AnthropicProviderSettings provider={baseProvider} onUpdate={onUpdate} onValidate={validateOk} />
     );
 
     fireEvent.change(screen.getByTestId('anthropic-custom-headers-input'), {

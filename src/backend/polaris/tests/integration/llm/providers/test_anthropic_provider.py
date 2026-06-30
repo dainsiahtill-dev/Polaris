@@ -1,4 +1,4 @@
-"""Integration tests for AnthropicCompatProvider.
+"""Integration tests for AnthropicProvider.
 
 Covers:
 - Happy path: invoke(), health(), list_models()
@@ -12,8 +12,8 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from polaris.infrastructure.llm.providers.anthropic_compat_provider import (
-    AnthropicCompatProvider,
+from polaris.infrastructure.llm.providers.anthropic_provider import (
+    AnthropicProvider,
     _convert_tool_choice_to_anthropic,
     _convert_tools_to_anthropic,
 )
@@ -21,21 +21,21 @@ from polaris.kernelone.llm.providers import THINKING_PREFIX
 from polaris.kernelone.llm.types import InvokeResult
 
 
-class TestAnthropicCompatProviderHappyPath:
+class TestAnthropicProviderHappyPath:
     """Tests for the normal successful execution paths."""
 
     def test_get_provider_info(self) -> None:
-        info = AnthropicCompatProvider.get_provider_info()
+        info = AnthropicProvider.get_provider_info()
         assert info.type == "anthropic_compat"
         assert "messages_api" in info.supported_features
 
     def test_get_default_config(self) -> None:
-        defaults = AnthropicCompatProvider.get_default_config()
+        defaults = AnthropicProvider.get_default_config()
         assert defaults["api_path"] == "/v1/messages"
         assert defaults["anthropic_version"] == "2023-06-01"
 
     def test_validate_config_valid(self, anthropic_compat_config: dict[str, Any]) -> None:
-        result = AnthropicCompatProvider.validate_config(anthropic_compat_config)
+        result = AnthropicProvider.validate_config(anthropic_compat_config)
         assert result.valid is True
         assert not result.errors
 
@@ -56,7 +56,7 @@ class TestAnthropicCompatProviderHappyPath:
             lambda _url, _headers, _payload, _timeout: mock_resp,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         result = provider.invoke("Say hello", "claude-3-haiku", anthropic_compat_config)
 
         assert isinstance(result, InvokeResult)
@@ -81,7 +81,7 @@ class TestAnthropicCompatProviderHappyPath:
             lambda _url, _headers, _payload, _timeout: mock_resp,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         result = provider.health(anthropic_compat_config)
 
         assert result.ok is True
@@ -110,7 +110,7 @@ class TestAnthropicCompatProviderHappyPath:
             lambda _url, _headers, _timeout: mock_resp,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         result = provider.list_models(anthropic_compat_config)
 
         assert result.ok is True
@@ -118,7 +118,7 @@ class TestAnthropicCompatProviderHappyPath:
         assert result.models[0].id == "claude-3-opus"
 
 
-class TestAnthropicCompatProviderToolConversion:
+class TestAnthropicProviderToolConversion:
     """Tests for tool and tool_choice conversion helpers."""
 
     def test_convert_openai_tools_to_anthropic(self) -> None:
@@ -186,7 +186,7 @@ class TestAnthropicCompatProviderToolConversion:
             fake_post,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         config = {
             **anthropic_compat_config,
             "tools": [{"name": "edit_file", "input_schema": {"type": "object"}}],
@@ -219,7 +219,7 @@ class TestAnthropicCompatProviderToolConversion:
             fake_post,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         config = {
             **anthropic_compat_config,
             "base_url": "https://api.deepseek.com/anthropic",
@@ -254,7 +254,7 @@ class TestAnthropicCompatProviderToolConversion:
             fake_post,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         config = {
             **anthropic_compat_config,
             "disable_tool_choice": True,
@@ -290,7 +290,7 @@ class TestAnthropicCompatProviderToolConversion:
             fake_post,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         config = {
             **anthropic_compat_config,
             "anthropic_beta": "structured-outputs-2025-11-13",
@@ -357,7 +357,7 @@ class TestAnthropicCompatProviderToolConversion:
             fake_post,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         config = {
             **anthropic_compat_config,
             "base_url": "https://api.kimi.com/coding",
@@ -390,7 +390,7 @@ class TestAnthropicCompatProviderToolConversion:
             fake_post,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         config = {
             **anthropic_compat_config,
             "thinking": {"type": "disabled", "budget_tokens": 2048},
@@ -422,7 +422,7 @@ class TestAnthropicCompatProviderToolConversion:
             fake_post,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         config = {
             **anthropic_compat_config,
             "thinking": {"type": "enabled", "budget_tokens": 2048},
@@ -434,7 +434,7 @@ class TestAnthropicCompatProviderToolConversion:
         assert captured["payload"]["thinking"] == {"type": "enabled"}
 
 
-class TestAnthropicCompatProviderEdgeCases:
+class TestAnthropicProviderEdgeCases:
     """Tests for edge cases and boundary conditions."""
 
     def test_invoke_empty_content(
@@ -456,7 +456,7 @@ class TestAnthropicCompatProviderEdgeCases:
             lambda _url, _headers, _payload, _timeout: mock_resp,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         result = provider.invoke("Say nothing", "claude-3-haiku", anthropic_compat_config)
 
         assert result.ok is True
@@ -464,7 +464,7 @@ class TestAnthropicCompatProviderEdgeCases:
 
     def test_validate_config_invalid_max_tokens(self) -> None:
         config = {"base_url": "https://api.anthropic.com", "api_path": "/v1/messages", "max_tokens": -5}
-        result = AnthropicCompatProvider.validate_config(config)
+        result = AnthropicProvider.validate_config(config)
         assert result.valid is True
         assert any("max_tokens" in w.lower() for w in result.warnings)
         assert result.normalized_config is not None
@@ -472,14 +472,14 @@ class TestAnthropicCompatProviderEdgeCases:
 
     def test_validate_config_allows_zero_max_tokens_for_cache_prewarm(self) -> None:
         config = {"base_url": "https://api.anthropic.com", "api_path": "/v1/messages", "max_tokens": 0}
-        result = AnthropicCompatProvider.validate_config(config)
+        result = AnthropicProvider.validate_config(config)
         assert result.valid is True
         assert result.normalized_config is not None
         assert result.normalized_config["max_tokens"] == 0
 
     def test_validate_config_invalid_headers_type(self) -> None:
         config = {"base_url": "https://api.anthropic.com", "api_path": "/v1/messages", "headers": "bad"}
-        result = AnthropicCompatProvider.validate_config(config)
+        result = AnthropicProvider.validate_config(config)
         assert result.valid is True
         assert any("headers" in w.lower() for w in result.warnings)
         assert result.normalized_config is not None
@@ -501,14 +501,14 @@ class TestAnthropicCompatProviderEdgeCases:
             lambda _url, _headers, _timeout: mock_resp,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         result = provider.list_models(anthropic_compat_config)
 
         assert result.ok is True
         assert result.models == []
 
 
-class TestAnthropicCompatProviderExceptions:
+class TestAnthropicProviderExceptions:
     """Tests for error and exception handling paths."""
 
     def test_invoke_http_401(
@@ -529,7 +529,7 @@ class TestAnthropicCompatProviderExceptions:
             lambda _url, _headers, _payload, _timeout: mock_resp,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         result = provider.invoke("Hello", "claude-3-haiku", anthropic_compat_config)
 
         assert result.ok is False
@@ -558,7 +558,7 @@ class TestAnthropicCompatProviderExceptions:
             lambda _seconds: None,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         result = provider.invoke("Hello", "claude-3-haiku", anthropic_compat_config)
 
         assert result.ok is False
@@ -583,7 +583,7 @@ class TestAnthropicCompatProviderExceptions:
             lambda _url, _headers, _payload, _timeout: mock_resp,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         result = provider.health(anthropic_compat_config)
 
         # health_check_post maps 404 to a specific message
@@ -608,7 +608,7 @@ class TestAnthropicCompatProviderExceptions:
             lambda _url, _headers, _timeout: mock_resp,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         result = provider.list_models(anthropic_compat_config)
 
         assert result.ok is False
@@ -635,7 +635,7 @@ class TestAnthropicCompatProviderExceptions:
             lambda _seconds: None,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         chunks: list[str] = []
         async for chunk in provider.invoke_stream("Hello", "claude-3-haiku", anthropic_compat_config):
             chunks.append(chunk)
@@ -655,11 +655,11 @@ class TestAnthropicCompatProviderExceptions:
             yield {"delta": {"text": "Hello! How can I help you today?"}}
 
         monkeypatch.setattr(
-            "polaris.infrastructure.llm.providers.anthropic_compat_provider.invoke_stream_with_retry",
+            "polaris.infrastructure.llm.providers.anthropic_provider.invoke_stream_with_retry",
             _mock_invoke_stream_with_retry,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         chunks: list[str] = []
         async for chunk in provider.invoke_stream("Hello", "claude-3-haiku", anthropic_compat_config):
             chunks.append(chunk)
@@ -679,11 +679,11 @@ class TestAnthropicCompatProviderExceptions:
             yield {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}
 
         monkeypatch.setattr(
-            "polaris.infrastructure.llm.providers.anthropic_compat_provider.invoke_stream_with_retry",
+            "polaris.infrastructure.llm.providers.anthropic_provider.invoke_stream_with_retry",
             _mock_invoke_stream_with_retry,
         )
 
-        provider = AnthropicCompatProvider()
+        provider = AnthropicProvider()
         chunks: list[str] = []
         async for chunk in provider.invoke_stream("Hello", "claude-3-haiku", anthropic_compat_config):
             chunks.append(chunk)

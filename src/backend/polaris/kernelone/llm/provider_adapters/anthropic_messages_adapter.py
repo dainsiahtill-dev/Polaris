@@ -10,7 +10,7 @@ IMPORTANT: Adapter 层构建的 messages 必须在 Provider 层被正确使用�
 
 职责：
     在 ConversationState (typed transcript) 与 Anthropic Messages API 格式之间做双向转换。
-    依赖底层 BaseProvider (polaris.infrastructure.llm.providers.AnthropicCompatProvider)
+    依赖底层 BaseProvider (polaris.infrastructure.llm.providers.AnthropicProvider)
     处理 HTTP/流式通信和工具格式。
 
 设计约束：
