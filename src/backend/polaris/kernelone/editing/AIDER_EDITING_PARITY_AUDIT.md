@@ -78,7 +78,7 @@ This is active in `protocol_kernel.py`.
 ## Safety / Governance Guards
 
 1. Runtime vendor import quarantine test: **DONE** (`tests/test_editing_vendor_quarantine.py`)
-2. Legacy downgrade matrix documented: **DONE** (`LEGACY_DOWNGRADE_MATRIX.md`)
+2. Editing retirement matrix documented: **DONE** (`EDITING_RETIREMENT_MATRIX.md`)
 3. Vendor directory cleanup completed: **DONE** (`polaris/kernelone/editing/vendor` removed)
 
 ## Deliberate Exclusions (Not Runtime Core)

@@ -1,4 +1,4 @@
-# KernelOne Editing Legacy Downgrade Matrix
+# KernelOne Editing Retirement Matrix
 
 Status: active
 Decision: `polaris/kernelone/editing/* + protocol_kernel` is the canonical editing stack.
@@ -9,12 +9,12 @@ Decision: `polaris/kernelone/editing/* + protocol_kernel` is the canonical editi
 2. Rich format routing -> `polaris.kernelone.editing.operation_router`
 3. Unified apply -> `StrictOperationApplier` / `apply_protocol_output`
 
-## Legacy Modules to Downgrade
+## Retired Modules to Downgrade
 
 1. `polaris/cells/roles/kernel/internal/output_parser.py`
 - Keep as compatibility parser facade only.
 - Must not own main patch semantics.
-- Any legacy regex fallback is deprecated-only and should emit warning.
+- Any retired regex fallback is deprecation-only and should emit warning.
 
 2. `polaris/cells/director/execution/internal/patch_apply_engine.py`
 - Keep as thin shim to `protocol_kernel`.
@@ -33,11 +33,10 @@ Decision: `polaris/kernelone/editing/* + protocol_kernel` is the canonical editi
 - Must not become execution-time parser truth.
 
 6. `polaris/kernelone/runtime/shared_types.py` PATCH regex assets
-- Legacy compatibility only.
+- Retired compatibility only.
 - Must not be used for canonical apply.
 
 ## Guardrail
 
 New editing features must land in `polaris/kernelone/editing/*` and be consumed by `protocol_kernel`.
-Do not add new primary editing behavior in legacy modules above.
-
+Do not add new primary editing behavior in retired modules above.
