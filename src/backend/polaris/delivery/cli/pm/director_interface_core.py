@@ -1,16 +1,13 @@
 """Director Interface compatibility layer for PM delivery code.
 
 The public dataclasses and factory remain for older PM callers, but code
-materialization is routed through the canonical application orchestrator and
-``roles.adapters`` Director adapter. This module must not spawn Director
-scripts or own a second execution protocol.
+materialization is routed through the ``director.execution`` public Cell
+contract. This module must not spawn Director scripts or own a second execution
+protocol.
 """
 
-import asyncio
 import os
-import threading
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -93,33 +90,8 @@ class DirectorInterface(ABC):
         pass
 
 
-def _run_awaitable_sync(factory: Callable[[], Coroutine[Any, Any, Any]]) -> Any:
-    """Run an awaitable from sync PM delivery code without reusing event loops."""
-
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(factory())
-
-    result: dict[str, Any] = {}
-    errors: list[BaseException] = []
-
-    def _runner() -> None:
-        try:
-            result["value"] = asyncio.run(factory())
-        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:  # pragma: no cover
-            errors.append(exc)
-
-    thread = threading.Thread(target=_runner, name="polaris-director-adapter-sync", daemon=True)
-    thread.start()
-    thread.join()
-    if errors:
-        raise errors[0]
-    return result.get("value")
-
-
 class CanonicalDirectorAdapter(DirectorInterface):
-    """PM compatibility adapter backed by the canonical Director orchestrator."""
+    """PM compatibility adapter backed by the Director execution public Cell."""
 
     def is_available(self) -> bool:
         """The canonical adapter is the only materialization path."""
@@ -127,84 +99,71 @@ class CanonicalDirectorAdapter(DirectorInterface):
         return True
 
     def execute(self, task: DirectorTask) -> DirectorResult:
-        """Execute a task through ``DirectorOrchestrator`` and ``roles.adapters``."""
+        """Execute a task through ``ExecuteDirectorTaskCommandV1``."""
 
         try:
-            from polaris.application.orchestration.director_orchestrator import (
-                DirectorExecutionConfig,
-                DirectorOrchestrator,
+            from polaris.cells.director.execution.public import (
+                ExecuteDirectorTaskCommandV1,
+                execute_director_task,
             )
 
-            raw_workers = (
-                self.config.get("max_directors")
-                or self.config.get("max_parallel_tasks")
-                or self.config.get("director_max_parallel_tasks")
-                or self.config.get("max_workers")
+            payload = self._to_execution_payload(task)
+            metadata = dict(payload["metadata"])
+            metadata.update(
+                {
+                    "source": "pm.director_interface",
+                    "target_files": normalize_path_list(task.target_files),
+                    "scope_paths": normalize_path_list(task.scope_paths or []),
+                    "acceptance_criteria": list(task.acceptance_criteria or []),
+                    "constraints": list(task.constraints or []),
+                    "timeout_seconds": int(self.config.get("timeout") or 3600),
+                    "model": str(self.config.get("model") or ""),
+                    "max_workers": self._resolve_max_workers(),
+                    "execution_mode": self._resolve_execution_mode(),
+                }
             )
-            max_workers = 1
-            if raw_workers is not None:
-                try:
-                    parsed = int(raw_workers)
-                    max_workers = max(1, parsed)
-                except (RuntimeError, ValueError):
-                    pass
-
-            raw_mode = (
-                self.config.get("director_execution_mode")
-                or self.config.get("director_workflow_execution_mode")
-                or self.config.get("execution_mode")
-            )
-            execution_mode = "serial"
-            if raw_mode is not None:
-                mode_token = str(raw_mode).strip().lower()
-                if mode_token in ("parallel", "concurrent", "multi"):
-                    execution_mode = "parallel"
-                elif mode_token in ("serial", "sequential", "single"):
-                    execution_mode = "serial"
-
-            orchestrator = DirectorOrchestrator(
-                DirectorExecutionConfig(
+            result = execute_director_task(
+                ExecuteDirectorTaskCommandV1(
+                    task_id=task.task_id,
                     workspace=str(self.workspace),
-                    model=str(self.config.get("model") or ""),
-                    max_workers=max_workers,
-                    execution_mode=execution_mode,
-                    timeout_seconds=int(self.config.get("timeout") or 3600),
+                    instruction=str(payload.get("description") or task.goal or task.task_id),
+                    metadata=metadata,
                 )
             )
-            result = _run_awaitable_sync(lambda: orchestrator.execute_task(self._to_orchestrator_task(task)))
         except (ImportError, RuntimeError, TypeError, ValueError) as exc:
             return DirectorResult(
                 success=False,
                 task_id=task.task_id,
                 changed_files=[],
                 patches=[],
-                error=f"Canonical Director adapter failed: {exc}",
-                metadata={"adapter": "application.director_orchestrator"},
+                error=f"Director execution public contract failed: {exc}",
+                metadata={"adapter": "director.execution.public"},
             )
 
         metadata = dict(result.metadata)
-        adapter_result = metadata.get("adapter_result")
-        adapter_payload = adapter_result if isinstance(adapter_result, dict) else {}
-        changed_files = normalize_path_list(metadata.get("changed_files") or adapter_payload.get("changed_files") or [])
-        raw_patches = adapter_payload.get("patches")
+        changed_files = normalize_path_list(metadata.get("changed_files") or list(result.evidence_paths or ()))
+        adapter_payload = metadata.get("adapter_result")
+        adapter_result = adapter_payload if isinstance(adapter_payload, dict) else {}
+        raw_patches = adapter_result.get("patches")
         patches = (
             [dict(item) for item in raw_patches if isinstance(item, dict)] if isinstance(raw_patches, list) else []
         )
         return DirectorResult(
-            success=bool(result.success),
+            success=bool(result.ok),
             task_id=task.task_id,
             changed_files=changed_files,
             patches=patches,
-            error=result.error or None,
+            error=result.error_message or result.error_code or None,
             metadata={
                 **metadata,
-                "adapter": "application.director_orchestrator",
-                "canonical_role_adapter": "roles.adapters.director",
+                "adapter": "director.execution.public",
+                "canonical_execution_contract": "ExecuteDirectorTaskCommandV1",
+                "status": result.status,
             },
         )
 
     @staticmethod
-    def _to_orchestrator_task(task: DirectorTask) -> dict[str, Any]:
+    def _to_execution_payload(task: DirectorTask) -> dict[str, Any]:
         context = dict(task.context) if isinstance(task.context, dict) else {}
         embedded_task_raw = context.get("task")
         embedded_task = dict(embedded_task_raw) if isinstance(embedded_task_raw, dict) else {}
@@ -236,6 +195,32 @@ class CanonicalDirectorAdapter(DirectorInterface):
             "context": context,
             "metadata": metadata,
         }
+
+    def _resolve_max_workers(self) -> int:
+        raw_workers = (
+            self.config.get("max_directors")
+            or self.config.get("max_parallel_tasks")
+            or self.config.get("director_max_parallel_tasks")
+            or self.config.get("max_workers")
+        )
+        if raw_workers is None:
+            return 1
+        try:
+            parsed = int(raw_workers)
+        except (RuntimeError, ValueError, TypeError):
+            return 1
+        return max(1, parsed)
+
+    def _resolve_execution_mode(self) -> str:
+        raw_mode = (
+            self.config.get("director_execution_mode")
+            or self.config.get("director_workflow_execution_mode")
+            or self.config.get("execution_mode")
+        )
+        mode_token = str(raw_mode or "").strip().lower()
+        if mode_token in ("parallel", "concurrent", "multi"):
+            return "parallel"
+        return "serial"
 
     def get_info(self) -> dict[str, str]:
         return {

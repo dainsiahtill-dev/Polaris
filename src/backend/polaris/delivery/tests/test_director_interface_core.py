@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from polaris.cells.director.execution.public import DirectorExecutionResultV1, ExecuteDirectorTaskCommandV1
 from polaris.delivery.cli.pm.director_interface_core import (
     CanonicalDirectorAdapter,
     DirectorFactory,
@@ -263,8 +264,8 @@ class TestCanonicalDirectorAdapter:
         assert info["type"] == "canonical"
         assert info["adapter"] == "roles.adapters.director"
 
-    def test_to_orchestrator_task_preserves_contract_fields(self) -> None:
-        """Task conversion preserves fields needed by DirectorOrchestrator."""
+    def test_to_execution_payload_preserves_contract_fields(self) -> None:
+        """Task conversion preserves fields needed by Director execution."""
         task = DirectorTask(
             task_id="TASK-1",
             goal="Implement feature",
@@ -275,7 +276,7 @@ class TestCanonicalDirectorAdapter:
             scope_paths=["src"],
             scope_mode="module",
         )
-        payload = CanonicalDirectorAdapter._to_orchestrator_task(task)
+        payload = CanonicalDirectorAdapter._to_execution_payload(task)
         assert payload["id"] == "TASK-1"
         assert payload["description"] == "Implement feature"
         assert payload["target_files"] == ["src/app.py"]
@@ -283,29 +284,29 @@ class TestCanonicalDirectorAdapter:
         assert payload["metadata"]["source"] == "pm.director_interface"
         assert payload["metadata"]["priority"] == "high"
 
-    def test_execute_delegates_to_director_orchestrator(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """execute() must use DirectorOrchestrator, not a subprocess adapter."""
+    def test_execute_delegates_to_director_execution_contract(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """execute() must use the Director execution public contract."""
         captured: dict[str, object] = {}
 
-        class _Result:
-            success = True
-            error = ""
-            metadata = {
-                "changed_files": ["src/app.py"],
-                "adapter_result": {"patches": [{"path": "src/app.py"}]},
-            }
-
-        class _Orchestrator:
-            def __init__(self, config) -> None:
-                captured["config"] = config
-
-            async def execute_task(self, payload):
-                captured["payload"] = payload
-                return _Result()
+        def _execute(command: ExecuteDirectorTaskCommandV1) -> DirectorExecutionResultV1:
+            captured["command"] = command
+            return DirectorExecutionResultV1(
+                ok=True,
+                task_id=command.task_id,
+                workspace=command.workspace,
+                status="completed",
+                evidence_paths=("src/app.py",),
+                metadata={
+                    "changed_files": ["src/app.py"],
+                    "adapter_result": {"patches": [{"path": "src/app.py"}]},
+                },
+            )
 
         monkeypatch.setattr(
-            "polaris.application.orchestration.director_orchestrator.DirectorOrchestrator",
-            _Orchestrator,
+            "polaris.cells.director.execution.public.execute_director_task",
+            _execute,
         )
         adapter = CanonicalDirectorAdapter(tmp_path, {"model": "test-model", "timeout": 30})
         result = adapter.execute(
@@ -322,63 +323,64 @@ class TestCanonicalDirectorAdapter:
         assert result.success is True
         assert result.changed_files == ["src/app.py"]
         assert result.patches == [{"path": "src/app.py"}]
-        assert result.metadata["canonical_role_adapter"] == "roles.adapters.director"
-        assert captured["payload"]
-        config = captured["config"]
-        assert config.max_workers == 1
-        assert config.execution_mode == "serial"
+        assert result.metadata["canonical_execution_contract"] == "ExecuteDirectorTaskCommandV1"
+        command = captured["command"]
+        assert isinstance(command, ExecuteDirectorTaskCommandV1)
+        assert command.task_id == "TASK-1"
+        assert command.instruction == "Implement feature"
+        assert command.metadata["source"] == "pm.director_interface"
+        assert command.metadata["model"] == "test-model"
+        assert command.metadata["timeout_seconds"] == 30
 
     def test_execute_reads_max_workers_from_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """max_workers should be read from config keys, not hardcoded."""
+        """max_workers should be preserved as public execution metadata."""
         captured: dict[str, object] = {}
 
-        class _Result:
-            success = True
-            error = ""
-            metadata: dict[str, object] = {}
-
-        class _Orchestrator:
-            def __init__(self, config) -> None:
-                captured["config"] = config
-
-            async def execute_task(self, payload):
-                return _Result()
+        def _execute(command: ExecuteDirectorTaskCommandV1) -> DirectorExecutionResultV1:
+            captured["command"] = command
+            return DirectorExecutionResultV1(
+                ok=True,
+                task_id=command.task_id,
+                workspace=command.workspace,
+                status="completed",
+            )
 
         monkeypatch.setattr(
-            "polaris.application.orchestration.director_orchestrator.DirectorOrchestrator",
-            _Orchestrator,
+            "polaris.cells.director.execution.public.execute_director_task",
+            _execute,
         )
         adapter = CanonicalDirectorAdapter(tmp_path, {"max_directors": 4})
         adapter.execute(
             DirectorTask(task_id="T1", goal="g", target_files=[], acceptance_criteria=[], constraints=[], context={})
         )
-        assert captured["config"].max_workers == 4
+        command = captured["command"]
+        assert isinstance(command, ExecuteDirectorTaskCommandV1)
+        assert command.metadata["max_workers"] == 4
 
     def test_execute_reads_execution_mode_from_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """execution_mode should be read from config keys, not hardcoded."""
+        """execution_mode should be preserved as public execution metadata."""
         captured: dict[str, object] = {}
 
-        class _Result:
-            success = True
-            error = ""
-            metadata: dict[str, object] = {}
-
-        class _Orchestrator:
-            def __init__(self, config) -> None:
-                captured["config"] = config
-
-            async def execute_task(self, payload):
-                return _Result()
+        def _execute(command: ExecuteDirectorTaskCommandV1) -> DirectorExecutionResultV1:
+            captured["command"] = command
+            return DirectorExecutionResultV1(
+                ok=True,
+                task_id=command.task_id,
+                workspace=command.workspace,
+                status="completed",
+            )
 
         monkeypatch.setattr(
-            "polaris.application.orchestration.director_orchestrator.DirectorOrchestrator",
-            _Orchestrator,
+            "polaris.cells.director.execution.public.execute_director_task",
+            _execute,
         )
         adapter = CanonicalDirectorAdapter(tmp_path, {"director_execution_mode": "parallel"})
         adapter.execute(
             DirectorTask(task_id="T1", goal="g", target_files=[], acceptance_criteria=[], constraints=[], context={})
         )
-        assert captured["config"].execution_mode == "parallel"
+        command = captured["command"]
+        assert isinstance(command, ExecuteDirectorTaskCommandV1)
+        assert command.metadata["execution_mode"] == "parallel"
 
 
 class TestDirectorFactory:
