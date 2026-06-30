@@ -350,6 +350,55 @@ class KernelFileSystem:
             bytes_written=size,
         )
 
+    def workspace_write_text_atomic(
+        self,
+        relative_or_absolute_path: str,
+        content: str,
+        *,
+        encoding: str = "utf-8",
+    ) -> FileWriteReceipt:
+        self._require_utf8_encoding(encoding)
+        path = self.resolve_workspace_path(relative_or_absolute_path)
+        text = str(content)
+        try:
+            size = self._adapter.write_text(str(path), text, encoding=encoding, atomic=True)
+            relative = self.to_workspace_relative_path(str(path))
+            return FileWriteReceipt(
+                logical_path=relative,
+                absolute_path=str(path),
+                bytes_written=size,
+            )
+        except TypeError:
+            pass
+
+        parent_dir = Path(path).parent
+        parent_dir.mkdir(parents=True, exist_ok=True)
+
+        tmp_fd, tmp_path_str = tempfile.mkstemp(
+            dir=str(parent_dir),
+            prefix=".write_tmp_",
+            suffix=".txt",
+        )
+        try:
+            with os.fdopen(tmp_fd, "w", encoding=encoding) as tmp_file:
+                tmp_file.write(text)
+                tmp_file.flush()
+                os.fsync(tmp_fd)
+
+            target_path = Path(path)
+            tmp_path = Path(tmp_path_str)
+            tmp_path.replace(target_path)
+            relative = self.to_workspace_relative_path(str(path))
+            return FileWriteReceipt(
+                logical_path=relative,
+                absolute_path=str(path),
+                bytes_written=len(text.encode(encoding)),
+            )
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path_str)
+            raise
+
     def workspace_append_text(
         self,
         relative_or_absolute_path: str,

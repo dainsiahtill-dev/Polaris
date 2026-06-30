@@ -25,6 +25,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+
 SCHEMA_VERSION = 1
 DEFAULT_BACKEND_PORT = 49977
 DEFAULT_FRONTEND_PORT = 5173
@@ -277,6 +279,7 @@ class InstanceRegistry:
     def __init__(self, home: Path | None = None, *, publish_events: bool = True) -> None:
         self.home = ensure_absolute_dir(home or default_instance_home())
         self.registry_path = self.home / "registry.json"
+        self._fs = KernelFileSystem(str(self.home), get_default_adapter())
         self.publish_events = publish_events
 
     def list_records(self) -> list[InstanceRecord]:
@@ -337,9 +340,10 @@ class InstanceRegistry:
 
     def _write_raw(self, data: dict[str, Any]) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
-        tmp = self.registry_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        tmp.replace(self.registry_path)
+        self._fs.workspace_write_text_atomic(
+            "registry.json",
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+        )
 
 
 def public_instance_summary(record: InstanceRecord) -> dict[str, Any]:

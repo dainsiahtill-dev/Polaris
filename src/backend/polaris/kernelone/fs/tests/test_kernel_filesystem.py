@@ -198,6 +198,30 @@ def test_workspace_scoped_text_roundtrip(
     assert Path(receipt.absolute_path) == (workspace / "src" / "app.py")
 
 
+def test_workspace_scoped_text_atomic_roundtrip(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fs, workspace = _build_kernel_fs(monkeypatch, tmp_path)
+
+    receipt = fs.workspace_write_text_atomic("registry.json", "状态\n")
+    loaded = fs.workspace_read_text("registry.json")
+
+    assert loaded == "状态\n"
+    assert receipt.logical_path == "registry.json"
+    assert Path(receipt.absolute_path) == (workspace / "registry.json")
+
+
+def test_workspace_scoped_text_atomic_requires_utf8(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fs, _ = _build_kernel_fs(monkeypatch, tmp_path)
+
+    with pytest.raises(ValueError):
+        fs.workspace_write_text_atomic("registry.json", "x", encoding="latin-1")
+
+
 def test_workspace_scoped_path_rejects_escape(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -206,6 +230,9 @@ def test_workspace_scoped_path_rejects_escape(
 
     with pytest.raises(ValueError):
         fs.workspace_read_text("../outside.txt")
+
+    with pytest.raises(ValueError):
+        fs.workspace_write_text_atomic("../outside.txt", "x")
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Symlink tests require Unix-like OS or admin privileges on Windows")
