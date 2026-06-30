@@ -27,6 +27,8 @@ vi.mock('@/services/apiClient', () => ({
 
 vi.mock('@/runtime/transport', () => ({
   useRuntimeTransport: () => runtimeTransportMock,
+  useTransportActions: () => runtimeTransportMock,
+  useMessageHandler: () => runtimeTransportMock,
 }));
 
 function jsonResponse(payload: unknown, ok = true): Response {

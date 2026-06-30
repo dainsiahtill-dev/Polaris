@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/api';
 import { useConnectionState, useMessageHandler, useTransportActions } from '@/runtime/transport';
+import type { JetstreamChatStartResponse } from './roleChatProtocol';
 
 function appendWorkspaceQuery(path: string, workspace?: string): string {
   if (!workspace) return path;
@@ -20,14 +21,6 @@ export interface UseChatStreamWSOptions {
   role: string;
   workspace?: string;
   onChunk?: (chunk: { type: string; data: Record<string, unknown> }) => void;
-}
-
-interface JetstreamChatStartResponse {
-  session_id: string;
-  status: string;
-  channel: string;
-  subject: string;
-  transport: string;
 }
 
 export interface UseChatStreamWSReturn {

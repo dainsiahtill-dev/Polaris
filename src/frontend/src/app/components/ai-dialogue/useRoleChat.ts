@@ -4,6 +4,13 @@ import { useMessageHandler, useTransportActions } from '@/runtime/transport';
 import { getRoleChatStatus } from '@/services/llmService';
 import type { ChatStatus } from '@/services/llmService';
 import type { RoleChatRole } from '@/services/api.types';
+import {
+  chatCompleteContent,
+  chatErrorMessage,
+  normalizeRuntimeChatEvent,
+  type ChatStreamEvent,
+  type JetstreamChatStartResponse,
+} from './roleChatProtocol';
 
 export type DialogueRole = RoleChatRole;
 
@@ -36,55 +43,11 @@ export interface UseRoleChatReturn {
   handleKeyDown: (e: React.KeyboardEvent) => void;
 }
 
-interface ChatStreamEvent {
-  type: 'thinking_chunk' | 'content_chunk' | 'complete' | 'error';
-  data?: {
-    content?: string;
-    response?: string;
-    message?: string;
-    complete?: string;
-    error?: string;
-  };
-}
-
-interface JetstreamChatStartResponse {
-  session_id?: string;
-  status?: string;
-  channel?: string;
-  subject?: string;
-  transport?: string;
-}
-
 function appendWorkspaceQuery(path: string, workspace?: string): string {
   const value = String(workspace || '').trim();
   if (!value) return path;
   const separator = path.includes('?') ? '&' : '?';
   return `${path}${separator}workspace=${encodeURIComponent(value)}`;
-}
-
-function runtimeChatEvent(raw: unknown, channel: string): ChatStreamEvent | null {
-  const message = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
-  const event = message.type === 'EVENT' && message.event && typeof message.event === 'object'
-    ? message.event as Record<string, unknown>
-    : message;
-  if (event.channel !== channel) return null;
-
-  const payload = event.payload && typeof event.payload === 'object'
-    ? event.payload as Record<string, unknown>
-    : {};
-  const type = typeof payload.type === 'string' ? payload.type : '';
-  if (
-    type !== 'thinking_chunk'
-    && type !== 'content_chunk'
-    && type !== 'complete'
-    && type !== 'error'
-  ) {
-    return null;
-  }
-  const data = payload.data && typeof payload.data === 'object'
-    ? payload.data as ChatStreamEvent['data']
-    : {};
-  return { type, data };
 }
 
 /**
@@ -252,7 +215,7 @@ export function useRoleChat(options: UseRoleChatOptions): UseRoleChatReturn {
       cleanupActiveStream();
       channelUnsubscribeRef.current = subscribeChannels([{ channel, tailLines: 0 }]);
       messageHandlerUnregisterRef.current = registerMessageHandler((raw: unknown) => {
-        const event = runtimeChatEvent(raw, channel);
+        const event = normalizeRuntimeChatEvent(raw, channel);
         if (!event) return;
         handleStreamEvent(event, messageId, setMessages);
         if (event.type === 'complete' || event.type === 'error') {
@@ -356,9 +319,8 @@ function handleStreamEvent(
       break;
 
     case 'complete':
-      // 统一使用向后兼容的解析逻辑
       {
-        const content = eventData?.content ?? eventData?.response ?? eventData?.complete ?? '';
+        const content = chatCompleteContent(eventData);
         setMessages((prev) =>
           prev.map((m) =>
             m.id === messageId
@@ -374,9 +336,8 @@ function handleStreamEvent(
       break;
 
     case 'error':
-      // 统一使用向后兼容的解析逻辑
       {
-        const errorMsg = eventData?.error ?? eventData?.message ?? '未知错误';
+        const errorMsg = chatErrorMessage(eventData);
         setMessages((prev) =>
           prev.map((m) =>
             m.id === messageId

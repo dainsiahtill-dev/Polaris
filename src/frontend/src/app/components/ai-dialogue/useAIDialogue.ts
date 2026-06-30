@@ -50,6 +50,7 @@ export type {
   RoleSessionMemoryItem,
   RoleSessionSnapshotExportFormat,
 } from '@/services/roleSessionService';
+import type { JetstreamChatStartResponse } from './roleChatProtocol';
 
 interface ChatStatus extends DialogueChatStatus {
   error?: string;
@@ -63,14 +64,6 @@ interface ChatStatus extends DialogueChatStatus {
   provider_type?: string;
   supports_streaming?: boolean;
   debug?: Record<string, unknown>;
-}
-
-interface JetstreamChatStartResponse {
-  session_id?: string;
-  status?: string;
-  channel?: string;
-  subject?: string;
-  transport?: string;
 }
 
 function appendWorkspaceQuery(path: string, workspace?: string): string {
