@@ -1010,7 +1010,7 @@ def test_rust_post_execution_bridge_runs_dedicated_method_self_runtime_binding(
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
 
     monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", lambda _: [])
+    assert not hasattr(rust_repairs, "run_all_rust_post_repairs")
 
     results = post_execution_repair_bridge._run_rust_post_repairs(
         adapter,
@@ -1057,7 +1057,7 @@ def test_rust_post_execution_bridge_runs_dedicated_wrong_crate_path_runtime_bind
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
 
     monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", lambda _: [])
+    assert not hasattr(rust_repairs, "run_all_rust_post_repairs")
 
     results = post_execution_repair_bridge._run_rust_post_repairs(
         adapter,
@@ -1106,7 +1106,7 @@ def test_rust_post_execution_bridge_runs_dedicated_copy_derive_runtime_binding_w
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
 
     monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", lambda _: [])
+    assert not hasattr(rust_repairs, "run_all_rust_post_repairs")
 
     results = post_execution_repair_bridge._run_rust_post_repairs(
         adapter,
@@ -1149,7 +1149,7 @@ def test_rust_post_execution_bridge_runs_dedicated_unused_import_runtime_binding
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
 
     monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", lambda _: [])
+    assert not hasattr(rust_repairs, "run_all_rust_post_repairs")
 
     results = post_execution_repair_bridge._run_rust_post_repairs(
         adapter,
@@ -1195,7 +1195,7 @@ def test_rust_post_execution_bridge_runs_dedicated_unresolved_pub_use_runtime_bi
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
 
     monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", lambda _: [])
+    assert not hasattr(rust_repairs, "run_all_rust_post_repairs")
 
     results = post_execution_repair_bridge._run_rust_post_repairs(
         adapter,
@@ -1242,7 +1242,7 @@ def test_rust_post_execution_bridge_runs_dedicated_trait_import_runtime_binding_
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
 
     monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", lambda _: [])
+    assert not hasattr(rust_repairs, "run_all_rust_post_repairs")
 
     results = post_execution_repair_bridge._run_rust_post_repairs(
         adapter,
@@ -1291,7 +1291,7 @@ def test_rust_post_execution_bridge_runs_dedicated_line_suggestion_runtime_bindi
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
 
     monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", lambda _: [])
+    assert not hasattr(rust_repairs, "run_all_rust_post_repairs")
 
     results = post_execution_repair_bridge._run_rust_post_repairs(
         adapter,
@@ -1338,7 +1338,7 @@ def test_rust_post_execution_bridge_runs_missing_module_runtime_binding_with_wri
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
 
     monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", lambda _: [])
+    assert not hasattr(rust_repairs, "run_all_rust_post_repairs")
 
     results = post_execution_repair_bridge._run_rust_post_repairs(
         adapter,
@@ -1447,7 +1447,7 @@ def test_rust_post_execution_bridge_runs_runtime_source_tool_sequence_without_ad
         "run_runtime_repair_with_director_tools",
         fake_runtime_repair_with_director_tools,
     )
-    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", fail_if_adapter_aggregate_called)
+    assert not hasattr(rust_repairs, "run_all_rust_post_repairs")
 
     results = post_execution_repair_bridge._run_rust_post_repairs(
         adapter,
@@ -1984,8 +1984,9 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     source.parent.mkdir(parents=True)
     source.write_text("use serde::Serialize;\npub struct Demo;\n", encoding="utf-8")
 
-    migrated_legacy_helpers = (
+    retired_legacy_helpers = (
         "_apply_deterministic_rust_crate_import_repair",
+        "_apply_deterministic_rust_derive_repair",
         "_apply_deterministic_rust_line_suggestion_repair",
         "_apply_deterministic_rust_missing_lib_target_repair",
         "_apply_deterministic_rust_lib_root_facade_repair",
@@ -1993,11 +1994,8 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
         "_apply_deterministic_rust_trait_import_repair",
     )
 
-    def fail_if_legacy_called(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
-        raise AssertionError("materialization Rust migrated helper used legacy direct wrapper")
-
-    for helper_name in migrated_legacy_helpers:
-        monkeypatch.setattr(rust_repairs, helper_name, fail_if_legacy_called)
+    for helper_name in retired_legacy_helpers:
+        assert not hasattr(rust_repairs, helper_name)
 
     runtime_calls: list[dict[str, Any]] = []
 

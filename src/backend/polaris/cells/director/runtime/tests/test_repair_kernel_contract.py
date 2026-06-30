@@ -8516,6 +8516,88 @@ def test_rust_crate_import_rewrite_rule_uses_span_based_editor_operations(tmp_pa
     assert records[0]["span_based"] is True
 
 
+def test_rust_crate_import_legacy_source_tool_executes_through_runtime_editor(tmp_path: Path) -> None:
+    cargo = '[package]\nname = "kitchen-flavor-palette"\nversion = "0.1.0"\n'
+    main_path = "src/main.rs"
+    main_content = (
+        "use kitchen_palette::engine::generate_palette;\n"
+        "fn main() {\n"
+        "    let _ = kitchen_palette::models::Recipe::default();\n"
+        "    generate_palette();\n"
+        "}\n"
+    )
+    raw = "cargo check failed: error[E0433]: cannot find module or crate `kitchen_palette` in this scope"
+    base_files = {
+        "Cargo.toml": cargo,
+        main_path: main_content,
+    }
+    target = tmp_path / main_path
+    target.parent.mkdir(parents=True)
+    target.write_text(main_content, encoding="utf-8")
+    (tmp_path / "Cargo.toml").write_text(cargo, encoding="utf-8")
+    edited_operations: list[str] = []
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        raise AssertionError("span-based Rust crate import repair must use edit_file")
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        edit_target = tmp_path / operation.path
+        current = edit_target.read_text(encoding="utf-8")
+        start = int(operation.span_start or 0)
+        end = int(operation.span_end or 0)
+        assert current[start:end] == operation.expected
+        edit_target.write_text(
+            current[:start] + str(operation.replacement or "") + current[end:],
+            encoding="utf-8",
+        )
+        edited_operations.append(operation.operation_id)
+        return {"ok": True, "file": operation.path, "operation": "edit_file"}
+
+    run = run_runtime_repair(
+        source_tool="deterministic_rust_crate_import_repair",
+        workspace=tmp_path,
+        base_files=base_files,
+        artifact_quality_errors=(raw,),
+        writer=writer,
+        editor=editor,
+        allowed_paths=(main_path, "Cargo.toml"),
+    )
+
+    repaired = target.read_text(encoding="utf-8")
+    assert run.ok is True
+    assert edited_operations
+    assert "use kitchen_flavor_palette::engine::generate_palette;" in repaired
+    assert "kitchen_flavor_palette::models::Recipe" in repaired
+    assert "kitchen_palette::" not in repaired
+    assert run.execution_result is not None
+    assert {record["operation"] for record in run.execution_result.receipt.metadata["execution_records"]} == {
+        "edit_file"
+    }
+
+
+def test_rust_crate_import_legacy_source_tool_declines_declared_dependencies() -> None:
+    cargo = (
+        '[package]\nname = "kitchen-flavor-palette"\nversion = "0.1.0"\n\n'
+        "[dependencies]\nkitchen_palette = \"1\"\n"
+    )
+    main_content = "use kitchen_palette::engine::generate_palette;\n"
+    raw = "cargo check failed: error[E0433]: cannot find module or crate `kitchen_palette` in this scope"
+
+    planning = plan_runtime_repair(
+        source_tool="deterministic_rust_crate_import_repair",
+        base_files={
+            "Cargo.toml": cargo,
+            "src/main.rs": main_content,
+        },
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert planning.error_code is None
+    assert planning.plan is None
+    assert planning.composition is None
+
+
 def test_rust_wrong_crate_path_runtime_binding_executes_public_edit(tmp_path: Path) -> None:
     relative_path = "src/lib.rs"
     target = tmp_path / relative_path

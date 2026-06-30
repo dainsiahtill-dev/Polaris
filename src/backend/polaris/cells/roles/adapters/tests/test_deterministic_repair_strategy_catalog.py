@@ -431,47 +431,17 @@ def test_director_runtime_public_catalog_mirrors_authoritative_catalog() -> None
     assert payload["summary"]["by_concern"]
 
 
-def test_rust_post_repairs_no_longer_emit_dependency_records(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    (tmp_path / "Cargo.toml").write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
-    stderr_before = "error[E0433]: failed to resolve: use of unresolved module or unlinked crate `serde`\n"
-
-    def fake_cargo_check(workspace: Path) -> str:
-        assert workspace == tmp_path
-        return stderr_before
-
-    def fake_dependencies(workspace: Path, artifact_quality_errors: list[str]) -> list[dict[str, Any]]:
-        assert workspace == tmp_path
-        assert artifact_quality_errors == [stderr_before]
-        raise AssertionError("dependency repair belongs to rust.dependency_resolution runtime bridge")
-
-    monkeypatch.setattr(rust_repairs, "_run_cargo_check_stderr", fake_cargo_check)
-    monkeypatch.setattr(rust_repairs, "repair_rust_dependencies", fake_dependencies)
-
-    for name in (
-        "repair_rust_crate_imports",
-        "repair_rust_wrong_crate_paths",
-        "repair_rust_method_self_signatures",
-        "repair_rust_incompatible_copy_derives",
-        "repair_rust_duplicate_module_files",
-        "repair_rust_missing_module_files",
-        "repair_rust_missing_binary_entrypoint",
-        "repair_rust_missing_derives",
-        "repair_rust_unused_imports",
-        "repair_rust_missing_fields",
-        "repair_rust_field_rename_suggestions",
-        "repair_rust_lib_root_facade",
+def test_rust_post_repairs_aggregate_entrypoint_is_retired() -> None:
+    retired_helpers = (
         "repair_rust_unresolved_pub_uses",
         "repair_rust_trait_imports",
         "repair_rust_line_suggestions",
-    ):
-        monkeypatch.setattr(rust_repairs, name, lambda *args, **kwargs: [])
-
-    records = rust_repairs.run_all_rust_post_repairs(tmp_path)
-
-    assert records == []
+        "run_all_rust_post_repairs",
+        "_run_rust_post_repair_round",
+        "_annotate_rust_post_repair_records",
+    )
+    for name in retired_helpers:
+        assert not hasattr(rust_repairs, name)
 
 
 def test_rust_dependency_resolution_bridge_routes_runtime_repair(

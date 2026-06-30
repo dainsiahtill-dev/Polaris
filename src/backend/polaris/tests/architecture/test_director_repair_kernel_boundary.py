@@ -152,6 +152,13 @@ MIGRATED_EXECUTE_METHOD_COMPAT_HELPERS_FORBIDDEN = {
     "_apply_deterministic_python_static_smoke",
     "_apply_deterministic_python_unittest_runtime_failure_repair",
     "_apply_deterministic_runtime_dependency_repair",
+    "_apply_deterministic_rust_crate_import_repair",
+    "_apply_deterministic_rust_derive_repair",
+    "_apply_deterministic_rust_line_suggestion_repair",
+    "_apply_deterministic_rust_missing_lib_target_repair",
+    "_apply_deterministic_rust_lib_root_facade_repair",
+    "_apply_deterministic_rust_trait_import_repair",
+    "_apply_deterministic_rust_unresolved_pub_use_repair",
     "_apply_deterministic_typeorm_model_normalization_repair",
     "_apply_deterministic_typescript_canvas_scale_return_type_repair",
     "_apply_deterministic_typescript_entrypoint_repair",
@@ -1073,7 +1080,6 @@ def test_execute_method_delegates_post_execution_language_repairs_to_bridge() ->
     language_repair_tokens = {
         "_apply_deterministic_go_module_import_repair",
         "deterministic_rust_dependency_repair",
-        "run_all_rust_post_repairs",
     }
     bridge_runtime_tokens = {
         "deterministic_go_bare_import_string_repair",
@@ -1142,16 +1148,12 @@ def test_post_execution_bridge_does_not_call_legacy_java_test_dependency_tail() 
     assert "repair_java_test_dependencies" not in java_runner_source
 
 
-def test_rust_post_execution_callback_does_not_own_convergence_loop() -> None:
-    rust_runner_source = _function_source(RUST_REPAIRS_PATH, "run_all_rust_post_repairs")
-    rust_annotation_source = _function_source(RUST_REPAIRS_PATH, "_annotate_rust_post_repair_records")
+def test_rust_post_execution_legacy_aggregate_callback_is_retired() -> None:
+    rust_source = _read_text(RUST_REPAIRS_PATH)
 
-    assert "for round_number in range" not in rust_runner_source
-    assert "seen_stderr" not in rust_runner_source
-    assert "max_rounds =" not in rust_runner_source
-    assert '"round_number"' not in rust_annotation_source
-    assert '"max_rounds"' not in rust_annotation_source
-    assert '"revalidation"' in rust_annotation_source
+    assert "def run_all_rust_post_repairs" not in rust_source
+    assert "def _run_rust_post_repair_round" not in rust_source
+    assert "def _annotate_rust_post_repair_records" not in rust_source
 
 
 def test_rust_aggregate_post_repair_is_not_executable_runtime_binding() -> None:

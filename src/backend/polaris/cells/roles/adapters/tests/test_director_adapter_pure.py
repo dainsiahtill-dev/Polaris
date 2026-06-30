@@ -1687,44 +1687,20 @@ def test_java_post_accessor_alias_repair_uses_director_runtime_kernel(
     assert adapter.progress[-1] == ("task-java", "executing", relative_path)
 
 
-def test_rust_post_aggregate_excludes_runtime_migrated_span_repairs(
-    tmp_path: Any,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_rust_post_aggregate_excludes_runtime_migrated_span_repairs() -> None:
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
 
-    migrated_helpers = [
-        "repair_rust_crate_imports",
-        "repair_rust_wrong_crate_paths",
-        "repair_rust_method_self_signatures",
-        "repair_rust_incompatible_copy_derives",
-        "repair_rust_unused_imports",
+    retired_helpers = [
         "repair_rust_unresolved_pub_uses",
         "repair_rust_trait_imports",
         "repair_rust_line_suggestions",
-        "repair_rust_missing_derives",
-        "repair_rust_missing_module_files",
-        "repair_rust_duplicate_module_files",
+        "run_all_rust_post_repairs",
+        "_run_rust_post_repair_round",
+        "_annotate_rust_post_repair_records",
     ]
 
-    def fail_if_called(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
-        raise AssertionError("runtime-migrated Rust repair helper was called by legacy aggregate")
-
-    for helper_name in migrated_helpers:
-        monkeypatch.setattr(rust_repairs, helper_name, fail_if_called)
-
-    monkeypatch.setattr(rust_repairs, "repair_rust_dependencies", fail_if_called)
-    for helper_name in (
-        "repair_rust_missing_binary_entrypoint",
-        "repair_rust_missing_fields",
-        "repair_rust_field_rename_suggestions",
-        "repair_rust_lib_root_facade",
-    ):
-        monkeypatch.setattr(rust_repairs, helper_name, lambda *_args, **_kwargs: [])
-
-    batches = rust_repairs._run_rust_post_repair_round(tmp_path, "error[E0433]: unresolved module")
-
-    assert batches == []
+    for helper_name in retired_helpers:
+        assert not hasattr(rust_repairs, helper_name)
 
 
 def test_rust_post_repairs_run_remaining_rules_through_runtime_bridge(
@@ -1776,7 +1752,7 @@ def test_rust_post_repairs_run_remaining_rules_through_runtime_bridge(
         called.append((source_tool, use_editor))
         return []
 
-    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", fail_if_adapter_aggregate_called)
+    assert not hasattr(rust_repairs, "run_all_rust_post_repairs")
     monkeypatch.setattr(post_execution_repair_bridge, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
 
     results = post_execution_repair_bridge._run_rust_post_repairs(FakeAdapter(), tmp_path, task_id="task-rust-runtime")
@@ -2491,24 +2467,13 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
             }
         ]
 
-    def fail_legacy_rust_dependency_repair(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
-        raise AssertionError("legacy repair_rust_dependencies must not run from post-execution bridge")
-
     monkeypatch.setattr(
         post_execution_repair_bridge,
         "run_runtime_repair_with_director_tools",
         fake_runtime_repair_with_director_tools,
     )
-    monkeypatch.setattr(
-        rust_repairs,
-        "repair_rust_dependencies",
-        fail_legacy_rust_dependency_repair,
-    )
-    monkeypatch.setattr(
-        rust_repairs,
-        "run_all_rust_post_repairs",
-        lambda *_args, **_kwargs: [],
-    )
+    assert not hasattr(rust_repairs, "repair_rust_dependencies")
+    assert not hasattr(rust_repairs, "run_all_rust_post_repairs")
     monkeypatch.setattr(
         execute_method_module,
         "_collect_workspace_code_diff",
