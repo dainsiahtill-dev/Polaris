@@ -7,8 +7,6 @@ module.
 
 from __future__ import annotations
 
-import contextlib
-import difflib
 import os
 import re
 from pathlib import Path
@@ -27,7 +25,6 @@ from ._common import (
     _TS_RUNTIME_EXPORT_TEMPLATE,
     _path_inside_workspace,
     _relative_import_suffix_order,
-    controlled_legacy_write_text,
 )
 
 _TS_MISSING_PROPERTY_ERROR_RE = re.compile(
@@ -449,76 +446,6 @@ def _parse_typescript_missing_closing_brace_errors(errors: list[str]) -> list[di
             seen.add(key)
             parsed.append(item)
     return parsed
-
-
-def _write_typescript_repair_results(
-    adapter: Any,
-    *,
-    workspace_path: Path,
-    task_id: str,
-    updated_by_path: dict[Path, str],
-    source_tool: str,
-    metadata_key: str,
-    metadata_value: list[dict[str, str]],
-) -> list[dict[str, Any]]:
-    if not updated_by_path:
-        return []
-    writes: list[dict[str, Any]] = []
-    for path, content in updated_by_path.items():
-        rel_path = path.relative_to(workspace_path).as_posix()
-        try:
-            before_content = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            before_content = ""
-        diff_excerpt = _typescript_repair_diff_excerpt(rel_path, before_content, content)
-        write_result = controlled_legacy_write_text(
-            path,
-            content,
-            workspace=workspace_path,
-            source_tool=source_tool,
-        )
-        if not write_result:
-            continue
-        with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-            adapter._update_task_progress(task_id, "executing", current_file=rel_path)
-        writes.append(
-            {
-                "tool": "write_file",
-                "tool_name": "write_file",
-                "success": True,
-                "result": {
-                    "ok": True,
-                    "source_tool": source_tool,
-                    "file": rel_path,
-                    metadata_key: [item for item in metadata_value if item.get("file") == rel_path],
-                    "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
-                    "operation": str(write_result.get("operation") or "modify"),
-                    "before_sha256": write_result.get("before_sha256"),
-                    "after_sha256": write_result.get("after_sha256"),
-                    "diff_excerpt": diff_excerpt,
-                    "broadcast_ok": False,
-                    "director_policy": {
-                        "runtime_authoritative": False,
-                        "legacy_controlled_bridge": True,
-                    },
-                },
-            }
-        )
-    return writes
-
-
-def _typescript_repair_diff_excerpt(rel_path: str, before: str, after: str, *, max_chars: int = 1600) -> str:
-    if before == after:
-        return ""
-    diff = difflib.unified_diff(
-        before.splitlines(),
-        after.splitlines(),
-        fromfile=f"a/{rel_path}",
-        tofile=f"b/{rel_path}",
-        lineterm="",
-        n=3,
-    )
-    return "\n".join(diff)[:max_chars]
 
 
 def _repair_typescript_nullable_canvas_context_guards(

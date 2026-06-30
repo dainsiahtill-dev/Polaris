@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 _LEGACY_TEXT_TOOL_PROTOCOL_NOTICE = (
     "DEPRECATED: This compatibility integration no longer executes text-wrapped "
     "tool protocols such as TOOL_CALLS, [READ_FILE], or [WRITE_FILE]. "
-    "Use RoleExecutionKernel / LLMCaller native tool calling instead. "
+    "Use RoleExecutionKernel / LLMInvoker native tool calling instead. "
     "Do not emit bracketed tool blocks in this path."
 )
 
