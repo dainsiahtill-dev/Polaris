@@ -160,6 +160,30 @@ def test_write_text_requires_utf8_encoding(
         fs.write_text("workspace/meta/kfs/latin1.txt", "x", encoding="latin-1")
 
 
+def test_write_text_atomic_roundtrip_utf8(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fs, _ = _build_kernel_fs(monkeypatch, tmp_path)
+
+    receipt = fs.write_text_atomic("workspace/meta/kfs/status.md", "状态\n")
+    content = fs.read_text("workspace/meta/kfs/status.md")
+
+    assert content == "状态\n"
+    assert receipt.logical_path == "workspace/meta/kfs/status.md"
+    assert Path(receipt.absolute_path).read_text(encoding="utf-8") == "状态\n"
+
+
+def test_write_text_atomic_requires_utf8_encoding(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fs, _ = _build_kernel_fs(monkeypatch, tmp_path)
+
+    with pytest.raises(ValueError):
+        fs.write_text_atomic("workspace/meta/kfs/status.md", "x", encoding="latin-1")
+
+
 def test_workspace_scoped_text_roundtrip(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -240,7 +264,7 @@ def test_resolve_workspace_path_rejects_nested_symlink_traversal(
 
     # Create a target file OUTSIDE the workspace
     outside_file = tmp_path / "secret_config.txt"
-    outside_file.parent.mkdir(parents=True)
+    outside_file.parent.mkdir(parents=True, exist_ok=True)
     outside_file.write_text("API_KEY=secret123", encoding="utf-8")
 
     # Create subdirectory structure and symlink inside workspace

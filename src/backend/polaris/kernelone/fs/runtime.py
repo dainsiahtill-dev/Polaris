@@ -72,6 +72,55 @@ class KernelFileSystem:
             bytes_written=size,
         )
 
+    def write_text_atomic(
+        self,
+        logical_path: str,
+        content: str,
+        *,
+        encoding: str = "utf-8",
+    ) -> FileWriteReceipt:
+        """Atomically write UTF-8 text via the adapter's atomic write support."""
+        self._require_utf8_encoding(encoding)
+        normalized = self.to_logical_path(logical_path)
+        text = str(content)
+        path = self.resolve_path(normalized)
+        try:
+            size = self._adapter.write_text(str(path), text, encoding=encoding, atomic=True)
+            return FileWriteReceipt(
+                logical_path=normalized,
+                absolute_path=str(path),
+                bytes_written=size,
+            )
+        except TypeError:
+            pass
+
+        parent_dir = Path(path).parent
+        parent_dir.mkdir(parents=True, exist_ok=True)
+
+        tmp_fd, tmp_path_str = tempfile.mkstemp(
+            dir=str(parent_dir),
+            prefix=".write_tmp_",
+            suffix=".txt",
+        )
+        try:
+            with os.fdopen(tmp_fd, "w", encoding=encoding) as tmp_file:
+                tmp_file.write(text)
+                tmp_file.flush()
+                os.fsync(tmp_fd)
+
+            target_path = Path(path)
+            tmp_path = Path(tmp_path_str)
+            tmp_path.replace(target_path)
+            return FileWriteReceipt(
+                logical_path=normalized,
+                absolute_path=str(path),
+                bytes_written=len(text.encode(encoding)),
+            )
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path_str)
+            raise
+
     def append_text(
         self,
         logical_path: str,

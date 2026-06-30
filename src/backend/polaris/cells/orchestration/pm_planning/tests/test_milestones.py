@@ -578,7 +578,7 @@ def test_atomicity_no_half_written(register: MilestoneRegister, monkeypatch: Any
     def boom(*_args: Any, **_kwargs: Any) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr(ms.json, "dump", boom)
+    monkeypatch.setattr(register._fs, "write_json_atomic", boom)
     with pytest.raises(OSError):
         register.register(name="label-a")
     assert register.list() == []
@@ -679,8 +679,12 @@ def test_module_imports_only_allowed() -> None:
     imported = _imported_module_names(Path(ms.__file__))
     assert not any(forbidden_ce in module for module in imported)
     assert not any(module.startswith(forbidden_delivery) for module in imported)
-    # The only non-stdlib imports are the storage helper and the sibling Schedule.
-    allowed_non_stdlib = {"polaris.kernelone.storage", ".dependency_validator"}
+    # The only non-stdlib imports are the KFS/storage helpers and the sibling Schedule.
+    allowed_non_stdlib = {
+        "polaris.kernelone.fs",
+        "polaris.kernelone.storage",
+        ".dependency_validator",
+    }
     stdlib = {
         "__future__",
         "json",

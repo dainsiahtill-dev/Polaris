@@ -60,12 +60,12 @@ status passes through as its own active key), NOT in any core.
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.storage import resolve_logical_path
 
 from .dependency_validator import DependencyCycleError, Schedule, compute_schedule
@@ -568,20 +568,6 @@ def _safe_milestone_summary(register: MilestoneRegister | None, current_iteratio
         return {}
 
 
-def _write_text_atomic(path: Path, text: str) -> None:
-    """Atomically write UTF-8 ``text`` to ``path`` (temp companion + replace).
-
-    The temp companion is ``{name}.tmp`` (string-concat, not ``with_suffix``)
-    because ``.`` is a legal name char -- mirrors the sibling RAID/milestone
-    ``_save`` idiom. ``os.replace`` makes the swap atomic so a reader never sees
-    a partial file.
-    """
-    tmp = path.parent / (path.name + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as handle:
-        handle.write(text)
-    os.replace(tmp, path)
-
-
 def build_pm_project_report(
     workspace: str,
     *,
@@ -674,10 +660,16 @@ def build_pm_project_report(
     json_path = out_dir / "pm.status.json"
     ok = True
     try:
+        fs = KernelFileSystem(workspace, get_default_adapter())
         out_dir.mkdir(parents=True, exist_ok=True)
-        _write_text_atomic(md_path, render_project_markdown(report))
-        _write_text_atomic(json_path, json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
-    except OSError:
+        fs.write_text_atomic("runtime/pm/pm.status.md", render_project_markdown(report))
+        fs.write_json_atomic(
+            "runtime/pm/pm.status.json",
+            report.to_dict(),
+            ensure_ascii=False,
+            indent=2,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
         ok = False
         degraded = True
 

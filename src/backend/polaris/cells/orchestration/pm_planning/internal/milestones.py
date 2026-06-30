@@ -23,8 +23,8 @@ calendar date, so the model stays deterministic and project-agnostic: Polaris
 plans in director iterations and the schedule is expressed in effort/iteration
 units, never wall-clock time.
 
-The store mirrors the sibling RAID register's storage shape exactly: atomic
-temp-file + ``os.replace`` writes, traversal-guarded ids, fail-closed loads
+The store mirrors the sibling RAID register's storage shape exactly:
+KernelFileSystem-backed atomic writes, traversal-guarded ids, fail-closed loads
 (one corrupt file degrades exactly one record), and explicit UTF-8 on every
 read/write. It is pure/deterministic modulo the clock/nonce seams, 100% generic
 meta-tooling -- no project/business/domain literals -- and imports NOTHING from
@@ -71,6 +71,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.storage import resolve_logical_path
 
 from .dependency_validator import Schedule
@@ -410,6 +411,7 @@ class MilestoneRegister:
 
     def __init__(self, workspace: str, *, ensure_directory: bool = True) -> None:
         """Resolve the storage directory under ``runtime/pm/milestones``."""
+        self._fs = KernelFileSystem(workspace, get_default_adapter())
         self._dir = Path(resolve_logical_path(workspace, "runtime/pm/milestones"))
         if ensure_directory:
             self._dir.mkdir(parents=True, exist_ok=True)
@@ -614,22 +616,14 @@ class MilestoneRegister:
     # ------------------------------------------------------------------
 
     def _save(self, record: MilestoneRecordV1) -> None:
-        """Atomically persist a record to ``{milestone_id}.json``.
-
-        The temp companion is ``{name}.tmp`` (string-concat, not
-        ``with_suffix``) because ``.`` is a legal id char, so a dotted id would
-        otherwise make ``with_suffix`` clobber only the last segment.
-        ``os.replace`` makes the swap atomic, so a reader globbing ``*.json``
-        never sees a partial file. The directory is created defensively in case
-        the register was built with ``ensure_directory=False``.
-        """
+        """Atomically persist a record to ``{milestone_id}.json`` via KFS."""
         safe_id = _validate_record_id(record.milestone_id)
-        path = self._dir / f"{safe_id}.json"
-        tmp = path.parent / (path.name + ".tmp")
-        self._dir.mkdir(parents=True, exist_ok=True)
-        with open(tmp, "w", encoding="utf-8") as handle:
-            json.dump(record.to_dict(), handle, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
+        self._fs.write_json_atomic(
+            f"runtime/pm/milestones/{safe_id}.json",
+            record.to_dict(),
+            ensure_ascii=False,
+            indent=2,
+        )
 
     def _load_path(self, path: Path) -> MilestoneRecordV1 | None:
         """Load and coerce one record file; return ``None`` on any read error.

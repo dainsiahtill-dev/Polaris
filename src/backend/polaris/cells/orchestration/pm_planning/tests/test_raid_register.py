@@ -531,7 +531,7 @@ def test_atomicity_no_half_written_record_visible(register: RaidRegister, monkey
     def _boom(*_args: Any, **_kwargs: Any) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr(rr.json, "dump", _boom)
+    monkeypatch.setattr(register._fs, "write_json_atomic", _boom)
     with pytest.raises(OSError):
         _register_one(register)
     # the final target was never created; list surfaces nothing

@@ -7,9 +7,9 @@ unverified), **I**ssues (problems that have already occurred), and
 ``probability x impact`` and drives each entry through a shared lifecycle.
 
 This module is the workspace-scoped store: one JSON file per entry under
-``runtime/pm/raid/{entry_id}.json``. It is pure, deterministic (modulo the
-clock/nonce seams), fail-closed on load, and 100% generic meta-tooling --
-no project/business/domain literals.
+``runtime/pm/raid/{entry_id}.json`` using KernelFileSystem-backed atomic writes.
+It is pure, deterministic (modulo the clock/nonce seams), fail-closed on load,
+and 100% generic meta-tooling -- no project/business/domain literals.
 
 The enum *values* are byte-identical to the chief-engineer Risk Register
 vocabulary for cross-role alignment, but this module imports NOTHING from
@@ -35,6 +35,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.storage import resolve_logical_path
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -388,6 +389,7 @@ class RaidRegister:
 
     def __init__(self, workspace: str, *, ensure_directory: bool = True) -> None:
         """Resolve the storage directory under ``runtime/pm/raid``."""
+        self._fs = KernelFileSystem(workspace, get_default_adapter())
         self._dir = Path(resolve_logical_path(workspace, "runtime/pm/raid"))
         if ensure_directory:
             self._dir.mkdir(parents=True, exist_ok=True)
@@ -566,19 +568,14 @@ class RaidRegister:
     # ------------------------------------------------------------------
 
     def _save(self, record: RaidRecordV1) -> None:
-        """Atomically persist a record to ``{entry_id}.json``.
-
-        The temp companion is ``{name}.tmp`` (not ``with_suffix``) because
-        ``.`` is a legal id char, so a dotted entry id would otherwise make
-        ``with_suffix`` clobber only the last segment. ``os.replace`` makes the
-        swap atomic, so a reader globbing ``*.json`` never sees a partial file.
-        """
+        """Atomically persist a record to ``{entry_id}.json`` via KFS."""
         safe_id = _validate_record_id(record.entry_id)
-        path = self._dir / f"{safe_id}.json"
-        tmp = path.parent / (path.name + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as handle:
-            json.dump(record.to_dict(), handle, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
+        self._fs.write_json_atomic(
+            f"runtime/pm/raid/{safe_id}.json",
+            record.to_dict(),
+            ensure_ascii=False,
+            indent=2,
+        )
 
     def _load_path(self, path: Path) -> RaidRecordV1 | None:
         """Load and coerce one entry file; return ``None`` on any read error.

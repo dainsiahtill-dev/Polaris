@@ -574,18 +574,21 @@ def _imported_module_names(path: Path) -> set[str]:
 def test_ast_import_boundary_relaxed() -> None:
     forbidden_delivery = "polaris." + "delivery"
     sibling = "orchestration." + "pm_planning.internal"
-    storage = "polaris." + "kernelone.storage"
+    storage_imports = {
+        "polaris." + "kernelone.fs",
+        "polaris." + "kernelone.storage",
+    }
     imported = _imported_module_names(Path(pr.__file__))
     assert not any(module.startswith(forbidden_delivery) for module in imported)
     assert not any("chief_engineer" in module for module in imported)
     for module in imported:
         if module.startswith("polaris."):
-            assert sibling in module or module == storage, f"unexpected polaris import: {module}"
+            assert sibling in module or module in storage_imports, f"unexpected polaris import: {module}"
 
 
 def test_pure_composer_renderer_clock_env_free() -> None:
-    # Scope the clock/env scan to ONLY the pure functions; the os.replace seam
-    # legitimately lives in the gather half, so a whole-file scan would falsely fail.
+    # Scope the clock/env scan to ONLY the pure functions; persistence legitimately
+    # lives in the gather half, so a whole-file scan would falsely fail.
     pure_sources = (
         inspect.getsource(compose_project_report),
         inspect.getsource(render_project_markdown),

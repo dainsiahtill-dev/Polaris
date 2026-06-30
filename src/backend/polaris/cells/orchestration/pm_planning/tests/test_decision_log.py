@@ -482,7 +482,7 @@ def test_atomicity_no_half_written_record_visible(register: DecisionRegister, mo
     def _boom(*_args: Any, **_kwargs: Any) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr(dl.json, "dump", _boom)
+    monkeypatch.setattr(register._fs, "write_json_atomic", _boom)
     with pytest.raises(OSError):
         register.register(title="label-a")
     assert register.list() == []
@@ -580,7 +580,7 @@ def test_module_does_not_import_chief_engineer_or_delivery() -> None:
         assert not name.startswith("polaris.delivery")
     assert DecisionStatus.__module__.endswith("decision_log")
     non_stdlib = {m for m in modules if m.startswith("polaris")}
-    assert non_stdlib <= {"polaris.kernelone.storage"}
+    assert non_stdlib <= {"polaris.kernelone.fs", "polaris.kernelone.storage"}
 
 
 def test_test_file_does_not_import_chief_engineer() -> None:

@@ -15,14 +15,13 @@ which is a different concept. This module touches neither the agent nor that
 list; the two never couple.
 
 The store mirrors the sibling registers' storage shape exactly: one JSON file
-per entry under ``runtime/pm/decisions/{decision_id}.json``, atomic temp-file +
-``os.replace`` writes, traversal-guarded ids, fail-closed loads (one corrupt
-file degrades exactly one record), explicit UTF-8 on every read/write, and an
-append-only history. It is pure/deterministic modulo the clock/nonce seams,
-100% generic meta-tooling -- no project/business/domain literals -- and imports
-NOTHING from ``chief_engineer`` and NOTHING from ``polaris.delivery``. Its only
-non-stdlib import is :func:`resolve_logical_path`, the storage SSoT also used by
-both sibling registers, so it adds no new cross-cell edge.
+per entry under ``runtime/pm/decisions/{decision_id}.json``,
+KernelFileSystem-backed atomic writes, traversal-guarded ids, fail-closed loads
+(one corrupt file degrades exactly one record), explicit UTF-8 on every
+read/write, and an append-only history. It is pure/deterministic modulo the
+clock/nonce seams, 100% generic meta-tooling -- no project/business/domain
+literals -- and imports NOTHING from ``chief_engineer`` and NOTHING from
+``polaris.delivery``.
 
 This increment is purely additive: nothing here is wired into the live planning
 path, and the store is wired to NOTHING, so the from-scratch + repair regression
@@ -68,7 +67,6 @@ move.
 from __future__ import annotations
 
 import json
-import os
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -77,6 +75,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.storage import resolve_logical_path
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -288,6 +287,7 @@ class DecisionRegister:
 
     def __init__(self, workspace: str, *, ensure_directory: bool = True) -> None:
         """Resolve the storage directory under ``runtime/pm/decisions``."""
+        self._fs = KernelFileSystem(workspace, get_default_adapter())
         self._dir = Path(resolve_logical_path(workspace, "runtime/pm/decisions"))
         if ensure_directory:
             self._dir.mkdir(parents=True, exist_ok=True)
@@ -457,22 +457,14 @@ class DecisionRegister:
     # ------------------------------------------------------------------
 
     def _save(self, record: DecisionRecordV1) -> None:
-        """Atomically persist a record to ``{decision_id}.json``.
-
-        The temp companion is ``{name}.tmp`` (string-concat, not
-        ``with_suffix``) because ``.`` is a legal id char, so a dotted id would
-        otherwise make ``with_suffix`` clobber only the last segment.
-        ``os.replace`` makes the swap atomic, so a reader globbing ``*.json``
-        never sees a partial file. The directory is created defensively in case
-        the register was built with ``ensure_directory=False``.
-        """
+        """Atomically persist a record to ``{decision_id}.json`` via KFS."""
         safe_id = _validate_record_id(record.decision_id)
-        path = self._dir / f"{safe_id}.json"
-        tmp = path.parent / (path.name + ".tmp")
-        self._dir.mkdir(parents=True, exist_ok=True)
-        with open(tmp, "w", encoding="utf-8") as handle:
-            json.dump(record.to_dict(), handle, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
+        self._fs.write_json_atomic(
+            f"runtime/pm/decisions/{safe_id}.json",
+            record.to_dict(),
+            ensure_ascii=False,
+            indent=2,
+        )
 
     def _load_path(self, path: Path) -> DecisionRecordV1 | None:
         """Load and coerce one record file; return ``None`` on any read error.
