@@ -1,11 +1,4 @@
-"""Canonical runtime defaults shared across Polaris layers.
-
-KernelOne Purity Note (2026-04-25):
-    Director workflow path constants are inlined here to eliminate the reverse
-    dependency ``kernelone -> domain``.  The canonical source of truth for
-    these values remains ``polaris.domain.director.constants``; if the values
-    there change, this file must be kept in sync.
-"""
+"""Canonical runtime defaults shared across Polaris layers."""
 
 from __future__ import annotations
 
@@ -13,6 +6,7 @@ import os
 from typing import Final
 
 from polaris.kernelone._runtime_config import get_workspace
+from polaris.kernelone.runtime.channel_contracts import CHANNEL_FILES, NEW_CHANNEL_METADATA
 from polaris.kernelone.storage.io_paths import find_workspace_root
 
 # ═══════════════════════════════════════════════════════════════════
@@ -21,6 +15,8 @@ from polaris.kernelone.storage.io_paths import find_workspace_root
 #
 # Canonical source: polaris.domain.director.constants
 # Keep in sync with any changes there.
+# Channel mappings are imported from polaris.kernelone.runtime.channel_contracts
+# so runtime/defaults and director/constants cannot drift.
 # ═══════════════════════════════════════════════════════════════════
 
 _RUNTIME_DIR: Final[str] = "runtime"
@@ -51,42 +47,6 @@ DEFAULT_REQUIREMENTS: Final[str] = "workspace/docs/product/requirements.md"
 AGENTS_DRAFT_REL: Final[str] = f"{_CONTRACTS_DIR}/agents.generated.md"
 AGENTS_FEEDBACK_REL: Final[str] = f"{_CONTRACTS_DIR}/agents.feedback.md"
 WORKSPACE_STATUS_REL: Final[str] = "workspace/meta/workspace_status.json"
-
-CHANNEL_FILES: Final[dict[str, str]] = {
-    # Legacy channels (still supported)
-    "pm_report": DEFAULT_PM_REPORT,
-    "pm_log": DEFAULT_PM_LOG,
-    "pm_subprocess": DEFAULT_PM_SUBPROCESS_LOG,
-    "pm_llm": DEFAULT_PM_LLM_EVENTS,
-    "planner": DEFAULT_PLANNER,
-    "ollama": DEFAULT_OLLAMA,
-    "qa": DEFAULT_QA,
-    "runlog": DEFAULT_RUNLOG,
-    "dialogue": DEFAULT_DIALOGUE,
-    "director_console": DEFAULT_DIRECTOR_SUBPROCESS_LOG,
-    "director_llm": DEFAULT_DIRECTOR_LLM_EVENTS,
-    "engine_status": DEFAULT_ENGINE_STATUS,
-    "runtime_events": DEFAULT_RUNTIME_EVENTS,
-    # New unified channels (CanonicalLogEventV2)
-    "system": f"{_RUNTIME_DIR}/runs/{{run_id}}/logs/journal.norm.jsonl",
-    "process": f"{_RUNTIME_DIR}/runs/{{run_id}}/logs/journal.norm.jsonl",
-    "llm": f"{_RUNTIME_DIR}/runs/{{run_id}}/logs/journal.norm.jsonl",
-}
-
-NEW_CHANNEL_METADATA: Final[dict[str, dict[str, str | list[str]]]] = {
-    "system": {
-        "description": "System events (runtime, engine status, PM reports)",
-        "severity_levels": ["debug", "info", "warn", "error", "critical"],
-    },
-    "process": {
-        "description": "Process output (subprocess stdout/stderr)",
-        "severity_levels": ["debug", "info", "warn", "error"],
-    },
-    "llm": {
-        "description": "LLM interaction events",
-        "severity_levels": ["debug", "info", "warn", "error"],
-    },
-}
 
 # ═══════════════════════════════════════════════════════════════════
 # KernelOne-native defaults

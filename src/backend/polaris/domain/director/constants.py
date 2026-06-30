@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Final
 
+from polaris.kernelone.runtime.channel_contracts import CHANNEL_FILES, NEW_CHANNEL_METADATA
+
 # ═══════════════════════════════════════════════════════════════════
 # Director 工作流路径常量
 # ═══════════════════════════════════════════════════════════════════
@@ -147,43 +149,8 @@ class DirectorPhase:
 # 通道文件映射
 # ═══════════════════════════════════════════════════════════════════
 
-CHANNEL_FILES: dict[str, str] = {
-    # Legacy channels (still supported)
-    "pm_report": DEFAULT_PM_REPORT,
-    "pm_log": DEFAULT_PM_LOG,
-    "pm_subprocess": DEFAULT_PM_SUBPROCESS_LOG,
-    "pm_llm": DEFAULT_PM_LLM_EVENTS,
-    "planner": DEFAULT_PLANNER,
-    "ollama": DEFAULT_OLLAMA,
-    "qa": DEFAULT_QA,
-    "runlog": DEFAULT_RUNLOG,
-    "dialogue": DEFAULT_DIALOGUE,
-    "director_console": DEFAULT_DIRECTOR_SUBPROCESS_LOG,
-    "director_llm": DEFAULT_DIRECTOR_LLM_EVENTS,
-    "engine_status": DEFAULT_ENGINE_STATUS,
-    "runtime_events": DEFAULT_RUNTIME_EVENTS,
-    # New unified channels (CanonicalLogEventV2)
-    "system": "runtime/runs/{run_id}/logs/journal.norm.jsonl",
-    "process": "runtime/runs/{run_id}/logs/journal.norm.jsonl",
-    "llm": "runtime/runs/{run_id}/logs/journal.norm.jsonl",
-}
-"""通道文件映射表"""
-
-NEW_CHANNEL_METADATA: dict[str, dict[str, str | list[str]]] = {
-    "system": {
-        "description": "System events (runtime, engine status, PM reports)",
-        "severity_levels": ["debug", "info", "warn", "error", "critical"],
-    },
-    "process": {
-        "description": "Process output (subprocess stdout/stderr)",
-        "severity_levels": ["debug", "info", "warn", "error"],
-    },
-    "llm": {
-        "description": "LLM interaction events",
-        "severity_levels": ["debug", "info", "warn", "error"],
-    },
-}
-"""新通道元数据映射"""
+# CHANNEL_FILES / NEW_CHANNEL_METADATA are re-exported from the runtime.v2
+# channel contract to avoid a second source of truth in the Director domain.
 
 
 __all__ = [

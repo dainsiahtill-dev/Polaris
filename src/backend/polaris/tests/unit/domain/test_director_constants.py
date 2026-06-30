@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+from types import ModuleType
+
+import polaris.domain.director.constants as director_constants
+import polaris.kernelone.runtime.channel_contracts as channel_contracts
+import polaris.kernelone.runtime.defaults as runtime_defaults
 from polaris.domain.director.constants import (
     CHANNEL_FILES,
     DEFAULT_DIALOGUE,
@@ -29,6 +36,22 @@ from polaris.domain.director.constants import (
     NEW_CHANNEL_METADATA,
     DirectorPhase,
 )
+
+
+def _module_assigned_names(module: ModuleType) -> set[str]:
+    module_file = module.__file__
+    assert module_file is not None
+    source = Path(module_file).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+    return names
 
 
 class TestDirectorConstants:
@@ -79,3 +102,23 @@ class TestDirectorConstants:
         assert "system" in NEW_CHANNEL_METADATA
         assert "description" in NEW_CHANNEL_METADATA["system"]
         assert "severity_levels" in NEW_CHANNEL_METADATA["system"]
+
+    def test_channel_contracts_are_runtime_reexports(self) -> None:
+        assert CHANNEL_FILES is channel_contracts.CHANNEL_FILES
+        assert NEW_CHANNEL_METADATA is channel_contracts.NEW_CHANNEL_METADATA
+        assert director_constants.CHANNEL_FILES is channel_contracts.CHANNEL_FILES
+        assert runtime_defaults.CHANNEL_FILES is channel_contracts.CHANNEL_FILES
+        assert runtime_defaults.NEW_CHANNEL_METADATA is channel_contracts.NEW_CHANNEL_METADATA
+
+    def test_canonical_channels_share_runtime_v2_journal_path(self) -> None:
+        for channel in ("system", "process", "llm"):
+            assert (
+                channel_contracts.CHANNEL_FILES[channel]
+                == channel_contracts.RUNTIME_V2_JOURNAL_PATH
+            )
+
+    def test_old_modules_do_not_redefine_channel_contracts(self) -> None:
+        forbidden = {"CHANNEL_FILES", "NEW_CHANNEL_METADATA"}
+        assert forbidden.isdisjoint(_module_assigned_names(director_constants))
+        assert forbidden.isdisjoint(_module_assigned_names(runtime_defaults))
+        assert forbidden <= _module_assigned_names(channel_contracts)
