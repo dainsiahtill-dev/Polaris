@@ -199,12 +199,17 @@ class TestRecipeLoader:
         assert recipe.persona == "gongbu_shilang"
         assert recipe.profession == "python_principal_architect"
 
-    def test_load_by_legacy_id(self) -> None:
-        """Test loading recipe by legacy ID."""
-        recipe = self.loader.load_by_legacy_id("director")
+    def test_load_by_alias(self) -> None:
+        """Test loading recipe by explicit alias."""
+        recipe = self.loader.load_by_alias("python_director")
 
         assert recipe is not None
-        assert recipe.backward_compatible is True
+        assert recipe.profession == "python_principal_architect"
+
+    def test_load_by_unknown_alias_returns_none(self) -> None:
+        """Test loading unknown recipe alias returns None."""
+        recipe = self.loader.load_by_alias("nonexistent_alias")
+        assert recipe is None
 
     def test_load_nonexistent_returns_none(self) -> None:
         """Test loading non-existent recipe returns None."""

@@ -135,10 +135,16 @@ class TestRoleComposer:
         assert composed is not None
         assert "安全" in composed.system_prompt
 
-    def test_compose_by_recipe_legacy_id(self) -> None:
-        """Test compose_by_recipe with legacy ID."""
+    def test_compose_by_recipe_canonical_role_id(self) -> None:
+        """Test compose_by_recipe with canonical role ID."""
         composed = self.composer.compose_by_recipe("director")
         assert composed is not None
+
+    def test_compose_by_recipe_alias(self) -> None:
+        """Test compose_by_recipe with explicit recipe alias."""
+        composed = self.composer.compose_by_recipe("python_director")
+        assert composed is not None
+        assert composed.metadata.profession_id == "python_principal_architect"
 
     def test_compose_by_recipe_returns_none_for_unknown(self) -> None:
         """Test compose_by_recipe returns None for unknown recipe."""

@@ -77,7 +77,7 @@ class RecipeConfig:
     description: str = ""
     version: str = "1.0"
     backward_compatible: bool = False
-    legacy_id: str | None = None
+    aliases: list[str] = field(default_factory=list)
 
 
 class AnchorLoader:
@@ -282,7 +282,7 @@ class RecipeLoader:
                 description=recipe_data.get("description", ""),
                 version=recipe_data.get("version", "1.0"),
                 backward_compatible=recipe_data.get("backward_compatible", False),
-                legacy_id=recipe_data.get("legacy_id"),
+                aliases=list(recipe_data.get("aliases", [])),
             )
 
             self._cache[recipe_id] = config
@@ -292,8 +292,8 @@ class RecipeLoader:
             logger.error(f"Failed to load Recipe {recipe_id}: {e}")
             return None
 
-    def load_by_legacy_id(self, legacy_id: str) -> RecipeConfig | None:
-        """Load a Recipe by its legacy (backward compatible) ID."""
+    def load_by_alias(self, alias: str) -> RecipeConfig | None:
+        """Load a Recipe by an explicitly declared alias."""
         builtins_path = _ASSETS_DIR / "recipes" / "_builtins.yaml"
 
         try:
@@ -302,13 +302,14 @@ class RecipeLoader:
 
             recipes = data.get("recipes", {})
             for recipe_id, recipe_data in recipes.items():
-                if recipe_data.get("legacy_id") == legacy_id:
+                aliases = {str(item).strip() for item in recipe_data.get("aliases", []) if str(item).strip()}
+                if alias in aliases:
                     return self.load(recipe_id)
 
             return None
 
         except (yaml.YAMLError, OSError) as e:
-            logger.error(f"Failed to load Recipe by legacy_id {legacy_id}: {e}")
+            logger.error(f"Failed to load Recipe by alias {alias}: {e}")
             return None
 
 

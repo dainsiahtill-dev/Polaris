@@ -200,17 +200,16 @@ class TestHotSwapIntegration:
         assert modifiers[1].modifier_type == "format_override"
 
 
-class TestBackwardCompatibility:
-    """Tests to verify backward compatibility with existing system."""
+class TestCanonicalRoleRecipes:
+    """Tests to verify canonical role recipe loading."""
 
-    def test_legacy_role_id_still_works(self) -> None:
-        """Test that legacy role IDs (director, pm, qa) still work."""
+    def test_canonical_role_ids_still_work(self) -> None:
+        """Test that canonical role IDs (director, pm, qa) work."""
         composer = get_role_composer()
 
-        # These should work as legacy aliases
-        for legacy_id in ["director", "pm", "qa"]:
-            composed = composer.compose_by_recipe(legacy_id)
-            assert composed is not None, f"Legacy role {legacy_id} failed"
+        for recipe_id in ["director", "pm", "qa"]:
+            composed = composer.compose_by_recipe(recipe_id)
+            assert composed is not None, f"Canonical role {recipe_id} failed"
 
     def test_persona_backward_compatible(self) -> None:
         """Test that existing persona loading still works."""

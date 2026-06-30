@@ -3,7 +3,7 @@
 
 recipes:
   # =========================================
-  # Polaris 原生角色（保持向后兼容）
+  # Polaris 原生角色
   # =========================================
 
   pm:
@@ -12,7 +12,6 @@ recipes:
     profession: project_manager
     description: 项目管理器，负责需求拆解和规划
     backward_compatible: true
-    legacy_id: pm
 
   director:
     anchor: polaris_director
@@ -20,7 +19,6 @@ recipes:
     profession: software_engineer
     description: 执行引擎，负责任务调度和代码实现
     backward_compatible: true
-    legacy_id: director
 
   qa:
     anchor: polaris_qa
@@ -28,7 +26,6 @@ recipes:
     profession: quality_engineer
     description: 质量审查，负责代码审查和测试
     backward_compatible: true
-    legacy_id: qa
 
   architect:
     anchor: polaris_architect
@@ -36,7 +33,6 @@ recipes:
     profession: software_engineer
     description: 架构师，负责系统设计
     backward_compatible: true
-    legacy_id: architect
 
   chief_engineer:
     anchor: polaris_chief_engineer
@@ -44,7 +40,6 @@ recipes:
     profession: chief_engineer_blueprint
     description: 总工程师，负责技术分析和实施蓝图
     backward_compatible: true
-    legacy_id: chief_engineer
 
   # =========================================
   # 专业角色（新增）
@@ -54,6 +49,8 @@ recipes:
     anchor: polaris_director
     persona: gongbu_shilang
     profession: python_principal_architect
+    aliases:
+      - python_director
     description: |
       具备 Director 风格的 Python 首席架构师。
       先蓝图规划，再委派执行。

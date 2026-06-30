@@ -216,10 +216,7 @@ class RoleComposer:
         """
         recipe = self._recipe_loader.load(recipe_id)
         if not recipe:
-            # Try legacy ID
-            legacy_recipe = self._recipe_loader.load_by_legacy_id(recipe_id)
-            if legacy_recipe:
-                recipe = legacy_recipe
+            recipe = self._recipe_loader.load_by_alias(recipe_id)
 
         if not recipe:
             logger.error(f"Recipe not found: {recipe_id}")

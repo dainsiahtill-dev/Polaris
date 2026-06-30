@@ -39,6 +39,8 @@ properties:
           pattern: "^\\d+\\.\\d+$"
         backward_compatible:
           type: boolean
-        legacy_id:
-          type: string
-          description: 旧版角色 ID，用于向后兼容
+        aliases:
+          type: array
+          description: Optional non-authoritative recipe aliases.
+          items:
+            type: string
