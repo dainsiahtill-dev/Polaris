@@ -74,7 +74,6 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     execute_director_task,
 )
 from polaris.cells.roles.adapters.internal.director.execute_method_repair_bridge import (
-    get_legacy_execute_method_repair_helper,
     run_patch_residue_cleanup,
     run_python_runtime_smoke,
     run_python_static_smoke,
@@ -186,20 +185,17 @@ def _write_substantive_node_test_script(tmp_path: Any) -> None:
     )
 
 
-def test_execute_method_repair_bridge_blocks_migrated_runtime_helper() -> None:
-    with pytest.raises(AttributeError, match=r"director\.runtime"):
-        get_legacy_execute_method_repair_helper("_apply_deterministic_patch_residue_cleanup")
-
-    with pytest.raises(AttributeError, match="_apply_deterministic_patch_residue_cleanup"):
-        execute_method_module.__getattr__("_apply_deterministic_patch_residue_cleanup")
+def _assert_execute_method_attr_missing(name: str) -> None:
+    with pytest.raises(AttributeError, match=name):
+        getattr(execute_method_module, name)
 
 
-def test_execute_method_repair_bridge_unknown_helper_fails_closed() -> None:
-    with pytest.raises(AttributeError, match="not an allowlisted"):
-        get_legacy_execute_method_repair_helper("_apply_deterministic_not_a_registered_helper")
+def test_execute_method_legacy_repair_helper_surface_is_removed() -> None:
+    assert not hasattr(execute_method_module, "get_legacy_execute_method_repair_helper")
+    assert not hasattr(execute_method_module, "__getattr__")
 
-    with pytest.raises(AttributeError, match="_apply_deterministic_not_a_registered_helper"):
-        execute_method_module.__getattr__("_apply_deterministic_not_a_registered_helper")
+    _assert_execute_method_attr_missing("_apply_deterministic_patch_residue_cleanup")
+    _assert_execute_method_attr_missing("_apply_deterministic_not_a_registered_helper")
 
 
 @pytest.mark.parametrize(
@@ -214,27 +210,16 @@ def test_execute_method_repair_bridge_unknown_helper_fails_closed() -> None:
     ],
 )
 def test_execute_method_repair_bridge_blocks_migrated_materialization_helpers(helper_name: str) -> None:
-    with pytest.raises(AttributeError, match=r"director\.runtime|not an allowlisted"):
-        get_legacy_execute_method_repair_helper(helper_name)
-
-    with pytest.raises(AttributeError, match=helper_name):
-        getattr(execute_method_module, helper_name)
+    _assert_execute_method_attr_missing(helper_name)
 
 
 def test_execute_method_repair_bridge_rust_helper_fails_closed() -> None:
-    with pytest.raises(AttributeError, match=r"director\.runtime"):
-        get_legacy_execute_method_repair_helper("_apply_deterministic_rust_crate_import_repair")
-
-    with pytest.raises(AttributeError, match="not an allowlisted"):
-        get_legacy_execute_method_repair_helper("repair_rust_crate_imports")
+    _assert_execute_method_attr_missing("_apply_deterministic_rust_crate_import_repair")
+    _assert_execute_method_attr_missing("repair_rust_crate_imports")
 
 
 def test_execute_method_repair_bridge_has_no_allowlisted_legacy_helpers() -> None:
-    with pytest.raises(AttributeError, match=r"director\.runtime"):
-        get_legacy_execute_method_repair_helper("_apply_deterministic_scaffold_marker_cleanup")
-
-    with pytest.raises(AttributeError, match="_apply_deterministic_scaffold_marker_cleanup"):
-        execute_method_module.__getattr__("_apply_deterministic_scaffold_marker_cleanup")
+    _assert_execute_method_attr_missing("_apply_deterministic_scaffold_marker_cleanup")
 
 
 @pytest.mark.asyncio

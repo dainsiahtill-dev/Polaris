@@ -224,29 +224,39 @@ def test_materialization_python_import_uses_runtime_bridge_not_legacy_python_rep
     assert violations == []
 
 
-def test_execute_method_legacy_repair_helper_allowlist_stays_empty() -> None:
+def test_execute_method_legacy_repair_helper_surface_is_removed() -> None:
     bridge_path = _director_internal_root() / "execute_method_repair_bridge.py"
+    execute_method_path = _director_internal_root() / "execute_method.py"
     tree = ast.parse(bridge_path.read_text(encoding="utf-8"))
-    allowlist_values: list[ast.AST] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and any(
-            isinstance(target, ast.Name) and target.id == "_LEGACY_EXECUTE_METHOD_REPAIR_HELPER_ALLOWLIST"
-            for target in node.targets
-        ):
-            allowlist_values.append(node.value)
-        if (
-            isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and node.target.id == "_LEGACY_EXECUTE_METHOD_REPAIR_HELPER_ALLOWLIST"
-            and node.value is not None
-        ):
-            allowlist_values.append(node.value)
+    execute_tree = ast.parse(execute_method_path.read_text(encoding="utf-8"))
 
-    assert len(allowlist_values) == 1
-    allowlist_value = allowlist_values[0]
-    assert isinstance(allowlist_value, ast.Call)
-    assert _attribute_chain(allowlist_value.func) == "frozenset"
-    assert allowlist_value.args == []
+    forbidden_bridge_names = {
+        "_LEGACY_EXECUTE_METHOD_REPAIR_HELPER_ALLOWLIST",
+        "_LEGACY_DETERMINISTIC_REPAIR_COMPAT_PREFIXES",
+        "get_legacy_execute_method_repair_helper",
+    }
+    defined_bridge_names = {
+        node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    assigned_bridge_names = {
+        target.id
+        for node in ast.walk(tree)
+        for target in (
+            list(node.targets)
+            if isinstance(node, ast.Assign)
+            else [node.target]
+            if isinstance(node, ast.AnnAssign)
+            else []
+        )
+        if isinstance(target, ast.Name)
+    }
+    execute_defined_names = {
+        node.name for node in ast.walk(execute_tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+
+    assert not forbidden_bridge_names & defined_bridge_names
+    assert not forbidden_bridge_names & assigned_bridge_names
+    assert "__getattr__" not in execute_defined_names
 
 
 def test_catalog_registers_all_hardcoded_deterministic_tokens() -> None:

@@ -4170,15 +4170,13 @@ async def _attach_director_file_event_bus(adapter: Any) -> None:
 # ``execute_method`` stays the canonical import path. The bodies below were
 # moved verbatim into sibling modules; non-repair helpers are re-imported here
 # so the public + test-import surface resolves on this module exactly as
-# before. Concrete legacy repair functions stay behind
-# ``execute_method_repair_bridge`` during migration.
+# before.
 # ---------------------------------------------------------------------------
 from .artifact_quality_diagnostics import (  # noqa: E402  (deferred for circular-import safety)
     _filter_satisfied_declared_target_missing_errors as _filter_satisfied_declared_target_missing_errors,
     _parse_missing_declared_target_files as _parse_missing_declared_target_files,
 )
 from .execute_method_repair_bridge import (  # noqa: E402  (deferred for circular-import safety)
-    get_legacy_execute_method_repair_helper as get_legacy_execute_method_repair_helper,
     run_declared_target_contract_repairs as run_declared_target_contract_repairs,
     run_node_test_script_contract_repair as run_node_test_script_contract_repair,
     run_patch_residue_cleanup as run_patch_residue_cleanup,
@@ -4189,21 +4187,6 @@ from .execute_method_repair_bridge import (  # noqa: E402  (deferred for circula
     run_scaffold_marker_cleanup as run_scaffold_marker_cleanup,
     run_typescript_reexport_repair as run_typescript_reexport_repair,
 )
-
-_LEGACY_DETERMINISTIC_REPAIR_COMPAT_PREFIXES = ("_apply_deterministic_", "repair_")
-
-
-def __getattr__(name: str) -> Any:
-    """Compatibility shim for old tests importing legacy repair helpers here."""
-
-    if name.startswith(_LEGACY_DETERMINISTIC_REPAIR_COMPAT_PREFIXES):
-        try:
-            return get_legacy_execute_method_repair_helper(name)
-        except AttributeError:
-            pass
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 from .quality_gate import (  # noqa: E402  (deferred for circular-import safety)
     _ACCEPTANCE_VERIFY_EXISTS_RE as _ACCEPTANCE_VERIFY_EXISTS_RE,
     _QUALITY_REPAIR_ATTEMPT_HARD_CAP as _QUALITY_REPAIR_ATTEMPT_HARD_CAP,

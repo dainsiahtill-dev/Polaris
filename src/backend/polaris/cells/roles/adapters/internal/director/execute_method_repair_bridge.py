@@ -13,37 +13,14 @@ import os
 import re
 import subprocess
 import sys
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
-
-from polaris.cells.director.runtime.public.service import query_director_repair_strategy_catalog
 
 from .execution_tools import DirectorToolExecutor
 from .repair_profile_projection import project_repair_kernel_summary
 from .runtime_repair_tool_adapter import run_runtime_repair_with_director_tools
 from .task_scope_paths import _extract_task_path_candidates, _normalize_declared_task_path
 
-_LEGACY_DETERMINISTIC_REPAIR_COMPAT_PREFIXES = ("_apply_deterministic_", "repair_")
-# Migration-only surface for old ``execute_method`` imports. Production calls
-# must use the explicit run_* wrappers below or director.runtime public service.
-_LEGACY_EXECUTE_METHOD_REPAIR_HELPER_ALLOWLIST: frozenset[str] = frozenset()
-_RUNTIME_EXECUTABLE_REPAIR_SOURCE_TOOL_FALLBACKS = frozenset(
-    {
-        "deterministic_cpp_include_path_repair",
-        "deterministic_cpp_missing_private_members_repair",
-        "deterministic_cpp_placeholder_declaration_repair",
-        "deterministic_cpp_standard_include_repair",
-        "deterministic_cpp_struct_getter_field_access_repair",
-        "deterministic_go_bare_import_string_repair",
-        "deterministic_java_accessor_alias_repair",
-        "deterministic_patch_residue_cleanup",
-        "deterministic_typescript_duplicate_object_property_repair",
-        "deterministic_typescript_enum_member_separator_repair",
-        "deterministic_typescript_nullable_canvas_context_repair",
-        "deterministic_typescript_return_object_semicolon_repair",
-    }
-)
 _RUNTIME_REPAIR_SCAN_EXCLUDED_DIRS = frozenset(
     {
         ".git",
@@ -97,38 +74,6 @@ _PYTHON_MAIN_BLOCK_RE = re.compile(
     re.MULTILINE,
 )
 _PYTHON_RUNTIME_SMOKE_TIMEOUT_SECONDS = 5.0
-
-
-def _legacy_execute_method_helper_source_tool(name: str) -> str:
-    if name.startswith("_apply_"):
-        return name[len("_apply_") :]
-    if name.startswith("repair_"):
-        return name
-    return ""
-
-
-@lru_cache(maxsize=1)
-def _runtime_executable_repair_source_tools() -> frozenset[str]:
-    source_tools = set(_RUNTIME_EXECUTABLE_REPAIR_SOURCE_TOOL_FALLBACKS)
-    try:
-        catalog = query_director_repair_strategy_catalog()
-        summary = catalog.summary if isinstance(catalog.summary, dict) else {}
-        for source_tool in summary.get("executable_runtime_source_tools") or ():
-            normalized = str(source_tool or "").strip()
-            if normalized:
-                source_tools.add(normalized)
-    except (OSError, RuntimeError, TypeError, ValueError):
-        pass
-    return frozenset(source_tools)
-
-
-def get_legacy_execute_method_repair_helper(name: str) -> Any:
-    """Return an allowlisted migration helper for old execute_method imports."""
-
-    source_tool = _legacy_execute_method_helper_source_tool(name)
-    if source_tool in _runtime_executable_repair_source_tools():
-        raise AttributeError(f"{name} is owned by director.runtime; use director.runtime.public")
-    raise AttributeError(f"{name} is not an allowlisted execute_method legacy repair helper")
 
 
 def _adapter_workspace_path(adapter: Any) -> Path | None:
