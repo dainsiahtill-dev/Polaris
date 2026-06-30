@@ -3122,6 +3122,127 @@ def test_typescript_scaffold_public_planner_generates_package_and_tsconfig() -> 
     assert tsconfig_payload["include"] == ["src/**/*.ts"]
 
 
+def test_typescript_entrypoint_public_planner_generates_safe_aggregator() -> None:
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL,
+            base_files={
+                "package.json": '{"main":"dist/index.js","scripts":{"start":"node dist/index.js"}}\n',
+                "src/flower.ts": "export const hello = 'world';\n",
+                "src/moon.ts": "export const night = true;\n",
+                "src/types.d.ts": "export interface Ignored {}\n",
+                "src/flower.test.ts": "export const ignored = true;\n",
+            },
+            artifact_quality_errors=("TypeScript entrypoint missing for dist/index.js.",),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.entrypoint"
+    assert planning["composition_summary"]["changed_paths"] == ["src/index.ts"]
+    patch = planning["composition_summary"]["patches"][0]
+    assert patch["path"] == "src/index.ts"
+    content = patch["content_after"]
+    assert "import * as flower from './flower';" in content
+    assert "import * as moon from './moon';" in content
+    assert "export { flower };" in content
+    assert "export { moon };" in content
+    for forbidden in ("console", "window", "document", "process", "global", "Buffer"):
+        assert forbidden not in content
+
+
+def test_typescript_entrypoint_public_planner_does_not_overwrite_existing_entrypoint() -> None:
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL,
+            base_files={
+                "package.json": '{"main":"dist/index.js"}\n',
+                "src/index.ts": "export const existing = true;\n",
+                "src/feature.ts": "export const feature = true;\n",
+            },
+            artifact_quality_errors=("TypeScript entrypoint missing for dist/index.js.",),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is False
+    assert planning["planned"] is False
+    assert planning["source_tool"] == ts_syntax.TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL
+    assert planning["composition_summary"]["changed_paths"] == []
+    assert planning["composition_summary"]["patch_count"] == 0
+
+
+def test_typescript_relative_import_case_public_planner_rewrites_specifier_only() -> None:
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_RELATIVE_IMPORT_CASE_SOURCE_TOOL,
+            base_files={
+                "src/Garden.ts": "import { Moon } from './Moon';\nexport class Garden { moon = new Moon(); }\n",
+                "src/moon.ts": "export class Moon {}\n",
+            },
+            artifact_quality_errors=(
+                "Artifact quality scan failed: unresolved relative import './Moon' in src/Garden.ts",
+            ),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.relative_import_case"
+    assert planning["composition_summary"]["changed_paths"] == ["src/Garden.ts"]
+    content = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "from './moon'" in content
+    assert "new Moon()" in content
+
+
+def test_typescript_unused_import_public_planner_removes_unresolved_unused_import() -> None:
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL,
+            base_files={
+                "src/main.ts": 'import { Garden } from "./engine/garden";\nconsole.log("ready");\n',
+            },
+            artifact_quality_errors=(
+                "Artifact quality scan failed: unresolved relative import './engine/garden' in src/main.ts",
+            ),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.unused_import"
+    assert planning["composition_summary"]["changed_paths"] == ["src/main.ts"]
+    assert planning["composition_summary"]["patches"][0]["content_after"] == 'console.log("ready");\n'
+
+
+def test_typescript_unique_export_import_public_planner_repoints_to_unique_export_owner() -> None:
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
+            base_files={
+                "src/Garden.ts": "import { Moon } from './models';\nexport class Garden { moon = new Moon(); }\n",
+                "src/entities/moon.ts": "export class Moon {}\n",
+            },
+            artifact_quality_errors=(
+                "Artifact quality scan failed: unresolved relative import './models' in src/Garden.ts",
+            ),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.unique_export_import"
+    assert planning["composition_summary"]["changed_paths"] == ["src/Garden.ts"]
+    content = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "from './entities/moon'" in content
+    assert "new Moon()" in content
+
+
 def test_typescript_conservative_planner_recognizes_all_legacy_ts_html_source_tools() -> None:
     cases = _typescript_conservative_planner_safe_cases()
     expected_source_tools = {
