@@ -148,6 +148,7 @@ def test_quality_gate_failure_stage_does_not_add_qa_llm_warning_for_deterministi
     assert report["warnings"] == ["workspace_quality_gate_failed"]
     assert "qa_llm_judgement_unavailable" not in report["warnings"]
 
+
 def test_workspace_validation_artifact_writes_run_ledger_command_evidence(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     run = FactoryRun(
@@ -519,7 +520,7 @@ class TestChiefEngineerHandoffGuards:
                         "model": "test-model",
                         "structured_output": ce_output,
                         "final_request_context_audit": {"context_window_utilization": 0.42},
-                        "context_snapshot_ref": "runtime/contexts/aa/bb.json",
+                        "context_snapshot_ref": "runtime/contexts/aa/abcdef123456abcdef123456.json",
                     },
                     usage={},
                 )
@@ -4121,7 +4122,7 @@ class TestRunWorkspaceQualityChecks:
         assert payload["passed"] is True
 
     @pytest.mark.asyncio
-    async def test_repairs_typescript_failures_across_multiple_rounds(
+    async def test_unplannable_cross_file_typescript_missing_export_routes_to_task_boundary_triage(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -4193,18 +4194,19 @@ class TestRunWorkspaceQualityChecks:
 
         passed, artifact = await executor._run_workspace_quality_checks(run, {})
 
-        assert passed is True
-        assert calls == [["npm", "run", "build"], ["npm", "run", "build"], ["npm", "run", "build"]]
+        assert passed is False
+        assert calls == [["npm", "run", "build"]]
         payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
-        assert payload["passed"] is True
-        assert [item["phase"] for item in payload["commands"]] == [
-            "check",
-            "check_after_repair",
-            "check_after_repair_2",
-        ]
-        assert len(payload["repair"]["rounds"]) == 2
-        assert "deterministic_typescript_missing_export_repair" in payload["repair"]["source_tools"]
-        assert "deterministic_typescript_missing_member_repair" in payload["repair"]["source_tools"]
+        assert payload["passed"] is False
+        assert payload["warnings"] == ["task_boundary_interface_discrepancy_required"]
+        assert [item["phase"] for item in payload["commands"]] == ["check"]
+        repair = payload["repair"]
+        assert repair["task_boundary_triage_required"] is True
+        assert repair["success_reason"] == "task_boundary_interface_discrepancy_required"
+        assert repair["plan_probe_preaudit"]["status"] == "coverage_matched_but_unplannable"
+        assert repair["plan_probe_preaudit"]["covered_unplannable_diagnostic_count"] == 2
+        assert repair["write_tool_evidence"] is False
+        assert repair["tool_results"] == 0
 
     @pytest.mark.asyncio
     async def test_repairs_typescript_enum_member_separator_and_reruns_commands(
@@ -5840,7 +5842,7 @@ class TestDirectorDispatchLoop:
         tasks = [
             {
                 "id": "TASK-1",
-                "target_files": ["package.json", "src/index.ts", "index.html"],
+                "target_files": ["package.json", "src/index.ts"],
             }
         ]
         executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
@@ -5877,7 +5879,17 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-23T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        _write_handoff_ready_review_for_tasks(
+            executor,
+            run_id=run.id,
+            tasks=[
+                *tasks,
+                {
+                    "id": "TASK-2",
+                    "target_files": ["package.json", "src/index.ts"],
+                },
+            ],
+        )
 
         result = await executor._execute_director_dispatch(
             run,
@@ -6017,7 +6029,7 @@ class TestDirectorDispatchLoop:
         tasks = [
             {
                 "id": "TASK-1",
-                "target_files": ["package.json", "src/index.ts", "index.html", "README.md"],
+                "target_files": ["package.json", "src/index.ts", "README.md"],
             }
         ]
         executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
@@ -6053,7 +6065,17 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-23T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        _write_handoff_ready_review_for_tasks(
+            executor,
+            run_id=run.id,
+            tasks=[
+                *tasks,
+                {
+                    "id": "TASK-2",
+                    "target_files": ["package.json", "src/index.ts"],
+                },
+            ],
+        )
 
         result = await executor._execute_director_dispatch(
             run,
