@@ -2454,7 +2454,7 @@ def test_post_execution_migration_debt_ledger_distinguishes_runtime_and_legacy(
     steps = {step["step_id"]: step for step in migration_debt["steps"]}
     cpp_step = steps["cpp.post_execution"]
     assert cpp_step["runtime_executable_source_tools"] == ["deterministic_cpp_include_path_repair"]
-    assert cpp_step["legacy_only_source_tools"] == []
+    assert cpp_step["adapter_only_source_tools"] == []
     assert cpp_step["write_tool_evidence"] is True
     assert cpp_step["verifier_evidence_required"] is True
     assert cpp_step["verifier_evidence_present"] is False
@@ -2463,15 +2463,15 @@ def test_post_execution_migration_debt_ledger_distinguishes_runtime_and_legacy(
 
     java_step = steps["java.post_execution"]
     assert java_step["runtime_executable_source_tools"] == ["deterministic_java_post_repair"]
-    assert java_step["legacy_only_source_tools"] == []
-    assert "legacy_callback_record_projection" in java_step["blockers"]
-    legacy_payload = next(
+    assert java_step["adapter_only_source_tools"] == []
+    assert "adapter_projection_record_requires_revalidation" in java_step["blockers"]
+    adapter_projection_payload = next(
         item["result"] for item in tool_results if item["result"]["source_tool"] == "deterministic_java_post_repair"
     )
-    assert legacy_payload["repair_kernel"]["owner_cell"] == "roles.adapters.strategy_host"
-    assert legacy_payload["repair_kernel"]["authoritative"] is False
-    assert legacy_payload["repair_kernel"]["requires_revalidation"] is True
-    assert migration_debt["adapter_projection_debt"]["legacy_only_step_count"] == 0
+    assert adapter_projection_payload["repair_kernel"]["owner_cell"] == "roles.adapters.strategy_host"
+    assert adapter_projection_payload["repair_kernel"]["authoritative"] is False
+    assert adapter_projection_payload["repair_kernel"]["requires_revalidation"] is True
+    assert migration_debt["adapter_projection_debt"]["adapter_only_step_count"] == 0
 
 
 def test_go_post_execution_uses_runtime_source_tool_sequence_without_adapter_aggregate(
@@ -2588,9 +2588,7 @@ def test_post_execution_rust_migration_debt_uses_typed_receipt_gap_names(
     assert evidence["typed_receipt_cutover_authoritative"] is False
     assert evidence["cutover_ready"] is False
     assert evidence["remaining_source_tool_count"] == 1
-    assert evidence["remaining_source_tools_without_runtime_receipt"] == [
-        "deterministic_rust_missing_fields_repair"
-    ]
+    assert evidence["remaining_source_tools_without_runtime_receipt"] == ["deterministic_rust_missing_fields_repair"]
     assert evidence["remaining_legacy_subcase_count"] == 1
     assert evidence["runtime_migrated_subcase_count"] == 2
     assert "typed_receipt_cutover_not_authoritative" in evidence["cutover_blockers"]
@@ -2725,11 +2723,11 @@ def test_post_execution_migration_debt_marks_runtime_verifier_evidence_without_a
 
     java_step = steps["java.post_execution"]
     assert java_step["runtime_executable_source_tools"] == ["deterministic_java_post_repair"]
-    assert java_step["legacy_only_source_tools"] == []
+    assert java_step["adapter_only_source_tools"] == []
     assert java_step["verifier_evidence_present"] is False
     assert java_step["cutover_ready"] is False
-    assert "legacy_only_source_tools_present" not in java_step["blockers"]
-    assert "legacy_callback_record_projection" in java_step["blockers"]
+    assert "adapter_only_source_tools_present" not in java_step["blockers"]
+    assert "adapter_projection_record_requires_revalidation" in java_step["blockers"]
 
 
 def test_java_post_execution_junit_dependency_runs_runtime_binding(

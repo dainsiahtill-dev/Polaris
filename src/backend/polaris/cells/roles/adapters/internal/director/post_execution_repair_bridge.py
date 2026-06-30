@@ -1628,7 +1628,7 @@ def _record_payload(record: dict[str, Any], *, source_tool: str, default_action:
         "action": str(record.get("action") or default_action),
         "operation": "modify",
         "applied_tool_name": "write_file",
-        "receipt_authority": "non_authoritative_legacy_callback_record",
+        "receipt_authority": "non_authoritative_adapter_projection_record",
         "receipt_status": "pending_revalidation",
         "authoritative": False,
         "typed_receipt_path_available": False,
@@ -1637,7 +1637,7 @@ def _record_payload(record: dict[str, Any], *, source_tool: str, default_action:
         "repair_success_verdict": False,
         "verifier_evidence_required": True,
         "verifier_evidence_present": False,
-        "repair_kernel": _legacy_callback_repair_kernel_payload(
+        "repair_kernel": _adapter_projection_repair_kernel_payload(
             source_tool=source_tool,
             file_path=file_path,
         ),
@@ -2167,9 +2167,7 @@ def _rust_typed_receipt_cutover_projection_fields(cutover_evidence: dict[str, An
         "rust_typed_receipt_cutover_not_authoritative": not cutover_authoritative,
         "rust_typed_receipt_authority_boundary": str(evidence.get("authority_boundary") or ""),
         "rust_typed_receipt_remaining_source_tool_blockers": list(evidence.get("remaining_source_tool_blockers") or []),
-        "rust_typed_receipt_remaining_subcase_blockers": list(
-            evidence.get("remaining_legacy_subcase_blockers") or []
-        ),
+        "rust_typed_receipt_remaining_subcase_blockers": list(evidence.get("remaining_legacy_subcase_blockers") or []),
         "rust_typed_receipt_blocked_source_tool_blockers": list(evidence.get("blocked_source_tool_blockers") or []),
         "rust_typed_receipt_blocked_migrated_source_tool_blockers": list(
             evidence.get("blocked_migrated_source_tool_blockers") or []
@@ -2193,7 +2191,9 @@ def _rust_typed_receipt_cutover_projection_fields(cutover_evidence: dict[str, An
         "rust_typed_receipt_remaining_subcase_counts": dict(evidence.get("remaining_legacy_subcase_counts") or {}),
         "rust_typed_receipt_runtime_migrated_subcases": list(evidence.get("runtime_migrated_subcases") or []),
         "rust_typed_receipt_runtime_migrated_subcase_count": int(evidence.get("runtime_migrated_subcase_count") or 0),
-        "rust_typed_receipt_runtime_migrated_subcase_counts": dict(evidence.get("runtime_migrated_subcase_counts") or {}),
+        "rust_typed_receipt_runtime_migrated_subcase_counts": dict(
+            evidence.get("runtime_migrated_subcase_counts") or {}
+        ),
         "rust_typed_receipt_blocked_subcases": list(evidence.get("blocked_subcases") or []),
         "rust_typed_receipt_blocked_subcase_count": int(evidence.get("blocked_subcase_count") or 0),
         "rust_typed_receipt_blocked_subcase_counts": dict(evidence.get("blocked_subcase_counts") or {}),
@@ -2272,7 +2272,7 @@ def _build_repair_kernel_migration_debt(
         )
         for step in ordered_steps
     ]
-    legacy_step_count = sum(1 for step in step_entries if step["legacy_only_source_tools"])
+    adapter_only_step_count = sum(1 for step in step_entries if step["adapter_only_source_tools"])
     missing_evidence_step_count = sum(1 for step in step_entries if "missing_verifier_evidence" in step["blockers"])
     cutover_ready_step_count = sum(1 for step in step_entries if bool(step["cutover_ready"]))
     return {
@@ -2300,7 +2300,7 @@ def _build_repair_kernel_migration_debt(
             "produces_tool_results_only": True,
             "preferred_typed_receipt_entrypoint": "run_runtime_repair_convergence",
             "runtime_bound_step_count": sum(1 for step in step_entries if step["runtime_executable_source_tools"]),
-            "legacy_only_step_count": legacy_step_count,
+            "adapter_only_step_count": adapter_only_step_count,
             "missing_verifier_evidence_step_count": missing_evidence_step_count,
             "cutover_ready_step_count": cutover_ready_step_count,
             "cutover_ready": cutover_ready_step_count == len(step_entries) and bool(step_entries),
@@ -2328,7 +2328,7 @@ def _build_step_migration_debt(
     runtime_executable_source_tools = [
         source_tool for source_tool in actual_source_tools if source_tool in executable_source_tools
     ]
-    legacy_only_source_tools = [
+    adapter_only_source_tools = [
         source_tool for source_tool in actual_source_tools if source_tool not in executable_source_tools
     ]
     write_tool_evidence = any(_payload_has_write_tool_evidence(payload) for payload in payloads)
@@ -2374,8 +2374,8 @@ def _build_step_migration_debt(
         blockers.append("no_tool_results_observed")
     if actual_source_tools and not convergence_path_available:
         blockers.append("convergence_path_unavailable")
-    if legacy_only_source_tools:
-        blockers.append("legacy_only_source_tools_present")
+    if adapter_only_source_tools:
+        blockers.append("adapter_only_source_tools_present")
     if step.source_tool not in executable_source_tools and runtime_executable_source_tools:
         blockers.append("declared_step_source_tool_uses_aggregate_runner")
     if actual_source_tools and not write_tool_evidence:
@@ -2386,8 +2386,8 @@ def _build_step_migration_debt(
         blockers.append("convergence_verifier_not_provided")
     if any(_payload_has_non_authoritative_runtime_receipt(payload) for payload in payloads):
         blockers.append("non_authoritative_runtime_receipt_requires_revalidation")
-    if any(_payload_is_legacy_callback_record(payload) for payload in payloads):
-        blockers.append("legacy_callback_record_projection")
+    if any(_payload_is_adapter_projection_record(payload) for payload in payloads):
+        blockers.append("adapter_projection_record_requires_revalidation")
     if rust_typed_receipt_blocked_source_tools:
         blockers.append(_RUST_TYPED_RECEIPT_SOURCE_TOOL_BLOCKER)
     blockers = _sorted_unique(blockers)
@@ -2399,7 +2399,7 @@ def _build_step_migration_debt(
         "declared_source_tool": step.source_tool,
         "actual_source_tools": actual_source_tools,
         "runtime_executable_source_tools": runtime_executable_source_tools,
-        "legacy_only_source_tools": legacy_only_source_tools,
+        "adapter_only_source_tools": adapter_only_source_tools,
         "rust_typed_receipt_remaining_source_tools": remaining_source_tools,
         "rust_typed_receipt_source_tools_without_runtime_receipt": source_tools_without_runtime_receipt,
         "rust_typed_receipt_remaining_subcases": remaining_subcases,
@@ -2419,14 +2419,14 @@ def _build_step_migration_debt(
             and write_tool_evidence
             and convergence_path_available
             and verifier_evidence_present
-            and not legacy_only_source_tools
+            and not adapter_only_source_tools
             and not blockers
         ),
         "blockers": blockers,
     }
 
 
-def _legacy_callback_repair_kernel_payload(*, source_tool: str, file_path: str) -> dict[str, Any]:
+def _adapter_projection_repair_kernel_payload(*, source_tool: str, file_path: str) -> dict[str, Any]:
     return {
         "owner_cell": "roles.adapters.strategy_host",
         "status": "pending_revalidation",
@@ -2442,19 +2442,19 @@ def _legacy_callback_repair_kernel_payload(*, source_tool: str, file_path: str) 
         "source_tools": [source_tool],
         "file": file_path,
         "files_changed": [file_path] if file_path else [],
-        "receipt_authority": "non_authoritative_legacy_callback_record",
+        "receipt_authority": "non_authoritative_adapter_projection_record",
         "typed_receipt_path_available": False,
         "applied_tool_name": "write_file",
         "revalidation_evidence": {},
         "migration_debt": {
-            "schema_version": "director.post_execution_legacy_callback_record_debt.v1",
-            "legacy_only_source_tools": [source_tool],
+            "schema_version": "director.post_execution_adapter_projection_record_debt.v1",
+            "adapter_only_source_tools": [source_tool],
             "runtime_executable_source_tools": [],
             "cutover_ready": False,
             "blockers": [
-                "legacy_only_source_tools_present",
+                "adapter_only_source_tools_present",
                 "missing_verifier_evidence",
-                "legacy_callback_record_projection",
+                "adapter_projection_record_requires_revalidation",
             ],
         },
     }
@@ -2521,7 +2521,7 @@ def _payload_has_non_authoritative_runtime_receipt(payload: dict[str, Any]) -> b
     return not bool(repair_kernel.get("authoritative")) or bool(repair_kernel.get("requires_revalidation"))
 
 
-def _payload_is_legacy_callback_record(payload: dict[str, Any]) -> bool:
+def _payload_is_adapter_projection_record(payload: dict[str, Any]) -> bool:
     repair_kernel = payload.get("repair_kernel")
     return isinstance(repair_kernel, dict) and repair_kernel.get("owner_cell") == "roles.adapters.strategy_host"
 
