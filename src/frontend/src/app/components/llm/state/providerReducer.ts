@@ -67,8 +67,7 @@ export interface ProviderState {
   deepView: DeepView;
   interviewMode: InterviewMode;
   
-  // Provider card editing state
-  editingProvider: string | null;
+  // Provider card expansion state
   expandedProviders: Set<string>;
   
   // === 新的统一编辑状态 ===
@@ -118,9 +117,7 @@ export type ProviderAction =
   | { type: 'SET_DEEP_VIEW'; payload: DeepView }
   | { type: 'SET_INTERVIEW_MODE'; payload: InterviewMode }
   
-  // Provider card editing
-  | { type: 'START_EDIT_PROVIDER'; payload: string }
-  | { type: 'STOP_EDIT_PROVIDER' }
+  // Provider card expansion
   | { type: 'TOGGLE_EXPAND_PROVIDER'; payload: string }
   | { type: 'EXPAND_ALL_PROVIDERS' }
   | { type: 'COLLAPSE_ALL_PROVIDERS' }
@@ -188,8 +185,6 @@ export const initialProviderState: ProviderState = {
   deepView: 'hall',
   interviewMode: 'interactive',
   
-  // Provider card editing state
-  editingProvider: null,
   expandedProviders: new Set(),
   
   // 新的统一编辑状态
@@ -289,21 +284,6 @@ export function providerReducer(state: ProviderState, action: ProviderAction): P
         interviewMode: action.payload,
         // 切换模式时重置视图
         deepView: action.payload === 'auto' ? 'hall' : state.deepView,
-      };
-    }
-    
-    // Provider 编辑
-    case 'START_EDIT_PROVIDER': {
-      return {
-        ...state,
-        editingProvider: action.payload,
-      };
-    }
-    
-    case 'STOP_EDIT_PROVIDER': {
-      return {
-        ...state,
-        editingProvider: null,
       };
     }
     
@@ -704,9 +684,7 @@ export const ProviderActions = {
   setDeepView: (view: DeepView): ProviderAction => ({ type: 'SET_DEEP_VIEW', payload: view }),
   setInterviewMode: (mode: InterviewMode): ProviderAction => ({ type: 'SET_INTERVIEW_MODE', payload: mode }),
   
-  // Provider card edit actions
-  startEditProvider: (id: string): ProviderAction => ({ type: 'START_EDIT_PROVIDER', payload: id }),
-  stopEditProvider: (): ProviderAction => ({ type: 'STOP_EDIT_PROVIDER' }),
+  // Provider card expansion actions
   toggleExpandProvider: (id: string): ProviderAction => ({ type: 'TOGGLE_EXPAND_PROVIDER', payload: id }),
   collapseAllProviders: (): ProviderAction => ({ type: 'COLLAPSE_ALL_PROVIDERS' }),
   

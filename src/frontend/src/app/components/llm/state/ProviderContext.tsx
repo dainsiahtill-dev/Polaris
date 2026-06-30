@@ -143,9 +143,7 @@ interface ProviderActionsContextValue {
   setDeepView: (view: 'hall' | 'session') => void;
   setInterviewMode: (mode: 'interactive' | 'auto') => void;
 
-  // Actions - Provider Card Editing
-  startEditProvider: (id: string) => void;
-  stopEditProvider: () => void;
+  // Actions - Provider Card Expansion
   toggleExpandProvider: (id: string) => void;
   collapseAllProviders: () => void;
 
@@ -265,16 +263,8 @@ export function ProviderContextProvider({
   }, []);
 
   // ==========================================================================
-  // Provider Card Edit Actions
+  // Provider Card Expansion Actions
   // ==========================================================================
-  const startEditProvider = useCallback((id: string) => {
-    dispatch(ProviderActions.startEditProvider(id));
-  }, []);
-
-  const stopEditProvider = useCallback(() => {
-    dispatch(ProviderActions.stopEditProvider());
-  }, []);
-
   const toggleExpandProvider = useCallback((id: string) => {
     dispatch(ProviderActions.toggleExpandProvider(id));
   }, []);
@@ -430,8 +420,6 @@ export function ProviderContextProvider({
       setConfigView,
       setDeepView,
       setInterviewMode,
-      startEditProvider,
-      stopEditProvider,
       toggleExpandProvider,
       collapseAllProviders,
       startEdit,
@@ -470,8 +458,6 @@ export function ProviderContextProvider({
       setConfigView,
       setDeepView,
       setInterviewMode,
-      startEditProvider,
-      stopEditProvider,
       toggleExpandProvider,
       collapseAllProviders,
       startEdit,

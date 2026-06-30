@@ -69,9 +69,7 @@ interface CanonicalBridgeContextValue {
   setDeepView: (view: 'hall' | 'session') => void;
   setInterviewMode: (mode: 'interactive' | 'auto') => void;
   
-  // Provider Edit (Legacy-compatible)
-  startEditProvider: (id: string) => void;
-  stopEditProvider: () => void;
+  // Provider Card Expansion
   toggleExpandProvider: (id: string) => void;
   collapseAllProviders: () => void;
   
@@ -209,9 +207,6 @@ function mapCanonicalToLegacyState(
     // Unified config (converted from entities) - will be refactored in Phase 5
     unifiedConfig: {} as UnifiedLlmConfig,
     
-    // Provider card editing state
-    editingProvider: canonical.asyncOps.savingProviderId || null,
-    
     // New edit state (from canonical async ops)
     editingProviderId: canonical.asyncOps.savingProviderId || null,
     editFormState: legacyState?.editFormState || {},
@@ -297,15 +292,7 @@ export function CanonicalBridgeProvider({
 
   }, []);
   
-  // Provider Card Edit Actions
-  const startEditProvider = useCallback((id: string) => {
-    manager.updateAsyncOps({ savingProviderId: id });
-  }, [manager]);
-  
-  const stopEditProvider = useCallback(() => {
-    manager.updateAsyncOps({ savingProviderId: undefined });
-  }, [manager]);
-  
+  // Provider Card Expansion Actions
   const toggleExpandProvider = useCallback((id: string) => {
     const currentExpanded = new Set(canonicalState.ui.expandedProviderIds);
     if (currentExpanded.has(id)) {
@@ -506,8 +493,6 @@ export function CanonicalBridgeProvider({
       setConfigView,
       setDeepView,
       setInterviewMode,
-      startEditProvider,
-      stopEditProvider,
       toggleExpandProvider,
       collapseAllProviders,
       startEdit,
@@ -548,8 +533,6 @@ export function CanonicalBridgeProvider({
       setConfigView,
       setDeepView,
       setInterviewMode,
-      startEditProvider,
-      stopEditProvider,
       toggleExpandProvider,
       collapseAllProviders,
       startEdit,

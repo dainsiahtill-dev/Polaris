@@ -56,8 +56,6 @@ export interface SerializableProviderState {
   deepView: DeepView;
   interviewMode: InterviewMode;
 
-  // Legacy edit
-  editingProvider: string | null;
   expandedProviders: string[]; // Set -> Array
 
   // New edit
@@ -100,9 +98,6 @@ export interface ProviderStoreActions {
   setDeepView: (view: DeepView) => void;
   setInterviewMode: (mode: InterviewMode) => void;
 
-  // Legacy edit
-  startEditProvider: (id: string) => void;
-  stopEditProvider: () => void;
   toggleExpandProvider: (id: string) => void;
   collapseAllProviders: () => void;
 
@@ -242,7 +237,6 @@ const getInitialState = (): SerializableProviderState => ({
   deepView: 'hall',
   interviewMode: 'interactive',
 
-  editingProvider: null,
   expandedProviders: [],
 
   editingProviderId: null,
@@ -319,11 +313,6 @@ export const useProviderStore = create<ProviderStoreState & ProviderStoreActions
         interviewMode: mode,
         deepView: mode === 'auto' ? 'hall' : get().deepView,
       }),
-
-      // ============ Legacy Edit ============
-      startEditProvider: (id) => set({ editingProvider: id }),
-
-      stopEditProvider: () => set({ editingProvider: null }),
 
       toggleExpandProvider: (id) => set((state) => {
         const expanded = new Set(state.expandedProviders);
