@@ -7,7 +7,6 @@
  * - projectionAdapter: Runtime event to projection adapter
  * - selectors: React hooks for selecting runtime state
  * - guards: Type guards for runtime types
- * - dashboard: Dashboard-specific runtime utilities
  * - directorWorkspace: Director workspace utilities
  * - transport: Unified WebSocket transport layer (Nats-JetStream alignment)
  *
@@ -47,9 +46,6 @@ export * from './selectors';
 
 // Type guards
 export * from './guards';
-
-// Dashboard utilities
-export * from './dashboard';
 
 // Director workspace utilities
 export * from './directorWorkspace';
