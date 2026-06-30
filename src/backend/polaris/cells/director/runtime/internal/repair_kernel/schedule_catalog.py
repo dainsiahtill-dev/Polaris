@@ -354,7 +354,6 @@ _MATERIALIZATION_NODE_MANIFEST_RUNTIME_SOURCE_TOOLS = (
     "deterministic_runtime_dependency_repair",
 )
 _MATERIALIZATION_TARGET_RUNTIME_SOURCE_TOOLS = (
-    "deterministic_missing_declared_target_repair",
     "deterministic_javascript_test_missing_target_repair",
     "deterministic_javascript_typescript_annotation_repair",
     "deterministic_javascript_missing_export_repair",

@@ -35,10 +35,6 @@ _GENERIC_PLACEHOLDER_ERROR_RE = re.compile(
     r"generic/placeholder content detected:\s*(?P<path>[^:\s]+):",
     re.IGNORECASE,
 )
-_DECLARED_TARGET_FILE_MISSING_RE = re.compile(
-    r"declared target file(?:\s+missing)?\s+['\"]?(?P<path>[^'\"\n]+?)['\"]?(?:\s+is\s+missing)?(?:$|\s)",
-    re.IGNORECASE,
-)
 _UNDECLARED_RUNTIME_IMPORT_ERROR_RE = re.compile(
     r"undeclared runtime import ['\"](?P<package>[^'\"]+)['\"] in (?P<path>\S+)",
     re.IGNORECASE,
@@ -187,31 +183,35 @@ def build_missing_declared_target_plan(
     mode: str = "commit",
     source_tool: str = MISSING_DECLARED_TARGET_SOURCE_TOOL,
     rule_id: str = "generic.missing_declared_target",
-    pre_materialization_only: bool = False,
+    pre_materialization_filter: bool = False,
 ) -> RepairPlan | None:
-    """Build a create-file plan for missing declared targets from nearby source files."""
+    """Create a missing declared target only from an existing nearby source file."""
 
     normalized_base = _normalize_base_files(base_files)
     operations: list[RepairOperation] = []
     for missing_path in _missing_declared_target_paths(diagnostics):
-        if pre_materialization_only and not _pre_materialization_declared_target_repair_allowed(missing_path):
+        if pre_materialization_filter and not _pre_materialization_declared_target_repair_allowed(missing_path):
             continue
         if missing_path in normalized_base:
             continue
-        source_path = _nearby_declared_target_source(normalized_base, missing_path)
-        if not source_path:
+        source_path = _find_nearby_declared_target_source(normalized_base, missing_path)
+        if source_path is None:
             continue
         content = normalized_base[source_path]
+        if not _declared_target_source_quality_safe(content):
+            continue
         operations.append(
             RepairOperation(
                 kind="write_file",
                 path=missing_path,
                 content=content,
                 metadata={
-                    "target_contract": "declared_target",
+                    "repair_kind": "missing_declared_target",
                     "source_file": source_path,
-                    "created_from_nearby_declared_target_source": True,
-                    "write_file_reason": "new_declared_target_from_nearby_source",
+                    "edit_strategy": "write_file",
+                    "write_file_reason": "new_file_from_existing_declared_source",
+                    "fabricates_content": False,
+                    "pre_materialization_filter": bool(pre_materialization_filter),
                 },
             )
         )
@@ -223,9 +223,42 @@ def build_missing_declared_target_plan(
         operations=tuple(operations),
         diagnostics=tuple(diagnostics or ()),
         mode=mode,
-        risk_level="low",
-        priority=0,
-        metadata={"target_contract": "declared_target", "create_file_requires_allowed_path": True},
+        risk_level="medium",
+        priority=0 if pre_materialization_filter else 1,
+        metadata={
+            "declared_target_repair": True,
+            "fabricates_content": False,
+            "source": "nearby_declared_source",
+        },
+    )
+
+
+def build_declared_target_contract_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic] = (),
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Keep declared-target contract repair as an audit/classification surface."""
+
+    return None
+
+
+def build_pre_materialization_declared_target_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic] = (),
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Create pre-materialization declared targets for the legacy allowlist only."""
+
+    return build_missing_declared_target_plan(
+        base_files=base_files,
+        diagnostics=diagnostics,
+        mode=mode,
+        source_tool=PRE_MATERIALIZATION_DECLARED_TARGET_SOURCE_TOOL,
+        rule_id="generic.pre_materialization_declared_target",
+        pre_materialization_filter=True,
     )
 
 
@@ -368,29 +401,14 @@ def build_generic_hygiene_plan(
             rule_id="generic.scaffold_residue_cleanup",
         )
     if source_tool == MISSING_DECLARED_TARGET_SOURCE_TOOL:
-        return build_missing_declared_target_plan(
-            base_files=base_files,
-            diagnostics=diagnostics,
-            mode=mode,
-            source_tool=source_tool,
-            rule_id="generic.missing_declared_target",
-        )
+        return build_missing_declared_target_plan(base_files=base_files, diagnostics=diagnostics, mode=mode)
     if source_tool == DECLARED_TARGET_CONTRACT_SOURCE_TOOL:
-        return build_missing_declared_target_plan(
-            base_files=base_files,
-            diagnostics=diagnostics,
-            mode=mode,
-            source_tool=source_tool,
-            rule_id="generic.declared_target_contract",
-        )
+        return build_declared_target_contract_plan(base_files=base_files, diagnostics=diagnostics, mode=mode)
     if source_tool == PRE_MATERIALIZATION_DECLARED_TARGET_SOURCE_TOOL:
-        return build_missing_declared_target_plan(
+        return build_pre_materialization_declared_target_plan(
             base_files=base_files,
             diagnostics=diagnostics,
             mode=mode,
-            source_tool=source_tool,
-            rule_id="generic.pre_materialization_declared_target",
-            pre_materialization_only=True,
         )
     if source_tool == RUNTIME_DEPENDENCY_SOURCE_TOOL:
         return build_runtime_dependency_plan(base_files=base_files, diagnostics=diagnostics, mode=mode)
@@ -529,25 +547,34 @@ def _scaffold_marker_error_paths(diagnostics: Sequence[RepairDiagnostic]) -> tup
 def _missing_declared_target_paths(diagnostics: Sequence[RepairDiagnostic]) -> tuple[str, ...]:
     paths: list[str] = []
     for diagnostic in diagnostics:
-        if diagnostic.code == "declared_target_missing" and diagnostic.path:
-            path = _normalize_repair_path(str(diagnostic.path))
-            if path:
-                paths.append(path)
-                continue
-        text = "\n".join(item for item in (str(diagnostic.raw or ""), str(diagnostic.message or "")) if item)
-        match = _DECLARED_TARGET_FILE_MISSING_RE.search(text)
-        if match:
-            path = _normalize_repair_path(str(match.group("path") or ""))
-            if path:
-                paths.append(path)
+        if diagnostic.code != "declared_target_missing":
+            continue
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        if path and not any(ch in path for ch in ("*", "?")):
+            paths.append(path)
     return tuple(dict.fromkeys(paths))
 
 
-def _nearby_declared_target_source(base_files: Mapping[str, str], missing_path: str) -> str:
-    normalized = _normalize_repair_path(missing_path)
-    if not normalized or "." not in normalized.rsplit("/", 1)[-1]:
-        return ""
-    directory, filename = normalized.rsplit("/", 1) if "/" in normalized else ("", normalized)
+def _find_nearby_declared_target_source(base_files: Mapping[str, str], missing_path: str) -> str | None:
+    normalized_missing = _normalize_repair_path(missing_path)
+    if not normalized_missing:
+        return None
+    for candidate in _nearby_declared_target_source_candidates(normalized_missing):
+        if candidate != normalized_missing and candidate in base_files:
+            return candidate
+    return None
+
+
+def _nearby_declared_target_source_candidates(path: str) -> tuple[str, ...]:
+    normalized = _normalize_repair_path(path)
+    if "/" in normalized:
+        directory, filename = normalized.rsplit("/", 1)
+        prefix = f"{directory}/"
+    else:
+        filename = normalized
+        prefix = ""
+    if "." not in filename:
+        return ()
     stem, suffix = filename.rsplit(".", 1)
     suffix = f".{suffix}"
     candidate_stems: list[str] = []
@@ -557,12 +584,8 @@ def _nearby_declared_target_source(base_files: Mapping[str, str], missing_path: 
         candidate_stems.append(stem.split(".", 1)[0])
     if stem.endswith("-model"):
         candidate_stems.append(stem[: -len("-model")])
-    for candidate_stem in dict.fromkeys(candidate_stems):
-        candidate = f"{candidate_stem}{suffix}"
-        candidate_path = f"{directory}/{candidate}" if directory else candidate
-        if candidate_path != normalized and candidate_path in base_files:
-            return candidate_path
-    return ""
+    candidates = [f"{prefix}{candidate_stem}{suffix}" for candidate_stem in candidate_stems if candidate_stem]
+    return tuple(dict.fromkeys(candidates))
 
 
 def _pre_materialization_declared_target_repair_allowed(relative_path: str) -> bool:
@@ -581,6 +604,13 @@ def _pre_materialization_declared_target_repair_allowed(relative_path: str) -> b
         or lowered == "tests/unit/taskgraph.test.ts"
         or lowered.endswith("/taskgraph.test.ts")
     )
+
+
+def _declared_target_source_quality_safe(content: str) -> bool:
+    text = str(content or "")
+    if _PATCH_RESIDUE_LINE_RE.search(text):
+        return False
+    return not any(marker in text for marker in ("audit-seed", "TODO", "FIXME", "NotImplemented"))
 
 
 def _parse_undeclared_runtime_import_packages(diagnostics: Sequence[RepairDiagnostic]) -> tuple[str, ...]:
@@ -630,9 +660,11 @@ __all__ = [
     "SCAFFOLD_MARKER_CLEANUP_SOURCE_TOOL",
     "SCAFFOLD_MARKER_QUALITY_CLEANUP_SOURCE_TOOL",
     "SCAFFOLD_RESIDUE_CLEANUP_SOURCE_TOOL",
+    "build_declared_target_contract_plan",
     "build_generic_hygiene_plan",
     "build_missing_declared_target_plan",
     "build_patch_residue_cleanup_plan",
+    "build_pre_materialization_declared_target_plan",
     "build_quality_repair_plan",
     "build_runtime_dependency_plan",
     "build_scaffold_marker_cleanup_plan",

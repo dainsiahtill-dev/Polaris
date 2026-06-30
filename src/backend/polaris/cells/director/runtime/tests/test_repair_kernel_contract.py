@@ -3528,6 +3528,84 @@ def test_scaffold_placeholder_quality_diagnostic_is_covered_plannable() -> None:
     assert result.items[0].patch_count == 1
 
 
+def test_missing_declared_target_runtime_declines_file_fabrication(tmp_path: Path) -> None:
+    source_path = "src/user.ts"
+    missing_path = "src/user.model.ts"
+    source_content = "export interface User { id: string; }\n"
+    diagnostic = f"Artifact quality scan failed: declared target file missing '{missing_path}'"
+    writes: list[tuple[str, str]] = []
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        writes.append((path, content))
+        return {
+            "ok": True,
+            "file": path,
+            "operation": "create",
+            "bytes_written": len(content.encode("utf-8")),
+        }
+
+    result = run_director_repair(
+        RunDirectorRepairCommandV1(
+            task_id="task-missing-declared-target",
+            workspace=str(tmp_path),
+            source_tool="deterministic_missing_declared_target_repair",
+            base_files={source_path: source_content},
+            artifact_quality_errors=(diagnostic,),
+            allowed_paths=(source_path, missing_path),
+        ),
+        writer=writer,
+    )
+
+    assert result.ok is False
+    assert result.error_code == "unsupported_repair_source_tool"
+    assert writes == []
+    assert result.receipts == ()
+    assert not (tmp_path / missing_path).exists()
+
+    coverage = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,))
+    ).to_dict()
+    item = coverage["items"][0]
+    assert item["known_rule_matched"] is True
+    assert item["executable_runtime_plan_matched"] is False
+    assert item["metadata_only_match"] is True
+    assert item["coverage_status"] == "metadata_only_not_executable"
+    assert item["recommended_route"] == "task_boundary"
+    assert item["runtime_blocker_reasons"] == ["task_boundary_required"]
+    assert "deterministic_missing_declared_target_repair" in item["matched_source_tools"]
+
+    probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=(diagnostic,),
+            base_files={source_path: source_content},
+            source_tools=("deterministic_missing_declared_target_repair",),
+        )
+    )
+    assert probe.status == "coverage_matched_but_unplannable"
+    assert probe.plannable_source_tools == ()
+    assert probe.covered_unplannable_source_tools == ("deterministic_missing_declared_target_repair",)
+    assert probe.items[0].status == "unsupported_repair_source_tool"
+    assert probe.items[0].patch_count == 0
+
+
+def test_pre_materialization_declared_target_runtime_filters_unsafe_paths() -> None:
+    source_path = "src/app.ts"
+    diagnostic = "Artifact quality scan failed: declared target file missing 'docs/app.model.ts'"
+
+    planning = plan_runtime_repair(
+        source_tool="deterministic_pre_materialization_declared_target_repair",
+        base_files={source_path: "export const app = true;\n"},
+        artifact_quality_errors=(diagnostic,),
+        mode="shadow",
+    )
+
+    assert planning.plan is None
+    assert planning.composition is None
+
+
 def test_typescript_ts2584_dom_lib_diagnostic_is_covered_plannable() -> None:
     source_tool = ts_syntax.TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL
     diagnostic = (

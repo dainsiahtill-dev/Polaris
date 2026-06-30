@@ -145,6 +145,11 @@ MIGRATED_EXECUTE_METHOD_COMPAT_HELPERS_FORBIDDEN = {
     "_apply_deterministic_javascript_missing_method_runtime_repair",
     "_apply_deterministic_node_test_script_contract_repair",
     "_apply_deterministic_html_typescript_module_script_repair",
+    "_apply_deterministic_scaffold_marker_cleanup",
+    "_apply_deterministic_scaffold_marker_error_cleanup",
+    "_apply_deterministic_pre_materialization_declared_target_repairs",
+    "_apply_deterministic_declared_target_contract_repairs",
+    "_apply_deterministic_missing_declared_target_repair",
     "_apply_deterministic_javascript_typescript_annotation_repair",
     "_apply_deterministic_npm_test_script_repair",
     "_apply_deterministic_python_package_shadow_bridge_repair",
@@ -1477,7 +1482,6 @@ def test_roles_adapter_repair_summaries_use_runtime_typed_projection_contract() 
     adapter_projection_callers = [
         POST_EXECUTION_BRIDGE_PATH,
         MATERIALIZATION_QUALITY_EVIDENCE_PORTS_PATH,
-        GENERIC_REPAIRS_PATH,
         QUALITY_GATE_PATH,
     ]
     violations: list[str] = []

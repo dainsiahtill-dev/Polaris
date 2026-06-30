@@ -38,9 +38,6 @@ from polaris.cells.roles.adapters.internal.director.adapter import (
     _merge_ce_blueprint_contract_payload,
     _normalize_director_role_response,
 )
-from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
-    _apply_deterministic_scaffold_marker_cleanup,
-)
 from polaris.cells.roles.adapters.internal.director.execute_method import (
     _build_empty_write_content_retry_message,
     _build_existing_workspace_task_evidence,
@@ -6512,45 +6509,6 @@ export function summary() {
 
         assert results == []
         assert target.read_text(encoding="utf-8") == original
-
-    def test_deterministic_scaffold_marker_cleanup_rewrites_declared_residue_files(self, tmp_path: Any) -> None:
-        source = tmp_path / "src" / "server" / "app.ts"
-        source.parent.mkdir(parents=True, exist_ok=True)
-        source.write_text(
-            'export const tags = ["runtime", "audit-seed"];\nexport const title = "server planning scenario 0";\n',
-            encoding="utf-8",
-        )
-        script = tmp_path / "scripts" / "test.mjs"
-        script.parent.mkdir(parents=True, exist_ok=True)
-        script.write_text(
-            "throw new Error(`trivial arithmetic placeholder test scripts/test.mjs`);\n"
-            "console.log(`test verification completed: 1 files`);\n",
-            encoding="utf-8",
-        )
-        adapter = _make_adapter(tmp_path)
-
-        results = _apply_deterministic_scaffold_marker_cleanup(
-            adapter,
-            task={
-                "metadata": {
-                    "target_files": ["src/server/app.ts", "scripts/test.mjs"],
-                    "scope_paths": ["src/server/app.ts", "scripts/test.mjs"],
-                    "autofix_reason": "deterministic_scaffold_residue_cleanup",
-                }
-            },
-            task_id="PM-AUTO-SEED-RESIDUE-CLEANUP",
-        )
-
-        assert len(results) == 2
-        assert {item["result"]["source_tool"] for item in results} == {"deterministic_scaffold_marker_cleanup"}
-        source_text = source.read_text(encoding="utf-8")
-        script_text = script.read_text(encoding="utf-8")
-        assert "audit-seed" not in source_text
-        assert "planning scenario" not in source_text
-        assert "test verification completed" not in script_text
-        assert "placeholder" not in script_text
-        assert "verified-sample" in source_text
-        assert "test contract checks passed" in script_text
 
     @pytest.mark.asyncio
     async def test_execute_completes_scaffold_marker_cleanup_without_llm_call(self, tmp_path: Any) -> None:

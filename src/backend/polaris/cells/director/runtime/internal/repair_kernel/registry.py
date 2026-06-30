@@ -856,6 +856,23 @@ class RepairDiagnosticCoverage:
 def _runtime_blockers_for_matched_rules(rules: Sequence[RepairRuleDefinition]) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
     for rule in rules:
+        if rule.archetype == RepairArchetype.MISSING_DECLARED_TARGET and not rule.runtime_plan_available:
+            blockers.append(
+                {
+                    "reason": "task_boundary_required",
+                    "source_tool": rule.source_tool,
+                    "rule_id": rule.rule_id,
+                    "message": (
+                        "Declared target files that were never materialized must be handled "
+                        "by TaskBoundary/Director orchestration, not repair-kernel file fabrication."
+                    ),
+                    "metadata": {
+                        "responsible_layer": "task_boundary",
+                        "failure_class": "incomplete_materialization",
+                        "runtime_executable": False,
+                    },
+                }
+            )
         if (
             rule.source_tool == RUST_MISSING_FIELDS_SOURCE_TOOL
             and rule.rule_id == "rust.missing_struct_field_declaration"
@@ -1037,6 +1054,8 @@ def _coverage_recommended_route(
     if executable_runtime_plan_matched:
         return "runtime_rule"
     if metadata_only_match:
+        if diagnostic_archetype == RepairArchetype.MISSING_DECLARED_TARGET.value:
+            return "task_boundary"
         return "runtime_rule"
     if not known_rule_matched:
         if slot is not None:
@@ -1256,9 +1275,13 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 priority=1,
                 diagnostic_codes=("declared_target_missing",),
                 raw_terms=("src/",),
-                risk_level="low",
-                description="Creates missing declared target files only from nearby source files in base_files.",
+                risk_level="medium",
+                description=(
+                    "Creates a missing declared target only by copying an existing nearby "
+                    "declared source file through runtime policy-gated write_file."
+                ),
                 runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="generic_missing_declared_target_write_file"),
             ),
             RepairRuleDefinition(
                 rule_id="generic.declared_target_contract",
@@ -1269,9 +1292,12 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 priority=1,
                 diagnostic_codes=("declared_target_missing",),
                 raw_terms=("src/",),
-                risk_level="low",
-                description="Target-contract create-file repair using nearby source content and policy scope.",
-                runtime_plan_available=True,
+                risk_level="medium",
+                description=(
+                    "Classifies target-contract materialization gaps; missing files are "
+                    "not blanket repair-kernel write operations."
+                ),
+                runtime_plan_available=False,
             ),
             RepairRuleDefinition(
                 rule_id="generic.pre_materialization_declared_target",
@@ -1282,9 +1308,13 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 priority=1,
                 diagnostic_codes=("declared_target_missing",),
                 raw_terms=("src/",),
-                risk_level="low",
-                description="Pre-materialization declared-target repair limited to approved manifest/model targets.",
+                risk_level="medium",
+                description=(
+                    "Creates a pre-materialization declared target only for allowlisted "
+                    "target classes and only from an existing nearby source file."
+                ),
                 runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="generic_pre_materialization_declared_target_write_file"),
             ),
             RepairRuleDefinition(
                 rule_id="generic.runtime_dependency",

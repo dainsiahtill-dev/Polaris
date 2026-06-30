@@ -1070,6 +1070,8 @@ class DirectorRepairDiagnosticCoverageV1:
     authoritative_rule_registration_allowed: bool = False
     recommended_registration_path: str = ""
     coverage_status: str = "coverage_gap"
+    runtime_blockers: tuple[Mapping[str, Any], ...] = ()
+    runtime_blocker_reasons: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "diagnostic", _to_dict_copy(self.diagnostic))
@@ -1127,6 +1129,12 @@ class DirectorRepairDiagnosticCoverageV1:
             str(self.recommended_registration_path or "").strip(),
         )
         object.__setattr__(self, "coverage_status", str(self.coverage_status or "coverage_gap").strip())
+        object.__setattr__(self, "runtime_blockers", tuple(_to_dict_copy(item) for item in self.runtime_blockers))
+        object.__setattr__(
+            self,
+            "runtime_blocker_reasons",
+            _to_tuple_str(list(self.runtime_blocker_reasons)),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1162,6 +1170,8 @@ class DirectorRepairDiagnosticCoverageV1:
             "authoritative_rule_registration_allowed": False,
             "recommended_registration_path": self.recommended_registration_path,
             "coverage_status": self.coverage_status,
+            "runtime_blockers": [dict(item) for item in self.runtime_blockers],
+            "runtime_blocker_reasons": list(self.runtime_blocker_reasons),
         }
 
 

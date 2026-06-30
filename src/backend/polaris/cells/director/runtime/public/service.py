@@ -1478,6 +1478,8 @@ def _project_director_repair_diagnostic_coverage(
         authoritative_rule_registration_allowed=bool(gap_payload.get("authoritative_rule_registration_allowed")),
         recommended_registration_path=str(gap_payload.get("recommended_registration_path") or ""),
         coverage_status=str(coverage_payload.get("coverage_status") or "coverage_gap"),
+        runtime_blockers=tuple(dict(item) for item in coverage_payload.get("runtime_blockers") or ()),
+        runtime_blocker_reasons=tuple(str(item) for item in coverage_payload.get("runtime_blocker_reasons") or ()),
     )
 
 
