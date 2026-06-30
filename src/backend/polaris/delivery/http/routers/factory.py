@@ -19,6 +19,8 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from fastapi import APIRouter, Depends
+from polaris.cells.control_plane.run_ledger.public.contracts import ReadRunLedgerProjectionQueryV1
+from polaris.cells.control_plane.run_ledger.public.service import read_run_ledger_projection
 from polaris.cells.factory.pipeline.internal.bench_service import (
     FactoryBenchService,
 )
@@ -1725,6 +1727,60 @@ def _build_factory_audit_bundle(
     return result
 
 
+def _factory_run_identity(*, run: FactoryRun, workspace: str) -> dict[str, Any]:
+    start_request = run.metadata.get("factory_start_request")
+    start_request_map = start_request if isinstance(start_request, dict) else {}
+    start_metadata = start_request_map.get("metadata")
+    start_metadata_map = start_metadata if isinstance(start_metadata, dict) else {}
+    return {
+        "schema_version": "factory.run_identity.v1",
+        "run_id": run.id,
+        "factory_run_id": run.id,
+        "workspace": str(workspace),
+        "requested_project_id": str(
+            start_metadata_map.get("requested_project_id")
+            or start_metadata_map.get("factory_bench_requested_project_id")
+            or start_metadata_map.get("factory_bench_project_id")
+            or ""
+        ),
+        "canonical_project_id": str(
+            start_metadata_map.get("canonical_project_id")
+            or start_metadata_map.get("factory_bench_canonical_project_id")
+            or start_metadata_map.get("factory_bench_project_id")
+            or ""
+        ),
+        "instance_id": str(start_metadata_map.get("instance_id") or start_metadata_map.get("launcher_instance_id") or ""),
+        "backend_port": start_metadata_map.get("backend_port"),
+        "frontend_port": start_metadata_map.get("frontend_port"),
+    }
+
+
+def _attach_control_plane_projection(
+    *,
+    bundle: dict[str, Any],
+    run: FactoryRun,
+    workspace: str,
+) -> None:
+    identity = _factory_run_identity(run=run, workspace=workspace)
+    bundle["factory_run_id"] = run.id
+    bundle["workspace"] = str(workspace)
+    bundle["run_identity"] = identity
+    try:
+        projection = read_run_ledger_projection(
+            ReadRunLedgerProjectionQueryV1(workspace=str(workspace), run_id=run.id)
+        ).projection
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+        bundle["control_plane_projection_error"] = {
+            "schema_version": "factory.control_plane_projection_error.v1",
+            "code": "CONTROL_PLANE_PROJECTION_UNAVAILABLE",
+            "message": str(exc)[:300],
+            "exception_type": type(exc).__name__,
+        }
+        return
+    bundle["control_plane_projection"] = projection
+    bundle["run_ledger_projection"] = projection
+
+
 async def _persist_run_summary(
     *,
     service: FactoryRunService,
@@ -2208,6 +2264,7 @@ async def _get_factory_run_audit_bundle_core(
         artifacts=artifacts,
         events_tail_limit=limit,
     )
+    _attach_control_plane_projection(bundle=bundle, run=run, workspace=effective_workspace)
     return FactoryRunAuditBundleResponse(**bundle)
 
 

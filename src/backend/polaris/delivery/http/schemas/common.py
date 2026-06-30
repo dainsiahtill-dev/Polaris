@@ -164,6 +164,12 @@ class FactoryRunAuditBundleResponse(BaseModel):
     summary_json: dict[str, Any] | None = None
     generated_at: str | None = None
     evidence_counts: dict[str, Any] | None = None
+    factory_run_id: str | None = None
+    workspace: str | None = None
+    run_identity: dict[str, Any] | None = None
+    control_plane_projection: dict[str, Any] | None = None
+    run_ledger_projection: dict[str, Any] | None = None
+    control_plane_projection_error: dict[str, Any] | None = None
 
 
 class SessionDeleteResponse(BaseModel):

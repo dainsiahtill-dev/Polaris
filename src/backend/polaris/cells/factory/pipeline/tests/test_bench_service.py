@@ -132,6 +132,14 @@ class TestFactoryBenchService(unittest.TestCase):
                     "records": [
                         {
                             "project_id": "L1-01",
+                            "requested_project_id": "L1-01",
+                            "canonical_project_id": "L1-11",
+                            "instance_id": "bench-instance-1",
+                            "workspace": "/tmp/factory-bench/L1-01",
+                            "backend_port": 51001,
+                            "frontend_port": 52001,
+                            "run_id": "bench-run-1",
+                            "factory_run_id": "factory-run-1",
                             "run_ledger_projection": {
                                 "schema_version": 1,
                                 "source": "run_ledger",
@@ -183,7 +191,16 @@ class TestFactoryBenchService(unittest.TestCase):
         self.assertEqual(projection["projected"], 1)
         self.assertEqual(projection["missing"], 0)
         self.assertEqual(projection["projects"][0]["project_id"], "L1-01")
+        self.assertEqual(projection["projects"][0]["requested_project_id"], "L1-01")
+        self.assertEqual(projection["projects"][0]["canonical_project_id"], "L1-11")
+        self.assertEqual(projection["projects"][0]["instance_id"], "bench-instance-1")
+        self.assertEqual(projection["projects"][0]["workspace"], "/tmp/factory-bench/L1-01")
+        self.assertEqual(projection["projects"][0]["backend_port"], 51001)
+        self.assertEqual(projection["projects"][0]["frontend_port"], 52001)
+        self.assertEqual(projection["projects"][0]["run_id"], "bench-run-1")
+        self.assertEqual(projection["projects"][0]["factory_run_id"], "factory-run-1")
         self.assertEqual(projection["projects"][0]["latest_token_id"], "job-token-1")
+        self.assertEqual(projection["projects"][0]["run_ledger_projection"]["source"], "run_ledger")
         self.assertEqual(projection["evidence_policy"]["enabled_modalities"], ["browser"])
         self.assertEqual(projection["projects"][0]["evidence_policy"]["enabled_modalities"], ["browser"])
         self.assertEqual(projection["goal_audit"], {"projected": 1, "total": 1, "missing": 0})

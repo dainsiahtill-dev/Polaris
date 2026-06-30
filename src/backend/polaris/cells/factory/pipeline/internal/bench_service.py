@@ -230,6 +230,14 @@ def _control_plane_projection_from_audit(status: dict[str, Any]) -> dict[str, An
         projects.append(
             {
                 "project_id": str(record.get("project_id") or record.get("id") or f"record-{index + 1}"),
+                "requested_project_id": str(record.get("requested_project_id") or record.get("project_id") or ""),
+                "canonical_project_id": str(record.get("canonical_project_id") or record.get("project_id") or ""),
+                "instance_id": str(record.get("instance_id") or ""),
+                "workspace": str(record.get("workspace") or ""),
+                "backend_port": record.get("backend_port"),
+                "frontend_port": record.get("frontend_port"),
+                "run_id": str(record.get("run_id") or ""),
+                "factory_run_id": str(record.get("factory_run_id") or ""),
                 "ok": ok,
                 "integrity_ok": bool(projection_for_summary.get("integrity_ok")),
                 "outcome_ok": bool(projection_for_summary.get("outcome_ok")),
@@ -241,6 +249,7 @@ def _control_plane_projection_from_audit(status: dict[str, Any]) -> dict[str, An
                 "failed_required_modalities": list(projection_status.get("failed_required_modalities") or []),
                 "evidence_policy": evidence_policy_map,
                 "evidence_modalities": evidence_modalities_map,
+                "run_ledger_projection": projection_map,
             }
         )
 

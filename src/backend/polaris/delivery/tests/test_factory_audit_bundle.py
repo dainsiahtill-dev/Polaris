@@ -94,6 +94,16 @@ def test_get_factory_run_audit_bundle_reads_service_evidence(
         run = await service.create_run(FactoryConfig(name="audit-run", stages=["pm_planning"]))
         run.metadata["summary_md"] = "# Summary\n"
         run.metadata["summary_json"] = {"status": "PENDING"}
+        run.metadata["factory_start_request"] = {
+            "workspace": str(tmp_path),
+            "metadata": {
+                "factory_bench_requested_project_id": "L2-08",
+                "factory_bench_canonical_project_id": "L2-18",
+                "instance_id": "bench-instance-1",
+                "backend_port": 51001,
+                "frontend_port": 52001,
+            },
+        }
         await service.store.save_run(run)
         artifact_path = service.store.get_run_dir(run.id) / "artifacts" / "evidence.json"
         artifact_path.write_text('{"ok": true}\n', encoding="utf-8")
@@ -101,6 +111,19 @@ def test_get_factory_run_audit_bundle_reads_service_evidence(
         await service._append_event(run.id, {"type": "stage_completed", "stage": "pm_planning"})
 
         monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
+        monkeypatch.setattr(
+            factory_router_module,
+            "read_run_ledger_projection",
+            lambda query: SimpleNamespace(
+                projection={
+                    "schema_version": "control_plane.run_ledger_projection.v1",
+                    "source": "run_ledger_projection",
+                    "run_id": query.run_id,
+                    "task_boundary": {"failed": False},
+                    "tool_lifecycle": {"dropped_count": 0},
+                }
+            ),
+        )
         state: Any = SimpleNamespace(settings=SimpleNamespace(workspace=tmp_path))
         response = await factory_router_module.get_factory_run_audit_bundle(run.id, limit=1, state=state)
         return response.model_dump(mode="json")
@@ -114,6 +137,15 @@ def test_get_factory_run_audit_bundle_reads_service_evidence(
     assert payload["summary_json"] == {"status": "PENDING"}
     assert payload["evidence_counts"]["events_total"] == 2
     assert payload["evidence_counts"]["artifacts"] == 1
+    assert payload["factory_run_id"] == payload["run_id"]
+    assert payload["workspace"] == str(tmp_path)
+    assert payload["control_plane_projection"]["source"] == "run_ledger_projection"
+    assert payload["run_ledger_projection"]["tool_lifecycle"]["dropped_count"] == 0
+    assert payload["run_identity"]["requested_project_id"] == "L2-08"
+    assert payload["run_identity"]["canonical_project_id"] == "L2-18"
+    assert payload["run_identity"]["instance_id"] == "bench-instance-1"
+    assert payload["run_identity"]["backend_port"] == 51001
+    assert payload["run_identity"]["frontend_port"] == 52001
 
 
 def test_get_factory_run_audit_bundle_missing_run_returns_404(

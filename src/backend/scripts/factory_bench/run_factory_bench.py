@@ -29,6 +29,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid as _uuid
 from collections.abc import Mapping, Sequence
@@ -2718,6 +2719,8 @@ def run_factory_chain(
     dispatch_driver = str(director_dispatch_driver or "task-market").strip().lower()
     if dispatch_driver != "task-market":
         raise ValueError("factory-bench only supports the PM→Chief Engineer→Director task-market chain")
+    parsed_backend_url = urllib.parse.urlparse(str(backend_url or ""))
+    backend_port = parsed_backend_url.port
 
     feature_keywords = _extract_feature_keywords(project)
     requirements_doc = build_requirements_doc(project)
@@ -2779,9 +2782,19 @@ def run_factory_chain(
         "metadata": {
             "factory_bench_session_id": str(bench_session_id or "").strip(),
             "factory_bench_project_id": str(project.get("id") or "").strip(),
+            "factory_bench_requested_project_id": str(
+                project.get("requested_project_id") or project.get("requested_id") or project.get("id") or ""
+            ).strip(),
+            "factory_bench_canonical_project_id": str(
+                project.get("canonical_project_id") or project.get("canonical_id") or project.get("id") or ""
+            ).strip(),
             "factory_bench_level": int(project.get("level") or 0),
             "factory_bench_title": str(project.get("title") or "").strip(),
             "factory_bench_project_workspace": str(workspace.resolve()),
+            "backend_url": str(backend_url or "").strip(),
+            "backend_port": backend_port,
+            "frontend_port": project.get("frontend_port"),
+            "instance_id": str(project.get("instance_id") or project.get("launcher_instance_id") or "").strip(),
             "factory_bench_start_from": requested_start_from,
             "factory_bench_api_start_from": api_start_from,
             "factory_run_timeout_seconds": float(timeout_s),
