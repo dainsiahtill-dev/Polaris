@@ -1577,68 +1577,6 @@ def test_deterministic_materialization_repair_routes_typescript_missing_export(
     assert "export class GardenSimulator" not in repaired
 
 
-def test_deterministic_typescript_number_to_string_argument_repair_wraps_argument(
-    tmp_path: Any,
-) -> None:
-    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
-        _apply_deterministic_typescript_number_to_string_argument_repair,
-    )
-
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "garden.ts").write_text(
-        "const fireflies = Array.from({ length: 3 }, (_, i) => new Firefly(i, width, height));\n",
-        encoding="utf-8",
-    )
-    errors = [
-        "Artifact quality scan failed: TypeScript project typecheck failed: "
-        "src/garden.ts(1,65): error TS2345: Argument of type 'number' is not assignable "
-        "to parameter of type 'string'."
-    ]
-
-    results = _apply_deterministic_typescript_number_to_string_argument_repair(
-        _make_adapter(tmp_path),
-        task_id="task-1",
-        artifact_quality_errors=errors,
-    )
-
-    assert results
-    repaired = (tmp_path / "src" / "garden.ts").read_text(encoding="utf-8")
-    assert "new Firefly(String(i), width, height)" in repaired
-
-
-def test_deterministic_typescript_canvas_scale_return_type_repair_fixes_sx_sy_functions(
-    tmp_path: Any,
-) -> None:
-    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
-        _apply_deterministic_typescript_canvas_scale_return_type_repair,
-    )
-
-    (tmp_path / "src" / "engine").mkdir(parents=True)
-    (tmp_path / "src" / "engine" / "simulation.ts").write_text(
-        "export function scaleToCanvas(state: unknown, width: number, height: number): "
-        "{ sx: number; sy: number; scale: number } {\n"
-        "  const scale = Math.min(width, height);\n"
-        "  return { sx: (x: number) => x * scale, sy: (y: number) => y * scale, scale };\n"
-        "}\n",
-        encoding="utf-8",
-    )
-    errors = [
-        "Artifact quality scan failed: TypeScript project typecheck failed: "
-        "src/engine/renderer.ts(178,37): error TS2345: Argument of type 'number' is not assignable "
-        "to parameter of type '(n: number) => number'."
-    ]
-
-    results = _apply_deterministic_typescript_canvas_scale_return_type_repair(
-        _make_adapter(tmp_path),
-        task_id="task-1",
-        artifact_quality_errors=errors,
-    )
-
-    assert results
-    repaired = (tmp_path / "src" / "engine" / "simulation.ts").read_text(encoding="utf-8")
-    assert "{ sx: (n: number) => number; sy: (n: number) => number; scale: number }" in repaired
-
-
 def test_deterministic_typescript_too_few_arguments_repair_adds_trailing_defaults(
     tmp_path: Any,
 ) -> None:

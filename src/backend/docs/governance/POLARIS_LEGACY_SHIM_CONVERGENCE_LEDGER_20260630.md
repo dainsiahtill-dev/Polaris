@@ -13,7 +13,7 @@ business wording, React `Suspense fallback`, and accepted config migration code.
 
 | Class | Count | Meaning |
 | --- | ---: | --- |
-| Closed in this convergence pass | 20 | Removed, retired, or converted into an audited sunset path and verified. |
+| Closed in this convergence pass | 21 | Removed, retired, or converted into an audited sunset path and verified. |
 | P1 open | 3 | Still close to execution, LLM/tool, QA, or state projection paths. |
 | P2 open | 1 | Exposed API/UI/CLI compatibility surfaces that should be retired after callers move. |
 | P3 accepted with sunset | 0 | Kept for user config or historical data migration; requires an expiry policy, not immediate deletion. |
@@ -40,7 +40,7 @@ business wording, React `Suspense fallback`, and accepted config migration code.
 ## Open Gap Subledger
 
 The remaining parent gaps break down into 8 open concrete closure cuts, plus
-closed cuts LS-03A, LS-03B, LS-03C, LS-03D1, LS-03D, LS-03E, LS-03F, LS-03G, LS-03H, LS-03I, LS-04A, LS-04B, LS-04C1, LS-04C2, LS-04E, and LS-10B below. Close open items in this order unless a
+closed cuts LS-03A, LS-03B, LS-03C, LS-03D1, LS-03D, LS-03E, LS-03F, LS-03G, LS-03H, LS-03I, LS-04A, LS-04B, LS-04C1, LS-04C2, LS-04C3, LS-04E, and LS-10B below. Close open items in this order unless a
 production/bench incident gives a narrower safe cut.
 
 | Sub-ID | Parent | Priority | Owner Layer | Concrete Remaining Gap | Closure Cut |
@@ -59,7 +59,8 @@ production/bench incident gives a narrower safe cut.
 | LS-04B | LS-04 | P1 | `director.runtime.repair_kernel` | Closed: NPM runtime dependency and package script contract repairs no longer have adapter direct-write mutator definitions. Runtime owns `deterministic_runtime_dependency_repair` and `deterministic_npm_script_contract_repair`, including structured package.json planning, receipt metadata, and environment-prep signaling. | Closed by deleting `_apply_deterministic_runtime_dependency_repair` and `_apply_deterministic_npm_test_script_repair` from `roles.adapters.internal.director.deterministic_repairs.npm_repairs`, removing direct adapter-pure characterization calls, and fencing the old helper names in architecture tests. Verified with runtime NPM/script/dependency tests, materialization bridge schedule tests, adapter pure selection, architecture fence, targeted `rtk ruff check`, and negative grep. |
 | LS-04C1 | LS-04 | P1 | `director.runtime.repair_kernel` | Closed: JavaScript missing test-target repair no longer has an adapter direct-write mutator definition. Runtime catalog/contract keeps `deterministic_javascript_test_missing_target_repair` as the canonical executable source_tool. | Closed by deleting `_apply_deterministic_javascript_test_missing_target_repair` and its adapter-pure direct-write characterization test, adding bridge/architecture negative fences, and verifying runtime JS repair catalog coverage. Verification: targeted runtime JS contract/coverage tests, materialization bridge test, architecture repair-boundary fence, targeted `rtk ruff check`, negative grep, and codegraph callers. |
 | LS-04C2 | LS-04 | P1 | `director.runtime.repair_kernel` | Closed: JavaScript TypeScript-annotation cleanup no longer has an adapter direct-write mutator definition. Runtime owns `deterministic_javascript_typescript_annotation_repair` as a text-replace plan that also updates placeholder export contracts. | Closed by adding runtime contract coverage for the placeholder-contract case, deleting `_apply_deterministic_javascript_typescript_annotation_repair` and its adapter-pure characterization test, and adding bridge/architecture negative fences. Verified with targeted runtime JS annotation/missing-test tests, materialization bridge test, architecture repair-boundary fence, targeted `rtk ruff check`, negative grep, and codegraph search. |
-| LS-04C | LS-04 | P1 | `director.runtime.repair_kernel` | TypeScript/JavaScript deterministic repairs still contain direct write paths after LS-04C1/LS-04C2. Remaining adapter mutators include JS missing-export/entrypoint/missing-method and TypeScript reexport/entrypoint/export/member/tsconfig/vitest/sourcefile/relative-import/unresolved-family helpers. | Continue removing one runtime-covered TS/JS helper at a time; next safest cuts are JS missing-export/ESM entrypoint helpers if codegraph shows no production callers outside runtime schedule. |
+| LS-04C3 | LS-04 | P1 | `director.runtime.repair_kernel` | Closed: TypeScript TS2345 number-to-string argument repair no longer has an adapter direct-write mutator definition. Runtime owns `deterministic_typescript_number_to_string_argument_repair` with precise `text_replace` planning and editor-backed execution coverage. | Closed by deleting `_apply_deterministic_typescript_number_to_string_argument_repair` and its adapter-pure characterization test, relying on existing runtime precise-edit coverage, and adding the helper to architecture negative fences. Verified with targeted runtime TS number-to-string tests, architecture repair-boundary fence, targeted `rtk ruff check`, negative grep, `rtk git diff --check`, and codegraph search. |
+| LS-04C | LS-04 | P1 | `director.runtime.repair_kernel` | TypeScript/JavaScript deterministic repairs still contain direct write paths after LS-04C1/LS-04C2/LS-04C3. Remaining adapter mutators include JS missing-export/entrypoint/missing-method and TypeScript reexport/entrypoint/export/member/tsconfig/vitest/sourcefile/relative-import/unresolved-family helpers. | Continue removing one runtime-covered TS/JS helper at a time; next safest cuts are JS missing-export/ESM entrypoint helpers if codegraph shows no production callers outside runtime schedule. |
 | LS-04D | LS-04 | P1 | `director.runtime.repair_kernel` | Go/Rust/C++/Java repairs still write files directly via `Path.write_text`. | Convert remaining language postpass repairs to runtime patch plans or mark them explicit post-materialization gates with non-authoritative receipts. |
 | LS-04E | LS-04 | P1 | Architecture tests | Closed: every legacy deterministic source_tool token is now required to have a runtime catalog registration and explicit `implementation_status`; executable rules must be owned by `director.runtime`. | Closed with `test_legacy_deterministic_mutator_tokens_have_runtime_migration_status`; remaining LS-04C-D are concrete migration/removal cuts. |
 | LS-05A | LS-05 | P1 | Role kernel | `KernelCore` still holds compatibility helpers and state/result shapes over `TransactionKernel`. | Inventory live `KernelCore`/`TurnEngine` imports, move callers to transaction/controller public contracts, then reduce core to a thin facade. |
@@ -74,7 +75,8 @@ production/bench incident gives a narrower safe cut.
 
 1. LS-04C: continue migrating/removing high-frequency TypeScript/JavaScript
    import/export, entrypoint, and missing-method repair mutators after the
-   LS-04C1 JavaScript test-target and LS-04C2 JavaScript annotation helper removals.
+   LS-04C1 JavaScript test-target, LS-04C2 JavaScript annotation, and LS-04C3
+   TypeScript number-to-string helper removals.
 2. LS-06A -> LS-06B: extract request preparation from `LLMCaller`, then delete
    the facade.
 3. LS-05A -> LS-05B: collapse remaining Role Kernel execution facades after
