@@ -52,6 +52,7 @@ from polaris.cells.roles.kernel.internal.kernel.helpers import (
     quality_result_to_dict,
 )
 from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import (
+    request_forces_no_transaction_tools,
     tool_contract_requires_no_tools,
     tool_contract_requires_single_batch,
 )
@@ -334,19 +335,7 @@ class RoleExecutionKernel:
     @staticmethod
     def _request_forces_no_transaction_tools(request: RoleTurnRequest) -> bool:
         """Return True when this turn must be handled as text-only output."""
-        context_override = getattr(request, "context_override", None)
-        context = context_override if isinstance(context_override, dict) else {}
-        if bool(context.get("disable_internal_tool_rounds")):
-            return True
-        if str(context.get("delivery_mode") or "").strip().lower() == "propose_patch":
-            return True
-        forced_defs = context.get("_transaction_kernel_forced_tool_definitions")
-        forced_choice = str(context.get("_transaction_kernel_forced_tool_choice") or "").strip().lower()
-        if isinstance(forced_defs, list) and not forced_defs and forced_choice == "none":
-            return True
-
-        message = str(getattr(request, "message", "") or "").lower()
-        return "[mode:propose]" in message and "do not call tools" in message
+        return request_forces_no_transaction_tools(request)
 
     @staticmethod
     def _cognitive_runtime_blocked_tools(request: RoleTurnRequest) -> frozenset[str]:
