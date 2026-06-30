@@ -13,8 +13,8 @@ business wording, React `Suspense fallback`, and accepted config migration code.
 
 | Class | Count | Meaning |
 | --- | ---: | --- |
-| Closed in this convergence pass | 55 | Removed, retired, or converted into an audited sunset path and verified. |
-| P1 open | 3 | Still close to execution, LLM/tool, QA, or state projection paths. |
+| Closed in this convergence pass | 56 | Removed, retired, or converted into an audited sunset path and verified. |
+| P1 open | 2 | Still close to execution, LLM/tool, QA, or state projection paths. |
 | P2 open | 1 | Exposed API/UI/CLI compatibility surfaces that should be retired after callers move. |
 | P3 accepted with sunset | 0 | Kept for user config or historical data migration; requires an expiry policy, not immediate deletion. |
 
@@ -93,7 +93,8 @@ production/bench incident gives a narrower safe cut.
 | LS-04D5 | LS-04 | P1 | `director.runtime.repair_kernel` | Closed: Java post-execution direct writers remained in the adapter legacy strategy host after the bridge had already switched to runtime-owned Java repair source tools. | Closed by deleting `deterministic_repairs/java_repairs.py` and the obsolete adapter test that exercised `run_all_java_post_repairs`; architecture coverage now asserts the legacy Java module does not exist and the bridge uses runtime source tools (`deterministic_java_accessor_alias_repair`, `deterministic_java_test_dependency_repair`) instead. |
 | LS-04D6 | LS-04 | P1 | `director.runtime.repair_kernel` | Closed: Go and C++ direct postpass writer hosts remained after the bridge had already switched to runtime-owned Go/C++ source tools. | Closed by deleting `deterministic_repairs/go_repairs.py`, `deterministic_repairs/cpp_repairs.py`, and the obsolete adapter C++ host test; architecture coverage now asserts the legacy Go/C++ modules do not exist and the post-execution bridge continues to use runtime source tools instead. |
 | LS-04D7 | LS-04 | P1 | `director.runtime.repair_kernel` | Closed: Python smoke helpers remained in the adapter legacy strategy host after materialization/runtime smoke paths had moved to `execute_method_repair_bridge.py`, and the cross-file symbol block builder had moved to `artifact_quality_diagnostics.py`. | Closed by deleting `deterministic_repairs/python_repairs.py`, removing the package-facade re-export, and adding architecture coverage that the legacy Python module is absent while materialization quality repair continues through runtime callback ports. |
-| LS-04D | LS-04 | P1 | `director.runtime.repair_kernel` | Remaining legacy strategy-host execution surfaces are Rust bottom/postpass helper implementation sites. Current scan: direct `_apply_deterministic_*_repair` definitions are 0; Python, Java, Go, and C++ legacy direct postpass modules are deleted; `rust_repairs.py` still has controlled legacy writer sites. | Convert remaining Rust direct writers to runtime patch plans or explicit controlled bridge runners with non-authoritative receipts, then remove the legacy helper host or reduce it to read-only detection helpers. |
+| LS-04D8 | LS-04 | P1 | `director.runtime.repair_kernel` | Closed: Rust bottom/postpass helper host remained as the last language repair module with controlled legacy writer sites after the bridge had already switched to runtime-owned Rust source tools. | Closed by deleting `deterministic_repairs/rust_repairs.py`, migrating missing-module regression coverage to the runtime `deterministic_rust_missing_module_file_repair` path, changing the expected contract from guessed enum/struct generation to comment-only topology stubs, and removing the last unused `controlled_legacy_write_text` writer from `_common.py`. Architecture coverage now asserts the legacy Rust module is absent and no legacy strategy-host writer exception remains. |
+| LS-04D | LS-04 | P1 | `director.runtime.repair_kernel` | Closed: the remaining language repair strategy-host execution surfaces under `deterministic_repairs/` are retired. Current scan: direct `_apply_deterministic_*_repair` definitions are 0; Python, Java, Go, C++, and Rust legacy direct postpass modules are deleted. | Closed by LS-04D1 through LS-04D8. New repair behavior must enter `director.runtime.repair_kernel` as typed Plan → Compose → Policy → Execute → Receipt rules, not adapter-owned writer hosts. |
 | LS-04E | LS-04 | P1 | Architecture tests | Closed: every legacy deterministic source_tool token is now required to have a runtime catalog registration and explicit `implementation_status`; executable rules must be owned by `director.runtime`. | Closed with `test_legacy_deterministic_mutator_tokens_have_runtime_migration_status`; remaining LS-04C-D are concrete migration/removal cuts. |
 | LS-05A | LS-05 | P1 | Role kernel | `KernelCore` still holds compatibility helpers and state/result shapes over `TransactionKernel`. | Inventory live `KernelCore`/`TurnEngine` imports, move callers to transaction/controller public contracts, then reduce core to a thin facade. |
 | LS-05B | LS-05 | P1 | Role kernel | `TurnEngine`, `turn_execution.py`, and transaction factory still expose overlapping execution abstractions. | Collapse duplicated state/result types into `TransactionKernel`; add a fence against new `TurnEngine` production imports. |
@@ -107,12 +108,11 @@ production/bench incident gives a narrower safe cut.
 
 ## Closure Order
 
-1. LS-04D: migrate or retire remaining Rust/generic direct repair mutators.
-2. LS-06A -> LS-06B: extract request preparation from `LLMCaller`, then delete
+1. LS-06A -> LS-06B: extract request preparation from `LLMCaller`, then delete
    the facade.
-3. LS-05A -> LS-05B: collapse remaining Role Kernel execution facades after
+2. LS-05A -> LS-05B: collapse remaining Role Kernel execution facades after
    LLM caller dependencies are gone.
-4. LS-10C: converge runtime/log read projection once execution facts are stable.
+3. LS-10C: converge runtime/log read projection once execution facts are stable.
 
 ## Not Counted As Debt
 

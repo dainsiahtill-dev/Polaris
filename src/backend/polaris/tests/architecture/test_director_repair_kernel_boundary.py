@@ -606,9 +606,7 @@ def _legacy_strategy_host_write_primitives() -> list[str]:
         "write_file",
         "write_text",
     }
-    allowed = {
-        DETERMINISTIC_REPAIRS_ROOT / "_common.py": {"controlled_legacy_write_text"},
-    }
+    allowed: dict[Path, set[str]] = {}
     violations: list[str] = []
     for path in _production_python_source_files(DETERMINISTIC_REPAIRS_ROOT):
         rel_path = path.relative_to(BACKEND_ROOT).as_posix()
@@ -1204,11 +1202,7 @@ def test_post_execution_bridge_does_not_call_legacy_java_test_dependency_tail() 
 
 
 def test_rust_post_execution_legacy_aggregate_callback_is_retired() -> None:
-    rust_source = _read_text(RUST_REPAIRS_PATH)
-
-    assert "def run_all_rust_post_repairs" not in rust_source
-    assert "def _run_rust_post_repair_round" not in rust_source
-    assert "def _annotate_rust_post_repair_records" not in rust_source
+    assert not RUST_REPAIRS_PATH.exists()
 
 
 def test_rust_aggregate_post_repair_is_not_executable_runtime_binding() -> None:

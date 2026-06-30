@@ -20,7 +20,6 @@ from polaris.cells.roles.adapters.internal.director import (
 )
 from polaris.cells.roles.adapters.internal.director.deterministic_repairs import (
     generic_repairs,
-    rust_repairs,
 )
 from polaris.cells.roles.adapters.internal.director.repair_profile_projection import (
     summarize_deterministic_repair_source_tools,
@@ -38,6 +37,7 @@ _FORBIDDEN_REPAIR_IMPORT_PREFIXES = (
     "polaris.cells.roles.adapters.internal.director.deterministic_repairs.strategy_catalog",
 )
 _ALLOWED_EXECUTE_METHOD_DIRECTOR_RUNTIME_IMPORTS = {
+    "polaris.cells.director.runtime.public.contracts",
     "polaris.cells.director.runtime.public.service",
 }
 _EXECUTE_METHOD_FILE_MUTATING_REPAIR_WRAPPERS = frozenset(
@@ -429,19 +429,6 @@ def test_director_runtime_public_catalog_mirrors_authoritative_catalog() -> None
     assert payload["summary"]["total"] == len(catalog)
     assert payload["summary"]["returned"] == len(catalog)
     assert payload["summary"]["by_concern"]
-
-
-def test_rust_post_repairs_aggregate_entrypoint_is_retired() -> None:
-    retired_helpers = (
-        "repair_rust_unresolved_pub_uses",
-        "repair_rust_trait_imports",
-        "repair_rust_line_suggestions",
-        "run_all_rust_post_repairs",
-        "_run_rust_post_repair_round",
-        "_annotate_rust_post_repair_records",
-    )
-    for name in retired_helpers:
-        assert not hasattr(rust_repairs, name)
 
 
 def test_rust_dependency_resolution_bridge_routes_runtime_repair(

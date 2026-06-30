@@ -1684,28 +1684,11 @@ def test_java_post_accessor_alias_repair_uses_director_runtime_kernel(
     assert adapter.progress[-1] == ("task-java", "executing", relative_path)
 
 
-def test_rust_post_aggregate_excludes_runtime_migrated_span_repairs() -> None:
-    from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
-
-    retired_helpers = [
-        "repair_rust_unresolved_pub_uses",
-        "repair_rust_trait_imports",
-        "repair_rust_line_suggestions",
-        "run_all_rust_post_repairs",
-        "_run_rust_post_repair_round",
-        "_annotate_rust_post_repair_records",
-    ]
-
-    for helper_name in retired_helpers:
-        assert not hasattr(rust_repairs, helper_name)
-
-
 def test_rust_post_repairs_run_remaining_rules_through_runtime_bridge(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from polaris.cells.roles.adapters.internal.director import post_execution_repair_bridge
-    from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
 
     (tmp_path / "Cargo.toml").write_text(
         '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2021"\n',
@@ -1749,7 +1732,6 @@ def test_rust_post_repairs_run_remaining_rules_through_runtime_bridge(
         called.append((source_tool, use_editor))
         return []
 
-    assert not hasattr(rust_repairs, "run_all_rust_post_repairs")
     monkeypatch.setattr(post_execution_repair_bridge, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
 
     results = post_execution_repair_bridge._run_rust_post_repairs(FakeAdapter(), tmp_path, task_id="task-rust-runtime")
@@ -2417,7 +2399,6 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from polaris.cells.roles.adapters.internal.director import post_execution_repair_bridge
-    from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
 
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
 
@@ -2469,8 +2450,6 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
         "run_runtime_repair_with_director_tools",
         fake_runtime_repair_with_director_tools,
     )
-    assert not hasattr(rust_repairs, "repair_rust_dependencies")
-    assert not hasattr(rust_repairs, "run_all_rust_post_repairs")
     monkeypatch.setattr(
         execute_method_module,
         "_collect_workspace_code_diff",

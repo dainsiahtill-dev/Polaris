@@ -4,8 +4,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
-from polaris.cells.roles.adapters.internal.director.deterministic_repairs.rust_repairs import (
-    repair_rust_missing_module_files,
+from polaris.cells.director.runtime.internal.repair_kernel.rust_syntax import (
+    RUST_MISSING_MODULE_FILE_SOURCE_TOOL,
+    RUST_MISSING_MODULE_FILE_STUB,
 )
 from polaris.cells.roles.adapters.internal.director.execution_tools import DirectorToolExecutor
 from polaris.cells.roles.adapters.internal.director.runtime_repair_tool_adapter import (
@@ -39,6 +40,32 @@ def _run_runtime_rust_repair(
     )
 
 
+def _rust_e0583_missing_module_error(
+    *,
+    module_name: str,
+    path: str,
+    line: int,
+    declaration: str,
+    candidates: str,
+) -> str:
+    return (
+        f"error[E0583]: file not found for module `{module_name}`\n"
+        f" --> {path}:{line}:1\n"
+        "  |\n"
+        f"{line} | {declaration}\n"
+        "  | ^^^^^^^^^^^^^^^\n"
+        "  |\n"
+        f"  = help: to create the module `{module_name}`, create file {candidates}\n"
+    )
+
+
+def _assert_comment_only_missing_module_stub(content: str) -> None:
+    assert content == RUST_MISSING_MODULE_FILE_STUB
+    assert "pub enum" not in content
+    assert "pub struct" not in content
+    assert "::" not in content
+
+
 def test_deterministic_rust_dependency_repair_adds_serde_and_serde_json(tmp_path: Path) -> None:
     (tmp_path / "Cargo.toml").write_text(
         '[package]\nname = "kitchen-taste-palette"\n\n[dependencies]\n', encoding="utf-8"
@@ -60,7 +87,6 @@ def test_deterministic_rust_dependency_repair_adds_serde_and_serde_json(tmp_path
     assert results
     assert 'serde = { version = "1.0", features = ["derive"] }' in cargo
     assert 'serde_json = "1.0"' in cargo
-
 
 
 def test_deterministic_rust_line_suggestion_repair_applies_rustc_field_hint(tmp_path: Path) -> None:
@@ -190,19 +216,14 @@ def test_deterministic_rust_trait_import_repair_uses_rustc_suggestion(tmp_path: 
     assert repaired.startswith("use crate::engine::mapper::PaletteGenerator;\n")
 
 
-def test_rust_missing_module_generates_enum_from_variant_usage(tmp_path: Path) -> None:
-    """L1-09 regression: missing element.rs should generate enum, not empty struct.
-
-    When code uses Element::Stardust, Element::Fire etc., the repair must detect
-    the enum usage pattern and generate a proper enum definition.
-    """
+def test_rust_missing_module_runtime_creates_comment_only_topology_stub(tmp_path: Path) -> None:
+    """Missing module repair creates topology only, not guessed symbols."""
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "stardust-alchemy"\n', encoding="utf-8")
     src = tmp_path / "src"
     src.mkdir()
     models_dir = src / "models"
     models_dir.mkdir()
 
-    # main.rs declares mod models
     (src / "main.rs").write_text(
         "mod models;\n"
         "use crate::models::element::Element;\n"
@@ -214,15 +235,11 @@ def test_rust_missing_module_generates_enum_from_variant_usage(tmp_path: Path) -
         encoding="utf-8",
     )
 
-    # models/mod.rs declares mod element and mod ingredient
     (models_dir / "mod.rs").write_text(
-        "pub mod element;\n"
-        "pub mod ingredient;\n",
+        "pub mod element;\npub mod ingredient;\n",
         encoding="utf-8",
     )
 
-    # element.rs is MISSING — this is the bug scenario
-    # ingredient.rs imports Element and uses it
     (models_dir / "ingredient.rs").write_text(
         "use crate::models::element::Element;\n"
         "\n"
@@ -247,26 +264,40 @@ def test_rust_missing_module_generates_enum_from_variant_usage(tmp_path: Path) -
         encoding="utf-8",
     )
 
-    repairs = repair_rust_missing_module_files(tmp_path)
+    repairs = _run_runtime_rust_repair(
+        tmp_path,
+        source_tool=RUST_MISSING_MODULE_FILE_SOURCE_TOOL,
+        artifact_quality_errors=[
+            _rust_e0583_missing_module_error(
+                module_name="element",
+                path="src/models/mod.rs",
+                line=1,
+                declaration="pub mod element;",
+                candidates='"src/models/element.rs"',
+            )
+        ],
+        relative_paths=(
+            "Cargo.toml",
+            "src/main.rs",
+            "src/models/mod.rs",
+            "src/models/ingredient.rs",
+        ),
+        allowed_paths=(
+            "Cargo.toml",
+            "src/main.rs",
+            "src/models/mod.rs",
+            "src/models/ingredient.rs",
+            "src/models/element.rs",
+        ),
+    )
 
     assert repairs, "Should create missing element.rs"
     element_rs = (models_dir / "element.rs").read_text(encoding="utf-8")
-    # Must generate enum, NOT struct
-    assert "pub enum Element" in element_rs, f"Expected enum, got:\n{element_rs}"
-    assert "Crystal" in element_rs
-    assert "Echo" in element_rs
-    assert "Ember" in element_rs
-    assert "Fire" in element_rs
-    assert "Lumen" in element_rs
-    assert "Stardust" in element_rs
-    assert "Tide" in element_rs
-    assert "Void" in element_rs
-    # Must NOT generate empty struct
-    assert "pub struct Element" not in element_rs
+    _assert_comment_only_missing_module_stub(element_rs)
 
 
-def test_rust_missing_module_updates_existing_stub(tmp_path: Path) -> None:
-    """When element.rs exists but is just a comment stub, the repair should update it."""
+def test_rust_missing_module_runtime_refuses_existing_stub_without_contract(tmp_path: Path) -> None:
+    """Existing module files are not rewritten with guessed symbols."""
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "alchemy"\n', encoding="utf-8")
     src = tmp_path / "src"
     src.mkdir()
@@ -274,28 +305,46 @@ def test_rust_missing_module_updates_existing_stub(tmp_path: Path) -> None:
     models_dir.mkdir()
 
     (src / "main.rs").write_text(
-        "mod models;\n"
-        "use crate::models::element::Element;\n"
-        "fn main() { let _e = Element::Fire; }\n",
+        "mod models;\nuse crate::models::element::Element;\nfn main() { let _e = Element::Fire; }\n",
         encoding="utf-8",
     )
     (models_dir / "mod.rs").write_text("pub mod element;\n", encoding="utf-8")
 
-    # element.rs exists but is just a stub comment
-    (models_dir / "element.rs").write_text(
-        "// Auto-generated stub module: element\n", encoding="utf-8"
+    (models_dir / "element.rs").write_text("// Auto-generated stub module: element\n", encoding="utf-8")
+
+    repairs = _run_runtime_rust_repair(
+        tmp_path,
+        source_tool=RUST_MISSING_MODULE_FILE_SOURCE_TOOL,
+        artifact_quality_errors=[
+            _rust_e0583_missing_module_error(
+                module_name="element",
+                path="src/models/mod.rs",
+                line=1,
+                declaration="pub mod element;",
+                candidates='"src/models/element.rs"',
+            )
+        ],
+        relative_paths=(
+            "Cargo.toml",
+            "src/main.rs",
+            "src/models/mod.rs",
+            "src/models/element.rs",
+        ),
+        allowed_paths=(
+            "Cargo.toml",
+            "src/main.rs",
+            "src/models/mod.rs",
+            "src/models/element.rs",
+        ),
     )
 
-    repairs = repair_rust_missing_module_files(tmp_path)
-
-    assert repairs, "Should update stub element.rs"
+    assert repairs == []
     element_rs = (models_dir / "element.rs").read_text(encoding="utf-8")
-    assert "pub enum Element" in element_rs
-    assert "Fire" in element_rs
+    assert element_rs == "// Auto-generated stub module: element\n"
 
 
 def test_rust_missing_module_nested_grouped_import(tmp_path: Path) -> None:
-    """Handle grouped imports with sub-paths: use crate::models::{element::Element, flavor::Flavor}"""
+    """Multiple missing module diagnostics create multiple topology stubs."""
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "alchemy"\n', encoding="utf-8")
     src = tmp_path / "src"
     src.mkdir()
@@ -304,12 +353,10 @@ def test_rust_missing_module_nested_grouped_import(tmp_path: Path) -> None:
 
     (src / "main.rs").write_text("mod models;\nfn main() {}\n", encoding="utf-8")
     (models_dir / "mod.rs").write_text(
-        "pub mod element;\n"
-        "pub mod flavor;\n",
+        "pub mod element;\npub mod flavor;\n",
         encoding="utf-8",
     )
 
-    # recipe.rs uses nested grouped import
     (models_dir / "recipe.rs").write_text(
         "use crate::models::{element::Element, flavor::Flavor};\n"
         "pub struct Recipe { pub element: Element, pub flavor: Flavor }\n",
@@ -322,21 +369,48 @@ def test_rust_missing_module_nested_grouped_import(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    # Also need mod recipe
     (models_dir / "mod.rs").write_text(
-        "pub mod element;\n"
-        "pub mod flavor;\n"
-        "pub mod recipe;\n",
+        "pub mod element;\npub mod flavor;\npub mod recipe;\n",
         encoding="utf-8",
     )
 
-    repairs = repair_rust_missing_module_files(tmp_path)
+    repairs = _run_runtime_rust_repair(
+        tmp_path,
+        source_tool=RUST_MISSING_MODULE_FILE_SOURCE_TOOL,
+        artifact_quality_errors=[
+            _rust_e0583_missing_module_error(
+                module_name="element",
+                path="src/models/mod.rs",
+                line=1,
+                declaration="pub mod element;",
+                candidates='"src/models/element.rs" or "src/models/element/mod.rs"',
+            ),
+            _rust_e0583_missing_module_error(
+                module_name="flavor",
+                path="src/models/mod.rs",
+                line=2,
+                declaration="pub mod flavor;",
+                candidates='"src/models/flavor.rs" or "src/models/flavor/mod.rs"',
+            ),
+        ],
+        relative_paths=(
+            "Cargo.toml",
+            "src/main.rs",
+            "src/models/mod.rs",
+            "src/models/recipe.rs",
+        ),
+        allowed_paths=(
+            "Cargo.toml",
+            "src/main.rs",
+            "src/models/mod.rs",
+            "src/models/recipe.rs",
+            "src/models/element.rs",
+            "src/models/flavor.rs",
+        ),
+    )
 
-    # element.rs and flavor.rs should be created
     assert repairs
     element_rs = (models_dir / "element.rs").read_text(encoding="utf-8")
     flavor_rs = (models_dir / "flavor.rs").read_text(encoding="utf-8")
-    assert "pub enum Element" in element_rs
-    assert "Fire" in element_rs
-    assert "pub enum Flavor" in flavor_rs
-    assert "Sweet" in flavor_rs
+    _assert_comment_only_missing_module_stub(element_rs)
+    _assert_comment_only_missing_module_stub(flavor_rs)
