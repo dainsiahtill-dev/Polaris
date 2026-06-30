@@ -1816,6 +1816,7 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
     assert not hasattr(typescript_repairs, "_apply_deterministic_typescript_entrypoint_repair")
     assert not hasattr(typescript_repairs, "_apply_deterministic_typescript_member_alias_repair")
     assert not hasattr(typescript_repairs, "_apply_deterministic_typescript_relative_import_case_repair")
+    assert not hasattr(typescript_repairs, "_apply_deterministic_typescript_missing_member_repair")
     assert not hasattr(typescript_repairs, "_apply_deterministic_typescript_reexport_repair")
     assert not hasattr(typescript_repairs, "_apply_deterministic_typescript_reexported_type_binding_repair")
     assert not hasattr(typescript_repairs, "_looks_like_typescript_reexport_failure")

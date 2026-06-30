@@ -6308,6 +6308,110 @@ def test_typescript_missing_member_infers_indexed_property_shape() -> None:
     assert "items: unknown;" not in content_after
 
 
+def test_typescript_missing_member_infers_numeric_class_property_from_arithmetic() -> None:
+    diagnostic = "src/firefly.ts(3,31): error TS2339: Property 'brightness' does not exist on type 'Moon'."
+    base_files = {
+        "src/moon.ts": "export class Moon {\n  public getIllumination(): number {\n    return 1;\n  }\n}\n",
+        "src/firefly.ts": (
+            "import { Moon } from './moon.js';\n"
+            "const moon = new Moon();\n"
+            "const moonFactor = 0.4 + moon.brightness * 0.6;\n"
+        ),
+    }
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["composition_summary"]["changed_paths"] == ["src/moon.ts"]
+    content_after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "public brightness: number = 0;" in content_after
+
+
+def test_typescript_missing_member_infers_interface_string_and_number_properties() -> None:
+    diagnostic = (
+        "src/render.ts(4,23): error TS2339: Property 'size' does not exist on type 'Flower'.\n"
+        "src/render.ts(5,21): error TS2339: Property 'color' does not exist on type 'Flower'.\n"
+        "src/render.ts(6,19): error TS2339: Property 'baseX' does not exist on type 'Firefly'.\n"
+        "src/render.ts(6,35): error TS2339: Property 'brightness' does not exist on type 'Firefly'."
+    )
+    base_files = {
+        "src/simulation.ts": (
+            "export interface Flower {\n"
+            "  mood: number;\n"
+            "}\n\n"
+            "export interface Firefly {\n"
+            "  id: string;\n"
+            "}\n"
+        ),
+        "src/render.ts": (
+            "import type { Firefly, Flower } from './simulation.js';\n"
+            "const flower = {} as Flower;\n"
+            "const firefly = {} as Firefly;\n"
+            "const radius = flower.size * 2;\n"
+            "const fill = flower.color;\n"
+            "const x = firefly.baseX + firefly.brightness;\n"
+        ),
+    }
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["composition_summary"]["changed_paths"] == ["src/simulation.ts"]
+    content_after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "  size: number;" in content_after
+    assert "  color: string;" in content_after
+    assert "  baseX: number;" in content_after
+    assert "  brightness: number;" in content_after
+
+
+def test_typescript_missing_member_static_factory_without_return_evidence_is_unplannable() -> None:
+    diagnostic = (
+        "src/engine/simulation.ts(3,21): error TS2339: Property 'createRandom' does not exist on type "
+        "'typeof Flower'."
+    )
+    base_files = {
+        "src/models/flower.ts": (
+            "export class Flower {\n"
+            "  constructor(name: string, color: string, isBlooming: boolean = true) {}\n"
+            "}\n"
+        ),
+        "src/engine/simulation.ts": (
+            "import { Flower } from '../models/flower';\n"
+            "const flowers: Flower[] = [];\n"
+            "flowers.push(Flower.createRandom(1));\n"
+        ),
+    }
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is False
+    assert planning["planned"] is False
+    assert planning["composition_summary"]["patch_count"] == 0
+
+
 def test_typescript_unknown_member_access_and_required_literal_cover_l2_07_residuals() -> None:
     diagnostics = (
         (

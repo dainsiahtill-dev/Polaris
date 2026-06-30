@@ -2241,7 +2241,8 @@ def _build_typescript_missing_member_plan(
     members.extend(inline_members)
     grouped_members: dict[str, dict[str, dict[str, object]]] = {}
     for item in _parse_typescript_missing_member_errors(diagnostics):
-        type_name = _typescript_declaration_type_name(item["type"])
+        raw_type_name = item["type"]
+        type_name = _typescript_declaration_type_name(raw_type_name)
         member = item["member"]
         if not type_name or not _TS_IDENTIFIER_RE.fullmatch(member):
             continue
@@ -2249,6 +2250,7 @@ def _build_typescript_missing_member_plan(
         usage_text = str(base_files.get(usage_path) or "")
         line_number = _to_positive_int(item.get("line"))
         member_is_call = _typescript_member_usage_is_call(usage_text, line_number, member)
+        static_context = str(raw_type_name or "").strip().startswith("typeof ")
         if member_is_call and _typescript_declared_type_kind(base_files=base_files, type_name=type_name) != "class":
             continue
         declared_type = _typescript_missing_member_declared_type(
@@ -2277,6 +2279,7 @@ def _build_typescript_missing_member_plan(
         type_members[member] = {
             "is_call": bool(existing.get("is_call")) or member_is_call,
             "declared_type": existing_type if existing_type and existing_type != "unknown" else declared_type,
+            "static_context": bool(existing.get("static_context")) or static_context,
         }
     for type_name, type_members in grouped_members.items():
         operation = _add_typescript_members_operation(
@@ -2287,6 +2290,7 @@ def _build_typescript_missing_member_plan(
                     member,
                     bool(spec.get("is_call")),
                     str(spec.get("declared_type") or "unknown"),
+                    bool(spec.get("static_context")),
                 )
                 for member, spec in type_members.items()
             ),
@@ -5443,7 +5447,7 @@ def _typescript_member_usage_is_call(text: str, line_number: int, member: str) -
 
 def _typescript_missing_member_declared_type(text: str, line_number: int, member: str, *, member_is_call: bool) -> str:
     if member_is_call:
-        return "any"
+        return "number"
     return _typescript_usage_compatible_member_type(_typescript_line_at(text, line_number), member) or "unknown"
 
 
@@ -5452,6 +5456,19 @@ def _typescript_usage_compatible_member_type(usage_line: str, member: str) -> st
         return ""
     escaped = re.escape(member)
     line = str(usage_line or "")
+    if _typescript_member_name_suggests_string(member) and (
+        re.search(rf"\.\s*{escaped}\s*(?:={2,3}|!==?)", line)
+        or re.search(rf"(?:={2,3}|!==?)\s*[^;\n]*\.\s*{escaped}\b", line)
+        or re.search(rf"\.\s*{escaped}\s*\.\s*(?:length|trim|toLowerCase|toUpperCase|includes)\b", line)
+    ):
+        return "string"
+    if _typescript_member_name_strongly_suggests_string(member) and re.search(rf"=\s*[^;\n]*\.\s*{escaped}\b", line):
+        return "string"
+    if _typescript_member_name_suggests_number(member) and re.search(
+        rf"(?:\.\s*{escaped}\b\s*(?:[*/%+\-]|[<>]=?)|(?:[*/%+\-]|[<>]=?)\s*[^;\n]*\.\s*{escaped}\b)",
+        line,
+    ):
+        return "number"
     if re.search(rf"\.\s*{escaped}\s*\[", line):
         return "Record<string, unknown>"
     if re.search(rf"\.\s*{escaped}\s*\.\s*(?:length|map|filter|reduce|forEach|some|every|find)\b", line):
@@ -5461,6 +5478,75 @@ def _typescript_usage_compatible_member_type(usage_line: str, member: str) -> st
     if re.search(rf"\.\s*{escaped}\s*\.\s*(?:trim|toLowerCase|toUpperCase|includes|startsWith|endsWith)\s*\(", line):
         return "string"
     return ""
+
+
+def _typescript_member_name_suggests_string(member: str) -> bool:
+    lowered = str(member or "").lower()
+    return lowered in {
+        "id",
+        "key",
+        "name",
+        "title",
+        "label",
+        "slug",
+        "type",
+        "status",
+        "color",
+        "colour",
+    } or lowered.endswith(("id", "key", "name", "title", "label", "slug", "type", "status", "color", "colour"))
+
+
+def _typescript_member_name_strongly_suggests_string(member: str) -> bool:
+    lowered = str(member or "").lower()
+    return lowered in {"color", "colour"} or lowered.endswith(("color", "colour"))
+
+
+def _typescript_member_name_suggests_number(member: str) -> bool:
+    lowered = str(member or "").lower()
+    return lowered in {
+        "x",
+        "y",
+        "z",
+        "r",
+        "g",
+        "b",
+        "width",
+        "height",
+        "size",
+        "radius",
+        "count",
+        "total",
+        "amount",
+        "quantity",
+        "price",
+        "score",
+        "rating",
+        "brightness",
+        "intensity",
+        "opacity",
+        "alpha",
+    } or lowered.endswith(
+        (
+            "x",
+            "y",
+            "z",
+            "width",
+            "height",
+            "size",
+            "radius",
+            "count",
+            "total",
+            "amount",
+            "quantity",
+            "price",
+            "score",
+            "rating",
+            "brightness",
+            "intensity",
+            "opacity",
+            "alpha",
+        )
+    )
 
 
 def _typescript_unknown_member_receiver_type(
@@ -5591,7 +5677,7 @@ def _add_typescript_members_operation(
     *,
     base_files: Mapping[str, str],
     type_name: str,
-    members: Sequence[tuple[str, bool, str]],
+    members: Sequence[tuple[str, bool, str] | tuple[str, bool, str, bool]],
 ) -> RepairOperation | None:
     escaped = re.escape(type_name)
     for path, content in base_files.items():
@@ -5606,18 +5692,37 @@ def _add_typescript_members_operation(
         existing = _typescript_existing_member_names_for_type(base_files={path: content}, type_name=type_name)
         declarations: list[str] = []
         is_class = str(match.group("kind") or "") == "class"
-        for member, member_is_call, declared_type in members:
+        class_text = content[match.start() : insert_at]
+        for member_spec in members:
+            member, member_is_call, declared_type = member_spec[:3]
+            static_context = len(member_spec) > 3 and bool(member_spec[3])
             if member in existing or not _TS_IDENTIFIER_RE.fullmatch(member):
                 continue
             value_type = declared_type if _typescript_safe_structural_member_type(declared_type) else "unknown"
-            if is_class and member_is_call:
-                declarations.append(f"\n  public {member}(..._args: unknown[]): unknown {{\n    return {{}};\n  }}")
+            if is_class and static_context and member_is_call:
+                constructor_args = _typescript_constructor_default_arguments(class_text)
+                declarations.append(
+                    f"\n  public static {member}(..._args: unknown[]): {type_name} {{"
+                    f"\n    return new {type_name}({constructor_args});\n  }}"
+                )
+            elif is_class and static_context:
+                constructor_args = _typescript_constructor_default_arguments(class_text)
+                declarations.append(
+                    f"\n  public static readonly {member}: {type_name} = new {type_name}({constructor_args});"
+                )
+            elif is_class and member_is_call:
+                return_type = value_type if value_type not in {"unknown", "any"} else "number"
+                declarations.append(
+                    f"\n  public {member}(..._args: unknown[]): {return_type} {{"
+                    f"\n    return {_typescript_default_value_for_required_property_type(return_type)};\n  }}"
+                )
             elif is_class:
                 declarations.append(
                     f"\n  public {member}: {value_type} = {_typescript_default_value_for_required_property_type(value_type)};"
                 )
             elif member_is_call:
-                declarations.append(f"\n  {member}(..._args: unknown[]): unknown;")
+                return_type = value_type if value_type not in {"unknown", "any"} else "number"
+                declarations.append(f"\n  {member}(..._args: unknown[]): {return_type};")
             else:
                 declarations.append(f"\n  {member}: {value_type};")
         if not declarations:
@@ -5634,13 +5739,29 @@ def _add_typescript_members_operation(
             metadata={
                 "repair_kind": "typescript_missing_member",
                 "type": type_name,
-                "members": tuple(member for member, _is_call, _declared_type in members),
+                "members": tuple(member_spec[0] for member_spec in members),
                 "batched_same_type_members": True,
                 "expected_context_before": content[context_start:insert_at],
                 "expected_context_after": content[insert_at : insert_at + 2],
             },
         )
     return None
+
+
+def _typescript_constructor_default_arguments(class_text: str) -> str:
+    match = re.search(r"\bconstructor\s*\((?P<params>[^)]*)\)", str(class_text or ""), re.DOTALL)
+    if not match:
+        return ""
+    defaults: list[str] = []
+    for raw_param in str(match.group("params") or "").split(","):
+        param = raw_param.strip()
+        if not param:
+            continue
+        type_match = re.search(r":\s*(?P<type>[^=,]+)", param)
+        param_type = str(type_match.group("type") or "unknown").strip() if type_match else "unknown"
+        default_value = _typescript_default_value_for_required_property_type(param_type)
+        defaults.append(default_value if default_value else "undefined")
+    return ", ".join(defaults)
 
 
 def _resolve_relative_ts_module_path(importer_path: str, module_ref: str, base_files: Mapping[str, str]) -> str:

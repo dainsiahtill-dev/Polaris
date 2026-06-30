@@ -159,6 +159,7 @@ MIGRATED_EXECUTE_METHOD_COMPAT_HELPERS_FORBIDDEN = {
     "_apply_deterministic_typescript_member_alias_repair",
     "_apply_deterministic_typescript_missing_closing_brace_repair",
     "_apply_deterministic_typescript_missing_export_repair",
+    "_apply_deterministic_typescript_missing_member_repair",
     "_apply_deterministic_typescript_number_to_string_argument_repair",
     "_apply_deterministic_typescript_relative_import_case_repair",
     "_apply_deterministic_typescript_reexport_repair",
