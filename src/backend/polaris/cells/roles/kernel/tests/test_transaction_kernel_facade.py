@@ -8,6 +8,9 @@ from unittest.mock import AsyncMock
 import pytest
 from polaris.cells.roles.kernel.internal.interaction_contract import TurnIntent, infer_turn_intent
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import (
+    tool_contract_requires_no_tools,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.finalization_caller import FinalizationCaller
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     resolve_mutation_target_guard_violation,
@@ -2360,11 +2363,10 @@ def test_tool_contract_requires_no_tools_uses_platform_metadata_only() -> None:
     )
     normal_request = RoleTurnRequest(message="read and summarize README", metadata={})
 
-    assert RoleExecutionKernel._tool_contract_requires_no_tools(request_from_prompt) is False
-    assert RoleExecutionKernel._tool_contract_requires_no_tools(request_from_metadata) is True
-    assert RoleExecutionKernel._tool_contract_requires_no_tools(request_from_nested_context) is True
-    assert RoleExecutionKernel._tool_contract_requires_no_tools(normal_request) is False
-    assert RoleExecutionKernel._benchmark_requires_no_tools(request_from_metadata) is True
+    assert tool_contract_requires_no_tools(request_from_prompt) is False
+    assert tool_contract_requires_no_tools(request_from_metadata) is True
+    assert tool_contract_requires_no_tools(request_from_nested_context) is True
+    assert tool_contract_requires_no_tools(normal_request) is False
 
 
 def test_prompt_layer_single_batch_uses_platform_contract_not_benchmark_text() -> None:

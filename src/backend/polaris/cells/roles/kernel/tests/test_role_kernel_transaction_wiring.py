@@ -3,12 +3,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from polaris.cells.roles.kernel.internal.kernel import core as kernel_core
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import request_forces_no_transaction_tools
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import _apply_forced_transaction_tool_definitions
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.finalization import FinalizationHandler
@@ -236,12 +237,12 @@ class TestTransactionKernelFeatureFlag:
             },
         )
 
-        assert RoleExecutionKernel._request_forces_no_transaction_tools(request) is True
+        assert request_forces_no_transaction_tools(request) is True
 
     def test_request_allows_transaction_tools_by_default(self) -> None:
         request = _MockRequest(message="Please inspect the repository.")
 
-        assert RoleExecutionKernel._request_forces_no_transaction_tools(request) is False
+        assert request_forces_no_transaction_tools(request) is False
 
 
 class TestContextDeliveryModeMarker:
@@ -269,7 +270,7 @@ class TestContextDeliveryModeMarker:
 
     def test_platform_tool_contract_metadata_projects_to_latest_user_message(self) -> None:
         ensure_contract = getattr(kernel_core, "_ensure_platform_tool_contract_metadata", None)
-        messages = [
+        messages: list[dict[str, Any]] = [
             {"role": "system", "content": "system prompt"},
             {"role": "user", "content": "Update a.py", "metadata": {"trace_id": "t1"}},
         ]
@@ -283,8 +284,9 @@ class TestContextDeliveryModeMarker:
         assert result is not messages
         assert messages[-1]["metadata"] == {"trace_id": "t1"}
         assert result[-1]["content"] == "Update a.py"
-        assert result[-1]["metadata"]["trace_id"] == "t1"
-        assert result[-1]["metadata"]["tool_contract"] == {
+        result_metadata = cast(dict[str, Any], result[-1]["metadata"])
+        assert result_metadata["trace_id"] == "t1"
+        assert result_metadata["tool_contract"] == {
             "single_batch": True,
             "required_tools": ["write_file"],
         }
@@ -847,6 +849,7 @@ class TestExecuteTransactionKernelTurn:
                 },
             }
         ]
+        assert request.context_override is not None
         assert "director_first_call_materialization_scope" not in request.context_override
 
     @pytest.mark.asyncio
@@ -1159,7 +1162,10 @@ class TestExecuteTransactionKernelTurn:
                 "context_tokens_after": 321,
             },
         )
-        failure = RuntimeError("single_batch_contract_violation: mutation write batch failed")
+        class LedgerRuntimeError(RuntimeError):
+            turn_ledger: TurnLedger
+
+        failure = LedgerRuntimeError("single_batch_contract_violation: mutation write batch failed")
         failure.turn_ledger = ledger
 
         with (

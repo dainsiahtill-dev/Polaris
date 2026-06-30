@@ -44,11 +44,7 @@ from polaris.cells.roles.kernel.internal.kernel.error_handler import (
 from polaris.cells.roles.kernel.internal.kernel.helpers import (
     quality_result_to_dict,
 )
-from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import (
-    request_forces_no_transaction_tools,
-    tool_contract_requires_no_tools,
-    tool_contract_requires_single_batch,
-)
+from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import tool_contract_requires_single_batch
 from polaris.cells.roles.kernel.internal.kernel.suggestions import get_suggestions_for_error
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
     _CONTEXT_EXPENSIVE_TOOL_NAMES,
@@ -308,21 +304,6 @@ class RoleExecutionKernel:
         if not self._use_structured_output:
             return None
         return None
-
-    @staticmethod
-    def _tool_contract_requires_no_tools(request: RoleTurnRequest) -> bool:
-        """Return True when the platform tool contract forbids tool calls."""
-        return tool_contract_requires_no_tools(request)
-
-    @staticmethod
-    def _benchmark_requires_no_tools(request: RoleTurnRequest) -> bool:
-        """Compatibility shim for legacy callers."""
-        return tool_contract_requires_no_tools(request)
-
-    @staticmethod
-    def _request_forces_no_transaction_tools(request: RoleTurnRequest) -> bool:
-        """Return True when this turn must be handled as text-only output."""
-        return request_forces_no_transaction_tools(request)
 
     def _create_transaction_kernel(
         self,

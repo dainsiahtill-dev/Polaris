@@ -58,12 +58,6 @@ class _DroppedToolDispatchKernel:
 
         return _TransactionKernel()
 
-    def _tool_contract_requires_no_tools(self, _request: Any) -> bool:
-        return False
-
-    def _request_forces_no_transaction_tools(self, _request: Any) -> bool:
-        return False
-
     def _build_context_gateway_config(self, _role: str, _profile: Any, _request: Any) -> None:
         return None
 
