@@ -151,18 +151,18 @@ units:
     wave: 2
     category: application
     scope: file_family
-    status: shim_only
-    current_impl_state: mixed
+    status: retired
+    current_impl_state: retired
     owner: architecture-engineer
     legacy_policy: no_new_shim
     depends_on:
       - mig-kernelone-core
-    blockers:
-      - "91 implementation files in polaris/application/ remain unclaimed by any Cell"
+    blockers: []
     notes:
       - "Batch 1 (2026-03-20): task_service, worker_service, worker_executor, code_generation_engine, file_apply_service, unified_apply, bootstrap_template_catalog, repair_service → director.execution"
       - "Batch 1 (2026-03-20): orchestration/*, role_agent/*, docs_stage_service → orchestration.workflow_runtime, roles.runtime, docs.court_workflow"
       - "Report: docs/migration/application_cellization_report_2026-03-21.md"
+      - "Retired 2026-06-30: batch-1 source refs have been removed from polaris/application; production runtime roots are fenced against polaris.application.orchestration imports."
     target:
       cell: director.execution
       catalog_status: actual
@@ -248,9 +248,7 @@ units:
         - docs/graph/catalog/cells.yaml (roles.runtime owned_paths updated)
         - docs/graph/catalog/cells.yaml (orchestration.workflow_runtime owned_paths updated)
     delete_when:
-      - "All batch-1 source files removed from polaris/application/"
-      - "No polaris/application/services/* references in polaris/ code"
-      - "Verification targets pass"
+      - "Retired 2026-06-30; keep archived for provenance only."
 
   - id: mig-application-batch2a
     title: Application cellization batch 2A (2026-03-21, low-risk cell merge)

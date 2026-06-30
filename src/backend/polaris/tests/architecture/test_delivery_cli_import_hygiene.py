@@ -44,6 +44,30 @@ RETIRED_SCRIPT_SHIMS = [
     "scripts/dev-tools.py",
 ]
 
+RETIRED_APPLICATION_ORCHESTRATION_PATHS = [
+    "polaris/application/orchestration/__init__.py",
+    "polaris/application/orchestration/architect_orchestrator.py",
+    "polaris/application/orchestration/architect_schemas.py",
+    "polaris/application/orchestration/director_orchestrator.py",
+    "polaris/application/orchestration/director_schemas.py",
+    "polaris/application/orchestration/pm_orchestrator.py",
+    "polaris/application/orchestration/pm_schemas.py",
+    "polaris/application/orchestration/protocols.py",
+    "polaris/application/orchestration/qa_orchestrator.py",
+    "polaris/application/orchestration/qa_schemas.py",
+    "polaris/application/orchestration/tests/__init__.py",
+    "polaris/application/orchestration/tests/test_director_orchestrator_parallel.py",
+    "polaris/application/orchestration/tests/test_director_schemas.py",
+    "polaris/application/orchestration/tests/test_orchestration_schemas.py",
+    "polaris/application/orchestration/tests/test_orchestrator_regression.py",
+    "polaris/tests/application/test_architect_orchestrator.py",
+    "polaris/tests/application/test_qa_orchestrator.py",
+    "polaris/tests/orchestration/test_boundary_conditions.py",
+    "polaris/tests/orchestration/test_qa_orchestrator.py",
+    "polaris/tests/test_director_orchestrator_adapter_routing.py",
+    "polaris/tests/test_director_orchestrator_resident_decision.py",
+]
+
 
 def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
@@ -136,6 +160,25 @@ def test_retired_import_checker_does_not_use_legacy_module_name() -> None:
 def test_retired_backend_script_shims_are_removed(relative_path: str) -> None:
     full_path = BACKEND_ROOT / relative_path
     assert not full_path.exists(), f"Retired backend script shim was recreated: {relative_path}"
+
+
+@pytest.mark.parametrize("relative_path", RETIRED_APPLICATION_ORCHESTRATION_PATHS)
+def test_application_orchestration_shims_are_removed(relative_path: str) -> None:
+    full_path = BACKEND_ROOT / relative_path
+    assert not full_path.exists(), f"Retired application orchestration path was recreated: {relative_path}"
+
+
+def test_application_orchestration_has_no_source_files() -> None:
+    root = BACKEND_ROOT / "polaris/application/orchestration"
+    if not root.exists():
+        return
+
+    offenders = [
+        path.relative_to(BACKEND_ROOT).as_posix()
+        for path in root.rglob("*.py")
+        if "__pycache__" not in path.parts
+    ]
+    assert not offenders, f"Retired application orchestration source files were recreated: {offenders}"
 
 
 @pytest.mark.parametrize("relative_path", DELIVERY_ADAPTERS)
