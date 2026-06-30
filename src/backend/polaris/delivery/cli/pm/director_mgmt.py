@@ -93,7 +93,7 @@ def run_director_once(
         return 0
 
     # Canonical architecture: route through the PM compatibility facade, whose
-    # implementation delegates to DirectorOrchestrator and roles.adapters.
+    # implementation delegates to the director.execution public Cell contract.
     try:
         from polaris.delivery.cli.pm.director_interface_integration import (
             DIRECTOR_INTERFACE_AVAILABLE,

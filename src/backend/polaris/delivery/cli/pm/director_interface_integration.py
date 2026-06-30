@@ -1,8 +1,8 @@
 """Director integration for PM delivery code.
 
 The exported function names are kept for older PM callers, but execution is
-canonical: PM delegates to ``DirectorOrchestrator`` and the ``roles.adapters``
-Director adapter. No subprocess Director path is allowed here.
+canonical: PM delegates to the ``director.execution`` public Cell contract.
+No subprocess Director path is allowed here.
 """
 
 import argparse

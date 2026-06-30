@@ -1,9 +1,8 @@
-"""Director CLI compatibility service.
+"""Director CLI service.
 
 This delivery-layer service is intentionally thin.  It delegates task
-discovery and execution to ``DirectorOrchestrator``, whose execution path is
-the canonical roles.adapters Director adapter with write receipts and
-materialization quality gates.
+discovery to the runtime TaskBoard public contract and execution to the
+``director.execution`` public Cell contract.
 """
 
 from __future__ import annotations
@@ -13,16 +12,16 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
-from polaris.application.orchestration.director_orchestrator import (
-    DirectorExecutionConfig,
-    DirectorIterationResult,
-    DirectorOrchestrator,
-    DirectorTaskResult,
+from polaris.cells.director.execution.public import (
+    ExecuteDirectorTaskCommandV1,
+    execute_director_task,
 )
+from polaris.cells.runtime.task_runtime.public.task_board_contract import TaskBoard
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 
 logger = logging.getLogger(__name__)
@@ -42,7 +41,7 @@ _bootstrap_backend_import_path()
 
 
 class DirectorService:
-    """Director delivery facade backed by the canonical adapter orchestrator."""
+    """Director delivery facade backed by public Cell contracts."""
 
     def __init__(
         self,
@@ -55,14 +54,12 @@ class DirectorService:
         self.model = model
         self.max_workers = max_workers
         self.execution_mode = execution_mode
-        self._orchestrator = DirectorOrchestrator(
-            DirectorExecutionConfig(
-                workspace=str(workspace),
-                model=model,
-                max_workers=max_workers,
-                execution_mode=execution_mode,
-            )
-        )
+        self._task_board: TaskBoard | None = None
+
+    def _get_task_board(self) -> TaskBoard:
+        if self._task_board is None:
+            self._task_board = TaskBoard(workspace=str(self.workspace))
+        return self._task_board
 
     async def run_iteration(self, iteration: int = 1) -> dict[str, Any]:
         """运行 Director 迭代。
@@ -80,47 +77,141 @@ class DirectorService:
             self.execution_mode,
         )
 
-        result = await self._orchestrator.run_iteration(iteration=iteration)
-        return self._iteration_to_dict(result)
+        ready_tasks = self._get_ready_tasks()
+        if not ready_tasks:
+            return {
+                "success": True,
+                "iteration": iteration,
+                "tasks_processed": 0,
+                "tasks_succeeded": 0,
+                "tasks_failed": 0,
+                "message": "No ready tasks",
+                "results": [],
+            }
+
+        batch_size = self.max_workers if self.execution_mode == "parallel" else 1
+        batch = ready_tasks[: max(1, int(batch_size or 1))]
+        if self.execution_mode == "parallel" and len(batch) > 1:
+            raw_results = list(await asyncio.gather(*[self._execute_task(task) for task in batch], return_exceptions=True))
+            results = [
+                self._exception_result(batch[index], item) if isinstance(item, BaseException) else item
+                for index, item in enumerate(raw_results)
+            ]
+        else:
+            results = []
+            for task in batch:
+                results.append(await self._execute_task(task))
+
+        tasks_succeeded = sum(1 for result in results if bool(result.get("success")))
+        return {
+            "success": True,
+            "iteration": iteration,
+            "tasks_processed": len(batch),
+            "tasks_succeeded": tasks_succeeded,
+            "tasks_failed": len(batch) - tasks_succeeded,
+            "message": "",
+            "results": results,
+        }
 
     def _get_ready_tasks(self) -> list[dict]:
-        """Return ready task rows through the canonical orchestrator."""
-        return self._orchestrator.get_ready_tasks()
+        """Return ready task rows through the runtime TaskBoard public contract."""
+        raw_tasks = self._get_task_board().get_ready_tasks()
+        rows: list[dict[str, Any]] = []
+        for task in raw_tasks:
+            if hasattr(task, "to_dict"):
+                rows.append(dict(task.to_dict()))
+            elif isinstance(task, dict):
+                rows.append(dict(task))
+        return rows
 
     @staticmethod
     def _normalize_task_id(task_id: Any) -> int:
         token = str(task_id or "").strip()
+        token = re.sub(r"^(task[-_])+", "", token, flags=re.IGNORECASE)
         if not token.isdigit():
             raise ValueError(f"Invalid TaskBoard task id: {task_id}")
         return int(token)
 
     async def _execute_task(self, task: dict) -> dict[str, Any]:
-        """Execute one task through ``DirectorOrchestrator``."""
-        result = await self._orchestrator.execute_task(task)
-        return self._task_result_to_dict(result)
+        """Execute one task through ``director.execution`` public contract."""
+        task_id = str(task.get("id") or task.get("task_id") or "").strip()
+        subject = str(task.get("subject") or task.get("title") or task_id).strip()
+        description = str(task.get("description") or task.get("goal") or subject).strip()
+        metadata = self._build_execution_metadata(task)
+        result = execute_director_task(
+            ExecuteDirectorTaskCommandV1(
+                task_id=task_id,
+                workspace=str(self.workspace),
+                instruction=description or subject or task_id,
+                metadata=metadata,
+            )
+        )
+        result_payload = self._execution_result_to_dict(result, subject=subject)
+        self._update_task_board(task_id, result_payload)
+        return result_payload
+
+    def _build_execution_metadata(self, task: dict[str, Any]) -> dict[str, Any]:
+        metadata_raw = task.get("metadata")
+        metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+        task_id = str(task.get("id") or task.get("task_id") or "").strip()
+        metadata.update(
+            {
+                "task_id": task_id,
+                "pm_task_id": str(metadata.get("pm_task_id") or task_id),
+                "subject": str(task.get("subject") or task.get("title") or "").strip(),
+                "goal": str(task.get("description") or task.get("goal") or task.get("subject") or "").strip(),
+                "source": "delivery.cli.director_service",
+                "model": str(self.model or ""),
+                "max_workers": max(1, int(self.max_workers or 1)),
+                "execution_mode": "parallel" if self.execution_mode == "parallel" else "serial",
+            }
+        )
+        return metadata
 
     @staticmethod
-    def _task_result_to_dict(result: DirectorTaskResult) -> dict[str, Any]:
+    def _execution_result_to_dict(result: Any, *, subject: str) -> dict[str, Any]:
+        metadata = dict(getattr(result, "metadata", {}) or {})
+        evidence_paths = list(getattr(result, "evidence_paths", ()) or ())
+        changed_files = list(metadata.get("changed_files") or evidence_paths)
         return {
-            "success": result.success,
-            "task_id": result.task_id,
-            "subject": result.subject,
-            "status": result.status,
-            "response_length": result.response_length,
-            "error": result.error,
-            "metadata": result.metadata,
+            "success": bool(getattr(result, "ok", False)),
+            "task_id": str(getattr(result, "task_id", "")),
+            "subject": subject,
+            "status": str(getattr(result, "status", "")),
+            "response_length": len(str(getattr(result, "output_summary", "") or "")),
+            "error": str(getattr(result, "error_message", "") or getattr(result, "error_code", "") or ""),
+            "metadata": {
+                **metadata,
+                "adapter": "director.execution.public",
+                "canonical_execution_contract": "ExecuteDirectorTaskCommandV1",
+                "changed_files": changed_files,
+                "evidence_paths": evidence_paths,
+            },
         }
 
-    @classmethod
-    def _iteration_to_dict(cls, result: DirectorIterationResult) -> dict[str, Any]:
+    def _update_task_board(self, task_id: str, result: dict[str, Any]) -> None:
+        status = "completed" if bool(result.get("success")) else "failed"
+        try:
+            self._get_task_board().update(
+                self._normalize_task_id(task_id),
+                status=status,
+                metadata=dict(result.get("metadata") or {}),
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("Failed to update Director task %s after public execution: %s", task_id, exc)
+
+    @staticmethod
+    def _exception_result(task: dict[str, Any], exc: BaseException) -> dict[str, Any]:
+        task_id = str(task.get("id") or task.get("task_id") or "unknown").strip()
+        subject = str(task.get("subject") or task.get("title") or task_id).strip()
         return {
-            "success": result.success,
-            "iteration": result.iteration,
-            "tasks_processed": result.tasks_processed,
-            "tasks_succeeded": result.tasks_succeeded,
-            "tasks_failed": result.tasks_failed,
-            "message": result.notes,
-            "results": [cls._task_result_to_dict(item) for item in result.results],
+            "success": False,
+            "task_id": task_id,
+            "subject": subject,
+            "status": "failed",
+            "response_length": 0,
+            "error": str(exc),
+            "metadata": {"error_type": type(exc).__name__},
         }
 
 
