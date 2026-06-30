@@ -56,6 +56,7 @@ DETERMINISTIC_REPAIRS_ROOT = ROLES_DIRECTOR_ROOT / "deterministic_repairs"
 GENERIC_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "generic_repairs.py"
 RUNTIME_REPAIR_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "runtime_repair_tool_adapter.py"
 RUST_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "rust_repairs.py"
+JAVA_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "java_repairs.py"
 QUALITY_GATE_PATH = ROLES_DIRECTOR_ROOT / "quality_gate.py"
 DIRECTOR_RUNTIME_PUBLIC_SERVICE_PATH = (
     BACKEND_ROOT / "polaris" / "cells" / "director" / "runtime" / "public" / "service.py"
@@ -1186,6 +1187,9 @@ def test_post_execution_bridge_does_not_call_legacy_java_test_dependency_tail() 
     bridge_source = _read_text(POST_EXECUTION_BRIDGE_PATH)
     java_runner_source = _function_source(POST_EXECUTION_BRIDGE_PATH, "_run_java_post_repairs")
 
+    assert not JAVA_REPAIRS_PATH.exists()
+    assert "java_repairs" not in bridge_source
+    assert "run_all_java_post_repairs" not in bridge_source
     assert "repair_java_test_dependencies" not in bridge_source
     assert "deterministic_java_test_dependency_repair" in bridge_source
     assert "_run_java_test_dependency_runtime_repair" in bridge_source
