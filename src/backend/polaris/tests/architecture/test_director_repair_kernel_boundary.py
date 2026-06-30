@@ -140,6 +140,7 @@ MIGRATED_TYPESCRIPT_SOURCE_TOOL_NAMES = {
 EXPECTED_EXECUTE_METHOD_REPAIR_BRIDGE_COMPAT_ALLOWLIST: set[str] = set()
 MIGRATED_EXECUTE_METHOD_COMPAT_HELPERS_FORBIDDEN = {
     "_apply_deterministic_javascript_test_missing_target_repair",
+    "_apply_deterministic_javascript_missing_export_repair",
     "_apply_deterministic_javascript_typescript_annotation_repair",
     "_apply_deterministic_npm_test_script_repair",
     "_apply_deterministic_python_package_shadow_bridge_repair",
@@ -150,7 +151,15 @@ MIGRATED_EXECUTE_METHOD_COMPAT_HELPERS_FORBIDDEN = {
     "_apply_deterministic_typescript_canvas_scale_return_type_repair",
     "_apply_deterministic_typescript_missing_closing_brace_repair",
     "_apply_deterministic_typescript_number_to_string_argument_repair",
+    "_apply_deterministic_typescript_sourcefile_diagnostics_repair",
     "_apply_deterministic_typescript_too_few_arguments_repair",
+    "_apply_deterministic_typescript_uninitialized_property_repair",
+    "_apply_deterministic_typescript_vitest_globals_repair",
+    "_add_vitest_import_to_typescript_test",
+    "_parse_typescript_missing_test_global_errors",
+    "_parse_typescript_sourcefile_diagnostics_errors",
+    "_repair_typescript_sourcefile_diagnostics_usage",
+    "_typescript_vitest_manifest_repair_content",
     "_apply_deterministic_unresolved_import_symbol_repair",
 }
 ALLOWED_EXECUTE_METHOD_LEGACY_DETERMINISTIC_REPAIR_CALLS: set[str] = set()

@@ -177,17 +177,9 @@ _TS_NULLABLE_DOM_HANDLE_DECLARATION_LINE_RE = re.compile(
     r"[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*\.querySelector)"
     r"\s*\([^;\n]*\)[^;\n]*)\s*;?\s*$"
 )
-_TS_VITEST_IMPORT_RE = re.compile(
-    r"import\s*\{\s*(?P<symbols>[^}]+)\s*\}\s*from\s*['\"]vitest['\"]\s*;?",
-    re.MULTILINE,
-)
 _TS_EXPORTED_CLASS_RE_TEMPLATE = r"export\s+(?:abstract\s+)?class\s+{type_name}\b[^{{]*{{"
 _TS_STRUCTURAL_TYPE_RE_TEMPLATE = r"(?:export\s+)?(?:interface\s+{type_name}\b[^{{]*{{|type\s+{type_name}\b\s*=\s*{{)"
 _TS_IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
-_TS_TEST_GLOBAL_NAMES = frozenset(
-    {"describe", "it", "test", "expect", "beforeEach", "afterEach", "beforeAll", "afterAll"}
-)
-_VITEST_DEV_DEPENDENCY_VERSION = "^2.1.8"
 _TS_STRINGISH_MEMBER_NAMES = {"color", "colour", "id", "key", "label", "name", "title"}
 _TS_NUMERIC_MEMBER_NAMES = {
     "amplitude",
@@ -827,96 +819,6 @@ def _apply_deterministic_typescript_member_alias_repair(
     )
 
 
-def _apply_deterministic_typescript_sourcefile_diagnostics_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> list[dict[str, Any]]:
-    diagnostic_errors = _parse_typescript_sourcefile_diagnostics_errors(artifact_quality_errors)
-    if not diagnostic_errors:
-        return []
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-
-    updated_by_path: dict[Path, str] = {}
-    repaired: list[dict[str, str]] = []
-    for rel_file in _dedupe_preserve_order([item["file"] for item in diagnostic_errors]):
-        path = (workspace_path / rel_file).resolve()
-        if not _path_inside_workspace(path, workspace_path) or not path.is_file():
-            continue
-        try:
-            original = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        repaired_text = _repair_typescript_sourcefile_diagnostics_usage(original)
-        if repaired_text == original:
-            continue
-        updated_by_path[path] = repaired_text
-        repaired.append({"file": rel_file, "symbol": "diagnostics"})
-
-    return _write_typescript_repair_results(
-        adapter,
-        workspace_path=workspace_path,
-        task_id=task_id,
-        updated_by_path=updated_by_path,
-        source_tool="deterministic_typescript_sourcefile_diagnostics_repair",
-        metadata_key="diagnostics",
-        metadata_value=repaired,
-    )
-
-
-def _apply_deterministic_typescript_vitest_globals_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> list[dict[str, Any]]:
-    missing_globals = _parse_typescript_missing_test_global_errors(artifact_quality_errors)
-    if not missing_globals:
-        return []
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-
-    updated_by_path: dict[Path, str] = {}
-    repaired: list[dict[str, str]] = []
-    by_file: dict[str, set[str]] = {}
-    for item in missing_globals:
-        by_file.setdefault(item["file"], set()).add(item["symbol"])
-
-    for rel_file, symbols in by_file.items():
-        path = (workspace_path / rel_file).resolve()
-        if not _path_inside_workspace(path, workspace_path) or not path.is_file():
-            continue
-        try:
-            original = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        repaired_text = _add_vitest_import_to_typescript_test(original, symbols)
-        if repaired_text == original:
-            continue
-        updated_by_path[path] = repaired_text
-        repaired.extend({"file": rel_file, "symbol": symbol} for symbol in sorted(symbols))
-
-    manifest_path = workspace_path / "package.json"
-    manifest_text = _typescript_vitest_manifest_repair_content(manifest_path)
-    if manifest_text:
-        updated_by_path[manifest_path] = manifest_text
-        repaired.append({"file": "package.json", "symbol": "vitest"})
-
-    return _write_typescript_repair_results(
-        adapter,
-        workspace_path=workspace_path,
-        task_id=task_id,
-        updated_by_path=updated_by_path,
-        source_tool="deterministic_typescript_vitest_globals_repair",
-        metadata_key="test_globals",
-        metadata_value=repaired,
-    )
-
-
 def _apply_deterministic_typescript_reexported_type_binding_repair(
     adapter: Any,
     *,
@@ -1067,63 +969,6 @@ def _typescript_import_insertion_index(text: str) -> int:
     if first_export:
         return first_export.start()
     return 0
-
-
-def _apply_deterministic_typescript_uninitialized_property_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> list[dict[str, Any]]:
-    uninitialized = _parse_typescript_uninitialized_property_errors(artifact_quality_errors)
-    if not uninitialized:
-        return []
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-
-    updated_by_path: dict[Path, str] = {}
-    repaired: list[dict[str, str]] = []
-    for item in uninitialized:
-        raw_file = str(item.get("file") or "").strip()
-        member = str(item.get("member") or "").strip()
-        if not raw_file or not member:
-            continue
-        target_path = (workspace_path / raw_file).resolve()
-        try:
-            target_path.relative_to(workspace_path)
-        except ValueError:
-            continue
-        try:
-            text = updated_by_path.get(target_path) or target_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        line_index = int(item.get("line") or "0") - 1
-        lines = text.splitlines()
-        if line_index < 0 or line_index >= len(lines):
-            continue
-        line = lines[line_index]
-        repaired_line = _typescript_property_line_with_default(line, member)
-        if repaired_line == line:
-            continue
-        lines[line_index] = repaired_line
-        updated_by_path[target_path] = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
-        repaired.append(
-            {
-                "file": target_path.relative_to(workspace_path).as_posix(),
-                "member": member,
-            }
-        )
-
-    return _write_typescript_repair_results(
-        adapter,
-        workspace_path=workspace_path,
-        task_id=task_id,
-        updated_by_path=updated_by_path,
-        source_tool="deterministic_typescript_uninitialized_property_repair",
-        metadata_key="properties",
-        metadata_value=repaired,
-    )
 
 
 def _parse_typescript_missing_member_errors(errors: list[str]) -> list[dict[str, str]]:
@@ -1494,19 +1339,6 @@ def _parse_typescript_duplicate_object_property_errors(errors: list[str]) -> lis
     return parsed
 
 
-def _parse_typescript_sourcefile_diagnostics_errors(errors: list[str]) -> list[dict[str, str]]:
-    parsed: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for error in errors:
-        for match in _TS_SOURCEFILE_DIAGNOSTICS_ERROR_RE.finditer(str(error or "")):
-            rel_file = _normalize_declared_task_path(match.group("file"))
-            if not rel_file or rel_file in seen:
-                continue
-            seen.add(rel_file)
-            parsed.append({"file": rel_file})
-    return parsed
-
-
 def _parse_html_typescript_module_script_errors(errors: list[str]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -1521,23 +1353,6 @@ def _parse_html_typescript_module_script_errors(errors: list[str]) -> list[dict[
                 continue
             seen.add(key)
             parsed.append(item)
-    return parsed
-
-
-def _parse_typescript_missing_test_global_errors(errors: list[str]) -> list[dict[str, str]]:
-    parsed: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for error in errors:
-        for match in _TS_CANNOT_FIND_TEST_GLOBAL_ERROR_RE.finditer(str(error or "")):
-            file_name = _normalize_declared_task_path(match.group("file"))
-            symbol = str(match.group("symbol") or "").strip()
-            if not _is_typescript_test_path(file_name) or symbol not in _TS_TEST_GLOBAL_NAMES:
-                continue
-            key = (file_name, symbol)
-            if key in seen:
-                continue
-            seen.add(key)
-            parsed.append({"file": file_name, "symbol": symbol})
     return parsed
 
 
@@ -1856,44 +1671,6 @@ def _looks_like_single_line_typescript_object_property(line: str) -> bool:
     return bool(property_re.match(stripped))
 
 
-def _repair_typescript_sourcefile_diagnostics_usage(text: str) -> str:
-    if "ts.createSourceFile" not in text:
-        return text
-    create_match = re.search(
-        r"ts\.createSourceFile\(\s*(?P<file>[A-Za-z_$][A-Za-z0-9_$]*)\s*,\s*"
-        r"(?P<source>[A-Za-z_$][A-Za-z0-9_$]*)",
-        text,
-        re.DOTALL,
-    )
-    source_var = str(create_match.group("source") if create_match else "text")
-    file_var = str(create_match.group("file") if create_match else "file")
-    diagnostics_re = re.compile(
-        r"(?m)^(?P<indent>\s*)const\s+diagnostics(?:\s*:[^=]+)?\s*=\s*"
-        r"(?P<expr>[^\n;]*(?:parseDiagnostics|undefined\s+as\s+unknown|unknown\s*\?\?\s*\[\])[^\n;]*);?\s*$"
-    )
-
-    def _replace(match: re.Match[str]) -> str:
-        indent = str(match.group("indent") or "")
-        inner = indent + "  "
-        return (
-            f"{indent}const diagnostics: readonly ts.Diagnostic[] =\n"
-            f"{inner}ts.transpileModule({source_var}, {{\n"
-            f"{inner}  compilerOptions: {{\n"
-            f"{inner}    module: ts.ModuleKind.ES2020,\n"
-            f"{inner}    target: ts.ScriptTarget.ES2020,\n"
-            f"{inner}  }},\n"
-            f"{inner}  fileName: {file_var},\n"
-            f"{inner}  reportDiagnostics: true,\n"
-            f"{inner}}}).diagnostics ?? [];"
-        )
-
-    repaired, replacements = diagnostics_re.subn(_replace, text, count=1)
-    if replacements == 0:
-        return text
-    repaired = re.sub(r"if\s*\(\s*(?:0\s*>\s*0|false)\s*\)", "if (diagnostics.length > 0)", repaired)
-    return repaired
-
-
 def _html_javascript_entrypoint_for_typescript_source(source_ref: str) -> str:
     source = str(source_ref or "").strip().replace("\\", "/")
     if not source.endswith((".ts", ".tsx")):
@@ -1966,70 +1743,6 @@ def _typescript_member_alias_replacement(
         if "hue" in existing_members:
             return f"`hsl(${{{receiver}.hue}}, 70%, 62%)`"
     return ""
-
-
-def _add_vitest_import_to_typescript_test(text: str, symbols: set[str]) -> str:
-    requested = sorted(symbol for symbol in symbols if symbol in _TS_TEST_GLOBAL_NAMES)
-    if not requested:
-        return text
-    match = _TS_VITEST_IMPORT_RE.search(text)
-    if match:
-        existing = {
-            token.strip()
-            for token in str(match.group("symbols") or "").split(",")
-            if token.strip() in _TS_TEST_GLOBAL_NAMES
-        }
-        merged = sorted(existing | set(requested))
-        replacement = f"import {{ {', '.join(merged)} }} from 'vitest';"
-        return text[: match.start()] + replacement + text[match.end() :]
-
-    insertion = f"import {{ {', '.join(requested)} }} from 'vitest';\n"
-    if text.startswith("#!"):
-        first_newline = text.find("\n")
-        if first_newline >= 0:
-            return text[: first_newline + 1] + insertion + text[first_newline + 1 :]
-    return insertion + text
-
-
-def _typescript_vitest_manifest_repair_content(package_path: Path) -> str:
-    if not package_path.is_file():
-        return ""
-    try:
-        payload = json.loads(package_path.read_text(encoding="utf-8"))
-    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
-        return ""
-    if not isinstance(payload, dict):
-        return ""
-    changed = False
-    scripts_raw = payload.get("scripts")
-    scripts: dict[str, Any] = dict(scripts_raw) if isinstance(scripts_raw, dict) else {}
-    test_script = str(scripts.get("test") or "").strip()
-    if "vitest" not in test_script:
-        scripts["test"] = "vitest run"
-        payload["scripts"] = dict(sorted((str(key), value) for key, value in scripts.items()))
-        changed = True
-
-    dev_dependencies_raw = payload.get("devDependencies")
-    dev_dependencies: dict[str, Any] = dict(dev_dependencies_raw) if isinstance(dev_dependencies_raw, dict) else {}
-    if not _package_manifest_declares_dependency(payload, "vitest"):
-        dev_dependencies["vitest"] = _VITEST_DEV_DEPENDENCY_VERSION
-        payload["devDependencies"] = dict(sorted(dev_dependencies.items()))
-        changed = True
-
-    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n" if changed else ""
-
-
-def _package_manifest_declares_dependency(payload: dict[str, Any], package_name: str) -> bool:
-    for dependency_key in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
-        dependencies = payload.get(dependency_key)
-        if isinstance(dependencies, dict) and package_name in dependencies:
-            return True
-    return False
-
-
-def _is_typescript_test_path(path: str) -> bool:
-    normalized = str(path or "").replace("\\", "/").lower()
-    return normalized.endswith((".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx")) or normalized.startswith("tests/")
 
 
 def _find_typescript_class_declaration(

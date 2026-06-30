@@ -666,6 +666,245 @@ def test_javascript_missing_run_export_with_entrypoint_contract_is_plannable() -
     assert "return { ok: true, entrypoint };" in repaired
 
 
+def _plan_javascript_missing_export(
+    *,
+    base_files: dict[str, str],
+    diagnostics: tuple[str, ...],
+) -> dict[str, object]:
+    return plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=js_syntax.JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+
+def _javascript_missing_export_after(
+    *,
+    base_files: dict[str, str],
+    diagnostics: tuple[str, ...],
+    path: str = "src/index.js",
+) -> str:
+    payload = _plan_javascript_missing_export(base_files=base_files, diagnostics=diagnostics)
+    assert payload["ok"] is True
+    assert payload["planned"] is True
+    summary = payload["composition_summary"]
+    assert isinstance(summary, dict)
+    patches = summary["patches"]
+    assert isinstance(patches, list)
+    for patch in patches:
+        assert isinstance(patch, dict)
+        if patch["path"] == path:
+            return str(patch["content_after"])
+    raise AssertionError(f"missing patch for {path}: {patches!r}")
+
+
+def test_javascript_missing_export_repair_uses_js_contracts() -> None:
+    repaired = _javascript_missing_export_after(
+        base_files={
+            "src/index.js": "console.log('dream note app');\n",
+            "tests/test_basic.js": (
+                'import { run, refineDreamNotes } from "../src/index.js";\n'
+                "const result = refineDreamNotes({ notes: ['有效便签', '', null] });\n"
+                "assert.equal(result.count, 1);\n"
+                "assert.equal(result.distilled[0], '[提炼] 有效便签');\n"
+                "const output = run();\n"
+                "assert.equal(output.ok, true);\n"
+                "assert.match(output.entrypoint, /src[\\\\/]+index\\.js$/);\n"
+            ),
+        },
+        diagnostics=(
+            "Artifact quality scan failed: unresolved import symbol 'refineDreamNotes' "
+            "from '../src/index.js' in tests/test_basic.js",
+            "Artifact quality scan failed: unresolved import symbol 'run' "
+            "from '../src/index.js' in tests/test_basic.js",
+        ),
+    )
+
+    assert "export function refineDreamNotes(...args)" in repaired
+    assert '"[提炼] " + note.trim()' in repaired
+    assert "return { count: distilled.length, distilled };" in repaired
+    assert "export function run(...args)" in repaired
+    assert "return { ok: true, entrypoint };" in repaired
+    assert ": unknown" not in repaired
+    assert "): any" not in repaired
+
+
+def test_javascript_missing_export_repair_turns_iterable_method_into_constant() -> None:
+    repaired = _javascript_missing_export_after(
+        path="src/engine/AlchemyEngine.js",
+        base_files={
+            "src/engine/AlchemyEngine.js": (
+                "export class AlchemyEngine {\n  defaultRecipes() {\n    return [{ name: 'starter' }];\n  }\n}\n"
+            ),
+            "tests/alchemyEngine.test.js": (
+                'import { AlchemyEngine, defaultRecipes } from "../src/engine/AlchemyEngine.js";\n'
+                "const engine = new AlchemyEngine();\n"
+                "for (const recipe of defaultRecipes) engine.addRecipe(recipe);\n"
+            ),
+        },
+        diagnostics=(
+            "Artifact quality scan failed: unresolved import symbol 'defaultRecipes' "
+            "from '../src/engine/AlchemyEngine.js' in tests/alchemyEngine.test.js",
+        ),
+    )
+
+    assert "export const defaultRecipes = new AlchemyEngine().defaultRecipes();" in repaired
+    assert "export function defaultRecipes" not in repaired
+    assert "export class AlchemyEngine" in repaired
+
+
+def test_javascript_export_contract_repair_replaces_wrong_existing_function() -> None:
+    repaired = _javascript_missing_export_after(
+        base_files={
+            "src/index.js": (
+                "export function refineDreamNotes(cards) {\n"
+                "  if (!Array.isArray(cards)) return [];\n"
+                "  return cards;\n"
+                "}\n"
+            ),
+            "tests/smoke.test.js": (
+                'import assert from "node:assert/strict";\n'
+                'import { refineDreamNotes } from "../src/index.js";\n'
+                "const result = refineDreamNotes('a glowing key', 'silent bell', 'paper moon');\n"
+                "assert.equal(result.count, 3);\n"
+                "assert.equal(result.summary, 'a glowing key | silent bell | paper moon');\n"
+            ),
+        },
+        diagnostics=(
+            "Artifact quality scan failed: workspace validation command failed (npm test): "
+            "file:///tmp/project/tests/smoke.test.js:5\n"
+            "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n"
+            "undefined !== 3",
+        ),
+    )
+
+    assert "export function refineDreamNotes(...args)" in repaired
+    assert "const values = args" in repaired
+    assert 'summary: values.join(" | ")' in repaired
+    assert "if (!Array.isArray(cards)) return [];" not in repaired
+
+
+def test_javascript_export_contract_repair_supports_prefixed_text_and_semver() -> None:
+    repaired = _javascript_missing_export_after(
+        base_files={
+            "package.json": '{"version":"0.2.0"}\n',
+            "src/index.js": (
+                "function refineDreamNotes(notes) {\n"
+                "  return [];\n"
+                "}\n\n"
+                "export function getVersion(...args) {\n"
+                "  return { ok: true };\n"
+                "}\n\n"
+                "export { refineDreamNotes };\n"
+            ),
+            "tests/smoke.test.js": (
+                'import assert from "node:assert/strict";\n'
+                'import { refineDreamNotes, getVersion, VERSION } from "../src/index.js";\n'
+                "const result = refineDreamNotes('  first dream  \\n\\n second dream ');\n"
+                'assert.equal(result, "[dream] first dream\\n[dream] second dream");\n'
+                "assert.throws(() => refineDreamNotes(null), TypeError);\n"
+                "const v = getVersion();\n"
+                "assert.equal(typeof v, 'string');\n"
+                "assert.ok(/^\\d+\\.\\d+\\.\\d+/.test(v));\n"
+                "assert.equal(typeof VERSION, 'string');\n"
+                "assert.equal(VERSION, getVersion());\n"
+            ),
+        },
+        diagnostics=(
+            "Artifact quality scan failed: workspace validation command failed (npm test): "
+            "file:///tmp/project/tests/smoke.test.js:4\n"
+            "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal",
+        ),
+    )
+
+    assert "function refineDreamNotes(...args)" in repaired
+    assert 'throw new TypeError("Expected a string input");' in repaired
+    assert '"[dream] " + line' in repaired
+    assert "return VERSION;" in repaired
+    assert 'export const VERSION = "0.2.0";' in repaired
+
+
+def test_javascript_export_contract_repair_supports_app_metadata() -> None:
+    repaired = _javascript_missing_export_after(
+        base_files={
+            "package.json": (
+                '{"name":"dream-note-alchemy-furnace","version":"0.1.0","description":"Dream note alchemy CLI"}\n'
+            ),
+            "src/index.js": "export function getAppInfo() {\n  return { ok: true };\n}\n",
+            "tests/version.test.js": (
+                'import assert from "node:assert/strict";\n'
+                'import { APP_NAME, APP_VERSION, APP_DESCRIPTION, getAppInfo } from "../src/index.js";\n'
+                "assert.equal(typeof APP_NAME, 'string');\n"
+                "assert.ok(APP_NAME.length > 0);\n"
+                "assert.match(APP_VERSION, /^\\d+\\.\\d+\\.\\d+/);\n"
+                "assert.equal(typeof APP_DESCRIPTION, 'string');\n"
+                "const info = getAppInfo();\n"
+                "assert.equal(info.name, APP_NAME);\n"
+                "assert.equal(info.version, APP_VERSION);\n"
+                "assert.equal(info.description, APP_DESCRIPTION);\n"
+            ),
+        },
+        diagnostics=(
+            "Artifact quality scan failed: workspace validation command failed (npm test): "
+            "file:///tmp/project/tests/version.test.js:8\n"
+            "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal",
+            "Artifact quality scan failed: unresolved import symbol 'APP_DESCRIPTION' "
+            "from '../src/index.js' in tests/version.test.js (sibling module does not define it)",
+            "Artifact quality scan failed: unresolved import symbol 'APP_NAME' "
+            "from '../src/index.js' in tests/version.test.js (sibling module does not define it)",
+            "Artifact quality scan failed: unresolved import symbol 'APP_VERSION' "
+            "from '../src/index.js' in tests/version.test.js (sibling module does not define it)",
+        ),
+    )
+
+    assert 'export const APP_NAME = "dream-note-alchemy-furnace";' in repaired
+    assert 'export const APP_VERSION = "0.1.0";' in repaired
+    assert 'export const APP_DESCRIPTION = "Dream note alchemy CLI";' in repaired
+    assert "name: APP_NAME" in repaired
+    assert "version: APP_VERSION" in repaired
+    assert "description: APP_DESCRIPTION" in repaired
+
+
+def test_javascript_export_contract_repair_uses_asserted_literal_and_note_shape() -> None:
+    repaired = _javascript_missing_export_after(
+        base_files={
+            "package.json": '{"name":"dream-note-alchemy-furnace","version":"0.1.0"}\n',
+            "src/index.js": "export function main() {\n  return true;\n}\n",
+            "tests/test_index.js": (
+                'import assert from "node:assert/strict";\n'
+                'import { ALCHEMY_FURNACE, refineDreamNote } from "../src/index.js";\n'
+                'assert.equal(typeof ALCHEMY_FURNACE, "string");\n'
+                'assert.equal(ALCHEMY_FURNACE, "dream-note-alchemy-furnace");\n'
+                'const result = refineDreamNote("  flying over paper lanterns  ");\n'
+                "assert.deepEqual(result, {\n"
+                '  source: "  flying over paper lanterns  ",\n'
+                '  refined: "flying over paper lanterns",\n'
+                '  tag: "dream-fragment",\n'
+                "});\n"
+                'const empty = refineDreamNote("   ");\n'
+                'assert.equal(empty.source, "   ");\n'
+                'assert.equal(empty.refined, "");\n'
+                'assert.equal(empty.tag, "empty");\n'
+            ),
+        },
+        diagnostics=(
+            "Artifact quality scan failed: unresolved import symbol 'ALCHEMY_FURNACE' "
+            "from '../src/index.js' in tests/test_index.js (sibling module does not define it)",
+            "Artifact quality scan failed: unresolved import symbol 'refineDreamNote' "
+            "from '../src/index.js' in tests/test_index.js (sibling module does not define it)",
+        ),
+    )
+
+    assert 'export const ALCHEMY_FURNACE = "dream-note-alchemy-furnace";' in repaired
+    assert "export function refineDreamNote(...args)" in repaired
+    assert 'const source = typeof args[0] === "string" ? args[0] : "";' in repaired
+    assert "const refined = source.trim();" in repaired
+    assert 'tag: refined.length > 0 ? "dream-fragment" : "empty"' in repaired
+
+
 def test_repair_rule_registry_rejects_duplicate_rule_ids_and_unknown_source_tool() -> None:
     rule = RepairRuleDefinition(
         rule_id="typescript.object_literal_missing_comma",
@@ -1873,14 +2112,10 @@ def test_typescript_too_few_arguments_rule_adds_trailing_declaration_defaults() 
     source_tool = ts_syntax.TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL
     base_files = {
         "src/firefly.ts": (
-            "export class Firefly {\n"
-            "  update(deltaTime: number, moonPhase: number, temperature: number): void {}\n"
-            "}\n"
+            "export class Firefly {\n  update(deltaTime: number, moonPhase: number, temperature: number): void {}\n}\n"
         ),
         "src/garden.ts": (
-            "import { Firefly } from './firefly.js';\n"
-            "const firefly = new Firefly();\n"
-            "firefly.update(0.5, 0.8);\n"
+            "import { Firefly } from './firefly.js';\nconst firefly = new Firefly();\nfirefly.update(0.5, 0.8);\n"
         ),
     }
     diagnostic = (
@@ -1937,6 +2172,75 @@ def test_typescript_too_few_arguments_rule_repairs_two_arg_clamp_callsite() -> N
     assert payload["composition_summary"]["changed_paths"] == ["src/engine.ts"]
     repaired = payload["composition_summary"]["patches"][0]["content_after"]
     assert "let y = clamp(42, 0, 600);" in repaired
+
+
+def test_typescript_uninitialized_property_rule_adds_default_value() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL
+    base_files = {"src/flower.ts": "export class Flower {\n  public happiness: number;\n  constructor() {}\n}\n"}
+    diagnostic = (
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/flower.ts(2,10): error TS2564: Property 'happiness' has no initializer "
+        "and is not definitely assigned in the constructor."
+    )
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    )
+    payload = planning.to_dict()
+
+    assert payload["ok"] is True
+    assert payload["planned"] is True
+    assert payload["plan_summary"]["rule_id"] == "typescript.uninitialized_property"
+    assert payload["composition_summary"]["changed_paths"] == ["src/flower.ts"]
+    repaired = payload["composition_summary"]["patches"][0]["content_after"]
+    assert "public happiness: number = 0;" in repaired
+
+
+def test_typescript_sourcefile_diagnostics_rule_replaces_bad_scaffold() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_SOURCEFILE_DIAGNOSTICS_SOURCE_TOOL
+    base_files = {
+        "src/verify.ts": (
+            'import * as ts from "typescript";\n'
+            "function check(file: string, text: string): string[] {\n"
+            "  const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.ES2020, true);\n"
+            "  const diagnostics = undefined as unknown as unknown ?? [];\n"
+            "  if (0 > 0) {\n"
+            "    return diagnostics.map((d) => String(d.messageText));\n"
+            "  }\n"
+            "  return [];\n"
+            "}\n"
+        )
+    }
+    diagnostics = (
+        "src/verify.ts(4,23): error TS2871: This expression is always nullish.",
+        "src/verify.ts(6,24): error TS2339: Property 'map' does not exist on type '{}'.",
+        "src/verify.ts(6,29): error TS7006: Parameter 'd' implicitly has an 'any' type.",
+    )
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    )
+    payload = planning.to_dict()
+
+    assert payload["ok"] is True
+    assert payload["planned"] is True
+    assert payload["plan_summary"]["rule_id"] == "typescript.sourcefile_diagnostics"
+    assert payload["composition_summary"]["changed_paths"] == ["src/verify.ts"]
+    repaired = payload["composition_summary"]["patches"][0]["content_after"]
+    assert "const diagnostics: readonly ts.Diagnostic[]" in repaired
+    assert "ts.transpileModule(text" in repaired
+    assert "if (diagnostics.length > 0)" in repaired
+    assert "undefined as unknown" not in repaired
 
 
 def test_typescript_readonly_assignment_rule_covers_ts2540_and_removes_single_modifier() -> None:

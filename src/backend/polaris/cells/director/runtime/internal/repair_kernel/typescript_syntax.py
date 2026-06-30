@@ -6589,11 +6589,41 @@ def _parse_typescript_sourcefile_diagnostics_paths(diagnostics: Sequence[RepairD
 
 
 def _repair_typescript_sourcefile_diagnostics_usage(text: str) -> str:
-    if "ts.createSourceFile" not in str(text or ""):
-        return str(text or "")
-    return re.sub(
-        r"const\s+diagnostics[^;\n]*;?", "const diagnostics: readonly ts.Diagnostic[] = [];", str(text or ""), count=1
+    source = str(text or "")
+    if "ts.createSourceFile" not in source:
+        return source
+    create_match = re.search(
+        r"ts\.createSourceFile\(\s*(?P<file>[A-Za-z_$][A-Za-z0-9_$]*)\s*,\s*"
+        r"(?P<source>[A-Za-z_$][A-Za-z0-9_$]*)",
+        source,
+        re.DOTALL,
     )
+    source_var = str(create_match.group("source") if create_match else "text")
+    file_var = str(create_match.group("file") if create_match else "file")
+    diagnostics_re = re.compile(
+        r"(?m)^(?P<indent>\s*)const\s+diagnostics(?:\s*:[^=]+)?\s*=\s*"
+        r"(?P<expr>[^\n;]*(?:parseDiagnostics|undefined\s+as\s+unknown|unknown\s*\?\?\s*\[\])[^\n;]*);?\s*$"
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        indent = str(match.group("indent") or "")
+        inner = indent + "  "
+        return (
+            f"{indent}const diagnostics: readonly ts.Diagnostic[] =\n"
+            f"{inner}ts.transpileModule({source_var}, {{\n"
+            f"{inner}  compilerOptions: {{\n"
+            f"{inner}    module: ts.ModuleKind.ES2020,\n"
+            f"{inner}    target: ts.ScriptTarget.ES2020,\n"
+            f"{inner}  }},\n"
+            f"{inner}  fileName: {file_var},\n"
+            f"{inner}  reportDiagnostics: true,\n"
+            f"{inner}}}).diagnostics ?? [];"
+        )
+
+    repaired, replacements = diagnostics_re.subn(_replace, source, count=1)
+    if replacements == 0:
+        return source
+    return re.sub(r"if\s*\(\s*(?:0\s*>\s*0|false)\s*\)", "if (diagnostics.length > 0)", repaired)
 
 
 def _parse_typescript_too_few_arguments_errors(diagnostics: Sequence[RepairDiagnostic]) -> list[dict[str, str]]:
