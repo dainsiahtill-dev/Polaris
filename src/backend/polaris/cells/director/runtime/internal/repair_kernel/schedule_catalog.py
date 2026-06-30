@@ -93,6 +93,7 @@ class MaterializationQualityRepairScheduleStep:
     priority: int
     source_tool: str
     source_tool_kind: str = _SOURCE_TOOL_KIND_CALLBACK_SCHEDULE_LABEL
+    runtime_source_tools: tuple[str, ...] = ()
     depends_on: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -102,6 +103,11 @@ class MaterializationQualityRepairScheduleStep:
         object.__setattr__(self, "priority", max(0, int(self.priority)))
         object.__setattr__(self, "source_tool", _non_empty(self.source_tool))
         object.__setattr__(self, "source_tool_kind", _source_tool_kind(self.source_tool_kind))
+        object.__setattr__(
+            self,
+            "runtime_source_tools",
+            tuple(_non_empty(item) for item in self.runtime_source_tools if str(item or "").strip()),
+        )
         object.__setattr__(self, "depends_on", tuple(str(item) for item in self.depends_on if str(item or "").strip()))
 
     @property
@@ -117,6 +123,7 @@ class MaterializationQualityRepairScheduleStep:
             "source_tool": self.source_tool,
             "source_tool_kind": self.source_tool_kind,
             "executable_runtime_source_tool": self.executable_runtime_source_tool,
+            "runtime_source_tools": list(self.runtime_source_tools),
             "depends_on": list(self.depends_on),
         }
 
@@ -264,6 +271,91 @@ _POST_EXECUTION_REPAIR_SCHEDULE: tuple[PostExecutionRepairScheduleStep, ...] = (
     ),
 )
 
+_MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS = (
+    "deterministic_rust_crate_import_rewrite_repair",
+    "deterministic_rust_dependency_repair",
+    "deterministic_rust_missing_lib_target_repair",
+    "deterministic_rust_missing_module_file_repair",
+    "deterministic_rust_duplicate_module_file_repair",
+    "deterministic_rust_lib_root_facade_repair",
+    "deterministic_rust_serde_derive_repair",
+    "deterministic_rust_line_suggestion_repair",
+    "deterministic_rust_unresolved_pub_use_repair",
+    "deterministic_rust_trait_import_repair",
+)
+_MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
+    "deterministic_typescript_canvas_scale_return_type_repair",
+    "deterministic_typescript_commonjs_package_type_repair",
+    "deterministic_typescript_duplicate_object_property_repair",
+    "deterministic_typescript_entrypoint_repair",
+    "deterministic_typescript_enum_member_separator_repair",
+    "deterministic_typescript_escaped_newline_repair",
+    "deterministic_typescript_member_alias_repair",
+    "deterministic_typescript_missing_closing_brace_repair",
+    "deterministic_typescript_missing_export_repair",
+    "deterministic_typescript_missing_member_repair",
+    "deterministic_typescript_nullable_canvas_context_repair",
+    "deterministic_typescript_number_to_string_argument_repair",
+    "deterministic_typescript_readonly_assignment_repair",
+    "deterministic_typescript_reexport_repair",
+    "deterministic_typescript_reexported_type_binding_repair",
+    "deterministic_typescript_relative_import_case_repair",
+    "deterministic_typescript_return_object_semicolon_repair",
+    "deterministic_typescript_sourcefile_diagnostics_repair",
+    "deterministic_typescript_too_few_arguments_repair",
+    "deterministic_typescript_tsconfig_lib_repair",
+    "deterministic_typescript_uninitialized_property_repair",
+    "deterministic_typescript_unique_export_import_repair",
+    "deterministic_typescript_unresolved_identifier_repair",
+    "deterministic_typescript_unused_import_repair",
+    "deterministic_typescript_vitest_globals_repair",
+    "deterministic_typescript_zod_type_class_collision_repair",
+    "deterministic_javascript_typescript_annotation_repair",
+    "deterministic_javascript_missing_export_repair",
+    "deterministic_javascript_esm_commonjs_entrypoint_repair",
+    "deterministic_javascript_dom_global_runtime_guard_repair",
+    "deterministic_javascript_missing_method_runtime_repair",
+)
+_MATERIALIZATION_HTML_RUNTIME_SOURCE_TOOLS = ("deterministic_html_typescript_module_script_repair",)
+_MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS = (
+    "deterministic_go_bare_import_string_repair",
+    "deterministic_go_nested_import_repair",
+    "deterministic_go_module_import_repair",
+    "deterministic_go_bare_import_repair",
+    "deterministic_go_subpath_repair",
+    "deterministic_go_unused_import_repair",
+    "deterministic_go_error_string_helper_repair",
+    "deterministic_go_dedup_repair",
+)
+_MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS = (
+    "deterministic_python_unittest_runtime_failure_repair",
+    "deterministic_python_package_shadow_bridge_repair",
+    "deterministic_unresolved_import_symbol_repair",
+)
+_MATERIALIZATION_HYGIENE_RUNTIME_SOURCE_TOOLS = (
+    "deterministic_scaffold_marker_cleanup",
+    "deterministic_scaffold_marker_quality_cleanup",
+)
+_MATERIALIZATION_TYPESCRIPT_SCAFFOLD_RUNTIME_SOURCE_TOOLS = (
+    "deterministic_typescript_scaffold_repair",
+    "deterministic_typeorm_model_normalization_repair",
+)
+_MATERIALIZATION_NODE_MANIFEST_RUNTIME_SOURCE_TOOLS = (
+    "deterministic_node_test_script_contract_repair",
+    "deterministic_npm_script_contract_repair",
+    "deterministic_runtime_dependency_repair",
+)
+_MATERIALIZATION_TARGET_RUNTIME_SOURCE_TOOLS = (
+    "deterministic_missing_declared_target_repair",
+    "deterministic_javascript_test_missing_target_repair",
+    "deterministic_javascript_typescript_annotation_repair",
+    "deterministic_javascript_missing_export_repair",
+    "deterministic_javascript_esm_commonjs_entrypoint_repair",
+    "deterministic_javascript_dom_global_runtime_guard_repair",
+    "deterministic_javascript_missing_method_runtime_repair",
+    "deterministic_typescript_html_container_selector_repair",
+)
+
 
 _MATERIALIZATION_QUALITY_REPAIR_SCHEDULE: tuple[MaterializationQualityRepairScheduleStep, ...] = (
     MaterializationQualityRepairScheduleStep(
@@ -272,6 +364,7 @@ _MATERIALIZATION_QUALITY_REPAIR_SCHEDULE: tuple[MaterializationQualityRepairSche
         phase="hygiene",
         priority=0,
         source_tool="deterministic_materialization_hygiene_repair",
+        runtime_source_tools=_MATERIALIZATION_HYGIENE_RUNTIME_SOURCE_TOOLS,
     ),
     MaterializationQualityRepairScheduleStep(
         step_id="materialization.typescript_scaffold",
@@ -279,6 +372,7 @@ _MATERIALIZATION_QUALITY_REPAIR_SCHEDULE: tuple[MaterializationQualityRepairSche
         phase="scaffold",
         priority=10,
         source_tool="deterministic_typescript_scaffold_materialization_repair",
+        runtime_source_tools=_MATERIALIZATION_TYPESCRIPT_SCAFFOLD_RUNTIME_SOURCE_TOOLS,
         depends_on=("materialization.hygiene_scaffold",),
     ),
     MaterializationQualityRepairScheduleStep(
@@ -287,6 +381,7 @@ _MATERIALIZATION_QUALITY_REPAIR_SCHEDULE: tuple[MaterializationQualityRepairSche
         phase="compiler",
         priority=20,
         source_tool="deterministic_typescript_materialization_repair",
+        runtime_source_tools=_MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS,
         depends_on=("materialization.typescript_scaffold",),
     ),
     MaterializationQualityRepairScheduleStep(
@@ -295,6 +390,7 @@ _MATERIALIZATION_QUALITY_REPAIR_SCHEDULE: tuple[MaterializationQualityRepairSche
         phase="entrypoint",
         priority=25,
         source_tool="deterministic_html_typescript_module_script_repair",
+        runtime_source_tools=_MATERIALIZATION_HTML_RUNTIME_SOURCE_TOOLS,
         depends_on=("materialization.typescript_compiler",),
     ),
     MaterializationQualityRepairScheduleStep(
@@ -303,6 +399,7 @@ _MATERIALIZATION_QUALITY_REPAIR_SCHEDULE: tuple[MaterializationQualityRepairSche
         phase="manifest",
         priority=30,
         source_tool="deterministic_node_manifest_materialization_repair",
+        runtime_source_tools=_MATERIALIZATION_NODE_MANIFEST_RUNTIME_SOURCE_TOOLS,
         depends_on=("materialization.html_entrypoint",),
     ),
     MaterializationQualityRepairScheduleStep(
@@ -311,6 +408,7 @@ _MATERIALIZATION_QUALITY_REPAIR_SCHEDULE: tuple[MaterializationQualityRepairSche
         phase="compiler",
         priority=40,
         source_tool="deterministic_rust_materialization_repair",
+        runtime_source_tools=_MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS,
         depends_on=("materialization.node_manifest",),
     ),
     MaterializationQualityRepairScheduleStep(
@@ -319,6 +417,7 @@ _MATERIALIZATION_QUALITY_REPAIR_SCHEDULE: tuple[MaterializationQualityRepairSche
         phase="runtime_smoke",
         priority=50,
         source_tool="deterministic_target_runtime_materialization_repair",
+        runtime_source_tools=_MATERIALIZATION_TARGET_RUNTIME_SOURCE_TOOLS,
         depends_on=("materialization.rust_compiler",),
     ),
     MaterializationQualityRepairScheduleStep(
@@ -327,6 +426,7 @@ _MATERIALIZATION_QUALITY_REPAIR_SCHEDULE: tuple[MaterializationQualityRepairSche
         phase="compiler",
         priority=60,
         source_tool="deterministic_python_materialization_repair",
+        runtime_source_tools=_MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS,
         depends_on=("materialization.target_runtime",),
     ),
     MaterializationQualityRepairScheduleStep(
@@ -335,6 +435,7 @@ _MATERIALIZATION_QUALITY_REPAIR_SCHEDULE: tuple[MaterializationQualityRepairSche
         phase="dependency_resolution",
         priority=70,
         source_tool="deterministic_go_materialization_repair",
+        runtime_source_tools=_MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS,
         depends_on=("materialization.python_import",),
     ),
 )

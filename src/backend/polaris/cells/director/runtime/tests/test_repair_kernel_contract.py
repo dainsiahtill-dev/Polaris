@@ -122,6 +122,7 @@ from polaris.cells.director.runtime.public import (
     DirectorRepairLanguageSlotsResultV1,
     DirectorRepairLanguageSlotV1,
     DirectorRepairMaterializationAllowedPathsResultV1,
+    DirectorRepairMaterializationPlanProbeResultV1,
     DirectorRepairMaterializationQualityScheduleResultV1,
     DirectorRepairMetricsResultV1,
     DirectorRepairPlanningResultV1,
@@ -137,6 +138,7 @@ from polaris.cells.director.runtime.public import (
     QueryDirectorRepairCoverageV1,
     QueryDirectorRepairLanguageSlotsV1,
     QueryDirectorRepairMaterializationAllowedPathsV1,
+    QueryDirectorRepairMaterializationPlanProbeV1,
     QueryDirectorRepairMaterializationQualityScheduleV1,
     QueryDirectorRepairPlanProbeV1,
     QueryDirectorRepairPostExecutionScheduleV1,
@@ -156,6 +158,7 @@ from polaris.cells.director.runtime.public import (
     query_director_repair_coverage,
     query_director_repair_language_slots,
     query_director_repair_materialization_allowed_paths,
+    query_director_repair_materialization_plan_probe,
     query_director_repair_materialization_quality_schedule,
     query_director_repair_plan_probe,
     query_director_repair_post_execution_schedule,
@@ -516,6 +519,44 @@ def test_materialization_allowed_paths_query_merges_base_and_runtime_changed_pat
     assert result.changed_paths
     assert set(result.changed_paths).issubset(set(result.allowed_paths))
     assert result.to_dict()["metadata"]["read_only_allowed_paths_plan"] is True
+
+
+def test_materialization_plan_probe_query_owns_candidate_and_plannable_source_tools() -> None:
+    error = (
+        "Artifact quality scan failed: workspace validation command failed (npm run start): "
+        "file:///tmp/project/src/index.js:1\n"
+        "SyntaxError: The requested module ./engine/AlchemyEngine.js "
+        "does not provide an export named default"
+    )
+    base_files = {
+        "package.json": '{"type":"module","scripts":{"start":"node src/index.js"}}',
+        "src/index.js": 'import AlchemyEngine from "./engine/AlchemyEngine.js";\n',
+        "src/engine/AlchemyEngine.js": (
+            "class AlchemyEngine {}\n"
+            "function buildDefaultEngine() { return {}; }\n"
+            "module.exports = AlchemyEngine;\n"
+            "module.exports.buildDefaultEngine = buildDefaultEngine;\n"
+        ),
+    }
+
+    result = query_director_repair_materialization_plan_probe(
+        QueryDirectorRepairMaterializationPlanProbeV1(
+            artifact_quality_errors=(error,),
+            base_files=base_files,
+            source_tools=(
+                "deterministic_javascript_esm_commonjs_entrypoint_repair",
+                "deterministic_python_package_shadow_bridge_repair",
+            ),
+        )
+    )
+
+    assert isinstance(result, DirectorRepairMaterializationPlanProbeResultV1)
+    assert result.owner_cell == "director.runtime"
+    assert result.execution_boundary == "read_only_materialization_plan_probe_no_writes"
+    assert result.candidate_source_tools == ("deterministic_javascript_esm_commonjs_entrypoint_repair",)
+    assert result.plannable_source_tools == ("deterministic_javascript_esm_commonjs_entrypoint_repair",)
+    assert result.plan_probe_result is not None
+    assert result.to_dict()["metadata"]["coverage_is_not_planning"] is True
 
 
 def test_javascript_missing_export_without_declaration_is_covered_unplannable() -> None:
@@ -10750,8 +10791,15 @@ def test_public_materialization_quality_schedule_is_runtime_owned_and_read_only(
     assert payload["items"][0]["phase"] == "hygiene"
     assert payload["items"][0]["source_tool_kind"] == "callback_schedule_label"
     assert payload["items"][0]["executable_runtime_source_tool"] is False
+    assert payload["items"][0]["runtime_source_tools"] == [
+        "deterministic_scaffold_marker_cleanup",
+        "deterministic_scaffold_marker_quality_cleanup",
+    ]
     assert payload["items"][3]["source_tool"] == "deterministic_html_typescript_module_script_repair"
     assert payload["items"][3]["source_tool_kind"] == "callback_schedule_label"
+    assert payload["items"][3]["runtime_source_tools"] == ["deterministic_html_typescript_module_script_repair"]
+    assert "deterministic_python_package_shadow_bridge_repair" in payload["items"][7]["runtime_source_tools"]
+    assert "deterministic_go_module_import_repair" in payload["items"][8]["runtime_source_tools"]
     assert payload["items"][3]["executable_runtime_source_tool"] is False
     assert payload["items"][4]["depends_on"] == ["materialization.html_entrypoint"]
     assert payload["items"][-1]["depends_on"] == ["materialization.python_import"]

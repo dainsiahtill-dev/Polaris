@@ -81,6 +81,7 @@ from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairLanguageSlotsResultV1,
     DirectorRepairLanguageSlotV1,
     DirectorRepairMaterializationAllowedPathsResultV1,
+    DirectorRepairMaterializationPlanProbeResultV1,
     DirectorRepairMaterializationQualityScheduleResultV1,
     DirectorRepairMaterializationQualityScheduleRunResultV1,
     DirectorRepairMaterializationQualityStepV1,
@@ -112,6 +113,7 @@ from polaris.cells.director.runtime.public.contracts import (
     QueryDirectorRepairEnvironmentRefreshRequirementsV1,
     QueryDirectorRepairLanguageSlotsV1,
     QueryDirectorRepairMaterializationAllowedPathsV1,
+    QueryDirectorRepairMaterializationPlanProbeV1,
     QueryDirectorRepairMaterializationQualityScheduleV1,
     QueryDirectorRepairPlanProbeV1,
     QueryDirectorRepairPostExecutionScheduleV1,
@@ -1141,6 +1143,125 @@ def query_director_repair_materialization_allowed_paths(
     )
 
 
+def query_director_repair_materialization_plan_probe(
+    query: QueryDirectorRepairMaterializationPlanProbeV1,
+) -> DirectorRepairMaterializationPlanProbeResultV1:
+    """Return materialization source tools proven by runtime coverage and planning."""
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(query.artifact_quality_errors))
+    schedule_source_tools = _materialization_plan_probe_source_tools(step_id=query.step_id)
+    requested_source_tools = _ordered_unique(query.source_tools) or schedule_source_tools
+    if not query.artifact_quality_errors:
+        return DirectorRepairMaterializationPlanProbeResultV1(
+            status="already_clean",
+            coverage_report=coverage,
+            requested_source_tools=requested_source_tools,
+            base_file_count=len(query.base_files),
+            metadata={
+                **dict(query.metadata),
+                "public_entrypoint": "query_director_repair_materialization_plan_probe",
+                "read_only_plan_probe": True,
+                "materialization_step_id": query.step_id,
+                "materialization_schedule_source_tools": list(schedule_source_tools),
+            },
+        )
+    candidate_source_tools = _materialization_candidate_source_tools_from_coverage(
+        coverage,
+        requested_source_tools=requested_source_tools,
+    )
+    if (
+        not candidate_source_tools
+        and query.fallback_to_step_source_tools
+        and coverage.total_diagnostics > 0
+    ):
+        candidate_source_tools = requested_source_tools
+    if not candidate_source_tools:
+        status = (
+            "coverage_gap_uncovered_diagnostics"
+            if int(coverage.uncovered_diagnostic_count or 0) > 0
+            else "stuck_no_materialization_runtime_source_tool"
+        )
+        return DirectorRepairMaterializationPlanProbeResultV1(
+            status=status,
+            coverage_report=coverage,
+            requested_source_tools=requested_source_tools,
+            candidate_source_tools=(),
+            base_file_count=len(query.base_files),
+            metadata={
+                **dict(query.metadata),
+                "public_entrypoint": "query_director_repair_materialization_plan_probe",
+                "read_only_plan_probe": True,
+                "coverage_is_not_planning": True,
+                "materialization_step_id": query.step_id,
+                "materialization_schedule_source_tools": list(schedule_source_tools),
+                "fallback_to_step_source_tools": query.fallback_to_step_source_tools,
+            },
+        )
+    plan_probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=query.artifact_quality_errors,
+            base_files=query.base_files,
+            source_tools=candidate_source_tools,
+            mode=query.mode,
+            advisor_notes=query.advisor_notes,
+            metadata={
+                **dict(query.metadata),
+                "public_entrypoint": "query_director_repair_materialization_plan_probe",
+                "read_only_plan_probe": True,
+                "coverage_is_not_planning": True,
+                "materialization_step_id": query.step_id,
+                "materialization_schedule_source_tools": list(schedule_source_tools),
+                "fallback_to_step_source_tools": query.fallback_to_step_source_tools,
+            },
+        )
+    )
+    return DirectorRepairMaterializationPlanProbeResultV1(
+        status=plan_probe.status,
+        coverage_report=coverage,
+        plan_probe_result=plan_probe,
+        requested_source_tools=requested_source_tools,
+        candidate_source_tools=candidate_source_tools,
+        plannable_source_tools=plan_probe.plannable_source_tools,
+        base_file_count=len(query.base_files),
+        metadata={
+            **dict(query.metadata),
+            "public_entrypoint": "query_director_repair_materialization_plan_probe",
+            "read_only_plan_probe": True,
+            "coverage_is_not_planning": True,
+            "materialization_step_id": query.step_id,
+            "materialization_schedule_source_tools": list(schedule_source_tools),
+            "fallback_to_step_source_tools": query.fallback_to_step_source_tools,
+            "candidate_source_tool_count": len(candidate_source_tools),
+            "plannable_source_tool_count": len(plan_probe.plannable_source_tools),
+        },
+    )
+
+
+def _materialization_candidate_source_tools_from_coverage(
+    coverage: DirectorRepairCoverageReportV1,
+    *,
+    requested_source_tools: Sequence[str],
+) -> tuple[str, ...]:
+    requested = set(_ordered_unique(requested_source_tools))
+    candidates: list[str] = []
+    for item in coverage.items:
+        if not item.executable_runtime_plan_matched:
+            continue
+        for source_tool in item.matched_source_tools:
+            if source_tool in requested:
+                candidates.append(source_tool)
+    return _ordered_unique(candidates)
+
+
+def _materialization_plan_probe_source_tools(*, step_id: str | None = None) -> tuple[str, ...]:
+    steps = materialization_quality_repair_schedule()
+    selected_steps = tuple(step for step in steps if step.step_id == step_id) if step_id else steps
+    source_tools: list[str] = []
+    for step in selected_steps:
+        source_tools.extend(step.runtime_source_tools)
+    return _ordered_unique(tuple(source_tools))
+
+
 def _plan_probe_candidate_source_tools(
     coverage: DirectorRepairCoverageReportV1,
     *,
@@ -1495,6 +1616,9 @@ def query_director_repair_materialization_quality_schedule(
     callback_schedule_label_source_tools = [
         step.source_tool for step in ordered_steps if not step.executable_runtime_source_tool
     ]
+    runtime_source_tools = _ordered_unique(
+        tuple(source_tool for step in ordered_steps for source_tool in step.runtime_source_tools)
+    )
     return DirectorRepairMaterializationQualityScheduleResultV1(
         schema_version="director.repair_materialization_quality_schedule.v1",
         source="director.runtime.repair_kernel.scheduler",
@@ -1508,6 +1632,8 @@ def query_director_repair_materialization_quality_schedule(
             "ordered_step_ids": [step.step_id for step in ordered_steps],
             "source_tools": [step.source_tool for step in ordered_steps],
             "source_tool_kinds": [step.source_tool_kind for step in ordered_steps],
+            "runtime_source_tools": list(runtime_source_tools),
+            "runtime_source_tool_count": len(runtime_source_tools),
             "source_tool_kind_counts": {
                 "callback_schedule_label": len(callback_schedule_label_source_tools),
                 "executable_runtime": len(executable_runtime_source_tools),
@@ -1579,6 +1705,7 @@ def _public_post_execution_step(step: PostExecutionRepairScheduleStep) -> Direct
         source_tool=step.source_tool,
         source_tool_kind=step.source_tool_kind,
         executable_runtime_source_tool=step.executable_runtime_source_tool,
+        runtime_source_tools=step.runtime_source_tools,
         depends_on=step.depends_on,
     )
 
@@ -1594,6 +1721,7 @@ def _public_materialization_quality_step(
         source_tool=step.source_tool,
         source_tool_kind=step.source_tool_kind,
         executable_runtime_source_tool=step.executable_runtime_source_tool,
+        runtime_source_tools=step.runtime_source_tools,
         depends_on=step.depends_on,
     )
 

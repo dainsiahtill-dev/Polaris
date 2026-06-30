@@ -1906,6 +1906,7 @@ class DirectorRepairMaterializationQualityStepV1:
     source_tool: str
     source_tool_kind: str = "callback_schedule_label"
     executable_runtime_source_tool: bool = False
+    runtime_source_tools: tuple[str, ...] = ()
     depends_on: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -1917,6 +1918,7 @@ class DirectorRepairMaterializationQualityStepV1:
         source_tool_kind = _require_non_empty("source_tool_kind", self.source_tool_kind)
         object.__setattr__(self, "source_tool_kind", source_tool_kind)
         object.__setattr__(self, "executable_runtime_source_tool", source_tool_kind == "executable_runtime")
+        object.__setattr__(self, "runtime_source_tools", _to_tuple_str(list(self.runtime_source_tools)))
         object.__setattr__(self, "depends_on", _to_tuple_str(list(self.depends_on)))
 
     def to_dict(self) -> dict[str, Any]:
@@ -1928,6 +1930,7 @@ class DirectorRepairMaterializationQualityStepV1:
             "source_tool": self.source_tool,
             "source_tool_kind": self.source_tool_kind,
             "executable_runtime_source_tool": self.executable_runtime_source_tool,
+            "runtime_source_tools": list(self.runtime_source_tools),
             "depends_on": list(self.depends_on),
         }
 
@@ -2767,6 +2770,84 @@ class DirectorRepairMaterializationAllowedPathsResultV1:
             "changed_paths": list(self.changed_paths),
             "allowed_paths": list(self.allowed_paths),
             "planning_result": self.planning_result.to_dict(),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class QueryDirectorRepairMaterializationPlanProbeV1:
+    """Read-only materialization probe that owns source-tool candidate filtering."""
+
+    artifact_quality_errors: tuple[str, ...]
+    source_tools: tuple[str, ...] = ()
+    base_files: Mapping[str, str] = field(default_factory=dict)
+    step_id: str | None = None
+    mode: str = "shadow"
+    fallback_to_step_source_tools: bool = False
+    advisor_notes: tuple[RepairAdvisoryV1, ...] = ()
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "artifact_quality_errors", _to_tuple_str(list(self.artifact_quality_errors)))
+        object.__setattr__(self, "source_tools", _to_tuple_str(list(self.source_tools)))
+        object.__setattr__(self, "base_files", dict(self.base_files or {}))
+        object.__setattr__(self, "step_id", str(self.step_id or "").strip() or None)
+        object.__setattr__(self, "mode", str(self.mode or "shadow").strip() or "shadow")
+        object.__setattr__(self, "fallback_to_step_source_tools", bool(self.fallback_to_step_source_tools))
+        object.__setattr__(self, "advisor_notes", tuple(self.advisor_notes or ()))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class DirectorRepairMaterializationPlanProbeResultV1:
+    """Runtime-owned source-tool filtering and planning proof for materialization repair."""
+
+    status: str
+    coverage_report: DirectorRepairCoverageReportV1
+    plan_probe_result: DirectorRepairPlanProbeResultV1 | None = None
+    requested_source_tools: tuple[str, ...] = ()
+    candidate_source_tools: tuple[str, ...] = ()
+    plannable_source_tools: tuple[str, ...] = ()
+    base_file_count: int = 0
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    schema_version: str = "director.materialization_plan_probe_preaudit.v1"
+    owner_cell: str = "director.runtime"
+    execution_boundary: str = "read_only_materialization_plan_probe_no_writes"
+    agi_execution_authority: bool = False
+    director_tool_execution_required: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "status", _require_non_empty("status", self.status))
+        object.__setattr__(self, "requested_source_tools", _to_tuple_str(list(self.requested_source_tools)))
+        object.__setattr__(self, "candidate_source_tools", _to_tuple_str(list(self.candidate_source_tools)))
+        object.__setattr__(self, "plannable_source_tools", _to_tuple_str(list(self.plannable_source_tools)))
+        object.__setattr__(self, "base_file_count", max(0, int(self.base_file_count)))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(
+            self,
+            "execution_boundary",
+            _require_non_empty("execution_boundary", self.execution_boundary),
+        )
+        object.__setattr__(self, "agi_execution_authority", False)
+        object.__setattr__(self, "director_tool_execution_required", False)
+
+    def to_dict(self) -> dict[str, Any]:
+        plan_probe = self.plan_probe_result.to_dict() if self.plan_probe_result is not None else None
+        return {
+            "schema_version": self.schema_version,
+            "status": self.status,
+            "owner_cell": self.owner_cell,
+            "execution_boundary": self.execution_boundary,
+            "agi_execution_authority": False,
+            "director_tool_execution_required": False,
+            "requested_source_tools": list(self.requested_source_tools),
+            "candidate_source_tools": list(self.candidate_source_tools),
+            "plannable_source_tools": list(self.plannable_source_tools),
+            "base_file_count": self.base_file_count,
+            "coverage_report": self.coverage_report.to_dict(),
+            "runtime_plan_probe": plan_probe,
             "metadata": dict(self.metadata),
         }
 

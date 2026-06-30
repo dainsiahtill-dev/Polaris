@@ -16,15 +16,15 @@ from polaris.cells.director.runtime.public.service import (
     DirectorRepairMaterializationQualityStepV1,
     QueryDirectorRepairCoverageV1,
     QueryDirectorRepairMaterializationAllowedPathsV1,
+    QueryDirectorRepairMaterializationPlanProbeV1,
     QueryDirectorRepairMaterializationQualityScheduleV1,
-    QueryDirectorRepairPlanProbeV1,
     QueryDirectorRepairStrategyCatalogV1,
     RepairReceiptV1,
     compare_director_repair_shadow_run,
     query_director_repair_coverage,
     query_director_repair_materialization_allowed_paths,
+    query_director_repair_materialization_plan_probe,
     query_director_repair_materialization_quality_schedule,
-    query_director_repair_plan_probe,
     query_director_repair_strategy_catalog,
     run_director_materialization_quality_repair_schedule_result,
 )
@@ -53,89 +53,10 @@ _NON_AUTHORITATIVE_CALLBACK_RECEIPT_AUTHORITIES = {
     "non_authoritative_callback_receipt_projection",
     "non_authoritative_callback_tool_result_projection",
 }
-_MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS = (
-    "deterministic_rust_crate_import_rewrite_repair",
-    "deterministic_rust_dependency_repair",
-    "deterministic_rust_missing_lib_target_repair",
-    "deterministic_rust_missing_module_file_repair",
-    "deterministic_rust_duplicate_module_file_repair",
-    "deterministic_rust_lib_root_facade_repair",
-    "deterministic_rust_serde_derive_repair",
-    "deterministic_rust_line_suggestion_repair",
-    "deterministic_rust_unresolved_pub_use_repair",
-    "deterministic_rust_trait_import_repair",
-)
-_MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
-    "deterministic_typescript_canvas_scale_return_type_repair",
-    "deterministic_typescript_commonjs_package_type_repair",
-    "deterministic_typescript_duplicate_object_property_repair",
-    "deterministic_typescript_entrypoint_repair",
-    "deterministic_typescript_enum_member_separator_repair",
-    "deterministic_typescript_escaped_newline_repair",
-    "deterministic_typescript_member_alias_repair",
-    "deterministic_typescript_missing_closing_brace_repair",
-    "deterministic_typescript_missing_export_repair",
-    "deterministic_typescript_missing_member_repair",
-    "deterministic_typescript_nullable_canvas_context_repair",
-    "deterministic_typescript_number_to_string_argument_repair",
-    "deterministic_typescript_readonly_assignment_repair",
-    "deterministic_typescript_reexport_repair",
-    "deterministic_typescript_reexported_type_binding_repair",
-    "deterministic_typescript_relative_import_case_repair",
-    "deterministic_typescript_return_object_semicolon_repair",
-    "deterministic_typescript_sourcefile_diagnostics_repair",
-    "deterministic_typescript_too_few_arguments_repair",
-    "deterministic_typescript_tsconfig_lib_repair",
-    "deterministic_typescript_uninitialized_property_repair",
-    "deterministic_typescript_unique_export_import_repair",
-    "deterministic_typescript_unresolved_identifier_repair",
-    "deterministic_typescript_unused_import_repair",
-    "deterministic_typescript_vitest_globals_repair",
-    "deterministic_typescript_zod_type_class_collision_repair",
-)
-_MATERIALIZATION_HTML_RUNTIME_SOURCE_TOOLS = ("deterministic_html_typescript_module_script_repair",)
 _SEMANTIC_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
     "deterministic_typescript_missing_export_repair",
     "deterministic_typescript_hyphenated_identifier_repair",
     "deterministic_typescript_zod_type_class_collision_repair",
-)
-_MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS = (
-    "deterministic_go_bare_import_string_repair",
-    "deterministic_go_nested_import_repair",
-    "deterministic_go_module_import_repair",
-    "deterministic_go_bare_import_repair",
-    "deterministic_go_subpath_repair",
-    "deterministic_go_unused_import_repair",
-    "deterministic_go_error_string_helper_repair",
-    "deterministic_go_dedup_repair",
-)
-_MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS = (
-    "deterministic_python_unittest_runtime_failure_repair",
-    "deterministic_python_package_shadow_bridge_repair",
-    "deterministic_unresolved_import_symbol_repair",
-)
-_MATERIALIZATION_HYGIENE_RUNTIME_SOURCE_TOOLS = (
-    "deterministic_scaffold_marker_cleanup",
-    "deterministic_scaffold_marker_quality_cleanup",
-)
-_MATERIALIZATION_TYPESCRIPT_SCAFFOLD_RUNTIME_SOURCE_TOOLS = (
-    "deterministic_typescript_scaffold_repair",
-    "deterministic_typeorm_model_normalization_repair",
-)
-_MATERIALIZATION_NODE_MANIFEST_RUNTIME_SOURCE_TOOLS = (
-    "deterministic_node_test_script_contract_repair",
-    "deterministic_npm_script_contract_repair",
-    "deterministic_runtime_dependency_repair",
-)
-_MATERIALIZATION_TARGET_RUNTIME_SOURCE_TOOLS = (
-    "deterministic_missing_declared_target_repair",
-    "deterministic_javascript_test_missing_target_repair",
-    "deterministic_javascript_typescript_annotation_repair",
-    "deterministic_javascript_missing_export_repair",
-    "deterministic_javascript_esm_commonjs_entrypoint_repair",
-    "deterministic_javascript_dom_global_runtime_guard_repair",
-    "deterministic_javascript_missing_method_runtime_repair",
-    "deterministic_typescript_html_container_selector_repair",
 )
 
 
@@ -153,19 +74,21 @@ def has_materialization_quality_runtime_repair_coverage(artifact_quality_errors:
     return False
 
 
-def _materialization_runtime_coverage_source_tools() -> frozenset[str]:
-    return frozenset(
-        (
-            *_MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS,
-            *_MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS,
-            *_MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS,
-            *_MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS,
-            *_MATERIALIZATION_HYGIENE_RUNTIME_SOURCE_TOOLS,
-            *_MATERIALIZATION_TYPESCRIPT_SCAFFOLD_RUNTIME_SOURCE_TOOLS,
-            *_MATERIALIZATION_NODE_MANIFEST_RUNTIME_SOURCE_TOOLS,
-            *_MATERIALIZATION_TARGET_RUNTIME_SOURCE_TOOLS,
-        )
+def _materialization_runtime_source_tools_for_step(step_id: str) -> tuple[str, ...]:
+    schedule = query_director_repair_materialization_quality_schedule(
+        QueryDirectorRepairMaterializationQualityScheduleV1(include_items=True)
     )
+    for step in schedule.items:
+        if step.step_id == step_id:
+            return step.runtime_source_tools
+    return ()
+
+
+def _materialization_runtime_coverage_source_tools() -> frozenset[str]:
+    schedule = query_director_repair_materialization_quality_schedule(
+        QueryDirectorRepairMaterializationQualityScheduleV1(include_items=True)
+    )
+    return frozenset(source_tool for step in schedule.items for source_tool in step.runtime_source_tools)
 
 
 def _coverage_has_materialization_runtime_source_tool(
@@ -387,7 +310,7 @@ def _run_materialization_hygiene_scaffold(
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    for source_tool in _MATERIALIZATION_HYGIENE_RUNTIME_SOURCE_TOOLS:
+    for source_tool in _materialization_runtime_source_tools_for_step("materialization.hygiene_scaffold"):
         workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
         base_files = _collect_materialization_hygiene_base_files(
             workspace_path,
@@ -424,7 +347,7 @@ def _run_materialization_typescript_scaffold(
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    for source_tool in _MATERIALIZATION_TYPESCRIPT_SCAFFOLD_RUNTIME_SOURCE_TOOLS:
+    for source_tool in _materialization_runtime_source_tools_for_step("materialization.typescript_scaffold"):
         base_files = _collect_materialization_runtime_base_files(
             workspace_path,
             artifact_quality_errors=artifact_quality_errors,
@@ -493,7 +416,7 @@ def _materialization_typescript_compiler_runtime_source_tools(
     )
     if matched_tools:
         return matched_tools
-    return _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS
+    return _materialization_runtime_source_tools_for_step("materialization.typescript_compiler")
 
 
 def _materialization_plannable_runtime_source_tools(
@@ -542,8 +465,8 @@ def _materialization_plannable_runtime_source_tools_from_base_files(
     errors = tuple(str(item) for item in artifact_quality_errors or () if str(item or "").strip())
     if not errors:
         return tuple(str(item) for item in candidate_source_tools)
-    plan_probe = query_director_repair_plan_probe(
-        QueryDirectorRepairPlanProbeV1(
+    plan_probe = query_director_repair_materialization_plan_probe(
+        QueryDirectorRepairMaterializationPlanProbeV1(
             artifact_quality_errors=errors,
             base_files=dict(base_files),
             source_tools=tuple(str(item) for item in candidate_source_tools),
@@ -555,7 +478,7 @@ def _materialization_plannable_runtime_source_tools_from_base_files(
             },
         )
     )
-    return tuple(plan_probe.plannable_source_tools)
+    return plan_probe.plannable_source_tools
 
 
 def _run_materialization_html_entrypoint(
@@ -567,7 +490,7 @@ def _run_materialization_html_entrypoint(
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    for source_tool in _MATERIALIZATION_HTML_RUNTIME_SOURCE_TOOLS:
+    for source_tool in _materialization_runtime_source_tools_for_step("materialization.html_entrypoint"):
         results.extend(
             _run_materialization_typescript_runtime_repair(
                 adapter,
@@ -630,7 +553,7 @@ def _run_materialization_node_manifest(
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    for source_tool in _MATERIALIZATION_NODE_MANIFEST_RUNTIME_SOURCE_TOOLS:
+    for source_tool in _materialization_runtime_source_tools_for_step("materialization.node_manifest"):
         base_files = _collect_materialization_node_manifest_base_files(
             workspace_path,
             task=task,
@@ -697,11 +620,11 @@ def _materialization_rust_compiler_runtime_source_tools(
         artifact_quality_errors=artifact_quality_errors,
         source_tool_prefixes=("deterministic_rust_",),
     )
-    materialization_tools = set(_MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS)
+    materialization_tools = set(_materialization_runtime_source_tools_for_step("materialization.rust_compiler"))
     selected = tuple(source_tool for source_tool in matched_tools if source_tool in materialization_tools)
     if selected:
         return selected
-    return _MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS
+    return _materialization_runtime_source_tools_for_step("materialization.rust_compiler")
 
 
 def _collect_materialization_runtime_base_files(
@@ -817,7 +740,7 @@ def _collect_materialization_target_runtime_base_files(
         collect_unmatched_diagnostic_paths=True,
         task=task,
     )
-    if source_tool in _MATERIALIZATION_TARGET_RUNTIME_SOURCE_TOOLS:
+    if source_tool in _materialization_runtime_source_tools_for_step("materialization.target_runtime"):
         _add_bounded_workspace_materialization_base_files(
             base_files,
             workspace_path,
@@ -998,7 +921,7 @@ def _run_materialization_target_runtime(
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    for source_tool in _MATERIALIZATION_TARGET_RUNTIME_SOURCE_TOOLS:
+    for source_tool in _materialization_runtime_source_tools_for_step("materialization.target_runtime"):
         base_files = _collect_materialization_target_runtime_base_files(
             workspace_path,
             task=task,
@@ -1079,11 +1002,11 @@ def _materialization_python_import_runtime_source_tools(
         artifact_quality_errors=artifact_quality_errors,
         source_tool_prefixes=("deterministic_python_", "deterministic_unresolved_import_symbol"),
     )
-    materialization_tools = set(_MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS)
+    materialization_tools = set(_materialization_runtime_source_tools_for_step("materialization.python_import"))
     selected = tuple(source_tool for source_tool in matched_tools if source_tool in materialization_tools)
     if selected:
         return selected
-    return _MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS
+    return _materialization_runtime_source_tools_for_step("materialization.python_import")
 
 
 def _collect_materialization_python_base_files(workspace_path: Path) -> dict[str, str]:
@@ -1177,11 +1100,11 @@ def _materialization_go_import_runtime_source_tools(
         artifact_quality_errors=artifact_quality_errors,
         source_tool_prefixes=("deterministic_go_",),
     )
-    materialization_tools = set(_MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS)
+    materialization_tools = set(_materialization_runtime_source_tools_for_step("materialization.go_import"))
     selected = tuple(source_tool for source_tool in matched_tools if source_tool in materialization_tools)
     if selected:
         return selected
-    return _MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS
+    return _materialization_runtime_source_tools_for_step("materialization.go_import")
 
 
 def _collect_materialization_go_base_files(workspace_path: Path) -> dict[str, str]:
@@ -2766,30 +2689,17 @@ def _project_materialization_plan_probe_preaudit(
             "schema_version": "director.materialization_quality_plan_probe_preaudit.v1",
             "status": "already_clean",
             "source": "roles.adapters.materialization_quality_repair_bridge",
-            "runtime_public_entrypoint": "query_director_repair_plan_probe",
+            "runtime_public_entrypoint": "query_director_repair_materialization_plan_probe",
             "read_only": True,
             "candidate_source_tools": [],
             "base_file_count": 0,
-        }
-    candidate_source_tools = _materialization_coverage_candidate_source_tools(coverage_preaudit)
-    if not candidate_source_tools:
-        return {
-            "schema_version": "director.materialization_quality_plan_probe_preaudit.v1",
-            "status": "coverage_gap_uncovered_diagnostics"
-            if int(coverage_preaudit.get("uncovered_diagnostic_count") or 0) > 0
-            else "stuck_no_materialization_runtime_source_tool",
-            "source": "roles.adapters.materialization_quality_repair_bridge",
-            "runtime_public_entrypoint": "query_director_repair_plan_probe",
-            "read_only": True,
-            "candidate_source_tools": [],
-            "base_file_count": 0,
-            "coverage_preaudit": dict(coverage_preaudit),
         }
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    materialization_source_tools = tuple(sorted(_materialization_runtime_coverage_source_tools()))
     base_files = _collect_materialization_runtime_base_files(
         workspace_path,
         artifact_quality_errors=artifact_quality_errors,
-        source_tool=candidate_source_tools[0],
+        source_tool=next(iter(materialization_source_tools), ""),
         allowed_suffixes=(
             ".ts",
             ".tsx",
@@ -2815,11 +2725,11 @@ def _project_materialization_plan_probe_preaudit(
         collect_unmatched_diagnostic_paths=True,
         task=task,
     )
-    plan_probe = query_director_repair_plan_probe(
-        QueryDirectorRepairPlanProbeV1(
+    plan_probe = query_director_repair_materialization_plan_probe(
+        QueryDirectorRepairMaterializationPlanProbeV1(
             artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
             base_files=base_files,
-            source_tools=candidate_source_tools,
+            source_tools=materialization_source_tools,
             mode="shadow",
             metadata={
                 "caller": "materialization_quality_repair_bridge",
@@ -2831,27 +2741,12 @@ def _project_materialization_plan_probe_preaudit(
         **plan_probe,
         "schema_version": "director.materialization_quality_plan_probe_preaudit.v1",
         "source": "roles.adapters.materialization_quality_repair_bridge",
-        "runtime_public_entrypoint": "query_director_repair_plan_probe",
+        "runtime_public_entrypoint": "query_director_repair_materialization_plan_probe",
         "read_only": True,
-        "candidate_source_tools": list(candidate_source_tools),
+        "candidate_source_tools": list(plan_probe.get("candidate_source_tools") or ()),
         "base_file_count": len(base_files),
         "runtime_plan_probe": plan_probe,
     }
-
-
-def _materialization_coverage_candidate_source_tools(coverage_preaudit: Mapping[str, Any]) -> tuple[str, ...]:
-    materialization_source_tools = _materialization_runtime_coverage_source_tools()
-    candidates: list[str] = []
-    for item in coverage_preaudit.get("items") or ():
-        if not isinstance(item, Mapping):
-            continue
-        if not bool(item.get("executable_runtime_plan_matched")):
-            continue
-        for raw_source_tool in item.get("matched_source_tools") or ():
-            source_tool = str(raw_source_tool or "").strip()
-            if source_tool in materialization_source_tools:
-                candidates.append(source_tool)
-    return tuple(_ordered_unique(candidates))
 
 
 def _project_dark_launch_self_check(

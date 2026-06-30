@@ -39,14 +39,14 @@ business wording, React `Suspense fallback`, and accepted config migration code.
 
 ## Open Gap Subledger
 
-The remaining parent gaps break down into 14 open concrete closure cuts, plus
-closed cuts LS-03A, LS-04E, and LS-10B below. Close open items in this order unless a
+The remaining parent gaps break down into 13 open concrete closure cuts, plus
+closed cuts LS-03A, LS-03B, LS-04E, and LS-10B below. Close open items in this order unless a
 production/bench incident gives a narrower safe cut.
 
 | Sub-ID | Parent | Priority | Owner Layer | Concrete Remaining Gap | Closure Cut |
 | --- | --- | --- | --- | --- | --- |
 | LS-03A | LS-03 | P1 | `director.runtime.public` | Closed: materialization bridge no longer computes runtime-shadow allowed paths through direct `plan_director_repair` calls. | Closed by `QueryDirectorRepairMaterializationAllowedPathsV1` / `query_director_repair_materialization_allowed_paths`; bridge only consumes `allowed_paths`. Verified with targeted runtime contract/export tests, bridge target-runtime test, scheduler materialization test, and negative grep for `plan_director_repair` in the bridge. |
-| LS-03B | LS-03 | P1 | `director.runtime.public` | Source-tool candidate and plan-probe filtering still live in `materialization_quality_repair_bridge.py`. | Runtime public returns matched source tools and plan-probe evidence; bridge no longer decides repair candidates. |
+| LS-03B | LS-03 | P1 | `director.runtime.public` | Closed: source-tool candidate and plan-probe filtering no longer live in `materialization_quality_repair_bridge.py`. | Closed by `QueryDirectorRepairMaterializationPlanProbeV1` / `query_director_repair_materialization_plan_probe`; runtime public now owns coverage-to-candidate and plan-probe-to-plannable filtering, while bridge only supplies base files and requested materialization source tools. Verified with targeted runtime contract/export tests, bridge target-runtime test, and negative grep for `query_director_repair_plan_probe` in the bridge. |
 | LS-03C | LS-03 | P1 | `director.runtime.public` | `scheduler_bridge`, migration debt, and callback receipt lifecycle projection are summarized by the bridge. | Runtime public owns summary projector; bridge only forwards tool results and adapter evidence. |
 | LS-03D | LS-03 | P1 | `roles.adapters.public` | Public repair schedule wrapper still forwards into a large internal bridge. | Introduce a runtime-owned materialization repair facade with writer/editor/deleter callback ports; keep wrapper as a thin adapter until callers migrate. |
 | LS-03E | LS-03 | P1 | `director.runtime.public` | `run_typescript_semantic_quality_repairs` remains a side entrypoint from quality gate to bridge. | Fold TypeScript semantic repair into the materialization schedule or expose a separate runtime public semantic repair entrypoint. |
@@ -65,7 +65,7 @@ production/bench incident gives a narrower safe cut.
 
 ## Closure Order
 
-1. LS-03B -> LS-03C: move repair planning/projection authority from the bridge
+1. LS-03C: move repair projection authority from the bridge
    into runtime public contracts before deleting the bridge.
 2. LS-04A -> LS-04C: migrate high-frequency repair mutators that caused bench
    regressions: Python unresolved import, NPM/manifest, TS/JS import/export.
