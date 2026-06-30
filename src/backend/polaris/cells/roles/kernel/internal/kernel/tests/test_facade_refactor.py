@@ -12,6 +12,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
+    _apply_runtime_tool_policy,
+    _cognitive_runtime_blocked_tools,
+    _filter_cognitive_blocked_tool_definitions,
+)
 from polaris.cells.roles.kernel.public.config import KernelConfig
 from polaris.cells.roles.kernel.services.contracts import (
     CellToolExecutorPort,
@@ -293,8 +298,8 @@ class TestFacadeMethods:
             message="safe edit only",
             metadata={"cognitive_tool_policy": {"blocked_tools": ("delete_file",)}},
         )
-        blocked = RoleExecutionKernel._cognitive_runtime_blocked_tools(request)
-        filtered = RoleExecutionKernel._filter_cognitive_blocked_tool_definitions(
+        blocked = _cognitive_runtime_blocked_tools(request)
+        filtered = _filter_cognitive_blocked_tool_definitions(
             [
                 {"type": "function", "function": {"name": "read_file"}},
                 {"type": "function", "function": {"name": "delete_file"}},
@@ -319,7 +324,7 @@ class TestFacadeMethods:
             }
         )
 
-        filtered, audit = RoleExecutionKernel._apply_runtime_tool_policy(
+        filtered, audit = _apply_runtime_tool_policy(
             request=request,
             context_result=context_result,
             tool_definitions=[
@@ -347,7 +352,7 @@ class TestFacadeMethods:
             }
         )
 
-        filtered, audit = RoleExecutionKernel._apply_runtime_tool_policy(
+        filtered, audit = _apply_runtime_tool_policy(
             request=request,
             context_result=context_result,
             tool_definitions=[

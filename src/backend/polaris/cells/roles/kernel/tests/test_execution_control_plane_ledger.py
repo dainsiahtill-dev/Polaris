@@ -67,15 +67,6 @@ class _DroppedToolDispatchKernel:
     def _build_context_gateway_config(self, _role: str, _profile: Any, _request: Any) -> None:
         return None
 
-    def _apply_runtime_tool_policy(
-        self,
-        *,
-        request: Any,
-        context_result: Any,
-        tool_definitions: list[dict[str, Any]],
-    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        return tool_definitions, {}
-
 
 class _SuccessfulNoMaterializationKernel(_DroppedToolDispatchKernel):
     def _create_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:

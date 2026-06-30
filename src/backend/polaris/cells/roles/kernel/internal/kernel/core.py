@@ -53,12 +53,8 @@ from polaris.cells.roles.kernel.internal.kernel.suggestions import get_suggestio
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
     _CONTEXT_EXPENSIVE_TOOL_NAMES,
     _CONTEXT_SAFE_MUTATING_TOOL_EXCEPTIONS,
-    _apply_runtime_tool_policy,
     _cognitive_runtime_blocked_tools,
-    _filter_cognitive_blocked_tool_definitions,
-    _iter_tool_policy_values,
     _normalize_tool_policy_name,
-    _runtime_tool_policy_from_context,
 )
 from polaris.cells.roles.kernel.internal.kernel.transaction_factory import create_transaction_kernel
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import (
@@ -327,62 +323,6 @@ class RoleExecutionKernel:
     def _request_forces_no_transaction_tools(request: RoleTurnRequest) -> bool:
         """Return True when this turn must be handled as text-only output."""
         return request_forces_no_transaction_tools(request)
-
-    @staticmethod
-    def _cognitive_runtime_blocked_tools(request: RoleTurnRequest) -> frozenset[str]:
-        """Return canonical tool names blocked by Cognitive Runtime mainline policy.
-
-        Delegates to :mod:`polaris.cells.roles.kernel.internal.kernel.tool_policy`.
-        """
-        return _cognitive_runtime_blocked_tools(request)
-
-    @staticmethod
-    def _iter_tool_policy_values(raw_value: Any) -> tuple[Any, ...]:
-        return _iter_tool_policy_values(raw_value)
-
-    @staticmethod
-    def _normalize_tool_policy_name(raw_name: Any) -> str:
-        return _normalize_tool_policy_name(raw_name)
-
-    @staticmethod
-    def _filter_cognitive_blocked_tool_definitions(
-        tool_definitions: list[dict[str, Any]],
-        blocked_tools: frozenset[str],
-    ) -> list[dict[str, Any]]:
-        """Remove tools disallowed by Cognitive Runtime from native LLM schemas.
-
-        Delegates to :mod:`polaris.cells.roles.kernel.internal.kernel.tool_policy`.
-        """
-        return _filter_cognitive_blocked_tool_definitions(tool_definitions, blocked_tools)
-
-    @staticmethod
-    def _runtime_tool_policy_from_context(
-        context_result: Any,
-    ) -> tuple[frozenset[str], dict[str, Any]]:
-        """Derive tool-surface reductions from ContextGateway decision hints.
-
-        ContextGateway decisions may only reduce the tool surface. They never
-        grant access to tools outside the role profile whitelist. Delegates to
-        :mod:`polaris.cells.roles.kernel.internal.kernel.tool_policy`.
-        """
-        return _runtime_tool_policy_from_context(context_result)
-
-    @staticmethod
-    def _apply_runtime_tool_policy(
-        *,
-        request: RoleTurnRequest,
-        context_result: Any,
-        tool_definitions: list[dict[str, Any]],
-    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        """Apply Cognitive-Runtime + ContextGateway tool-surface reductions.
-
-        Delegates to :mod:`polaris.cells.roles.kernel.internal.kernel.tool_policy`.
-        """
-        return _apply_runtime_tool_policy(
-            request=request,
-            context_result=context_result,
-            tool_definitions=tool_definitions,
-        )
 
     def _create_transaction_kernel(
         self,
@@ -1154,8 +1094,8 @@ class RoleExecutionKernel:
         """
         request_for_policy = context.get("request") if context else None
         if request_for_policy is not None:
-            cognitive_blocked_tools = self._cognitive_runtime_blocked_tools(cast(RoleTurnRequest, request_for_policy))
-            if self._normalize_tool_policy_name(tool_name) in cognitive_blocked_tools:
+            cognitive_blocked_tools = _cognitive_runtime_blocked_tools(cast(RoleTurnRequest, request_for_policy))
+            if _normalize_tool_policy_name(tool_name) in cognitive_blocked_tools:
                 from polaris.cells.roles.kernel.internal.tool_gateway import ToolAuthorizationError
 
                 raise ToolAuthorizationError(f"Cognitive Runtime blocked tool '{tool_name}'")

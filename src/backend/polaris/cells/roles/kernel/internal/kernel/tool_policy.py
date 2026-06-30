@@ -1,13 +1,12 @@
-"""Stateless tool-surface reduction policy for RoleExecutionKernel.
+"""Stateless tool-surface reduction policy for role turns.
 
 Cognitive-Runtime and ContextGateway tool-surface reductions extracted verbatim
 from ``core.py`` as module-level functions. ContextGateway decisions may only
 *reduce* the tool surface; they never grant access to tools outside the role
 profile whitelist.
 
-``core.py`` binds these onto ``RoleExecutionKernel`` as ``@staticmethod`` shims
-so callers (``RoleExecutionKernel._apply_runtime_tool_policy`` etc.) keep working
-unchanged. This module must not import ``core.py`` at module top-level.
+Callers should import this module directly. This module must not import
+``core.py`` at module top-level.
 """
 
 from __future__ import annotations
