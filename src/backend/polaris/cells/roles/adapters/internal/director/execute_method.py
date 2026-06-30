@@ -2676,7 +2676,7 @@ def _phase_direct_fallback(
             "timeout_seconds": direct_timeout,
             "content_length": len(direct_content),
             "error": "",
-            "skipped_reason": "direct_runtime_provider_removed",
+            "skipped_reason": "runtime_provider_bypass_removed",
             "tool_results": len(direct_tool_results),
             "provider": "",
             "model": "",

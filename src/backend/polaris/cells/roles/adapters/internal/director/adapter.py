@@ -1477,7 +1477,7 @@ class DirectorAdapter(BaseRoleAdapter):
     ) -> dict[str, Any]:
         """Fail closed: direct provider bypass is no longer a Director fallback."""
         del message, timeout_seconds
-        raise RuntimeError("director_direct_runtime_provider_removed")
+        raise RuntimeError("director_runtime_provider_bypass_removed")
 
     async def _invoke_role_dialogue_with_timeout(
         self,

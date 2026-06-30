@@ -7643,7 +7643,7 @@ export function summary() {
         assert adapter_result.get("failure_class") == "INCOMPLETE_MATERIALIZATION"
         assert adapter_result.get("new_files") == []
         assert adapter_result.get("primary_llm", {}).get("error") == "role_model_not_configured"
-        assert adapter_result.get("direct_fallback", {}).get("skipped_reason") == "direct_runtime_provider_removed"
+        assert adapter_result.get("direct_fallback", {}).get("skipped_reason") == "runtime_provider_bypass_removed"
 
     @pytest.mark.asyncio
     async def test_execute_accepts_existing_scope_after_read_only_mutation_guard(self, tmp_path: Any) -> None:
@@ -7717,7 +7717,7 @@ export function summary() {
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
         assert adapter_result.get("existing_contract_evidence", {}).get("ok") is True
         assert adapter_result.get("primary_llm", {}).get("error", "").startswith("TransactionKernel execution failed")
-        assert adapter_result.get("direct_fallback", {}).get("skipped_reason") == "direct_runtime_provider_removed"
+        assert adapter_result.get("direct_fallback", {}).get("skipped_reason") == "runtime_provider_bypass_removed"
 
     @pytest.mark.asyncio
     async def test_execute_accepts_existing_scope_after_read_write_batch_violation(self, tmp_path: Any) -> None:
@@ -9939,7 +9939,7 @@ class TestDirectorRuntimeFallback:
         tmp_path: Any,
     ) -> None:
         adapter = _make_adapter(tmp_path)
-        with pytest.raises(RuntimeError, match="director_direct_runtime_provider_removed"):
+        with pytest.raises(RuntimeError, match="director_runtime_provider_bypass_removed"):
             await adapter._invoke_direct_runtime_provider("write a file", timeout_seconds=3)
 
 

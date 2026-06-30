@@ -1584,7 +1584,7 @@ def test_materialization_bridge_passes_verifier_to_runtime_bound_go_bare_import(
     assert migration_debt["cutover_ready"] is False
     go_debt = {item["step_id"]: item for item in migration_debt["adapter_projection_debt"]}["materialization.go_import"]
     assert go_debt["runtime_executable_source_tools"] == ["deterministic_go_bare_import_string_repair"]
-    assert go_debt["legacy_only_source_tools"] == []
+    assert go_debt["adapter_only_source_tools"] == []
     assert go_debt["convergence_path_available"] is True
     assert go_debt["convergence_verifier_present"] is True
     assert go_debt["verifier_evidence_present"] is True
@@ -1972,7 +1972,7 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     ]
     assert "deterministic_rust_missing_lib_target_repair" in rust_debt["runtime_executable_source_tools"]
     assert "deterministic_rust_lib_root_facade_repair" in rust_debt["runtime_executable_source_tools"]
-    assert rust_debt["legacy_only_source_tools"] == []
+    assert rust_debt["adapter_only_source_tools"] == []
 
 
 def test_materialization_rust_compiler_executes_only_plan_probe_plannable_tools(

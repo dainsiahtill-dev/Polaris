@@ -652,7 +652,7 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
             "declared_source_tool",
             "actual_source_tools",
             "runtime_executable_source_tools",
-            "legacy_only_source_tools",
+            "adapter_only_source_tools",
             "native_receipt_present",
             "native_repair_kernel_receipt_count",
             "adapter_projection_present",
@@ -677,7 +677,7 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         } <= set(item)
         assert item["actual_source_tools"] == []
         assert item["runtime_executable_source_tools"] == []
-        assert item["legacy_only_source_tools"] == []
+        assert item["adapter_only_source_tools"] == []
         assert item["native_receipt_present"] is False
         assert item["native_repair_kernel_receipt_count"] == 0
         assert item["adapter_projection_present"] is False
@@ -781,7 +781,7 @@ def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
     assert node_manifest_debt["declared_source_tool"] == "deterministic_node_manifest_materialization_repair"
     assert node_manifest_debt["actual_source_tools"] == ["deterministic_runtime_dependency_repair"]
     assert node_manifest_debt["runtime_executable_source_tools"] == ["deterministic_runtime_dependency_repair"]
-    assert node_manifest_debt["legacy_only_source_tools"] == []
+    assert node_manifest_debt["adapter_only_source_tools"] == []
     assert node_manifest_debt["write_tool_evidence"] is True
     assert node_manifest_debt["convergence_path_available"] is True
     assert node_manifest_debt["convergence_verifier_present"] is True
@@ -789,7 +789,7 @@ def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
     assert node_manifest_debt["verifier_evidence_present"] is False
     assert node_manifest_debt["cutover_ready"] is False
     assert "adapter_schedule_runner" in node_manifest_debt["blockers"]
-    assert "legacy_only_source_tools" not in node_manifest_debt["blockers"]
+    assert "adapter_only_source_tools" not in node_manifest_debt["blockers"]
     assert "missing_revalidation_evidence" in node_manifest_debt["blockers"]
     assert "independent_shadow_required" in node_manifest_debt["blockers"]
     scheduler_bridge = summary["scheduler_bridge"]

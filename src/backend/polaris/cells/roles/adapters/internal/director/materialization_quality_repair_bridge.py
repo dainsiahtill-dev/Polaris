@@ -2539,7 +2539,7 @@ def _project_adapter_projection_debt_for_step(
         for source_tool in actual_source_tools
         if _repair_source_tool_status(source_tool, catalog) == "executable_runtime"
     ]
-    legacy_only_source_tools = [
+    adapter_only_source_tools = [
         source_tool for source_tool in actual_source_tools if source_tool not in runtime_executable_source_tools
     ]
     native_receipt_count = len(native_receipts)
@@ -2564,8 +2564,8 @@ def _project_adapter_projection_debt_for_step(
         blockers.append("declared_source_tool_not_runtime_executable")
     if not convergence_path_available:
         blockers.append("missing_native_convergence_path")
-    if legacy_only_source_tools:
-        blockers.append("legacy_only_source_tools")
+    if adapter_only_source_tools:
+        blockers.append("adapter_only_source_tools")
     if callback_only:
         blockers.append("adapter_projection_only")
     if (tool_results or callback_projection_present) and not native_receipt_present:
@@ -2583,7 +2583,7 @@ def _project_adapter_projection_debt_for_step(
         "declared_source_tool": step.source_tool,
         "actual_source_tools": actual_source_tools,
         "runtime_executable_source_tools": runtime_executable_source_tools,
-        "legacy_only_source_tools": legacy_only_source_tools,
+        "adapter_only_source_tools": adapter_only_source_tools,
         "native_receipt_present": native_receipt_present,
         "native_repair_kernel_receipt_count": native_receipt_count,
         "adapter_projection_present": callback_projection_present,

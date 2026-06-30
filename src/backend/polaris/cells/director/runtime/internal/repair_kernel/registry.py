@@ -2167,7 +2167,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                     "metadata_only": True,
                     "executable_runtime_binding": False,
                     "planner_helper_available": False,
-                    "legacy_materialization_runner": False,
+                    "adapter_materialization_runner": False,
                 },
             ),
             RepairRuleDefinition(
@@ -2296,7 +2296,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                     "executable_runtime_binding": True,
                     "planner_helper_available": True,
                     "runtime_plan_scope": "single_pub_use_export_insert_after_declared_module",
-                    "legacy_materialization_runner": False,
+                    "adapter_materialization_runner": False,
                 },
             ),
             RepairRuleDefinition(
@@ -2316,7 +2316,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                     "executable_runtime_binding": True,
                     "planner_helper_available": True,
                     "runtime_plan_scope": "single_pub_use_export_insert_after_declared_module",
-                    "legacy_materialization_runner": False,
+                    "adapter_materialization_runner": False,
                 },
             ),
             RepairRuleDefinition(
@@ -2336,7 +2336,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                     "executable_runtime_binding": True,
                     "planner_helper_available": True,
                     "runtime_plan_scope": "crate_lib_prefix_path_rewrite_only",
-                    "legacy_materialization_runner": False,
+                    "adapter_materialization_runner": False,
                 },
             ),
             RepairRuleDefinition(
