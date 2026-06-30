@@ -2,7 +2,7 @@
 
 Covers:
   - director/cli_thin.py parser and main entry
-  - director/cli_compat.py parser and main entry
+  - director/cli_entrypoint.py parser and main entry
   - Console host integration helpers
   - Happy path, error cases, help text
 """
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import argparse
 
-# Import cli_compat directly to bypass __init__.py circular import issues
+# Import cli_entrypoint directly to bypass __init__.py circular import issues
 import importlib.util
 import sys
 from pathlib import Path
@@ -24,8 +24,8 @@ from polaris.delivery.cli.director.cli_thin import (
     main as director_thin_main,
 )
 
-_compat_spec = importlib.util.spec_from_file_location(
-    "cli_compat",
+_entrypoint_spec = importlib.util.spec_from_file_location(
+    "cli_entrypoint",
     str(
         Path(__file__).resolve().parents[7]
         / "src"
@@ -34,14 +34,14 @@ _compat_spec = importlib.util.spec_from_file_location(
         / "delivery"
         / "cli"
         / "director"
-        / "cli_compat.py"
+        / "cli_entrypoint.py"
     ),
 )
-_cli_compat_mod = importlib.util.module_from_spec(_compat_spec)  # type: ignore[arg-type]
-sys.modules["cli_compat"] = _cli_compat_mod
-_compat_spec.loader.exec_module(_cli_compat_mod)  # type: ignore[union-attr]
-director_compat_create_parser = _cli_compat_mod.create_parser
-director_compat_main = _cli_compat_mod.main
+_cli_entrypoint_mod = importlib.util.module_from_spec(_entrypoint_spec)  # type: ignore[arg-type]
+sys.modules["cli_entrypoint"] = _cli_entrypoint_mod
+_entrypoint_spec.loader.exec_module(_cli_entrypoint_mod)  # type: ignore[union-attr]
+director_entrypoint_create_parser = _cli_entrypoint_mod.create_parser
+director_entrypoint_main = _cli_entrypoint_mod.main
 
 
 # ---------------------------------------------------------------------------
@@ -56,9 +56,9 @@ def director_thin_parser() -> argparse.ArgumentParser:
 
 
 @pytest.fixture
-def director_compat_parser() -> argparse.ArgumentParser:
-    """Return a fresh director-compat parser."""
-    return director_compat_create_parser()
+def director_entrypoint_parser() -> argparse.ArgumentParser:
+    """Return a fresh director-entrypoint parser."""
+    return director_entrypoint_create_parser()
 
 
 # ---------------------------------------------------------------------------
@@ -284,54 +284,62 @@ class TestDirectorThinCli:
 
 
 # ---------------------------------------------------------------------------
-# Test: cli_compat.py (director-compat)
+# Test: cli_entrypoint.py (director-entrypoint)
 # ---------------------------------------------------------------------------
 
 
-class TestDirectorCompatCli:
-    """Test director compat CLI parser and main."""
+class TestDirectorEntrypointCli:
+    """Test director entrypoint CLI parser and main."""
 
-    def test_director_compat_parser_has_workspace(self, director_compat_parser: argparse.ArgumentParser) -> None:
-        """director-compat parser must accept --workspace."""
-        args = director_compat_parser.parse_args(["--workspace", "/tmp/ws"])
+    def test_director_entrypoint_parser_has_workspace(
+        self, director_entrypoint_parser: argparse.ArgumentParser
+    ) -> None:
+        """director-entrypoint parser must accept --workspace."""
+        args = director_entrypoint_parser.parse_args(["--workspace", "/tmp/ws"])
         assert args.workspace == "/tmp/ws"
 
-    def test_director_compat_parser_has_backend(self, director_compat_parser: argparse.ArgumentParser) -> None:
-        """director-compat parser must accept --backend with choices."""
+    def test_director_entrypoint_parser_has_backend(self, director_entrypoint_parser: argparse.ArgumentParser) -> None:
+        """director-entrypoint parser must accept --backend with choices."""
         for backend in ("auto", "plain"):
-            args = director_compat_parser.parse_args(["--backend", backend])
+            args = director_entrypoint_parser.parse_args(["--backend", backend])
             assert args.backend == backend
 
-    def test_director_compat_parser_has_iterations(self, director_compat_parser: argparse.ArgumentParser) -> None:
-        """director-compat parser must accept --iterations."""
-        args = director_compat_parser.parse_args(["--iterations", "3"])
+    def test_director_entrypoint_parser_has_iterations(
+        self, director_entrypoint_parser: argparse.ArgumentParser
+    ) -> None:
+        """director-entrypoint parser must accept --iterations."""
+        args = director_entrypoint_parser.parse_args(["--iterations", "3"])
         assert args.iterations == 3
 
-    def test_director_compat_parser_has_max_workers(self, director_compat_parser: argparse.ArgumentParser) -> None:
-        """director-compat parser must accept --max-workers."""
-        args = director_compat_parser.parse_args(["--max-workers", "4"])
+    def test_director_entrypoint_parser_has_max_workers(
+        self, director_entrypoint_parser: argparse.ArgumentParser
+    ) -> None:
+        """director-entrypoint parser must accept --max-workers."""
+        args = director_entrypoint_parser.parse_args(["--max-workers", "4"])
         assert args.max_workers == 4
 
-    def test_director_compat_parser_has_host(self, director_compat_parser: argparse.ArgumentParser) -> None:
-        """director-compat parser must accept --host."""
-        args = director_compat_parser.parse_args(["--host", "0.0.0.0"])
+    def test_director_entrypoint_parser_has_host(self, director_entrypoint_parser: argparse.ArgumentParser) -> None:
+        """director-entrypoint parser must accept --host."""
+        args = director_entrypoint_parser.parse_args(["--host", "0.0.0.0"])
         assert args.host == "0.0.0.0"
 
-    def test_director_compat_parser_has_port(self, director_compat_parser: argparse.ArgumentParser) -> None:
-        """director-compat parser must accept --port."""
-        args = director_compat_parser.parse_args(["--port", "8080"])
+    def test_director_entrypoint_parser_has_port(self, director_entrypoint_parser: argparse.ArgumentParser) -> None:
+        """director-entrypoint parser must accept --port."""
+        args = director_entrypoint_parser.parse_args(["--port", "8080"])
         assert args.port == 8080
 
-    def test_director_compat_parser_task_create_requires_subject(
-        self, director_compat_parser: argparse.ArgumentParser
+    def test_director_entrypoint_parser_task_create_requires_subject(
+        self, director_entrypoint_parser: argparse.ArgumentParser
     ) -> None:
         """task create without --subject must fail."""
         with pytest.raises(SystemExit):
-            director_compat_parser.parse_args(["task", "create"])
+            director_entrypoint_parser.parse_args(["task", "create"])
 
-    def test_director_compat_parser_task_create_parses(self, director_compat_parser: argparse.ArgumentParser) -> None:
+    def test_director_entrypoint_parser_task_create_parses(
+        self, director_entrypoint_parser: argparse.ArgumentParser
+    ) -> None:
         """task create with all flags must parse."""
-        args = director_compat_parser.parse_args(
+        args = director_entrypoint_parser.parse_args(
             ["task", "create", "--subject", "Fix bug", "--description", "A bug", "--priority", "high"]
         )
         assert args.task_command == "create"
@@ -339,9 +347,11 @@ class TestDirectorCompatCli:
         assert args.description == "A bug"
         assert args.priority == "high"
 
-    def test_director_compat_parser_default_values(self, director_compat_parser: argparse.ArgumentParser) -> None:
-        """director-compat parser defaults must be correct."""
-        args = director_compat_parser.parse_args([])
+    def test_director_entrypoint_parser_default_values(
+        self, director_entrypoint_parser: argparse.ArgumentParser
+    ) -> None:
+        """director-entrypoint parser defaults must be correct."""
+        args = director_entrypoint_parser.parse_args([])
         assert args.workspace == str(Path.cwd())
         assert args.backend == "auto"
         assert args.iterations == 1
@@ -349,17 +359,17 @@ class TestDirectorCompatCli:
         assert args.host == "127.0.0.1"
         assert args.port == 49978
 
-    def test_director_compat_main_help_exits_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """director-compat main(['--help']) must raise SystemExit(0)."""
-        monkeypatch.setattr(sys, "argv", ["director-compat", "--help"])
+    def test_director_entrypoint_main_help_exits_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """director-entrypoint main(['--help']) must raise SystemExit(0)."""
+        monkeypatch.setattr(sys, "argv", ["director-entrypoint", "--help"])
         with pytest.raises(SystemExit) as exc_info:
-            director_compat_main()
+            director_entrypoint_main()
         assert exc_info.value.code == 0
 
-    def test_director_compat_main_task_create_runs(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """director-compat task create dispatch path.
+    def test_director_entrypoint_main_task_create_runs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """director-entrypoint task create dispatch path.
 
-        Note: cli_compat.create_task has a known bug (uses non-existent
+        Note: cli_entrypoint.create_task has a known bug (uses non-existent
         DirectorConfig() and DirectorService.create_task). We test the dispatch
         logic by mocking create_task itself.
         """
@@ -371,20 +381,20 @@ class TestDirectorCompatCli:
             )
 
         monkeypatch.setattr(
-            _cli_compat_mod,
+            _cli_entrypoint_mod,
             "create_task",
             fake_create_task,
         )
         monkeypatch.setattr(
-            sys, "argv", ["director-compat", "task", "create", "--subject", "Test", "--priority", "medium"]
+            sys, "argv", ["director-entrypoint", "task", "create", "--subject", "Test", "--priority", "medium"]
         )
-        code = director_compat_main()
+        code = director_entrypoint_main()
         assert code == 0
         assert len(create_calls) == 1
         assert create_calls[0]["subject"] == "Test"
 
-    def test_director_compat_main_serve_flag(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """director-compat server mode must enter server mode.
+    def test_director_entrypoint_main_serve_flag(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """director-entrypoint server mode must enter server mode.
 
         Note: The parser has a known design issue where the 'serve' positional
         conflicts with the task subcommand parser. We test the dispatch logic
@@ -396,7 +406,7 @@ class TestDirectorCompatCli:
             server_calls.append({"workspace": workspace, "host": host, "port": port})
 
         monkeypatch.setattr(
-            _cli_compat_mod,
+            _cli_entrypoint_mod,
             "run_director_server",
             fake_run_director_server,
         )
@@ -412,43 +422,43 @@ class TestDirectorCompatCli:
             max_workers=1,
         )
         monkeypatch.setattr(
-            _cli_compat_mod,
+            _cli_entrypoint_mod,
             "create_parser",
             lambda: MagicMock(parse_args=lambda _: parsed),
         )
-        monkeypatch.setattr(sys, "argv", ["director-compat", "serve"])
-        code = director_compat_main()
+        monkeypatch.setattr(sys, "argv", ["director-entrypoint", "serve"])
+        code = director_entrypoint_main()
         assert code == 0
         assert len(server_calls) == 1
         assert server_calls[0]["host"] == "0.0.0.0"
         assert server_calls[0]["port"] == 9000
 
-    def test_director_compat_main_default_console_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """director-compat without serve or task must enter console mode."""
+    def test_director_entrypoint_main_default_console_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """director-entrypoint without serve or task must enter console mode."""
         console_calls: list[dict[str, Any]] = []
 
         async def fake_run_director_console(workspace: str, iterations: int, max_workers: int) -> None:
             console_calls.append({"workspace": workspace, "iterations": iterations, "max_workers": max_workers})
 
         monkeypatch.setattr(
-            _cli_compat_mod,
+            _cli_entrypoint_mod,
             "run_director_console",
             fake_run_director_console,
         )
         monkeypatch.setattr(
-            sys, "argv", ["director-compat", "--workspace", "/tmp/ws", "--iterations", "2", "--max-workers", "3"]
+            sys, "argv", ["director-entrypoint", "--workspace", "/tmp/ws", "--iterations", "2", "--max-workers", "3"]
         )
-        code = director_compat_main()
+        code = director_entrypoint_main()
         assert code == 0
         assert len(console_calls) == 1
         assert console_calls[0]["workspace"] == "/tmp/ws"
         assert console_calls[0]["iterations"] == 2
         assert console_calls[0]["max_workers"] == 3
 
-    def test_director_compat_create_task_logs_info(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """create_task in compat must log info on success.
+    def test_director_entrypoint_create_task_logs_info(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """create_task in entrypoint must log info on success.
 
-        Note: cli_compat.create_task has a known bug (uses non-existent
+        Note: cli_entrypoint.create_task has a known bug (uses non-existent
         DirectorConfig() without required workspace arg). We test the logging
         behavior by mocking the entire function body.
         """
@@ -461,10 +471,10 @@ class TestDirectorCompatCli:
                 logged.append(record.getMessage())
 
         # Patch the module-level logger directly so the cached reference works
-        fake_logger = logging.getLogger("test_director_compat_create_task_logs_info")
+        fake_logger = logging.getLogger("test_director_entrypoint_create_task_logs_info")
         fake_logger.addHandler(ListHandler())
         fake_logger.setLevel(logging.INFO)
-        monkeypatch.setattr(_cli_compat_mod, "logger", fake_logger)
+        monkeypatch.setattr(_cli_entrypoint_mod, "logger", fake_logger)
 
         class FakeResult:
             ok = True
@@ -492,13 +502,13 @@ class TestDirectorCompatCli:
 
         import asyncio
 
-        asyncio.run(_cli_compat_mod.create_task("/tmp/ws", "Subject", "Desc", "medium"))
+        asyncio.run(_cli_entrypoint_mod.create_task("/tmp/ws", "Subject", "Desc", "medium"))
         assert any("Task created" in msg for msg in logged)
 
-    def test_director_compat_create_task_logs_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """create_task in compat must log error on failure.
+    def test_director_entrypoint_create_task_logs_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """create_task in entrypoint must log error on failure.
 
-        Note: cli_compat.create_task has a known bug (uses non-existent
+        Note: cli_entrypoint.create_task has a known bug (uses non-existent
         DirectorConfig() without required workspace arg). We test the logging
         behavior by mocking the entire function body.
         """
@@ -510,10 +520,10 @@ class TestDirectorCompatCli:
             def emit(self, record: logging.LogRecord) -> None:
                 logged.append(record.getMessage())
 
-        fake_logger = logging.getLogger("test_director_compat_create_task_logs_error")
+        fake_logger = logging.getLogger("test_director_entrypoint_create_task_logs_error")
         fake_logger.addHandler(ListHandler())
         fake_logger.setLevel(logging.ERROR)
-        monkeypatch.setattr(_cli_compat_mod, "logger", fake_logger)
+        monkeypatch.setattr(_cli_entrypoint_mod, "logger", fake_logger)
 
         class FakeResult:
             ok = False
@@ -541,7 +551,7 @@ class TestDirectorCompatCli:
 
         import asyncio
 
-        asyncio.run(_cli_compat_mod.create_task("/tmp/ws", "Subject", "Desc", "medium"))
+        asyncio.run(_cli_entrypoint_mod.create_task("/tmp/ws", "Subject", "Desc", "medium"))
         assert any("Failed to create task" in msg for msg in logged)
 
 

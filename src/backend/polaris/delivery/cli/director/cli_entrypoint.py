@@ -1,4 +1,4 @@
-"""Director CLI Compatibility Layer — canonical implementation.
+"""Director CLI entrypoint adapter.
 
 This file is the canonical location for the Director thin CLI adapter.
 The original ``cli_thin.py`` has been demoted to a deprecation shim.
@@ -10,10 +10,10 @@ Migration note:
         ``python -m polaris.delivery.cli console``
 
 Usage:
-    python -m polaris.delivery.cli.director.cli_compat --workspace <path> [--iterations N]
-    python -m polaris.delivery.cli.director.cli_compat serve [--host HOST] [--port PORT]
-    python -m polaris.delivery.cli.director.cli_compat task create --subject "Task name"
-    python -m polaris.delivery.cli.director.cli_compat console [--backend auto|plain]
+    python -m polaris.delivery.cli.director.cli_entrypoint --workspace <path> [--iterations N]
+    python -m polaris.delivery.cli.director.cli_entrypoint serve [--host HOST] [--port PORT]
+    python -m polaris.delivery.cli.director.cli_entrypoint task create --subject "Task name"
+    python -m polaris.delivery.cli.director.cli_entrypoint console [--backend auto|plain]
 
 Architecture:
     - CLI Layer: Argument parsing only (this file)
@@ -130,7 +130,7 @@ async def run_director_console(workspace: str, iterations: int, max_workers: int
         command=[
             sys.executable,
             "-m",
-            "polaris.delivery.cli.director.cli_compat",
+            "polaris.delivery.cli.director.cli_entrypoint",
             "--workspace",
             workspace,
             "--iterations",
@@ -164,7 +164,7 @@ async def run_director_server(workspace: str, host: str, port: int) -> None:
         command=[
             sys.executable,
             "-m",
-            "polaris.delivery.cli.director.cli_compat",
+            "polaris.delivery.cli.director.cli_entrypoint",
             "serve",
             "--host",
             host,

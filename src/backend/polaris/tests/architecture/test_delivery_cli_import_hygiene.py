@@ -94,6 +94,18 @@ def test_delivery_cli_deprecation_warnings_do_not_use_compat_module_name() -> No
     assert "polaris.delivery.cli.entrypoint_warnings" in router_source
 
 
+def test_director_cli_entrypoint_does_not_use_compat_module_name() -> None:
+    retired_path = BACKEND_ROOT / "polaris/delivery/cli/director/cli_compat.py"
+    canonical_path = BACKEND_ROOT / "polaris/delivery/cli/director/cli_entrypoint.py"
+
+    assert not retired_path.exists(), "Retired director/cli_compat.py module was recreated."
+    assert canonical_path.is_file(), "Director CLI entrypoint must live in cli_entrypoint.py."
+
+    source = _read_text(canonical_path)
+    assert "polaris.delivery.cli.director.cli_compat" not in source
+    assert "polaris.delivery.cli.director.cli_entrypoint" in source
+
+
 @pytest.mark.parametrize("relative_path", DELIVERY_ADAPTERS)
 def test_delivery_adapters_do_not_mutate_sys_path(relative_path: str) -> None:
     full_path = BACKEND_ROOT / relative_path
