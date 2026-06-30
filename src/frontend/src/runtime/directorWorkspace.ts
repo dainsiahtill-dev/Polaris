@@ -9,7 +9,7 @@ import { useRuntime } from '@/app/hooks/useRuntime';
 import type { PmTask, TaskStatus } from '@/types/task';
 import type { LogEntry } from '@/types/log';
 import type { FileEditEvent, RuntimeWorkerState } from '@/app/hooks/useRuntime';
-import type { TaskTraceMap } from '@/types/taskTrace';
+import type { TaskTraceMap } from '@/app/types/taskTrace';
 
 // ============================================================
 // 类型定义

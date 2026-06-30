@@ -104,7 +104,7 @@ import { TaskStatus, type PmTask } from '@/types/task';
 import type { FileEditEvent } from '@/app/hooks/useRuntime';
 import type { LogEntry } from '@/types/log';
 import type { RuntimeWorkerState } from '@/app/hooks/useRuntime';
-import type { TaskTraceMap } from '@/types/taskTrace';
+import type { TaskTraceMap } from '@/app/types/taskTrace';
 
 interface DirectorWorkspaceProps {
   workspace: string;
