@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from polaris.kernelone.benchmark.factory_audit import check_workspace_delivery_depth_contract
+from polaris.kernelone.fs.text_ops import write_text_atomic
 
 from . import factory_stage_helpers as helpers
 from .factory_run_models import _WORKSPACE_VALIDATION_TIMEOUT_SECONDS
@@ -124,7 +125,7 @@ class WorkspaceQualityRunner:
 
         before_hash = hashlib.sha256(patch.content_before.encode("utf-8")).hexdigest()
         after_hash = hashlib.sha256(patch.content_after.encode("utf-8")).hexdigest()
-        path.write_text(patch.content_after, encoding="utf-8")
+        write_text_atomic(str(path), patch.content_after)
         receipt = {
             "schema_version": "factory.workspace_quality.repair_patch_receipt.v1",
             "source": "factory.workspace_quality",

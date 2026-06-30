@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.storage import resolve_logical_path
 
 from . import factory_stage_helpers as helpers
@@ -61,7 +62,7 @@ class ArtifactStore:
     def write_text_artifact(self, relative_path: str, content: str) -> Path:
         target = self.artifact_path(relative_path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        self._fs.write_text(str(target), str(content or ""))
+        write_text_atomic(str(target), str(content or ""))
         return target
 
     def write_stage_signal_artifact(
@@ -137,10 +138,7 @@ class ArtifactStore:
             if audit_path.exists():
                 existing = json.loads(audit_path.read_text(encoding="utf-8"))
             existing.append(audit_entry)
-            audit_path.write_text(
-                json.dumps(existing, ensure_ascii=False, indent=1) + "\n",
-                encoding="utf-8",
-            )
+            write_text_atomic(str(audit_path), json.dumps(existing, ensure_ascii=False, indent=1) + "\n")
         except (OSError, json.JSONDecodeError):
             logger.debug("Failed to write audit event: %s", event_type)
 

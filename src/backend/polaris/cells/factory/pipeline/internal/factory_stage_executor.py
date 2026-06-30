@@ -38,6 +38,7 @@ from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+from polaris.kernelone.fs.text_ops import write_json_atomic
 
 from . import factory_stage_helpers as helpers
 from .factory_artifact_store import ArtifactStore
@@ -405,10 +406,7 @@ class OrchestrationStageExecutor:
             "files": entries,
             "platform_excluded_prefixes": list(_PRE_DIRECTOR_PLATFORM_PREFIXES),
         }
-        (snapshot_dir / "manifest.json").write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        write_json_atomic(str(snapshot_dir / "manifest.json"), manifest)
         return manifest
 
     def _restore_pre_director_snapshot(self) -> dict[str, Any]:
@@ -6534,12 +6532,16 @@ class OrchestrationStageExecutor:
         payload: dict[str, Any],
     ) -> None:
         raw_commands = payload.get("commands")
-        commands = [dict(item) for item in raw_commands if isinstance(item, dict)] if isinstance(raw_commands, list) else []
+        commands = (
+            [dict(item) for item in raw_commands if isinstance(item, dict)] if isinstance(raw_commands, list) else []
+        )
         for command in commands:
             if "ok" not in command and "passed" in command:
                 command["ok"] = bool(command.get("passed"))
         passed = bool(payload.get("passed"))
-        detail = str(payload.get("error") or ("workspace validation passed" if passed else "workspace validation failed"))
+        detail = str(
+            payload.get("error") or ("workspace validation passed" if passed else "workspace validation failed")
+        )
         target_files = self._merge_string_list(
             context.get("target_files")
             or context.get("declared_source_targets")
@@ -6559,7 +6561,9 @@ class OrchestrationStageExecutor:
             "required_evidence_modalities": ["command"] if commands else [],
             "enabled_evidence_modalities": ["command"] if commands else [],
             "chain": {"run_id": run.id},
-            "factory_workspace_quality_repair": payload.get("repair") if isinstance(payload.get("repair"), dict) else {},
+            "factory_workspace_quality_repair": payload.get("repair")
+            if isinstance(payload.get("repair"), dict)
+            else {},
         }
         gate = {
             "ok": passed,

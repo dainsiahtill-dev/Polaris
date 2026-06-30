@@ -30,6 +30,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
+from polaris.kernelone.fs.text_ops import append_text_atomic, write_json_atomic, write_text_atomic
+
 from .run_ledger import summarize_run_ledger_projection
 
 logger = logging.getLogger(__name__)
@@ -55,10 +57,7 @@ def _now_iso() -> str:
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)
+    write_json_atomic(str(path), payload)
 
 
 def _empty_control_plane_projection(*, session_status: str, audit_path: Path | None = None) -> dict[str, Any]:
@@ -331,7 +330,7 @@ class FactoryBenchService:
         }
         _atomic_write_json(sdir / "status.json", status)
         _atomic_write_json(sdir / "index.json", {"project_ids": list(project_ids), "total": int(total)})
-        (sdir / "events.jsonl").write_text("", encoding="utf-8")
+        write_text_atomic(str(sdir / "events.jsonl"), "")
         logger.info("Registered factory-bench session %s at %s", sid, sdir)
         return sid
 
@@ -351,9 +350,8 @@ class FactoryBenchService:
         self._seq_by_session[session_id] = next_seq
         payload["seq"] = next_seq
         try:
-            with events_path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        except OSError as exc:
+            append_text_atomic(str(events_path), json.dumps(payload, ensure_ascii=False) + "\n")
+        except (OSError, TimeoutError) as exc:
             logger.warning("bench append_event: write failed for %s: %s", session_id, exc)
             # Roll back the in-memory counter so a retry produces a
             # contiguous sequence instead of a gap.
