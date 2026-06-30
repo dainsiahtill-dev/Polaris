@@ -1751,7 +1751,7 @@ def test_materialization_python_import_runs_through_runtime_bridge(
         materialization_quality_callback_ports, "run_runtime_repair_with_director_tools", fake_runtime_bridge
     )
 
-    results = materialization_quality_runtime_ports._run_materialization_python_import(
+    results = materialization_quality_callback_ports._run_materialization_python_import(
         _FakeAdapter(tmp_path),
         task={"target_files": ["shared/__init__.py", "shared/registry.py"]},
         task_id="task-python-materialization",
@@ -1860,28 +1860,28 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
     ]
 
     adapter = _FakeAdapter(tmp_path)
-    materialization_quality_runtime_ports._run_materialization_hygiene_scaffold(
+    materialization_quality_callback_ports._run_materialization_hygiene_scaffold(
         adapter,
         task=task,
         task_id="task-materialization-hard-cut",
         artifact_quality_errors=artifact_quality_errors,
         convergence_verifier=sentinel_verifier,
     )
-    materialization_quality_runtime_ports._run_materialization_typescript_scaffold(
+    materialization_quality_callback_ports._run_materialization_typescript_scaffold(
         adapter,
         task=task,
         task_id="task-materialization-hard-cut",
         artifact_quality_errors=artifact_quality_errors,
         convergence_verifier=sentinel_verifier,
     )
-    materialization_quality_runtime_ports._run_materialization_node_manifest(
+    materialization_quality_callback_ports._run_materialization_node_manifest(
         adapter,
         task=task,
         task_id="task-materialization-hard-cut",
         artifact_quality_errors=artifact_quality_errors,
         convergence_verifier=sentinel_verifier,
     )
-    materialization_quality_runtime_ports._run_materialization_target_runtime(
+    materialization_quality_callback_ports._run_materialization_target_runtime(
         adapter,
         task=task,
         task_id="task-materialization-hard-cut",
@@ -2132,7 +2132,7 @@ def test_materialization_rust_compiler_executes_only_plan_probe_plannable_tools(
         fake_runtime_repair,
     )
 
-    results = materialization_quality_runtime_ports._run_materialization_rust_compiler(
+    results = materialization_quality_callback_ports._run_materialization_rust_compiler(
         _FakeAdapter(tmp_path),
         task={"target_files": ["src/lib.rs"]},
         task_id="task-rust-materialization",

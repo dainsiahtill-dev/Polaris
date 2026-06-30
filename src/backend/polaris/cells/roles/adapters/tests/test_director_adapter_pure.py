@@ -3886,7 +3886,10 @@ def test_rust_dependency_repair_runs_through_director_runtime_bridge(tmp_path: A
 
 def test_materialization_quality_summary_projects_dark_launch_cutover_blocker() -> None:
     from polaris.cells.director.runtime.public import DirectorRepairMaterializationQualityStepV1
-    from polaris.cells.roles.adapters.internal.director import materialization_quality_runtime_ports
+    from polaris.cells.roles.adapters.internal.director import (
+        materialization_quality_callback_ports,
+        materialization_quality_evidence_ports,
+    )
 
     tool_results = [
         {
@@ -3902,11 +3905,11 @@ def test_materialization_quality_summary_projects_dark_launch_cutover_blocker() 
         }
     ]
 
-    summary = materialization_quality_runtime_ports._annotate_materialization_quality_summary(
+    summary = materialization_quality_evidence_ports._annotate_materialization_quality_summary(
         step_summaries={},
         tool_results=tool_results,
         artifact_quality_errors=["error[E0432]: unresolved import `serde`"],
-        coverage_preaudit=materialization_quality_runtime_ports._project_coverage_preaudit(
+        coverage_preaudit=materialization_quality_callback_ports._project_coverage_preaudit(
             ["error[E0432]: unresolved import `serde`"]
         ),
         ordered_steps=(
@@ -3938,7 +3941,9 @@ def test_materialization_quality_summary_projects_dark_launch_cutover_blocker() 
 
 def test_materialization_quality_scheduler_bridge_projects_callback_receipts_without_inflating_kernel() -> None:
     from polaris.cells.director.runtime.public import DirectorRepairMaterializationQualityStepV1
-    from polaris.cells.roles.adapters.internal.director import materialization_quality_runtime_ports
+    from polaris.cells.roles.adapters.internal.director import (
+        materialization_quality_evidence_ports,
+    )
 
     tool_results = [
         {
@@ -4070,7 +4075,7 @@ def test_materialization_quality_scheduler_bridge_projects_callback_receipts_wit
         ),
     )
 
-    summary = materialization_quality_runtime_ports._annotate_materialization_quality_summary(
+    summary = materialization_quality_evidence_ports._annotate_materialization_quality_summary(
         step_summaries={},
         tool_results=tool_results,
         artifact_quality_errors=["src/main.ts(1,1): error TS2304: Cannot find name 'Demo'."],
@@ -4155,7 +4160,7 @@ def test_materialization_quality_scheduler_bridge_prefers_public_result_callback
     from polaris.cells.director.runtime.public.service import (
         query_director_repair_materialization_quality_schedule,
     )
-    from polaris.cells.roles.adapters.internal.director import materialization_quality_runtime_ports
+    from polaris.cells.roles.adapters.internal.director import materialization_quality_callback_ports
 
     runtime_schedule = query_director_repair_materialization_quality_schedule(
         QueryDirectorRepairMaterializationQualityScheduleV1(include_items=True)
@@ -4267,7 +4272,7 @@ def test_materialization_quality_scheduler_bridge_prefers_public_result_callback
         fake_facade_result,
     )
     monkeypatch.setattr(
-        materialization_quality_runtime_ports,
+        materialization_quality_callback_ports,
         "_project_coverage_preaudit",
         lambda _errors: {
             "total_diagnostics": 1,

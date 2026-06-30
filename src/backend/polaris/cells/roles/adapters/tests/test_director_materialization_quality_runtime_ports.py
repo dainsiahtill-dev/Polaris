@@ -10,7 +10,10 @@ from polaris.cells.director.runtime.public import (
     QueryDirectorRepairMaterializationPlanProbeV1,
     query_director_repair_materialization_plan_probe,
 )
-from polaris.cells.roles.adapters.internal.director import materialization_quality_runtime_ports
+from polaris.cells.roles.adapters.internal.director import (
+    materialization_quality_evidence_ports,
+    materialization_quality_runtime_ports,
+)
 from polaris.cells.roles.adapters.public import service as roles_adapters_public_service
 
 _STEP_ID = "materialization.hygiene_scaffold"
@@ -76,7 +79,7 @@ def _scheduler_bridge(
         "native_receipt_step_ids": [_STEP_ID] if native_receipts else [],
         "callback_projection_step_ids": [_STEP_ID] if callback_projections else [],
     }
-    return materialization_quality_runtime_ports._collect_materialization_scheduler_bridge_evidence(
+    return materialization_quality_evidence_ports._collect_materialization_scheduler_bridge_evidence(
         tool_results=tool_results,
         repair_kernel={"receipts": native_receipts},
         ordered_steps=(step,),

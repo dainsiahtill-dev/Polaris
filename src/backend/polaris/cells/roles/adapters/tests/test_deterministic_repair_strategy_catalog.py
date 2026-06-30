@@ -13,6 +13,7 @@ from polaris.cells.director.runtime.public import (
     query_director_repair_strategy_catalog,
 )
 from polaris.cells.roles.adapters.internal.director import (
+    materialization_quality_callback_ports,
     materialization_quality_evidence_ports,
     materialization_quality_runtime_ports,
     post_execution_repair_bridge,
@@ -579,7 +580,7 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         return []
 
     monkeypatch.setattr(
-        materialization_quality_runtime_ports,
+        materialization_quality_callback_ports,
         "_run_materialization_quality_repair_step",
         fake_materialization_repair_step,
     )
@@ -727,7 +728,7 @@ def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
         ]
 
     monkeypatch.setattr(
-        materialization_quality_runtime_ports,
+        materialization_quality_callback_ports,
         "_run_materialization_quality_repair_step",
         fake_materialization_repair_step,
     )
