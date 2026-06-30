@@ -91,13 +91,6 @@ async def get_topology_v2() -> dict[str, Any]:
     }
 
 
-@router.get("/court/topology", response_model=CourtTopologyResponse)
-async def get_topology() -> dict[str, Any]:
-    # DEPRECATED
-    """Get court topology structure (deprecated)."""
-    return await get_topology_v2()
-
-
 @router.get("/v2/court/state", response_model=CourtStateResponse)
 async def get_state_v2(
     request: Request,
@@ -128,15 +121,6 @@ async def get_state_v2(
     )
 
     return court_state
-
-
-@router.get("/court/state", response_model=CourtStateResponse)
-async def get_state(
-    request: Request,
-) -> dict[str, Any]:
-    # DEPRECATED
-    """Get current court state (deprecated)."""
-    return await get_state_v2(request)
 
 
 @router.get("/v2/court/actors/{role_id}", response_model=CourtActorResponse)
@@ -182,16 +166,6 @@ async def get_actor_detail_v2(
     return actor
 
 
-@router.get("/court/actors/{role_id}", response_model=CourtActorResponse)
-async def get_actor_detail(
-    role_id: str,
-    request: Request,
-) -> dict[str, Any]:
-    # DEPRECATED
-    """Get detailed information for a single role (deprecated)."""
-    return await get_actor_detail_v2(role_id, request)
-
-
 @router.get("/v2/court/scenes/{scene_id}", response_model=CourtSceneResponse)
 async def get_scene_detail_v2(scene_id: str) -> dict[str, Any]:
     """Get detailed configuration for a single scene.
@@ -214,13 +188,6 @@ async def get_scene_detail_v2(scene_id: str) -> dict[str, Any]:
     return scenes[scene_id]
 
 
-@router.get("/court/scenes/{scene_id}", response_model=CourtSceneResponse)
-async def get_scene_detail(scene_id: str) -> dict[str, Any]:
-    # DEPRECATED
-    """Get detailed configuration for a single scene (deprecated)."""
-    return await get_scene_detail_v2(scene_id)
-
-
 @router.get("/v2/court/mapping", response_model=CourtMappingResponse)
 async def get_role_mapping_v2() -> dict[str, Any]:
     """Get technical role to court role mapping table.
@@ -238,10 +205,3 @@ async def get_role_mapping_v2() -> dict[str, Any]:
         "version": "1.0",
         "description": "Unique mapping table from technical roles to display roles",
     }
-
-
-@router.get("/court/mapping", response_model=CourtMappingResponse)
-async def get_role_mapping() -> dict[str, Any]:
-    # DEPRECATED
-    """Get technical role to court role mapping table (deprecated)."""
-    return await get_role_mapping_v2()

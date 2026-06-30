@@ -254,7 +254,7 @@ class CourtSceneConfig:
 class CourtState:
     """Full court state definition.
 
-    This is the complete data structure returned by WebSocket push and GET /court/state.
+    This is the complete data structure returned by WebSocket push and GET /v2/court/state.
 
     Attributes:
         phase: Current scene phase

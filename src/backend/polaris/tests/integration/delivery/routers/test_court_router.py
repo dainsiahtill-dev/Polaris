@@ -28,7 +28,7 @@ class TestCourtRouter:
     """Contract tests for the court router."""
 
     def test_get_topology_happy_path(self) -> None:
-        """GET /court/topology returns 200 with topology data."""
+        """GET /v2/court/topology returns 200 with topology data."""
         client = _build_client()
         mock_topology = [
             {"role_id": "emperor", "is_interactive": True},
@@ -45,7 +45,7 @@ class TestCourtRouter:
                 return_value=mock_scenes,
             ),
         ):
-            response = client.get("/court/topology")
+            response = client.get("/v2/court/topology")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
@@ -55,7 +55,7 @@ class TestCourtRouter:
         assert payload["scenes"] == mock_scenes
 
     def test_get_state_happy_path(self) -> None:
-        """GET /court/state returns 200 with court state."""
+        """GET /v2/court/state returns 200 with court state."""
         client = _build_client()
         mock_state = {
             "phase": "draft",
@@ -82,7 +82,7 @@ class TestCourtRouter:
                 return_value=mock_state,
             ),
         ):
-            response = client.get("/court/state")
+            response = client.get("/v2/court/state")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
@@ -90,7 +90,7 @@ class TestCourtRouter:
         assert payload["actors"]["pm"]["status"] == "active"
 
     def test_get_actor_detail_happy_path(self) -> None:
-        """GET /court/actors/{role_id} returns 200 for existing role."""
+        """GET /v2/court/actors/{role_id} returns 200 for existing role."""
         client = _build_client()
         mock_state = {
             "actors": {
@@ -122,7 +122,7 @@ class TestCourtRouter:
                 return_value=mock_topology,
             ),
         ):
-            response = client.get("/court/actors/pm")
+            response = client.get("/v2/court/actors/pm")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
@@ -130,7 +130,7 @@ class TestCourtRouter:
         assert payload["topology"]["name"] == "PM"
 
     def test_get_actor_detail_not_found(self) -> None:
-        """GET /court/actors/{role_id} returns 404 for unknown role."""
+        """GET /v2/court/actors/{role_id} returns 404 for unknown role."""
         client = _build_client()
         mock_state: dict[str, Any] = {"actors": {}}
         with (
@@ -151,39 +151,39 @@ class TestCourtRouter:
                 return_value=mock_state,
             ),
         ):
-            response = client.get("/court/actors/unknown_role")
+            response = client.get("/v2/court/actors/unknown_role")
 
         assert response.status_code == 404
         assert "unknown_role" in response.json()["error"]["message"]
 
     def test_get_scene_detail_happy_path(self) -> None:
-        """GET /court/scenes/{scene_id} returns 200 for existing scene."""
+        """GET /v2/court/scenes/{scene_id} returns 200 for existing scene."""
         client = _build_client()
         mock_scenes = {"main": {"camera": "default", "lights": []}}
         with patch(
             "polaris.delivery.http.routers.court.get_scene_configs",
             return_value=mock_scenes,
         ):
-            response = client.get("/court/scenes/main")
+            response = client.get("/v2/court/scenes/main")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
         assert payload["camera"] == "default"
 
     def test_get_scene_detail_not_found(self) -> None:
-        """GET /court/scenes/{scene_id} returns 404 for unknown scene."""
+        """GET /v2/court/scenes/{scene_id} returns 404 for unknown scene."""
         client = _build_client()
         with patch(
             "polaris.delivery.http.routers.court.get_scene_configs",
             return_value={},
         ):
-            response = client.get("/court/scenes/unknown")
+            response = client.get("/v2/court/scenes/unknown")
 
         assert response.status_code == 404
         assert "unknown" in response.json()["error"]["message"]
 
     def test_get_role_mapping_happy_path(self) -> None:
-        """GET /court/mapping returns 200 with role mapping."""
+        """GET /v2/court/mapping returns 200 with role mapping."""
         client = _build_client()
         mock_mapping = {"pm": "PM"}
         mock_topology = [MagicMock(role_id="pm")]
@@ -197,7 +197,7 @@ class TestCourtRouter:
                 mock_topology,
             ),
         ):
-            response = client.get("/court/mapping")
+            response = client.get("/v2/court/mapping")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
