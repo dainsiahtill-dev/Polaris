@@ -14,22 +14,16 @@ The LLM caller modules have been consolidated from standalone files into a unifi
 | `call_sync.py` | `LLMInvoker.call()` | Removed |
 | `call_structured.py` | `LLMInvoker.call_structured()` | Removed |
 | `call_stream.py` | `LLMInvoker.call_stream()` | Removed |
-| `LLMCaller` | `LLMCaller` (facade over `LLMInvoker`) | Deprecated |
 | - | `LLMInvoker` (new service class) | Added |
 
 ## Migration Instructions
 
 ### For Existing Code Using `LLMCaller`
 
-**No immediate action required.** `LLMCaller` is now a facade over `LLMInvoker` and emits deprecation warnings. Your code will continue to work, but you should plan to migrate.
-
-```python
-# Old code (still works, but emits DeprecationWarning)
-from polaris.cells.roles.kernel.internal.llm_caller import LLMCaller
-
-caller = LLMCaller(workspace=".")
-response = await caller.call(profile, system_prompt, context)
-```
+`LLMCaller` has been retired by the LS-06G convergence cut. Existing code must
+migrate to `LLMInvoker` or, for request construction tests, `LLMRequestPreparer`.
+Direct imports from `polaris.cells.roles.kernel.internal.llm_caller.caller` are
+treated as architecture drift.
 
 ### For New Code
 
@@ -45,11 +39,11 @@ response = await invoker.call(profile, system_prompt, context)
 
 ### Method Mapping
 
-| Old Method | New Method | Notes |
+| Retired Method | Replacement | Notes |
 |------------|------------|-------|
-| `LLMCaller.call()` | `LLMInvoker.call()` | Same signature |
-| `LLMCaller.call_structured()` | `LLMInvoker.call_structured()` | Same signature |
-| `LLMCaller.call_stream()` | `LLMInvoker.call_stream()` | Same signature |
+| `LLMCaller.call()` | `LLMInvoker.call()` | Use the canonical invocation service |
+| `LLMCaller.call_structured()` | `LLMInvoker.call_structured()` | Use the canonical invocation service |
+| `LLMCaller.call_stream()` | `LLMInvoker.call_stream()` | Use the canonical invocation service |
 
 ## API Compatibility
 
@@ -135,18 +129,28 @@ async for event in invoker.call_stream(profile, system_prompt, context):
 
 ## Backward Compatibility
 
-- `LLMCaller` is maintained as a facade over `LLMInvoker`
-- All existing imports from `llm_caller/__init__.py` continue to work
-- Deprecation warnings are emitted for `LLMCaller` instantiation and method calls
-- The facade pattern ensures identical behavior for existing code
+There is no runtime compatibility facade for `LLMCaller`. Backward-compatible
+behavior is covered at the canonical boundaries:
+
+- `LLMInvoker` owns provider invocation, stream invocation, fallback, cache, and
+  event emission behavior.
+- `LLMRequestPreparer` owns final provider request preparation, tool schema
+  projection, response format projection, and execution-envelope metadata.
+- `LLMEventEmitter` owns call lifecycle event emission.
 
 ## Testing
 
 Run the test suite to verify the migration:
 
 ```bash
-# Run llm_caller tests
-python -m pytest polaris/cells/roles/kernel/tests/test_llm_caller.py -v
+# Run canonical LLM invocation/request-preparation tests
+python -m pytest \
+  polaris/cells/roles/kernel/tests/test_llm_caller_helpers.py \
+  polaris/cells/roles/kernel/tests/test_llm_invoker_decomposition_characterization.py \
+  polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py \
+  polaris/cells/roles/kernel/tests/test_llm_invoker_final_request_receipt.py \
+  polaris/cells/roles/kernel/tests/test_llm_caller_capability_profile.py \
+  -v
 
 # Run all kernel tests
 python -m pytest polaris/cells/roles/kernel/tests/ -v
@@ -158,7 +162,8 @@ If issues are encountered:
 
 1. The old files are not in git history (they were deleted)
 2. To rollback, restore from backup or revert the git commit
-3. The migration is designed to be backward compatible, so rollback should not be necessary
+3. `LLMCaller` compatibility is intentionally not restored during rollback-less
+   forward fixes; repair callers at `LLMInvoker` / `LLMRequestPreparer` instead.
 
 ## Benefits
 
@@ -171,8 +176,8 @@ If issues are encountered:
 ## Related Documentation
 
 - `polaris/cells/roles/kernel/internal/llm_caller/__init__.py` - Package exports
-- `polaris/cells/roles/kernel/internal/llm_caller/invoker.py` - New service implementation
-- `polaris/cells/roles/kernel/internal/llm_caller/caller.py` - Legacy facade (deprecated)
+- `polaris/cells/roles/kernel/internal/llm_caller/invoker.py` - Invocation service implementation
+- `polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py` - Final provider request preparation
 
 ## Contact
 

@@ -143,7 +143,7 @@ class TestDependencyInjection:
         assert not any("LLMCaller is deprecated" in str(item.message) for item in captured)
 
     def test_llm_caller_is_not_public_kernel_export(self) -> None:
-        """LLMCaller may remain implementation-local, but not exported from boundaries."""
+        """LLMCaller must not be exported from any kernel boundary."""
         import polaris.cells.roles.kernel as kernel_public_root
         import polaris.cells.roles.kernel.internal.llm_caller as llm_caller_package
         import polaris.cells.roles.kernel.public as kernel_public
@@ -157,8 +157,17 @@ class TestDependencyInjection:
             kernel_public.__getattr__("LLMCaller")
         assert "LLMCaller" not in vars(llm_caller_package)
 
-    def test_llm_caller_direct_imports_are_implementation_local(self) -> None:
-        """New production callers must not depend on the deprecated LLMCaller facade."""
+    def test_llm_caller_facade_file_is_retired(self) -> None:
+        """The retired LLMCaller facade must not reappear as an implementation-local shim."""
+        import polaris
+
+        package_root = Path(polaris.__file__).resolve().parent
+        caller_file = package_root / "cells/roles/kernel/internal/llm_caller/caller.py"
+
+        assert not caller_file.exists()
+
+    def test_llm_caller_direct_imports_are_retired(self) -> None:
+        """New production callers must not depend on the retired LLMCaller facade."""
         import polaris
 
         package_root = Path(polaris.__file__).resolve().parent

@@ -68,7 +68,7 @@ parsing, quality checks, retry policy, and runtime-level event emission.
 - `internal/prompt_builder.py`
 - `internal/output_parser.py`
 - `internal/quality_checker.py`
-- `internal/llm_caller.py`
+- `internal/llm_caller/`
 - `internal/retry_policy_engine.py`
 - `internal/error_category.py`
 - `generated/verify.pack.json`
@@ -78,7 +78,11 @@ parsing, quality checks, retry policy, and runtime-level event emission.
 - `tests/test_prompt_builder_retry.py`
 - `tests/test_output_parser_patch_file.py`
 - `tests/test_quality_checker_director_tool_calls.py`
-- `tests/test_llm_caller.py`
+- `tests/test_llm_caller_helpers.py`
+- `tests/test_llm_invoker_decomposition_characterization.py`
+- `tests/test_llm_invoker_role_binding_fallback.py`
+- `tests/test_llm_invoker_final_request_receipt.py`
+- `tests/test_llm_caller_capability_profile.py`
 - `tests/test_role_kernel_write_budget.py`
 - `tests/test_turn_engine_semantic_stages.py`
 - `tests/test_turn_engine_policy_convergence.py`
