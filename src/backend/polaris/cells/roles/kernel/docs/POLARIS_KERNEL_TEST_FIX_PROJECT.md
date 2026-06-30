@@ -28,7 +28,6 @@
 | `test_turn_engine_*.py` (4 files) | 35 | P1 | 中 | Team Delta |
 | `test_transcript_leak_guard.py` | 3 | P1 | 中 | Team Epsilon |
 | `test_turn_engine_policy_convergence.py` | 2 | P1 | 中 | Team Epsilon |
-| `test_turn_engine_compat_methods.py` | 2 | P1 | 低 | Team Zeta |
 | `test_turn_engine_semantic_stages.py` | 10 | P1 | 中 | Team Eta |
 | `test_transaction_controller.py` | 5 | P2 | 中 | Team Theta |
 | `test_stream_visible_output_contract.py` | 8 | P2 | 中 | Team Theta |
@@ -172,16 +171,19 @@
 
 ---
 
-### Team Zeta - 兼容性方法修复 (1人)
+### Team Zeta - Prompt 构建器集成修复 (1人)
 **队长**: Backend Engineer
 
 **负责文件**:
-- `test_turn_engine_compat_methods.py` (2 tests)
 - `test_kernel_prompt_builder_integration.py` (1 test)
 
 **核心问题**:
-- 向后兼容方法
 - Prompt构建器集成
+
+**已收敛**:
+- `test_turn_engine_compat_methods.py` 已删除。旧 `TurnEngineCompatMixin`
+  helper API 不再是支持面，回归由架构护栏
+  `test_turn_engine_compat_fence.py` 覆盖。
 
 **交付物**:
 1. 修复3个测试

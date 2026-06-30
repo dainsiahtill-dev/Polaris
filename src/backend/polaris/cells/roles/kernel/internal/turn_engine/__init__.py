@@ -16,12 +16,15 @@ Wave 2 完成状态:
 
 Wave 3 完成状态:
     - utils.py: 静态工具函数（去重、签名、归一化、合并等） ✓
-    - compat.py: TurnEngineCompatMixin（Phase 3/4 兼容 API） ✓
     - results.py: RoleTurnResult 构造辅助函数 ✓
 
 向后兼容：
-    所有原有导入路径继续有效：
+    原有 TurnEngine/TurnEngineConfig 导入路径继续有效：
     from polaris.cells.roles.kernel.internal.turn_engine import TurnEngine, TurnEngineConfig
+
+已收敛:
+    - compat.py / TurnEngineCompatMixin 已移除。旧 Phase 3/4 helper API
+      不再作为执行面存在；新行为必须进入 TransactionKernel/RoleExecutionKernel。
 """
 
 from polaris.cells.roles.kernel.internal.turn_engine.artifacts import (

@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import _apply_forced_transaction_tool_definitions
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
-from polaris.cells.roles.kernel.internal.turn_engine.compat import TurnEngineCompatMixin
 from polaris.cells.roles.kernel.internal.turn_engine.turn_materializer import TurnMaterializer
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TransactionConfig
 from polaris.cells.roles.profile.public.service import RoleTurnResult
@@ -57,7 +56,7 @@ def _first_non_empty(*values: Any) -> str:
     return ""
 
 
-class TurnEngine(TurnEngineCompatMixin):
+class TurnEngine:
     """Deprecated turn-engine API reduced to a TransactionKernel facade.
 
     Deprecated compatibility shim. New execution behavior must land in

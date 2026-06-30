@@ -324,23 +324,24 @@
 
 ---
 
-## Team Zeta - 兼容性方法修复
+## Team Zeta - Prompt 构建器集成修复
 
 ### 成员
 - **队长**: Backend Engineer (Jack)
 
 ### 负责范围
-- `test_turn_engine_compat_methods.py` - 2 tests
 - `test_kernel_prompt_builder_integration.py` - 1 test
 
 ### 失败测试清单
 
-- [ ] `test_turn_engine_compat_methods_are_runnable`
-- [ ] `test_turn_engine_maybe_compact_triggers_under_pressure`
 - [ ] `test_build_system_prompt_for_request_passes_message_to_prompt_builder`
 
-**根因**: 向后兼容方法接口变更
-**修复策略**: 更新兼容层或测试
+**根因**: Prompt 构建器集成接口变更
+**修复策略**: 更新 Prompt 构建路径或测试
+
+**已收敛**: `test_turn_engine_compat_methods.py` 已删除；旧
+`TurnEngineCompatMixin` helper API 不再支持，防回流由
+`test_turn_engine_compat_fence.py` 覆盖。
 
 ### 交付检查清单
 - [ ] 3个测试全部通过
