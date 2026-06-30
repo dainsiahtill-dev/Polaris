@@ -3374,7 +3374,7 @@ def test_rust_post_repairs_run_remaining_rules_through_runtime_bridge(
     raw_error = "error[E0609]: no field `name` on type `Demo`\nerror[E0432]: unresolved import `demo::external`"
 
     def fail_if_legacy_aggregate_called(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
-        raise AssertionError("Rust post repairs must not run legacy aggregate shadow replay")
+        raise AssertionError("Rust post repairs must not run legacy aggregate repair")
 
     class FakeAdapter:
         def __init__(self) -> None:

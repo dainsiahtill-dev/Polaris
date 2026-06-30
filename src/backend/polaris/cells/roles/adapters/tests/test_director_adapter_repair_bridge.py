@@ -1439,7 +1439,13 @@ def test_post_execution_scheduler_passes_verifier_and_advisory_to_rust_steps(
             "advisor_notes": advisor_notes,
             "convergence_verifier": convergence_verifier,
         }
-        return []
+        return [
+            post_execution_repair_bridge._record_to_tool_result(
+                {"file": "src/lib.rs", "action": "rust_post_repair"},
+                source_tool="deterministic_rust_missing_fields_repair",
+                default_action="rust_post_repair",
+            )
+        ]
 
     monkeypatch.setattr(post_execution_repair_bridge, "_run_go_post_repairs", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(
@@ -1456,8 +1462,8 @@ def test_post_execution_scheduler_passes_verifier_and_advisory_to_rust_steps(
         convergence_verifier=sentinel_verifier,
     )
 
-    assert tool_results == []
-    assert summary is None
+    assert len(tool_results) == 1
+    assert summary is not None
     assert captured["dependency"]["convergence_verifier"] is sentinel_verifier
     assert captured["post"]["convergence_verifier"] is sentinel_verifier
     assert captured["dependency"]["advisor_notes"][0].advisor_source == "resident_agi"
@@ -2440,7 +2446,7 @@ def test_post_execution_migration_debt_ledger_distinguishes_runtime_and_legacy(
     assert migration_debt["legacy_aggregate_remaining_legacy_subcase_count"] == 0
     assert migration_debt["legacy_aggregate_runtime_migrated_subcase_count"] == 3
     assert migration_debt["legacy_aggregate_blocked_migrated_source_tool_count"] == 0
-    assert migration_debt["legacy_aggregate_shadow_replay_authoritative"] is False
+    assert migration_debt["legacy_aggregate_typed_receipt_cutover_authoritative"] is False
     assert migration_debt["legacy_aggregate_cutover_ready"] is False
     assert not any(
         str(blocker).startswith(("remaining_legacy_subcase:", "remaining_source_tool:"))
@@ -2531,67 +2537,25 @@ def test_go_post_execution_uses_runtime_source_tool_sequence_without_legacy_aggr
     assert 'import "fmt"' in base_file_snapshots[1]["cmd/app/main.go"]
 
 
-def test_post_execution_allowed_rust_shadow_replay_stays_non_cutover_ready(
+def test_post_execution_rust_migration_debt_uses_typed_receipt_gap_names(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
-    remaining_source_tools = [
-        "deterministic_rust_missing_fields_repair",
-    ]
-    remaining_legacy_subcases = [
-        "deterministic_rust_missing_fields_repair:field_declaration",
-    ]
-    runtime_migrated_subcases = [
-        "deterministic_rust_lib_root_facade_repair:export_or_module_declaration",
-        "deterministic_rust_lib_root_facade_repair:path_rewrite",
-    ]
-
     class FakeAdapter:
         def __init__(self) -> None:
             self.workspace = str(tmp_path)
 
-    def fake_rust_post_repairs(
-        adapter: Any,
-        workspace: Path,
-        *,
-        task_id: str,
-        advisor_notes: tuple[RepairAdvisoryV1, ...] = (),
-        convergence_verifier: Any = None,
-    ) -> list[dict[str, Any]]:
-        del adapter, workspace, task_id, advisor_notes, convergence_verifier
-        return [
-            post_execution_repair_bridge._rust_record_to_tool_result(
-                {
-                    "file": "src/lib.rs",
-                    "source_tool": "deterministic_rust_missing_fields_repair",
-                    "action": "rust_missing_fields",
-                    "revalidation": {
-                        "command": ["rtk", "cargo", "check"],
-                        "exit_code": 0,
-                    },
-                },
-                write_result={
-                    "ok": True,
-                    "file": "src/lib.rs",
-                    "operation": "edit_file",
-                    "replacements": 1,
-                },
-                shadow_metadata={
-                    "applied_tool_name": "edit_file",
-                    "before_content": "pub fn demo() -> i32 { 1 }\n",
-                    "after_content": "pub fn demo() -> i32 { 2 }\n",
-                    "record_count": 1,
-                    "legacy_aggregate_remaining_source_tools": remaining_source_tools,
-                    "legacy_aggregate_shadow_replay_allowed_source_tools": remaining_source_tools,
-                    "remaining_legacy_subcases": remaining_legacy_subcases,
-                    "runtime_migrated_subcases": runtime_migrated_subcases,
-                    "source_tools": ["deterministic_rust_missing_fields_repair"],
-                },
-            )
-        ]
-
     def no_repairs(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
         return []
+
+    def fake_rust_post_repairs(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        return [
+            post_execution_repair_bridge._record_to_tool_result(
+                {"file": "src/lib.rs", "action": "rust_missing_fields"},
+                source_tool="deterministic_rust_missing_fields_repair",
+                default_action="rust_missing_fields",
+            )
+        ]
 
     monkeypatch.setattr(post_execution_repair_bridge, "_run_go_post_repairs", no_repairs)
     monkeypatch.setattr(post_execution_repair_bridge, "_run_rust_dependency_repair", no_repairs)
@@ -2617,27 +2581,23 @@ def test_post_execution_allowed_rust_shadow_replay_stays_non_cutover_ready(
 
     assert summary is not None
     assert len(tool_results) == 1
+    summary_text = repr(summary)
+    assert "shadow_replay" not in summary_text
+    assert "legacy_shadow" not in summary_text
+
     evidence = summary["legacy_aggregate_cutover_readiness_evidence"]
-    assert evidence["shadow_replay_authoritative"] is False
+    assert evidence["typed_receipt_cutover_authoritative"] is False
     assert evidence["cutover_ready"] is False
     assert evidence["remaining_source_tool_count"] == 1
-    assert evidence["remaining_source_tool_counts"] == {
-        "deterministic_rust_missing_fields_repair": 1,
-    }
-    assert evidence["remaining_legacy_subcases"] == remaining_legacy_subcases
-    assert evidence["runtime_migrated_subcases"] == runtime_migrated_subcases
+    assert evidence["remaining_source_tools_without_runtime_receipt"] == [
+        "deterministic_rust_missing_fields_repair"
+    ]
     assert evidence["remaining_legacy_subcase_count"] == 1
     assert evidence["runtime_migrated_subcase_count"] == 2
-    assert evidence["blocked_migrated_source_tool_count"] == 0
-    assert evidence["blocked_migrated_source_tool_counts"] == {}
-    assert "remaining_source_tool:deterministic_rust_missing_fields_repair" in evidence["cutover_blockers"]
-    assert (
-        "remaining_legacy_subcase:deterministic_rust_missing_fields_repair:field_declaration"
-        in evidence["cutover_blockers"]
-    )
+    assert "typed_receipt_cutover_not_authoritative" in evidence["cutover_blockers"]
 
     repair_kernel = summary["repair_kernel"]
-    assert repair_kernel["legacy_aggregate_shadow_replay_authoritative"] is False
+    assert repair_kernel["legacy_aggregate_typed_receipt_cutover_authoritative"] is False
     assert repair_kernel["legacy_aggregate_cutover_ready"] is False
     assert repair_kernel["legacy_aggregate_remaining_source_tool_count"] == 1
     assert repair_kernel["legacy_aggregate_remaining_legacy_subcase_count"] == 1
@@ -2648,6 +2608,9 @@ def test_post_execution_allowed_rust_shadow_replay_stays_non_cutover_ready(
     migration_debt = summary["repair_kernel_migration_debt"]
     assert migration_debt["legacy_aggregate_cutover_ready"] is False
     assert migration_debt["legacy_aggregate_remaining_source_tool_count"] == 1
+    assert migration_debt["legacy_aggregate_remaining_source_tools_without_runtime_receipt"] == [
+        "deterministic_rust_missing_fields_repair"
+    ]
     assert migration_debt["legacy_aggregate_remaining_legacy_subcase_count"] == 1
     assert migration_debt["legacy_aggregate_runtime_migrated_subcase_count"] == 2
     assert migration_debt["legacy_aggregate_blocked_migrated_source_tool_count"] == 0
@@ -2660,7 +2623,7 @@ def test_post_execution_allowed_rust_shadow_replay_stays_non_cutover_ready(
     assert rust_step["legacy_aggregate_blocked_migrated_source_tool_count"] == 0
 
     scheduler_bridge = summary["scheduler_bridge"]
-    assert scheduler_bridge["legacy_aggregate_shadow_replay_authoritative"] is False
+    assert scheduler_bridge["legacy_aggregate_typed_receipt_cutover_authoritative"] is False
     assert scheduler_bridge["legacy_aggregate_cutover_ready"] is False
     assert scheduler_bridge["legacy_aggregate_cutover_blockers"] == evidence["cutover_blockers"]
 

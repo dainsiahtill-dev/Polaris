@@ -81,7 +81,7 @@ _RUST_LEGACY_POST_AGGREGATE_REMAINING_SOURCE_TOOLS = frozenset(
     }
 )
 _RUST_LEGACY_POST_AGGREGATE_SOURCE_TOOL_BLOCKER = (
-    "legacy_aggregate_shadow_replay_source_tool_not_remaining"
+    "legacy_aggregate_source_tool_not_runtime_executable"
 )
 
 

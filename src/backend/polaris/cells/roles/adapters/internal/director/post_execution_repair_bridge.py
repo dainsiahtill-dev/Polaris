@@ -7,7 +7,6 @@ repair functions and the Director runtime repair kernel receipt model.
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import re
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -36,9 +35,9 @@ RuntimeAdvisorNotes = tuple[RepairAdvisoryV1, ...]
 ConvergenceVerifier = Callable[[Any], Any]
 
 _CPP_REPAIR_FILE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx")
-_RUST_SHADOW_COPY_IGNORES = frozenset({".git", ".venv", "__pycache__", "node_modules", "target"})
 _POST_EXECUTION_REPAIR_MAX_ROUNDS = 3
 _CALLBACK_RECEIPT_MIGRATION_BLOCKER = "adapter schedule runners still return tool_results instead of RepairReceipt"
+_RUST_BASE_FILE_IGNORES = frozenset({".git", ".venv", "__pycache__", "node_modules", "target"})
 _RUST_LEGACY_AGGREGATE_REMAINING_SOURCE_TOOLS = frozenset(
     {
         "deterministic_rust_missing_fields_repair",
@@ -61,7 +60,7 @@ _RUST_LEGACY_AGGREGATE_SUBCASES_BY_SOURCE_TOOL: Mapping[str, frozenset[str]] = {
         }
     ),
 }
-_RUST_LEGACY_AGGREGATE_SOURCE_TOOL_BLOCKER = "legacy_aggregate_shadow_replay_source_tool_not_remaining"
+_RUST_LEGACY_AGGREGATE_SOURCE_TOOL_BLOCKER = "legacy_aggregate_source_tool_not_runtime_executable"
 _GO_POST_EXECUTION_RUNTIME_SOURCE_TOOLS = (
     "deterministic_go_bare_import_string_repair",
     "deterministic_go_nested_import_repair",
@@ -1367,7 +1366,7 @@ def _collect_rust_base_files(workspace: Path) -> dict[str, str]:
         with contextlib.suppress(OSError, UnicodeDecodeError):
             base_files["Cargo.toml"] = cargo_manifest.read_text(encoding="utf-8")
     for path in sorted(workspace.rglob("*.rs")):
-        if not path.is_file() or any(part in _RUST_SHADOW_COPY_IGNORES for part in path.parts):
+        if not path.is_file() or any(part in _RUST_BASE_FILE_IGNORES for part in path.parts):
             continue
         try:
             relative_path = path.relative_to(workspace).as_posix()
@@ -1576,128 +1575,6 @@ def _is_generated_build_path(path: Path) -> bool:
     return "build" in path.parts or "cmake-build" in path.parts
 
 
-def _rust_shadow_copy_ignore(src: str, names: list[str]) -> set[str]:
-    ignored: set[str] = set()
-    src_path = Path(src)
-    for name in names:
-        candidate = src_path / name
-        if name in _RUST_SHADOW_COPY_IGNORES or candidate.is_symlink():
-            ignored.add(name)
-    return ignored
-
-
-def _snapshot_rust_shadow_text_files(workspace: Path) -> dict[str, str]:
-    files: dict[str, str] = {}
-    for path in sorted(workspace.rglob("*")):
-        if not path.is_file():
-            continue
-        try:
-            relative_path = path.relative_to(workspace)
-        except ValueError:
-            continue
-        if any(part in _RUST_SHADOW_COPY_IGNORES for part in relative_path.parts):
-            continue
-        if path.name != "Cargo.toml" and path.suffix != ".rs":
-            continue
-        try:
-            files[relative_path.as_posix()] = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-    return files
-
-
-def _apply_rust_shadow_change_with_director_tool(
-    executor: DirectorToolExecutor,
-    relative_path: str,
-    *,
-    before_content: str | None,
-    after_content: str,
-    task_id: str,
-) -> tuple[str, dict[str, Any]]:
-    replacement = None
-    if before_content is not None and relative_path.endswith(".rs"):
-        replacement = _minimal_unique_text_replacement(before_content, after_content)
-    if replacement is not None:
-        search, replace = replacement
-        edit_result = executor.execute_tool(
-            "edit_file",
-            {"file": relative_path, "search": search, "replace": replace},
-            task_id=task_id,
-        )
-        return "edit_file", dict(edit_result)
-
-    write_result = executor.execute_tool(
-        "write_file",
-        {"file": relative_path, "content": after_content},
-        task_id=task_id,
-    )
-    return "write_file", dict(write_result)
-
-
-def _minimal_unique_text_replacement(before_content: str, after_content: str) -> tuple[str, str] | None:
-    if before_content == after_content or before_content == "":
-        return None
-
-    prefix_length = 0
-    max_prefix = min(len(before_content), len(after_content))
-    while prefix_length < max_prefix and before_content[prefix_length] == after_content[prefix_length]:
-        prefix_length += 1
-
-    before_end = len(before_content)
-    after_end = len(after_content)
-    while (
-        before_end > prefix_length
-        and after_end > prefix_length
-        and before_content[before_end - 1] == after_content[after_end - 1]
-    ):
-        before_end -= 1
-        after_end -= 1
-
-    start = prefix_length
-    end = before_end
-    if start == end:
-        if start > 0:
-            start -= 1
-        elif end < len(before_content):
-            end += 1
-        else:
-            return None
-
-    while before_content.count(before_content[start:end]) != 1 and (start > 0 or end < len(before_content)):
-        if start > 0:
-            start -= 1
-        if before_content.count(before_content[start:end]) == 1:
-            break
-        if end < len(before_content):
-            end += 1
-
-    search = before_content[start:end]
-    if not search or before_content.count(search) != 1:
-        return None
-
-    left_context = prefix_length - start
-    right_context = end - before_end
-    replace_start = prefix_length - left_context
-    replace_end = after_end + right_context
-    return search, after_content[replace_start:replace_end]
-
-
-def _primary_rust_shadow_record(records: list[dict[str, Any]] | None, relative_path: str) -> dict[str, Any]:
-    if records:
-        record = dict(records[0])
-        record.setdefault("file", relative_path)
-        return record
-    return {
-        "file": relative_path,
-        "source_tool": "deterministic_rust_post_repair",
-        "action": "legacy_shadow_diff_apply",
-    }
-
-
-def _rust_shadow_record_source_tool(record: dict[str, Any]) -> str:
-    return str(record.get("source_tool") or "deterministic_rust_post_repair").strip()
-
-
 def _rust_legacy_aggregate_allowed_source_tools(
     runtime_executable_source_tools: frozenset[str],
 ) -> frozenset[str]:
@@ -1732,585 +1609,6 @@ def _rust_legacy_aggregate_remaining_subcases(
         if source_tool not in runtime_executable_source_tools:
             subcases.update(source_tool_subcases)
     return sorted(subcases)
-
-
-def _rust_shadow_record_subcases(record: dict[str, Any]) -> list[str]:
-    source_tool = _rust_shadow_record_source_tool(record)
-    if source_tool == _RUST_MISSING_FIELDS_SOURCE_TOOL:
-        return [_RUST_MISSING_FIELDS_FIELD_DECLARATION_SUBCASE]
-    if source_tool != _RUST_LIB_ROOT_FACADE_SOURCE_TOOL:
-        return []
-
-    subcases: list[str] = []
-    path_rewrites = record.get("path_rewrites")
-    if isinstance(path_rewrites, list) and path_rewrites:
-        subcases.append(_RUST_LIB_ROOT_FACADE_PATH_REWRITE_SUBCASE)
-    module_exports = record.get("module_exports")
-    if isinstance(module_exports, list) and module_exports:
-        subcases.append(_RUST_LIB_ROOT_FACADE_EXPORT_OR_MODULE_DECLARATION_SUBCASE)
-    return _sorted_unique(subcases)
-
-
-def _rust_legacy_aggregate_shadow_replay_guard(
-    *,
-    records: list[dict[str, Any]],
-    records_by_file: dict[str, list[dict[str, Any]]],
-    shadow_paths: list[str],
-    runtime_executable_source_tools: frozenset[str],
-) -> dict[str, list[str]]:
-    allowed_source_tools = _rust_legacy_aggregate_allowed_source_tools(runtime_executable_source_tools)
-    remaining_subcases = set(_rust_legacy_aggregate_remaining_subcases(runtime_executable_source_tools))
-    runtime_migrated_subcases = set(_rust_legacy_aggregate_runtime_migrated_subcases(runtime_executable_source_tools))
-    blocked_source_tools: list[str] = []
-    blocked_migrated_source_tools: list[str] = []
-    blocked_subcases: list[str] = []
-    blocked_migrated_subcases: list[str] = []
-
-    for record in records:
-        source_tool = _rust_shadow_record_source_tool(record)
-        if source_tool in allowed_source_tools:
-            continue
-        record_subcases = _rust_shadow_record_subcases(record)
-        if record_subcases and all(subcase in remaining_subcases for subcase in record_subcases):
-            continue
-        blocked_source_tools.append(source_tool)
-        if source_tool in runtime_executable_source_tools:
-            blocked_migrated_source_tools.append(source_tool)
-        for subcase in record_subcases:
-            if subcase in runtime_migrated_subcases:
-                blocked_migrated_subcases.append(subcase)
-            else:
-                blocked_subcases.append(subcase)
-
-    if shadow_paths:
-        for relative_path in shadow_paths:
-            path_records = records_by_file.get(relative_path)
-            if not path_records:
-                blocked_source_tools.append("deterministic_rust_post_repair")
-    return {
-        "blocked_source_tools": _sorted_unique(blocked_source_tools),
-        "blocked_migrated_source_tools": _sorted_unique(blocked_migrated_source_tools),
-        "blocked_subcases": _sorted_unique(blocked_subcases),
-        "blocked_migrated_subcases": _sorted_unique(blocked_migrated_subcases),
-    }
-
-
-def _rust_legacy_aggregate_source_tool_blocked_result(
-    *,
-    relative_paths: list[str],
-    source_tools: list[str],
-    blocked_migrated_source_tools: list[str],
-    blocked_subcases: list[str],
-    blocked_migrated_subcases: list[str],
-    runtime_executable_source_tools: frozenset[str],
-) -> dict[str, Any]:
-    normalized_source_tools = _sorted_unique(source_tools)
-    runtime_migrated_source_tools = [
-        source_tool for source_tool in normalized_source_tools if source_tool in runtime_executable_source_tools
-    ]
-    allowed_source_tools = sorted(_rust_legacy_aggregate_allowed_source_tools(runtime_executable_source_tools))
-    remaining_source_tools = _rust_legacy_aggregate_remaining_source_tools(runtime_executable_source_tools)
-    remaining_subcases = _rust_legacy_aggregate_remaining_subcases(runtime_executable_source_tools)
-    runtime_migrated_subcases = _rust_legacy_aggregate_runtime_migrated_subcases(runtime_executable_source_tools)
-    cutover_evidence = _build_rust_legacy_aggregate_cutover_evidence(
-        remaining_source_tools=remaining_source_tools,
-        allowed_source_tools=allowed_source_tools,
-        blocked_source_tools=normalized_source_tools,
-        blocked_migrated_source_tools=blocked_migrated_source_tools or runtime_migrated_source_tools,
-        remaining_legacy_subcases=remaining_subcases,
-        runtime_migrated_subcases=runtime_migrated_subcases,
-        blocked_subcases=blocked_subcases,
-        blocked_migrated_subcases=blocked_migrated_subcases,
-    )
-    primary_source_tool = normalized_source_tools[0] if normalized_source_tools else "deterministic_rust_post_repair"
-    primary_path = relative_paths[0] if len(relative_paths) == 1 else ""
-    result = _record_payload(
-        {
-            "file": primary_path,
-            "source_tool": primary_source_tool,
-            "action": "legacy_shadow_replay_blocked",
-        },
-        source_tool=primary_source_tool,
-        default_action="legacy_shadow_replay_blocked",
-    )
-    result.update(
-        {
-            "ok": False,
-            "blocked": True,
-            "file": primary_path,
-            "files_changed": list(relative_paths),
-            "operation": "legacy_shadow_replay_guard",
-            "requested_tool_name": "legacy_shadow_replay",
-            "applied_tool_name": "blocked_legacy_shadow_replay",
-            "error": "Rust legacy aggregate shadow replay emitted source_tool outside the remaining allowlist.",
-            "source_tools": normalized_source_tools,
-            "legacy_shadow_source_tools": normalized_source_tools,
-            "legacy_shadow_workspace": True,
-            "legacy_shadow_replay": True,
-            "legacy_shadow_applied_via_director_tools": False,
-            "receipt_authority": "non_authoritative_shadow_replay_projection",
-            "receipt_status": "blocked",
-            "evidence_status": "failed_evidence",
-            "evidence_failed": True,
-            "evidence_missing": False,
-            "repair_success_verdict": False,
-            "evidence_failure_reason": _RUST_LEGACY_AGGREGATE_SOURCE_TOOL_BLOCKER,
-            "verifier_evidence_required": True,
-            "verifier_evidence_present": False,
-            "runtime_authoritative_plan": False,
-            "typed_receipt_path_available": False,
-            "migration_blocker": _RUST_LEGACY_AGGREGATE_SOURCE_TOOL_BLOCKER,
-            "legacy_aggregate_remaining_source_tools": remaining_source_tools,
-            "legacy_aggregate_shadow_replay_allowed_source_tools": allowed_source_tools,
-            "legacy_aggregate_blocked_source_tools": normalized_source_tools,
-            "legacy_aggregate_blocked_migrated_source_tools": blocked_migrated_source_tools
-            or runtime_migrated_source_tools,
-            "remaining_legacy_subcases": remaining_subcases,
-            "runtime_migrated_subcases": runtime_migrated_subcases,
-            "legacy_aggregate_remaining_legacy_subcases": remaining_subcases,
-            "legacy_aggregate_runtime_migrated_subcases": runtime_migrated_subcases,
-            "legacy_aggregate_blocked_subcases": _sorted_unique(blocked_subcases),
-            "legacy_aggregate_blocked_migrated_subcases": _sorted_unique(blocked_migrated_subcases),
-            **_legacy_aggregate_cutover_projection_fields(cutover_evidence),
-        }
-    )
-    repair_kernel = result.get("repair_kernel")
-    if isinstance(repair_kernel, dict):
-        repair_kernel.update(
-            {
-                "status": "blocked",
-                "blocked": True,
-                "authoritative": False,
-                "runtime_authoritative_plan": False,
-                "requires_revalidation": True,
-                "receipt_authority": "non_authoritative_shadow_replay_projection",
-                "receipt_status": "blocked",
-                "evidence_status": "failed_evidence",
-                "evidence_failed": True,
-                "evidence_missing": False,
-                "repair_success_verdict": False,
-                "source_tools": normalized_source_tools,
-                "files_changed": list(relative_paths),
-                "applied_tool_name": "blocked_legacy_shadow_replay",
-                "legacy_shadow_workspace": True,
-                "legacy_shadow_replay": True,
-                "legacy_shadow_applied_via_director_tools": False,
-                "migration_blocker": _RUST_LEGACY_AGGREGATE_SOURCE_TOOL_BLOCKER,
-                "evidence_failure_reason": _RUST_LEGACY_AGGREGATE_SOURCE_TOOL_BLOCKER,
-                "legacy_aggregate_remaining_source_tools": remaining_source_tools,
-                "legacy_aggregate_shadow_replay_allowed_source_tools": allowed_source_tools,
-                "legacy_aggregate_blocked_source_tools": normalized_source_tools,
-                "legacy_aggregate_blocked_migrated_source_tools": blocked_migrated_source_tools
-                or runtime_migrated_source_tools,
-                "remaining_legacy_subcases": remaining_subcases,
-                "runtime_migrated_subcases": runtime_migrated_subcases,
-                "legacy_aggregate_remaining_legacy_subcases": remaining_subcases,
-                "legacy_aggregate_runtime_migrated_subcases": runtime_migrated_subcases,
-                "legacy_aggregate_blocked_subcases": _sorted_unique(blocked_subcases),
-                "legacy_aggregate_blocked_migrated_subcases": _sorted_unique(blocked_migrated_subcases),
-                **_legacy_aggregate_cutover_projection_fields(cutover_evidence),
-            }
-        )
-    return _write_tool_result(result, tool_name="write_file")
-
-
-def _sha256_text(content: str) -> str:
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
-
-
-def _normalized_source_tools(
-    record: dict[str, Any],
-    *,
-    source_tools: list[str] | None,
-    fallback: str,
-) -> list[str]:
-    values = [str(record.get("source_tool") or fallback)]
-    if isinstance(source_tools, list):
-        values.extend(str(source_tool) for source_tool in source_tools)
-    return sorted({value.strip() for value in values if value.strip()})
-
-
-def _legacy_revalidation_evidence_status(
-    evidence: Mapping[str, Any] | None,
-    *,
-    write_ok: bool,
-    blocked: bool,
-) -> str:
-    if blocked or not write_ok:
-        return "failed_evidence"
-    payload = dict(evidence or {})
-    if not payload:
-        return "missing_evidence"
-    metadata = payload.get("metadata")
-    metadata_dict = metadata if isinstance(metadata, dict) else {}
-    failure_reason = str(metadata_dict.get("revalidation_failure_reason") or "").strip()
-    if failure_reason in {
-        "invalid_revalidation_evidence_type",
-        "missing_revalidation_evidence",
-        "missing_revalidation_exit_code",
-        "revalidator_exception",
-    }:
-        return "missing_evidence"
-    command = payload.get("command")
-    has_command = isinstance(command, (list, tuple)) and any(str(item or "").strip() for item in command)
-    exit_code = _optional_int(payload.get("exit_code"))
-    if not has_command or exit_code is None:
-        return "missing_evidence"
-    errors_after = _optional_int(payload.get("errors_after"))
-    if exit_code != 0 or (errors_after is not None and errors_after > 0):
-        return "failed_evidence"
-    if payload.get("residual_diagnostic_ids") or payload.get("residual_artifact_quality_errors"):
-        return "failed_evidence"
-    return "resolved_evidence"
-
-
-def _legacy_evidence_missing_reason(evidence: Mapping[str, Any] | None) -> str:
-    payload = dict(evidence or {})
-    if not payload:
-        return "missing_revalidation_evidence"
-    metadata = payload.get("metadata")
-    metadata_dict = metadata if isinstance(metadata, dict) else {}
-    failure_reason = str(metadata_dict.get("revalidation_failure_reason") or "").strip()
-    if failure_reason:
-        return failure_reason
-    command = payload.get("command")
-    if not isinstance(command, (list, tuple)) or not any(str(item or "").strip() for item in command):
-        return "missing_revalidation_command"
-    if _optional_int(payload.get("exit_code")) is None:
-        return "missing_revalidation_exit_code"
-    return "missing_revalidation_evidence"
-
-
-def _legacy_receipt_status_for_evidence(evidence_status: str, *, blocked: bool = False) -> str:
-    if blocked:
-        return "blocked"
-    if evidence_status == "resolved_evidence":
-        return "applied"
-    if evidence_status == "failed_evidence":
-        return "failed_revalidation"
-    return "pending_revalidation"
-
-
-def _optional_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _apply_shadow_replay_repair_kernel_projection(
-    result: dict[str, Any],
-    *,
-    relative_path: str,
-    source_tools: list[str],
-    applied_tool_name: str,
-    evidence_status: str,
-    before_hash: Any,
-    after_hash: Any,
-    revalidation_evidence: dict[str, Any],
-    evidence_failure_reason: Any = None,
-    blocked: bool = False,
-) -> None:
-    repair_kernel = result.get("repair_kernel")
-    if not isinstance(repair_kernel, dict):
-        return
-    before_hash_text = str(before_hash or "").strip()
-    after_hash_text = str(after_hash or "").strip()
-    receipt_status = _legacy_receipt_status_for_evidence(evidence_status, blocked=blocked)
-    repair_kernel.update(
-        {
-            "receipt_authority": "non_authoritative_shadow_replay_projection",
-            "status": receipt_status,
-            "authoritative": False,
-            "runtime_authoritative_plan": False,
-            "requires_revalidation": True,
-            "verifier_evidence_required": True,
-            "verifier_evidence_present": evidence_status != "missing_evidence",
-            "evidence_status": evidence_status,
-            "evidence_missing": evidence_status == "missing_evidence",
-            "evidence_failed": evidence_status == "failed_evidence",
-            "evidence_resolved": evidence_status == "resolved_evidence",
-            "repair_success_verdict": evidence_status == "resolved_evidence" and not blocked,
-            "applied_tool_name": applied_tool_name,
-            "source_tools": list(source_tools),
-            "files_changed": [relative_path] if relative_path else [],
-            "legacy_shadow_workspace": True,
-            "legacy_shadow_replay": True,
-            "legacy_shadow_applied_via_director_tools": bool(result.get("legacy_shadow_applied_via_director_tools")),
-            "legacy_shadow_before_exists": bool(result.get("legacy_shadow_before_exists", True)),
-            "legacy_shadow_after_exists": bool(result.get("legacy_shadow_after_exists", not blocked)),
-            "typed_receipt_path_available": False,
-            "migration_blocker": _CALLBACK_RECEIPT_MIGRATION_BLOCKER,
-            "revalidation_evidence": dict(revalidation_evidence),
-        }
-    )
-    if before_hash_text:
-        repair_kernel["before_hashes"] = {relative_path: before_hash_text} if relative_path else {}
-    if after_hash_text:
-        repair_kernel["after_hashes"] = {relative_path: after_hash_text} if relative_path else {}
-    if blocked:
-        repair_kernel["blocked"] = True
-        repair_kernel["legacy_shadow_delete_blocked"] = True
-    if evidence_status == "missing_evidence":
-        reason = str(result.get("evidence_missing_reason") or "missing_revalidation_evidence")
-        repair_kernel["evidence_missing_reason"] = reason
-    if evidence_failure_reason:
-        repair_kernel["evidence_failure_reason"] = str(evidence_failure_reason)
-    remaining_source_tools = result.get("legacy_aggregate_remaining_source_tools")
-    if isinstance(remaining_source_tools, list):
-        repair_kernel["legacy_aggregate_remaining_source_tools"] = list(remaining_source_tools)
-    allowed_source_tools = result.get("legacy_aggregate_shadow_replay_allowed_source_tools")
-    if isinstance(allowed_source_tools, list):
-        repair_kernel["legacy_aggregate_shadow_replay_allowed_source_tools"] = list(allowed_source_tools)
-    remaining_legacy_subcases = result.get("remaining_legacy_subcases")
-    if isinstance(remaining_legacy_subcases, list):
-        repair_kernel["remaining_legacy_subcases"] = list(remaining_legacy_subcases)
-        repair_kernel["legacy_aggregate_remaining_legacy_subcases"] = list(remaining_legacy_subcases)
-    runtime_migrated_subcases = result.get("runtime_migrated_subcases")
-    if isinstance(runtime_migrated_subcases, list):
-        repair_kernel["runtime_migrated_subcases"] = list(runtime_migrated_subcases)
-        repair_kernel["legacy_aggregate_runtime_migrated_subcases"] = list(runtime_migrated_subcases)
-    blocked_subcases = result.get("legacy_aggregate_blocked_subcases")
-    if isinstance(blocked_subcases, list):
-        repair_kernel["legacy_aggregate_blocked_subcases"] = list(blocked_subcases)
-    blocked_migrated_subcases = result.get("legacy_aggregate_blocked_migrated_subcases")
-    if isinstance(blocked_migrated_subcases, list):
-        repair_kernel["legacy_aggregate_blocked_migrated_subcases"] = list(blocked_migrated_subcases)
-    cutover_evidence = result.get("legacy_aggregate_cutover_readiness_evidence")
-    if isinstance(cutover_evidence, dict):
-        repair_kernel.update(_legacy_aggregate_cutover_projection_fields(cutover_evidence))
-
-
-def _rust_shadow_delete_blocked_tool_result(
-    record: dict[str, Any],
-    relative_path: str,
-    *,
-    before_content: str | None = None,
-    source_tools: list[str] | None = None,
-    runtime_executable_source_tools: frozenset[str] | None = None,
-) -> dict[str, Any]:
-    runtime_source_tools = runtime_executable_source_tools or frozenset()
-    remaining_source_tools = _rust_legacy_aggregate_remaining_source_tools(runtime_source_tools)
-    allowed_source_tools = sorted(_rust_legacy_aggregate_allowed_source_tools(runtime_source_tools))
-    normalized_source_tools = _normalized_source_tools(
-        record,
-        source_tools=source_tools,
-        fallback="deterministic_rust_post_repair",
-    )
-    remaining_subcases = _rust_legacy_aggregate_remaining_subcases(runtime_source_tools)
-    runtime_migrated_subcases = _rust_legacy_aggregate_runtime_migrated_subcases(runtime_source_tools)
-    cutover_evidence = _build_rust_legacy_aggregate_cutover_evidence(
-        remaining_source_tools=remaining_source_tools,
-        allowed_source_tools=allowed_source_tools,
-        blocked_source_tools=[],
-        blocked_migrated_source_tools=[],
-        remaining_legacy_subcases=remaining_subcases,
-        runtime_migrated_subcases=runtime_migrated_subcases,
-        blocked_subcases=[],
-        blocked_migrated_subcases=[],
-    )
-    before_hash = _sha256_text(before_content) if before_content is not None else ""
-    result = _record_payload(
-        record,
-        source_tool=str(record.get("source_tool") or "deterministic_rust_post_repair"),
-        default_action=str(record.get("symbols") or record.get("action") or "rust_post_repair"),
-    )
-    result.update(
-        {
-            "ok": False,
-            "file": relative_path,
-            "operation": "delete",
-            "blocked": True,
-            "error": "Rust shadow repair requested a deletion, but DirectorToolExecutor has no delete_file tool.",
-            "requested_tool_name": "delete_file",
-            "applied_tool_name": "blocked_delete_file",
-            "source_tools": normalized_source_tools,
-            "receipt_authority": "non_authoritative_shadow_replay_projection",
-            "receipt_status": "blocked",
-            "authoritative": False,
-            "runtime_authoritative_plan": False,
-            "typed_receipt_path_available": False,
-            "evidence_status": "failed_evidence",
-            "evidence_failed": True,
-            "repair_success_verdict": False,
-            "evidence_failure_reason": "shadow_replay_delete_blocked",
-            "verifier_evidence_required": True,
-            "verifier_evidence_present": False,
-            "legacy_shadow_workspace": True,
-            "legacy_shadow_replay": True,
-            "legacy_shadow_before_exists": before_content is not None,
-            "legacy_shadow_after_exists": False,
-            "legacy_shadow_delete_blocked": True,
-            "legacy_aggregate_remaining_source_tools": remaining_source_tools,
-            "legacy_aggregate_shadow_replay_allowed_source_tools": allowed_source_tools,
-            "remaining_legacy_subcases": remaining_subcases,
-            "runtime_migrated_subcases": runtime_migrated_subcases,
-            "legacy_aggregate_remaining_legacy_subcases": remaining_subcases,
-            "legacy_aggregate_runtime_migrated_subcases": runtime_migrated_subcases,
-            **_legacy_aggregate_cutover_projection_fields(cutover_evidence),
-        }
-    )
-    if before_hash:
-        result["before_hash"] = before_hash
-        result["after_hash"] = "file_absent"
-    _apply_shadow_replay_repair_kernel_projection(
-        result,
-        relative_path=relative_path,
-        source_tools=normalized_source_tools,
-        applied_tool_name="blocked_delete_file",
-        evidence_status="failed_evidence",
-        before_hash=result.get("before_hash"),
-        after_hash=result.get("after_hash"),
-        revalidation_evidence={},
-        evidence_failure_reason="shadow_replay_delete_blocked",
-        blocked=True,
-    )
-    repair_kernel = result.get("repair_kernel")
-    if isinstance(repair_kernel, dict):
-        repair_kernel["legacy_aggregate_remaining_source_tools"] = remaining_source_tools
-        repair_kernel["legacy_aggregate_shadow_replay_allowed_source_tools"] = allowed_source_tools
-        repair_kernel["remaining_legacy_subcases"] = remaining_subcases
-        repair_kernel["runtime_migrated_subcases"] = runtime_migrated_subcases
-        repair_kernel["legacy_aggregate_remaining_legacy_subcases"] = remaining_subcases
-        repair_kernel["legacy_aggregate_runtime_migrated_subcases"] = runtime_migrated_subcases
-        repair_kernel.update(_legacy_aggregate_cutover_projection_fields(cutover_evidence))
-    return _write_tool_result(result)
-
-
-def _rust_record_to_tool_result(
-    record: dict[str, Any],
-    *,
-    write_result: dict[str, Any] | None = None,
-    shadow_metadata: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    applied_tool_name = "write_file"
-    result = _record_payload(
-        record,
-        source_tool=str(record.get("source_tool") or "deterministic_rust_post_repair"),
-        default_action=str(record.get("symbols") or "rust_post_repair"),
-    )
-    if record.get("phase"):
-        result["phase"] = record.get("phase")
-    if record.get("priority") is not None:
-        result["priority"] = record.get("priority")
-    if record.get("round_number") is not None:
-        result["round_number"] = record.get("round_number")
-    revalidation = record.get("revalidation")
-    if isinstance(revalidation, dict) and revalidation:
-        result["revalidation"] = revalidation
-        result["revalidation_evidence"] = dict(revalidation)
-        result["revalidation_scope"] = "legacy_shadow_workspace"
-    if shadow_metadata is not None:
-        before_content = str(shadow_metadata.get("before_content") or "")
-        after_content = str(shadow_metadata.get("after_content") or "")
-        result["before_hash"] = _sha256_text(before_content)
-        result["after_hash"] = _sha256_text(after_content)
-        result["legacy_shadow_workspace"] = True
-        result["legacy_shadow_replay"] = True
-        result["legacy_shadow_applied_via_director_tools"] = write_result is not None
-        result["legacy_shadow_before_exists"] = bool(shadow_metadata.get("before_exists", True))
-        result["legacy_shadow_after_exists"] = bool(shadow_metadata.get("after_exists", True))
-        result["legacy_shadow_record_count"] = int(shadow_metadata.get("record_count") or 0)
-        applied_tool_name = str(shadow_metadata.get("applied_tool_name") or applied_tool_name)
-        result["applied_tool_name"] = applied_tool_name
-        result["receipt_authority"] = "non_authoritative_shadow_replay_projection"
-        result["authoritative"] = False
-        result["runtime_authoritative_plan"] = False
-        result["typed_receipt_path_available"] = False
-        result["migration_blocker"] = _CALLBACK_RECEIPT_MIGRATION_BLOCKER
-        result["legacy_aggregate_remaining_source_tools"] = list(
-            shadow_metadata.get(
-                "legacy_aggregate_remaining_source_tools",
-                sorted(_RUST_LEGACY_AGGREGATE_REMAINING_SOURCE_TOOLS),
-            )
-        )
-        result["legacy_aggregate_shadow_replay_allowed_source_tools"] = list(
-            shadow_metadata.get(
-                "legacy_aggregate_shadow_replay_allowed_source_tools",
-                sorted(_RUST_LEGACY_AGGREGATE_REMAINING_SOURCE_TOOLS),
-            )
-        )
-        result["remaining_legacy_subcases"] = list(shadow_metadata.get("remaining_legacy_subcases", []))
-        result["runtime_migrated_subcases"] = list(shadow_metadata.get("runtime_migrated_subcases", []))
-        result["legacy_aggregate_remaining_legacy_subcases"] = list(result["remaining_legacy_subcases"])
-        result["legacy_aggregate_runtime_migrated_subcases"] = list(result["runtime_migrated_subcases"])
-        source_tools = shadow_metadata.get("source_tools")
-        normalized_source_tools = _normalized_source_tools(
-            record,
-            source_tools=source_tools if isinstance(source_tools, list) else None,
-            fallback="deterministic_rust_post_repair",
-        )
-        result["source_tools"] = normalized_source_tools
-        result["legacy_shadow_source_tools"] = normalized_source_tools
-        cutover_evidence = _build_rust_legacy_aggregate_cutover_evidence(
-            remaining_source_tools=list(result.get("legacy_aggregate_remaining_source_tools") or []),
-            allowed_source_tools=list(result.get("legacy_aggregate_shadow_replay_allowed_source_tools") or []),
-            blocked_source_tools=[],
-            blocked_migrated_source_tools=[],
-            remaining_legacy_subcases=list(result.get("remaining_legacy_subcases") or []),
-            runtime_migrated_subcases=list(result.get("runtime_migrated_subcases") or []),
-            blocked_subcases=[],
-            blocked_migrated_subcases=[],
-        )
-        result.update(_legacy_aggregate_cutover_projection_fields(cutover_evidence))
-    if write_result is not None:
-        ok = bool(write_result.get("ok"))
-        result["ok"] = ok
-        result["file"] = str(write_result.get("file") or result.get("file") or "")
-        for key in (
-            "bytes_written",
-            "operation",
-            "broadcast_ok",
-            "director_policy",
-            "replacements",
-            "normalized_patch_like_write",
-            "json_config_repaired",
-        ):
-            if key in write_result:
-                result[key] = write_result.get(key)
-        if "operation" not in write_result:
-            result["operation"] = applied_tool_name
-        if not ok:
-            result["error"] = str(write_result.get("error") or "Director write_file failed")
-            if write_result.get("blocked"):
-                result["blocked"] = True
-    if shadow_metadata is not None:
-        revalidation_evidence = dict(result.get("revalidation_evidence") or {})
-        evidence_status = _legacy_revalidation_evidence_status(
-            revalidation_evidence,
-            write_ok=bool(result.get("ok", True)),
-            blocked=bool(result.get("blocked")),
-        )
-        result["evidence_status"] = evidence_status
-        result["receipt_status"] = _legacy_receipt_status_for_evidence(
-            evidence_status,
-            blocked=bool(result.get("blocked")),
-        )
-        result["evidence_missing"] = evidence_status == "missing_evidence"
-        result["evidence_failed"] = evidence_status == "failed_evidence"
-        result["evidence_resolved"] = evidence_status == "resolved_evidence"
-        result["repair_success_verdict"] = evidence_status == "resolved_evidence" and bool(result.get("ok", True))
-        result["verifier_evidence_required"] = True
-        result["verifier_evidence_present"] = evidence_status != "missing_evidence"
-        if evidence_status == "missing_evidence":
-            result["evidence_missing_reason"] = _legacy_evidence_missing_reason(revalidation_evidence)
-        elif evidence_status == "failed_evidence":
-            result["evidence_failure_reason"] = "legacy_shadow_revalidation_failed"
-        _apply_shadow_replay_repair_kernel_projection(
-            result,
-            relative_path=str(result.get("file") or ""),
-            source_tools=list(result.get("source_tools") or []),
-            applied_tool_name=applied_tool_name,
-            evidence_status=evidence_status,
-            before_hash=result.get("before_hash"),
-            after_hash=result.get("after_hash"),
-            revalidation_evidence=revalidation_evidence,
-            evidence_failure_reason=result.get("evidence_failure_reason"),
-            blocked=bool(result.get("blocked")),
-        )
-    return _write_tool_result(result, tool_name=applied_tool_name)
 
 
 def _record_to_tool_result(
@@ -2792,7 +2090,7 @@ def _build_rust_legacy_aggregate_cutover_evidence(
     )
     blockers = _sorted_unique(
         [
-            "legacy_shadow_replay_non_authoritative",
+            "typed_receipt_cutover_not_authoritative",
             *remaining_source_tool_blockers,
             *remaining_legacy_subcase_blockers,
             *blocked_source_tool_blockers,
@@ -2803,11 +2101,10 @@ def _build_rust_legacy_aggregate_cutover_evidence(
     )
     return {
         "schema_version": "director.rust_legacy_aggregate_cutover_readiness_evidence.v1",
-        "shadow_replay_non_authoritative": True,
-        "shadow_replay_authoritative": False,
-        "shadow_replay_writes_authoritative": False,
-        "shadow_replay_receipt_authority": "non_authoritative_shadow_replay_projection",
-        "shadow_replay_authority_boundary": "legacy_shadow_replay_projection_only_not_runtime_receipt",
+        "typed_receipt_cutover_authoritative": False,
+        "typed_receipt_cutover_writes_authoritative": False,
+        "receipt_authority": "migration_debt_projection",
+        "authority_boundary": "adapter_projection_only_not_runtime_repair_receipt",
         "cutover_ready": False,
         "cutover_blockers": blockers,
         "remaining_source_tool_blockers": remaining_source_tool_blockers,
@@ -2819,9 +2116,9 @@ def _build_rust_legacy_aggregate_cutover_evidence(
         "remaining_source_tools": remaining,
         "remaining_source_tool_count": len(remaining),
         "remaining_source_tool_counts": _source_tool_counts(remaining),
-        "shadow_replay_allowed_source_tools": allowed,
-        "shadow_replay_allowed_source_tool_count": len(allowed),
-        "shadow_replay_allowed_source_tool_counts": _source_tool_counts(allowed),
+        "remaining_source_tools_without_runtime_receipt": allowed,
+        "remaining_source_tool_without_runtime_receipt_count": len(allowed),
+        "remaining_source_tool_without_runtime_receipt_counts": _source_tool_counts(allowed),
         "blocked_source_tools": blocked,
         "blocked_source_tool_count": len(blocked),
         "blocked_source_tool_counts": _source_tool_counts(blocked),
@@ -2847,14 +2144,12 @@ def _legacy_aggregate_cutover_projection_fields(cutover_evidence: dict[str, Any]
     evidence = dict(cutover_evidence or {})
     return {
         "legacy_aggregate_cutover_readiness_evidence": evidence,
-        "legacy_aggregate_shadow_replay_authoritative": False,
-        "legacy_aggregate_shadow_replay_writes_authoritative": False,
+        "legacy_aggregate_typed_receipt_cutover_authoritative": False,
+        "legacy_aggregate_typed_receipt_cutover_writes_authoritative": False,
         "legacy_aggregate_cutover_ready": False,
         "legacy_aggregate_cutover_blockers": list(evidence.get("cutover_blockers") or []),
-        "legacy_aggregate_shadow_replay_non_authoritative": True,
-        "legacy_aggregate_shadow_replay_authority_boundary": str(
-            evidence.get("shadow_replay_authority_boundary") or ""
-        ),
+        "legacy_aggregate_typed_receipt_cutover_not_authoritative": True,
+        "legacy_aggregate_authority_boundary": str(evidence.get("authority_boundary") or ""),
         "legacy_aggregate_remaining_source_tool_blockers": list(evidence.get("remaining_source_tool_blockers") or []),
         "legacy_aggregate_remaining_legacy_subcase_blockers": list(
             evidence.get("remaining_legacy_subcase_blockers") or []
@@ -2970,7 +2265,7 @@ def _build_repair_kernel_migration_debt(
         "runner_binding_owner": public_schedule.runner_binding_owner,
         "convergence_verifier_present": convergence_verifier_present,
         "legacy_aggregate_remaining_source_tools": remaining_source_tools,
-        "legacy_aggregate_shadow_replay_allowed_source_tools": allowed_legacy_aggregate_source_tools,
+        "legacy_aggregate_remaining_source_tools_without_runtime_receipt": allowed_legacy_aggregate_source_tools,
         "remaining_legacy_subcases": remaining_legacy_subcases,
         "runtime_migrated_subcases": runtime_migrated_subcases,
         "legacy_aggregate_remaining_legacy_subcases": remaining_legacy_subcases,
@@ -2994,7 +2289,7 @@ def _build_repair_kernel_migration_debt(
             "cutover_ready_step_count": cutover_ready_step_count,
             "cutover_ready": cutover_ready_step_count == len(step_entries) and bool(step_entries),
             "legacy_aggregate_remaining_source_tools": remaining_source_tools,
-            "legacy_aggregate_shadow_replay_allowed_source_tools": allowed_legacy_aggregate_source_tools,
+            "legacy_aggregate_remaining_source_tools_without_runtime_receipt": allowed_legacy_aggregate_source_tools,
             "remaining_legacy_subcases": remaining_legacy_subcases,
             "runtime_migrated_subcases": runtime_migrated_subcases,
             "legacy_aggregate_remaining_legacy_subcases": remaining_legacy_subcases,
@@ -3092,7 +2387,7 @@ def _build_step_migration_debt(
         "runtime_executable_source_tools": runtime_executable_source_tools,
         "legacy_only_source_tools": legacy_only_source_tools,
         "legacy_aggregate_remaining_source_tools": remaining_source_tools,
-        "legacy_aggregate_shadow_replay_allowed_source_tools": allowed_legacy_aggregate_source_tools,
+        "legacy_aggregate_remaining_source_tools_without_runtime_receipt": allowed_legacy_aggregate_source_tools,
         "remaining_legacy_subcases": remaining_legacy_subcases,
         "runtime_migrated_subcases": runtime_migrated_subcases,
         "legacy_aggregate_remaining_legacy_subcases": remaining_legacy_subcases,
@@ -3166,9 +2461,9 @@ def _actual_source_tools_for_payloads(payloads: list[dict[str, Any]]) -> list[st
     source_tools: list[str] = []
     for payload in payloads:
         source_tools.append(str(payload.get("source_tool") or ""))
-        legacy_shadow_source_tools = payload.get("legacy_shadow_source_tools")
-        if isinstance(legacy_shadow_source_tools, list):
-            source_tools.extend(str(item) for item in legacy_shadow_source_tools)
+        payload_source_tools = payload.get("source_tools")
+        if isinstance(payload_source_tools, list):
+            source_tools.extend(str(item) for item in payload_source_tools)
     return _sorted_unique(source_tools)
 
 
