@@ -95,11 +95,11 @@ export const ProviderCard = memo(function ProviderCard({
   onTest,
 }: ProviderCardProps) {
   const { state } = useProviderState();
-  const { startEditProvider, stopEditProvider, toggleExpandProvider } =
+  const { startEdit, cancelEdit, toggleExpandProvider } =
     useProviderActions();
 
   const isExpanded = useIsProviderExpanded(providerId);
-  const isEditing = state.editingProvider === providerId;
+  const isEditing = state.editingProviderId === providerId;
 
   // Debug: log status changes
   useEffect(() => {
@@ -178,11 +178,11 @@ export const ProviderCard = memo(function ProviderCard({
 
   const handleToggleEdit = useCallback(() => {
     if (isEditing) {
-      stopEditProvider();
+      cancelEdit(providerId);
     } else {
-      startEditProvider(providerId);
+      startEdit(providerId, provider);
     }
-  }, [isEditing, providerId, startEditProvider, stopEditProvider]);
+  }, [cancelEdit, isEditing, provider, providerId, startEdit]);
 
   const handleToggleExpand = useCallback(() => {
     toggleExpandProvider(providerId);
