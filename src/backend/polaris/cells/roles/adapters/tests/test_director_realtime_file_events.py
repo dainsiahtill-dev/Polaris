@@ -5,13 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
-    _apply_deterministic_typescript_reexport_repair,
-)
 from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor
 from polaris.cells.roles.adapters.internal.director.execution_tools import DirectorToolExecutor
 from polaris.kernelone.events.message_bus import MessageType
@@ -269,53 +265,3 @@ async def test_markdown_patch_file_returns_disabled_receipt_without_persisting_e
 
     event_log = tmp_path / ".polaris" / "runtime" / "file-edits" / "events.jsonl"
     assert not event_log.exists()
-
-
-@pytest.mark.asyncio
-async def test_deterministic_typescript_reexport_repair_broadcasts_modify_event(tmp_path: Path) -> None:
-    type_dir = tmp_path / "src" / "types"
-    test_dir = type_dir / "__tests__"
-    test_dir.mkdir(parents=True)
-    (type_dir / "asset.ts").write_text(
-        "export enum AssetType {\n  garment = 'garment',\n}\n",
-        encoding="utf-8",
-    )
-    (type_dir / "generation.ts").write_text(
-        "import type { Asset } from './asset';\n"
-        "export enum TaskType {\n  garment_to_model = 'garment_to_model',\n}\n"
-        "export interface GenerationSpec {\n  input_assets: Asset[];\n}\n",
-        encoding="utf-8",
-    )
-    (test_dir / "spec.test.ts").write_text(
-        "import { GenerationSpec, TaskType, AssetType } from '../generation';\nconst type = AssetType.garment;\n",
-        encoding="utf-8",
-    )
-    bus = RecordingMessageBus()
-    adapter = SimpleNamespace(
-        workspace=str(tmp_path),
-        _execution=SimpleNamespace(_message_bus=bus),
-        _update_task_progress=_progress_noop,
-    )
-
-    results = _apply_deterministic_typescript_reexport_repair(
-        adapter,
-        task={
-            "subject": "Repair TypeScript npm test failure",
-            "description": "Cannot read properties of undefined while importing AssetType from ../generation.",
-        },
-        task_id="task-4",
-    )
-
-    await _drain_broadcast_tasks()
-
-    assert results and results[0]["success"] is True
-    result = results[0]["result"]
-    assert result["file"] == "src/types/generation.ts"
-    assert result["operation"] == "modify"
-    assert result["broadcast_ok"] is True
-    assert len(bus.messages) == 1
-    payload = bus.messages[0]["payload"]
-    assert payload["file_path"] == "src/types/generation.ts"
-    assert payload["operation"] == "modify"
-    assert payload["task_id"] == "task-4"
-    assert "export { AssetType } from './asset';" in payload["patch"]

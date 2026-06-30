@@ -3139,6 +3139,80 @@ def test_typescript_conservative_planner_recognizes_all_legacy_ts_html_source_to
     assert "json_set" in operation_kinds
 
 
+def test_typescript_reexport_runtime_repairs_missing_runtime_barrel_symbol(tmp_path: Path) -> None:
+    type_dir = tmp_path / "src" / "types"
+    test_dir = type_dir / "__tests__"
+    test_dir.mkdir(parents=True)
+    (type_dir / "asset.ts").write_text(
+        "export enum AssetType {\n  garment = 'garment',\n}\n",
+        encoding="utf-8",
+    )
+    generation_path = type_dir / "generation.ts"
+    generation_text = (
+        "import type { Asset } from './asset';\n"
+        "export enum TaskType {\n  garment_to_model = 'garment_to_model',\n}\n"
+        "export interface GenerationSpec {\n  input_assets: Asset[];\n}\n"
+    )
+    generation_path.write_text(generation_text, encoding="utf-8")
+    (test_dir / "spec.test.ts").write_text(
+        "import { GenerationSpec, TaskType, AssetType } from '../generation';\nconst type = AssetType.garment;\n",
+        encoding="utf-8",
+    )
+    writes: list[str] = []
+    edits: list[str] = []
+
+    def writer(path: str, updated: str) -> dict[str, object]:
+        writes.append(path)
+        raise AssertionError("typescript re-export repair must prefer edit_file over write_file")
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        assert operation.expected is not None
+        assert operation.replacement is not None
+        assert operation.span_start is not None
+        assert operation.span_end is not None
+        target = tmp_path / operation.path
+        current = target.read_text(encoding="utf-8")
+        if current[operation.span_start : operation.span_end] != operation.expected:
+            return {"ok": False, "error": "expected text not found"}
+        target.write_text(
+            current[: operation.span_start] + operation.replacement + current[operation.span_end :],
+            encoding="utf-8",
+        )
+        edits.append(operation.operation_id)
+        return {"ok": True}
+
+    result = run_runtime_repair(
+        source_tool="deterministic_typescript_reexport_repair",
+        workspace=tmp_path,
+        base_files={
+            "src/types/asset.ts": (type_dir / "asset.ts").read_text(encoding="utf-8"),
+            "src/types/generation.ts": generation_text,
+            "src/types/__tests__/spec.test.ts": (test_dir / "spec.test.ts").read_text(encoding="utf-8"),
+        },
+        artifact_quality_errors=(
+            "TypeScript runtime re-export missing export: AssetType is undefined in src/types/__tests__/spec.test.ts.",
+        ),
+        writer=writer,
+        editor=editor,
+        allowed_paths=("src/types/generation.ts",),
+    )
+
+    assert result.ok is True
+    assert writes == []
+    assert edits
+    repaired = generation_path.read_text(encoding="utf-8")
+    assert "export { AssetType } from './asset';" in repaired
+    assert repaired.count("export { AssetType } from './asset';") == 1
+    assert result.execution_result is not None
+    receipt = result.execution_result.receipt
+    assert receipt.source_tool == "deterministic_typescript_reexport_repair"
+    assert receipt.files_changed == ("src/types/generation.ts",)
+    record = receipt.metadata["execution_records"][0]
+    assert record["operation"] == "edit_file"
+    assert record["span_based"] is True
+    assert record["precise_edit_strategy"]["editor_used"] is True
+
+
 def test_typescript_conservative_planner_fails_closed_for_unknown_source_tool_and_unknown_inputs() -> None:
     unknown_diagnostics = (
         _ts_diag(
@@ -5555,6 +5629,63 @@ def test_typescript_ts2459_declares_locally_reexports_imported_type() -> None:
     )
     assert probe.status == "covered_plannable"
     assert probe.plannable_source_tools == (ts_syntax.TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,)
+
+
+def test_typescript_reexported_type_binding_runtime_adds_local_import(tmp_path: Path) -> None:
+    (tmp_path / "src" / "domain").mkdir(parents=True)
+    (tmp_path / "src" / "domain" / "firefly.ts").write_text(
+        "export interface Firefly { id: string; }\n",
+        encoding="utf-8",
+    )
+    relative_path = "src/index.ts"
+    original = (
+        'export { Firefly } from "./domain/firefly";\nexport interface GardenSnapshot {\n  fireflies: Firefly[];\n}\n'
+    )
+    target = tmp_path / relative_path
+    target.write_text(original, encoding="utf-8")
+    writes: list[str] = []
+    edits: list[str] = []
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        writes.append(path)
+        raise AssertionError("reexported type binding repair must prefer edit_file over write_file")
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        current = target.read_text(encoding="utf-8")
+        assert operation.span_start is not None
+        assert operation.span_end is not None
+        assert operation.expected is not None
+        assert operation.replacement is not None
+        assert current[operation.span_start : operation.span_end] == operation.expected
+        target.write_text(
+            current[: operation.span_start] + operation.replacement + current[operation.span_end :],
+            encoding="utf-8",
+        )
+        edits.append(operation.path)
+        return {"ok": True}
+
+    result = run_runtime_repair(
+        source_tool=ts_syntax.TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL,
+        workspace=tmp_path,
+        base_files={relative_path: original},
+        artifact_quality_errors=(
+            "Artifact quality scan failed: TypeScript project typecheck failed: "
+            "src/index.ts(3,14): error TS2304: Cannot find name 'Firefly'.",
+        ),
+        writer=writer,
+        editor=editor,
+        allowed_paths=(relative_path,),
+    )
+
+    assert result.ok is True
+    assert writes == []
+    assert edits == [relative_path]
+    repaired = target.read_text(encoding="utf-8")
+    assert 'import type { Firefly } from "./domain/firefly";' in repaired
+    assert repaired.index("import type") < repaired.index("export { Firefly }")
+    assert result.execution_result is not None
+    record = result.execution_result.receipt.metadata["execution_records"][0]
+    assert record["operation"] == "edit_file"
 
 
 def test_typescript_value_used_as_type_repairs_exported_const_class_alias() -> None:

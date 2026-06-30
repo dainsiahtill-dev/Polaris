@@ -41,10 +41,6 @@ from polaris.cells.roles.adapters.internal.director.adapter import (
 from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
     _apply_deterministic_scaffold_marker_cleanup,
 )
-from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
-    _apply_deterministic_typescript_reexport_repair,
-    _looks_like_typescript_reexport_failure,
-)
 from polaris.cells.roles.adapters.internal.director.execute_method import (
     _build_empty_write_content_retry_message,
     _build_existing_workspace_task_evidence,
@@ -1729,39 +1725,6 @@ def test_deterministic_typescript_tsconfig_lib_repair_updates_module_for_import_
     repaired = json.loads((tmp_path / "tsconfig.json").read_text(encoding="utf-8"))
     assert repaired["compilerOptions"]["module"] == "ES2020"
     assert repaired["compilerOptions"]["lib"] == ["ES2020"]
-
-
-def test_deterministic_typescript_reexported_type_binding_repair_adds_local_import(
-    tmp_path: Any,
-) -> None:
-    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
-        _apply_deterministic_typescript_reexported_type_binding_repair,
-    )
-
-    (tmp_path / "src" / "domain").mkdir(parents=True)
-    (tmp_path / "src" / "domain" / "firefly.ts").write_text(
-        "export interface Firefly { id: string; }\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "src" / "index.ts").write_text(
-        'export { Firefly } from "./domain/firefly";\nexport interface GardenSnapshot {\n  fireflies: Firefly[];\n}\n',
-        encoding="utf-8",
-    )
-    errors = [
-        "Artifact quality scan failed: TypeScript project typecheck failed: "
-        "src/index.ts(3,14): error TS2304: Cannot find name 'Firefly'."
-    ]
-
-    results = _apply_deterministic_typescript_reexported_type_binding_repair(
-        _make_adapter(tmp_path),
-        task_id="task-1",
-        artifact_quality_errors=errors,
-    )
-
-    assert results
-    repaired = (tmp_path / "src" / "index.ts").read_text(encoding="utf-8")
-    assert 'import type { Firefly } from "./domain/firefly";' in repaired
-    assert repaired.index("import type") < repaired.index("export { Firefly }")
 
 
 def test_deterministic_typescript_nullable_canvas_context_repair_adds_guard(tmp_path: Any) -> None:
@@ -8619,66 +8582,6 @@ class TestDeterministicPythonRuntimeSmoke:
         elapsed = time.monotonic() - started
         assert second == [], second
         assert elapsed < 5.0, f"second smoke took {elapsed:.2f}s -- leaked process"
-
-
-class TestDeterministicTypescriptReexportRepair:
-    """Director can materialize a narrow TypeScript runtime re-export fix."""
-
-    def test_repairs_missing_runtime_reexport(self, tmp_path: Any) -> None:
-        adapter = _make_adapter(tmp_path)
-        type_dir = tmp_path / "src" / "types"
-        test_dir = type_dir / "__tests__"
-        test_dir.mkdir(parents=True)
-        (type_dir / "asset.ts").write_text(
-            "export enum AssetType {\n  garment = 'garment',\n}\n",
-            encoding="utf-8",
-        )
-        (type_dir / "generation.ts").write_text(
-            "import type { Asset } from './asset';\n"
-            "export enum TaskType {\n  garment_to_model = 'garment_to_model',\n}\n"
-            "export interface GenerationSpec {\n  input_assets: Asset[];\n}\n",
-            encoding="utf-8",
-        )
-        (test_dir / "spec.test.ts").write_text(
-            "import { GenerationSpec, TaskType, AssetType } from '../generation';\nconst type = AssetType.garment;\n",
-            encoding="utf-8",
-        )
-
-        results = _apply_deterministic_typescript_reexport_repair(
-            adapter,
-            task={
-                "subject": "Repair TypeScript npm test failure",
-                "description": (
-                    "Vitest reports Cannot read properties of undefined while importing AssetType from ../generation."
-                ),
-            },
-            task_id="task-1",
-        )
-
-        assert results and results[0]["success"] is True
-        generation_text = (type_dir / "generation.ts").read_text(encoding="utf-8")
-        assert "export { AssetType } from './asset';" in generation_text
-
-        second = _apply_deterministic_typescript_reexport_repair(
-            adapter,
-            task={
-                "subject": "Repair TypeScript npm test failure",
-                "description": "Cannot read properties of undefined for AssetType",
-            },
-            task_id="task-1",
-        )
-
-        assert second == []
-        updated_text = (type_dir / "generation.ts").read_text(encoding="utf-8")
-        assert updated_text.count("export { AssetType } from './asset';") == 1
-
-    def test_export_import_contract_fix_triggers_reexport_repair(self) -> None:
-        assert (
-            _looks_like_typescript_reexport_failure(
-                "Apply a minimal TypeScript export/import contract fix; npm test must pass."
-            )
-            is True
-        )
 
 
 # ---------------------------------------------------------------------------

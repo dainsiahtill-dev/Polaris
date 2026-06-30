@@ -2350,6 +2350,8 @@ def _build_typescript_reexport_plan(
                             "repair_kind": "typescript_runtime_reexport",
                             "symbol": symbol,
                             "source": source_path,
+                            "expected_context_before": module_text[max(0, start - 240) : start],
+                            "expected_context_after": module_text[len(module_text) : len(module_text)],
                         },
                     )
                 )

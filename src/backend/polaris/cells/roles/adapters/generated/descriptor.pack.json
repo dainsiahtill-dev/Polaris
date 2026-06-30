@@ -825,12 +825,6 @@
     },
     {
       "type": "function",
-      "name": "_looks_like_typescript_reexport_failure",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
       "name": "_task_requires_fresh_materialization",
       "description": "Return true when an existing file scope is not enough evidence.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"

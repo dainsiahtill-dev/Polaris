@@ -20,11 +20,9 @@ from ..execution_tools import DirectorToolExecutor
 from ..task_scope_paths import (
     _dedupe_preserve_order,
     _normalize_declared_task_path,
-    _task_text_blob,
 )
 from ._common import (
     _TS_MISSING_CLOSING_BRACE_ERROR_RE,
-    _TS_NAMED_IMPORT_RE,
     _TS_OBJECT_LITERAL_START_RE,
     _TS_OBJECT_PROPERTY_SEMICOLON_LINE_RE,
     _TS_OBJECT_PROPERTY_VALUE_SEMICOLON_LINE_RE,
@@ -33,7 +31,6 @@ from ._common import (
     _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE,
     _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE,
     _dedupe_paths,
-    _parse_named_import_symbols,
     _path_inside_workspace,
     _relative_import_repair_target_candidates,
     _relative_import_suffix_order,
@@ -208,92 +205,6 @@ _TS_NUMERIC_MEMBER_NAMES = {
     "y",
     "z",
 }
-
-
-def _apply_deterministic_typescript_reexport_repair(
-    adapter: Any,
-    *,
-    task: dict[str, Any],
-    task_id: str,
-) -> list[dict[str, Any]]:
-    """Repair a narrow TypeScript runtime re-export miss without target-specific code.
-
-    This covers a common Director failure mode: tests import a runtime symbol from
-    a barrel/module file, but that module only exposes type contracts while the
-    symbol is exported by a sibling module. The repair only appends an explicit
-    `export { Symbol } from './source';` when the source file has a runtime export.
-    """
-    task_text = _task_text_blob(task)
-    if not _looks_like_typescript_reexport_failure(task_text):
-        return []
-
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-
-    for importer in _iter_typescript_files(workspace_path):
-        try:
-            importer_text = importer.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        for match in _TS_NAMED_IMPORT_RE.finditer(importer_text):
-            module_path = _resolve_relative_ts_module(importer, match.group("module"), workspace_path)
-            if module_path is None:
-                continue
-            try:
-                module_text = module_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                continue
-            for symbol in _parse_named_import_symbols(match.group("symbols")):
-                if _typescript_module_runtime_exports_symbol(module_text, symbol):
-                    continue
-                source_path = _find_typescript_runtime_symbol_source(
-                    workspace_path=workspace_path,
-                    module_path=module_path,
-                    module_text=module_text,
-                    symbol=symbol,
-                )
-                if source_path is None:
-                    continue
-                export_line = _build_typescript_reexport_line(
-                    module_path=module_path, source_path=source_path, symbol=symbol
-                )
-                if export_line in module_text:
-                    continue
-                new_text = module_text.rstrip() + "\n" + export_line + "\n"
-                rel_module = module_path.relative_to(workspace_path).as_posix()
-                message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-                write_result = DirectorToolExecutor(
-                    str(workspace_path),
-                    message_bus=message_bus,
-                    worker_id="director",
-                ).execute_tool(
-                    "write_file",
-                    {"file": rel_module, "content": new_text},
-                    task_id=task_id,
-                )
-                if not bool(write_result.get("ok")):
-                    continue
-                with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-                    adapter._update_task_progress(task_id, "executing", current_file=rel_module)
-                return [
-                    {
-                        "tool": "edit_file",
-                        "success": True,
-                        "result": {
-                            "ok": True,
-                            "source_tool": "deterministic_typescript_reexport_repair",
-                            "file": rel_module,
-                            "symbol": symbol,
-                            "reexport": export_line,
-                            "bytes_written": int(write_result.get("bytes_written") or len(new_text.encode("utf-8"))),
-                            "operation": str(write_result.get("operation") or "modify"),
-                            "broadcast_ok": bool(write_result.get("broadcast_ok")),
-                            "director_policy": write_result.get("director_policy"),
-                        },
-                    }
-                ]
-    return []
 
 
 def _apply_deterministic_typescript_entrypoint_repair(
@@ -817,58 +728,6 @@ def _apply_deterministic_typescript_member_alias_repair(
     )
 
 
-def _apply_deterministic_typescript_reexported_type_binding_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> list[dict[str, Any]]:
-    unresolved = _parse_typescript_cannot_find_name_errors(artifact_quality_errors)
-    if not unresolved:
-        return []
-
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-
-    updated_by_path: dict[Path, str] = {}
-    repaired: list[dict[str, str]] = []
-    by_file: dict[str, list[dict[str, str]]] = {}
-    for item in unresolved:
-        by_file.setdefault(item["file"], []).append(item)
-
-    for rel_file, items in by_file.items():
-        path = (workspace_path / rel_file).resolve()
-        if not _path_inside_workspace(path, workspace_path) or not path.is_file():
-            continue
-        try:
-            original = updated_by_path.get(path) or path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        repaired_text = original
-        for item in items:
-            if not _typescript_missing_identifier_usage_is_type_position(repaired_text, item):
-                continue
-            repaired_text, import_meta = _add_typescript_reexported_type_binding(
-                repaired_text,
-                missing_symbol=item["symbol"],
-            )
-            if import_meta:
-                repaired.append({"file": rel_file, **import_meta})
-        if repaired_text != original:
-            updated_by_path[path] = repaired_text
-
-    return _write_typescript_repair_results(
-        adapter,
-        workspace_path=workspace_path,
-        task_id=task_id,
-        updated_by_path=updated_by_path,
-        source_tool="deterministic_typescript_reexported_type_binding_repair",
-        metadata_key="imports",
-        metadata_value=repaired,
-    )
-
-
 def _typescript_errors_require_dom_lib(errors: list[str]) -> bool:
     joined = "\n".join(str(error or "").lower() for error in errors)
     if "include 'dom'" not in joined:
@@ -886,87 +745,6 @@ def _typescript_errors_require_import_meta_module(errors: list[str]) -> bool:
 def _typescript_module_allows_import_meta(raw_module: Any) -> bool:
     module = str(raw_module or "").strip().lower()
     return module in {"es2020", "es2022", "esnext", "system", "node16", "node18", "node20", "nodenext"}
-
-
-def _typescript_missing_identifier_usage_is_type_position(text: str, item: dict[str, str]) -> bool:
-    try:
-        line_number = int(item.get("line") or "0")
-    except ValueError:
-        return False
-    lines = str(text or "").splitlines()
-    if line_number <= 0 or line_number > len(lines):
-        return False
-    symbol = str(item.get("symbol") or "").strip()
-    if not _TS_IDENTIFIER_RE.fullmatch(symbol):
-        return False
-    line = lines[line_number - 1]
-    return bool(
-        re.search(rf"[:<,|&([]\s*{re.escape(symbol)}\b", line)
-        or re.search(rf"\b{re.escape(symbol)}\s*(?:\[\])", line)
-        or re.search(rf"\bas\s+{re.escape(symbol)}\b", line)
-    )
-
-
-def _add_typescript_reexported_type_binding(text: str, *, missing_symbol: str) -> tuple[str, dict[str, str]]:
-    symbol = str(missing_symbol or "").strip()
-    if not _TS_IDENTIFIER_RE.fullmatch(symbol):
-        return text, {}
-    module_ref = _typescript_reexport_module_for_symbol(text, symbol)
-    if not module_ref:
-        return text, {}
-    if _typescript_has_type_import_for_symbol(text, symbol, module_ref):
-        return text, {}
-    import_line = f'import type {{ {symbol} }} from "{module_ref}";\n'
-    insert_at = _typescript_import_insertion_index(text)
-    return text[:insert_at] + import_line + text[insert_at:], {"symbol": symbol, "module": module_ref}
-
-
-def _typescript_reexport_module_for_symbol(text: str, symbol: str) -> str:
-    for match in _TS_NAMED_REEXPORT_RE.finditer(str(text or "")):
-        module_ref = str(match.group("module") or "").strip()
-        for token in str(match.group("symbols") or "").split(","):
-            imported, exported = _typescript_named_export_token_symbols(token)
-            if symbol in {imported, exported}:
-                return module_ref
-    return ""
-
-
-def _typescript_named_export_token_symbols(token: str) -> tuple[str, str]:
-    raw = str(token or "").strip()
-    raw = re.sub(r"/\*.*?\*/", "", raw).strip()
-    raw = raw.split("//", 1)[0].strip()
-    if not raw:
-        return "", ""
-    parts = re.split(r"\s+as\s+", raw, maxsplit=1, flags=re.IGNORECASE)
-    imported = parts[0].strip()
-    exported = parts[1].strip() if len(parts) > 1 else imported
-    if not _TS_IDENTIFIER_RE.fullmatch(imported) or not _TS_IDENTIFIER_RE.fullmatch(exported):
-        return "", ""
-    return imported, exported
-
-
-def _typescript_has_type_import_for_symbol(text: str, symbol: str, module_ref: str) -> bool:
-    import_re = re.compile(
-        r"import\s+type\s*\{\s*(?P<symbols>[^}]+)\}\s*from\s*['\"]" + re.escape(module_ref) + r"['\"]",
-        re.MULTILINE | re.DOTALL,
-    )
-    for match in import_re.finditer(str(text or "")):
-        for token in str(match.group("symbols") or "").split(","):
-            imported, exported = _typescript_named_export_token_symbols(token)
-            if symbol in {imported, exported}:
-                return True
-    return False
-
-
-def _typescript_import_insertion_index(text: str) -> int:
-    stripped = str(text or "")
-    first_import = re.search(r"^\s*import\s", stripped, re.MULTILINE)
-    if first_import:
-        return first_import.start()
-    first_export = re.search(r"^\s*export\s", stripped, re.MULTILINE)
-    if first_export:
-        return first_export.start()
-    return 0
 
 
 def _parse_typescript_missing_member_errors(errors: list[str]) -> list[dict[str, str]]:
@@ -3931,22 +3709,3 @@ def _build_typescript_reexport_line(*, module_path: Path, source_path: Path, sym
     if not relative.startswith("."):
         relative = f"./{relative}"
     return f"export {{ {symbol} }} from '{relative}';"
-
-
-def _looks_like_typescript_reexport_failure(text: str) -> bool:
-    token = str(text or "").lower()
-    if not any(hint in token for hint in ("typescript", ".ts", ".tsx", "vitest", "npm test")):
-        return False
-    return any(
-        hint in token
-        for hint in (
-            "cannot read properties of undefined",
-            "undefined",
-            "missing export",
-            "re-export",
-            "reexport",
-            "import/export",
-            "export/import",
-            "contract fix",
-        )
-    )
