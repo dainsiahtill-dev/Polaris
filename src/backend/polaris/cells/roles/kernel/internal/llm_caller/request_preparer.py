@@ -407,7 +407,7 @@ class LLMRequestPreparer:
     ) -> None:
         self.workspace = workspace
         self._formatter = formatter
-        self._model_catalog = model_catalog or ModelCatalog()
+        self._model_catalog = model_catalog or ModelCatalog(workspace=workspace or ".")
 
     @staticmethod
     def _build_native_tool_schemas(profile: RoleProfile) -> list[dict[str, Any]]:

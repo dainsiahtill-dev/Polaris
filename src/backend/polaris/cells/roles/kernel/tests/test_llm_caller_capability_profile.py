@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 from polaris.cells.roles.kernel.internal import context_gateway as context_gateway_module
-from polaris.cells.roles.kernel.internal.llm_caller import caller as caller_module
-from polaris.cells.roles.kernel.internal.llm_caller.caller import LLMCaller
+from polaris.cells.roles.kernel.internal.llm_caller import request_preparer as request_preparer_module
+from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import LLMRequestPreparer
 from polaris.kernelone.context.contracts import TurnEngineContextResult
 from polaris.kernelone.llm.engine.contracts import ModelSpec
 
@@ -58,8 +58,8 @@ class _NoToolModelCatalog:
 
 @pytest.mark.asyncio
 async def test_prepare_request_includes_resolved_actor_capability_profile(tmp_path: Path) -> None:
-    caller = LLMCaller(workspace=str(tmp_path), enable_cache=False, emit_deprecation_warning=False)
-    caller._model_catalog = _ModelCatalog()
+    request_preparer = LLMRequestPreparer(workspace=str(tmp_path), formatter=None, model_catalog=None)
+    request_preparer._model_catalog = _ModelCatalog()
     profile = SimpleNamespace(
         role_id="director",
         provider_id="provider-a",
@@ -70,10 +70,10 @@ async def test_prepare_request_includes_resolved_actor_capability_profile(tmp_pa
         message="implement the task",
         domain="code",
         context_override={
-            caller_module._TRANSACTION_KERNEL_PREBUILT_MESSAGES_KEY: [
+            request_preparer_module._TRANSACTION_KERNEL_PREBUILT_MESSAGES_KEY: [
                 {"role": "user", "content": "implement the task"},
             ],
-            caller_module._TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY: [
+            request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY: [
                 {
                     "type": "function",
                     "function": {
@@ -85,7 +85,7 @@ async def test_prepare_request_includes_resolved_actor_capability_profile(tmp_pa
         },
     )
 
-    prepared = await caller._prepare_llm_request(
+    prepared = await request_preparer._prepare_llm_request(
         profile=profile,
         system_prompt="system prompt",
         context=context,
@@ -124,8 +124,8 @@ async def test_prepare_request_passes_capability_profile_to_context_gateway(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    caller = LLMCaller(workspace=str(tmp_path), enable_cache=False, emit_deprecation_warning=False)
-    caller._model_catalog = _ModelCatalog()
+    request_preparer = LLMRequestPreparer(workspace=str(tmp_path), formatter=None, model_catalog=None)
+    request_preparer._model_catalog = _ModelCatalog()
     captured: dict[str, Any] = {}
 
     class _Gateway:
@@ -158,7 +158,7 @@ async def test_prepare_request_passes_capability_profile_to_context_gateway(
         message="implement the task",
         domain="code",
         context_override={
-            caller_module._TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY: [
+            request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY: [
                 {
                     "type": "function",
                     "function": {
@@ -170,7 +170,7 @@ async def test_prepare_request_passes_capability_profile_to_context_gateway(
         },
     )
 
-    prepared = await caller._prepare_llm_request(
+    prepared = await request_preparer._prepare_llm_request(
         profile=profile,
         system_prompt="system prompt",
         context=context,
@@ -190,8 +190,8 @@ async def test_prepare_request_passes_capability_profile_to_context_gateway(
 
 @pytest.mark.asyncio
 async def test_prepare_request_preserves_native_tool_schemas_for_fallback(tmp_path: Path) -> None:
-    caller = LLMCaller(workspace=str(tmp_path), enable_cache=False, emit_deprecation_warning=False)
-    caller._model_catalog = _ModelCatalog()
+    request_preparer = LLMRequestPreparer(workspace=str(tmp_path), formatter=None, model_catalog=None)
+    request_preparer._model_catalog = _ModelCatalog()
     tool_schema = {
         "type": "function",
         "function": {
@@ -209,14 +209,14 @@ async def test_prepare_request_preserves_native_tool_schemas_for_fallback(tmp_pa
         message="read README",
         domain="code",
         context_override={
-            caller_module._TRANSACTION_KERNEL_PREBUILT_MESSAGES_KEY: [
+            request_preparer_module._TRANSACTION_KERNEL_PREBUILT_MESSAGES_KEY: [
                 {"role": "user", "content": "read README"},
             ],
-            caller_module._TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY: [tool_schema],
+            request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY: [tool_schema],
         },
     )
 
-    prepared = await caller._prepare_llm_request(
+    prepared = await request_preparer._prepare_llm_request(
         profile=profile,
         system_prompt="system prompt",
         context=context,
@@ -233,8 +233,8 @@ async def test_prepare_request_preserves_native_tool_schemas_for_fallback(tmp_pa
 async def test_prepare_request_preserves_tool_schemas_for_text_fallback_when_native_tools_unsupported(
     tmp_path: Path,
 ) -> None:
-    caller = LLMCaller(workspace=str(tmp_path), enable_cache=False, emit_deprecation_warning=False)
-    caller._model_catalog = _NoToolModelCatalog()
+    request_preparer = LLMRequestPreparer(workspace=str(tmp_path), formatter=None, model_catalog=None)
+    request_preparer._model_catalog = _NoToolModelCatalog()
     profile = SimpleNamespace(
         role_id="director",
         provider_id="provider-a",
@@ -245,14 +245,14 @@ async def test_prepare_request_preserves_tool_schemas_for_text_fallback_when_nat
         message="read README",
         domain="code",
         context_override={
-            caller_module._TRANSACTION_KERNEL_PREBUILT_MESSAGES_KEY: [
+            request_preparer_module._TRANSACTION_KERNEL_PREBUILT_MESSAGES_KEY: [
                 {"role": "user", "content": "read README"},
             ],
             "allow_native_tool_text_fallback": True,
         },
     )
 
-    prepared = await caller._prepare_llm_request(
+    prepared = await request_preparer._prepare_llm_request(
         profile=profile,
         system_prompt="system prompt",
         context=context,
