@@ -5,17 +5,11 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
 POLARIS_ROOT = BACKEND_ROOT / "polaris"
 RETIRED_TOOL_POLICY_MODULE = "polaris.cells.roles.kernel.internal.policy.tool_policy"
 POLICY_PACKAGE_MODULE = "polaris.cells.roles.kernel.internal.policy"
 RETIRED_PACKAGE_EXPORT = "ToolPolicyDecision"
-
-ALLOWED_RETIRED_TOOL_POLICY_IMPORTS = frozenset(
-    {
-        "polaris/cells/roles/kernel/internal/policy/tool_policy.py",
-    }
-)
 
 
 def _production_python_files() -> list[Path]:
@@ -52,11 +46,12 @@ def _retired_policy_imports(path: Path) -> list[str]:
 
 def test_production_code_does_not_import_retired_tool_policy_facade() -> None:
     """Production code must use the canonical policy layer, not old single-call facades."""
+    retired_path = POLARIS_ROOT / "cells/roles/kernel/internal/policy/tool_policy.py"
+    assert not retired_path.exists(), "Retired ToolPolicy single-call facade was recreated."
+
     violations: list[str] = []
     for path in _production_python_files():
         rel = path.relative_to(BACKEND_ROOT).as_posix()
-        if rel in ALLOWED_RETIRED_TOOL_POLICY_IMPORTS:
-            continue
         for imported in _retired_policy_imports(path):
             violations.append(f"{rel}: {imported}")
 
