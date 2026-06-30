@@ -140,6 +140,7 @@ MIGRATED_TYPESCRIPT_SOURCE_TOOL_NAMES = {
 EXPECTED_EXECUTE_METHOD_REPAIR_BRIDGE_COMPAT_ALLOWLIST: set[str] = set()
 MIGRATED_EXECUTE_METHOD_COMPAT_HELPERS_FORBIDDEN = {
     "_apply_deterministic_javascript_test_missing_target_repair",
+    "_apply_deterministic_javascript_esm_commonjs_entrypoint_repair",
     "_apply_deterministic_javascript_missing_export_repair",
     "_apply_deterministic_javascript_typescript_annotation_repair",
     "_apply_deterministic_npm_test_script_repair",
@@ -149,6 +150,7 @@ MIGRATED_EXECUTE_METHOD_COMPAT_HELPERS_FORBIDDEN = {
     "_apply_deterministic_python_unittest_runtime_failure_repair",
     "_apply_deterministic_runtime_dependency_repair",
     "_apply_deterministic_typescript_canvas_scale_return_type_repair",
+    "_apply_deterministic_typescript_escaped_newline_repair",
     "_apply_deterministic_typescript_missing_closing_brace_repair",
     "_apply_deterministic_typescript_number_to_string_argument_repair",
     "_apply_deterministic_typescript_sourcefile_diagnostics_repair",
@@ -157,8 +159,11 @@ MIGRATED_EXECUTE_METHOD_COMPAT_HELPERS_FORBIDDEN = {
     "_apply_deterministic_typescript_vitest_globals_repair",
     "_add_vitest_import_to_typescript_test",
     "_parse_typescript_missing_test_global_errors",
+    "_parse_typescript_escaped_newline_paths",
     "_parse_typescript_sourcefile_diagnostics_errors",
+    "_repair_typescript_escaped_newline_in_line_comments",
     "_repair_typescript_sourcefile_diagnostics_usage",
+    "_TS_LINE_COMMENT_ESCAPED_NEWLINE_CODE_RE",
     "_typescript_vitest_manifest_repair_content",
     "_apply_deterministic_unresolved_import_symbol_repair",
 }

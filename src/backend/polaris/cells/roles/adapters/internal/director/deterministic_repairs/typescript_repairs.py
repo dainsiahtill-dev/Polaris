@@ -23,7 +23,6 @@ from ..task_scope_paths import (
     _task_text_blob,
 )
 from ._common import (
-    _TS_LINE_COMMENT_ESCAPED_NEWLINE_CODE_RE,
     _TS_MISSING_CLOSING_BRACE_ERROR_RE,
     _TS_NAMED_IMPORT_RE,
     _TS_OBJECT_LITERAL_START_RE,
@@ -35,7 +34,6 @@ from ._common import (
     _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE,
     _dedupe_paths,
     _parse_named_import_symbols,
-    _parse_typescript_escaped_newline_paths,
     _path_inside_workspace,
     _relative_import_repair_target_candidates,
     _relative_import_suffix_order,
@@ -3603,93 +3601,6 @@ def _repair_typescript_return_object_semicolon_lines(text: str) -> str:
         while object_literal_depths and brace_depth < object_literal_depths[-1]:
             object_literal_depths.pop()
     return "".join(repaired) if changed else str(text or "")
-
-
-def _apply_deterministic_typescript_escaped_newline_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> list[dict[str, Any]]:
-    paths = _parse_typescript_escaped_newline_paths(artifact_quality_errors)
-    if not paths:
-        return []
-
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-
-    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-    executor = DirectorToolExecutor(
-        str(workspace_path),
-        message_bus=message_bus,
-        worker_id="director",
-    )
-    results: list[dict[str, Any]] = []
-    for relative_path in paths:
-        full_path = (workspace_path / relative_path).resolve()
-        try:
-            full_path.relative_to(workspace_path)
-        except ValueError:
-            continue
-        if not full_path.is_file():
-            continue
-        try:
-            original = full_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        repaired = _repair_typescript_escaped_newline_in_line_comments(original)
-        if repaired == original:
-            continue
-        write_result = executor.execute_tool(
-            "write_file",
-            {"file": relative_path, "content": repaired},
-            task_id=task_id,
-        )
-        if not bool(write_result.get("ok")):
-            continue
-        with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-            adapter._update_task_progress(task_id, "executing", current_file=relative_path)
-        results.append(
-            {
-                "tool": "write_file",
-                "tool_name": "write_file",
-                "success": True,
-                "result": {
-                    "ok": True,
-                    "source_tool": "deterministic_typescript_escaped_newline_repair",
-                    "file": relative_path,
-                    "bytes_written": int(write_result.get("bytes_written") or len(repaired.encode("utf-8"))),
-                    "operation": str(write_result.get("operation") or "modify"),
-                    "broadcast_ok": bool(write_result.get("broadcast_ok")),
-                    "director_policy": write_result.get("director_policy"),
-                },
-            }
-        )
-    return results
-
-
-def _repair_typescript_escaped_newline_in_line_comments(text: str) -> str:
-    changed = False
-    repaired_lines: list[str] = []
-
-    def _replace_escaped_newline(match: re.Match[str]) -> str:
-        nonlocal changed
-        changed = True
-        return f"{match.group('prefix')}\n{match.group('code')}"
-
-    for line in str(text or "").splitlines(keepends=True):
-        line_body = line.rstrip("\r\n")
-        newline = line[len(line_body) :]
-        if "//" not in line_body or "\\n" not in line_body:
-            repaired_lines.append(line)
-            continue
-        comment_index = line_body.find("//")
-        prefix = line_body[:comment_index]
-        comment = line_body[comment_index:]
-        repaired_comment = _TS_LINE_COMMENT_ESCAPED_NEWLINE_CODE_RE.sub(_replace_escaped_newline, comment)
-        repaired_lines.append(f"{prefix}{repaired_comment}{newline}")
-    return "".join(repaired_lines) if changed else str(text or "")
 
 
 def _typescript_relative_import_without_suffix(

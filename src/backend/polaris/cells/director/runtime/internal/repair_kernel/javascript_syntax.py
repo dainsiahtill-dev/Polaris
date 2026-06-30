@@ -122,6 +122,22 @@ _COMMONJS_REQUIRE_MAIN_GUARD_RE = re.compile(
     r"^(?P<indent>\s*)if\s*\(\s*require\.main\s*===\s*module\s*\)\s*\{\s*"
     r"(?P<call>[A-Za-z_$][\w$]*\s*\(\s*\)\s*;?)\s*\}\s*$"
 )
+_COMMONJS_MODULE_EXPORTS_OBJECT_BLOCK_RE = re.compile(
+    r"(?m)^(?P<indent>\s*)module\.exports\s*=\s*\{(?P<body>.*?)\}\s*;?\s*$",
+    re.DOTALL,
+)
+_COMMONJS_MODULE_EXPORTS_VALUE_BLOCK_RE = re.compile(
+    r"(?m)^(?P<indent>\s*)module\.exports\s*=\s*(?P<value>[A-Za-z_$][\w$]*)\s*;?\s*$"
+)
+_COMMONJS_MODULE_EXPORTS_PROPERTY_BLOCK_RE = re.compile(
+    r"(?m)^(?P<indent>\s*)module\.exports\.(?P<name>[A-Za-z_$][\w$]*)\s*=\s*"
+    r"(?P<value>[A-Za-z_$][\w$]*|(?P<literal>['\"][^'\"]*['\"]|\d+(?:\.\d+)?|true|false|null))\s*;?\s*$"
+)
+_COMMONJS_REQUIRE_MAIN_GUARD_BLOCK_RE = re.compile(
+    r"(?m)^(?P<indent>\s*)if\s*\(\s*require\.main\s*===\s*module\s*\)\s*\{\s*(?P<body>.*?)\s*\}\s*$",
+    re.DOTALL,
+)
+_ORPHAN_COMMONJS_EXPORTS_LINE_RE = re.compile(r"(?m)^\s*(?:module)?\.exports\s*;\s*$")
 _JS_IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][\w$]*$")
 _JS_STRING_LITERAL_RE = re.compile(r"(?P<quote>['\"])(?P<value>(?:\\.|(?!(?P=quote)).)*)(?P=quote)")
 _JS_DECLARATION_RE_TEMPLATE = (
@@ -1779,7 +1795,9 @@ def _javascript_contract_dependency_declarations(
 ) -> list[str]:
     declarations: list[str] = []
     if _javascript_symbol_contract_links_version_constant(importer_text, symbol):
-        declarations.append(f'export const VERSION = {json.dumps(_javascript_contract_constant_literal("VERSION", base_files, importer_text=importer_text))};')
+        declarations.append(
+            f"export const VERSION = {json.dumps(_javascript_contract_constant_literal('VERSION', base_files, importer_text=importer_text))};"
+        )
     if _javascript_symbol_contract_requires_app_info(importer_text, symbol):
         for constant in ("APP_NAME", "APP_VERSION", "APP_DESCRIPTION"):
             declarations.append(
@@ -2497,7 +2515,160 @@ def _commonjs_to_esm_operations(
         )
         repaired_lines.append(repaired)
         offset += len(line)
-    return tuple(operations), "".join(repaired_lines)
+    repaired = "".join(repaired_lines)
+    if _has_commonjs_runtime_residue(repaired):
+        whole_file_operation = _commonjs_to_esm_whole_file_operation(
+            path=path,
+            text=text,
+            base_files=base_files,
+            diagnostics=diagnostics,
+        )
+        if whole_file_operation is not None:
+            return (whole_file_operation,), str(whole_file_operation.replacement or "")
+    return tuple(operations), repaired
+
+
+def _has_commonjs_runtime_residue(text: str) -> bool:
+    return "require(" in text or "module.exports" in text or "require.main" in text
+
+
+def _commonjs_to_esm_whole_file_operation(
+    *,
+    path: str,
+    text: str,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+) -> RepairOperation | None:
+    repaired = _rewrite_commonjs_to_esm_whole_file(
+        path=path,
+        text=text,
+        base_files=base_files,
+    )
+    if not repaired or repaired == text or _has_commonjs_runtime_residue(repaired):
+        return None
+    return RepairOperation(
+        kind="text_replace",
+        path=path,
+        span_start=0,
+        span_end=len(text),
+        expected=text,
+        replacement=repaired,
+        before_hash=sha256_text(text),
+        metadata={
+            "repair_kind": "javascript_commonjs_esm_entrypoint_whole_file",
+            "diagnostic_ids": [diagnostic.diagnostic_id for diagnostic in diagnostics],
+            "edit_file_preferred": True,
+            "whole_file_fallback": True,
+            "runtime_plan_scope": "commonjs_entrypoint_block_rewrite",
+        },
+    )
+
+
+def _rewrite_commonjs_to_esm_whole_file(
+    *,
+    path: str,
+    text: str,
+    base_files: Mapping[str, str],
+) -> str:
+    source = str(text or "")
+    import_lines: list[str] = []
+    body_lines: list[str] = []
+    namespace_bindings = _commonjs_namespace_require_bindings(source)
+
+    for line in source.splitlines():
+        stripped = line.strip()
+        if stripped in {'"use strict";', "'use strict';"}:
+            continue
+        replacement = _commonjs_line_replacement(
+            line,
+            path=path,
+            base_files=base_files,
+            namespace_bindings=namespace_bindings,
+        )
+        if replacement is not None and replacement.strip().startswith("import "):
+            import_lines.append(replacement)
+            continue
+        body_lines.append(line if replacement is None else replacement)
+
+    body = "\n".join(body_lines)
+    for binding in sorted(namespace_bindings, key=len, reverse=True):
+        escaped = re.escape(binding)
+        body = re.sub(rf"\bnew\s+{escaped}\s*\(", f"new {binding}.{binding}(", body)
+    body = _COMMONJS_REQUIRE_MAIN_GUARD_BLOCK_RE.sub(_replace_commonjs_main_guard_block, body)
+    body = _rewrite_commonjs_module_exports_blocks(body)
+    parts = [part for part in ("\n".join(dict.fromkeys(import_lines)).strip(), body.strip()) if part]
+    if not parts:
+        return ""
+    return "\n\n".join(parts).rstrip() + "\n"
+
+
+def _replace_commonjs_main_guard_block(match: re.Match[str]) -> str:
+    indent = str(match.group("indent") or "")
+    body = str(match.group("body") or "").strip()
+    if not body:
+        return ""
+    rendered_body = "\n".join(f"{indent}  {line.strip()}" for line in body.splitlines() if line.strip())
+    return f"{indent}if (import.meta.url === `file://${{process.argv[1]}}`) {{\n{rendered_body}\n{indent}}}"
+
+
+def _rewrite_commonjs_module_exports_blocks(body: str) -> str:
+    exported_names: set[str] = set()
+    default_exported = False
+
+    def replace_object(match: re.Match[str]) -> str:
+        nonlocal default_exported
+        names = _parse_commonjs_module_exports_object_names(str(match.group("body") or ""))
+        if not names:
+            return ""
+        exported_names.update(names)
+        default_exported = True
+        rendered = ", ".join(names)
+        return (
+            f"{match.group('indent')}export {{ {rendered} }};\n{match.group('indent')}export default {{ {rendered} }};"
+        )
+
+    def replace_value(match: re.Match[str]) -> str:
+        nonlocal default_exported
+        default_exported = True
+        return f"{match.group('indent')}export default {match.group('value')};"
+
+    def replace_property(match: re.Match[str]) -> str:
+        nonlocal default_exported
+        indent = str(match.group("indent") or "")
+        name = str(match.group("name") or "")
+        value = str(match.group("value") or "")
+        if not name or not value:
+            return ""
+        if name == "default":
+            if default_exported:
+                return ""
+            default_exported = True
+        elif name in exported_names:
+            return ""
+        else:
+            exported_names.add(name)
+        if match.group("literal") is not None:
+            return f"{indent}export const {name} = {value};"
+        if name == value:
+            return f"{indent}export {{ {name} }};"
+        return f"{indent}export {{ {value} as {name} }};"
+
+    repaired = _COMMONJS_MODULE_EXPORTS_OBJECT_BLOCK_RE.sub(replace_object, body)
+    repaired = _COMMONJS_MODULE_EXPORTS_VALUE_BLOCK_RE.sub(replace_value, repaired)
+    repaired = _COMMONJS_MODULE_EXPORTS_PROPERTY_BLOCK_RE.sub(replace_property, repaired)
+    return _ORPHAN_COMMONJS_EXPORTS_LINE_RE.sub("", repaired)
+
+
+def _parse_commonjs_module_exports_object_names(body: str) -> list[str]:
+    names: list[str] = []
+    for raw_item in str(body or "").split(","):
+        token = raw_item.strip()
+        if not token:
+            continue
+        name = token.split(":", 1)[0].strip()
+        if _JS_IDENTIFIER_RE.match(name) and name not in names:
+            names.append(name)
+    return names
 
 
 def _commonjs_line_replacement(

@@ -159,11 +159,6 @@ _TS_ZOD_INFERRED_TYPE_ALIAS_LINE_RE = re.compile(
     r"(?P<infer>z\.infer\s*<\s*typeof\s+[A-Za-z_$][\w$]*\s*>)\s*;\s*$"
 )
 
-_TS_LINE_COMMENT_ESCAPED_NEWLINE_CODE_RE = re.compile(
-    r"(?P<prefix>//[^\r\n]*?)\\n(?P<code>\s*(?:export|import|const|let|var|class|function|interface|type|enum)\b)",
-    re.IGNORECASE,
-)
-
 _KNOWN_RUNTIME_DEPENDENCY_VERSIONS = {
     "@apollo/server": "^4.11.0",
     "axios": "^1.7.0",
@@ -318,18 +313,6 @@ def _parse_typescript_return_object_semicolon_paths(artifact_quality_errors: lis
             if normalized:
                 paths.append(normalized)
             break
-    return _dedupe_preserve_order(paths)
-
-
-def _parse_typescript_escaped_newline_paths(artifact_quality_errors: list[str]) -> list[str]:
-    paths: list[str] = []
-    for error in artifact_quality_errors:
-        match = _TS_ESCAPED_NEWLINE_IN_LINE_COMMENT_ERROR_RE.search(str(error or ""))
-        if not match:
-            continue
-        normalized = _normalize_declared_task_path(match.group("path"))
-        if normalized:
-            paths.append(normalized)
     return _dedupe_preserve_order(paths)
 
 

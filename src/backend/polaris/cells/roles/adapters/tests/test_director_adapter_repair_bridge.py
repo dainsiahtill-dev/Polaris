@@ -1810,6 +1810,7 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
     assert not hasattr(javascript_repairs, "_apply_deterministic_javascript_test_missing_target_repair")
     assert not hasattr(javascript_repairs, "_apply_deterministic_javascript_typescript_annotation_repair")
     assert not hasattr(javascript_repairs, "_apply_deterministic_javascript_missing_export_repair")
+    assert not hasattr(javascript_repairs, "_apply_deterministic_javascript_esm_commonjs_entrypoint_repair")
     for module, helper_name in legacy_helpers:
         if hasattr(module, helper_name):
             monkeypatch.setattr(module, helper_name, fail_if_legacy_called)

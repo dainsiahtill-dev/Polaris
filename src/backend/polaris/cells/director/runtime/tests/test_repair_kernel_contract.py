@@ -701,6 +701,148 @@ def _javascript_missing_export_after(
     raise AssertionError(f"missing patch for {path}: {patches!r}")
 
 
+def _javascript_esm_commonjs_after(
+    *,
+    base_files: dict[str, str],
+    diagnostics: tuple[str, ...],
+    path: str = "src/index.js",
+) -> str:
+    payload = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=js_syntax.JAVASCRIPT_ESM_COMMONJS_ENTRYPOINT_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+    assert payload["ok"] is True
+    assert payload["planned"] is True
+    assert payload["plan_summary"]["rule_id"] == "javascript.commonjs_esm_entrypoint"
+    summary = payload["composition_summary"]
+    assert isinstance(summary, dict)
+    patches = summary["patches"]
+    assert isinstance(patches, list)
+    for patch in patches:
+        assert isinstance(patch, dict)
+        if patch["path"] == path:
+            return str(patch["content_after"])
+    raise AssertionError(f"missing patch for {path}: {patches!r}")
+
+
+def test_javascript_esm_commonjs_entrypoint_repair_rewrites_multiline_blocks() -> None:
+    repaired = _javascript_esm_commonjs_after(
+        base_files={
+            "package.json": '{"type":"module","main":"src/index.js","scripts":{"start":"node src/index.js"}}',
+            "src/models/Note.js": "export class Note {}\nexport default Note;\n",
+            "src/index.js": (
+                '"use strict";\n\n'
+                'const Note = require("./models/Note");\n\n'
+                "function main() {\n"
+                "  return new Note();\n"
+                "}\n\n"
+                "if (require.main === module) {\n"
+                "  main();\n"
+                "}\n\n"
+                "module.exports = {\n"
+                "  main,\n"
+                "  Note,\n"
+                "};\n"
+                ".exports;\n"
+            ),
+        },
+        diagnostics=(
+            "Artifact quality scan failed: workspace validation command failed (npm run start): "
+            "file:///tmp/project/src/index.js:3\n"
+            "ReferenceError: require is not defined in ES module scope. "
+            'package.json contains "type": "module".',
+        ),
+    )
+
+    assert 'import { Note } from "./models/Note.js";' in repaired
+    assert "if (import.meta.url === `file://${process.argv[1]}`)" in repaired
+    assert "export { main, Note };" in repaired
+    assert "export default { main, Note };" in repaired
+    assert "require(" not in repaired
+    assert "require.main" not in repaired
+    assert "module.exports" not in repaired
+    assert ".exports" not in repaired
+
+
+def test_javascript_esm_commonjs_entrypoint_repair_converts_default_imported_module() -> None:
+    repaired = _javascript_esm_commonjs_after(
+        path="src/engine/AlchemyEngine.js",
+        base_files={
+            "package.json": '{"type":"module","main":"src/index.js","scripts":{"start":"node src/index.js"}}',
+            "src/index.js": 'import AlchemyEngine from "./engine/AlchemyEngine.js";\n',
+            "src/models/Note.js": "export class Note {}\nexport default Note;\n",
+            "src/engine/AlchemyEngine.js": (
+                '"use strict";\n\n'
+                'const Note = require("../models/Note");\n\n'
+                "class AlchemyEngine {\n"
+                "  constructor() {\n"
+                "    this.notes = [new Note()];\n"
+                "  }\n"
+                "}\n\n"
+                "function buildDefaultEngine() {\n"
+                "  return { notes: [] };\n"
+                "}\n\n"
+                "module.exports = AlchemyEngine;\n"
+                "module.exports.buildDefaultEngine = buildDefaultEngine;\n"
+                'module.exports.VERSION = "1.0.0";\n'
+            ),
+        },
+        diagnostics=(
+            "Artifact quality scan failed: workspace validation command failed (npm run start): "
+            "file:///tmp/project/src/index.js:1\n"
+            "SyntaxError: The requested module './engine/AlchemyEngine.js' "
+            "does not provide an export named 'default'",
+        ),
+    )
+
+    assert 'import { Note } from "../models/Note.js";' in repaired
+    assert "export default AlchemyEngine;" in repaired
+    assert "export { buildDefaultEngine };" in repaired
+    assert 'export const VERSION = "1.0.0";' in repaired
+    assert "module.exports" not in repaired
+    assert "require(" not in repaired
+
+
+def test_javascript_esm_commonjs_entrypoint_repair_preserves_namespace_require_binding() -> None:
+    repaired = _javascript_esm_commonjs_after(
+        base_files={
+            "package.json": '{"type":"module","main":"src/index.js","scripts":{"start":"node src/index.js"}}',
+            "src/engine/AlchemyEngine.js": (
+                "export class AlchemyEngine {}\n"
+                "export class Recipe {}\n"
+                "export class Note {}\n"
+                "export class DreamCard {}\n"
+            ),
+            "src/index.js": (
+                'const AlchemyEngine = require("./engine/AlchemyEngine");\n'
+                "const { Note, DreamCard, Recipe } = AlchemyEngine;\n"
+                "function buildDemoEngine() {\n"
+                "  const engine = new AlchemyEngine();\n"
+                "  return { engine, Note, DreamCard, Recipe };\n"
+                "}\n"
+                "module.exports = { buildDemoEngine };\n"
+            ),
+        },
+        diagnostics=(
+            "Artifact quality scan failed: workspace validation command failed (npm run start): "
+            "file:///tmp/project/src/index.js:1\n"
+            "ReferenceError: require is not defined in ES module scope\n"
+            'package.json contains "type": "module"',
+        ),
+    )
+
+    assert 'import * as AlchemyEngine from "./engine/AlchemyEngine.js";' in repaired
+    assert "const engine = new AlchemyEngine.AlchemyEngine();" in repaired
+    assert "const { Note, DreamCard, Recipe } = AlchemyEngine;" in repaired
+    assert "export { buildDemoEngine };" in repaired
+    assert "require(" not in repaired
+    assert "module.exports" not in repaired
+
+
 def test_javascript_missing_export_repair_uses_js_contracts() -> None:
     repaired = _javascript_missing_export_after(
         base_files={
@@ -2241,6 +2383,38 @@ def test_typescript_sourcefile_diagnostics_rule_replaces_bad_scaffold() -> None:
     assert "ts.transpileModule(text" in repaired
     assert "if (diagnostics.length > 0)" in repaired
     assert "undefined as unknown" not in repaired
+
+
+def test_typescript_escaped_newline_rule_repairs_line_comment_code() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL
+    base_files = {
+        "src/middleware/auth.ts": (
+            "import { AsyncLocalStorage } from 'async_hooks';\n\n"
+            "// Context for tenant lifecycle\\n"
+            "export const tenantContext = new AsyncLocalStorage<{ tenantId: string }>();\n"
+        )
+    }
+    diagnostic = (
+        "Artifact quality scan failed: TypeScript escaped newline in line comment before code in src/middleware/auth.ts"
+    )
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    )
+    payload = planning.to_dict()
+
+    assert payload["ok"] is True
+    assert payload["planned"] is True
+    assert payload["plan_summary"]["rule_id"] == "typescript.escaped_newline"
+    assert payload["composition_summary"]["changed_paths"] == ["src/middleware/auth.ts"]
+    patch = payload["composition_summary"]["patches"][0]
+    assert "lifecycle\\nexport const tenantContext" not in patch["content_after"]
+    assert "\nexport const tenantContext" in patch["content_after"]
 
 
 def test_typescript_readonly_assignment_rule_covers_ts2540_and_removes_single_modifier() -> None:
