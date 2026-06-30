@@ -4978,8 +4978,22 @@ def _typescript_member_alias_replacement(*, receiver: str, missing_member: str, 
         return f"{receiver}.position.{missing_member}"
     if missing_member == "brightness" and "intensity" in existing_members:
         return f"{receiver}.intensity"
-    if missing_member == "size" and "radius" in existing_members:
-        return f"{receiver}.radius"
+    if missing_member == "glow" and "brightness" in existing_members:
+        return f"{receiver}.brightness"
+    if missing_member == "size":
+        if "petalRadius" in existing_members:
+            return f"{receiver}.petalRadius"
+        if "radius" in existing_members:
+            return f"{receiver}.radius"
+    if missing_member == "color":
+        if {"hue", "saturation", "lightness"}.issubset(existing_members):
+            return (
+                f"`hsl(${{{receiver}.hue}}, "
+                f"${{Math.round({receiver}.saturation * 100)}}%, "
+                f"${{Math.round({receiver}.lightness * 100)}}%)`"
+            )
+        if "hue" in existing_members:
+            return f"`hsl(${{{receiver}.hue}}, 70%, 62%)`"
     if missing_member != "id" and missing_member.endswith("Id") and "id" in existing_members:
         return f"{receiver}.id"
     return ""

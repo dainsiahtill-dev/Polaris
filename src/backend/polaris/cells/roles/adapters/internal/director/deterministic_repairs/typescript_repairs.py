@@ -93,11 +93,6 @@ _TS_SOURCEFILE_DIAGNOSTICS_ERROR_RE = re.compile(
     r"(?P<message>[^\n]*(?:parseDiagnostics|diagnostics|always\s+nullish|implicitly\s+has\s+an\s+['\"]any['\"]\s+type)[^\n]*)",
     re.IGNORECASE,
 )
-_HTML_TS_MODULE_SCRIPT_ERROR_RE = re.compile(
-    r"HTML\s+module\s+script\s+references\s+TypeScript\s+source\s+['\"](?P<src>[^'\"]+\.tsx?)['\"]\s+"
-    r"in\s+(?P<path>\S+);\s+static\s+entrypoints\s+must\s+load\s+JavaScript",
-    re.IGNORECASE,
-)
 _TS_NULLABLE_ARGUMENT_ERROR_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2345:\s*"
     r"Argument\s+of\s+type\s+['\"](?P<type>[A-Za-z_$][A-Za-z0-9_$]*)\s*\|\s*null['\"]\s+is\s+not\s+assignable\s+"
@@ -534,219 +529,6 @@ def _apply_deterministic_typescript_missing_member_repair(
     return writes
 
 
-def _apply_deterministic_typescript_tsconfig_lib_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> list[dict[str, Any]]:
-    needs_dom_lib = _typescript_errors_require_dom_lib(artifact_quality_errors)
-    needs_import_meta_module = _typescript_errors_require_import_meta_module(artifact_quality_errors)
-    if not needs_dom_lib and not needs_import_meta_module:
-        return []
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    tsconfig_path = workspace_path / "tsconfig.json"
-    if not tsconfig_path.is_file():
-        return []
-    try:
-        payload = json.loads(tsconfig_path.read_text(encoding="utf-8"))
-    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
-        return []
-    if not isinstance(payload, dict):
-        return []
-    compiler_options_raw = payload.get("compilerOptions")
-    compiler_options: dict[str, Any] = dict(compiler_options_raw) if isinstance(compiler_options_raw, dict) else {}
-    changed = False
-    libs_raw = compiler_options.get("lib")
-    libs = [str(item) for item in libs_raw] if isinstance(libs_raw, list) else []
-    normalized = {item.lower() for item in libs}
-    if needs_dom_lib and "dom" not in normalized:
-        if not libs:
-            libs.append(str(compiler_options.get("target") or "ES2020"))
-        libs.append("DOM")
-        compiler_options["lib"] = libs
-        changed = True
-    if needs_import_meta_module and not _typescript_module_allows_import_meta(compiler_options.get("module")):
-        compiler_options["module"] = "ES2020"
-        changed = True
-    if not changed:
-        return []
-    payload["compilerOptions"] = compiler_options
-    content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-    write_result = DirectorToolExecutor(
-        str(workspace_path),
-        message_bus=message_bus,
-        worker_id="director",
-    ).execute_tool(
-        "write_file",
-        {"file": "tsconfig.json", "content": content},
-        task_id=task_id,
-    )
-    if not bool(write_result.get("ok")):
-        return []
-    with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-        adapter._update_task_progress(task_id, "executing", current_file="tsconfig.json")
-    return [
-        {
-            "tool": "write_file",
-            "tool_name": "write_file",
-            "success": True,
-            "result": {
-                "ok": True,
-                "source_tool": "deterministic_typescript_tsconfig_lib_repair",
-                "file": "tsconfig.json",
-                "libs": libs,
-                "module": compiler_options.get("module"),
-                "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
-                "operation": str(write_result.get("operation") or "modify"),
-                "broadcast_ok": bool(write_result.get("broadcast_ok")),
-                "director_policy": write_result.get("director_policy"),
-            },
-        }
-    ]
-
-
-def _apply_deterministic_html_typescript_module_script_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> list[dict[str, Any]]:
-    script_errors = _parse_html_typescript_module_script_errors(artifact_quality_errors)
-    if not script_errors:
-        return []
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-
-    updated_by_path: dict[Path, str] = {}
-    repaired: list[dict[str, str]] = []
-    for item in script_errors:
-        rel_file = _normalize_declared_task_path(item["file"])
-        source_ref = str(item.get("source") or "").strip()
-        if not rel_file or not source_ref:
-            continue
-        path = (workspace_path / rel_file).resolve()
-        if not _path_inside_workspace(path, workspace_path) or not path.is_file():
-            continue
-        try:
-            original = updated_by_path.get(path) or path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        replacement = _html_javascript_entrypoint_for_typescript_source(source_ref)
-        if not replacement:
-            continue
-        repaired_text = original.replace(f'src="{source_ref}"', f'src="{replacement}"')
-        repaired_text = repaired_text.replace(f"src='{source_ref}'", f"src='{replacement}'")
-        if repaired_text == original:
-            continue
-        updated_by_path[path] = repaired_text
-        repaired.append({"file": rel_file, "source": source_ref, "replacement": replacement})
-
-    return _write_typescript_repair_results(
-        adapter,
-        workspace_path=workspace_path,
-        task_id=task_id,
-        updated_by_path=updated_by_path,
-        source_tool="deterministic_html_typescript_module_script_repair",
-        metadata_key="scripts",
-        metadata_value=repaired,
-    )
-
-
-def _apply_deterministic_typescript_member_alias_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> list[dict[str, Any]]:
-    missing_members = _parse_typescript_missing_member_errors(artifact_quality_errors)
-    if not missing_members:
-        return []
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-
-    updated_by_path: dict[Path, str] = {}
-    repaired: list[dict[str, str]] = []
-    for item in missing_members:
-        rel_file = _normalize_declared_task_path(item["file"])
-        member = str(item.get("member") or "").strip()
-        type_name = _typescript_declaration_type_name(str(item.get("type") or ""))
-        if not rel_file or not _TS_IDENTIFIER_RE.fullmatch(member) or not type_name:
-            continue
-        path = (workspace_path / rel_file).resolve()
-        if not _path_inside_workspace(path, workspace_path) or not path.is_file():
-            continue
-        usage_line = _typescript_error_usage_line(workspace_path, item)
-        receiver = _typescript_receiver_for_member_access(usage_line, member)
-        if not receiver:
-            continue
-        existing_members = _typescript_existing_member_names_for_type(
-            workspace_path=workspace_path,
-            type_name=type_name,
-            updated_by_path=updated_by_path,
-        )
-        replacement = _typescript_member_alias_replacement(
-            receiver=receiver,
-            missing_member=member,
-            existing_members=existing_members,
-        )
-        if not replacement:
-            continue
-        try:
-            original = updated_by_path.get(path) or path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        repaired_text = re.sub(
-            rf"\b{re.escape(receiver)}\s*\.\s*{re.escape(member)}\b",
-            replacement,
-            original,
-        )
-        if repaired_text == original:
-            continue
-        updated_by_path[path] = repaired_text
-        repaired.append(
-            {
-                "file": rel_file,
-                "type": type_name,
-                "member": member,
-                "receiver": receiver,
-                "replacement": replacement,
-            }
-        )
-
-    return _write_typescript_repair_results(
-        adapter,
-        workspace_path=workspace_path,
-        task_id=task_id,
-        updated_by_path=updated_by_path,
-        source_tool="deterministic_typescript_member_alias_repair",
-        metadata_key="aliases",
-        metadata_value=repaired,
-    )
-
-
-def _typescript_errors_require_dom_lib(errors: list[str]) -> bool:
-    joined = "\n".join(str(error or "").lower() for error in errors)
-    if "include 'dom'" not in joined:
-        return False
-    return any(
-        f"cannot find name '{name}'" in joined for name in ("console", "window", "document", "navigator", "location")
-    )
-
-
-def _typescript_errors_require_import_meta_module(errors: list[str]) -> bool:
-    joined = "\n".join(str(error or "").lower() for error in errors)
-    return "ts1343" in joined and "import.meta" in joined and "module" in joined
-
-
-def _typescript_module_allows_import_meta(raw_module: Any) -> bool:
-    module = str(raw_module or "").strip().lower()
-    return module in {"es2020", "es2022", "esnext", "system", "node16", "node18", "node20", "nodenext"}
-
-
 def _parse_typescript_missing_member_errors(errors: list[str]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
     seen: set[tuple[str, str, str, str]] = set()
@@ -1115,23 +897,6 @@ def _parse_typescript_duplicate_object_property_errors(errors: list[str]) -> lis
     return parsed
 
 
-def _parse_html_typescript_module_script_errors(errors: list[str]) -> list[dict[str, str]]:
-    parsed: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for error in errors:
-        for match in _HTML_TS_MODULE_SCRIPT_ERROR_RE.finditer(str(error or "")):
-            item = {
-                "file": _normalize_declared_task_path(match.group("path")),
-                "source": str(match.group("src") or "").strip(),
-            }
-            key = (item["file"], item["source"])
-            if not item["file"] or not item["source"] or key in seen:
-                continue
-            seen.add(key)
-            parsed.append(item)
-    return parsed
-
-
 def _parse_typescript_enum_member_separator_errors(errors: list[str]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
     seen: set[tuple[str, str, str]] = set()
@@ -1445,19 +1210,6 @@ def _looks_like_single_line_typescript_object_property(line: str) -> bool:
         return False
     property_re = re.compile(r"^(?:[A-Za-z_$][A-Za-z0-9_$]*|['\"][^'\"]+['\"]|\[[^\]]+\])\s*:\s*.+,?\s*(?://.*)?$")
     return bool(property_re.match(stripped))
-
-
-def _html_javascript_entrypoint_for_typescript_source(source_ref: str) -> str:
-    source = str(source_ref or "").strip().replace("\\", "/")
-    if not source.endswith((".ts", ".tsx")):
-        return ""
-    source_no_root = source.lstrip("/")
-    if source_no_root.startswith("src/"):
-        source_no_root = "dist/" + source_no_root[len("src/") :]
-    replacement = re.sub(r"\.tsx?$", ".js", source_no_root)
-    if not replacement:
-        return ""
-    return replacement
 
 
 def _typescript_existing_member_names_for_type(

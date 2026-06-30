@@ -4842,6 +4842,32 @@ def test_public_html_module_script_uses_tsconfig_rootdir_for_compiled_entrypoint
     assert 'src="./dist/src/web.js"' in planning["composition_summary"]["patches"][0]["content_after"]
 
 
+def test_public_html_module_script_rewrites_typescript_source_entrypoint() -> None:
+    diagnostic = (
+        "Artifact quality scan failed: HTML module script references TypeScript source "
+        "'/src/engine/renderer.ts' in index.html; static entrypoints must load JavaScript"
+    )
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.HTML_TYPESCRIPT_MODULE_SCRIPT_SOURCE_TOOL,
+            base_files={
+                "index.html": '<div id="garden"></div>\n<script type="module" src="/src/engine/renderer.ts"></script>\n',
+            },
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "html.typescript_module_script"
+    assert planning["composition_summary"]["patch_count"] == 1
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert 'src="dist/engine/renderer.js"' in repaired
+    assert "/src/engine/renderer.ts" not in repaired
+
+
 def test_public_typescript_html_container_selector_covers_html5_verifier_contract_mismatch() -> None:
     diagnostic = (
         "Artifact quality scan failed: workspace validation command failed (npm test):\n"
@@ -5138,6 +5164,118 @@ def test_typescript_member_alias_maps_generated_id_suffix_to_existing_id_member(
     content_after = planning["composition_summary"]["patches"][0]["content_after"]
     assert "const a = opened.stall.id;" in content_after
     assert "const b = opened.stall!.id;" in content_after
+
+
+def test_typescript_member_alias_runtime_repairs_structural_drift(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "src" / "engine"
+    engine_dir.mkdir(parents=True)
+    simulation_path = engine_dir / "simulation.ts"
+    renderer_path = engine_dir / "renderer.ts"
+    simulation_text = (
+        "export interface Vec2 { x: number; y: number; }\n"
+        "export interface Firefly {\n"
+        "  position: Vec2;\n"
+        "  brightness: number;\n"
+        "}\n"
+        "export interface Flower {\n"
+        "  position: Vec2;\n"
+        "  petalRadius: number;\n"
+        "  hue: number;\n"
+        "  saturation: number;\n"
+        "  lightness: number;\n"
+        "}\n"
+        "export interface Moon {\n"
+        "  position: Vec2;\n"
+        "  intensity: number;\n"
+        "}\n"
+    )
+    renderer_text = (
+        "import type { Firefly, Flower, Moon } from './simulation.js';\n"
+        "export function render(moon: Moon, flower: Flower, firefly: Firefly): string {\n"
+        "  const moonGlow = moon.brightness;\n"
+        "  const flowerSize = flower.size;\n"
+        "  const flowerX = flower.x;\n"
+        "  const flowerY = flower.y;\n"
+        "  const flowerColor = flower.color;\n"
+        "  const fireflyGlow = firefly.glow;\n"
+        "  const fireflyX = firefly.x;\n"
+        "  const fireflyY = firefly.y;\n"
+        "  return `${moonGlow}:${flowerSize}:${flowerX}:${flowerY}:${flowerColor}:${fireflyGlow}:${fireflyX}:${fireflyY}`;\n"
+        "}\n"
+    )
+    diagnostics = (
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/engine/renderer.ts(3,25): error TS2339: Property 'brightness' does not exist on type 'Moon'.\n"
+        "src/engine/renderer.ts(4,29): error TS2339: Property 'size' does not exist on type 'Flower'.\n"
+        "src/engine/renderer.ts(5,27): error TS2339: Property 'x' does not exist on type 'Flower'.\n"
+        "src/engine/renderer.ts(6,27): error TS2339: Property 'y' does not exist on type 'Flower'.\n"
+        "src/engine/renderer.ts(7,31): error TS2339: Property 'color' does not exist on type 'Flower'.\n"
+        "src/engine/renderer.ts(8,31): error TS2339: Property 'glow' does not exist on type 'Firefly'.\n"
+        "src/engine/renderer.ts(9,29): error TS2339: Property 'x' does not exist on type 'Firefly'.\n"
+        "src/engine/renderer.ts(10,29): error TS2339: Property 'y' does not exist on type 'Firefly'.",
+    )
+    simulation_path.write_text(simulation_text, encoding="utf-8")
+    renderer_path.write_text(renderer_text, encoding="utf-8")
+    writes: list[str] = []
+    edits: list[str] = []
+
+    def writer(path: str, updated: str) -> dict[str, object]:
+        target = tmp_path / path
+        target.write_text(updated, encoding="utf-8")
+        writes.append(path)
+        return {"ok": True}
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        assert operation.expected is not None
+        assert operation.replacement is not None
+        assert operation.span_start is not None
+        assert operation.span_end is not None
+        target = tmp_path / operation.path
+        current = target.read_text(encoding="utf-8")
+        if current[operation.span_start : operation.span_end] != operation.expected:
+            return {"ok": False, "error": "expected text not found"}
+        target.write_text(
+            current[: operation.span_start] + operation.replacement + current[operation.span_end :],
+            encoding="utf-8",
+        )
+        edits.append(operation.operation_id)
+        return {"ok": True}
+
+    result = run_runtime_repair(
+        source_tool=ts_syntax.TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,
+        workspace=tmp_path,
+        base_files={
+            "src/engine/simulation.ts": simulation_text,
+            "src/engine/renderer.ts": renderer_text,
+        },
+        artifact_quality_errors=diagnostics,
+        writer=writer,
+        editor=editor,
+        allowed_paths=("src/engine/renderer.ts",),
+    )
+
+    assert result.ok is True
+    assert writes == []
+    assert edits
+    repaired = renderer_path.read_text(encoding="utf-8")
+    assert "moon.intensity" in repaired
+    assert "flower.petalRadius" in repaired
+    assert "flower.position.x" in repaired
+    assert "flower.position.y" in repaired
+    assert (
+        "`hsl(${flower.hue}, ${Math.round(flower.saturation * 100)}%, ${Math.round(flower.lightness * 100)}%)`"
+        in repaired
+    )
+    assert "firefly.brightness" in repaired
+    assert "firefly.position.x" in repaired
+    assert "firefly.position.y" in repaired
+    assert "moon.brightness" not in repaired
+    assert "flower.size" not in repaired
+    assert "firefly.glow" not in repaired
+    assert result.execution_result is not None
+    receipt = result.execution_result.receipt
+    assert receipt.source_tool == ts_syntax.TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL
+    assert receipt.files_changed == ("src/engine/renderer.ts",)
 
 
 def test_typescript_private_constructor_access_repairs_exported_class_factory_new_expression() -> None:
@@ -6135,6 +6273,42 @@ def test_public_typescript_tsconfig_repair_plans_import_meta_module_option() -> 
     assert payload["composition_summary"]["ok"] is True
     assert payload["composition_summary"]["changed_paths"] == ["tsconfig.json"]
     assert '"module": "ES2020"' in payload["composition_summary"]["patches"][0]["content_after"]
+
+
+def test_public_typescript_tsconfig_repair_plans_dom_lib_for_console() -> None:
+    source_tool = "deterministic_typescript_tsconfig_lib_repair"
+
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={
+                "tsconfig.json": (
+                    '{"compilerOptions":{"target":"ES2020","module":"ES2020",'
+                    '"moduleResolution":"node","lib":["ES2020"]},"include":["src/**/*.ts"]}\n'
+                ),
+                "src/main.ts": "console.log('hello');\n",
+            },
+            artifact_quality_errors=(
+                "Artifact quality scan failed: TypeScript project typecheck failed: "
+                "src/main.ts(1,1): error TS2584: Cannot find name 'console'. "
+                "Do you need to change your target library? Try changing the 'lib' compiler option to include 'dom'.",
+            ),
+            mode="shadow",
+        )
+    )
+    payload = planning_result.to_dict()
+
+    assert payload["ok"] is True
+    assert payload["planned"] is True
+    assert payload["source_tool"] == source_tool
+    assert payload["plan_summary"]["rule_id"] == "typescript.tsconfig_lib"
+    assert payload["plan_summary"]["operation_count"] == 1
+    assert payload["composition_summary"]["ok"] is True
+    assert payload["composition_summary"]["changed_paths"] == ["tsconfig.json"]
+    content_after = payload["composition_summary"]["patches"][0]["content_after"]
+    assert '"lib": [' in content_after
+    assert '"ES2020"' in content_after
+    assert '"DOM"' in content_after
 
 
 def test_public_typescript_tsconfig_repair_plans_es2021_lib_for_replace_all() -> None:
