@@ -1316,6 +1316,39 @@ class TestLLMCallerInvokerDelegation:
         assert captured["kwargs"]["prepared"] is prepared
         assert captured["kwargs"]["profile"] is profile
 
+    async def test_event_helper_delegates_to_llm_event_emitter(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The compatibility facade must not own a second event writer."""
+        captured: dict[str, Any] = {}
+
+        def fake_emit(self: LLMEventEmitter, **kwargs: Any) -> None:
+            captured["workspace"] = self.workspace
+            captured["kwargs"] = kwargs
+
+        monkeypatch.setattr(LLMEventEmitter, "emit_call_start_event", fake_emit)
+        caller = LLMCaller(workspace="/ws", emit_deprecation_warning=False)
+
+        caller._emit_call_start_event(
+            role="director",
+            run_id="run-1",
+            task_id="task-1",
+            attempt=1,
+            model="gpt-5",
+            provider="openai",
+            prompt_tokens=42,
+            call_id="call-1",
+            context_tokens_before=123,
+            compression_strategy="none",
+            messages=[{"role": "user", "content": "hello"}],
+            metadata={"source": "test"},
+        )
+
+        assert captured["workspace"] == "/ws"
+        assert captured["kwargs"]["event_emitter"] is None
+        assert captured["kwargs"]["role"] == "director"
+        assert captured["kwargs"]["run_id"] == "run-1"
+        assert captured["kwargs"]["prompt_tokens"] == 42
+        assert captured["kwargs"]["context_tokens_before"] == 123
+
     async def test_call_does_not_pass_itself_as_event_emitter(self) -> None:
         from polaris.cells.roles.kernel.internal.llm_caller.caller import LLMCaller
 
