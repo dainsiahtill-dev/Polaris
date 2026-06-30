@@ -5,6 +5,7 @@ from polaris.kernelone.events.final_request_evidence import (
     FINAL_REQUEST_EVIDENCE_SCHEMA,
     attach_final_request_evidence,
     build_final_request_evidence,
+    normalize_context_snapshot_ref,
 )
 
 
@@ -42,7 +43,7 @@ def test_build_final_request_evidence_projects_audit_refs_without_prompt_content
     evidence = build_final_request_evidence(
         {
             "metadata": {
-                "context_snapshot_ref": "runtime/contexts/ab/cdef.json",
+                "context_snapshot_ref": "runtime/contexts/ab/abcdef123456abcdef123456.json",
                 "final_request_context_audit": audit,
                 "messages": [{"role": "user", "content": "do not project this"}],
             }
@@ -50,7 +51,7 @@ def test_build_final_request_evidence_projects_audit_refs_without_prompt_content
     )
 
     assert evidence["schema_version"] == FINAL_REQUEST_EVIDENCE_SCHEMA
-    assert evidence["context_snapshot_ref"] == "runtime/contexts/ab/cdef.json"
+    assert evidence["context_snapshot_ref"] == "abcdef123456abcdef123456"
     assert evidence["final_request_context_audit_present"] is True
     assert evidence["request_hash"] == "request-hash-1"
     assert evidence["final_request_evidence_coverage_pass"] is False
@@ -89,13 +90,13 @@ def test_attach_final_request_evidence_adds_stable_top_level_audit_refs() -> Non
     evidence = attach_final_request_evidence(
         payload,
         {
-            "context_snapshot_ref": "runtime/contexts/11/2222.json",
+            "context_snapshot_ref": "runtime/contexts/11/111111222222333333444444.json",
             "metadata": {"final_request_context_audit": audit},
         },
     )
 
-    assert evidence["context_snapshot_ref"] == "runtime/contexts/11/2222.json"
-    assert payload["context_snapshot_ref"] == "runtime/contexts/11/2222.json"
+    assert evidence["context_snapshot_ref"] == "111111222222333333444444"
+    assert payload["context_snapshot_ref"] == "111111222222333333444444"
     assert payload["final_request_context_audit"] == audit
     assert isinstance(payload["final_request_evidence"], dict)
     assert isinstance(payload["audit_refs"], dict)
@@ -107,7 +108,7 @@ def test_build_final_request_evidence_preserves_existing_lightweight_projection(
     evidence = build_final_request_evidence(
         {
             "final_request_evidence": {
-                "context_snapshot_ref": "runtime/contexts/44/5555.json",
+                "context_snapshot_ref": "runtime/contexts/44/444444555555666666777777.json",
                 "final_request_context_audit_present": True,
                 "final_request_context_audit_hash": "audit-hash-light",
                 "final_request_evidence_coverage_pass": False,
@@ -133,7 +134,7 @@ def test_build_final_request_evidence_preserves_existing_lightweight_projection(
         }
     )
 
-    assert evidence["context_snapshot_ref"] == "runtime/contexts/44/5555.json"
+    assert evidence["context_snapshot_ref"] == "444444555555666666777777"
     assert evidence["final_request_context_audit_present"] is True
     assert evidence["final_request_context_audit_hash"] == "audit-hash-light"
     assert evidence["final_request_evidence_coverage_pass"] is False
@@ -148,3 +149,12 @@ def test_build_final_request_evidence_preserves_existing_lightweight_projection(
     assert evidence["available_tools"] == []
     assert evidence["missing_required_tools"] == ["repo_tree"]
     assert evidence["final_request_evidence_authority_hash"]
+
+def test_context_snapshot_ref_normalizes_hash_and_rejects_invalid_refs() -> None:
+    assert normalize_context_snapshot_ref("aabbccddeeff001122334455") == "aabbccddeeff001122334455"
+    assert (
+        normalize_context_snapshot_ref("runtime/contexts/aa/AABBCCDDEEFF001122334455.json")
+        == "aabbccddeeff001122334455"
+    )
+    assert normalize_context_snapshot_ref("snapshot://not-a-context-store-hash") == ""
+    assert normalize_context_snapshot_ref("runtime/contexts/aa/short.json") == ""

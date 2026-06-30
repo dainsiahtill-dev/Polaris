@@ -18,7 +18,10 @@ from polaris.kernelone.events.constants import (
     EVENT_TYPE_TOOL_CALL,
     EVENT_TYPE_TOOL_RESULT,
 )
-from polaris.kernelone.events.final_request_evidence import build_final_request_evidence
+from polaris.kernelone.events.final_request_evidence import (
+    build_final_request_evidence,
+    normalize_context_snapshot_ref,
+)
 from polaris.kernelone.events.realtime_bridge import (
     LLMRealtimeEvent,
     LLMRealtimeEventBridge,
@@ -403,7 +406,7 @@ def _build_refs(event: LLMRealtimeEvent) -> dict[str, Any]:
     turn_id = _extract_turn_id(data)
     if turn_id:
         refs["turn_id"] = turn_id
-    context_snapshot_ref = _extract_context_snapshot_ref(data)
+    context_snapshot_ref = normalize_context_snapshot_ref(_extract_context_snapshot_ref(data))
     if context_snapshot_ref:
         refs["context_snapshot_ref"] = context_snapshot_ref
     final_request_evidence = build_final_request_evidence(data)
@@ -419,8 +422,9 @@ def _build_refs(event: LLMRealtimeEvent) -> dict[str, Any]:
         missing_tools = final_request_evidence.get("missing_required_tools")
         if isinstance(missing_tools, list):
             refs["missing_required_tools"] = missing_tools
-        if not context_snapshot_ref and final_request_evidence.get("context_snapshot_ref"):
-            refs["context_snapshot_ref"] = final_request_evidence["context_snapshot_ref"]
+        evidence_context_ref = normalize_context_snapshot_ref(final_request_evidence.get("context_snapshot_ref"))
+        if evidence_context_ref:
+            refs["context_snapshot_ref"] = evidence_context_ref
     model = _extract_model(data)
     if model:
         refs["model"] = model

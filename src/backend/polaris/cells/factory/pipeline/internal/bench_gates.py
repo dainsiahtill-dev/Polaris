@@ -38,6 +38,7 @@ from polaris.cells.control_plane.verifier_policy.public import (
     ReadVerifierPolicyQueryV1,
     read_verifier_policy,
 )
+from polaris.kernelone.events.final_request_evidence import normalize_context_snapshot_ref
 
 from .run_ledger import summarize_run_ledger_projection
 
@@ -1979,14 +1980,16 @@ def _normalize_llm_event(raw: dict[str, Any], *, source_path: str = "") -> dict[
         final_request_context_audit = _as_dict(data.get("final_request_context_audit"))
     if not final_request_context_audit:
         final_request_context_audit = _as_dict(data_metadata.get("final_request_context_audit"))
-    context_snapshot_ref = _first_string(
-        raw.get("context_snapshot_ref"),
-        data.get("context_snapshot_ref"),
-        metadata.get("context_snapshot_ref"),
-        data_metadata.get("context_snapshot_ref"),
-        extra_fields.get("context_snapshot_ref"),
-        audit_refs.get("context_snapshot_ref"),
-        final_request_evidence.get("context_snapshot_ref"),
+    context_snapshot_ref = normalize_context_snapshot_ref(
+        _first_string(
+            raw.get("context_snapshot_ref"),
+            data.get("context_snapshot_ref"),
+            metadata.get("context_snapshot_ref"),
+            data_metadata.get("context_snapshot_ref"),
+            extra_fields.get("context_snapshot_ref"),
+            audit_refs.get("context_snapshot_ref"),
+            final_request_evidence.get("context_snapshot_ref"),
+        )
     )
 
     event_name = _first_string(

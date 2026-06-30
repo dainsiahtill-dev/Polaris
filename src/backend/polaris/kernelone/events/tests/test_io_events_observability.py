@@ -211,7 +211,7 @@ def test_emit_llm_event_projects_final_request_evidence_refs(tmp_path: Path) -> 
             run_id="run-final-request",
             data={
                 "metadata": {
-                    "context_snapshot_ref": "runtime/contexts/22/3333.json",
+                    "context_snapshot_ref": "runtime/contexts/22/222222333333444444555555.json",
                     "final_request_context_audit": audit,
                     "messages": [{"role": "user", "content": "secret prompt"}],
                 },
@@ -219,9 +219,9 @@ def test_emit_llm_event_projects_final_request_evidence_refs(tmp_path: Path) -> 
         )
 
     row = json.loads(events_path.read_text(encoding="utf-8").splitlines()[0])
-    assert row["context_snapshot_ref"] == "runtime/contexts/22/3333.json"
+    assert row["context_snapshot_ref"] == "222222333333444444555555"
     assert row["final_request_context_audit"] == audit
-    assert row["audit_refs"]["context_snapshot_ref"] == "runtime/contexts/22/3333.json"
+    assert row["audit_refs"]["context_snapshot_ref"] == "222222333333444444555555"
     assert row["audit_refs"]["request_hash"] == "request-hash-3"
     assert row["final_request_evidence"]["missing_required_refs"] == ["execution_envelope"]
     assert "secret prompt" not in events_path.read_text(encoding="utf-8")

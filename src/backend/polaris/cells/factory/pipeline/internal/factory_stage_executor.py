@@ -3398,7 +3398,11 @@ class OrchestrationStageExecutor:
             evidence["context_os_audit"] = dict(context_os_audit)
         context_snapshot_ref = str(_walk_values(roots, {"context_snapshot_ref", "contextsnapshotref"}) or "").strip()
         if context_snapshot_ref:
-            evidence["context_snapshot_ref"] = context_snapshot_ref
+            from polaris.kernelone.events.final_request_evidence import normalize_context_snapshot_ref
+
+            normalized_context_snapshot_ref = normalize_context_snapshot_ref(context_snapshot_ref)
+            if normalized_context_snapshot_ref:
+                evidence["context_snapshot_ref"] = normalized_context_snapshot_ref
         kernel_repair_reasons = _walk_values(roots, {"kernel_repair_reasons", "kernelrepairreasons"})
         if isinstance(kernel_repair_reasons, list):
             evidence["kernel_repair_reasons"] = [str(item) for item in kernel_repair_reasons]

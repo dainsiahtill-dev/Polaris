@@ -19,7 +19,7 @@ def _make_event(**data_overrides: Any) -> LLMRealtimeEvent:
     base_data: dict[str, Any] = {
         "call_id": "call-abc-123",
         "turn_id": "turn-42",
-        "context_snapshot_ref": "snapshot://ws/run/context-99",
+        "context_snapshot_ref": "runtime/contexts/aa/aaaabbbbccccddddeeeeffff.json",
         "model": "gpt-5.4",
         "provider": "openai",
         "task_id": "task-7",
@@ -53,7 +53,7 @@ class TestBuildRefsRichFields:
         assert refs["task_id"] == "task-7"
         assert refs["call_id"] == "call-abc-123"
         assert refs["turn_id"] == "turn-42"
-        assert refs["context_snapshot_ref"] == "snapshot://ws/run/context-99"
+        assert refs["context_snapshot_ref"] == "aaaabbbbccccddddeeeeffff"
         assert refs["model"] == "gpt-5.4"
         assert refs["provider"] == "openai"
 
@@ -103,7 +103,7 @@ class TestBuildRefsRichFields:
                 "metadata": {
                     "call_id": "meta-call-1",
                     "turn_id": "meta-turn-1",
-                    "context_snapshot_ref": "meta-snap-1",
+                    "context_snapshot_ref": "runtime/contexts/bb/bbbbccccddddeeeeffffaaaa.json",
                     "model": "claude-4",
                     "provider": "anthropic",
                     "task_id": "meta-task-1",
@@ -120,9 +120,21 @@ class TestBuildRefsRichFields:
         assert refs["task_id"] == "meta-task-1"
         assert refs["call_id"] == "meta-call-1"
         assert refs["turn_id"] == "meta-turn-1"
-        assert refs["context_snapshot_ref"] == "meta-snap-1"
+        assert refs["context_snapshot_ref"] == "bbbbccccddddeeeeffffaaaa"
         assert refs["model"] == "claude-4"
         assert refs["provider"] == "anthropic"
+
+    def test_refs_omit_invalid_context_snapshot_ref(self, bridge: LogPipelineLLMRealtimeBridge) -> None:
+        writer = MagicMock()
+        event = _make_event(context_snapshot_ref="snapshot://ws/run/context-99")
+        with patch(
+            "polaris.infrastructure.log_pipeline.llm_realtime_bridge.get_writer",
+            return_value=writer,
+        ):
+            bridge.publish(event)
+
+        refs = writer.write_event.call_args.kwargs.get("refs") or writer.write_event.call_args[1].get("refs")
+        assert "context_snapshot_ref" not in refs
 
     def test_refs_include_final_request_audit_projection(self, bridge: LogPipelineLLMRealtimeBridge) -> None:
         writer = MagicMock()
@@ -142,7 +154,7 @@ class TestBuildRefsRichFields:
             event_type="llm_call_start",
             data={
                 "metadata": {
-                    "context_snapshot_ref": "runtime/contexts/aa/bbbb.json",
+                    "context_snapshot_ref": "runtime/contexts/aa/aaaabbbbccccddddeeeeffff.json",
                     "final_request_context_audit": audit,
                 }
             },
@@ -154,7 +166,7 @@ class TestBuildRefsRichFields:
             bridge.publish(event)
 
         refs = writer.write_event.call_args.kwargs.get("refs") or writer.write_event.call_args[1].get("refs")
-        assert refs["context_snapshot_ref"] == "runtime/contexts/aa/bbbb.json"
+        assert refs["context_snapshot_ref"] == "aaaabbbbccccddddeeeeffff"
         assert refs["final_request_evidence_hash"]
         assert refs["final_request_context_audit_hash"]
         assert refs["final_request_evidence_coverage_pass"] is False
@@ -170,6 +182,11 @@ class TestBuildRefsRichFields:
                 "pass": True,
             },
         }
+        refs_by_role = {
+            "pm": "111111111111111111111111",
+            "chief_engineer": "222222222222222222222222",
+            "director": "333333333333333333333333",
+        }
         with patch(
             "polaris.infrastructure.log_pipeline.llm_realtime_bridge.get_writer",
             return_value=writer,
@@ -183,7 +200,7 @@ class TestBuildRefsRichFields:
                         event_type="llm_call_start",
                         data={
                             "metadata": {
-                                "context_snapshot_ref": f"runtime/contexts/{role}/snapshot.json",
+                                "context_snapshot_ref": f"runtime/contexts/{role}/{refs_by_role[role]}.json",
                                 "final_request_context_audit": audit,
                             }
                         },
@@ -194,7 +211,7 @@ class TestBuildRefsRichFields:
         assert len(calls) == 3
         for role, call in zip(("pm", "chief_engineer", "director"), calls, strict=True):
             refs = call.kwargs.get("refs") or call[1].get("refs")
-            assert refs["context_snapshot_ref"] == f"runtime/contexts/{role}/snapshot.json"
+            assert refs["context_snapshot_ref"] == refs_by_role[role]
             assert refs["final_request_evidence_hash"]
             assert refs["final_request_context_audit_hash"]
             assert refs["final_request_evidence_coverage_pass"] is True

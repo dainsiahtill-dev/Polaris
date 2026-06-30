@@ -2118,7 +2118,7 @@ class TestArtifactStore:
                     "schema_version": "llm.final_request_context_audit.v1",
                     "final_request_token_estimate": 42000,
                 },
-                "context_snapshot_ref": "runtime/contexts/ab/cdef.json",
+                "context_snapshot_ref": "runtime/contexts/ab/abcdef123456abcdef123456.json",
             },
             usage={"cache_hit": False},
         )
@@ -2131,7 +2131,7 @@ class TestArtifactStore:
 
         assert evidence["provider"] == "openai"
         assert evidence["model"] == "gpt-5"
-        assert evidence["context_snapshot_ref"] == "runtime/contexts/ab/cdef.json"
+        assert evidence["context_snapshot_ref"] == "abcdef123456abcdef123456"
         assert evidence["final_request_context_audit"]["final_request_token_estimate"] == 42000
         assert OrchestrationStageExecutor._ce_missing_final_request_evidence(evidence) == []
 
@@ -2178,7 +2178,7 @@ class TestArtifactStore:
             run_id="factory-run",
             provider="openai",
             model="gpt-5",
-            context_snapshot_ref="runtime/contexts/aa/bb.json",
+            context_snapshot_ref="runtime/contexts/aa/aaaabbbbccccddddeeeeffff.json",
             final_request_context_audit={
                 "schema_version": "llm.final_request_context_audit.v1",
                 "final_request_token_estimate": 42000,
@@ -2190,7 +2190,7 @@ class TestArtifactStore:
             run_id="factory-run",
             provider="openai",
             model="gpt-5",
-            context_snapshot_ref="runtime/contexts/aa/cc.json",
+            context_snapshot_ref="runtime/contexts/aa/111122223333444455556666.json",
             final_request_context_audit={
                 "schema_version": "llm.final_request_context_audit.v1",
                 "final_request_token_estimate": 43000,
@@ -2206,9 +2206,9 @@ class TestArtifactStore:
         row = rows[0]
         assert row["role"] == "chief_engineer"
         assert row["event"] == "llm_call_end"
-        assert row["context_snapshot_ref"] == "runtime/contexts/aa/bb.json"
+        assert row["context_snapshot_ref"] == "aaaabbbbccccddddeeeeffff"
         assert row["final_request_context_audit"]["final_request_token_estimate"] == 42000
-        assert rows[1]["context_snapshot_ref"] == "runtime/contexts/aa/cc.json"
+        assert rows[1]["context_snapshot_ref"] == "111122223333444455556666"
 
 
 class TestMirrorHelpers:

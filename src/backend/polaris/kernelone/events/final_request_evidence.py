@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping, MutableMapping
 from typing import Any
 
 FINAL_REQUEST_EVIDENCE_SCHEMA = "llm.final_request_evidence.v1"
 FINAL_REQUEST_EVIDENCE_AUTHORITY_SCHEMA = "polaris.final_request_evidence_authority.v1"
 AUDIT_REFS_SCHEMA = "llm.final_request_audit_refs.v1"
+_CONTEXT_SNAPSHOT_HASH_RE = re.compile(r"(?<![0-9A-Fa-f])([0-9A-Fa-f]{24})(?![0-9A-Fa-f])")
 
 
 def _as_mapping(value: Any) -> Mapping[str, Any]:
@@ -34,6 +36,22 @@ def _first_mapping(*values: Any) -> dict[str, Any]:
         if isinstance(value, Mapping):
             return dict(value)
     return {}
+
+def normalize_context_snapshot_ref(value: Any) -> str:
+    """Return the canonical ContextStore snapshot hash for final-request refs.
+
+    New events must expose a single 24-hex ContextStore hash. Historical events
+    may carry paths such as ``runtime/contexts/aa/<hash>.json`` or URI-like
+    wrappers; those are accepted only when a valid hash can be extracted.
+    """
+
+    token = _text(value)
+    if not token:
+        return ""
+    match = _CONTEXT_SNAPSHOT_HASH_RE.search(token)
+    if not match:
+        return ""
+    return match.group(1).lower()
 
 
 def _string_list(value: Any) -> list[str]:
@@ -142,16 +160,18 @@ def build_final_request_evidence(data: Mapping[str, Any]) -> dict[str, Any]:
         extra_fields.get("final_request_context_audit"),
         existing_evidence.get("final_request_context_audit"),
     )
-    context_snapshot_ref = _first_text(
-        root.get("context_snapshot_ref"),
-        root.get("contextSnapshotRef"),
-        metadata.get("context_snapshot_ref"),
-        metadata.get("contextSnapshotRef"),
-        extra_fields.get("context_snapshot_ref"),
-        extra_fields.get("contextSnapshotRef"),
-        request_context.get("context_snapshot_ref"),
-        request_context.get("contextSnapshotRef"),
-        existing_evidence.get("context_snapshot_ref"),
+    context_snapshot_ref = normalize_context_snapshot_ref(
+        _first_text(
+            root.get("context_snapshot_ref"),
+            root.get("contextSnapshotRef"),
+            metadata.get("context_snapshot_ref"),
+            metadata.get("contextSnapshotRef"),
+            extra_fields.get("context_snapshot_ref"),
+            extra_fields.get("contextSnapshotRef"),
+            request_context.get("context_snapshot_ref"),
+            request_context.get("contextSnapshotRef"),
+            existing_evidence.get("context_snapshot_ref"),
+        )
     )
 
     if not final_request_context_audit and not context_snapshot_ref:
