@@ -26,7 +26,11 @@ def _production_python_files() -> list[Path]:
 
 
 def _removed_compat_references(path: Path) -> list[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    try:
+        source = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    tree = ast.parse(source)
     violations: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
