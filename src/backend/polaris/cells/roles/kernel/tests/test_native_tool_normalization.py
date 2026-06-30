@@ -235,8 +235,8 @@ def test_common_target_file_aliases_decode_to_file(file_key: str) -> None:
     assert invocation["arguments"]["replace"] == "def main():\n    return 0\n"
 
 
-def test_qwen_textual_function_call_recovers_when_enabled() -> None:
-    decoder = TurnDecisionDecoder(config=DecodeConfig(domain="code", enable_textual_fallback=True))
+def test_qwen_textual_function_call_is_not_executable() -> None:
+    decoder = TurnDecisionDecoder(config=DecodeConfig(domain="code"))
     response = RawLLMResponse(
         content=(
             "I will create the file now.\n"
@@ -253,15 +253,12 @@ def test_qwen_textual_function_call_recovers_when_enabled() -> None:
 
     decision = decoder.decode(response, TurnId("turn_qwen_textual_tool"))
 
-    assert decision["kind"] == TurnDecisionKind.TOOL_BATCH
-    assert decision["tool_batch"] is not None
-    invocation = decision["tool_batch"]["invocations"][0]
-    assert invocation["tool_name"] == "write_file"
-    assert invocation["arguments"] == {"file": "src/app.py", "content": "print('ok')"}
+    assert decision["kind"] == TurnDecisionKind.FINAL_ANSWER
+    assert decision["tool_batch"] is None
 
 
-def test_textual_function_call_recovers_when_native_call_fails_decode() -> None:
-    decoder = TurnDecisionDecoder(config=DecodeConfig(domain="code", enable_textual_fallback=True))
+def test_textual_function_call_does_not_recover_when_native_call_fails_decode() -> None:
+    decoder = TurnDecisionDecoder(config=DecodeConfig(domain="code"))
     response = RawLLMResponse(
         content=(
             "I will create the file now.\n"
@@ -284,16 +281,13 @@ def test_textual_function_call_recovers_when_native_call_fails_decode() -> None:
 
     decision = decoder.decode(response, TurnId("turn_native_fail_textual_recovery"))
 
-    assert decision["kind"] == TurnDecisionKind.TOOL_BATCH
-    assert decision["tool_batch"] is not None
-    invocation = decision["tool_batch"]["invocations"][0]
-    assert invocation["tool_name"] == "write_file"
-    assert invocation["arguments"] == {"file": "src/app.py", "content": "print('ok')"}
+    assert decision["kind"] == TurnDecisionKind.FINAL_ANSWER
+    assert decision["tool_batch"] is None
     assert decision["metadata"]["decode_failures"][0]["tool"] == "write_file"
 
 
-def test_textual_tool_recovery_ignores_thinking_when_enabled() -> None:
-    decoder = TurnDecisionDecoder(config=DecodeConfig(domain="code", enable_textual_fallback=True))
+def test_textual_tool_recovery_ignores_thinking() -> None:
+    decoder = TurnDecisionDecoder(config=DecodeConfig(domain="code"))
     response = RawLLMResponse(
         content="I need to inspect the repository first.",
         thinking=(

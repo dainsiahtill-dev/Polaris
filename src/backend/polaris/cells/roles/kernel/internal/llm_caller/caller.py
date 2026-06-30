@@ -919,61 +919,6 @@ class LLMCaller:
             return False
         return not prepared.native_tool_schemas
 
-    @staticmethod
-    def _allow_native_tool_text_fallback(context: ContextRequest) -> bool:
-        """Check if native tool text fallback is allowed."""
-        override = getattr(context, "context_override", None)
-        if not isinstance(override, dict):
-            return False
-        for key in (
-            "allow_native_tool_text_fallback",
-            "native_tool_text_fallback",
-            "allow_degraded_native_tool_text_fallback",
-        ):
-            raw = override.get(str(key))
-            if isinstance(raw, bool):
-                if raw:
-                    return True
-                continue
-            token = str(raw or "").strip().lower()
-            if token in {"1", "true", "yes", "on"}:
-                return True
-        return False
-
-    def _build_native_tool_fallback_request(
-        self,
-        *,
-        prepared: PreparedLLMRequest,
-        profile: RoleProfile,
-        mode: str = "chat",
-    ) -> AIRequest:
-        """Retry without native tool parameters when provider rejects them."""
-        fallback_options = dict(prepared.request_options)
-        fallback_options.pop("tools", None)
-        fallback_options.pop("tool_choice", None)
-        fallback_options.pop("parallel_tool_calls", None)
-        fallback_instruction = (
-            "【运行时工具回退】\n"
-            "当前 provider 不接受原生 tools 参数。请禁止输出任何伪造的工具调用、函数调用、"
-            '[TOOL_CALL] 包装、XML 工具标签或"已执行工具"的表述; 只能基于现有上下文直接回答。'
-        )
-        fallback_input = append_runtime_fallback_instruction(
-            str(prepared.input_text or ""),
-            fallback_instruction,
-        )
-        fallback_context = dict(prepared.ai_request.context if isinstance(prepared.ai_request.context, dict) else {})
-        fallback_context["workspace"] = self.workspace
-        fallback_context["mode"] = str(mode or "chat")
-        fallback_context["native_tool_mode"] = "native_tools_text_fallback"
-        self._append_fallback_instruction_to_chat_messages(fallback_context, fallback_instruction)
-        return AIRequest(
-            task_type=TaskType.DIALOGUE,
-            role=profile.role_id,
-            input=fallback_input,
-            options=fallback_options,
-            context=fallback_context,
-        )
-
     def _build_structured_fallback_request(
         self,
         *,

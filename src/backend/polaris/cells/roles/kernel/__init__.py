@@ -26,7 +26,6 @@ __all__ = [
     "IRoleKernelService",
     "LLMCache",
     "LLMCallEvent",
-    "LLMCaller",
     "LLMEventEmitter",
     "LLMEventType",
     "LLMResponse",

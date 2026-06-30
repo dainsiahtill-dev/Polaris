@@ -1560,41 +1560,6 @@ class TestLifecycleAndCacheGuards:
         assert "运行时结构化输出回退" in request.input
         assert "运行时结构化输出回退" in request.context["chat_messages"][-1]["content"]
 
-    def test_native_tool_fallback_request_updates_provider_bound_chat_messages(self) -> None:
-        caller = LLMCaller(workspace="C:/workspace")
-        prepared = SimpleNamespace(
-            request_options={
-                "temperature": 0.2,
-                "max_tokens": 256,
-                "timeout": 120,
-                "tools": [{"type": "function", "function": {"name": "read_file"}}],
-                "tool_choice": "auto",
-            },
-            input_text="read README",
-            ai_request=SimpleNamespace(
-                context={
-                    "workspace": "C:/workspace",
-                    "mode": "chat",
-                    "native_tool_mode": "native_tools",
-                    "chat_messages": [
-                        {"role": "system", "content": "system"},
-                        {"role": "user", "content": "read README"},
-                    ],
-                }
-            ),
-        )
-
-        request = caller._build_native_tool_fallback_request(
-            prepared=cast("PreparedLLMRequest", prepared),
-            profile=cast("RoleProfile", MockProfile(role_id="director", model="qwen", provider_id="local")),
-        )
-
-        assert "tools" not in request.options
-        assert "tool_choice" not in request.options
-        assert request.context["native_tool_mode"] == "native_tools_text_fallback"
-        assert "运行时工具回退" in request.input
-        assert "运行时工具回退" in request.context["chat_messages"][-1]["content"]
-
     @pytest.mark.asyncio
     async def test_call_stream_error_event_contains_metadata_on_prepare_failure(
         self,

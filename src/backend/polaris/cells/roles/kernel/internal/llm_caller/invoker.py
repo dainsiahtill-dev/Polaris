@@ -49,7 +49,6 @@ from .error_handling import (
     ERROR_CATEGORY_CANCELLED,
     build_native_tool_unavailable_error,
     classify_error,
-    is_native_tool_calling_unsupported,
     is_response_format_unsupported,
     is_retryable_error,
 )
@@ -347,7 +346,7 @@ class LLMInvoker:
         self._stream_engine = StreamEngine(
             workspace=workspace,
             get_executor=lambda: self._get_executor(),
-            allow_native_tool_text_fallback_fn=lambda ctx: self._allow_native_tool_text_fallback(ctx),
+            allow_native_tool_text_fallback_fn=lambda _ctx: False,
             emit_call_start_event=lambda **kwargs: self._emit_call_start_event(**kwargs),
             emit_call_error_event=lambda **kwargs: self._emit_call_error_event(**kwargs),
             emit_call_end_event=lambda **kwargs: self._emit_call_end_event(**kwargs),
@@ -978,9 +977,9 @@ class LLMInvoker:
     ) -> FallbackLadderResult:
         """Run the call-phase fallback ladder after the primary invoke.
 
-        Four rungs in fixed order: native-tool text fallback, response_format
-        fallback, reasoning-truncation re-ask, and role-binding fallback. Returns
-        a :class:`FallbackLadderResult` carrying the mutated state so the
+        Three rungs in fixed order: response_format fallback,
+        reasoning-truncation re-ask, and role-binding fallback. Returns a
+        :class:`FallbackLadderResult` carrying the mutated state so the
         orchestrator can repoint its locals.
         """
 
@@ -1009,18 +1008,7 @@ class LLMInvoker:
                 metadata=audit_metadata,
             )
 
-        if (
-            not is_response_ok
-            and prepared.native_tool_schemas
-            and allow_native_tool_text_fallback
-            and is_native_tool_calling_unsupported(response_error)
-        ):
-            active_request = caller._build_native_tool_fallback_request(prepared=prepared, profile=profile, mode="chat")
-            emit_fallback_request_audit("native_tool_text_fallback", active_request, profile)
-            response = await executor.invoke(active_request)
-            native_tool_fallback = True
-            is_response_ok, response_error = read_response_status(response)
-
+        _ = allow_native_tool_text_fallback
         if not is_response_ok and prepared.native_response_format and is_response_format_unsupported(response_error):
             active_request = caller._build_structured_fallback_request(
                 prepared=prepared, profile=profile, response_model=response_model or dict, mode="chat"
@@ -1227,108 +1215,11 @@ class LLMInvoker:
     ) -> LLMResponse:
         """Handle ``native_tool_mode == 'native_tools_unavailable'`` (call phase).
 
-        Attempts a prompt-described text fallback when allowed and schemas are
-        present; otherwise (or on fallback failure) emits a call_error event and
-        returns the ``native_tool_unavailable`` error response. This branch
-        ALWAYS returns an ``LLMResponse`` in the original control flow.
+        Emits a call_error event and returns the ``native_tool_unavailable``
+        error response. Text-mode tool fallback is retired; provider-native
+        tool schemas are required.
         """
-        # Try text-based fallback instead of immediately returning error
-        allow_native_tool_text_fallback = self._allow_native_tool_text_fallback(context)
-        if allow_native_tool_text_fallback and prepared.native_tool_schemas:
-            # Build and invoke fallback request (tools described in prompt, not native)
-            executor = self._get_executor()
-            fallback_request = caller._build_native_tool_fallback_request(
-                prepared=prepared, profile=profile, mode="chat"
-            )
-            response = await executor.invoke(fallback_request)
-            native_tool_fallback = True
-            response_ok = getattr(response, "ok", True)
-            if response_ok:
-                elapsed_ms = (time.perf_counter() - start_time) * 1000
-                response_text = str(getattr(response, "content", None) or getattr(response, "output", "") or "")
-                raw_payload = getattr(response, "raw", None)
-                raw_payload = raw_payload if isinstance(raw_payload, dict) else {}
-                provider_usage = _normalize_provider_usage(
-                    getattr(response, "usage", None)
-                ) or _normalize_provider_usage(raw_payload.get("usage"))
-                completion_tokens = (
-                    int(provider_usage["completion_tokens"])
-                    if provider_usage and int(provider_usage["completion_tokens"]) > 0
-                    else len(response_text) // 2
-                )
-                prompt_tokens = (
-                    int(provider_usage["prompt_tokens"])
-                    if provider_usage and int(provider_usage["prompt_tokens"]) > 0
-                    else (prepared.context_result.token_estimate if prepared.context_result else 0)
-                )
-                event_metadata: dict[str, Any] = {
-                    "native_tool_mode": "native_tools_text_fallback",
-                    "response_format_mode": prepared.response_format_mode,
-                    "native_tool_calling_fallback": native_tool_fallback,
-                    "elapsed_ms": round(elapsed_ms, 2),
-                    "context_snapshot_ref": self._extract_context_snapshot_ref(fallback_request),
-                }
-                event_metadata = _with_context_snapshot_diagnostics(event_metadata, fallback_request)
-                if provider_usage is not None:
-                    event_metadata["usage"] = provider_usage
-                    event_metadata["usage_source"] = "provider"
-                event_metadata = _with_final_request_context_audit(
-                    event_metadata,
-                    prepared=prepared,
-                    active_request=fallback_request,
-                    profile=profile,
-                )
-                final_context_tokens = _final_request_context_tokens(
-                    event_metadata,
-                    prepared.context_result.token_estimate if prepared.context_result else None,
-                )
-                self._emit_call_end_event(
-                    event_emitter=event_emitter,
-                    role=role_id,
-                    run_id=run_id,
-                    task_id=task_id,
-                    attempt=attempt,
-                    model=str(getattr(response, "model", "") or model),
-                    provider=str(getattr(response, "provider_id", "") or raw_payload.get("provider") or ""),
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    call_id=call_id,
-                    context_tokens_after=final_context_tokens,
-                    compression_strategy=prepared.context_result.compression_strategy
-                    if prepared.context_result
-                    else None,
-                    response_content=response_text,
-                    metadata=_with_context_os_audit(event_metadata, prepared),
-                )
-                response_metadata = _with_final_request_context_audit(
-                    {
-                        "model": model,
-                        "native_tool_mode": "native_tools_text_fallback",
-                        "response_format_mode": prepared.response_format_mode,
-                        "native_tool_calling_fallback": native_tool_fallback,
-                        "elapsed_ms": round(elapsed_ms, 2),
-                        "run_id": run_id,
-                        "workspace": self.workspace,
-                        "attempt": attempt,
-                        "context_snapshot_ref": self._extract_context_snapshot_ref(fallback_request),
-                    },
-                    prepared=prepared,
-                    active_request=fallback_request,
-                    profile=profile,
-                )
-                response_metadata = _with_context_snapshot_diagnostics(response_metadata, fallback_request)
-                if provider_usage is not None:
-                    response_metadata["usage"] = provider_usage
-                    response_metadata["usage_source"] = "provider"
-                return LLMResponse(
-                    content=response_text,
-                    error=None,
-                    error_category=None,
-                    metadata=_with_context_os_audit(response_metadata, prepared),
-                )
-            # Fallback failed, proceed to return error
-
-        # Fallback not allowed or failed - return error
+        _ = (caller, context)
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         tool_error = build_native_tool_unavailable_error(profile)
         error_metadata = _with_final_request_context_audit(
@@ -1533,7 +1424,7 @@ class LLMInvoker:
 
             executor = self._get_executor()
             native_tool_fallback = False
-            allow_native_tool_text_fallback = self._allow_native_tool_text_fallback(context)
+            allow_native_tool_text_fallback = False
             response = await executor.invoke(active_request)
             native_response_fallback = False
 
@@ -2783,27 +2674,6 @@ class LLMInvoker:
         if prepared.response_format_mode != "plain_text":
             return False
         return not prepared.native_tool_schemas
-
-    @staticmethod
-    def _allow_native_tool_text_fallback(context: Any) -> bool:
-        """Check if native tool text fallback is allowed."""
-        override = getattr(context, "context_override", None)
-        if not isinstance(override, dict):
-            return False
-        for key in (
-            "allow_native_tool_text_fallback",
-            "native_tool_text_fallback",
-            "allow_degraded_native_tool_text_fallback",
-        ):
-            raw = override.get(str(key))
-            if isinstance(raw, bool):
-                if raw:
-                    return True
-                continue
-            token = str(raw or "").strip().lower()
-            if token in {"1", "true", "yes", "on"}:
-                return True
-        return False
 
     @staticmethod
     def _is_stream_cancel_requested(context: Any) -> bool:

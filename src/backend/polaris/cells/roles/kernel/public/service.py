@@ -61,7 +61,6 @@ from polaris.cells.roles.kernel.internal.llm_cache import (
     set_global_llm_cache,
 )
 from polaris.cells.roles.kernel.internal.llm_caller import (
-    LLMCaller,
     LLMResponse,
     StructuredLLMResponse,
 )
@@ -118,7 +117,6 @@ __all__ = [
     "ErrorCategory",
     "LLMCache",
     "LLMCallEvent",
-    "LLMCaller",
     "LLMEventEmitter",
     "LLMEventType",
     "LLMResponse",

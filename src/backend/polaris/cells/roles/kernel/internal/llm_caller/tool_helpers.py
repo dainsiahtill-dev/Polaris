@@ -9,7 +9,6 @@ import json
 import logging
 import os
 import re
-import uuid
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -1006,20 +1005,20 @@ def extract_native_tool_calls(
 ) -> tuple[list[dict[str, Any]], str]:
     """Extract native tool calls from LLM response.
 
-    Supports three extraction layers:
+    Supports only provider-native tool call envelopes:
     1. OpenAI format: tool_calls at top level or in choices
     2. Anthropic format: content[].tool_use blocks
-    3. Text format fallback: JSON tool calls in response text
 
     Args:
         raw_payload: Raw response payload from provider
         provider_id: Provider identifier
         model: Model name
-        response_text: Optional response text for fallback parsing
+        response_text: Kept for call-site compatibility; never parsed as tools.
 
     Returns:
         Tuple of (tool_calls list, provider hint string)
     """
+    _ = response_text
     if not isinstance(raw_payload, dict):
         return [], "auto"
 
@@ -1068,205 +1067,7 @@ def extract_native_tool_calls(
     if anthropic_calls:
         return anthropic_calls, "anthropic"
 
-    # Layer 3: Text format fallback
-    #
-    # The text fallback exists only for models that return explicit JSON tool
-    # calls as plain text. It must not inspect proposal/delivery payloads such
-    # as fenced full-file blocks, because real source files like package.json
-    # commonly contain a top-level "name" field that is not a tool name.
-    if response_text:
-        text_calls = _extract_tool_calls_from_text(response_text, provider_hint=provider_hint)
-        if text_calls:
-            logger.debug("[LLMCaller] Fallback: extracted %d tool calls from text", len(text_calls))
-            return text_calls, "text_fallback"
-
     return [], provider_hint
-
-
-def _looks_like_file_or_patch_delivery(text: str) -> bool:
-    """Return True for source-code delivery formats that are not tool calls."""
-    token = str(text or "")
-    if not token.strip():
-        return False
-    lowered = token.lower()
-    if "patch_file:" in lowered or "delete_file:" in lowered:
-        return True
-    if "<<<<<<< search" in lowered and ">>>>>>> replace" in lowered:
-        return True
-    if re.search(r"(?:^|\n)\s*```\s*file\s*:\s*\S+", token, flags=re.IGNORECASE):
-        return True
-    return bool(
-        re.search(r"(?:^|\n)\s*(?:file|create)\s*[:\s]+\S+", token, flags=re.IGNORECASE)
-        and re.search(r"\n\s*end\s+(?:file|create)\s*(?:\n|$)", token, flags=re.IGNORECASE)
-    )
-
-
-def _extract_tool_calls_from_text(text: str, *, provider_hint: str = "auto") -> list[dict[str, Any]]:
-    """Extract tool calls from plain text response.
-
-    Args:
-        text: Response text that may contain JSON tool calls
-        provider_hint: Provider hint for parsing
-
-    Returns:
-        List of tool calls in OpenAI-like format
-    """
-    if not text or not isinstance(text, str):
-        return []
-    gemma_inline_calls = _extract_gemma_inline_tool_calls_from_text(text)
-    if gemma_inline_calls:
-        return gemma_inline_calls
-    if "<|tool_call>" in text and "call:" in text:
-        return []
-    if _looks_like_file_or_patch_delivery(text):
-        return []
-
-    # Simple regex for JSON tool call patterns
-    simple_pattern = re.compile(r'\{"[^"]*":\s*"[^"]*"[^}]*\}', re.DOTALL)
-    results: list[dict[str, Any]] = []
-
-    # Strategy 1: Parse entire text as JSON
-    stripped = text.strip()
-    if stripped.startswith("{"):
-        try:
-            parsed = json.loads(stripped)
-            if isinstance(parsed, dict):
-                tool_call = _convert_json_to_tool_call(parsed)
-                if tool_call:
-                    results.append(tool_call)
-                    return results
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    # Strategy 2: Extract JSON objects that look like tool calls
-    try:
-        from polaris.kernelone.llm.toolkit.parsers.json_based import JSONToolParser
-
-        parser = JSONToolParser()
-        parsed_calls = parser.parse(text)
-        for call in parsed_calls:
-            name = str(getattr(call, "name", "") or "").strip()
-            arguments = getattr(call, "arguments", {})
-            if name and isinstance(arguments, dict):
-                results.append(
-                    {
-                        "id": str(uuid.uuid4()),
-                        "type": "function",
-                        "function": {"name": name, "arguments": json.dumps(arguments)},
-                    }
-                )
-    except (RuntimeError, ValueError):
-        # Fallback to simple regex
-        for match in simple_pattern.finditer(text):
-            json_str = match.group(0)
-            try:
-                parsed = json.loads(json_str)
-                if isinstance(parsed, dict):
-                    tool_call = _convert_json_to_tool_call(parsed)
-                    if tool_call:
-                        results.append(tool_call)
-            except (json.JSONDecodeError, TypeError):
-                continue
-
-    return results
-
-
-def _extract_gemma_inline_tool_calls_from_text(text: str) -> list[dict[str, Any]]:
-    """Extract Gemma-style inline tool calls from plain response text.
-
-    ADR-0090 W1.6: delegates to the kernelone textual-recovery parser — the
-    single tolerant implementation — instead of a stricter parallel regex that
-    required the ``<tool_call|>`` close marker and ``<|"|>``-quoted values
-    (silently dropping e.g. unquoted ``n:50``). One parser, one behavior.
-    """
-    from polaris.kernelone.llm.toolkit.parsers.textual_tool_recovery import (
-        recover_textual_tool_calls,
-    )
-
-    results: list[dict[str, Any]] = []
-    for recovered in recover_textual_tool_calls(text):
-        name = str(recovered.get("tool") or "").strip()
-        if not name:
-            continue
-        arguments = recovered.get("arguments")
-        results.append(
-            {
-                "id": str(uuid.uuid4()),
-                "type": "function",
-                "function": {
-                    "name": name.replace("-", "_"),
-                    "arguments": json.dumps(
-                        arguments if isinstance(arguments, dict) else {},
-                        ensure_ascii=False,
-                    ),
-                },
-            }
-        )
-
-    return results
-
-
-def _convert_json_to_tool_call(data: dict[str, Any]) -> dict[str, Any] | None:
-    """Convert JSON dict to OpenAI tool call format.
-
-    Args:
-        data: Parsed JSON dictionary
-
-    Returns:
-        Tool call dict or None if invalid
-    """
-    if not isinstance(data, dict):
-        return None
-
-    # Normalize keys to lowercase
-    data_lower = {k.lower(): v for k, v in data.items()}
-
-    # Extract tool name
-    name = None
-    for key in ("name", "tool", "function", "action"):
-        value = data_lower.get(key)
-        if isinstance(value, str) and value.strip():
-            name = value.strip()
-            break
-
-    if not name:
-        return None
-
-    # Validate name format
-    if not re.match(r"^[a-z][a-z0-9_]{0,63}$", name, re.IGNORECASE):
-        return None
-
-    # Extract arguments. A bare {"name": "..."} object is often ordinary
-    # data such as package.json metadata, not a tool call.
-    has_arguments_key = any(key in data_lower for key in ("arguments", "args", "params", "parameters"))
-    if not has_arguments_key:
-        return None
-
-    arguments = {}
-    for key in ("arguments", "args", "params", "parameters"):
-        value = data_lower.get(key)
-        if value is None:
-            continue
-        if isinstance(value, dict):
-            arguments = value
-            break
-        if isinstance(value, str):
-            try:
-                parsed = json.loads(value)
-                if isinstance(parsed, dict):
-                    arguments = parsed
-                    break
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-    return {
-        "id": str(uuid.uuid4()),
-        "type": "function",
-        "function": {
-            "name": name,
-            "arguments": json.dumps(arguments) if isinstance(arguments, dict) else "{}",
-        },
-    }
 
 
 __all__ = [

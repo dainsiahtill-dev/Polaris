@@ -176,12 +176,11 @@ def test_write_file_tool_records_nested_package_manifest_diff(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_markdown_patch_file_broadcasts_create_event(tmp_path: Path) -> None:
+async def test_markdown_patch_file_is_fail_closed_without_file_event(tmp_path: Path) -> None:
     bus = RecordingMessageBus()
     executor = DirectorPatchExecutor(str(tmp_path))
     executor.set_message_bus(bus)
     response = "src/patch.ts\n```ts\nexport const patched = true;\n```"
-    expected_content = "export const patched = true;\n"
 
     results = await executor.execute_tools(response, "task-3", _progress_noop)
 
@@ -189,20 +188,12 @@ async def test_markdown_patch_file_broadcasts_create_event(tmp_path: Path) -> No
 
     assert len(results) == 1
     assert results[0]["tool"] == "patch_apply"
-    assert results[0]["success"] is True
-    result = results[0]["result"]
-    assert result["ok"] is True
-    assert result["source_tool"] == "write_file"
-    assert result["file"] == "src/patch.ts"
-    assert result["bytes_written"] == len(expected_content.encode("utf-8"))
-    assert result["operation"] == "create"
-    assert result["broadcast_ok"] is True
-    assert (tmp_path / "src" / "patch.ts").read_text(encoding="utf-8") == expected_content
-    assert len(bus.messages) == 1
-    payload = bus.messages[0]["payload"]
-    assert payload["file_path"] == "src/patch.ts"
-    assert payload["operation"] == "create"
-    assert payload["task_id"] == "task-3"
+    assert results[0]["success"] is False
+    assert results[0]["error"] == "legacy_patch_file_protocol_disabled"
+    assert results[0]["writes_allowed"] is False
+    assert results[0]["result"]["repair_path"] == "native_tools_or_director_runtime_repair_required"
+    assert not (tmp_path / "src" / "patch.ts").exists()
+    assert bus.messages == []
 
 
 @pytest.mark.asyncio
@@ -251,12 +242,16 @@ async def test_write_only_tool_fallback_does_not_apply_markdown_without_write_to
         allow_patch_fallback=False,
     )
 
-    assert results == []
+    assert len(results) == 1
+    assert results[0]["tool"] == "patch_apply"
+    assert results[0]["success"] is False
+    assert results[0]["error"] == "legacy_patch_file_protocol_disabled"
+    assert results[0]["allow_patch_fallback_requested"] is False
     assert not (tmp_path / "src" / "ignored.ts").exists()
 
 
 @pytest.mark.asyncio
-async def test_markdown_patch_file_returns_receipt_and_persists_event_without_message_bus(tmp_path: Path) -> None:
+async def test_markdown_patch_file_returns_disabled_receipt_without_persisting_event(tmp_path: Path) -> None:
     executor = DirectorPatchExecutor(str(tmp_path))
     response = "src/patch.ts\n```ts\nexport const patched = true;\n```"
 
@@ -266,20 +261,14 @@ async def test_markdown_patch_file_returns_receipt_and_persists_event_without_me
     item = results[0]
     assert item["tool"] == "patch_apply"
     assert item["tool_name"] == "patch_apply"
-    assert item["status"] == "success"
-    assert item["success"] is True
-    assert item["file"] == "src/patch.ts"
-    assert item["effect_receipt"]["path"] == "src/patch.ts"
-    assert item["effect_receipt"]["bytes_written"] == len(b"export const patched = true;\n")
-    assert item["result"]["broadcast_ok"] is False
+    assert item["status"] == "blocked"
+    assert item["success"] is False
+    assert item["error"] == "legacy_patch_file_protocol_disabled"
+    assert item["result"]["authoritative_receipt"] is False
+    assert not (tmp_path / "src" / "patch.ts").exists()
 
     event_log = tmp_path / ".polaris" / "runtime" / "file-edits" / "events.jsonl"
-    line = event_log.read_text(encoding="utf-8").strip()
-    event = json.loads(line)
-    payload = event["payload"]
-    assert payload["file_path"] == "src/patch.ts"
-    assert payload["task_id"] == "task-persist-2"
-    assert payload["has_patch"] is True
+    assert not event_log.exists()
 
 
 @pytest.mark.asyncio

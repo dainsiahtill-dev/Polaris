@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import warnings
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -138,6 +139,45 @@ class TestDependencyInjection:
 
         assert caller._emit_deprecation_warning is False
         assert not any("LLMCaller is deprecated" in str(item.message) for item in captured)
+
+    def test_llm_caller_is_not_public_kernel_export(self) -> None:
+        """LLMCaller may remain implementation-local, but not exported from boundaries."""
+        import polaris.cells.roles.kernel as kernel_public_root
+        import polaris.cells.roles.kernel.internal.llm_caller as llm_caller_package
+        import polaris.cells.roles.kernel.public as kernel_public
+
+        assert "LLMCaller" not in kernel_public_root.__all__
+        assert "LLMCaller" not in kernel_public.__all__
+        assert "LLMCaller" not in llm_caller_package.__all__
+        with pytest.raises(AttributeError):
+            kernel_public_root.__getattr__("LLMCaller")
+        with pytest.raises(AttributeError):
+            kernel_public.__getattr__("LLMCaller")
+        assert "LLMCaller" not in vars(llm_caller_package)
+
+    def test_llm_caller_direct_imports_are_implementation_local(self) -> None:
+        """New production callers must not depend on the deprecated LLMCaller facade."""
+        import polaris
+
+        package_root = Path(polaris.__file__).resolve().parent
+        allowed = {
+            package_root / "cells" / "roles" / "kernel" / "internal" / "kernel" / "core.py",
+            package_root / "cells" / "roles" / "kernel" / "internal" / "llm_caller" / "invoker.py",
+        }
+        offenders: list[str] = []
+        for path in package_root.rglob("*.py"):
+            rel = path.relative_to(package_root)
+            if "tests" in rel.parts:
+                continue
+            text = path.read_text(encoding="utf-8")
+            imports_llm_caller = (
+                "llm_caller.caller import LLMCaller" in text
+                or "from .caller import LLMCaller" in text
+            )
+            if imports_llm_caller and path not in allowed:
+                offenders.append(rel.as_posix())
+
+        assert offenders == []
 
 
 class TestFacadeMethods:

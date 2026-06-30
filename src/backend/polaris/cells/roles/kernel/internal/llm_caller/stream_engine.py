@@ -153,7 +153,7 @@ class StreamEngine:
         Args:
             workspace: Workspace path.
             get_executor: Callable that returns an executor with invoke_stream.
-            allow_native_tool_text_fallback_fn: Callable(context) -> bool.
+            allow_native_tool_text_fallback_fn: Deprecated compatibility hook; ignored.
             emit_call_start_event: Event emitter callable.
             emit_call_error_event: Event emitter callable.
             emit_call_end_event: Event emitter callable.
@@ -175,7 +175,7 @@ class StreamEngine:
         """
         self.workspace = workspace
         self._get_executor = get_executor
-        self._allow_native_tool_text_fallback = allow_native_tool_text_fallback_fn
+        _ = allow_native_tool_text_fallback_fn
         self._emit_call_start = emit_call_start_event
         self._emit_call_error = emit_call_error_event
         self._emit_call_end = emit_call_end_event
@@ -297,7 +297,7 @@ class StreamEngine:
                 "stream": True,
                 "native_tool_mode": active_native_tool_mode,
                 "tool_protocol": active_tool_protocol,
-                "native_tool_calling_fallback": active_native_tool_mode == "native_tools_text_fallback",
+                "native_tool_calling_fallback": False,
                 "context_snapshot_ref": _extract_context_snapshot_ref(active_request),
             }
             payload = _with_context_snapshot_diagnostics(payload, active_request)
@@ -404,126 +404,28 @@ class StreamEngine:
         )
 
         if prepared.native_tool_mode == "native_tools_unavailable":
-            allow_fallback = self._allow_native_tool_text_fallback(context)
-            if allow_fallback and prepared.native_tool_schemas:
-                from .caller import LLMCaller
-
-                caller = LLMCaller(
-                    workspace=self.workspace,
-                    enable_cache=False,
-                    executor=self._get_executor(),
-                    emit_deprecation_warning=False,
-                )
-                fallback_request = caller._build_native_tool_fallback_request(
-                    prepared=prepared, profile=profile, mode="chat"
-                )
-                active_request = fallback_request
-                active_native_tool_mode = "native_tools_text_fallback"
-                active_tool_protocol = "none"
-                fallback_audit_metadata = _with_context_os_audit(
-                    _with_context_snapshot_diagnostics(
-                        _with_final_request_context_audit(
-                            {
-                                "stream": True,
-                                "fallback_request": True,
-                                "retry_decision": "native_tool_stream_text_fallback_request",
-                                "native_tool_calling_fallback": True,
-                                "native_tool_mode": active_native_tool_mode,
-                                "tool_protocol": active_tool_protocol,
-                                "context_snapshot_ref": _extract_context_snapshot_ref(fallback_request),
-                            },
-                            fallback_request,
-                        ),
-                        fallback_request,
-                    )
-                )
-                self._emit_call_retry(
-                    event_emitter=event_emitter,
-                    role=role_id,
-                    run_id=run_id,
-                    task_id=task_id,
-                    attempt=attempt,
-                    model=model,
-                    call_id=call_id,
-                    retry_decision="native_tool_stream_text_fallback_request",
-                    backoff_seconds=0.0,
-                    metadata=fallback_audit_metadata,
-                )
-                executor = self._get_executor()
-                try:
-                    async for chunk in executor.invoke_stream(fallback_request):
-                        stream_event_count += 1
-                        if first_event_latency_ms is None:
-                            first_event_latency_ms = (time.perf_counter() - start_time) * 1000
-                        normalized = normalize_stream_chunk(
-                            chunk, native_tool_mode="native_tools_text_fallback", tool_protocol="none"
-                        )
-                        event_type = normalized.event_type
-                        content = normalized.content
-                        metadata = dict(normalized.metadata)
-                        metadata.setdefault("stream_event_index", stream_event_count)
-                        metadata.setdefault("native_tool_fallback", True)
-                        metadata.setdefault("native_tool_calling_fallback", True)
-                        metadata.setdefault("native_tool_mode", active_native_tool_mode)
-                        metadata.setdefault("tool_protocol", active_tool_protocol)
-                        if event_type == "chunk" and content:
-                            total_content += content
-                            emitted_content += content
-                        if event_type == "tool_call":
-                            raw_tool_call_count += 1
-                            signature = tool_call_signature_from_normalized(normalized)
-                            emitted_tool_signatures.add(signature)
-                        if event_type == "complete":
-                            elapsed_ms = (time.perf_counter() - start_time) * 1000
-                            usage_from_metadata = _normalize_provider_usage(
-                                metadata.get("usage")
-                            ) or _normalize_provider_usage(metadata)
-                            if usage_from_metadata is not None:
-                                provider_usage = usage_from_metadata
-                                metadata.setdefault("usage", usage_from_metadata)
-                                metadata.setdefault("usage_source", "provider")
-                            metadata.update(_current_slo(elapsed_ms))
-                            metadata = _with_context_os_audit(
-                                _with_context_snapshot_diagnostics(
-                                    _with_final_request_context_audit(metadata, fallback_request),
-                                    fallback_request,
-                                )
-                            )
-                        yield {
-                            "type": event_type,
-                            "content": content,
-                            "metadata": metadata,
-                            "iteration": turn_round,
-                        }
-                        if event_type == "complete":
-                            fallback_stream_completed = True
-                            break
-                except (RuntimeError, ValueError):
-                    fallback_stream_completed = False
-
-            if not fallback_stream_completed:
-                elapsed_ms = (time.perf_counter() - start_time) * 1000
-                tool_error = build_native_tool_unavailable_error(profile)
-                self._emit_call_error(
-                    event_emitter=event_emitter,
-                    role=role_id,
-                    run_id=run_id,
-                    task_id=task_id,
-                    attempt=attempt,
-                    model=model,
-                    error_category="provider",
-                    error_message=tool_error,
-                    call_id=call_id,
-                    elapsed_ms=elapsed_ms,
-                    metadata=_build_stream_error_metadata(elapsed_ms=elapsed_ms),
-                )
-                yield {
-                    "type": "error",
-                    "error": tool_error,
-                    "metadata": _build_stream_error_metadata(elapsed_ms=elapsed_ms),
-                    "iteration": turn_round,
-                }
-                return
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            tool_error = build_native_tool_unavailable_error(profile)
+            self._emit_call_error(
+                event_emitter=event_emitter,
+                role=role_id,
+                run_id=run_id,
+                task_id=task_id,
+                attempt=attempt,
+                model=model,
+                error_category="provider",
+                error_message=tool_error,
+                call_id=call_id,
+                elapsed_ms=elapsed_ms,
+                metadata=_build_stream_error_metadata(elapsed_ms=elapsed_ms),
+            )
+            yield {
+                "type": "error",
+                "error": tool_error,
+                "metadata": _build_stream_error_metadata(elapsed_ms=elapsed_ms),
+                "iteration": turn_round,
+            }
+            return
 
         executor = self._get_executor()
 
@@ -812,7 +714,7 @@ class StreamEngine:
             "stream": True,
             "native_tool_mode": active_native_tool_mode,
             "tool_protocol": active_tool_protocol,
-            "native_tool_calling_fallback": active_native_tool_mode == "native_tools_text_fallback",
+            "native_tool_calling_fallback": False,
             "compression_applied": context_result.compression_applied if context_result else False,
             "turn_round": turn_round,
             "context_snapshot_ref": _extract_context_snapshot_ref(active_request),

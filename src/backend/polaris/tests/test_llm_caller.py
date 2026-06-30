@@ -20,7 +20,8 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from polaris.cells.roles.kernel.internal.events import LLMEventType, get_global_emitter
-from polaris.cells.roles.kernel.internal.llm_caller import LLMCaller, LLMResponse
+from polaris.cells.roles.kernel.internal.llm_caller import LLMResponse
+from polaris.cells.roles.kernel.internal.llm_caller.caller import LLMCaller
 from polaris.cells.roles.kernel.internal.llm_caller.error_handling import classify_error
 from polaris.cells.roles.kernel.internal.llm_caller.helpers import messages_to_input
 
@@ -407,7 +408,7 @@ class TestLLMCallerCall:
         assert result.metadata.get("native_tool_text_fallback_allowed") is False
         assert mock_executor_instance.invoke.await_count == 1
 
-    async def test_call_falls_back_when_native_tools_not_supported_and_fallback_explicitly_enabled(
+    async def test_call_does_not_text_fallback_when_native_tools_not_supported_even_if_enabled(
         self,
         caller,
         mock_executor_instance,
@@ -440,7 +441,7 @@ class TestLLMCallerCall:
         assert result.error == "Unknown field: tools"
         assert result.content == ""
         assert result.metadata.get("native_tool_calling_fallback") is False
-        assert result.metadata.get("native_tool_text_fallback_allowed") is True
+        assert result.metadata.get("native_tool_text_fallback_allowed") is False
         assert mock_executor_instance.invoke.await_count == 1
 
     async def test_call_director_uses_director_timeout_and_zero_platform_retry(

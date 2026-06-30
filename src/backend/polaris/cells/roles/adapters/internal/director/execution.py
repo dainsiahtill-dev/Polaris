@@ -202,16 +202,19 @@ class DirectorPatchExecutor:
         allowed_tool_names: set[str] | None = None,
         allow_patch_fallback: bool = True,
     ) -> list[dict[str, Any]]:
-        """Execute only non-native fallback formats that remain intentionally enabled.
+        """Reject legacy non-native fallback formats with audit evidence.
 
         Native provider tool calls are handled before this adapter path. Textual
         tool protocols such as ``[TOOL_CALL]`` and ``[WRITE_FILE]`` are no
         longer executable because they bypass the tool lifecycle receipt chain.
-        ``PATCH_FILE`` fallback remains governed by ``allow_patch_fallback`` and
-        is tracked separately in the legacy convergence ledger.
+        Markdown/PATCH_FILE patch fallbacks are also non-authoritative and must
+        not write files. Repair attempts must enter native tool execution or
+        the director.runtime repair kernel.
         """
         del allowed_tool_names  # Textual tool parsing is disabled in this path.
-        if _TEXTUAL_TOOL_PROTOCOL_PATTERN.search(str(response or "")):
+        del update_task_progress_fn  # Legacy patch execution is intentionally disabled.
+        response_text = str(response or "")
+        if _TEXTUAL_TOOL_PROTOCOL_PATTERN.search(response_text):
             return [
                 {
                     "tool": "text_tool_protocol",
@@ -223,59 +226,38 @@ class DirectorPatchExecutor:
                     "task_id": task_id,
                 }
             ]
-        if not allow_patch_fallback:
-            return []
-        return await self._execute_patch_file_format(response, task_id, update_task_progress_fn)
-
-    async def _execute_single_tool_call(
-        self,
-        call: Any,
-        task_id: str,
-        update_task_progress_fn: Any,
-    ) -> dict[str, Any]:
-        """执行单个解析后的工具调用"""
-        from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
-
-        tool_name = normalize_tool_name(call.name.lower())
-        args, args_error = self._normalize_tool_arguments(call.arguments, tool_name=tool_name)
-        if args_error:
-            return {"tool": tool_name, "success": False, "error": args_error}
-        update_task_progress_fn(
-            task_id,
-            "executing",
-            current_file=args.get("file", args.get("path", "")),
-        )
-        try:
-            result = self._tool_executor.execute_tool(tool_name, args, task_id=task_id)
-            return {"tool": tool_name, "success": result.get("ok", False), "result": result}
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            return {"tool": tool_name, "success": False, "error": str(exc)}
+        if looks_like_protocol_patch_response(response_text) or self._extract_markdown_file_blocks(response_text):
+            return [self._legacy_patch_protocol_disabled_result(task_id, allow_patch_fallback=allow_patch_fallback)]
+        return []
 
     @staticmethod
-    def _normalize_tool_arguments(
-        raw_args: Any,
+    def _legacy_patch_protocol_disabled_result(
+        task_id: str,
         *,
-        tool_name: str | None = None,
-    ) -> tuple[dict[str, Any], str | None]:
-        """归一化工具参数"""
-        if isinstance(raw_args, dict):
-            args = raw_args
-        elif isinstance(raw_args, list):
-            if len(raw_args) == 1 and isinstance(raw_args[0], dict):
-                args = raw_args[0]
-            else:
-                return {}, "Invalid tool arguments type: list"
-        else:
-            return {}, f"Invalid tool arguments type: {type(raw_args).__name__}"
-        canonical_tool = str(tool_name or "").strip()
-        if not canonical_tool:
-            return args, None
-        try:
-            from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments
-
-            return normalize_tool_arguments(canonical_tool, args), None
-        except (TypeError, ValueError) as exc:
-            return {}, f"Invalid tool arguments normalization: {exc}"
+        allow_patch_fallback: bool,
+    ) -> dict[str, Any]:
+        error_code = "legacy_patch_file_protocol_disabled"
+        return {
+            "tool": "patch_apply",
+            "tool_name": "patch_apply",
+            "success": False,
+            "ok": False,
+            "status": "blocked",
+            "error": error_code,
+            "failure_class": "patch_file_protocol_disabled",
+            "protocol_violation": error_code,
+            "task_id": task_id,
+            "writes_allowed": False,
+            "allow_patch_fallback_requested": bool(allow_patch_fallback),
+            "result": {
+                "ok": False,
+                "source_tool": "patch_apply",
+                "error": error_code,
+                "writes_allowed": False,
+                "authoritative_receipt": False,
+                "repair_path": "native_tools_or_director_runtime_repair_required",
+            },
+        }
 
     # -------------------------------------------------------------------------
     # PATCH_FILE Format Execution

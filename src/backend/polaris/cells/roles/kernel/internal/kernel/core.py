@@ -75,7 +75,7 @@ from polaris.cells.roles.kernel.internal.kernel.turn_execution import (
     execute_transaction_kernel_stream,
     execute_transaction_kernel_turn,
 )
-from polaris.cells.roles.kernel.internal.llm_caller import LLMCaller
+from polaris.cells.roles.kernel.internal.llm_caller.caller import LLMCaller
 from polaris.cells.roles.kernel.internal.metrics import get_metrics_collector
 from polaris.cells.roles.kernel.internal.output_parser import OutputParser, ToolCallResult
 from polaris.cells.roles.kernel.internal.prompt_builder import PromptBuilder

@@ -42,7 +42,6 @@ _EXPORT_TO_MODULE: dict[str, str] = {
     "ConversationHistory": "polaris.cells.roles.kernel.public.service",
     "ErrorCategory": "polaris.cells.roles.kernel.public.service",
     "LLMCache": "polaris.cells.roles.kernel.public.service",
-    "LLMCaller": "polaris.cells.roles.kernel.public.service",
     "LLMCallEvent": "polaris.cells.roles.kernel.public.service",
     "LLMEventEmitter": "polaris.cells.roles.kernel.public.service",
     "LLMEventType": "polaris.cells.roles.kernel.public.service",

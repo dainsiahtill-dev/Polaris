@@ -2,7 +2,7 @@
 
 This package provides LLM invocation capabilities with the following modules:
 
-- caller.py: Core LLMCaller class (deprecated, use LLMInvoker)
+- caller.py: Internal LLMCaller compatibility adapter (not a package export)
 - invoker.py: LLMInvoker service class (recommended)
 - response_types.py: LLMResponse, StructuredLLMResponse, NormalizedStreamEvent
 - provider_formatter.py: ProviderFormatter protocol and implementations
@@ -15,17 +15,14 @@ Migration Notice (2026-03-31):
     have been removed. Their functionality has been consolidated into the
     LLMInvoker service class in invoker.py.
 
-    LLMCaller is now a facade over LLMInvoker and is maintained for backward
-    compatibility. New code should use LLMInvoker directly.
+    LLMCaller is an internal compatibility adapter used only while request
+    preparation logic is extracted. New code must use LLMInvoker directly.
 """
 
 import warnings
 from typing import Any
 
 from ..events import emit_llm_event
-
-# Legacy facade (deprecated, maintained for backward compatibility)
-from .caller import LLMCaller
 
 # Core service class (recommended for new code)
 from .decision_caller import DecisionCaller
@@ -68,7 +65,6 @@ __all__ = [
     "AnnotatedProviderFormatter",
     "DecisionCaller",
     "FinalizationCaller",
-    "LLMCaller",
     "LLMInvoker",
     "LLMResponse",
     "NativeProviderFormatter",

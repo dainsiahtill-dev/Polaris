@@ -189,61 +189,6 @@ class TestValidateGeneratedOutput:
 
 
 # ---------------------------------------------------------------------------
-# Tool Argument Normalization
-# ---------------------------------------------------------------------------
-
-
-class TestNormalizeToolArguments:
-    """_normalize_tool_arguments is a pure static function."""
-
-    def test_dict_passthrough(self) -> None:
-        args = {"file": "test.py", "content": "print(1)"}
-        result, error = DirectorPatchExecutor._normalize_tool_arguments(args)
-        assert result == args
-        assert error is None
-
-    def test_list_with_single_dict(self) -> None:
-        args = [{"file": "test.py"}]
-        result, error = DirectorPatchExecutor._normalize_tool_arguments(args)
-        assert result == {"file": "test.py"}
-        assert error is None
-
-    def test_applies_tool_arg_aliases_when_tool_name_provided(self) -> None:
-        result, error = DirectorPatchExecutor._normalize_tool_arguments(
-            {"filename": "src/app.py", "text": "print('ok')\n"},
-            tool_name="write_file",
-        )
-
-        assert result == {"file": "src/app.py", "content": "print('ok')\n"}
-        assert error is None
-
-    def test_list_multiple_items_error(self) -> None:
-        args = [{"file": "a.py"}, {"file": "b.py"}]
-        result, error = DirectorPatchExecutor._normalize_tool_arguments(args)
-        assert result == {}
-        assert error is not None
-        assert "list" in error.lower()
-
-    def test_string_error(self) -> None:
-        result, error = DirectorPatchExecutor._normalize_tool_arguments("not a dict")
-        assert result == {}
-        assert error is not None
-        assert "str" in error.lower()
-
-    def test_none_error(self) -> None:
-        result, error = DirectorPatchExecutor._normalize_tool_arguments(None)
-        assert result == {}
-        assert error is not None
-        assert "NoneType" in error
-
-    def test_int_error(self) -> None:
-        result, error = DirectorPatchExecutor._normalize_tool_arguments(42)
-        assert result == {}
-        assert error is not None
-        assert "int" in error.lower()
-
-
-# ---------------------------------------------------------------------------
 # Markdown File Block Extraction
 # ---------------------------------------------------------------------------
 

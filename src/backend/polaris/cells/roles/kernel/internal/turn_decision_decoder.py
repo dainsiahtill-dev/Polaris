@@ -30,10 +30,6 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     _infer_effect_type as global_infer_effect_type,
     _infer_execution_mode as global_infer_execution_mode,
 )
-from polaris.kernelone.llm.toolkit.parsers.textual_tool_recovery import (
-    has_textual_tool_calls,
-    recover_textual_tool_calls,
-)
 from polaris.kernelone.llm.toolkit.tool_normalization import (
     normalize_tool_arguments,
     normalize_tool_name,
@@ -54,7 +50,6 @@ class DecodeConfig:
 
     domain: Literal["document", "code"] = "document"
     max_tools_per_turn: int = 10
-    enable_textual_fallback: bool = False
 
 
 class TurnDecisionDecoder:
@@ -231,55 +226,7 @@ class TurnDecisionDecoder:
                 )
                 continue
 
-        should_attempt_textual_fallback = (
-            self.config.enable_textual_fallback
-            and not tools
-            and (not response.native_tool_calls or bool(failures))
-            and has_textual_tool_calls(response.content)
-        )
-        if should_attempt_textual_fallback:
-            for recovered in recover_textual_tool_calls(response.content):
-                try:
-                    tool = self._parse_recovered_textual_tool(recovered)
-                    call_id = str(tool["call_id"]).strip()
-                    if call_id and call_id in seen_call_ids:
-                        continue
-                    if call_id:
-                        seen_call_ids.add(call_id)
-                    tools.append(tool)
-                except (RuntimeError, ValueError, TurnDecisionDecodeError) as exc:
-                    tool_hint = str(recovered.get("tool") or "").strip()
-                    failures.append(
-                        {
-                            "tool": tool_hint,
-                            "error": f"{type(exc).__name__}: {exc}",
-                        }
-                    )
-                    logger.warning(
-                        "textual_tool_call_decode_failed: tool=%s error=%s",
-                        tool_hint or "<unknown>",
-                        exc,
-                    )
-
         return tools, failures
-
-    def _parse_recovered_textual_tool(self, recovered: dict[str, Any]) -> ToolInvocation:
-        tool_name = str(recovered.get("tool") or "").strip()
-        if not tool_name:
-            raise TurnDecisionDecodeError("textual tool payload missing tool name")
-        arguments = recovered.get("arguments") or {}
-        if not isinstance(arguments, dict):
-            raise TurnDecisionDecodeError("textual tool payload arguments must be object")
-
-        canonical_tool_name = normalize_tool_name(tool_name)
-        normalized_arguments = normalize_tool_arguments(canonical_tool_name, arguments)
-        return ToolInvocation(
-            call_id=ToolCallId(str(recovered.get("call_id") or self._generate_id())),
-            tool_name=canonical_tool_name,
-            arguments=normalized_arguments,
-            effect_type=self._infer_effect_type(canonical_tool_name),
-            execution_mode=self._infer_execution_mode(canonical_tool_name),
-        )
 
     @staticmethod
     def _native_tool_name_hint(native: dict[str, Any]) -> str:

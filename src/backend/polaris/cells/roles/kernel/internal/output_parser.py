@@ -2,7 +2,7 @@
 
 负责解析LLM输出，包括：
 - 思考过程提取
-- 工具调用解析
+- Native 工具调用解析
 - JSON内容提取
 - SEARCH/REPLACE块提取
 
@@ -20,10 +20,6 @@ from typing import TYPE_CHECKING, Any
 
 # Import canonical ToolCall for P0-002 unification
 from polaris.kernelone.llm.contracts.tool import ToolCall
-from polaris.kernelone.llm.toolkit.parsers.textual_tool_recovery import (
-    has_textual_tool_calls,
-    recover_textual_tool_calls,
-)
 
 # Import canonical dangerous pattern detection
 from polaris.kernelone.security.dangerous_patterns import (
@@ -99,6 +95,7 @@ class ToolCallResult:
 
     tool: str
     args: dict[str, Any] = field(default_factory=dict)
+    source: str = "kernel_parser"
     _canonical: ToolCall | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
@@ -119,7 +116,7 @@ class ToolCallResult:
             id=existing.id if existing is not None else f"kernel_{self.tool}_{uuid.uuid4().hex[:8]}",
             name=self.tool,
             arguments=dict(self.args),
-            source=existing.source if existing is not None else "kernel_parser",
+            source=existing.source if existing is not None else str(self.source or "kernel_parser"),
             raw=existing.raw if existing is not None else "",
             parse_error=existing.parse_error if existing is not None else None,
         )
@@ -141,6 +138,7 @@ class ToolCallResult:
         result = cls(
             tool=canonical.name,
             args=dict(canonical.arguments),
+            source=canonical.source,
             _canonical=canonical,
         )
         return result
@@ -178,9 +176,10 @@ class OutputParser:
     ) -> list[ToolCallResult]:
         """Parse executable tool calls for role-kernel execution.
 
-        Parsing order (fallback chain):
-        1. Native tool calling protocol (OpenAI/Anthropic format)
-        2. JSON tool call text (fallback for models returning JSON as text)
+        Runtime execution is native-tool-only. Textual/JSON fallback parsing is
+        intentionally excluded here so assistant prose cannot bypass provider
+        tool-call accounting, ToolSpecRegistry normalization, and tool lifecycle
+        receipts.
 
         Args:
             content: Raw text content from LLM output
@@ -195,7 +194,6 @@ class OutputParser:
         seen: set[tuple[str, str, str, str]] = set()
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
 
-        # Layer 1: Try native tool calling protocol
         native_calls = self._parse_native_tool_calls(
             native_tool_calls=native_tool_calls,
             native_provider=native_provider,
@@ -208,38 +206,8 @@ class OutputParser:
                 tool_name=call.tool,
                 arguments=call.args,
                 allowed=allowed,
+                source=call.to_canonical().source,
             )
-
-        # Layer 2: Fallback to JSON tool call parsing
-        # This handles cases where LLM returns tool calls as raw JSON text
-        # instead of using native tool calling protocols
-        if not native_calls and content and not self._has_explicit_patch_markers(content):
-            json_calls = self._parse_json_tool_calls(
-                content=content,
-                allowed_tool_names=allowed_tool_names,
-            )
-            for call in json_calls:
-                self._append_unique_tool_call(
-                    normalized,
-                    seen,
-                    tool_name=call.tool,
-                    arguments=call.args,
-                    allowed=allowed,
-                )
-
-        # Layer 3: textual tool-call recovery for models/servers without native
-        # function-calling (e.g. Gemma's `<|tool_call>call:NAME{...}` returned as
-        # plain content). Gated on no native calls, no JSON calls, and a textual
-        # marker present — native-FC providers never reach here.
-        if not native_calls and not normalized and content and has_textual_tool_calls(content):
-            for recovered in recover_textual_tool_calls(content, allowed_tool_names):
-                self._append_unique_tool_call(
-                    normalized,
-                    seen,
-                    tool_name=str(recovered.get("tool") or ""),
-                    arguments=dict(recovered.get("arguments") or {}),
-                    allowed=allowed,
-                )
 
         return normalized
 
@@ -319,6 +287,7 @@ class OutputParser:
         tool_name: str,
         arguments: dict[str, Any],
         allowed: set[str],
+        source: str = "kernel_parser",
     ) -> None:
         name = str(tool_name or "").strip().lower()
         if not name:
@@ -336,7 +305,7 @@ class OutputParser:
         if signature in seen:
             return
         seen.add(signature)
-        normalized.append(ToolCallResult(tool=name, args=arguments))
+        normalized.append(ToolCallResult(tool=name, args=arguments, source=source))
 
     def _parse_native_tool_calls(
         self,
@@ -365,7 +334,7 @@ class OutputParser:
                     continue
                 if not isinstance(arguments, dict):
                     continue
-                normalized.append(ToolCallResult(tool=name, args=arguments))
+                normalized.append(ToolCallResult(tool=name, args=arguments, source="native_tool_call"))
         except ImportError as e:
             logger.warning(
                 "LLMToolkitParserAdapter not available, native tool calls will not be parsed: %s",
@@ -380,152 +349,6 @@ class OutputParser:
             )
             logger.debug("Native tool-call parsing traceback:", exc_info=True)
         return normalized
-
-    def _parse_json_tool_calls(
-        self,
-        content: str,
-        *,
-        allowed_tool_names: Iterable[str] | None = None,
-    ) -> list[ToolCallResult]:
-        """Parse tool calls from JSON text format.
-
-        This is a fallback for cases where LLM returns tool calls as raw JSON
-        text instead of using native tool calling protocols.
-
-        Args:
-            content: Text content that may contain JSON tool calls
-            allowed_tool_names: Optional whitelist of allowed tool names
-
-        Returns:
-            List of parsed tool calls from JSON text
-        """
-        from polaris.kernelone.llm.toolkit.parsers.json_based import JSONToolParser
-
-        normalized: list[ToolCallResult] = []
-        try:
-            parsed_calls = JSONToolParser.parse(
-                str(content or ""),
-                allowed_tool_names=allowed_tool_names,
-            )
-            for call in parsed_calls:
-                name = str(getattr(call, "name", "")).strip().lower()
-                arguments = getattr(call, "arguments", {})
-                if not name or not re.match(r"^[a-z][a-z0-9_]{0,63}$", name):
-                    continue
-                if not isinstance(arguments, dict):
-                    continue
-                normalized.append(ToolCallResult(tool=name, args=arguments))
-        except (RuntimeError, ValueError) as e:
-            logger.debug(
-                "JSON tool-call parsing failed: %s",
-                e,
-            )
-        return normalized
-
-    @staticmethod
-    def _has_explicit_patch_markers(content: str) -> bool:
-        text = str(content or "")
-        lowered = text.lower()
-        if not lowered.strip():
-            return False
-
-        if "patch_file" in lowered:
-            return True
-        if "delete_file" in lowered:
-            return True
-        if "<<<<<<< search" in lowered and ">>>>>>> replace" in lowered:
-            return True
-        if re.search(r"(?:^|\n)\s*search:?\s*\n", text, flags=re.IGNORECASE) and re.search(
-            r"\n\s*replace:?\s*\n", text, flags=re.IGNORECASE
-        ):
-            return True
-        # FILE/CREATE 协议要求出现 END FILE/END CREATE，避免误匹配工具参数 `file: ...`
-        if re.search(r"(?:^|\n)\s*(?:file|create)\s*[:\s]+\S+", text, flags=re.IGNORECASE) and re.search(
-            r"\n\s*end\s+(?:file|create)\s*(?:\n|$)", text, flags=re.IGNORECASE
-        ):
-            return True
-        if re.search(r"(?:^|\n)\s*```\s*file\s*:\s*\S+", text, flags=re.IGNORECASE):
-            return True
-        # 兼容无 END 的简写，但必须以协议头开头，避免匹配到 [read_file] 内部参数行。
-        return bool(re.match(r"^\s*(?:patch_file|file|create|delete(?:_file)?)\b", text, flags=re.IGNORECASE))
-
-    @staticmethod
-    def _is_safe_relative_path(path: str) -> bool:
-        token = str(path or "").strip().replace("\\", "/")
-        if not token:
-            return False
-        if token.startswith("/") or token.startswith("\\"):
-            return False
-        if re.match(r"^[a-zA-Z]:[/\\]", token):
-            return False
-        if "\x00" in token:
-            return False
-        parts = [part for part in token.split("/") if part]
-        return not any(part in {".", ".."} for part in parts)
-
-    def _parse_patch_file_format(
-        self,
-        content: str,
-        *,
-        allowed_tool_names: Iterable[str] | None = None,
-    ) -> list[ToolCallResult]:
-        """解析 PATCH_FILE 格式为工具调用
-
-        委托统一解析器（application.unified_apply）处理 PATCH_FILE / SEARCH-REPLACE
-        的所有兼容方言，避免此处与应用层解析规则漂移。
-        """
-        results: list[ToolCallResult] = []
-        allowed = _normalize_allowed_tool_names(allowed_tool_names)
-        try:
-            from polaris.cells.director.execution.public.service import (
-                EditType,
-                parse_full_file_blocks,
-                parse_search_replace_blocks,
-            )
-        except (RuntimeError, ValueError) as exc:
-            logger.debug(f"无法加载 unified_apply 解析器: {exc}")
-            return results
-
-        operations = parse_search_replace_blocks(content)
-        operations.extend(parse_full_file_blocks(content))
-
-        for operation in operations:
-            path = str(getattr(operation, "path", "") or "").strip()
-            if not self._is_safe_relative_path(path):
-                continue
-
-            edit_type = getattr(operation, "edit_type", None)
-            search = str(getattr(operation, "search", "") or "")
-            replace = str(getattr(operation, "replace", "") or "")
-
-            if edit_type == EditType.SEARCH_REPLACE:
-                if search.strip():
-                    tool_name = "edit_file"
-                    args = {
-                        "file": path,
-                        "search": search,
-                        "replace": replace,
-                    }
-                else:
-                    tool_name = "write_file"
-                    args = {
-                        "file": path,
-                        "content": replace,
-                    }
-            elif edit_type in {EditType.FULL_FILE, EditType.CREATE}:
-                tool_name = "write_file"
-                args = {
-                    "file": path,
-                    "content": replace,
-                }
-            else:
-                continue
-
-            if allowed and tool_name not in allowed:
-                continue
-            results.append(ToolCallResult(tool=tool_name, args=args))
-
-        return results
 
     def parse_structured_output(
         self, content: str, profile: RoleProfile
@@ -633,105 +456,6 @@ class OutputParser:
             return [{"search": s.strip(), "replace": r.strip()} for s, r in matches]
 
         return None
-
-    def extract_edit_blocks(
-        self,
-        content: str,
-        *,
-        allowed_tool_names: Iterable[str] | None = None,
-    ) -> list[ToolCallResult]:
-        """提取 SEARCH/REPLACE 编辑块并转换为工具调用。
-
-        从 LLM 输出中提取 edit_blocks 格式的编辑块，并转换为 ToolCallResult 列表。
-        支持从自然语言中连续提取多个编辑块。
-
-        Args:
-            content: 包含编辑块的文本
-            allowed_tool_names: 可选的工具白名单
-
-        Returns:
-            ToolCallResult 列表
-        """
-        from polaris.kernelone.editing.editblock_engine import parse_edit_blocks
-
-        results: list[ToolCallResult] = []
-        allowed = _normalize_allowed_tool_names(allowed_tool_names)
-
-        if not content or not content.strip():
-            return results
-
-        try:
-            blocks = parse_edit_blocks(content)
-        except (ValueError, TypeError, RuntimeError) as e:
-            logger.debug("Failed to parse edit blocks: %s", e)
-            return results
-
-        if not blocks:
-            return results
-
-        for block in blocks:
-            if not block.filepath:
-                continue
-
-            # 安全检查
-            if not self._is_safe_relative_path(block.filepath):
-                logger.warning("Unsafe path in edit block: %s", block.filepath)
-                continue
-
-            tool_name = "edit_blocks"
-            if allowed and tool_name not in allowed:
-                continue
-
-            args = {
-                "file": block.filepath,
-                "blocks": f"<<<< SEARCH:{block.filepath}\n{block.search_text}====\n{block.replace_text}>>>> REPLACE",
-            }
-
-            results.append(ToolCallResult(tool=tool_name, args=args))
-
-        return results
-
-    def parse_with_edit_blocks(
-        self,
-        content: str,
-        *,
-        allowed_tool_names: Iterable[str] | None = None,
-        native_tool_calls: list[dict[str, Any]] | None = None,
-        native_provider: str = "auto",
-    ) -> list[ToolCallResult]:
-        """综合解析工具调用，包括 edit_blocks。
-
-        解析顺序（回退链）：
-        1. Native tool calling protocol (OpenAI/Anthropic format)
-        2. JSON tool call text
-        3. edit_blocks (SEARCH/REPLACE format)
-
-        Args:
-            content: Raw text content from LLM output
-            allowed_tool_names: Optional whitelist of allowed tool names
-            native_tool_calls: Native tool calls from provider
-            native_provider: Provider hint for parsing
-
-        Returns:
-            List of parsed tool calls
-        """
-        # 首先尝试标准解析
-        results = self.parse_execution_tool_calls(
-            content,
-            allowed_tool_names=allowed_tool_names,
-            native_tool_calls=native_tool_calls,
-            native_provider=native_provider,
-        )
-
-        if results:
-            return results
-
-        # 尝试 edit_blocks 解析
-        block_results = self.extract_edit_blocks(content, allowed_tool_names=allowed_tool_names)
-        if block_results:
-            return block_results
-
-        return []
 
     def check_security(self, content: str) -> tuple[bool, list[str]]:
         """安全检查

@@ -156,7 +156,7 @@ def _assert_final_request_audit(metadata: dict[str, Any]) -> None:
 
 
 @pytest.mark.asyncio
-async def test_native_tools_unavailable_text_fallback_success(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_native_tools_unavailable_text_fallback_is_retired(monkeypatch: pytest.MonkeyPatch) -> None:
     rec = _EventRecorder()
     rec.install(monkeypatch)
     profile = _profile()
@@ -166,7 +166,7 @@ async def test_native_tools_unavailable_text_fallback_success(monkeypatch: pytes
         native_tool_schemas=[{"name": "write_file"}],
     )
     _patch_prepare(monkeypatch, prepared)
-    executor = _ScriptedExecutor([AIResponse(ok=True, output="fallback content", raw={})])
+    executor = _ScriptedExecutor([])
     invoker = LLMInvoker(workspace="ws", enable_cache=False, executor=executor)
 
     resp = await invoker.call(
@@ -176,19 +176,16 @@ async def test_native_tools_unavailable_text_fallback_success(monkeypatch: pytes
         run_id="run1",
     )
 
-    assert resp.error is None
-    assert resp.content == "fallback content"
-    assert resp.metadata["native_tool_mode"] == "native_tools_text_fallback"
-    assert resp.metadata["native_tool_calling_fallback"] is True
-    assert resp.metadata["model"] == "model-x"
+    assert resp.error is not None
+    assert resp.content == ""
+    assert resp.metadata["native_tool_mode"] == "native_tools_unavailable"
     assert resp.metadata["run_id"] == "run1"
     assert resp.metadata["workspace"] == "ws"
-    assert "elapsed_ms" in resp.metadata
     _assert_final_request_audit(resp.metadata)
-    assert rec.error == []
-    assert len(rec.end) == 1
-    assert rec.end[0]["metadata"]["native_tool_calling_fallback"] is True
-    _assert_final_request_audit(rec.end[0]["metadata"])
+    assert len(executor.requests) == 0
+    assert len(rec.error) == 1
+    assert rec.end == []
+    _assert_final_request_audit(rec.error[0]["metadata"])
     # Only one start event.
     assert len(rec.start) == 1
 
@@ -499,7 +496,7 @@ async def test_call_end_event_surfaces_context_snapshot_degraded(monkeypatch: py
 
 
 @pytest.mark.asyncio
-async def test_native_tool_text_fallback_rung(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_native_tool_text_fallback_rung_is_retired(monkeypatch: pytest.MonkeyPatch) -> None:
     rec = _EventRecorder()
     rec.install(monkeypatch)
     profile = _profile()
@@ -520,12 +517,12 @@ async def test_native_tool_text_fallback_rung(monkeypatch: pytest.MonkeyPatch) -
         run_id="run5",
     )
 
-    assert resp.error is None
-    assert resp.content == "text-fallback-ok"
-    assert resp.metadata["native_tool_calls_count"] == 0
-    assert len(executor.requests) == 2
-    assert len(rec.end) == 1
-    assert rec.end[0]["metadata"]["source"] == "llm"
+    assert resp.error is not None
+    assert resp.content == ""
+    assert len(executor.requests) == 1
+    assert rec.end == []
+    assert len(rec.error) == 1
+    _assert_final_request_audit(resp.metadata)
 
 
 @pytest.mark.asyncio

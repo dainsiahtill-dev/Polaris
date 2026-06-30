@@ -7,7 +7,7 @@ def _to_payload(calls):
     return [(call.tool, dict(call.args)) for call in calls]
 
 
-def test_parse_tool_calls_supports_patch_file_search_replace() -> None:
+def test_parse_tool_calls_ignores_patch_file_search_replace_text() -> None:
     parser = OutputParser()
     content = (
         "PATCH_FILE: src/role_agent_service.py\n"
@@ -25,18 +25,10 @@ def test_parse_tool_calls_supports_patch_file_search_replace() -> None:
         content,
         allowed_tool_names=["edit_file", "write_file"],
     )
-    payload = _to_payload(calls)
-    assert (
-        "edit_file",
-        {
-            "file": "src/role_agent_service.py",
-            "search": "def old():\n    pass",
-            "replace": "def old():\n    return 1",
-        },
-    ) in payload
+    assert calls == []
 
 
-def test_parse_tool_calls_converts_empty_search_to_write_file() -> None:
+def test_parse_tool_calls_ignores_empty_search_patch_text() -> None:
     parser = OutputParser()
     content = (
         "PATCH_FILE: src/new_module.py\n"
@@ -52,8 +44,7 @@ def test_parse_tool_calls_converts_empty_search_to_write_file() -> None:
         content,
         allowed_tool_names=["write_file"],
     )
-    payload = _to_payload(calls)
-    assert payload == [("write_file", {"file": "src/new_module.py", "content": "print('hello')"})]
+    assert calls == []
 
 
 def test_parse_tool_calls_rejects_unsafe_patch_path() -> None:
@@ -140,14 +131,10 @@ def test_parse_tool_calls_does_not_misparse_read_file_tags_as_file_protocol() ->
         content,
         allowed_tool_names=["read_file", "write_file", "edit_file"],
     )
-    payload = _to_payload(calls)
-    assert payload == [
-        ("read_file", {"file": "src/expense_tracker/runtime_config.py"}),
-        ("read_file", {"file": "tests/test_expense_tracker.py"}),
-    ]
+    assert calls == []
 
 
-def test_parse_tool_calls_still_supports_file_protocol_with_end_file_markers() -> None:
+def test_parse_tool_calls_ignores_file_protocol_with_end_file_markers() -> None:
     parser = OutputParser()
     content = 'FILE: src/expense_tracker/runtime_config.py\nAPP_NAME = "expense-tracker"\nEND FILE\n'
 
@@ -155,16 +142,7 @@ def test_parse_tool_calls_still_supports_file_protocol_with_end_file_markers() -
         content,
         allowed_tool_names=["write_file"],
     )
-    payload = _to_payload(calls)
-    assert payload == [
-        (
-            "write_file",
-            {
-                "file": "src/expense_tracker/runtime_config.py",
-                "content": 'APP_NAME = "expense-tracker"',
-            },
-        )
-    ]
+    assert calls == []
 
 
 def test_extract_json_supports_single_quote_fence_with_json_hint() -> None:
