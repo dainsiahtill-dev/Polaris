@@ -34,7 +34,7 @@ import sys
 from pathlib import Path
 
 # ─── Early env-var normalization (must run before any polaris.kernelone import)
-from polaris._env_compat import normalize_env_prefix
+from polaris.env_prefix_normalization import normalize_env_prefix
 
 normalize_env_prefix()
 # ────────────────────────────────────────────────────────────────────────────

@@ -14,8 +14,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Canonical env var names. Legacy POLARIS_* names are normalized at process
-# startup by polaris._env_compat before kernelone modules are imported.
+# Canonical env var names. Deprecated POLARIS_* names are normalized at process
+# startup by polaris.env_prefix_normalization before kernelone modules are imported.
 CONTEXT_OS_ENABLED_ENV = "KERNELONE_CONTEXT_OS_ENABLED"
 COGNITIVE_RUNTIME_MODE_ENV = "KERNELONE_COGNITIVE_RUNTIME_MODE"
 

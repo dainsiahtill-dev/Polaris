@@ -5,14 +5,14 @@
 # anti-corruption layer is active for CLI entry points, server startup, and
 # test collection alike.
 try:
-    from polaris._env_compat import normalize_env_prefix
+    from polaris.env_prefix_normalization import normalize_env_prefix
 
     normalize_env_prefix()
 except ImportError:
-    # Compat module missing — acceptable, kernel will see unset env vars.
+    # Env-prefix normalization module missing; kernel will see unset env vars.
     pass
 except Exception as exc:  # noqa: BLE001
     # Unexpected error during normalization — log but don't block import.
     import logging
 
-    logging.getLogger(__name__).warning("env compat normalization failed: %s", exc)
+    logging.getLogger(__name__).warning("env prefix normalization failed: %s", exc)

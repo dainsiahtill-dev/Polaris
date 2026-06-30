@@ -136,7 +136,7 @@ class TestCognitiveRuntimeFeatureFlag:
         assert resolve_cognitive_runtime_mode() is CognitiveRuntimeMode.OFF
 
     def test_legacy_polaris_env_is_normalized_at_boundary(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from polaris._env_compat import normalize_env_prefix
+        from polaris.env_prefix_normalization import normalize_env_prefix
 
         previous_canonical = os.environ.pop(COGNITIVE_RUNTIME_MODE_ENV, None)
         monkeypatch.setenv("POLARIS_COGNITIVE_RUNTIME_MODE", "off")
