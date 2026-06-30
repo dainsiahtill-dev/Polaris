@@ -14,7 +14,7 @@ from polaris.kernelone.role.loaders import (
     get_profession_loader,
 )
 from polaris.kernelone.role.routing.cache import RoutingCache
-from polaris.kernelone.role.routing.compatibility import CompatibilityEngine, ConflictResolver
+from polaris.kernelone.role.routing.constraints import ConflictResolver, RoutingConstraintEngine
 from polaris.kernelone.role.routing.context import RoutingContext
 from polaris.kernelone.role.routing.preference import PreferenceLearner
 from polaris.kernelone.role.routing.result import (
@@ -60,7 +60,7 @@ class RoleRoutingEngine:
         # Initialize components
         self._rule_loader = RoutingRuleLoader()
         self._rule_matcher = RuleMatcher(self._rule_loader)
-        self._compatibility = CompatibilityEngine(self._persona_loader, self._profession_loader)
+        self._constraints = RoutingConstraintEngine(self._persona_loader, self._profession_loader)
         self._conflict_resolver = ConflictResolver(self._persona_loader, self._profession_loader)
         self._scoring = ScoringEngine()
         self._cache = RoutingCache()
@@ -108,9 +108,7 @@ class RoleRoutingEngine:
 
         # Step 5: Compatibility filtering
         candidates = [
-            c
-            for c in candidates
-            if self._compatibility.is_compatible(c.anchor_id, c.profession_id, c.persona_id, context)
+            c for c in candidates if self._constraints.is_allowed(c.anchor_id, c.profession_id, c.persona_id, context)
         ]
 
         if not candidates:
@@ -179,9 +177,7 @@ class RoleRoutingEngine:
 
         candidates = self._generate_candidates(matched_rules, context)
         candidates = [
-            c
-            for c in candidates
-            if self._compatibility.is_compatible(c.anchor_id, c.profession_id, c.persona_id, context)
+            c for c in candidates if self._constraints.is_allowed(c.anchor_id, c.profession_id, c.persona_id, context)
         ]
 
         if not candidates:

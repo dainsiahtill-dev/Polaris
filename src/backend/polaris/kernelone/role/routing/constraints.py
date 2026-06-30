@@ -1,4 +1,4 @@
-"""Compatibility Engine and Conflict Resolver."""
+"""Routing constraint checks and manual-vs-inferred conflict resolution."""
 
 from __future__ import annotations
 
@@ -16,11 +16,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class CompatibilityEngine:
-    """Compatibility check engine.
-
-    Checks if Anchor + Profession + Persona triple is compatible.
-    """
+class RoutingConstraintEngine:
+    """Checks whether an Anchor + Profession + Persona triple is allowed."""
 
     def __init__(
         self,
@@ -30,44 +27,43 @@ class CompatibilityEngine:
         self._persona_loader = persona_loader
         self._profession_loader = profession_loader
 
-    def is_compatible(
+    def is_allowed(
         self,
         anchor_id: str,
         profession_id: str,
         persona_id: str,
         context: RoutingContext,
     ) -> bool:
-        """Check if triple is compatible."""
+        """Check whether the requested routing triple is allowed."""
         profession = self._profession_loader.load(profession_id)
         persona = self._persona_loader.load(persona_id)
 
         if not profession or not persona:
-            return True  # Fallback handling
+            return True
 
-        # Check profession vs persona compatibility
         if (
             hasattr(profession, "routing")
             and hasattr(profession.routing, "excludes_personas")
             and persona_id in profession.routing.excludes_personas
         ):
-            logger.debug(f"Persona {persona_id} excluded by profession {profession_id}")
+            logger.debug("Persona %s excluded by profession %s", persona_id, profession_id)
             return False
 
-        # Check persona excludes_domains
         if hasattr(persona, "routing") and hasattr(persona.routing, "excludes_domains"):
             domain = context.domain
             if domain in persona.routing.excludes_domains:
-                logger.debug(f"Domain {domain} excluded by persona {persona_id}")
+                logger.debug("Domain %s excluded by persona %s", domain, persona_id)
                 return False
 
         return True
 
-    def get_compatible_set(
+    def get_allowed_set(
         self,
         profession_id: str,
         context: RoutingContext,
     ) -> tuple[list[str], list[str]]:
-        """Get compatible anchor and persona lists."""
+        """Get allowed anchor and persona lists for a profession."""
+        del context
         profession = self._profession_loader.load(profession_id)
 
         if not profession:
@@ -76,7 +72,6 @@ class CompatibilityEngine:
         anchors: list[str] = []
         personas: list[str] = []
 
-        # Get from profession config
         if hasattr(profession, "routing"):
             routing = profession.routing
             if hasattr(routing, "compatible_anchors"):
@@ -88,11 +83,7 @@ class CompatibilityEngine:
 
 
 class ConflictResolver:
-    """MIXED mode conflict resolver (v1.1).
-
-    Resolves conflicts between user-specified and system-inferred routing.
-    Core principle: Professional > Entertainment (Professional always wins).
-    """
+    """Resolve conflicts between user-specified and system-inferred routing."""
 
     def __init__(
         self,
@@ -108,13 +99,7 @@ class ConflictResolver:
         inferred: RoutingInference,
         context: RoutingContext,
     ) -> ResolvedTriple:
-        """Resolve conflict and return final triple.
-
-        Args:
-            manual: User-specified routing (can be None)
-            inferred: System-inferred routing result
-            context: Routing context
-        """
+        """Resolve manual-vs-inferred conflict and return final routing triple."""
         if manual is None:
             return ResolvedTriple(
                 anchor_id=inferred.anchor_id,
@@ -124,30 +109,26 @@ class ConflictResolver:
                 warnings=[],
             )
 
-        # Check persona vs profession mutual exclusion
         persona_conflict = False
         if manual.persona_id and manual.profession_id:
             persona_conflict = self._check_persona_profession_conflict(manual.persona_id, manual.profession_id)
         elif manual.persona_id:
-            # Only check if persona conflicts with inferred profession
             persona_conflict = self._check_persona_profession_conflict(manual.persona_id, inferred.profession_id)
 
         if persona_conflict:
-            # Strategy: Professional always beats entertainment
             fallback_persona = self._get_fallback_persona(manual.persona_id or "unknown", context)
 
             return ResolvedTriple(
                 anchor_id=manual.anchor_id or inferred.anchor_id,
-                profession_id=inferred.profession_id,  # Keep professional
+                profession_id=inferred.profession_id,
                 persona_id=fallback_persona,
                 resolution="persona_relaxed",
                 warnings=[
                     f"Persona '{manual.persona_id}' incompatible with profession '{inferred.profession_id}', "
-                    f"switched to compatible Persona '{fallback_persona}'"
+                    f"switched to allowed Persona '{fallback_persona}'"
                 ],
             )
 
-        # No conflict, merge
         return ResolvedTriple(
             anchor_id=manual.anchor_id or inferred.anchor_id,
             profession_id=manual.profession_id or inferred.profession_id,
@@ -164,7 +145,6 @@ class ConflictResolver:
         if not persona or not profession:
             return False
 
-        # Check persona excludes_domains
         if (
             hasattr(persona, "routing")
             and hasattr(persona.routing, "excludes_domains")
@@ -173,7 +153,6 @@ class ConflictResolver:
         ):
             return True
 
-        # Check profession excludes_personas
         return (
             hasattr(profession, "routing")
             and hasattr(profession.routing, "excludes_personas")
@@ -181,10 +160,6 @@ class ConflictResolver:
         )
 
     def _get_fallback_persona(self, original_persona_id: str, context: RoutingContext) -> str:
-        """Get compatible fallback persona.
-
-        Strategy: Keep similar style but compatible with current profession.
-        TODO: Implement style_tags-based similarity matching.
-        """
-        # Current implementation: return default persona
+        """Get an allowed fallback persona for the current routing context."""
+        del original_persona_id, context
         return "gongbu_shilang"
