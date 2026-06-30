@@ -7,8 +7,8 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from polaris.cells.roles.kernel.internal.llm_caller.caller import LLMCaller
 from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
+from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import LLMRequestPreparer
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
 from polaris.cells.roles.profile.public.service import RoleProfile
 from polaris.kernelone.llm.engine.contracts import AIRequest, AIResponse, TaskType
@@ -170,12 +170,12 @@ async def test_pm_rate_limit_falls_back_to_next_same_role_binding(
 ) -> None:
     prepare_profiles: list[tuple[str, str]] = []
 
-    async def _prepare(self: LLMCaller, **kwargs: Any) -> PreparedLLMRequest:
+    async def _prepare(self: LLMRequestPreparer, **kwargs: Any) -> PreparedLLMRequest:
         profile = cast(RoleProfile, kwargs["profile"])
         prepare_profiles.append((profile.provider_id, profile.model))
         return _prepared(profile)
 
-    monkeypatch.setattr(LLMCaller, "_prepare_llm_request", _prepare)
+    monkeypatch.setattr(LLMRequestPreparer, "_prepare_llm_request", _prepare)
     executor = _Executor(
         "MiniMax API Error 2056: 已达到 Token Plan 用量上限：请升级 Token Plan 套餐或购买积分补充用量。"
     )
@@ -237,12 +237,12 @@ async def test_director_retryable_provider_error_falls_back_to_next_binding(
     )
     prepare_profiles: list[tuple[str, str]] = []
 
-    async def _prepare(self: LLMCaller, **kwargs: Any) -> PreparedLLMRequest:
+    async def _prepare(self: LLMRequestPreparer, **kwargs: Any) -> PreparedLLMRequest:
         profile = cast(RoleProfile, kwargs["profile"])
         prepare_profiles.append((profile.provider_id, profile.model))
         return _prepared(profile)
 
-    monkeypatch.setattr(LLMCaller, "_prepare_llm_request", _prepare)
+    monkeypatch.setattr(LLMRequestPreparer, "_prepare_llm_request", _prepare)
     monkeypatch.setattr(LLMInvoker, "_emit_call_start_event", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(LLMInvoker, "_emit_call_end_event", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(LLMInvoker, "_emit_call_error_event", lambda *_args, **_kwargs: None)
@@ -303,11 +303,11 @@ async def test_director_retryable_provider_error_cools_binding_for_next_call(
         )
     )
 
-    async def _prepare(self: LLMCaller, **kwargs: Any) -> PreparedLLMRequest:
+    async def _prepare(self: LLMRequestPreparer, **kwargs: Any) -> PreparedLLMRequest:
         profile = cast(RoleProfile, kwargs["profile"])
         return _prepared(profile)
 
-    monkeypatch.setattr(LLMCaller, "_prepare_llm_request", _prepare)
+    monkeypatch.setattr(LLMRequestPreparer, "_prepare_llm_request", _prepare)
     monkeypatch.setattr(LLMInvoker, "_emit_call_start_event", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(LLMInvoker, "_emit_call_end_event", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(LLMInvoker, "_emit_call_error_event", lambda *_args, **_kwargs: None)
@@ -342,10 +342,10 @@ async def test_director_retryable_provider_error_cools_binding_for_next_call(
 
 @pytest.mark.asyncio
 async def test_pm_auth_error_does_not_fallback(monkeypatch: pytest.MonkeyPatch, role_slots: None) -> None:
-    async def _prepare(self: LLMCaller, **kwargs: Any) -> PreparedLLMRequest:
+    async def _prepare(self: LLMRequestPreparer, **kwargs: Any) -> PreparedLLMRequest:
         return _prepared(cast(RoleProfile, kwargs["profile"]))
 
-    monkeypatch.setattr(LLMCaller, "_prepare_llm_request", _prepare)
+    monkeypatch.setattr(LLMRequestPreparer, "_prepare_llm_request", _prepare)
     executor = _Executor("unauthorized: invalid api key")
     invoker = LLMInvoker(workspace=".", enable_cache=False, executor=executor)
 

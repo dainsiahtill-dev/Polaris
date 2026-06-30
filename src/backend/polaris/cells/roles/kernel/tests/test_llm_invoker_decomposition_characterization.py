@@ -6,7 +6,7 @@ blueprint: every fallback rung, cache hit/put, native-tools-unavailable
 branches, reasoning-truncation re-ask, ResponseNormalizer recovery, the
 structured strategy branches, and the exception arms.
 
-Strategy: patch ``LLMCaller._prepare_llm_request`` to return a controlled
+Strategy: patch ``LLMRequestPreparer._prepare_llm_request`` to return a controlled
 ``PreparedLLMRequest``, inject a fake executor via ``LLMInvoker(executor=...)``,
 and capture the verbatim metadata dicts the invoker passes into its
 ``_emit_call_*`` delegates (the byte-identical event contract surface).
@@ -19,8 +19,8 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from polaris.cells.roles.kernel.internal.llm_caller.caller import LLMCaller
 from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
+from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import LLMRequestPreparer
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import (
     PreparedLLMRequest,
     StructuredLLMResponse,
@@ -132,10 +132,10 @@ def _patch_prepare(
     monkeypatch: pytest.MonkeyPatch,
     prepared: PreparedLLMRequest,
 ) -> None:
-    async def _prepare(_self: LLMCaller, **_kwargs: Any) -> PreparedLLMRequest:
+    async def _prepare(_self: LLMRequestPreparer, **_kwargs: Any) -> PreparedLLMRequest:
         return prepared
 
-    monkeypatch.setattr(LLMCaller, "_prepare_llm_request", _prepare)
+    monkeypatch.setattr(LLMRequestPreparer, "_prepare_llm_request", _prepare)
 
 
 def _ctx(override: dict[str, Any] | None = None) -> Any:

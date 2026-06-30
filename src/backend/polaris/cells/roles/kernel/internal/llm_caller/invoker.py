@@ -305,8 +305,7 @@ class LLMInvoker:
     Consolidates functionality previously spread across call_sync.py,
     call_structured.py, and call_stream.py into a single service class.
 
-    This class is designed to be used by LLMCaller (facade) or directly
-    for advanced use cases.
+    This class is the canonical role-kernel LLM invocation boundary.
     """
 
     __slots__ = (
@@ -506,7 +505,7 @@ class LLMInvoker:
     async def _try_role_binding_fallback(
         self,
         *,
-        caller: Any,
+        request_preparer: LLMRequestPreparer,
         profile: RoleProfile,
         system_prompt: str,
         context: ContextRequest,
@@ -560,7 +559,7 @@ class LLMInvoker:
                         "trigger_error_category": classify_error(original_error),
                     },
                 )
-                fallback_prepared = await caller._prepare_llm_request(
+                fallback_prepared = await request_preparer._prepare_llm_request(
                     profile=fallback_profile,
                     system_prompt=system_prompt,
                     context=context,
@@ -952,7 +951,7 @@ class LLMInvoker:
     async def _run_fallback_ladder(
         self,
         *,
-        caller: Any,
+        request_preparer: LLMRequestPreparer,
         executor: Any,
         prepared: PreparedLLMRequest,
         profile: RoleProfile,
@@ -1012,7 +1011,7 @@ class LLMInvoker:
 
         _ = allow_native_tool_text_fallback
         if not is_response_ok and prepared.native_response_format and is_response_format_unsupported(response_error):
-            active_request = caller._build_structured_fallback_request(
+            active_request = request_preparer._build_structured_fallback_request(
                 prepared=prepared, profile=profile, response_model=response_model or dict, mode="chat"
             )
             emit_fallback_request_audit("response_format_text_fallback", active_request, profile)
@@ -1031,7 +1030,9 @@ class LLMInvoker:
             or "finish_reason=length" in response_error_lower
         )
         if not is_response_ok and _is_reasoning_truncation:
-            active_request = caller._build_reasoning_truncation_retry_request(prepared=prepared, profile=profile)
+            active_request = request_preparer._build_reasoning_truncation_retry_request(
+                prepared=prepared, profile=profile
+            )
             emit_fallback_request_audit("reasoning_truncation_retry", active_request, profile)
             response = await executor.invoke(active_request)
             logger.warning(
@@ -1043,7 +1044,7 @@ class LLMInvoker:
             classified = classify_error(response_error)
             if is_retryable_error(classified):
                 fallback = await self._try_role_binding_fallback(
-                    caller=caller,
+                    request_preparer=request_preparer,
                     profile=profile,
                     system_prompt=system_prompt,
                     context=context,
@@ -1202,7 +1203,6 @@ class LLMInvoker:
     async def _handle_native_tools_unavailable(
         self,
         *,
-        caller: Any,
         prepared: PreparedLLMRequest,
         profile: RoleProfile,
         context: ContextRequest,
@@ -1221,7 +1221,7 @@ class LLMInvoker:
         error response. Text-mode tool fallback is retired; provider-native
         tool schemas are required.
         """
-        _ = (caller, context)
+        _ = context
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         tool_error = build_native_tool_unavailable_error(profile)
         error_metadata = _with_final_request_context_audit(
@@ -1304,13 +1304,13 @@ class LLMInvoker:
         try:
             profile = self._profile_for_healthy_binding(role_id, profile)
             model = str(getattr(profile, "model", "") or model)
-            caller = LLMRequestPreparer(
+            request_preparer = LLMRequestPreparer(
                 workspace=self.workspace,
                 formatter=self._formatter,
                 model_catalog=self._model_catalog,
             )
 
-            prepared = await caller._prepare_llm_request(
+            prepared = await request_preparer._prepare_llm_request(
                 profile=profile,
                 system_prompt=system_prompt,
                 context=context,
@@ -1382,7 +1382,6 @@ class LLMInvoker:
 
             if prepared.native_tool_mode == "native_tools_unavailable":
                 return await self._handle_native_tools_unavailable(
-                    caller=caller,
                     prepared=prepared,
                     profile=profile,
                     context=context,
@@ -1427,7 +1426,7 @@ class LLMInvoker:
             is_response_ok, response_error = read_response_status(response)
 
             ladder = await self._run_fallback_ladder(
-                caller=caller,
+                request_preparer=request_preparer,
                 executor=executor,
                 prepared=prepared,
                 profile=profile,
@@ -1643,7 +1642,7 @@ class LLMInvoker:
     async def _try_native_response_format_structured(
         self,
         *,
-        caller: Any,
+        request_preparer: LLMRequestPreparer,
         prepared: PreparedLLMRequest,
         profile: RoleProfile,
         response_model: type,
@@ -1736,7 +1735,7 @@ class LLMInvoker:
                 )
             response_error = str(getattr(response, "error", "") or "").strip()
             normalized_error = response_error or "structured_llm_call_failed"
-            fallback_request = caller._build_structured_fallback_request(
+            fallback_request = request_preparer._build_structured_fallback_request(
                 prepared=prepared,
                 profile=profile,
                 response_model=response_model,
@@ -1874,7 +1873,7 @@ class LLMInvoker:
     async def _run_structured_fallback(
         self,
         *,
-        caller: Any,
+        request_preparer: LLMRequestPreparer,
         prepared: PreparedLLMRequest,
         profile: RoleProfile,
         response_model: type,
@@ -1895,7 +1894,7 @@ class LLMInvoker:
         not-ok error response, the validated success response, or the parse-fail
         ``validation_fail`` response. This strategy ALWAYS returns.
         """
-        ai_request = caller._build_structured_fallback_request(
+        ai_request = request_preparer._build_structured_fallback_request(
             prepared=prepared, profile=profile, response_model=response_model
         )
         executor = self._get_executor()
@@ -2107,13 +2106,13 @@ class LLMInvoker:
         prepared: PreparedLLMRequest | None = None
 
         try:
-            caller = LLMRequestPreparer(
+            request_preparer = LLMRequestPreparer(
                 workspace=self.workspace,
                 formatter=self._formatter,
                 model_catalog=self._model_catalog,
             )
 
-            prepared = await caller._prepare_llm_request(
+            prepared = await request_preparer._prepare_llm_request(
                 profile=profile,
                 system_prompt=system_prompt,
                 context=context,
@@ -2180,7 +2179,7 @@ class LLMInvoker:
 
             # Try native response_format
             native_result = await self._try_native_response_format_structured(
-                caller=caller,
+                request_preparer=request_preparer,
                 prepared=prepared,
                 profile=profile,
                 response_model=response_model,
@@ -2224,7 +2223,7 @@ class LLMInvoker:
 
             # Fallback
             return await self._run_structured_fallback(
-                caller=caller,
+                request_preparer=request_preparer,
                 prepared=prepared,
                 profile=profile,
                 response_model=response_model,
@@ -2426,13 +2425,13 @@ class LLMInvoker:
             return
 
         try:
-            caller = LLMRequestPreparer(
+            request_preparer = LLMRequestPreparer(
                 workspace=self.workspace,
                 formatter=self._formatter,
                 model_catalog=self._model_catalog,
             )
 
-            prepared = await caller._prepare_llm_request(
+            prepared = await request_preparer._prepare_llm_request(
                 profile=profile,
                 system_prompt=system_prompt,
                 context=context,
