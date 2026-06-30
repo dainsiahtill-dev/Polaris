@@ -20,9 +20,6 @@ describe('Runtime Projection Adapter', () => {
       expect(result.director).toBeNull();
       expect(result.workflow).toBeNull();
       expect(result.engine).toBeNull();
-      expect(result.snapshot_compat).toEqual(expect.objectContaining({
-        projection_source: 'empty',
-      }));
       expect(result.projection_source).toBe('empty');
       expect(result.provenance).toEqual(expect.objectContaining({
         source: 'empty',
@@ -42,14 +39,12 @@ describe('Runtime Projection Adapter', () => {
         director: null,
         workflow: null,
         engine: null,
-        snapshot_compat: { pm_status: 'planning' },
         generated_at: '2024-01-01T00:00:00Z',
       };
 
       const result = normalizeRuntimeProjection(canonical);
 
       expect(result.pm).toEqual(canonical.pm);
-      expect(result.snapshot_compat.pm_status).toBe('planning');
       expect(result.projection_source).toBe('canonical');
       expect(result.provenance).toEqual(expect.objectContaining({
         source: 'canonical',
@@ -139,13 +134,6 @@ describe('Runtime Projection Adapter', () => {
         version: '1.0.0',
         health: 'healthy',
       }));
-      expect(result.snapshot_compat).toEqual(expect.objectContaining({
-        pm_status: 'dispatching',
-        director_status: 'running',
-        workflow_loaded: true,
-        workflow_tasks: 3,
-        engine_run_id: 'engine-run-1',
-      }));
     });
 
     it('does not guess unsupported flat payloads into runtime projections', () => {
@@ -203,13 +191,11 @@ describe('Runtime Projection Adapter', () => {
           phase: 'planning',
           last_updated: '2024-01-01T00:00:00Z',
         },
-        snapshot_compat: { pm_status: 'planning' },
       };
 
       const result = mergeProjections(base, update);
 
       expect(result.pm?.running).toBe(true);
-      expect(result.snapshot_compat).toEqual(expect.objectContaining({ pm_status: 'planning' }));
       expect(result.projection_source).toBe('empty');
     });
   });

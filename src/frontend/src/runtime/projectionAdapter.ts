@@ -15,12 +15,11 @@ import {
   DirectorLocalStatus,
   WorkflowStatus,
   EngineStatus,
-  SnapshotCompatFields,
   WorkflowTask,
   PMPhase,
   DirectorPhase,
   TaskStatus,
-  EngineRoleStatus,
+  isRuntimeProjectionPayload,
 } from "./projection";
 
 // ============================================================================
@@ -235,16 +234,10 @@ function attachProjectionProvenance(
   projection: RuntimeProjectionPayload,
   provenance: RuntimeProjectionProvenance
 ): RuntimeProjectionPayload {
-  const snapshotCompat = {
-    ...projection.snapshot_compat,
-    projection_source: provenance.source,
-    projection_provenance: provenance,
-  };
   return {
     ...projection,
     projection_source: provenance.source,
     provenance,
-    snapshot_compat: snapshotCompat,
   };
 }
 
@@ -298,7 +291,6 @@ export function normalizeRuntimeProjection(response: unknown): RuntimeProjection
     director: normalizeDirectorStatus(event),
     workflow: normalizeWorkflowStatus(event),
     engine: normalizeEngineStatus(event),
-    snapshot_compat: extractTransitionFields(event),
     generated_at: generatedAt,
   }, provenance);
 }
@@ -307,12 +299,7 @@ export function normalizeRuntimeProjection(response: unknown): RuntimeProjection
  * Check if response is already in canonical format
  */
 function isCanonicalProjection(response: unknown): boolean {
-  return (
-    response !== null &&
-    typeof response === "object" &&
-    "snapshot_compat" in response &&
-    "generated_at" in response
-  );
+  return isRuntimeProjectionPayload(response);
 }
 
 /**
@@ -457,38 +444,6 @@ function normalizeEngineStatus(event: RuntimeStatusEvent): EngineStatus | null {
 }
 
 /**
- * Extract transition fields from runtime status event.
- */
-function extractTransitionFields(event: RuntimeStatusEvent): SnapshotCompatFields {
-  const compat: SnapshotCompatFields = {};
-
-  if (event.pm_status) {
-    compat.pm_status = event.pm_status.phase || 'idle';
-  }
-  if (event.director_status) {
-    const director = normalizeDirectorStatus(event);
-    compat.director_status = director?.phase || 'idle';
-    compat.director_active = director?.active_tasks ?? 0;
-  }
-  if (event.snapshot) {
-    compat.workflow_loaded = Boolean(event.snapshot.run_id);
-    compat.workflow_tasks = event.snapshot.tasks?.length;
-  }
-  if (event.engine_status) {
-    compat.engine_roles = event.engine_status.roles as Record<string, EngineRoleStatus> | undefined;
-    compat.engine_error = event.engine_status.error;
-    compat.engine_summary = event.engine_status.summary;
-    compat.engine_run_id = event.engine_status.run_id;
-  }
-
-  return compat;
-}
-
-// ============================================================================
-// Normalization Helpers
-// ============================================================================
-
-/**
  * Normalize PM phase string to PMPhase type
  */
 function normalizePMPhase(phase: string | undefined): PMPhase {
@@ -591,7 +546,6 @@ export function createEmptyProjection(reason = "empty_runtime_projection"): Runt
     director: null,
     workflow: null,
     engine: null,
-    snapshot_compat: {},
     generated_at: generatedAt,
   }, createProjectionProvenance({
     source: "empty",
@@ -627,12 +581,6 @@ export function mergeProjections(
     ...update,
     projection_source: update.projection_source || base.projection_source || provenance.source,
     provenance,
-    snapshot_compat: {
-      ...base.snapshot_compat,
-      ...update.snapshot_compat,
-      projection_source: update.projection_source || base.projection_source || provenance.source,
-      projection_provenance: provenance,
-    },
     // Keep the most recent generated_at if not explicitly provided
     generated_at: generatedAt,
   };

@@ -47,8 +47,6 @@ export interface RuntimeProjectionPayload {
   workflow: WorkflowStatus | null;
   /** Engine status projected from the runtime status event */
   engine: EngineStatus | null;
-  /** Transition fields retained until every runtime consumer reads canonical projection fields */
-  snapshot_compat: SnapshotCompatFields;
   /** ISO timestamp when this projection was generated */
   generated_at: string;
   /** Explicit source of this projection, so adapted runtime events cannot masquerade as backend canonical state */
@@ -229,43 +227,6 @@ export interface EngineStatus {
   last_check: string;
 }
 
-// ============================================================================
-// Backward Compatibility Fields
-// ============================================================================
-
-/**
- * Snapshot transition fields.
- * Prefer canonical fields (pm, director, workflow) for new consumers.
- */
-export interface SnapshotCompatFields {
-  /** Frontend adapter provenance; canonical consumers should use top-level `provenance` */
-  projection_source?: RuntimeProjectionSource;
-  /** Frontend adapter provenance; canonical consumers should use top-level `provenance` */
-  projection_provenance?: RuntimeProjectionProvenance;
-  /** PM status string mirrored for transition consumers */
-  pm_status?: string;
-  /** PM current task mirrored for transition consumers */
-  pm_current_task?: string | null;
-  /** Director status string mirrored for transition consumers */
-  director_status?: string;
-  /** Director active task count mirrored for transition consumers */
-  director_active?: number;
-  /** Workflow loaded flag mirrored for transition consumers */
-  workflow_loaded?: boolean;
-  /** Workflow task count mirrored for transition consumers */
-  workflow_tasks?: number;
-  /** Engine roles status mirrored for transition consumers */
-  engine_roles?: Record<string, EngineRoleStatus>;
-  /** Engine error message mirrored for transition consumers */
-  engine_error?: string;
-  /** Engine summary data mirrored for transition consumers */
-  engine_summary?: Record<string, unknown>;
-  /** Engine run id mirrored for transition consumers */
-  engine_run_id?: string;
-  /** Allow transition fields from runtime status payloads */
-  [key: string]: unknown;
-}
-
 /**
  * Engine role status carried by runtime events.
  * Prefer canonical fields in PMLocalStatus/DirectorLocalStatus for new consumers.
@@ -435,7 +396,10 @@ export function isRuntimeProjectionPayload(value: unknown): value is RuntimeProj
   if (!value || typeof value !== "object") return false;
   const payload = value as RuntimeProjectionPayload;
   return (
-    "snapshot_compat" in payload &&
+    "pm" in payload &&
+    "director" in payload &&
+    "workflow" in payload &&
+    "engine" in payload &&
     "generated_at" in payload &&
     typeof payload.generated_at === "string"
   );

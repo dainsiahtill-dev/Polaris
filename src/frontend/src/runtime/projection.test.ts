@@ -62,7 +62,6 @@ describe('Runtime Projection', () => {
         director: null,
         workflow: null,
         engine: null,
-        snapshot_compat: {},
         generated_at: '2024-01-01T00:00:00Z',
       };
       expect(isRuntimeProjectionPayload(validPayload)).toBe(true);
@@ -89,7 +88,6 @@ describe('Runtime Projection', () => {
           completed_at: null,
         },
         engine: null,
-        snapshot_compat: {},
         generated_at: '2024-01-01T00:00:00Z',
       };
 
@@ -111,7 +109,6 @@ describe('Runtime Projection', () => {
         },
         workflow: null,
         engine: null,
-        snapshot_compat: {},
         generated_at: '2024-01-01T00:00:00Z',
       };
 
@@ -127,7 +124,6 @@ describe('Runtime Projection', () => {
         director: null,
         workflow: null,
         engine: null,
-        snapshot_compat: {},
         generated_at: '2024-01-01T00:00:00Z',
       };
 
@@ -151,7 +147,6 @@ describe('Runtime Projection', () => {
         },
         workflow: null,
         engine: null,
-        snapshot_compat: {},
         generated_at: '2024-01-01T00:00:00Z',
       };
 
@@ -169,7 +164,6 @@ describe('Runtime Projection', () => {
         director: null,
         workflow: null,
         engine: null,
-        snapshot_compat: {},
         generated_at: '2024-01-01T00:00:00Z',
       };
 
@@ -187,7 +181,6 @@ describe('Runtime Projection', () => {
           completed_at: null,
         },
         engine: null,
-        snapshot_compat: {},
         generated_at: '2024-01-01T00:00:00Z',
       };
 
@@ -200,7 +193,6 @@ describe('Runtime Projection', () => {
         director: null,
         workflow: null,
         engine: null,
-        snapshot_compat: {},
         generated_at: '2024-01-01T00:00:00Z',
       };
 
@@ -220,7 +212,6 @@ describe('Runtime Projection', () => {
         director: null,
         workflow: null,
         engine: null,
-        snapshot_compat: {},
         generated_at: '2024-01-01T00:00:00Z',
       };
 
@@ -242,7 +233,6 @@ describe('Runtime Projection', () => {
         },
         workflow: null,
         engine: null,
-        snapshot_compat: {},
         generated_at: '2024-01-01T00:00:00Z',
       };
 
@@ -262,7 +252,6 @@ describe('Runtime Projection', () => {
           completed_at: null,
         },
         engine: null,
-        snapshot_compat: {},
         generated_at: '2024-01-01T00:00:00Z',
       };
 
@@ -282,7 +271,6 @@ describe('Runtime Projection', () => {
           completed_at: '2024-01-01T00:00:00Z',
         },
         engine: null,
-        snapshot_compat: {},
         generated_at: '2024-01-01T00:00:00Z',
       };
 
@@ -308,7 +296,6 @@ describe('Runtime Projection', () => {
           },
         },
         engine: null,
-        snapshot_compat: {},
         generated_at: '2024-01-01T00:00:00Z',
       };
 
@@ -327,7 +314,6 @@ describe('Runtime Projection', () => {
         director: null,
         workflow: null,
         engine: null,
-        snapshot_compat: {},
         generated_at: '2024-01-01T00:00:00Z',
       };
 
@@ -350,7 +336,6 @@ describe('Runtime Projection', () => {
           completed_at: null,
         },
         engine: null,
-        snapshot_compat: {},
         generated_at: '2024-01-01T00:00:00Z',
       };
 
@@ -363,7 +348,6 @@ describe('Runtime Projection', () => {
         director: null,
         workflow: null,
         engine: null,
-        snapshot_compat: {},
         generated_at: '2024-01-01T00:00:00Z',
       };
 
