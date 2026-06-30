@@ -363,11 +363,12 @@ class LLMInvoker:
             # in the thread pool via ``asyncio.to_thread`` instead of blocking
             # the event loop on every streamed LLM call.
             store_context_messages=(
-                lambda ws, msgs, trace_id, call_id_value: AIExecutor._store_context_messages(
+                lambda ws, msgs, trace_id, call_id_value, provider_request=None: AIExecutor._store_context_messages(
                     workspace=ws,
                     messages=msgs,
                     trace_id=trace_id,
                     call_id=call_id_value,
+                    provider_request=provider_request,
                 )
             ),
         )

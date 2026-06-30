@@ -42,6 +42,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.error_handling import (
 )
 from polaris.cells.roles.kernel.internal.llm_caller.event_emitter import LLMEventEmitter
 from polaris.cells.roles.kernel.internal.llm_caller.finalization_caller import FinalizationCaller
+from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
 from polaris.cells.roles.kernel.internal.llm_caller.provider_formatter import (
     AnnotatedProviderFormatter,
     NativeProviderFormatter,
@@ -52,7 +53,10 @@ from polaris.cells.roles.kernel.internal.llm_caller.response_types import (
     PreparedLLMRequest,
     StructuredLLMResponse,
 )
-from polaris.cells.roles.kernel.internal.llm_caller.stream_engine import StreamEngine
+from polaris.cells.roles.kernel.internal.llm_caller.stream_engine import (
+    StreamEngine,
+    _store_context_messages_accepts_provider_request,
+)
 from polaris.kernelone.audit.omniscient.dedup import LLMEventDeduplicator, set_global_llm_dedup
 
 
@@ -1362,6 +1366,12 @@ class TestStreamEngineInit:
         )
         assert engine.workspace == "/ws"
 
+    def test_llm_invoker_stream_store_wiring_accepts_provider_request(self) -> None:
+        """Default streamed context snapshots must preserve provider requests."""
+        invoker = LLMInvoker(workspace="/ws")
+
+        assert _store_context_messages_accepts_provider_request(invoker._stream_engine._store_context_messages)
+
 
 @pytest.mark.asyncio
 class TestStreamEngineRunStream:
@@ -1551,6 +1561,8 @@ class TestStreamEngineRunStream:
             list(call_args.args[1]) == prepared_messages
             and call_args.args[2] == "run_stream_42"
             and call_args.args[3] == "call_42"
+            and isinstance(call_args.args[4], dict)
+            and call_args.args[4].get("source") == "roles.kernel.llm_caller.context_audit"
             for call_args in fake_store.call_args_list
         ), fake_store.call_args_list
 
@@ -1729,17 +1741,16 @@ class TestStreamEngineRunStream:
         assert emit_start.call_args.kwargs["metadata"]["context_os_audit"] == audit
         assert emit_end.call_args.kwargs["metadata"]["context_os_audit"] == audit
 
-    async def test_native_tool_stream_fallback_emits_final_request_audit(self) -> None:
-        emit_retry = Mock()
-        emit_end = Mock()
+    async def test_native_tool_stream_unavailable_emits_final_request_audit(self) -> None:
+        emit_error = Mock()
         engine = StreamEngine(
             workspace="/ws",
             get_executor=Mock(),
             allow_native_tool_text_fallback_fn=Mock(return_value=True),
             emit_call_start_event=Mock(),
-            emit_call_error_event=Mock(),
-            emit_call_end_event=emit_end,
-            emit_call_retry_event=emit_retry,
+            emit_call_error_event=emit_error,
+            emit_call_end_event=Mock(),
+            emit_call_retry_event=Mock(),
         )
 
         context = Mock()
@@ -1782,6 +1793,7 @@ class TestStreamEngineRunStream:
         profile = Mock()
         profile.role_id = "director"
         profile.max_context_tokens = 32768
+        profile.tool_policy.whitelist = []
 
         events = []
         async for event in engine.run_stream(
@@ -1800,16 +1812,13 @@ class TestStreamEngineRunStream:
         ):
             events.append(event)
 
-        complete_event = next(event for event in events if event["type"] == "complete")
-        context_metadata = next(event for event in events if event["type"] == "context_metadata")
-        fallback_audit = context_metadata["final_request_context_audit"]
-        assert emit_retry.call_args.kwargs["metadata"]["final_request_context_audit"]["tool_schema_count"] == 0
-        assert complete_event["metadata"]["final_request_context_audit"]["tool_schema_count"] == 0
-        assert fallback_audit["tool_schema_count"] == 0
-        assert context_metadata["context_tokens"] == fallback_audit["final_request_token_estimate"]
-        end_metadata = emit_end.call_args.kwargs["metadata"]
-        assert end_metadata["native_tool_calling_fallback"] is True
-        assert end_metadata["final_request_context_audit"]["tool_schema_count"] == 0
+        error_event = next(event for event in events if event["type"] == "error")
+        error_audit = error_event["metadata"]["final_request_context_audit"]
+        assert error_audit["tool_schema_count"] == 1
+        assert error_event["metadata"]["contextTokens"] == error_audit["final_request_token_estimate"]
+        error_metadata = emit_error.call_args.kwargs["metadata"]
+        assert error_metadata["native_tool_calling_fallback"] is False
+        assert error_metadata["final_request_context_audit"]["tool_schema_count"] == 1
 
 
 async def async_empty_generator() -> Any:
