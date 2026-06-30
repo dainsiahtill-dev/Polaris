@@ -208,10 +208,13 @@ Remaining code still lives elsewhere:
   the runtime-owned schedule; it must not add, remove, or reorder schedule
   entries in adapter code. `execute_method.py`, Factory, QA, and bench harnesses
   must not import language-specific repair functions directly.
-- The materialization-quality path must stay behind explicit adapter runtime
-  ports in
+- The materialization-quality path must stay behind the adapter runtime-port
+  facade in
   `roles.adapters/internal/director/materialization_quality_runtime_ports.py`.
-  Those ports must consume
+  Callback execution/base-file collection lives in
+  `materialization_quality_callback_ports.py`; read-only summary, migration
+  debt, scheduler, and receipt lifecycle projection lives in
+  `materialization_quality_evidence_ports.py`. The callback ports must consume
   `run_director_materialization_quality_repair_schedule` and only provide
   runner bindings for runtime-declared step ids. Their runner key set must
   exactly match the runtime-owned schedule; they must not add, remove, or reorder

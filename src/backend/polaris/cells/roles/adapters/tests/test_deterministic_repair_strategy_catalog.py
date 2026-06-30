@@ -13,6 +13,7 @@ from polaris.cells.director.runtime.public import (
     query_director_repair_strategy_catalog,
 )
 from polaris.cells.roles.adapters.internal.director import (
+    materialization_quality_evidence_ports,
     materialization_quality_runtime_ports,
     post_execution_repair_bridge,
 )
@@ -203,7 +204,7 @@ def test_execute_method_file_mutating_repair_wrappers_are_runtime_hard_cut() -> 
 
 
 def test_materialization_python_import_uses_runtime_bridge_not_legacy_python_repairs() -> None:
-    bridge_path = _director_internal_root() / "materialization_quality_runtime_ports.py"
+    bridge_path = _director_internal_root() / "materialization_quality_callback_ports.py"
     definitions = _function_definitions(bridge_path)
 
     python_step = definitions["_run_materialization_python_import"]
@@ -804,12 +805,12 @@ def test_materialization_quality_migration_debt_lists_remaining_callback_only_st
         },
     }
     normalized_projection = (
-        materialization_quality_runtime_ports._materialization_callback_receipt_projections_from_schedule_result(
+        materialization_quality_evidence_ports._materialization_callback_receipt_projections_from_schedule_result(
             [callback_projection]
         )
     )[0]
 
-    debt = materialization_quality_runtime_ports._project_materialization_quality_migration_debt(
+    debt = materialization_quality_evidence_ports._project_materialization_quality_migration_debt(
         ordered_steps=(step,),
         tool_results=tool_results,
         callback_receipt_projections=[normalized_projection],
@@ -867,7 +868,7 @@ def test_materialization_hygiene_native_cutover_evidence_requires_all_selected_s
         "evidence_status": "resolved_evidence",
     }
 
-    missing_native_lifecycle = materialization_quality_runtime_ports._materialization_receipt_lifecycle_by_step(
+    missing_native_lifecycle = materialization_quality_evidence_ports._materialization_receipt_lifecycle_by_step(
         ordered_steps=(step,),
         tool_results=[],
         callback_receipt_projections=[],
@@ -880,7 +881,7 @@ def test_materialization_hygiene_native_cutover_evidence_requires_all_selected_s
     assert "native_repair_kernel.receipts" in missing_native_evidence["missing_required_evidence"]
     assert "missing_native_repair_receipt" in missing_native_evidence["cutover_blockers"]
 
-    callback_blocked_lifecycle = materialization_quality_runtime_ports._materialization_receipt_lifecycle_by_step(
+    callback_blocked_lifecycle = materialization_quality_evidence_ports._materialization_receipt_lifecycle_by_step(
         ordered_steps=(step,),
         tool_results=[],
         callback_receipt_projections=[callback_projection],
@@ -895,7 +896,7 @@ def test_materialization_hygiene_native_cutover_evidence_requires_all_selected_s
     assert "adapter_projection_absent" in callback_blocked_evidence["missing_required_evidence"]
     assert "adapter_projection_still_present" in callback_blocked_evidence["cutover_blockers"]
 
-    ready_lifecycle = materialization_quality_runtime_ports._materialization_receipt_lifecycle_by_step(
+    ready_lifecycle = materialization_quality_evidence_ports._materialization_receipt_lifecycle_by_step(
         ordered_steps=(step,),
         tool_results=[],
         callback_receipt_projections=[],

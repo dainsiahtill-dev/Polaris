@@ -48,6 +48,8 @@ EXECUTE_METHOD_PATH = ROLES_DIRECTOR_ROOT / "execute_method.py"
 EXECUTE_METHOD_REPAIR_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "execute_method_repair_bridge.py"
 EXECUTE_METHOD_REPAIR_BRIDGE_MODULE = "polaris.cells.roles.adapters.internal.director.execute_method_repair_bridge"
 POST_EXECUTION_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "post_execution_repair_bridge.py"
+MATERIALIZATION_QUALITY_CALLBACK_PORTS_PATH = ROLES_DIRECTOR_ROOT / "materialization_quality_callback_ports.py"
+MATERIALIZATION_QUALITY_EVIDENCE_PORTS_PATH = ROLES_DIRECTOR_ROOT / "materialization_quality_evidence_ports.py"
 MATERIALIZATION_QUALITY_RUNTIME_PORTS_PATH = ROLES_DIRECTOR_ROOT / "materialization_quality_runtime_ports.py"
 DETERMINISTIC_REPAIRS_INIT_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "__init__.py"
 GENERIC_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "generic_repairs.py"
@@ -1107,8 +1109,10 @@ def test_rust_aggregate_post_repair_is_not_executable_runtime_binding() -> None:
 
 def test_materialization_quality_runtime_ports_consume_runtime_owned_schedule() -> None:
     runtime_ports_source = _read_text(MATERIALIZATION_QUALITY_RUNTIME_PORTS_PATH)
+    callback_ports_source = _read_text(MATERIALIZATION_QUALITY_CALLBACK_PORTS_PATH)
+    evidence_ports_source = _read_text(MATERIALIZATION_QUALITY_EVIDENCE_PORTS_PATH)
     runner_step_ids = _module_level_dict_keys(
-        MATERIALIZATION_QUALITY_RUNTIME_PORTS_PATH, "_MATERIALIZATION_QUALITY_REPAIR_RUNNERS"
+        MATERIALIZATION_QUALITY_CALLBACK_PORTS_PATH, "_MATERIALIZATION_QUALITY_REPAIR_RUNNERS"
     )
     public_schedule = query_director_repair_materialization_quality_schedule(
         QueryDirectorRepairMaterializationQualityScheduleV1(include_items=True)
@@ -1128,27 +1132,29 @@ def test_materialization_quality_runtime_ports_consume_runtime_owned_schedule() 
 
     assert "run_director_materialization_quality_repair_facade" not in runtime_ports_source
     assert "run_director_materialization_quality_repair_schedule_result" not in runtime_ports_source
-    assert "query_director_repair_materialization_quality_schedule" in runtime_ports_source
+    assert "query_director_repair_materialization_quality_schedule" in callback_ports_source
     assert "DirectorRepairMaterializationQualityStepV1" in runtime_ports_source
-    assert "_MATERIALIZATION_QUALITY_REPAIR_RUNNERS" in runtime_ports_source
+    assert "_MATERIALIZATION_QUALITY_REPAIR_RUNNERS" not in runtime_ports_source
+    assert "_MATERIALIZATION_QUALITY_REPAIR_RUNNERS" in callback_ports_source
     assert "_require_materialization_schedule_reconciliation" not in runtime_ports_source
     assert "_materialization_schedule_reconciliation" not in runtime_ports_source
-    assert "runner_binding_reconciliation" in runtime_ports_source
-    assert "evidence_status" in runtime_ports_source
+    assert "runner_binding_reconciliation" not in runtime_ports_source
+    assert "evidence_status" not in runtime_ports_source
     assert public_runtime_step_ids == expected_runtime_step_ids
     assert runner_step_ids == expected_runtime_step_ids
     assert runner_step_ids == public_runtime_step_ids
-    assert "runtime_schedule_step_runner_adapter" in runtime_ports_source
-    assert "adapter_strategy_host_wrapper" not in runtime_ports_source
-    assert "materialization.quality_repair_host" not in runtime_ports_source
-    assert "materialization.typescript_compiler" in runtime_ports_source
-    assert "_apply_deterministic_materialization_quality_repairs" not in runtime_ports_source
+    assert "runtime_schedule_step_runner_adapter" in evidence_ports_source
+    assert "runtime_schedule_step_runner_adapter" not in callback_ports_source
+    assert "adapter_strategy_host_wrapper" not in callback_ports_source
+    assert "materialization.quality_repair_host" not in callback_ports_source
+    assert "materialization.typescript_compiler" in callback_ports_source
+    assert "_apply_deterministic_materialization_quality_repairs" not in callback_ports_source
 
 
 def test_bridge_runner_keys_match_runtime_schedule_run_items_exactly() -> None:
     post_runner_step_ids = _module_level_dict_keys(POST_EXECUTION_BRIDGE_PATH, "_POST_EXECUTION_REPAIR_RUNNERS")
     materialization_runner_step_ids = _module_level_dict_keys(
-        MATERIALIZATION_QUALITY_RUNTIME_PORTS_PATH,
+        MATERIALIZATION_QUALITY_CALLBACK_PORTS_PATH,
         "_MATERIALIZATION_QUALITY_REPAIR_RUNNERS",
     )
     post_schedule = query_director_repair_post_execution_schedule(
@@ -1318,15 +1324,17 @@ def test_roles_adapters_consumes_repair_strategy_profiles_through_projection_hel
 
 def test_go_bare_import_string_repair_runs_through_director_runtime_kernel() -> None:
     source = (
-        _read_text(MATERIALIZATION_QUALITY_RUNTIME_PORTS_PATH)
+        _read_text(MATERIALIZATION_QUALITY_CALLBACK_PORTS_PATH)
         + "\n"
-        + _function_source(MATERIALIZATION_QUALITY_RUNTIME_PORTS_PATH, "_run_materialization_go_import_repairs")
+        + _function_source(MATERIALIZATION_QUALITY_CALLBACK_PORTS_PATH, "_run_materialization_go_import_repairs")
         + "\n"
         + _function_source(POST_EXECUTION_BRIDGE_PATH, "_run_go_post_repairs")
     )
     bridge_source = _read_text(RUNTIME_REPAIR_BRIDGE_PATH)
 
-    assert "deterministic_go_bare_import_string_repair" in source
+    assert "deterministic_go_bare_import_string_repair" in _read_text(
+        DIRECTOR_RUNTIME_INTERNAL_REPAIR_KERNEL_ROOT / "schedule_catalog.py"
+    )
     assert "run_runtime_repair_with_director_tools" in source
     assert "executor_factory=DirectorToolExecutor" in source
     assert "run_director_repair" not in source
@@ -1389,20 +1397,21 @@ def test_roles_adapters_public_legacy_repair_wrappers_are_removed_after_hard_cut
 
 def test_quality_gate_semantic_repairs_use_runtime_materialization_schedule() -> None:
     quality_source = _read_text(QUALITY_GATE_PATH)
-    bridge_source = _read_text(MATERIALIZATION_QUALITY_RUNTIME_PORTS_PATH)
+    runtime_ports_source = _read_text(MATERIALIZATION_QUALITY_RUNTIME_PORTS_PATH)
+    callback_ports_source = _read_text(MATERIALIZATION_QUALITY_CALLBACK_PORTS_PATH)
     runtime_schedule_source = _read_text(DIRECTOR_RUNTIME_INTERNAL_REPAIR_KERNEL_ROOT / "schedule_catalog.py")
 
     assert "run_typescript_semantic_quality_repairs" not in quality_source
     assert "_apply_deterministic_typescript_missing_export_repair" not in quality_source
     assert "_apply_deterministic_typescript_canvas_scale_return_type_repair" not in quality_source
-    assert "def run_typescript_semantic_quality_repairs(" not in bridge_source
-    assert "deterministic_typescript_missing_export_repair" not in bridge_source
+    assert "def run_typescript_semantic_quality_repairs(" not in runtime_ports_source
+    assert "deterministic_typescript_missing_export_repair" not in runtime_ports_source
     assert "deterministic_typescript_missing_export_repair" in runtime_schedule_source
     assert "deterministic_typescript_hyphenated_identifier_repair" in runtime_schedule_source
     assert "deterministic_typescript_zod_type_class_collision_repair" in runtime_schedule_source
-    assert "run_runtime_repair_with_director_tools" in bridge_source
-    assert "_apply_deterministic_typescript_missing_export_repair" not in bridge_source
-    assert "_apply_deterministic_typescript_canvas_scale_return_type_repair" not in bridge_source
+    assert "run_runtime_repair_with_director_tools" in callback_ports_source
+    assert "_apply_deterministic_typescript_missing_export_repair" not in callback_ports_source
+    assert "_apply_deterministic_typescript_canvas_scale_return_type_repair" not in callback_ports_source
 
 
 def test_roles_adapter_repair_summaries_use_runtime_typed_projection_contract() -> None:

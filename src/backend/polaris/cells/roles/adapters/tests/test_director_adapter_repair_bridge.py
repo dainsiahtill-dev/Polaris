@@ -21,6 +21,7 @@ from polaris.cells.director.runtime.public.contracts import (
     RepairReceiptV1,
 )
 from polaris.cells.roles.adapters.internal.director import (
+    materialization_quality_callback_ports,
     materialization_quality_runtime_ports,
     post_execution_repair_bridge,
     runtime_repair_tool_adapter as runtime_bridge_module,
@@ -273,7 +274,7 @@ def _materialization_runtime_schedule_steps() -> tuple[Any, ...]:
             depends_on=dependencies_by_step_id.get(step_id, ()),
         )
         for index, step_id in enumerate(
-            materialization_quality_runtime_ports._MATERIALIZATION_QUALITY_REPAIR_RUNNERS,
+            materialization_quality_callback_ports._MATERIALIZATION_QUALITY_REPAIR_RUNNERS,
             start=1,
         )
     )
@@ -294,7 +295,7 @@ def _patch_materialization_runtime_schedule_query(
         )
 
     monkeypatch.setattr(
-        materialization_quality_runtime_ports,
+        materialization_quality_callback_ports,
         "query_director_repair_materialization_quality_schedule",
         fake_query,
     )
@@ -1637,9 +1638,9 @@ def test_materialization_bridge_passes_verifier_to_runtime_bound_go_bare_import(
         "_run_materialization_target_runtime",
         "_run_materialization_python_import",
     ):
-        monkeypatch.setattr(materialization_quality_runtime_ports, runner_name, lambda *args, **kwargs: [])
+        monkeypatch.setattr(materialization_quality_callback_ports, runner_name, lambda *args, **kwargs: [])
     monkeypatch.setattr(
-        materialization_quality_runtime_ports, "run_runtime_repair_with_director_tools", fake_runtime_bridge
+        materialization_quality_callback_ports, "run_runtime_repair_with_director_tools", fake_runtime_bridge
     )
     assert not hasattr(materialization_quality_runtime_ports, "repair_go_nested_import_keyword")
     assert not hasattr(materialization_quality_runtime_ports, "repair_go_import_subpaths")
@@ -1747,7 +1748,7 @@ def test_materialization_python_import_runs_through_runtime_bridge(
         ]
 
     monkeypatch.setattr(
-        materialization_quality_runtime_ports, "run_runtime_repair_with_director_tools", fake_runtime_bridge
+        materialization_quality_callback_ports, "run_runtime_repair_with_director_tools", fake_runtime_bridge
     )
 
     results = materialization_quality_runtime_ports._run_materialization_python_import(
@@ -1843,7 +1844,7 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
         return []
 
     monkeypatch.setattr(
-        materialization_quality_runtime_ports, "run_runtime_repair_with_director_tools", fake_runtime_bridge
+        materialization_quality_callback_ports, "run_runtime_repair_with_director_tools", fake_runtime_bridge
     )
     task = {
         "target_files": ["src/app.ts"],
@@ -1957,7 +1958,6 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
-    from polaris.cells.roles.adapters.internal.director import runtime_repair_tool_adapter
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
 
     (tmp_path / "Cargo.toml").write_text(
@@ -2042,9 +2042,14 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
         "deterministic_rust_unresolved_pub_use_repair",
         "deterministic_rust_trait_import_repair",
     ]
-    monkeypatch.setattr(runtime_repair_tool_adapter, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
     monkeypatch.setattr(
-        materialization_quality_runtime_ports,
+        materialization_quality_callback_ports,
+        "run_runtime_repair_with_director_tools",
+        fake_runtime_bridge,
+    )
+    monkeypatch.setattr(runtime_bridge_module, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
+    monkeypatch.setattr(
+        materialization_quality_callback_ports,
         "_materialization_plannable_runtime_source_tools_from_base_files",
         lambda **_kwargs: tuple(expected_source_tools),
     )
@@ -2058,7 +2063,7 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
         "_run_materialization_python_import",
         "_run_materialization_go_import",
     ):
-        monkeypatch.setattr(materialization_quality_runtime_ports, runner_name, lambda *args, **kwargs: [])
+        monkeypatch.setattr(materialization_quality_callback_ports, runner_name, lambda *args, **kwargs: [])
     _patch_materialization_schedule_result_as_dicts(monkeypatch)
 
     results, summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
@@ -2117,12 +2122,12 @@ def test_materialization_rust_compiler_executes_only_plan_probe_plannable_tools(
         ]
 
     monkeypatch.setattr(
-        materialization_quality_runtime_ports,
+        materialization_quality_callback_ports,
         "_materialization_plannable_runtime_source_tools_from_base_files",
         fake_plannable_tools,
     )
     monkeypatch.setattr(
-        materialization_quality_runtime_ports,
+        materialization_quality_callback_ports,
         "_run_materialization_rust_runtime_repair",
         fake_runtime_repair,
     )
@@ -2203,10 +2208,10 @@ def test_materialization_public_boundary_ignores_bridge_runner_map_drift(
 ) -> None:
     runtime_steps = _materialization_runtime_schedule_steps()
     _patch_materialization_runtime_schedule_query(monkeypatch, runtime_steps)
-    drifted_runners = dict(materialization_quality_runtime_ports._MATERIALIZATION_QUALITY_REPAIR_RUNNERS)
+    drifted_runners = dict(materialization_quality_callback_ports._MATERIALIZATION_QUALITY_REPAIR_RUNNERS)
     drifted_runners.pop("materialization.go_import")
     monkeypatch.setattr(
-        materialization_quality_runtime_ports,
+        materialization_quality_callback_ports,
         "_MATERIALIZATION_QUALITY_REPAIR_RUNNERS",
         drifted_runners,
     )
