@@ -10,7 +10,6 @@ Phase 6 Update: 新增统一编排兼容端点，内部转发到 UnifiedOrchestr
 
 from __future__ import annotations
 
-import warnings
 from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
@@ -656,8 +655,6 @@ async def pm_start(
 ) -> dict:
     """Start PM in loop mode.
 
-    This is the V2 endpoint - prefer /v2/pm/start over /pm/start_loop.
-
     Args:
         resume: Whether to resume from previous state
 
@@ -666,36 +663,6 @@ async def pm_start(
         ServiceUnavailableError: If backend is not available
         ProcessError: If process fails to start
     """
-    diagnostics = _build_pm_diagnostics_for_request(request, workspace_override=workspace)
-    _ensure_pm_can_start(diagnostics)
-    return _with_workspace_evidence(await pm_service.start_loop(resume=resume), diagnostics.workspace.workspace)
-
-
-@router.post(
-    "/start_loop",
-    dependencies=[Depends(require_auth)],
-    responses={
-        409: {"description": "Process already running"},
-        503: {"description": "Service unavailable"},
-        500: {"description": "Process error"},
-    },
-)
-async def pm_start_loop(
-    request: Request,
-    resume: bool = False,
-    workspace: str = "",
-    pm_service: PMService = Depends(get_pm_service),
-) -> dict:
-    """Start PM in loop mode (deprecated — use /v2/pm/start).
-
-    DEPRECATED: This endpoint is deprecated. Use /v2/pm/start instead.
-    Will be removed in v2.0.
-    """
-    warnings.warn(
-        "/pm/start_loop is deprecated. Use /v2/pm/start instead. Will be removed in v2.0.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
     diagnostics = _build_pm_diagnostics_for_request(request, workspace_override=workspace)
     _ensure_pm_can_start(diagnostics)
     return _with_workspace_evidence(await pm_service.start_loop(resume=resume), diagnostics.workspace.workspace)

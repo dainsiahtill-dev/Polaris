@@ -1,7 +1,7 @@
 """Tests for Polaris v2 PM router.
 
-Covers PM v2 endpoints: run_once, start, start_loop, stop, status, run,
-get orchestration, llm-events, cache-stats, cache-clear, token-budget-stats.
+Covers PM v2 endpoints: run_once, start, stop, status, run, get orchestration,
+llm-events, cache-stats, cache-clear, token-budget-stats.
 External services are mocked to avoid DI container and LLM dependencies.
 """
 
@@ -250,10 +250,7 @@ async def test_pm_lifecycle_start_routes_accept_workspace_query_override(
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_pm)
         run_once_response = await client.post("/v2/pm/run_once", params={"workspace": str(workspace)})
         start_response = await client.post("/v2/pm/start", params={"workspace": str(workspace)})
-        resume_response = await client.post(
-            "/v2/pm/start_loop",
-            params={"workspace": str(workspace), "resume": "true"},
-        )
+        resume_response = await client.post("/v2/pm/start", params={"workspace": str(workspace), "resume": "true"})
 
     assert run_once_response.status_code == 200
     assert start_response.status_code == 200
@@ -271,8 +268,8 @@ async def test_pm_lifecycle_start_routes_accept_workspace_query_override(
 
 
 @pytest.mark.asyncio
-async def test_pm_start_loop_deprecated(client: AsyncClient) -> None:
-    """PM start_loop (deprecated) should still work."""
+async def test_pm_start_loop_route_removed(client: AsyncClient) -> None:
+    """Deprecated PM start_loop route should not remain as a compatibility alias."""
     mock_pm = MagicMock()
     mock_pm.start_loop = AsyncMock(return_value={"ok": True, "state": "RUNNING"})
 
@@ -288,9 +285,8 @@ async def test_pm_start_loop_deprecated(client: AsyncClient) -> None:
     ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_pm)
         response = await client.post("/v2/pm/start_loop")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["ok"] is True
+        assert response.status_code == 404
+        mock_pm.start_loop.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -324,12 +320,10 @@ async def test_pm_run_once_blocks_when_startup_diagnostics_cannot_start(client: 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("endpoint", ["/v2/pm/start", "/v2/pm/start_loop"])
 async def test_pm_loop_start_blocks_when_startup_diagnostics_cannot_start(
     client: AsyncClient,
-    endpoint: str,
 ) -> None:
-    """PM loop start endpoints should fail closed when startup diagnostics block."""
+    """PM loop start endpoint should fail closed when startup diagnostics block."""
     mock_pm = MagicMock()
     mock_pm.start_loop = AsyncMock(return_value={"ok": True, "state": "RUNNING"})
 
@@ -347,7 +341,7 @@ async def test_pm_loop_start_blocks_when_startup_diagnostics_cannot_start(
         ),
     ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_pm)
-        response = await client.post(endpoint)
+        response = await client.post("/v2/pm/start")
 
     assert response.status_code == 409
     data = response.json()
