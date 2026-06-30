@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
 POLARIS_ROOT = BACKEND_ROOT / "polaris"
 REMOVED_TURN_ENGINE_COMPAT_MODULE = "polaris.cells.roles.kernel.internal.turn_engine.compat"
 REMOVED_TURN_ENGINE_COMPAT_CLASS = "TurnEngineCompatMixin"
@@ -58,3 +58,19 @@ def test_turn_engine_compat_helper_api_is_not_reintroduced() -> None:
         "TurnEngineCompatMixin is removed. Add execution behavior to TransactionKernel/"
         "RoleExecutionKernel instead of reviving the old TurnEngine helper API:\n" + "\n".join(violations)
     )
+
+
+def test_turn_engine_package_root_does_not_export_empty_stubs() -> None:
+    """Package-root exports must point to canonical implementations, not empty cutover stubs."""
+    source_path = POLARIS_ROOT / "cells/roles/kernel/internal/turn_engine/__init__.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    locally_defined = {node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef | ast.FunctionDef)}
+    assert "ConversationState" not in locally_defined
+    assert "build_stream_complete_result" not in locally_defined
+    assert "make_error_result" not in locally_defined
+
+
+def test_policy_conversation_state_placeholder_is_removed() -> None:
+    """Policy layer must use canonical runtime state instead of a second placeholder state class."""
+    retired_path = POLARIS_ROOT / "cells/roles/kernel/internal/policy/conversation_state.py"
+    assert not retired_path.exists(), "Retired policy ConversationState placeholder was recreated."

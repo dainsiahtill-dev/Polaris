@@ -14,12 +14,10 @@ from __future__ import annotations
 from unittest.mock import Mock
 
 import pytest
+from polaris.cells.roles.kernel.internal.conversation_state import ConversationState
 from polaris.cells.roles.kernel.internal.policy.budget_policy import (
     BudgetPolicy,
     BudgetState,
-)
-from polaris.cells.roles.kernel.internal.policy.conversation_state import (
-    ConversationState,
 )
 from polaris.cells.roles.kernel.internal.policy.layer.approval import ApprovalPolicy
 from polaris.cells.roles.kernel.internal.policy.layer.budget import BudgetPolicy as LayerBudgetPolicy
@@ -835,21 +833,21 @@ class TestPolicyLayerEvaluate:
 
 
 class TestConversationState:
-    """测试 ConversationState 占位符."""
+    """测试 canonical ConversationState."""
 
     def test_default_values(self) -> None:
         """默认值应符合预期."""
         state = ConversationState()
-        assert state.role_id == ""
+        assert state.role == ""
         assert state.workspace == ""
-        assert state.metadata == {}
+        assert state.loaded_tools == []
 
     def test_get_role_id(self) -> None:
-        """get_role_id 应返回 role_id."""
-        state = ConversationState(role_id="director")
-        assert state.get_role_id() == "director"
+        """role 字段应表达执行角色."""
+        state = ConversationState.new(role="director")
+        assert state.role == "director"
 
     def test_get_workspace(self) -> None:
         """get_workspace 应返回 workspace."""
         state = ConversationState(workspace="/workspace")
-        assert state.get_workspace() == "/workspace"
+        assert state.workspace == "/workspace"

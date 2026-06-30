@@ -18,15 +18,14 @@ Wave 3 完成状态:
     - utils.py: 静态工具函数（去重、签名、归一化、合并等） ✓
     - results.py: RoleTurnResult 构造辅助函数 ✓
 
-向后兼容：
-    原有 TurnEngine/TurnEngineConfig 导入路径继续有效：
-    from polaris.cells.roles.kernel.internal.turn_engine import TurnEngine, TurnEngineConfig
-
 已收敛:
     - compat.py / TurnEngineCompatMixin 已移除。旧 Phase 3/4 helper API
       不再作为执行面存在；新行为必须进入 TransactionKernel/RoleExecutionKernel。
+    - 包根只导出 canonical TurnEngine facade、真实 ConversationState 和真实
+      RoleTurnResult 构造 helper；不得重新添加空 stub。
 """
 
+from polaris.cells.roles.kernel.internal.conversation_state import ConversationState
 from polaris.cells.roles.kernel.internal.turn_engine.artifacts import (
     AssistantTurnArtifacts,
     _BracketToolWrapperFilter,
@@ -36,6 +35,10 @@ from polaris.cells.roles.kernel.internal.turn_engine.config import (
     TurnEngineConfig,
 )
 from polaris.cells.roles.kernel.internal.turn_engine.engine import TurnEngine
+from polaris.cells.roles.kernel.internal.turn_engine.results import (
+    build_stream_complete_result,
+    make_error_result,
+)
 from polaris.cells.roles.kernel.internal.turn_engine.utils import (
     dedupe_parsed_tool_calls,
     merge_stream_thinking,
@@ -46,29 +49,8 @@ from polaris.cells.roles.kernel.internal.turn_engine.utils import (
     visible_delta,
 )
 
-
-# Slice C (2026-04-16): Compatibility stubs for symbols removed during facade cut-over.
-class ConversationState:
-    """Minimal compatibility stub for removed ConversationState."""
-
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        pass
-
-
-def _build_stream_complete_result(*args: object, **kwargs: object) -> dict[str, object]:
-    return {}
-
-
-def build_stream_complete_result(*args: object, **kwargs: object) -> dict[str, object]:
-    return {}
-
-
-def _make_error_result(*args: object, **kwargs: object) -> dict[str, object]:
-    return {}
-
-
-def make_error_result(*args: object, **kwargs: object) -> dict[str, object]:
-    return {}
+_build_stream_complete_result = build_stream_complete_result
+_make_error_result = make_error_result
 
 
 __all__ = [
@@ -81,7 +63,6 @@ __all__ = [
     # Private classes (for testing)
     "_BracketToolWrapperFilter",
     "_build_stream_complete_result",
-    # 向后兼容别名
     "_make_error_result",
     "build_stream_complete_result",
     # Utils functions
