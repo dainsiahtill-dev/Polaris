@@ -35,6 +35,24 @@ class FactoryRunStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+def _require_factory_run_status(data: dict[str, Any]) -> FactoryRunStatus:
+    """Return the persisted factory run status or reject a malformed snapshot."""
+    if "status" not in data:
+        raise ValueError("FactoryRun field 'status' is required")
+
+    raw_status = data.get("status")
+    if not isinstance(raw_status, str) or not raw_status.strip():
+        raise ValueError("FactoryRun field 'status' must be a non-empty string")
+
+    try:
+        return FactoryRunStatus(raw_status.strip())
+    except ValueError as exc:
+        supported = ", ".join(status.value for status in FactoryRunStatus)
+        raise ValueError(
+            f"FactoryRun field 'status' must be one of: {supported}",
+        ) from exc
+
+
 TERMINAL_RUN_STATUSES = {
     FactoryRunStatus.COMPLETED,
     FactoryRunStatus.FAILED,
@@ -188,7 +206,7 @@ class FactoryRun:
         return cls(
             id=data["id"],
             config=config,
-            status=FactoryRunStatus(data.get("status", "pending")),
+            status=_require_factory_run_status(data),
             created_at=data["created_at"],
             updated_at=data.get("updated_at"),
             started_at=data.get("started_at"),
