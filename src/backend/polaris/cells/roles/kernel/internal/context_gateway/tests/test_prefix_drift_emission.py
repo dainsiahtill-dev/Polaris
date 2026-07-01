@@ -17,6 +17,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 from polaris.cells.roles.kernel.internal.context_gateway.gateway import RoleContextGateway
+from polaris.cells.roles.kernel.internal.context_gateway.gateway_telemetry import GatewayTelemetry
 from polaris.kernelone.context.cache_stability.drift_detector import get_prefix_drift_observer
 from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
 
@@ -44,6 +45,10 @@ def _read_events(path: str) -> list[dict[str, Any]]:
         return [json.loads(line) for line in handle if line.strip()]
 
 
+def _telemetry(tmp_path) -> GatewayTelemetry:
+    return GatewayTelemetry(workspace=tmp_path, role_id="director")
+
+
 _PREFIX_MESSAGES = [
     {"role": "system", "content": "You are the Director. Tools: read, write."},
     {"role": "user", "content": "build the thing"},
@@ -56,11 +61,11 @@ class TestPrefixDriftEmission:
         get_prefix_drift_observer().reset()
 
     def test_emits_to_explicit_events_path(self, tmp_path) -> None:
-        gateway = RoleContextGateway(_mock_profile(), workspace=str(tmp_path))
+        telemetry = _telemetry(tmp_path)
         events_path = str(tmp_path / "events" / "runtime.events.jsonl")
         request = ContextRequest(message="hi", run_id="pm-00001", events_path=events_path)
 
-        gateway._emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
+        telemetry.emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
 
         rows = _read_events(events_path)
         assert len(rows) == 1
@@ -77,16 +82,16 @@ class TestPrefixDriftEmission:
         assert isinstance(out["volatile_findings"], list)
 
     def test_drift_flagged_on_second_assembly_with_changed_prefix(self, tmp_path) -> None:
-        gateway = RoleContextGateway(_mock_profile(), workspace=str(tmp_path))
+        telemetry = _telemetry(tmp_path)
         events_path = str(tmp_path / "events" / "runtime.events.jsonl")
         request = ContextRequest(message="hi", run_id="pm-00001", events_path=events_path)
 
-        gateway._emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
+        telemetry.emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
         changed = [
             {"role": "system", "content": "You are the Director. Tools: read, write, edit."},
             {"role": "user", "content": "build the thing"},
         ]
-        gateway._emit_prefix_drift_observation(request, messages=changed, system_prompt="ROLE PROMPT")
+        telemetry.emit_prefix_drift_observation(request, messages=changed, system_prompt="ROLE PROMPT")
 
         rows = _read_events(events_path)
         drifts = [r for r in rows if r["name"] == "context.prefix_drift"]
@@ -96,12 +101,12 @@ class TestPrefixDriftEmission:
         assert drifts[1]["output"]["previous_fingerprint"] == drifts[0]["output"]["fingerprint"]
 
     def test_no_drift_when_prefix_stable(self, tmp_path) -> None:
-        gateway = RoleContextGateway(_mock_profile(), workspace=str(tmp_path))
+        telemetry = _telemetry(tmp_path)
         events_path = str(tmp_path / "events" / "runtime.events.jsonl")
         request = ContextRequest(message="hi", run_id="pm-00001", events_path=events_path)
 
         for _ in range(2):
-            gateway._emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
+            telemetry.emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
 
         rows = _read_events(events_path)
         drifts = [r for r in rows if r["name"] == "context.prefix_drift"]
@@ -109,52 +114,52 @@ class TestPrefixDriftEmission:
         assert drifts[1]["output"]["first_seen"] is False
 
     def test_self_resolves_when_run_dir_exists(self, tmp_path) -> None:
-        gateway = RoleContextGateway(_mock_profile(), workspace=str(tmp_path))
+        telemetry = _telemetry(tmp_path)
         run_dir = tmp_path / "runs" / "pm-00001"
         (run_dir / "events").mkdir(parents=True, exist_ok=True)
         request = ContextRequest(message="hi", run_id="pm-00001")
 
         with patch(f"{_GATEWAY_MODULE}.resolve_run_dir", return_value=str(run_dir)):
-            gateway._emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
+            telemetry.emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
 
         rows = _read_events(str(run_dir / "events" / "runtime.events.jsonl"))
         assert any(r["name"] == "context.prefix_drift" for r in rows)
 
     def test_failsafe_skips_when_run_dir_missing(self, tmp_path) -> None:
-        gateway = RoleContextGateway(_mock_profile(), workspace=str(tmp_path))
+        telemetry = _telemetry(tmp_path)
         missing = tmp_path / "runs" / "ghost"  # not created
         request = ContextRequest(message="hi", run_id="ghost")
 
         with patch(f"{_GATEWAY_MODULE}.resolve_run_dir", return_value=str(missing)):
-            gateway._emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
+            telemetry.emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
 
         assert not list(tmp_path.rglob("runtime.events.jsonl"))
 
     def test_no_run_id_no_emit(self, tmp_path) -> None:
-        gateway = RoleContextGateway(_mock_profile(), workspace=str(tmp_path))
+        telemetry = _telemetry(tmp_path)
         request = ContextRequest(message="hi", run_id="")
 
-        gateway._emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
+        telemetry.emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
 
         assert not list(tmp_path.rglob("runtime.events.jsonl"))
 
     def test_emit_never_raises_on_io_error(self, tmp_path) -> None:
-        gateway = RoleContextGateway(_mock_profile(), workspace=str(tmp_path))
+        telemetry = _telemetry(tmp_path)
         request = ContextRequest(message="hi", run_id="pm-1", events_path=str(tmp_path / "e.jsonl"))
 
         with patch(f"{_GATEWAY_MODULE}.emit_event", side_effect=OSError("disk full")):
             # Observability must never break a turn.
-            gateway._emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
+            telemetry.emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
 
     def test_volatile_token_in_prefix_is_flagged(self, tmp_path) -> None:
-        gateway = RoleContextGateway(_mock_profile(), workspace=str(tmp_path))
+        telemetry = _telemetry(tmp_path)
         events_path = str(tmp_path / "events" / "runtime.events.jsonl")
         request = ContextRequest(message="hi", run_id="pm-1", events_path=events_path)
 
         volatile_messages = [
             {"role": "system", "content": "Session started 2026-06-16T00:00:00Z"},
         ]
-        gateway._emit_prefix_drift_observation(request, messages=volatile_messages, system_prompt="ROLE PROMPT")
+        telemetry.emit_prefix_drift_observation(request, messages=volatile_messages, system_prompt="ROLE PROMPT")
 
         rows = _read_events(events_path)
         findings = rows[0]["output"]["volatile_findings"]
@@ -268,9 +273,9 @@ class TestDriftEventConsumer:
         # Drive the LIVE emit path (the same path the gateway takes on a real turn)
         # so the consumer test reads what the emitter actually writes.
         events_path = str(tmp_path / "events" / "runtime.events.jsonl")
-        gateway = RoleContextGateway(_mock_profile(), workspace=str(tmp_path))
+        telemetry = _telemetry(tmp_path)
         request = ContextRequest(message="hi", run_id="pm-00001", events_path=events_path)
-        gateway._emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
+        telemetry.emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
 
         summary = summarize_drift_events(events_path)
         # The first emit is first_seen=True (not drifted); the consumer must classify
@@ -319,17 +324,17 @@ class TestDriftEventConsumer:
         from polaris.kernelone.context.cache_stability import summarize_drift_events
 
         events_path = str(tmp_path / "events" / "runtime.events.jsonl")
-        gateway = RoleContextGateway(_mock_profile(), workspace=str(tmp_path))
+        telemetry = _telemetry(tmp_path)
         request = ContextRequest(message="hi", run_id="pm-00001", events_path=events_path)
 
         # First emit: first_seen=True (no drift)
-        gateway._emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
+        telemetry.emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
         # Second emit with changed system prompt: should be drifted=True, first_seen=False
         changed_messages = [
             {"role": "system", "content": "You are the Director. Tools: read, write, edit."},
             {"role": "user", "content": "build the thing"},
         ]
-        gateway._emit_prefix_drift_observation(request, messages=changed_messages, system_prompt="ROLE PROMPT")
+        telemetry.emit_prefix_drift_observation(request, messages=changed_messages, system_prompt="ROLE PROMPT")
 
         summary = summarize_drift_events(events_path)
         assert summary.observed == 2, (
@@ -354,11 +359,11 @@ class TestDriftEventConsumer:
         from polaris.kernelone.context.cache_stability import summarize_drift_events
 
         events_path = str(tmp_path / "events" / "runtime.events.jsonl")
-        gateway = RoleContextGateway(_mock_profile(), workspace=str(tmp_path))
+        telemetry = _telemetry(tmp_path)
         request = ContextRequest(message="hi", run_id="pm-00001", events_path=events_path)
 
         for _ in range(2):
-            gateway._emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
+            telemetry.emit_prefix_drift_observation(request, messages=_PREFIX_MESSAGES, system_prompt="ROLE PROMPT")
 
         summary = summarize_drift_events(events_path)
         assert summary.observed == 2

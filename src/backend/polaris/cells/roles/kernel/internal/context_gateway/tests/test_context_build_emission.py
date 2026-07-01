@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from polaris.cells.roles.kernel.internal.context_gateway.gateway import RoleContextGateway
+from polaris.cells.roles.kernel.internal.context_gateway.gateway_telemetry import GatewayTelemetry
 from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
 
 _GATEWAY_MODULE = "polaris.cells.roles.kernel.internal.context_gateway.gateway"
@@ -41,13 +42,17 @@ def _read_events(path: str) -> list[dict[str, Any]]:
         return [json.loads(line) for line in handle if line.strip()]
 
 
+def _telemetry(tmp_path) -> GatewayTelemetry:
+    return GatewayTelemetry(workspace=tmp_path, role_id="director")
+
+
 class TestContextBuildEmission:
     def test_emits_to_explicit_events_path(self, tmp_path) -> None:
-        gateway = RoleContextGateway(_mock_profile(), workspace=str(tmp_path))
+        telemetry = _telemetry(tmp_path)
         events_path = str(tmp_path / "events" / "runtime.events.jsonl")
         request = ContextRequest(message="hi", run_id="pm-00001", events_path=events_path)
 
-        gateway._emit_context_build_observation(
+        telemetry.emit_context_build_observation(
             request, items_count=5, total_tokens=3200, message_count=4, projection_id="proj-1"
         )
 
@@ -63,13 +68,13 @@ class TestContextBuildEmission:
         assert event["refs"]["role"] == "director"
 
     def test_self_resolves_per_run_file_when_run_dir_exists(self, tmp_path) -> None:
-        gateway = RoleContextGateway(_mock_profile(), workspace=str(tmp_path))
+        telemetry = _telemetry(tmp_path)
         run_dir = tmp_path / "runs" / "pm-00001"
         (run_dir / "events").mkdir(parents=True, exist_ok=True)
         request = ContextRequest(message="hi", run_id="pm-00001")  # no events_path → self-resolve
 
         with patch(f"{_GATEWAY_MODULE}.resolve_run_dir", return_value=str(run_dir)):
-            gateway._emit_context_build_observation(
+            telemetry.emit_context_build_observation(
                 request, items_count=7, total_tokens=999, message_count=3, projection_id="p2"
             )
 
@@ -79,44 +84,44 @@ class TestContextBuildEmission:
 
     def test_failsafe_skips_when_run_dir_missing(self, tmp_path) -> None:
         """Resolution mismatch (run dir absent) → skip rather than write a phantom file."""
-        gateway = RoleContextGateway(_mock_profile(), workspace=str(tmp_path))
+        telemetry = _telemetry(tmp_path)
         missing_run_dir = tmp_path / "runs" / "ghost"  # intentionally not created
         request = ContextRequest(message="hi", run_id="ghost")
 
         with patch(f"{_GATEWAY_MODULE}.resolve_run_dir", return_value=str(missing_run_dir)):
-            gateway._emit_context_build_observation(
+            telemetry.emit_context_build_observation(
                 request, items_count=5, total_tokens=1, message_count=1, projection_id="p"
             )
 
         assert not list(tmp_path.rglob("runtime.events.jsonl"))
 
     def test_no_run_id_no_emit(self, tmp_path) -> None:
-        gateway = RoleContextGateway(_mock_profile(), workspace=str(tmp_path))
+        telemetry = _telemetry(tmp_path)
         request = ContextRequest(message="hi", run_id="")
 
-        gateway._emit_context_build_observation(
+        telemetry.emit_context_build_observation(
             request, items_count=5, total_tokens=3200, message_count=4, projection_id="p"
         )
 
         assert not list(tmp_path.rglob("runtime.events.jsonl"))
 
     def test_emit_never_raises_on_io_error(self, tmp_path) -> None:
-        gateway = RoleContextGateway(_mock_profile(), workspace=str(tmp_path))
+        telemetry = _telemetry(tmp_path)
         request = ContextRequest(message="hi", run_id="pm-1", events_path=str(tmp_path / "e.jsonl"))
 
         with patch(f"{_GATEWAY_MODULE}.emit_event", side_effect=OSError("disk full")):
             # Observability must never break a turn.
-            gateway._emit_context_build_observation(
+            telemetry.emit_context_build_observation(
                 request, items_count=1, total_tokens=1, message_count=1, projection_id="p"
             )
 
     def test_explicit_path_bypasses_run_dir_existence_guard(self, tmp_path) -> None:
         """An explicitly provided events_path is trusted (no run-dir existence guard)."""
-        gateway = RoleContextGateway(_mock_profile(), workspace=str(tmp_path))
+        telemetry = _telemetry(tmp_path)
         events_path = str(tmp_path / "explicit" / "runtime.events.jsonl")
         request = ContextRequest(message="hi", run_id="pm-1", events_path=events_path)
 
-        gateway._emit_context_build_observation(
+        telemetry.emit_context_build_observation(
             request, items_count=2, total_tokens=10, message_count=1, projection_id="p"
         )
 

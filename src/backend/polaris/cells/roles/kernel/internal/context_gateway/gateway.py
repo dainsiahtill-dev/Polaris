@@ -563,7 +563,7 @@ class RoleContextGateway:
         # Emit a per-run context.build observation (mirrors ContextEngine) so the
         # realtime ContextOS dashboard surfaces projections / in-window item counts
         # for THIS role turn — not just PM planning's prompt_context. Best-effort.
-        self._emit_context_build_observation(
+        self._telemetry.emit_context_build_observation(
             request,
             items_count=active_window_size,
             total_tokens=token_estimate,
@@ -575,7 +575,7 @@ class RoleContextGateway:
         # (NON-MUTATING — does not change request bytes or reorder tools). Lets
         # the ContextOS dashboard / RoleSignalPlane surface whether the cache-hot
         # prefix drifts across turns and busts the local prompt cache.
-        self._emit_prefix_drift_observation(
+        self._telemetry.emit_prefix_drift_observation(
             request,
             messages=messages,
             system_prompt=system_prompt,
@@ -617,42 +617,6 @@ class RoleContextGateway:
                 "projection_id": projection_id,
                 "context_result_id": context_result_id,
             },
-        )
-
-    def _emit_context_build_observation(
-        self,
-        request: ContextRequest,
-        *,
-        items_count: int,
-        total_tokens: int,
-        message_count: int,
-        projection_id: str,
-    ) -> None:
-        """Backward-compatible delegate to GatewayTelemetry.emit_context_build_observation."""
-        self._telemetry.emit_context_build_observation(
-            request,
-            items_count=items_count,
-            total_tokens=total_tokens,
-            message_count=message_count,
-            projection_id=projection_id,
-        )
-
-    def _resolve_run_events_path(self, request: ContextRequest) -> str:
-        """Backward-compatible delegate to GatewayTelemetry.resolve_run_events_path."""
-        return self._telemetry.resolve_run_events_path(request)
-
-    def _emit_prefix_drift_observation(
-        self,
-        request: ContextRequest,
-        *,
-        messages: Sequence[Mapping[str, Any]],
-        system_prompt: str | None,
-    ) -> None:
-        """Backward-compatible delegate to GatewayTelemetry.emit_prefix_drift_observation."""
-        self._telemetry.emit_prefix_drift_observation(
-            request,
-            messages=messages,
-            system_prompt=system_prompt,
         )
 
     def _extract_strategy_override(self, request: ContextRequest) -> tuple[dict[str, Any], tuple[str, ...]]:

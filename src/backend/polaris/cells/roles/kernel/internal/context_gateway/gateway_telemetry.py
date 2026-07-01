@@ -1,10 +1,8 @@
 """Per-run telemetry emitters for :class:`RoleContextGateway`.
 
 Extracted (behavior-preserving) from ``gateway.py`` during the G8 god-class
-decomposition (blueprint REMAINING_04_gateway-py.md, step 2). The gateway keeps
-delegating shims (``_emit_context_build_observation`` /
-``_emit_prefix_drift_observation`` / ``_resolve_run_events_path``) with identical
-signatures — those names are frozen by test reach-ins.
+decomposition (blueprint REMAINING_04_gateway-py.md, step 2). The gateway now
+calls this owner directly for per-run context telemetry.
 
 MONKEYPATCH CONTRACT (load-bearing): the in-package tests patch
 ``...context_gateway.gateway.resolve_run_dir`` and ``...gateway.emit_event`` on
