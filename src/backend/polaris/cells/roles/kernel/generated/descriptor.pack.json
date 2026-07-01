@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T08:29:42.036583Z",
-  "source_hash": "0c5b3005892fceb5",
+  "generated_at": "2026-07-01T08:40:46.407400Z",
+  "source_hash": "2258e5c71ed832ae",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4700,6 +4700,84 @@
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_tool_dispatch_projection.py"
     },
     {
+      "type": "class",
+      "name": "_Registry",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_turn_prompt_setup.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "get_profile_or_raise",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_PromptBuilder",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_turn_prompt_setup.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "build_fingerprint",
+          "doc": ""
+        },
+        {
+          "name": "build_system_prompt",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_Kernel",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_turn_prompt_setup.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_profile",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_turn_prompt_setup.py"
+    },
+    {
+      "type": "function",
+      "name": "test_build_role_turn_prompt_setup_projects_shared_prompt_inputs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_turn_prompt_setup.py"
+    },
+    {
+      "type": "function",
+      "name": "test_format_role_turn_setup_error_uses_public_stage_messages",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_turn_prompt_setup.py"
+    },
+    {
+      "type": "function",
+      "name": "test_build_role_turn_prompt_setup_wraps_profile_failures",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_turn_prompt_setup.py"
+    },
+    {
+      "type": "function",
+      "name": "test_build_role_turn_prompt_setup_wraps_fingerprint_failures",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_turn_prompt_setup.py"
+    },
+    {
       "type": "function",
       "name": "tool_schema_names_for_error_audit",
       "description": "Return stable native tool names for degraded provider-request audit evidence.",
@@ -5012,6 +5090,37 @@
       "name": "_resolve_transaction_turn_id",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py"
+    },
+    {
+      "type": "class",
+      "name": "RoleTurnPromptSetup",
+      "description": "Prepared prompt setup needed before TransactionKernel execution.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/turn_prompt_setup.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleTurnSetupError",
+      "description": "Raised when role-turn prompt setup fails before TransactionKernel starts.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/turn_prompt_setup.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "format_role_turn_setup_error",
+      "description": "Return the public non-streaming error message for a setup failure.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/turn_prompt_setup.py"
+    },
+    {
+      "type": "function",
+      "name": "build_role_turn_prompt_setup",
+      "description": "Build shared profile and prompt inputs for a role turn.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/turn_prompt_setup.py"
     },
     {
       "type": "class",

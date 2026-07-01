@@ -37,13 +37,7 @@ from polaris.cells.roles.kernel.internal.kernel.helpers import (
     quality_result_to_dict,
 )
 from polaris.cells.roles.kernel.internal.kernel.output_parser_provider import get_output_parser
-from polaris.cells.roles.kernel.internal.kernel.prompt_assembly import (
-    append_prompt_profiles_for_request,
-    build_system_prompt_for_request,
-)
-from polaris.cells.roles.kernel.internal.kernel.prompt_builder_provider import get_prompt_builder
 from polaris.cells.roles.kernel.internal.kernel.quality_checker_provider import get_quality_checker
-from polaris.cells.roles.kernel.internal.kernel.request_appendix import build_prompt_appendix_from_request
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     role_turn_error_result,
     role_turn_result_from_transaction_result,
@@ -53,6 +47,11 @@ from polaris.cells.roles.kernel.internal.kernel.suggestions import get_suggestio
 from polaris.cells.roles.kernel.internal.kernel.turn_execution import (
     execute_transaction_kernel_stream,
     execute_transaction_kernel_turn,
+)
+from polaris.cells.roles.kernel.internal.kernel.turn_prompt_setup import (
+    RoleTurnSetupError,
+    build_role_turn_prompt_setup,
+    format_role_turn_setup_error,
 )
 from polaris.cells.roles.kernel.internal.metrics import get_metrics_collector
 from polaris.cells.roles.kernel.internal.output_parser import OutputParser
@@ -266,47 +265,22 @@ class RoleExecutionKernel:
         Returns:
             回合结果
         """
-        # 1. 加载角色Profile
+        # 1. Build shared profile/prompt setup before TransactionKernel execution.
         try:
-            profile = self.registry.get_profile_or_raise(role)
-        except (RuntimeError, ValueError) as e:
-            return role_turn_error_result(error=f"角色加载失败: {e}", is_complete=True)
-
-        # 2. 处理请求附录
-        try:
-            prompt_appendix = build_prompt_appendix_from_request(request)
-        except (RuntimeError, ValueError) as e:
-            return role_turn_error_result(error=f"参数处理失败: {e}", is_complete=True)
-
-        prompt_appendix = append_prompt_profiles_for_request(
-            profile=profile,
-            request=request,
-            prompt_appendix=prompt_appendix,
-            context_override=getattr(request, "context_override", None),
-            message=str(getattr(request, "message", "") or ""),
-            workspace=self.workspace,
-        )
-
-        # 3. 构建提示词指纹
-        try:
-            prompt_builder = get_prompt_builder(self)
-            fingerprint = prompt_builder.build_fingerprint(profile, prompt_appendix)
-        except (RuntimeError, ValueError) as e:
-            return role_turn_error_result(error=f"提示词构建失败: {e}", is_complete=True)
-
-        # 4. 构建基础系统提示词
-        try:
-            base_system_prompt = build_system_prompt_for_request(
-                prompt_builder=prompt_builder,
-                profile=profile,
+            turn_setup = build_role_turn_prompt_setup(
+                kernel=self,
+                role=role,
                 request=request,
-                prompt_appendix=prompt_appendix,
-                workspace=self.workspace,
             )
-        except (RuntimeError, ValueError) as e:
-            return role_turn_error_result(error=f"系统提示词构建失败: {e}", is_complete=True)
+        except RoleTurnSetupError as e:
+            return role_turn_error_result(error=format_role_turn_setup_error(e), is_complete=True)
 
-        # 5. 构建上下文（验证可用性，结果由 TransactionKernel 使用）
+        profile = turn_setup.profile
+        prompt_builder = turn_setup.prompt_builder
+        fingerprint = turn_setup.fingerprint
+        base_system_prompt = turn_setup.system_prompt
+
+        # 2. 构建上下文（验证可用性，结果由 TransactionKernel 使用）
         try:
             _ = build_context_request(request)
         except (RuntimeError, ValueError) as e:
@@ -316,7 +290,7 @@ class RoleExecutionKernel:
         self._cached_tool_gateway = None
         self._cached_gateway_profile = None
 
-        # 6. 重试循环配置
+        # 3. 重试循环配置
         max_retries = request.max_retries if request.max_retries > 0 else self._config.max_retries
         validate_output = request.validate_output
         last_validation: QualityResult | None = None
@@ -589,27 +563,19 @@ class RoleExecutionKernel:
         uep_publisher = UEPEventPublisher()
 
         try:
-            # 1. 加载角色Profile
-            profile = self.registry.get_profile_or_raise(role)
+            turn_setup = build_role_turn_prompt_setup(
+                kernel=self,
+                role=role,
+                request=request,
+            )
+            profile = turn_setup.profile
+            fingerprint = turn_setup.fingerprint
+            system_prompt = turn_setup.system_prompt
 
             # Reset cached gateway for new turn (FailureBudget should not persist across turns)
             self._cached_tool_gateway = None
             self._cached_gateway_profile = None
 
-            # 2. 处理请求附录
-            prompt_appendix = build_prompt_appendix_from_request(request)
-            prompt_appendix = append_prompt_profiles_for_request(
-                profile=profile,
-                request=request,
-                prompt_appendix=prompt_appendix,
-                context_override=getattr(request, "context_override", None),
-                message=str(getattr(request, "message", "") or ""),
-                workspace=self.workspace,
-            )
-
-            # 3. 构建提示词指纹
-            prompt_builder = get_prompt_builder(self)
-            fingerprint = prompt_builder.build_fingerprint(profile, prompt_appendix)
             await uep_publisher.publish_stream_event(
                 workspace=self.workspace or os.getcwd(),
                 run_id=stream_run_id,
@@ -618,15 +584,6 @@ class RoleExecutionKernel:
                 payload={"fingerprint": str(fingerprint.full_hash or "")},
             )
             yield {"type": "fingerprint", "fingerprint": fingerprint}
-
-            # 4. 构建系统提示词
-            system_prompt = build_system_prompt_for_request(
-                prompt_builder=prompt_builder,
-                profile=profile,
-                request=request,
-                prompt_appendix=prompt_appendix,
-                workspace=self.workspace,
-            )
 
             try:
                 async for event in execute_transaction_kernel_stream(
