@@ -122,18 +122,20 @@ def _build_kernel(*, workspace: str, role: str, real_profile: Any, fake_call: An
             include_task_history=False,
         ),
     )
-    kernel = RoleExecutionKernel(workspace=workspace, registry=_StubRegistry(profile))  # type: ignore[arg-type]
-    kernel_any: Any = kernel
-    kernel_any._prompt_builder = SimpleNamespace(
+    prompt_builder = SimpleNamespace(
         build_fingerprint=lambda _p, _a: SimpleNamespace(full_hash="fp-scout", core_hash="fp-scout"),
         build_system_prompt=lambda _p, _a: "system-prompt",
         build_retry_prompt=lambda _base, _q, _attempt: "system-prompt",
     )
-    kernel_any._injected_llm_invoker = SimpleNamespace(
-        call=fake_call or _noop_call,
-        call_stream=_noop_call_stream,
+    return RoleExecutionKernel(
+        workspace=workspace,
+        registry=_StubRegistry(profile),  # type: ignore[arg-type]
+        prompt_builder=prompt_builder,
+        llm_invoker=SimpleNamespace(
+            call=fake_call or _noop_call,
+            call_stream=_noop_call_stream,
+        ),
     )
-    return kernel
 
 
 def _scout_native_call(query: str, *, call_id: str = "call_scout") -> dict[str, Any]:

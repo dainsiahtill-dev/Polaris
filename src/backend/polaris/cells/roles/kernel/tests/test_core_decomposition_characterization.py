@@ -270,15 +270,18 @@ def _make_run_kernel(
     quality_checker: Any | None = None,
     event_emitter: Any | None = None,
 ) -> RoleExecutionKernel:
-    kernel = RoleExecutionKernel(workspace=".", quality_checker=quality_checker)  # type: ignore[arg-type]
-    kernel.registry = MagicMock(get_profile_or_raise=MagicMock(return_value=profile))
     prompt_builder = SimpleNamespace(
         build_system_prompt=lambda _profile, _appendix, **_kwargs: "system-prompt",
         build_fingerprint=lambda _profile, _appendix: _MockFingerprint(),
         build_retry_prompt=lambda _system_prompt, _quality_result, _attempt: "retry-prompt",
     )
-    kernel.inject_prompt_builder(prompt_builder)  # type: ignore[arg-type]
-    kernel.inject_event_emitter(event_emitter or _event_emitter())  # type: ignore[arg-type]
+    kernel = RoleExecutionKernel(
+        workspace=".",
+        quality_checker=quality_checker,  # type: ignore[arg-type]
+        prompt_builder=prompt_builder,  # type: ignore[arg-type]
+        event_emitter=event_emitter or _event_emitter(),  # type: ignore[arg-type]
+    )
+    kernel.registry = MagicMock(get_profile_or_raise=MagicMock(return_value=profile))
     return kernel
 
 

@@ -74,8 +74,8 @@ class TestRoleExecutionKernelConstruction:
 class TestDependencyInjection:
     """依赖注入测试"""
 
-    def test_inject_llm_invoker(self) -> None:
-        """测试注入 LLM Invoker"""
+    def test_constructor_llm_invoker_dependency(self) -> None:
+        """测试构造期注入 LLM Invoker"""
         mock_invoker = MagicMock(spec=ILLMInvoker)
         kernel = RoleExecutionKernel(
             workspace=".",
@@ -83,8 +83,8 @@ class TestDependencyInjection:
         )
         assert get_llm_invoker(kernel) is mock_invoker
 
-    def test_inject_tool_executor(self) -> None:
-        """测试注入 Tool Executor"""
+    def test_constructor_tool_executor_dependency(self) -> None:
+        """测试构造期注入 Tool Executor"""
         mock_executor = MagicMock(spec=CellToolExecutorPort)
         mock_executor.execute = AsyncMock(return_value={"success": True})
         kernel = RoleExecutionKernel(
@@ -95,8 +95,8 @@ class TestDependencyInjection:
         mock_executor.execute.assert_called_once()
         assert result == {"success": True}
 
-    def test_inject_prompt_builder(self) -> None:
-        """测试注入 Prompt Builder"""
+    def test_constructor_prompt_builder_dependency(self) -> None:
+        """测试构造期注入 Prompt Builder"""
         mock_builder = MagicMock(spec=IPromptBuilder)
         kernel = RoleExecutionKernel(
             workspace=".",
@@ -104,8 +104,8 @@ class TestDependencyInjection:
         )
         assert get_prompt_builder(kernel) is mock_builder
 
-    def test_inject_output_parser(self) -> None:
-        """测试注入 Output Parser"""
+    def test_constructor_output_parser_dependency(self) -> None:
+        """测试构造期注入 Output Parser"""
         mock_parser = MagicMock(spec=IOutputParser)
         kernel = RoleExecutionKernel(
             workspace=".",
@@ -113,8 +113,8 @@ class TestDependencyInjection:
         )
         assert get_output_parser(kernel) is mock_parser
 
-    def test_inject_quality_checker(self) -> None:
-        """测试注入 Quality Checker"""
+    def test_constructor_quality_checker_dependency(self) -> None:
+        """测试构造期注入 Quality Checker"""
         mock_checker = MagicMock(spec=IQualityChecker)
         kernel = RoleExecutionKernel(
             workspace=".",
@@ -122,8 +122,8 @@ class TestDependencyInjection:
         )
         assert get_quality_checker(kernel) is mock_checker
 
-    def test_inject_event_emitter(self) -> None:
-        """测试注入 Event Emitter"""
+    def test_constructor_event_emitter_dependency(self) -> None:
+        """测试构造期注入 Event Emitter"""
         mock_emitter = MagicMock(spec=IEventEmitter)
         kernel = RoleExecutionKernel(
             workspace=".",

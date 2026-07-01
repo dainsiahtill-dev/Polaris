@@ -348,7 +348,13 @@ class TestTransactionKernelTemperatureChannel:
 
     @pytest.mark.asyncio
     async def test_payload_temperature_lands_in_context_override(self) -> None:
-        kernel = RoleExecutionKernel.create_default(workspace=".")
+        captured_contexts: list[Any] = []
+
+        async def _fake_call(*, context: Any, **_kwargs: Any) -> Any:
+            captured_contexts.append(context)
+            return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
+
+        kernel = RoleExecutionKernel.create_default(workspace=".", llm_invoker=SimpleNamespace(call=_fake_call))
         profile = SimpleNamespace(role_id="director", version="1.0", model="test-model", provider_id="openai")
         request = SimpleNamespace(
             message="hello",
@@ -357,13 +363,6 @@ class TestTransactionKernelTemperatureChannel:
             workspace=".",
             context_override={"context_os_snapshot": {}},
         )
-        captured_contexts: list[Any] = []
-
-        async def _fake_call(*, context: Any, **_kwargs: Any) -> Any:
-            captured_contexts.append(context)
-            return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
-
-        kernel.inject_llm_invoker(SimpleNamespace(call=_fake_call))
         tk = create_transaction_kernel(kernel, "director", profile, request)
 
         await tk.llm_provider(
@@ -398,7 +397,7 @@ class TestTransactionKernelTemperatureChannel:
             captured_contexts.append(context)
             return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
 
-        kernel.inject_llm_invoker(SimpleNamespace(call=_fake_call))
+        kernel = RoleExecutionKernel.create_default(workspace=".", llm_invoker=SimpleNamespace(call=_fake_call))
         tk = create_transaction_kernel(kernel, "director", profile, request)
 
         await tk.llm_provider(
@@ -417,7 +416,13 @@ class TestTransactionKernelTemperatureChannel:
 
     @pytest.mark.asyncio
     async def test_payload_output_floor_does_not_lower_execution_strategy_budget(self) -> None:
-        kernel = RoleExecutionKernel.create_default(workspace=".")
+        captured_contexts: list[Any] = []
+
+        async def _fake_call(*, context: Any, **_kwargs: Any) -> Any:
+            captured_contexts.append(context)
+            return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
+
+        kernel = RoleExecutionKernel.create_default(workspace=".", llm_invoker=SimpleNamespace(call=_fake_call))
         profile = SimpleNamespace(role_id="director", version="1.0", model="test-model", provider_id="openai")
         request = SimpleNamespace(
             message="repair existing targets",
@@ -432,13 +437,6 @@ class TestTransactionKernelTemperatureChannel:
                 },
             },
         )
-        captured_contexts: list[Any] = []
-
-        async def _fake_call(*, context: Any, **_kwargs: Any) -> Any:
-            captured_contexts.append(context)
-            return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
-
-        kernel.inject_llm_invoker(SimpleNamespace(call=_fake_call))
         tk = create_transaction_kernel(kernel, "director", profile, request)
 
         await tk.llm_provider(
@@ -458,7 +456,13 @@ class TestTransactionKernelTemperatureChannel:
 
     @pytest.mark.asyncio
     async def test_forced_retry_output_floor_bounds_execution_strategy_budget(self) -> None:
-        kernel = RoleExecutionKernel.create_default(workspace=".")
+        captured_contexts: list[Any] = []
+
+        async def _fake_call(*, context: Any, **_kwargs: Any) -> Any:
+            captured_contexts.append(context)
+            return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
+
+        kernel = RoleExecutionKernel.create_default(workspace=".", llm_invoker=SimpleNamespace(call=_fake_call))
         profile = SimpleNamespace(role_id="director", version="1.0", model="test-model", provider_id="openai")
         request = SimpleNamespace(
             message="repair existing targets",
@@ -473,13 +477,6 @@ class TestTransactionKernelTemperatureChannel:
                 },
             },
         )
-        captured_contexts: list[Any] = []
-
-        async def _fake_call(*, context: Any, **_kwargs: Any) -> Any:
-            captured_contexts.append(context)
-            return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
-
-        kernel.inject_llm_invoker(SimpleNamespace(call=_fake_call))
         tk = create_transaction_kernel(kernel, "director", profile, request)
 
         await tk.llm_provider(

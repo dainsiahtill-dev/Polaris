@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T06:43:30.946202Z",
-  "source_hash": "c6bfcd4a3f8e1a0e",
+  "generated_at": "2026-07-01T07:04:18.270672Z",
+  "source_hash": "4caeb64c8a83ad6c",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4006,26 +4006,6 @@
         {
           "name": "context_gateway_config_factory",
           "doc": "Return the runtime-injected ContextGatewayConfig factory, if any."
-        },
-        {
-          "name": "inject_llm_invoker",
-          "doc": "注入 LLMInvoker（支持测试和扩展）"
-        },
-        {
-          "name": "inject_tool_executor",
-          "doc": "注入工具执行器（支持测试和扩展）"
-        },
-        {
-          "name": "inject_prompt_builder",
-          "doc": "注入提示词构建器（支持测试和扩展）"
-        },
-        {
-          "name": "inject_output_parser",
-          "doc": "注入输出解析器（支持测试和扩展）"
-        },
-        {
-          "name": "inject_event_emitter",
-          "doc": "注入事件发射器（支持测试和扩展）"
         }
       ]
     },
@@ -4429,28 +4409,28 @@
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py",
       "methods": [
         {
-          "name": "test_inject_llm_invoker",
-          "doc": "测试注入 LLM Invoker"
+          "name": "test_constructor_llm_invoker_dependency",
+          "doc": "测试构造期注入 LLM Invoker"
         },
         {
-          "name": "test_inject_tool_executor",
-          "doc": "测试注入 Tool Executor"
+          "name": "test_constructor_tool_executor_dependency",
+          "doc": "测试构造期注入 Tool Executor"
         },
         {
-          "name": "test_inject_prompt_builder",
-          "doc": "测试注入 Prompt Builder"
+          "name": "test_constructor_prompt_builder_dependency",
+          "doc": "测试构造期注入 Prompt Builder"
         },
         {
-          "name": "test_inject_output_parser",
-          "doc": "测试注入 Output Parser"
+          "name": "test_constructor_output_parser_dependency",
+          "doc": "测试构造期注入 Output Parser"
         },
         {
-          "name": "test_inject_quality_checker",
-          "doc": "测试注入 Quality Checker"
+          "name": "test_constructor_quality_checker_dependency",
+          "doc": "测试构造期注入 Quality Checker"
         },
         {
-          "name": "test_inject_event_emitter",
-          "doc": "测试注入 Event Emitter"
+          "name": "test_constructor_event_emitter_dependency",
+          "doc": "测试构造期注入 Event Emitter"
         },
         {
           "name": "test_inject_all_services",
@@ -20675,12 +20655,6 @@
       "defined_in": "polaris/cells/roles/kernel/tests/conftest.py"
     },
     {
-      "type": "function",
-      "name": "patch_prompt_builder",
-      "description": "Patch a kernel's prompt builder with mock implementations.",
-      "defined_in": "polaris/cells/roles/kernel/tests/conftest.py"
-    },
-    {
       "type": "class",
       "name": "TestCanonicalCodeExploration",
       "description": "Test suite for canonical code exploration policy enforcement.",
@@ -30133,12 +30107,6 @@
     {
       "type": "function",
       "name": "_build_kernel",
-      "description": "",
-      "defined_in": "polaris/cells/roles/kernel/tests/test_stream_visible_output_contract.py"
-    },
-    {
-      "type": "function",
-      "name": "_patch_prompt_builder",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_stream_visible_output_contract.py"
     },

@@ -349,23 +349,3 @@ def canonical_tool_call(
     from polaris.cells.roles.kernel.internal.tool_call_protocol import CanonicalToolCall
 
     return CanonicalToolCall(tool=tool, args=args or {}, raw="")
-
-
-def patch_prompt_builder(kernel: RoleExecutionKernel) -> SimpleNamespace:
-    """Patch a kernel's prompt builder with mock implementations.
-
-    This is useful for tests that need to verify prompt builder behavior.
-
-    Args:
-        kernel: RoleExecutionKernel to patch
-
-    Returns:
-        Mock prompt builder that was set on the kernel
-    """
-    mock_pb = SimpleNamespace(
-        build_system_prompt=lambda _p, _a, **kw: "test-system-prompt",
-        build_fingerprint=lambda _p, _a: SimpleNamespace(full_hash="fp-test-patch", core_hash="fp-test-patch"),
-        build_retry_prompt=lambda _p, _a, **kw: "retry-prompt",
-    )
-    kernel._prompt_builder = mock_pb  # type: ignore[assignment]
-    return mock_pb

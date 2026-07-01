@@ -227,13 +227,6 @@ class RoleExecutionKernel:
             workspace=workspace,
             registry=registry,
             config=config,
-            # 使用默认服务（None 表示使用内部默认实现）
-            llm_invoker=None,
-            tool_executor=None,
-            prompt_builder=None,
-            output_parser=None,
-            quality_checker=None,
-            event_emitter=None,
             **kwargs,
         )
 
@@ -250,50 +243,6 @@ class RoleExecutionKernel:
     def context_gateway_config_factory(self) -> ContextGatewayConfigFactory | None:
         """Return the runtime-injected ContextGatewayConfig factory, if any."""
         return self._context_gateway_config_factory
-
-    # ─────────────────────────────────────────────────────────────────────────────
-    # 公共 DI 注入方法（用于测试和扩展）
-    # ─────────────────────────────────────────────────────────────────────────────
-
-    def inject_llm_invoker(self, invoker: ILLMInvoker | Any | None) -> None:
-        """注入 LLMInvoker（支持测试和扩展）
-
-        Args:
-            invoker: LLM 调用服务实例，传入 None 可清除注入
-        """
-        self._injected_llm_invoker = invoker
-
-    def inject_tool_executor(self, executor: CellToolExecutorPort | None) -> None:
-        """注入工具执行器（支持测试和扩展）
-
-        Args:
-            executor: 工具执行器实例，传入 None 可清除注入
-        """
-        self._injected_tool_executor = executor
-
-    def inject_prompt_builder(self, builder: IPromptBuilder | None) -> None:
-        """注入提示词构建器（支持测试和扩展）
-
-        Args:
-            builder: 提示词构建器实例，传入 None 可清除注入
-        """
-        self._injected_prompt_builder = builder
-
-    def inject_output_parser(self, parser: IOutputParser | None) -> None:
-        """注入输出解析器（支持测试和扩展）
-
-        Args:
-            parser: 输出解析器实例，传入 None 可清除注入
-        """
-        self._injected_output_parser = parser
-
-    def inject_event_emitter(self, emitter: IEventEmitter | None) -> None:
-        """注入事件发射器（支持测试和扩展）
-
-        Args:
-            emitter: 事件发射器实例，传入 None 可清除注入
-        """
-        self._injected_event_emitter = emitter
 
     # ═══════════════════════════════════════════════════════════════════════════
     # 主要公开 API

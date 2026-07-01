@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.prompt_builder_provider import get_prompt_builder
 from polaris.cells.roles.kernel.internal.output_parser import OutputParser
 from polaris.cells.roles.profile.public.service import RoleExecutionMode, RoleTurnRequest
 
@@ -70,17 +70,12 @@ def _build_kernel() -> RoleExecutionKernel:
         tool_policy=tool_policy,
         context_policy=context_policy,
     )
-    kernel = RoleExecutionKernel(workspace=".", registry=_StubRegistry(profile))  # type: ignore[arg-type]
-    kernel_any: Any = kernel
-    # Inject mock prompt builder to avoid AttributeError when tests monkeypatch it
-    kernel_any._prompt_builder = SimpleNamespace(
+    prompt_builder = SimpleNamespace(
         build_fingerprint=lambda _profile, _appendix: SimpleNamespace(full_hash="fp-stream"),
         build_system_prompt=lambda _profile, _appendix: "system-prompt",
         build_retry_prompt=lambda _base, _quality_dict, _attempt: "system-prompt",
     )
 
-    # FIX: Initialize _injected_llm_invoker for proper dependency injection
-    # The kernel uses _injected_llm_invoker first if available, falling back to _llm_invoker
     async def _noop_call(**kw):
         return SimpleNamespace(content="", tool_calls=[], error=None)
 
@@ -88,8 +83,12 @@ def _build_kernel() -> RoleExecutionKernel:
         return
         yield  # make it an async generator
 
-    kernel_any._injected_llm_invoker = SimpleNamespace(call=_noop_call, call_stream=_noop_call_stream)
-    return kernel
+    return RoleExecutionKernel(
+        workspace=".",
+        registry=_StubRegistry(profile),  # type: ignore[arg-type]
+        prompt_builder=prompt_builder,
+        llm_invoker=SimpleNamespace(call=_noop_call, call_stream=_noop_call_stream),
+    )
 
 
 def _openai_native_tool_call(path: str, *, call_id: str = "call_readme") -> dict[str, object]:
@@ -109,12 +108,12 @@ def test_stream_continues_after_tool_results_with_transcript_context(monkeypatch
     call_contexts: list[dict[str, object]] = []
 
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_fingerprint",
         lambda _profile, _appendix: SimpleNamespace(full_hash="fp-stream"),
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_system_prompt",
         lambda _profile, _appendix: "system-prompt",
     )
@@ -216,12 +215,12 @@ def test_stream_executes_native_tool_calls_without_text_wrapper(monkeypatch) -> 
     call_contexts: list[dict[str, object]] = []
 
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_fingerprint",
         lambda _profile, _appendix: SimpleNamespace(full_hash="fp-stream-native"),
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_system_prompt",
         lambda _profile, _appendix: "system-prompt",
     )
@@ -314,12 +313,12 @@ def test_stream_executes_normalized_tool_calls_even_with_anthropic_provider_meta
     call_contexts: list[dict[str, object]] = []
 
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_fingerprint",
         lambda _profile, _appendix: SimpleNamespace(full_hash="fp-stream-anthropic-compat"),
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_system_prompt",
         lambda _profile, _appendix: "system-prompt",
     )
@@ -419,12 +418,12 @@ def test_stream_repeated_identical_tool_cycle_emits_safety_error(monkeypatch) ->
     kernel = _build_kernel()
 
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_fingerprint",
         lambda _profile, _appendix: SimpleNamespace(full_hash="fp-stream"),
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_system_prompt",
         lambda _profile, _appendix: "system-prompt",
     )
@@ -502,12 +501,12 @@ def test_stream_compacts_large_tool_receipts_in_transcript(monkeypatch) -> None:
     call_contexts: list[dict[str, object]] = []
 
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_fingerprint",
         lambda _profile, _appendix: SimpleNamespace(full_hash="fp-stream"),
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_system_prompt",
         lambda _profile, _appendix: "system-prompt",
     )
@@ -602,12 +601,12 @@ def test_stream_keeps_read_file_receipt_when_context_budget_allows(monkeypatch) 
     marker = "FILE_TAIL_MARKER_9f7b"
 
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_fingerprint",
         lambda _profile, _appendix: SimpleNamespace(full_hash="fp-stream"),
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_system_prompt",
         lambda _profile, _appendix: "system-prompt",
     )
@@ -695,12 +694,12 @@ def test_stream_examples_inside_code_blocks_do_not_execute(monkeypatch) -> None:
     kernel = _build_kernel()
 
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_fingerprint",
         lambda _profile, _appendix: SimpleNamespace(full_hash="fp-stream"),
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_system_prompt",
         lambda _profile, _appendix: "system-prompt",
     )
@@ -757,12 +756,12 @@ def test_stream_thinking_only_response_emits_explicit_error(monkeypatch) -> None
     kernel = _build_kernel()
 
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_fingerprint",
         lambda _profile, _appendix: SimpleNamespace(full_hash="fp-thinking-only"),
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_system_prompt",
         lambda _profile, _appendix: "system-prompt",
     )
@@ -807,12 +806,12 @@ def test_stream_blank_response_emits_explicit_error(monkeypatch) -> None:
     kernel = _build_kernel()
 
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_fingerprint",
         lambda _profile, _appendix: SimpleNamespace(full_hash="fp-stream-blank"),
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_system_prompt",
         lambda _profile, _appendix: "system-prompt",
     )
@@ -863,17 +862,17 @@ def test_run_continues_after_tool_results_with_transcript_context(monkeypatch) -
     captured_contexts: list[dict[str, object]] = []
 
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_fingerprint",
         lambda _profile, _appendix: SimpleNamespace(full_hash="fp-run", core_hash="fp-run"),
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_system_prompt",
         lambda _profile, _appendix: "system-prompt",
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_retry_prompt",
         lambda _base, _quality_dict, _attempt: "system-prompt",
     )
@@ -965,17 +964,17 @@ def test_run_repeated_identical_tool_cycle_does_not_trigger_stall(monkeypatch) -
     call_count = [0]
 
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_fingerprint",
         lambda _profile, _appendix: SimpleNamespace(full_hash="fp-run-safety", core_hash="fp-run-safety"),
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_system_prompt",
         lambda _profile, _appendix: "system-prompt",
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_retry_prompt",
         lambda _base, _quality_dict, _attempt: "system-prompt",
     )
@@ -1046,17 +1045,17 @@ def test_run_examples_inside_code_blocks_do_not_execute(monkeypatch) -> None:
     tool_executed = False
 
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_fingerprint",
         lambda _profile, _appendix: SimpleNamespace(full_hash="fp-run-codeblock", core_hash="fp-run-codeblock"),
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_system_prompt",
         lambda _profile, _appendix: "system-prompt",
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_retry_prompt",
         lambda _base, _quality_dict, _attempt: "system-prompt",
     )
@@ -1129,17 +1128,17 @@ def test_run_thinking_only_response_returns_explicit_error(monkeypatch) -> None:
     kernel = _build_kernel()
 
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_fingerprint",
         lambda _profile, _appendix: SimpleNamespace(full_hash="fp-run-thinking-only", core_hash="fp-run-thinking-only"),
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_system_prompt",
         lambda _profile, _appendix: "system-prompt",
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_retry_prompt",
         lambda _base, _quality_dict, _attempt: "system-prompt",
     )
@@ -1182,17 +1181,17 @@ def test_run_blank_response_returns_explicit_error(monkeypatch) -> None:
     kernel = _build_kernel()
 
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_fingerprint",
         lambda _profile, _appendix: SimpleNamespace(full_hash="fp-run-blank", core_hash="fp-run-blank"),
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_system_prompt",
         lambda _profile, _appendix: "system-prompt",
     )
     monkeypatch.setattr(
-        kernel._prompt_builder,
+        get_prompt_builder(kernel),
         "build_retry_prompt",
         lambda _base, _quality_dict, _attempt: "system-prompt",
     )

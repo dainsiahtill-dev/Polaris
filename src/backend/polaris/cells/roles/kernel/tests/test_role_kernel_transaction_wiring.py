@@ -367,11 +367,12 @@ class TestTransactionKernelPrebuiltContextPassThrough:
             if False:
                 yield {}  # pragma: no cover
 
-        kernel.inject_llm_invoker(
-            SimpleNamespace(
+        kernel = RoleExecutionKernel.create_default(
+            workspace=".",
+            llm_invoker=SimpleNamespace(
                 call=_fake_call,
                 call_stream=_fake_call_stream,
-            )
+            ),
         )
 
         tk = create_transaction_kernel(kernel, "director", profile, request)
@@ -407,7 +408,7 @@ class TestTransactionKernelPrebuiltContextPassThrough:
             captured_models.append(str(getattr(profile, "model", "") or ""))
             return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
 
-        kernel.inject_llm_invoker(SimpleNamespace(call=_fake_call))
+        kernel = RoleExecutionKernel.create_default(workspace=".", llm_invoker=SimpleNamespace(call=_fake_call))
         tk = create_transaction_kernel(kernel, "director", profile, request)
 
         response = await tk.llm_provider(
@@ -470,7 +471,10 @@ class TestTransactionKernelPrebuiltContextPassThrough:
             captured_contexts.append(context)
             return {"content": "```file: README.md\nok\n```", "tool_calls": []}
 
-        kernel.inject_llm_invoker(SimpleNamespace(call_decision=_fake_call_decision))
+        kernel = RoleExecutionKernel.create_default(
+            workspace=".",
+            llm_invoker=SimpleNamespace(call_decision=_fake_call_decision),
+        )
         tk = create_transaction_kernel(kernel, "director", profile, request)
 
         response = await tk.llm_provider(
@@ -518,7 +522,7 @@ class TestTransactionKernelPrebuiltContextPassThrough:
                 model="base-model",
             )
 
-        kernel.inject_llm_invoker(SimpleNamespace(call=_fake_call))
+        kernel = RoleExecutionKernel.create_default(workspace=".", llm_invoker=SimpleNamespace(call=_fake_call))
         tk = create_transaction_kernel(kernel, "pm", profile, request)
 
         response = await tk.llm_provider(
@@ -573,7 +577,10 @@ class TestTransactionKernelPrebuiltContextPassThrough:
             captured_contexts.append(context)
             return {"content": "", "tool_calls": []}
 
-        kernel.inject_llm_invoker(SimpleNamespace(call_decision=_fake_call_decision))
+        kernel = RoleExecutionKernel.create_default(
+            workspace=".",
+            llm_invoker=SimpleNamespace(call_decision=_fake_call_decision),
+        )
         tk = create_transaction_kernel(kernel, "director", profile, request)
 
         response = await tk.llm_provider(
@@ -1196,15 +1203,14 @@ class TestExecuteTransactionKernelTurn:
 
     @pytest.mark.asyncio
     async def test_run_preserves_transaction_context_os_audit_metadata(self) -> None:
-        kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(role_id="pm")
-        kernel.registry = MagicMock(get_profile_or_raise=MagicMock(return_value=profile))
         prompt_builder = SimpleNamespace(
             build_system_prompt=lambda _profile, _appendix, **_kwargs: "system-prompt",
             build_fingerprint=lambda _profile, _appendix: _MockFingerprint(),
             build_retry_prompt=lambda _system_prompt, _quality_result, _attempt: "retry-prompt",
         )
-        kernel.inject_prompt_builder(prompt_builder)  # type: ignore[arg-type]
+        kernel = RoleExecutionKernel.create_default(workspace=".", prompt_builder=prompt_builder)
+        kernel.registry = MagicMock(get_profile_or_raise=MagicMock(return_value=profile))
         expected_metadata = {
             "context_os_audit": {
                 "ok": True,

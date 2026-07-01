@@ -50,19 +50,17 @@ def _build_kernel() -> RoleExecutionKernel:
         async def call_stream(self, **kwargs: Any) -> Any:
             yield {"type": "chunk", "content": "mock stream"}
 
-    kernel = RoleExecutionKernel(workspace=".", registry=_StubRegistry(profile))  # type: ignore[arg-type]
-    kernel._injected_llm_invoker = _MockLLMInvoker()  # type: ignore[assignment]
-    return kernel
-
-
-def _patch_prompt_builder(kernel: RoleExecutionKernel) -> None:
-    # Use public injection so the stream path resolves the mock through the provider owner.
     mock_prompt_builder = SimpleNamespace(
         build_fingerprint=lambda _profile, _appendix: SimpleNamespace(full_hash="fp-visible-stream"),
         build_system_prompt=lambda _profile, _appendix: "system-prompt",
         build_retry_prompt=lambda _profile, _appendix, _error, _history, _attempt: "retry-prompt",
     )
-    kernel.inject_prompt_builder(mock_prompt_builder)  # type: ignore[arg-type]
+    return RoleExecutionKernel(
+        workspace=".",
+        registry=_StubRegistry(profile),  # type: ignore[arg-type]
+        llm_invoker=_MockLLMInvoker(),  # type: ignore[arg-type]
+        prompt_builder=mock_prompt_builder,
+    )
 
 
 def _make_request(message: str = "阅读并总结项目") -> RoleTurnRequest:
@@ -77,7 +75,6 @@ def _make_request(message: str = "阅读并总结项目") -> RoleTurnRequest:
 
 def test_stream_emits_only_sanitized_visible_content(monkeypatch) -> None:
     kernel = _build_kernel()
-    _patch_prompt_builder(kernel)
 
     async def _fake_call_stream(*, context: Any, **_kwargs: Any):
         message = str(getattr(context, "message", "") or "")
@@ -113,7 +110,6 @@ def test_stream_emits_only_sanitized_visible_content(monkeypatch) -> None:
 
 def test_stream_preserves_provider_reasoning_without_content_leak(monkeypatch) -> None:
     kernel = _build_kernel()
-    _patch_prompt_builder(kernel)
 
     async def _fake_call_stream(**_kwargs: Any):
         yield {"type": "reasoning_chunk", "content": "先分析目录结构。"}
@@ -143,7 +139,6 @@ def test_stream_preserves_provider_reasoning_without_content_leak(monkeypatch) -
 
 def test_stream_emits_incremental_visible_deltas(monkeypatch) -> None:
     kernel = _build_kernel()
-    _patch_prompt_builder(kernel)
 
     async def _fake_call_stream(**_kwargs: Any):
         yield {"type": "reasoning_chunk", "content": "先"}
@@ -181,7 +176,6 @@ def test_stream_emits_incremental_visible_deltas(monkeypatch) -> None:
 
 def test_stream_avoids_per_chunk_full_rematerialization(monkeypatch) -> None:
     kernel = _build_kernel()
-    _patch_prompt_builder(kernel)
 
     async def _fake_call_stream(**_kwargs: Any):
         for _ in range(40):
@@ -217,7 +211,6 @@ def test_stream_avoids_per_chunk_full_rematerialization(monkeypatch) -> None:
 
 def test_stream_strips_split_bracket_tool_wrappers(monkeypatch) -> None:
     kernel = _build_kernel()
-    _patch_prompt_builder(kernel)
 
     async def _fake_call_stream(**_kwargs: Any):
         yield {"type": "chunk", "content": "前缀 "}
@@ -250,7 +243,6 @@ def test_stream_strips_split_bracket_tool_wrappers(monkeypatch) -> None:
 
 def test_stream_strips_output_wrappers_from_visible_content(monkeypatch) -> None:
     kernel = _build_kernel()
-    _patch_prompt_builder(kernel)
 
     async def _fake_call_stream(**_kwargs: Any):
         yield {"type": "chunk", "content": "<output>这是"}
@@ -285,7 +277,6 @@ def test_stream_handles_bracket_tool_wrappers_in_stream(monkeypatch) -> None:
     XML-style <function_calls> tags are handled separately by OutputParser.
     """
     kernel = _build_kernel()
-    _patch_prompt_builder(kernel)
 
     async def _fake_call_stream(**_kwargs: Any):
         yield {"type": "chunk", "content": "前缀 "}
