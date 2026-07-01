@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from polaris.cells.roles.kernel.internal.interaction_contract import TurnIntent, infer_turn_intent
-from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.prompt_assembly import resolve_prompt_layer_options
 from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import (
     tool_contract_requires_no_tools,
 )
@@ -2381,11 +2381,11 @@ def test_tool_contract_requires_no_tools_uses_platform_metadata_only() -> None:
 
 
 def test_prompt_layer_single_batch_uses_platform_contract_not_benchmark_text() -> None:
-    marker_only_options = RoleExecutionKernel._resolve_prompt_layer_options(
+    marker_only_options = resolve_prompt_layer_options(
         {},
         message="Tool call count must be between 1 and 2.",
     )
-    contract_options = RoleExecutionKernel._resolve_prompt_layer_options(
+    contract_options = resolve_prompt_layer_options(
         {"tool_contract": {"single_batch": True}},
         message="Tool call count must be between 1 and 2.",
     )

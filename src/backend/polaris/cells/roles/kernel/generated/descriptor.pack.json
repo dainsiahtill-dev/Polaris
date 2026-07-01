@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T04:14:10.502960Z",
-  "source_hash": "2c53a4bac5e393fb",
+  "generated_at": "2026-07-01T04:21:47.582865Z",
+  "source_hash": "b55cc1df190f6856",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4074,26 +4074,6 @@
         {
           "name": "_build_context",
           "doc": "构建上下文请求"
-        },
-        {
-          "name": "_build_system_prompt_for_request",
-          "doc": "Build system prompt with domain-aware prompt construction."
-        },
-        {
-          "name": "_append_prompt_profiles_for_request",
-          "doc": "Append language/task prompt profiles when this turn is an engineering task."
-        },
-        {
-          "name": "_should_attach_prompt_profiles",
-          "doc": "Avoid profile bloat for ordinary chat; default it for concrete engineering tasks."
-        },
-        {
-          "name": "_resolve_prompt_layer_options",
-          "doc": "Resolve per-turn prompt layer switches from explicit runtime context."
-        },
-        {
-          "name": "_forced_tool_choice_name",
-          "doc": ""
         }
       ]
     },
@@ -4238,6 +4218,36 @@
       "name": "quality_result_to_dict",
       "description": "Convert quality result to dictionary.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "build_system_prompt_for_request",
+      "description": "Build a role system prompt with per-turn prompt layer controls.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/prompt_assembly.py"
+    },
+    {
+      "type": "function",
+      "name": "append_prompt_profiles_for_request",
+      "description": "Append language/task prompt profiles when this turn is an engineering task.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/prompt_assembly.py"
+    },
+    {
+      "type": "function",
+      "name": "should_attach_prompt_profiles",
+      "description": "Avoid profile bloat for ordinary chat; default it for concrete engineering tasks.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/prompt_assembly.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_prompt_layer_options",
+      "description": "Resolve per-turn prompt layer switches from explicit runtime context.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/prompt_assembly.py"
+    },
+    {
+      "type": "function",
+      "name": "_forced_tool_choice_name",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/prompt_assembly.py"
     },
     {
       "type": "function",

@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.prompt_assembly import build_system_prompt_for_request
 from polaris.cells.roles.profile.public.service import RoleExecutionMode, RoleTurnRequest
 
 
@@ -14,7 +15,7 @@ class _StubRegistry:
         return self._profile
 
 
-def test_build_system_prompt_for_request_passes_message_to_prompt_builder(monkeypatch) -> None:
+def test_system_prompt_builder_receives_request_message(monkeypatch) -> None:
     profile = SimpleNamespace(
         role_id="pm",
         model="gpt-5",
@@ -42,7 +43,13 @@ def test_build_system_prompt_for_request_passes_message_to_prompt_builder(monkey
     prompt_builder = kernel._get_prompt_builder()
     monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
 
-    result = kernel._build_system_prompt_for_request(profile, request, "benchmark appendix")  # type: ignore[arg-type]
+    result = build_system_prompt_for_request(
+        prompt_builder=prompt_builder,
+        profile=profile,  # type: ignore[arg-type]
+        request=request,
+        prompt_appendix="benchmark appendix",
+        workspace=kernel.workspace,
+    )
 
     assert result == "system-prompt"
     assert captured["appendix"] == "benchmark appendix"
@@ -80,7 +87,13 @@ def test_build_system_prompt_for_director_codegen_suppresses_conflicting_layers(
     prompt_builder = kernel._get_prompt_builder()
     monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
 
-    result = kernel._build_system_prompt_for_request(profile, request, "bridge appendix")  # type: ignore[arg-type]
+    result = build_system_prompt_for_request(
+        prompt_builder=prompt_builder,
+        profile=profile,  # type: ignore[arg-type]
+        request=request,
+        prompt_appendix="bridge appendix",
+        workspace=kernel.workspace,
+    )
 
     assert result == "system-prompt"
     assert captured["appendix"] == "bridge appendix"
@@ -118,7 +131,13 @@ def test_build_system_prompt_for_quality_repair_suppresses_working_memory_only(m
     prompt_builder = kernel._get_prompt_builder()
     monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
 
-    result = kernel._build_system_prompt_for_request(profile, request, "quality repair appendix")  # type: ignore[arg-type]
+    result = build_system_prompt_for_request(
+        prompt_builder=prompt_builder,
+        profile=profile,  # type: ignore[arg-type]
+        request=request,
+        prompt_appendix="quality repair appendix",
+        workspace=kernel.workspace,
+    )
 
     assert result == "system-prompt"
     assert str(captured["appendix"]).startswith("quality repair appendix")
@@ -160,7 +179,13 @@ def test_build_system_prompt_for_factory_contract_suppresses_working_memory_only
     prompt_builder = kernel._get_prompt_builder()
     monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
 
-    result = kernel._build_system_prompt_for_request(profile, request, "factory appendix")  # type: ignore[arg-type]
+    result = build_system_prompt_for_request(
+        prompt_builder=prompt_builder,
+        profile=profile,  # type: ignore[arg-type]
+        request=request,
+        prompt_appendix="factory appendix",
+        workspace=kernel.workspace,
+    )
 
     assert result == "system-prompt"
     assert str(captured["appendix"]).startswith("factory appendix")
@@ -213,7 +238,13 @@ def test_build_system_prompt_recomputes_stale_empty_prompt_profile_audit(monkeyp
     prompt_builder = kernel._get_prompt_builder()
     monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
 
-    result = kernel._build_system_prompt_for_request(profile, request, "")  # type: ignore[arg-type]
+    result = build_system_prompt_for_request(
+        prompt_builder=prompt_builder,
+        profile=profile,  # type: ignore[arg-type]
+        request=request,
+        prompt_appendix="",
+        workspace=kernel.workspace,
+    )
 
     assert result == "system-prompt"
     assert "[POLARIS PROMPT PROFILE]" in str(captured["appendix"])
@@ -290,7 +321,13 @@ def test_build_system_prompt_recomputes_stale_cached_prompt_profile_appendix(mon
     prompt_builder = kernel._get_prompt_builder()
     monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
 
-    result = kernel._build_system_prompt_for_request(profile, request, "")  # type: ignore[arg-type]
+    result = build_system_prompt_for_request(
+        prompt_builder=prompt_builder,
+        profile=profile,  # type: ignore[arg-type]
+        request=request,
+        prompt_appendix="",
+        workspace=kernel.workspace,
+    )
 
     assert result == "system-prompt"
     appendix = str(captured["appendix"])
@@ -336,7 +373,13 @@ def test_build_system_prompt_for_forced_write_suppresses_working_memory_only(mon
     prompt_builder = kernel._get_prompt_builder()
     monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
 
-    result = kernel._build_system_prompt_for_request(profile, request, "forced write appendix")  # type: ignore[arg-type]
+    result = build_system_prompt_for_request(
+        prompt_builder=prompt_builder,
+        profile=profile,  # type: ignore[arg-type]
+        request=request,
+        prompt_appendix="forced write appendix",
+        workspace=kernel.workspace,
+    )
 
     assert result == "system-prompt"
     assert captured["appendix"] == "forced write appendix"
