@@ -111,10 +111,10 @@ class TestSanitizeSnapshotLines:
         lines: list[str] = []
         assert sanitize_snapshot_lines("llm", lines) == []
 
-    def test_pm_llm_channel(self) -> None:
-        """Test pm_llm channel is treated as LLM channel."""
+    def test_pm_llm_channel_is_not_sanitized(self) -> None:
+        """Historical pm_llm files are not runtime.v2 LLM snapshots."""
         lines = ["garbage", "content"]
-        assert sanitize_snapshot_lines("pm_llm", lines) == ["content"]
+        assert sanitize_snapshot_lines("pm_llm", lines) == lines
 
     def test_whitespace_json_start(self) -> None:
         """Test whitespace before JSON start is handled."""
@@ -128,10 +128,10 @@ class TestSanitizeSnapshotLines:
         # Empty first line is falsy, so the condition `first and not first.startswith("{")` is False
         assert result == lines
 
-    def test_director_llm_channel(self) -> None:
-        """Test director_llm channel is treated as LLM channel."""
+    def test_director_llm_channel_is_not_sanitized(self) -> None:
+        """Historical director_llm files are not runtime.v2 LLM snapshots."""
         lines = ["header", '{"data": 1}']
-        assert sanitize_snapshot_lines("director_llm", lines) == ['{"data": 1}']
+        assert sanitize_snapshot_lines("director_llm", lines) == lines
 
     def test_none_in_first_line(self) -> None:
         """Test None-like first line in LLM channel."""

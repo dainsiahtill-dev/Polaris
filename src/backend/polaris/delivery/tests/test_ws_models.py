@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 from polaris.delivery.ws.endpoints.models import (
     JOURNAL_CHANNELS,
-    LEGACY_LLM_CHANNELS,
     V2_CHANNEL_TO_SUBJECT,
     WebSocketSendError,
 )
@@ -77,31 +76,6 @@ class TestWebSocketSendError:
         inner = RuntimeError("inner")
         outer = WebSocketSendError("wrapped", "outer", inner)
         assert outer.original_error is inner
-
-
-class TestLegacyLLMChannels:
-    """Tests for LEGACY_LLM_CHANNELS constant."""
-
-    def test_contains_pm_llm(self) -> None:
-        """Test that 'pm_llm' is in legacy channels."""
-        assert "pm_llm" in LEGACY_LLM_CHANNELS
-
-    def test_contains_director_llm(self) -> None:
-        """Test that 'director_llm' is in legacy channels."""
-        assert "director_llm" in LEGACY_LLM_CHANNELS
-
-    def test_is_set(self) -> None:
-        """Test that LEGACY_LLM_CHANNELS is a set."""
-        assert isinstance(LEGACY_LLM_CHANNELS, set)
-
-    def test_expected_count(self) -> None:
-        """Test expected channel count."""
-        assert len(LEGACY_LLM_CHANNELS) == 2
-
-    def test_elements_are_strings(self) -> None:
-        """Test that all elements are strings."""
-        for ch in LEGACY_LLM_CHANNELS:
-            assert isinstance(ch, str)
 
 
 class TestJournalChannels:
@@ -190,7 +164,6 @@ class TestModuleExports:
         from polaris.delivery.ws.endpoints.models import __all__
 
         assert "JOURNAL_CHANNELS" in __all__
-        assert "LEGACY_LLM_CHANNELS" in __all__
         assert "V2_CHANNEL_TO_SUBJECT" in __all__
         assert "WebSocketSendError" in __all__
 
@@ -198,6 +171,4 @@ class TestModuleExports:
         """Test expected export count."""
         from polaris.delivery.ws.endpoints.models import __all__
 
-        assert (
-            len(__all__) == 7
-        )  # JOURNAL, LEGACY_LLM, RUNTIME_EVENT_*, V2_CHANNEL_TO_SUBJECT, WebSocketSendError, is_websocket_disconnect_runtime_error
+        assert len(__all__) == 6

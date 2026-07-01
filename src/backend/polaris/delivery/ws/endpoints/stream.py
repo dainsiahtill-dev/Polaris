@@ -3,10 +3,6 @@
 This module contains core functions for:
 - Sending JSON payloads via WebSocket
 - Emitting stream lines with appropriate formatting
-
-Channel and journal snapshot/incremental functions are in separate modules:
-- channel_stream.py: send_channel_snapshot, send_channel_incremental
-- journal_stream.py: send_journal_snapshot, send_journal_incremental
 """
 
 from __future__ import annotations

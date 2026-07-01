@@ -55,7 +55,6 @@ def is_websocket_disconnect_runtime_error(exc: BaseException) -> bool:
 # Channel Configuration Constants
 # =============================================================================
 
-LEGACY_LLM_CHANNELS: set[str] = {"pm_llm", "director_llm"}
 JOURNAL_CHANNELS: set[str] = {"system", "process", "llm"}
 
 # v2 Protocol Channel Mapping (logical channel -> JetStream subject)
@@ -78,7 +77,6 @@ RUNTIME_EVENT_PROTOCOL_VERSION = 2
 
 __all__ = [
     "JOURNAL_CHANNELS",
-    "LEGACY_LLM_CHANNELS",
     "RUNTIME_EVENT_PROTOCOL_VERSION",
     "RUNTIME_EVENT_SCHEMA_VERSION",
     "V2_CHANNEL_TO_SUBJECT",

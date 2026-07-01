@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from polaris.delivery.ws.endpoints.models import (
     JOURNAL_CHANNELS,
-    LEGACY_LLM_CHANNELS,
     V2_CHANNEL_TO_SUBJECT,
     WebSocketSendError,
 )
@@ -29,10 +28,6 @@ class TestWebSocketSendError:
 
 
 class TestChannelConstants:
-    def test_legacy_llm_channels(self) -> None:
-        assert "pm_llm" in LEGACY_LLM_CHANNELS
-        assert "director_llm" in LEGACY_LLM_CHANNELS
-
     def test_journal_channels(self) -> None:
         assert "system" in JOURNAL_CHANNELS
         assert "process" in JOURNAL_CHANNELS

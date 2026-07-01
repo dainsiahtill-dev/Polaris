@@ -16,14 +16,10 @@ from typing import TYPE_CHECKING, Any
 from fastapi import Query, WebSocket, WebSocketDisconnect
 from polaris.cells.audit.diagnosis.public.service import write_ws_connection_event
 from polaris.cells.runtime.projection.public.service import (
-    CHANNEL_FILES,
     DEFAULT_WORKSPACE,
     resolve_workspace_runtime_context,
 )
-from polaris.delivery.ws.endpoints.helpers import (
-    LEGACY_LLM_CHANNELS,
-    normalize_roles,
-)
+from polaris.delivery.ws.endpoints.helpers import normalize_roles
 from polaris.delivery.ws.endpoints.models import WebSocketSendError, is_websocket_disconnect_runtime_error
 from polaris.delivery.ws.endpoints.protocol import build_status_payload
 from polaris.delivery.ws.endpoints.stream import send_json_safe
@@ -33,10 +29,6 @@ if TYPE_CHECKING:
     from polaris.infrastructure.messaging.nats.ws_consumer_manager import JetStreamConsumerManager
 
 logger = logging.getLogger(__name__)
-
-
-# Default realtime stream channels.
-STREAM_CHANNELS: tuple[str, ...] = tuple(channel for channel in CHANNEL_FILES if channel not in LEGACY_LLM_CHANNELS)
 
 
 async def runtime_websocket(
@@ -279,4 +271,4 @@ async def _log_connection_event(
     )
 
 
-__all__ = ["STREAM_CHANNELS", "runtime_websocket"]
+__all__ = ["runtime_websocket"]
