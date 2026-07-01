@@ -1,9 +1,9 @@
-"""Tests for polaris.bootstrap.runtime_health re-exports."""
+"""Tests for canonical runtime health application helpers."""
 
 from __future__ import annotations
 
 import pytest
-from polaris.bootstrap.runtime_health import (
+from polaris.application.health import (
     build_runtime_issues,
     check_backend_available,
     get_lancedb_status,

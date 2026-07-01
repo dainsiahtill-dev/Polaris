@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from polaris.bootstrap.runtime_health import check_backend_available
+from polaris.application.health import check_backend_available
 
 
 def test_check_backend_available_allows_ollama_runtime_without_cli() -> None:

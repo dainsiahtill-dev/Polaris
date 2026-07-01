@@ -3161,7 +3161,7 @@ class TestPmBackendRuntimeResolution:
         assert settings.pm_model == "gpt-4.1"
 
     def test_check_backend_available_ignores_stale_codex_when_runtime_is_generic(self):
-        from polaris.bootstrap.runtime_health import check_backend_available
+        from polaris.application.health import check_backend_available
 
         settings = MagicMock()
         settings.pm_backend = "codex"
@@ -3183,7 +3183,7 @@ class TestPmBackendRuntimeResolution:
         assert error is None
 
     def test_check_backend_available_requires_pm_role_mapping(self, tmp_path, monkeypatch):
-        from polaris.bootstrap.runtime_health import check_backend_available
+        from polaris.application.health import check_backend_available
 
         settings = MagicMock()
         settings.pm_backend = "auto"

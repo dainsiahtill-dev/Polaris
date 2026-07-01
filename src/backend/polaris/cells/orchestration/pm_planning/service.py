@@ -781,7 +781,7 @@ class PMService:
             return False
 
     async def _check_backend_available(self) -> str | None:
-        from polaris.bootstrap.runtime_health import check_backend_available
+        from polaris.application.health import check_backend_available
 
         return check_backend_available(self._settings)
 
