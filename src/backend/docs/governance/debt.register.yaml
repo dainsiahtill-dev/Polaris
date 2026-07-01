@@ -27,10 +27,12 @@ debts:
       - "2026-07-02: AssistantRawContent and AssistantCleanContent typed stages added; parse_execution_tool_calls now requires AssistantRawContent while parse_tool_calls remains a compatibility wrapper"
       - "2026-07-02: IOutputParser service protocol now exposes only parse_execution_tool_calls with AssistantRawContent, keeping the str-based parse_tool_calls wrapper out of dependency-injected execution contracts"
       - "2026-07-02: OutputParser no longer exposes the legacy parse_tool_calls(str) wrapper; parser tests now call parse_execution_tool_calls with AssistantRawContent"
+      - "2026-07-02: DevelopmentWorkflowRuntime no longer parses textual file tool calls from handoff intent; PATCH_FILE/FILE protocol remains explicit and textual [TOOL_CALL] wrappers fail closed"
+      - "2026-07-02: StreamEventHandler visible chunk path is structurally guarded to route through _BracketToolWrapperFilter before yielding content_chunk events"
       - "Semantic stage regression tests protect parser and transcript boundaries"
       - "verify.pack.json records current guarantees and residual risks"
     residual_risks:
-      - "Downstream stream consumers can still regress if they reintroduce wrapper-bearing chunk contracts"
+      - "Future non-StreamEventHandler transports could bypass the guarded visible stream path unless added to the structural guard"
     linked_assets:
       adrs:
         - "docs/governance/decisions/adr-0042-turn-engine-triple-responsibility.md"
@@ -45,7 +47,7 @@ debts:
         - "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
     next_actions:
       - "Keep compatibility parse_tool_calls out of execution authorization paths"
-      - "Extend transcript/write-path audits to host adapters that persist assistant chunks"
+      - "Keep StreamEventHandler as the only roles.kernel user-visible stream normalization path unless a new path receives equivalent structural and runtime tests"
 
   - id: "DEBT-20260325-kernelone-llm-reexport-parity"
     title: "KernelOne llm shared contract re-export chain can drift"

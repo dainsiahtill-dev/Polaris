@@ -198,6 +198,17 @@ class TestDevelopmentWorkflowRuntime:
         mock_tool_executor.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_execute_patch_textual_tool_call_fails_closed(self, mock_tool_executor, base_runtime):
+        session_state = SimpleNamespace(session_id="sess-1")
+        result = await base_runtime._execute_patch(
+            '[TOOL_CALL]{"tool":"write_file","arguments":{"path":"src/app.py","content":"print(1)"}}[/TOOL_CALL]',
+            session_state,
+        )
+        assert result["ok"] is False
+        assert result["error"] == "development_handoff_requires_concrete_patch"
+        mock_tool_executor.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_execute_patch_failure(self, mock_tool_executor, base_runtime):
         mock_tool_executor.side_effect = RuntimeError("disk full")
         session_state = SimpleNamespace(session_id="sess-1")

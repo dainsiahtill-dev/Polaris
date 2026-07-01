@@ -188,13 +188,13 @@ Relevant production boundaries:
    `DevelopmentWorkflowRuntime._execute_patch()` no longer writes a natural
    language intent to `.polaris/development_patch.md`. It only executes:
 
-   - native file tool calls (`write_file`, `edit_file`, `append_to_file`,
-     `delete_file`)
    - `PATCH_FILE` / `FILE` protocol operations parsed through the existing
      KernelOne toolkit
 
    Plain intent now returns `development_handoff_requires_concrete_patch`, so the
-   handoff cannot fake a code change.
+   handoff cannot fake a code change. Textual tool-call wrappers are also
+   rejected here; executable tool calls must enter through provider native tool
+   lifecycle before reaching this handoff runtime.
 
 3. Workflow role adapters are runtime-first.
 

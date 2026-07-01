@@ -22,7 +22,11 @@ ADR_0042_PATH = BACKEND_ROOT / "docs" / "governance" / "decisions" / "adr-0042-t
 ADR_0043_PATH = BACKEND_ROOT / "docs" / "governance" / "decisions" / "adr-0043-structural-bug-governance-loop.md"
 FITNESS_RULES_PATH = BACKEND_ROOT / "docs" / "governance" / "ci" / "fitness-rules.yaml"
 PIPELINE_TEMPLATE_PATH = BACKEND_ROOT / "docs" / "governance" / "ci" / "pipeline.template.yaml"
+ROLE_KERNEL_STREAM_HANDLER_PATH = (
+    POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "turn_engine" / "stream_handler.py"
+)
 ROLE_KERNEL_EXECUTION_AUTHORIZATION_FILES = (
+    POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "development_workflow_runtime.py",
     POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "turn_decision_decoder.py",
     POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "turn_transaction_controller.py",
     POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "transaction" / "decision_pipeline.py",
@@ -176,6 +180,24 @@ def test_roles_kernel_execution_paths_do_not_use_compat_tool_parser() -> None:
                 findings.append(f"{path.relative_to(POLARIS_ROOT)} contains {pattern!r}")
 
     assert findings == []
+
+
+def test_roles_kernel_stream_visible_chunks_use_wrapper_filter() -> None:
+    """User-visible stream chunks must pass the bracket wrapper filter."""
+
+    text = ROLE_KERNEL_STREAM_HANDLER_PATH.read_text(encoding="utf-8")
+    required_fragments = (
+        "from .artifacts import _BracketToolWrapperFilter",
+        "self._visible_filter = _BracketToolWrapperFilter()",
+        "visible_chunk = self._visible_filter.feed(output_visible)",
+        "trailing_visible = self._visible_filter.flush()",
+    )
+    for fragment in required_fragments:
+        assert fragment in text
+
+    first_filter = text.index("visible_chunk = self._visible_filter.feed(output_visible)")
+    first_visible_emit = text.index('yield {"type": "content_chunk"', first_filter)
+    assert first_filter < first_visible_emit
 
 
 def test_roles_kernel_verify_pack_shape_and_links() -> None:

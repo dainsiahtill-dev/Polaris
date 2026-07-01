@@ -196,14 +196,12 @@ class DevelopmentWorkflowRuntime:
     async def _execute_patch(self, intent: str, session_state: Any) -> dict[str, Any]:
         """执行代码修改（patch）。
 
-        只接受明确可审计的工具调用或 PATCH_FILE/FILE 协议输出。
+        只接受明确可审计的 PATCH_FILE/FILE 协议输出。
         普通自然语言 handoff 不会被写入临时文件伪装成代码变更。
+        文本化 tool-call wrapper 也不会被当作可执行工具调用；真实工具调用
+        必须通过 provider native tool lifecycle 进入上层事务链路。
         """
         _ = session_state
-        parsed_calls = self._parse_file_tool_calls(intent)
-        if parsed_calls:
-            return await self._execute_parsed_tool_calls(parsed_calls)
-
         protocol_calls = self._parse_protocol_file_operations(intent)
         if protocol_calls:
             return await self._execute_parsed_tool_calls(protocol_calls)
@@ -211,10 +209,7 @@ class DevelopmentWorkflowRuntime:
         return {
             "ok": False,
             "error": "development_handoff_requires_concrete_patch",
-            "reason": (
-                "Development handoff intent did not contain native file tool calls "
-                "or PATCH_FILE/FILE protocol operations."
-            ),
+            "reason": ("Development handoff intent did not contain PATCH_FILE/FILE protocol operations."),
         }
 
     async def _execute_parsed_tool_calls(self, calls: list[dict[str, Any]]) -> dict[str, Any]:
@@ -229,7 +224,7 @@ class DevelopmentWorkflowRuntime:
                 result = await self.tool_executor(tool, arguments)
                 result_payload = result if isinstance(result, dict) else {"result": result}
                 results.append({"ok": self._is_successful_tool_result(result_payload), "tool": tool, **result_payload})
-            except Exception as exc:  # noqa: BLE001
+            except (RuntimeError, ValueError, OSError, TypeError) as exc:
                 results.append({"ok": False, "tool": tool, "error": str(exc)})
 
         ok = bool(results) and all(self._is_successful_tool_result(item) for item in results)
@@ -240,31 +235,6 @@ class DevelopmentWorkflowRuntime:
             "results": results,
             "error": "" if ok else self._summarize_tool_errors(results),
         }
-
-    @staticmethod
-    def _parse_file_tool_calls(intent: str) -> list[dict[str, Any]]:
-        from polaris.kernelone.llm.toolkit import parse_tool_calls
-
-        parsed = parse_tool_calls(
-            intent,
-            allowed_tool_names={
-                "append_to_file",
-                "delete_file",
-                "edit_file",
-                "write_file",
-            },
-        )
-        calls: list[dict[str, Any]] = []
-        for item in parsed:
-            tool = str(getattr(item, "name", "") or "").strip()
-            arguments = getattr(item, "arguments", None)
-            if not tool or not isinstance(arguments, dict):
-                continue
-            path = DevelopmentWorkflowRuntime._extract_tool_path(tool, arguments)
-            if DevelopmentWorkflowRuntime._unsafe_relative_path(path):
-                continue
-            calls.append({"tool": tool, "arguments": dict(arguments)})
-        return calls
 
     @staticmethod
     def _parse_protocol_file_operations(intent: str) -> list[dict[str, Any]]:
@@ -291,12 +261,6 @@ class DevelopmentWorkflowRuntime:
             elif replace:
                 calls.append({"tool": "write_file", "arguments": {"path": path, "content": replace}})
         return calls
-
-    @staticmethod
-    def _extract_tool_path(tool: str, arguments: dict[str, Any]) -> str:
-        if tool == "edit_file":
-            return str(arguments.get("path") or arguments.get("file") or "")
-        return str(arguments.get("path") or arguments.get("file") or "")
 
     @staticmethod
     def _unsafe_relative_path(path: str) -> bool:
@@ -347,7 +311,7 @@ class DevelopmentWorkflowRuntime:
                 summary=raw[:500],
                 raw_output=raw,
             )
-        except Exception as exc:  # noqa: BLE001
+        except (RuntimeError, ValueError, OSError, TypeError) as exc:
             msg = str(exc)
             return TestResult(passed=False, summary=msg, raw_output=msg)
 
