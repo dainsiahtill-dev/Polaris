@@ -3270,13 +3270,11 @@ cells:
       - polaris.kernelone.runtime.usage_metrics
       - polaris.domain.services.token_service
       - polaris.infrastructure.accel.query.adaptive_budget
-      - polaris.infrastructure.accel.token_estimator
     owned_paths:
       - polaris/cells/finops/budget_guard/public/**
       - polaris/kernelone/runtime/usage_metrics.py
       - polaris/domain/services/token_service.py
       - polaris/infrastructure/accel/query/adaptive_budget.py
-      - polaris/infrastructure/accel/token_estimator.py
     public_contracts:
       modules:
         - polaris.cells.finops.budget_guard.public.contracts

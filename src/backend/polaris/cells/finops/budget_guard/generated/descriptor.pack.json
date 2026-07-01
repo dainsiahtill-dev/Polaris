@@ -202,30 +202,6 @@
       "defined_in": "polaris/infrastructure/accel/query/adaptive_budget.py"
     },
     {
-      "type": "function",
-      "name": "_positive_float",
-      "description": "",
-      "defined_in": "polaris/infrastructure/accel/token_estimator.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_backend",
-      "description": "",
-      "defined_in": "polaris/infrastructure/accel/token_estimator.py"
-    },
-    {
-      "type": "function",
-      "name": "estimate_tokens_for_text",
-      "description": "Estimate tokens with detailed metadata.",
-      "defined_in": "polaris/infrastructure/accel/token_estimator.py"
-    },
-    {
-      "type": "function",
-      "name": "estimate_tokens_from_chars",
-      "description": "Estimate tokens from character count with calibration.",
-      "defined_in": "polaris/infrastructure/accel/token_estimator.py"
-    },
-    {
       "type": "class",
       "name": "UsageContext",
       "description": "",

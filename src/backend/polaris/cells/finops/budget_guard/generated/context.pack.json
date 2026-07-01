@@ -7,8 +7,7 @@
   "owned_paths": [
     "polaris/kernelone/runtime/usage_metrics.py",
     "polaris/domain/services/token_service.py",
-    "polaris/infrastructure/accel/query/adaptive_budget.py",
-    "polaris/infrastructure/accel/token_estimator.py"
+    "polaris/infrastructure/accel/query/adaptive_budget.py"
   ],
   "public_contracts": {
     "commands": [
@@ -48,8 +47,7 @@
   "hotspots": [
     "polaris/kernelone/runtime/usage_metrics.py",
     "polaris/domain/services/token_service.py",
-    "polaris/infrastructure/accel/query/adaptive_budget.py",
-    "polaris/infrastructure/accel/token_estimator.py"
+    "polaris/infrastructure/accel/query/adaptive_budget.py"
   ],
   "test_targets": [
     "tests/test_llm_token_budget.py",
