@@ -26,7 +26,13 @@ PIPELINE_TEMPLATE_PATH = BACKEND_ROOT / "docs" / "governance" / "ci" / "pipeline
 EXPECTED_DEBT_IDS = {
     "DEBT-20260325-roles-kernel-turn-stage-contract",
     "DEBT-20260325-kernelone-llm-reexport-parity",
+    "DEBT-20260620-runtime-realtime-single-rail",
 }
+ROLE_KERNEL_VERIFY_PACK_DEBT_IDS = {
+    "DEBT-20260325-roles-kernel-turn-stage-contract",
+    "DEBT-20260325-kernelone-llm-reexport-parity",
+}
+EXPECTED_ACTIVE_DEBT_IDS: set[str] = set()
 EXPECTED_RULE_IDS = {
     "debt_register_schema_valid",
     "verify_pack_schema_valid",
@@ -119,7 +125,26 @@ def test_debt_register_shape_and_links() -> None:
                 assert isinstance(asset, str) and asset.strip()
                 _assert_repo_relative_file(asset)
 
-    assert EXPECTED_DEBT_IDS.issubset(seen_ids)
+    assert seen_ids == EXPECTED_DEBT_IDS
+
+
+def test_debt_register_has_no_unapproved_active_debt() -> None:
+    """Debt register active items require an explicit architecture allowlist.
+
+    Monitoring debt is allowed as a guarded long-term invariant. Active debt is
+    treated as unfinished convergence work, so adding or re-opening an active
+    item must update this test deliberately instead of silently increasing the
+    residual gap count.
+    """
+
+    payload = _read_yaml(DEBT_REGISTER_PATH)
+    active_debt_ids = {
+        str(debt.get("id") or "")
+        for debt in payload.get("debts", [])
+        if isinstance(debt, dict) and debt.get("status") == "active"
+    }
+
+    assert active_debt_ids == EXPECTED_ACTIVE_DEBT_IDS
 
 
 def test_roles_kernel_verify_pack_shape_and_links() -> None:
@@ -163,7 +188,7 @@ def test_roles_kernel_verify_pack_shape_and_links() -> None:
 
     open_debt_ids = verify_pack.get("open_debt_ids")
     assert isinstance(open_debt_ids, list)
-    assert EXPECTED_DEBT_IDS.issubset(set(open_debt_ids))
+    assert ROLE_KERNEL_VERIFY_PACK_DEBT_IDS.issubset(set(open_debt_ids))
     for debt_id in open_debt_ids:
         assert debt_id in debt_ids, f"verify pack references unknown debt id {debt_id}"
 
