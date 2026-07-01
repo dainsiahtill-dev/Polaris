@@ -7,18 +7,9 @@ servers (uvicorn, hypercorn, daphne).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
-# Handle imports for both runtime and standalone usage
-if TYPE_CHECKING:
-    from polaris.bootstrap.contracts.backend_launch import BackendLaunchRequest, BackendLaunchResult
-else:
-    try:
-        from polaris.bootstrap.contracts.backend_launch import BackendLaunchRequest, BackendLaunchResult
-    except ImportError:
-        # Fallback for development
-        BackendLaunchRequest = Any
-        BackendLaunchResult = Any
+from polaris.bootstrap.contracts.backend_launch import BackendLaunchRequest, BackendLaunchResult
 
 
 @runtime_checkable
