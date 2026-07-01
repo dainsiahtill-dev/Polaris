@@ -3,12 +3,12 @@
 # -*- coding: utf-8 -*-
 UTF-8 编码验证: 本文所有文本使用 UTF-8
 
-Free-function implementations behind the Phase 3.x helpers that used to live on
-:class:`TurnTransactionController`. To keep the session-state singletons
+Free-function implementations behind the Phase 3.x controller helpers. To keep
+the session-state singletons
 (``_turn_outcome_history``, ``_session_token_budget``/``_session_tokens_used``,
 …) single-instance *on the controller*, these functions take the relevant state
-explicitly and return either a derived value or the next state value; the facade
-methods own the assignment back onto ``self``.
+explicitly and return either a derived value or the next state value; controller
+entrypoints own the assignment back onto ``self``.
 
 Bodies moved verbatim from ``turn_transaction_controller.py``; only ``self``
 attribute access was replaced by explicit arguments / return values.

@@ -3,10 +3,10 @@
 # -*- coding: utf-8 -*-
 UTF-8 编码验证: 本文所有文本使用 UTF-8
 
-Free-function wrappers behind the ``_guard_assert_*`` helpers that used to live
-on :class:`TurnTransactionController`. Each binds a :class:`KernelGuard`
+Free-function implementations behind the ``_guard_assert_*`` controller
+entrypoints. Each binds a :class:`KernelGuard`
 invariant assertion to the per-turn ledger's ``record_kernel_guard_assert``
-telemetry. The facade retains thin static methods delegating here so that the
+telemetry. The controller keeps thin static methods delegating here so that the
 ``guard_assert_single_tool_batch`` / ``guard_assert_no_finalization_tool_calls``
 callables injected into the sub-handlers keep their exact signatures.
 

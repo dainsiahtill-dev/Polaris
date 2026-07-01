@@ -2,8 +2,8 @@
 
 Owns the canonical free-function execution paths consumed by
 ``RoleExecutionKernel.run`` and ``RoleExecutionKernel.run_stream``. The public
-kernel facade delegates to these functions directly so transaction execution has
-one implementation surface.
+kernel entrypoint delegates to these functions directly so transaction
+execution has one implementation surface.
 
 Behavior notes:
 - The turn body and the stream body share the tool-definitions preamble shape
@@ -12,7 +12,7 @@ Behavior notes:
   and restores the delivery-mode marker via ``_ensure_context_delivery_mode_marker``.
   Tool-surface planning is shared through the transaction-layer planner, while
   execution, projection feedback, and RoleTurnResult/stream event mapping stay
-  in this facade.
+  in this public-entrypoint adapter.
 - §8 governance note: the embedded weak-Director Prong-A / R7 / Fix-11
   write-vs-edit heuristics live in the planner. They are not deleted here (a
   separate governance pass owns that decision).

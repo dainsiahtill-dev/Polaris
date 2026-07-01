@@ -3,7 +3,7 @@
 The three-stage durable-commit protocol — pre-commit validation, durable commit
 critical section, and post-commit seal — extracted verbatim from ``core.py`` as
 module-level functions. Callers should import this module directly; the
-``RoleExecutionKernel`` class no longer exposes commit-protocol static shims.
+``RoleExecutionKernel`` class no longer exposes commit-protocol static wrappers.
 
 This module must not import ``core.py`` at module top-level (circular-import
 guard): it only depends on public turn contracts and transaction ledger types.

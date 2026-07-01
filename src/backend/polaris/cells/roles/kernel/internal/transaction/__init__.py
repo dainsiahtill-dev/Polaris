@@ -2,7 +2,8 @@
 Transaction Kernel 子模块 — 事务化 Turn 执行的核心组件。
 
 本包将 TurnTransactionController 的 monolithic 实现拆分为职责单一、
-高内聚、低耦合的协作模块。原文件保留为 Facade，所有公共 API 不变。
+高内聚、低耦合的协作模块。TurnTransactionController 保留为公共协调入口，
+具体执行行为由本包内的 TransactionKernel 协作模块承载。
 
 模块清单:
 - ledger: Turn 级审计账本与配置

@@ -395,7 +395,7 @@ def build_forced_write_only_retry_tool_definitions(
         # 2026-06-28) and burns the retry budget without a write. Offer read
         # companions so the model can read-then-write inside the single batch;
         # the batch contract guard still requires a write, so a read-only batch
-        # is still rejected. Default OFF -> byte-identical legacy behaviour.
+        # is still rejected. Default OFF keeps the standard narrowed-tool set.
         companion_tool_names.update(
             {
                 "read_file",

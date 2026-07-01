@@ -11,8 +11,8 @@ then enforces Invariant A for non-tool decisions in MATERIALIZE/strict modes.
 ADR-0071 note: when the guard fires it routes through
 ``retry_tool_batch_after_contract_violation`` (a single corrective re-ask that
 honours the <=1-ToolBatch invariant) rather than injecting a second decision.
-The retry/shadow facade helpers are injected as callables so monkeypatching the
-facade still penetrates this module.
+The retry/shadow collaborators are injected as callables so controller-level
+test seams still penetrate this module without duplicating execution logic.
 
 Returns ``None`` when the turn should fall through to the normal decision
 dispatch; returns a TurnResult ``dict`` when the guard produced a blocking

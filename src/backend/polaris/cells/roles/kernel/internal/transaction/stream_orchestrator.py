@@ -8,7 +8,7 @@
 
 设计原则：
 - 所有外部依赖通过 __init__ 注入，零隐式耦合
-- Facade 中的 _execute_turn_stream / _call_llm_for_decision_stream 退化为 proxy
+- 公共流式入口只做参数装配，执行路径收敛到本 orchestrator
 """
 
 from __future__ import annotations
@@ -782,7 +782,7 @@ async def drain_speculative_tasks(
 
 
 class StreamOrchestrator:
-    """流式决策与 Turn 执行编排器 — 将 Facade 的流式专用逻辑集中管理。"""
+    """流式决策与 Turn 执行编排器 — 集中管理流式专用逻辑。"""
 
     def __init__(
         self,

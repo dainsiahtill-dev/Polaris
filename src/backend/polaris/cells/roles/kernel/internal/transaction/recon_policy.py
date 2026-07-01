@@ -12,7 +12,7 @@ def resolve_recon_required(role: str, profile: Any) -> bool:
     """Return whether a role turn must execute a successful recon tool first.
 
     This is a transaction-layer policy. It is intentionally independent of the
-    retired TurnEngine facade so RoleExecutionKernel and TransactionKernel share
+    retired TurnEngine path so RoleExecutionKernel and TransactionKernel share
     the same read-side landing invariant.
     """
     context_policy = getattr(profile, "context_policy", None)

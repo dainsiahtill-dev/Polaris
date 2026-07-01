@@ -446,8 +446,8 @@ class TurnLedger:
         """转换为审计日志格式。
 
         The ``session_state_snapshots`` key is only included when at least one
-        snapshot has been recorded, preserving backward compatibility for
-        existing consumers that do not expect the field.
+        snapshot has been recorded, preserving the sparse audit-log schema for
+        consumers that do not need session-state evidence.
         """
         final_kind = str(self.decisions[-1].get("kind", "")) if self.decisions else ""
         audit: dict[str, Any] = {

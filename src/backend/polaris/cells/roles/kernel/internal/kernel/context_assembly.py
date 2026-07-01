@@ -2,7 +2,7 @@
 
 Holds behavior-preserving free functions for context assembly that used to live
 inside ``RoleExecutionKernel``. Callers should use these functions directly
-instead of reintroducing class-level helper shims.
+instead of reintroducing class-level helper wrappers.
 
 FROZEN behavior notes (do NOT change):
 - ``build_context_handoff_pack`` maps a TransactionKernel ``handoff_workflow``

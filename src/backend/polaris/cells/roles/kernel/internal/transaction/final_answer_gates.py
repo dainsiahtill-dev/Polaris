@@ -19,12 +19,12 @@ ToolBatch, preserving the ADR-0071 single-commit / 1-TurnDecision invariants.
 Each evaluator performs the ledger mutations that precede the shared block tail
 (anomaly flagging, inline-patch rejection accounting, ``mark_blocked``) in the
 exact original order, then returns a :class:`FinalAnswerBlock` descriptor for
-the facade to finalize through the single commit path. ``None`` means the gate
-did not fire and the turn should fall through to normal completion.
+the controller to finalize through the single commit path. ``None`` means the
+gate did not fire and the turn should fall through to normal completion.
 
 The evaluators are pure with respect to ``self`` (they depend only on their
-arguments and module-level imports), so the facade can delegate to them without
-any per-turn object allocation beyond the returned descriptor.
+arguments and module-level imports), so the controller can delegate to them
+without any per-turn object allocation beyond the returned descriptor.
 """
 
 from __future__ import annotations
@@ -51,8 +51,9 @@ class FinalAnswerBlock:
     """Descriptor for a blocked FINAL_ANSWER produced by a finalize gate.
 
     ``kind`` is the TurnResult kind (e.g. ``mutation_bypass_blocked``); the
-    facade renders the shared block tail (state transition, finalize, failed
-    CompletionEvent, ``_build_turn_result``) using ``kind`` and ``finalization``.
+    controller renders the shared block tail (state transition, finalize,
+    failed CompletionEvent, ``_build_turn_result``) using ``kind`` and
+    ``finalization``.
     """
 
     kind: str

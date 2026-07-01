@@ -26,9 +26,9 @@ original ``contextlib.suppress(ValueError)`` so a contextvar reset in the wrong
 context never masks the turn outcome.
 
 The controller is passed in so the scope can read/write the controller's
-session-level state and proxy the (monkeypatchable) facade helpers exactly as
-the inline code did. Only one small frozen :class:`TurnSessionScope` value is
-allocated per turn.
+session-level state and call the existing monkeypatchable controller helpers
+exactly as the inline code did. Only one small frozen
+:class:`TurnSessionScope` value is allocated per turn.
 """
 
 from __future__ import annotations

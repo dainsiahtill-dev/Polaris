@@ -15,9 +15,9 @@ decomposition blueprint (step 4). Owns:
 
 ADR-0071 note: this preserves the exact commit-point ordering — the LLM call,
 ``record_decision``, ``guard_assert_single_decision``, and the state-history
-appends are NOT reordered. Facade-bound helpers (decoder, LLM caller, delivery
-filter, guard assert, event emit) are injected as callables/objects so
-monkeypatching the facade still penetrates.
+appends are NOT reordered. Controller-bound collaborators (decoder, LLM caller,
+delivery filter, guard assert, event emit) are injected as callables/objects so
+existing controller-level test seams still penetrate.
 """
 
 from __future__ import annotations

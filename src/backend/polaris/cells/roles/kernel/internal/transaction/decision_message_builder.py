@@ -15,7 +15,7 @@ to preserve behavior and are flagged for separate review per the blueprint risk
 register — do NOT rewrite/delete them in a behavior-preserving pass.
 
 The function is pure: it depends only on its arguments and module-level imports,
-so the facade can delegate to it without any per-turn object allocation.
+so the controller can delegate to it without any per-turn object allocation.
 """
 
 from __future__ import annotations
@@ -222,9 +222,9 @@ def build_decision_messages(
     ledger: TurnLedger | None = None,
 ) -> list[dict[str, Any]]:
     """Build decision-stage messages with single-batch execution constraints."""
-    messages: list[dict[str, Any]] = _compact_tool_failure_messages([
-        dict(message) for message in context if message.get("metadata", {}).get("plane") != "control"
-    ])
+    messages: list[dict[str, Any]] = _compact_tool_failure_messages(
+        [dict(message) for message in context if message.get("metadata", {}).get("plane") != "control"]
+    )
     if not tool_definitions:
         return messages
 

@@ -4,7 +4,7 @@ This module owns the role-turn tool schema reduction policy used before a
 TransactionKernel turn is executed. It is deliberately pure with respect to I/O:
 callers provide request/profile/context evidence and receive planned tool
 definitions plus audit metadata. Projection feedback and RoleTurnResult mapping
-stay in the application facade.
+stay at the application boundary.
 """
 
 from __future__ import annotations

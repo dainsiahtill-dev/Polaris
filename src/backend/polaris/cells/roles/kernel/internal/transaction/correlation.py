@@ -4,8 +4,8 @@
 UTF-8 编码验证: 本文所有文本使用 UTF-8
 
 This module hosts the free-function implementations behind the correlation
-helpers historically defined on :class:`TurnTransactionController`. The facade
-keeps thin static/class methods that delegate here so that
+helpers owned by :class:`TurnTransactionController`. The controller keeps thin
+static/class entrypoints that delegate here so that
 
 * the by-class call site ``TurnTransactionController._attach_event_correlation``
   (exercised directly in tests) keeps working, and
@@ -33,9 +33,9 @@ from polaris.cells.storage.layout.public.service import resolve_polaris_roots
 
 logger = logging.getLogger(__name__)
 
-# Correlation ContextVars — single-instance, owned here. The facade imports
-# these so that execute()/execute_stream()/_emit_phase_event() share the same
-# objects (do NOT redefine them in the facade).
+# Correlation ContextVars — single-instance, owned here. Controller entrypoints
+# import these so execute()/execute_stream()/_emit_phase_event() share the same
+# objects (do NOT redefine them in the controller).
 _TURN_REQUEST_ID_CONTEXT: ContextVar[str | None] = ContextVar("_turn_request_id_context", default=None)
 _TURN_SPAN_ID_CONTEXT: ContextVar[str | None] = ContextVar("_turn_span_id_context", default=None)
 _TURN_PARENT_SPAN_ID_CONTEXT: ContextVar[str | None] = ContextVar("_turn_parent_span_id_context", default=None)

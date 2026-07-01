@@ -11,7 +11,7 @@ anomaly flags on the ledger.
 
 The two role-policy helpers (``resolve_delivery_mode_hybrid`` and
 ``inherit_materialize_from_history``) are passed in as callables so that
-monkeypatching them on the facade instance still penetrates this module.
+controller-level test seams still penetrate this module.
 """
 
 from __future__ import annotations

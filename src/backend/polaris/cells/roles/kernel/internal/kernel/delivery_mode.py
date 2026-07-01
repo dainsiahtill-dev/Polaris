@@ -2,7 +2,8 @@
 
 Stateless helpers that detect and restore the ``[mode:materialize]`` delivery
 marker after ContextOS projection. Extracted verbatim from ``core.py`` to keep
-the Facade focused; callers import these helpers from this module directly.
+``RoleExecutionKernel`` focused; callers import these helpers from this module
+directly.
 """
 
 from __future__ import annotations

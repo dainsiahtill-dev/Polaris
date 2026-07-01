@@ -203,8 +203,8 @@ def resolve_retry_output_floor() -> int | None:
     hard window by shrinking the input, never raising the window.
 
     Env ``KERNELONE_RETRY_OUTPUT_FLOOR_TOKENS``: positive int; ``off``/``none``/
-    ``disabled``/empty/non-positive disables the floor (returns ``None`` → legacy
-    behavior). Unset → 2500.
+    ``disabled``/empty/non-positive disables the floor and keeps the standard
+    retry budget path. Unset → 2500.
     """
     raw = os.environ.get(_RETRY_OUTPUT_FLOOR_ENV)
     if raw is None:
