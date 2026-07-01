@@ -15,13 +15,11 @@ from __future__ import annotations
 
 import pytest
 from polaris.kernelone.contracts.technical import (
-    ErrorCategory,
     KernelError,
-    KernelOneError,
     Result,
     TaggedError,
 )
-from polaris.kernelone.errors import KernelOneError as CanonicalKernelOneError
+from polaris.kernelone.errors import ErrorCategory, KernelOneError
 
 # ---------------------------------------------------------------------------
 # Result[T, E] construction
@@ -88,17 +86,17 @@ class TestCanonicalResultAccessors:
     def test_unwrap_on_none_ok(self) -> None:
         r: Result[None, TaggedError] = Result.ok(None)
         # Canonical unwrap() raises on None value (safe: avoids silent None bugs)
-        with pytest.raises(CanonicalKernelOneError, match=r"Result\.unwrap"):
+        with pytest.raises(KernelOneError, match=r"Result\.unwrap"):
             r.unwrap()
 
     def test_unwrap_raises_on_err(self) -> None:
         r: Result[int, TaggedError] = Result.err(TaggedError("NOT_FOUND", "not found"))
-        with pytest.raises(CanonicalKernelOneError, match=r"Result\.unwrap"):
+        with pytest.raises(KernelOneError, match=r"Result\.unwrap"):
             r.unwrap()
 
     def test_unwrap_raises_on_err_with_message(self) -> None:
         r: Result[int, TaggedError] = Result.err(TaggedError("NOT_FOUND", "record gone"))
-        with pytest.raises(CanonicalKernelOneError, match="record gone"):
+        with pytest.raises(KernelOneError, match="record gone"):
             r.unwrap()
 
     def test_unwrap_or_returns_value_on_ok(self) -> None:
@@ -340,3 +338,11 @@ class TestRuntimeResultExports:
 
         assert "ErrorCodes" not in runtime.__all__
         assert not hasattr(runtime, "ErrorCodes")
+
+    def test_runtime_does_not_re_export_kernelone_errors(self) -> None:
+        import polaris.kernelone.runtime as runtime
+
+        assert "ErrorCategory" not in runtime.__all__
+        assert "KernelOneError" not in runtime.__all__
+        assert not hasattr(runtime, "ErrorCategory")
+        assert not hasattr(runtime, "KernelOneError")

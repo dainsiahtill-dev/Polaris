@@ -28,9 +28,7 @@ from polaris.kernelone.constants import (
 
 # Result is now canonical from the contracts layer
 from polaris.kernelone.contracts.technical import (
-    ErrorCategory,
     KernelError,
-    KernelOneError,
     Result,
     TaggedError,
 )
@@ -89,7 +87,6 @@ __all__ = [
     "BlockingIoSpec",
     # Bounded cache for preventing memory leaks
     "BoundedCache",
-    "ErrorCategory",
     "ExecutionFacade",
     "ExecutionHandle",
     "ExecutionLane",
@@ -101,7 +98,6 @@ __all__ = [
     "ExecutionStatus",
     "InstanceScopedStateStore",
     "KernelError",
-    "KernelOneError",
     "ProcessRunResult",
     "ProcessSpec",
     # Canonical Result and error types (from contracts layer)

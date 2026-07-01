@@ -23,7 +23,6 @@ All types in this module MUST satisfy the KernelOne admission criteria:
 from __future__ import annotations
 
 import uuid
-import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -31,13 +30,12 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
-    TypeAlias,
     TypeVar,
 )
 
 from polaris.kernelone.errors import (
-    ErrorCategory as _CanonicalErrorCategory,
-    KernelOneError as _CanonicalKernelOneError,
+    ErrorCategory as KernelErrorCategory,
+    KernelOneError as _KernelOneError,
 )
 from polaris.kernelone.utils.constants import GENESIS_HASH
 from polaris.kernelone.utils.time_utils import utc_now as _utc_now
@@ -157,9 +155,9 @@ class Result(Generic[T, E]):
         """Get value, raise if error."""
         if self.is_err:
             msg = self.error_message or str(self.error) if self.error else "Unknown error"
-            raise _CanonicalKernelOneError(f"Result.unwrap() called on Err: {msg}")
+            raise _KernelOneError(f"Result.unwrap() called on Err: {msg}")
         if self.value is None:
-            raise _CanonicalKernelOneError("Result.unwrap() called on Ok(None)")
+            raise _KernelOneError("Result.unwrap() called on Ok(None)")
         return self.value  # type: ignore[return-value]
 
     def unwrap_or(self, default: T) -> T:
@@ -228,27 +226,6 @@ class Result(Generic[T, E]):
         return cls(is_ok=False, error=error, error_message=str(message))
 
 
-# -----------------------------------------------------------------------------
-# ErrorCategory (deprecated - import from polaris.kernelone.errors instead)
-# -----------------------------------------------------------------------------
-
-
-def __getattr__(name: str) -> Any:
-    if name == "ErrorCategory":
-        warnings.warn(
-            "ErrorCategory has been moved to polaris.kernelone.errors. "
-            "Please update imports to use: from polaris.kernelone.errors import ErrorCategory",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return _CanonicalErrorCategory
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-# For backward compatibility during deprecation period
-ErrorCategory: TypeAlias = _CanonicalErrorCategory
-
-
 @dataclass(frozen=True)
 class KernelError:
     """Standardized error structure across KernelOne.
@@ -268,7 +245,7 @@ class KernelError:
         )
     """
 
-    category: ErrorCategory = ErrorCategory.UNKNOWN
+    category: KernelErrorCategory = KernelErrorCategory.UNKNOWN
     message: str = ""
     code: str = "KERNEL_ERROR"
     context: dict[str, Any] = field(default_factory=dict)
@@ -290,32 +267,32 @@ class KernelError:
 # Legacy error code -> ErrorCategory mapping (for migration)
 # -----------------------------------------------------------------------------
 
-_CODE_TO_CATEGORY: dict[str, ErrorCategory] = {
-    "INVALID_ARGUMENT": ErrorCategory.INVALID_INPUT,
-    "NOT_FOUND": ErrorCategory.NOT_FOUND,
-    "ALREADY_EXISTS": ErrorCategory.ALREADY_EXISTS,
-    "PERMISSION_DENIED": ErrorCategory.PERMISSION_DENIED,
-    "RESOURCE_EXHAUSTED": ErrorCategory.RESOURCE_EXHAUSTED,
-    "FAILED_PRECONDITION": ErrorCategory.FAILED_PRECONDITION,
-    "ABORTED": ErrorCategory.ABORTED,
-    "OUT_OF_RANGE": ErrorCategory.OUT_OF_RANGE,
-    "UNIMPLEMENTED": ErrorCategory.UNIMPLEMENTED,
-    "INTERNAL_ERROR": ErrorCategory.INTERNAL_ERROR,
-    "UNAVAILABLE": ErrorCategory.UNAVAILABLE,
-    "DEADLINE_EXCEEDED": ErrorCategory.DEADLINE_EXCEEDED,
+_CODE_TO_CATEGORY: dict[str, KernelErrorCategory] = {
+    "INVALID_ARGUMENT": KernelErrorCategory.INVALID_INPUT,
+    "NOT_FOUND": KernelErrorCategory.NOT_FOUND,
+    "ALREADY_EXISTS": KernelErrorCategory.ALREADY_EXISTS,
+    "PERMISSION_DENIED": KernelErrorCategory.PERMISSION_DENIED,
+    "RESOURCE_EXHAUSTED": KernelErrorCategory.RESOURCE_EXHAUSTED,
+    "FAILED_PRECONDITION": KernelErrorCategory.FAILED_PRECONDITION,
+    "ABORTED": KernelErrorCategory.ABORTED,
+    "OUT_OF_RANGE": KernelErrorCategory.OUT_OF_RANGE,
+    "UNIMPLEMENTED": KernelErrorCategory.UNIMPLEMENTED,
+    "INTERNAL_ERROR": KernelErrorCategory.INTERNAL_ERROR,
+    "UNAVAILABLE": KernelErrorCategory.UNAVAILABLE,
+    "DEADLINE_EXCEEDED": KernelErrorCategory.DEADLINE_EXCEEDED,
     # Domain-specific codes
-    "AGENT_NOT_FOUND": ErrorCategory.NOT_FOUND,
-    "AGENT_ALREADY_REGISTERED": ErrorCategory.ALREADY_EXISTS,
-    "AGENT_INITIALIZATION_FAILED": ErrorCategory.INTERNAL_ERROR,
-    "AGENT_START_FAILED": ErrorCategory.INTERNAL_ERROR,
-    "AGENT_STOP_FAILED": ErrorCategory.INTERNAL_ERROR,
-    "TASK_NOT_FOUND": ErrorCategory.NOT_FOUND,
-    "TASK_ALREADY_EXISTS": ErrorCategory.ALREADY_EXISTS,
-    "TASK_INVALID_STATE": ErrorCategory.FAILED_PRECONDITION,
-    "REVIEW_NOT_FOUND": ErrorCategory.NOT_FOUND,
-    "REVIEW_INVALID_STATE": ErrorCategory.FAILED_PRECONDITION,
-    "PROTOCOL_ERROR": ErrorCategory.INTERNAL_ERROR,
-    "MESSAGE_QUEUE_ERROR": ErrorCategory.UNAVAILABLE,
+    "AGENT_NOT_FOUND": KernelErrorCategory.NOT_FOUND,
+    "AGENT_ALREADY_REGISTERED": KernelErrorCategory.ALREADY_EXISTS,
+    "AGENT_INITIALIZATION_FAILED": KernelErrorCategory.INTERNAL_ERROR,
+    "AGENT_START_FAILED": KernelErrorCategory.INTERNAL_ERROR,
+    "AGENT_STOP_FAILED": KernelErrorCategory.INTERNAL_ERROR,
+    "TASK_NOT_FOUND": KernelErrorCategory.NOT_FOUND,
+    "TASK_ALREADY_EXISTS": KernelErrorCategory.ALREADY_EXISTS,
+    "TASK_INVALID_STATE": KernelErrorCategory.FAILED_PRECONDITION,
+    "REVIEW_NOT_FOUND": KernelErrorCategory.NOT_FOUND,
+    "REVIEW_INVALID_STATE": KernelErrorCategory.FAILED_PRECONDITION,
+    "PROTOCOL_ERROR": KernelErrorCategory.INTERNAL_ERROR,
+    "MESSAGE_QUEUE_ERROR": KernelErrorCategory.UNAVAILABLE,
 }
 
 
@@ -339,7 +316,7 @@ class TaggedError:
     def __init__(self, code: str, message: str) -> None:
         self.code: str = code
         self.message: str = message
-        self.category: ErrorCategory = _CODE_TO_CATEGORY.get(code, ErrorCategory.UNKNOWN)
+        self.category: KernelErrorCategory = _CODE_TO_CATEGORY.get(code, KernelErrorCategory.UNKNOWN)
 
     def to_kernel_error(self) -> KernelError:
         """Convert to the canonical ``KernelError``."""
@@ -362,32 +339,6 @@ class TaggedError:
 
     def __hash__(self) -> int:
         return hash((self.code, self.message))
-
-
-# -----------------------------------------------------------------------------
-# KernelOneError (deprecated - import from polaris.kernelone.errors instead)
-# -----------------------------------------------------------------------------
-
-
-# Create a subclass for backward compatibility that emits deprecation warning
-class KernelOneError(_CanonicalKernelOneError):
-    """Base exception for KernelOne runtime errors.
-
-    .. deprecated::
-        KernelOneError has been moved to polaris.kernelone.errors.
-        Please update imports to use:
-            from polaris.kernelone.errors import KernelOneError
-    """
-
-    def __init__(self, message: str, *, code: str = "KERNEL_ERROR") -> None:
-        warnings.warn(
-            "KernelOneError has been moved to polaris.kernelone.errors. "
-            "Please update imports to use: from polaris.kernelone.errors import KernelOneError",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self.code = code
-        super().__init__(message, code=code)
 
 
 # -----------------------------------------------------------------------------
@@ -913,9 +864,7 @@ __all__ = [
     "EffectType",
     # Envelope
     "Envelope",
-    "ErrorCategory",
     "KernelError",
-    "KernelOneError",
     "LockAcquireResult",
     # Lock
     "LockOptions",

@@ -18,6 +18,7 @@ from polaris.kernelone.contracts.technical.master_types import (
     LockAcquireResult,
     LockOptions,
     LockReleaseResult,
+    Result,
     RuntimeHealthReport,
     ScheduledTask,
     ScheduleKind,
@@ -32,6 +33,7 @@ from polaris.kernelone.contracts.technical.master_types import (
     _new_event_id,
     _new_run_id,
 )
+from polaris.kernelone.errors import ErrorCategory, KernelOneError
 
 
 class TestIdentityHelpers:
@@ -258,6 +260,27 @@ class TestStreamEvents:
         err = KernelError(message="oops", code="ERR")
         se = StreamError(error=err)
         assert se.error.message == "oops"
+
+
+class TestErrorOwnership:
+    """KernelOne errors are owned by polaris.kernelone.errors, not master_types."""
+
+    def test_master_types_does_not_re_export_error_category_or_exception(self) -> None:
+        import polaris.kernelone.contracts.technical.master_types as master_types
+
+        assert "ErrorCategory" not in master_types.__all__
+        assert "KernelOneError" not in master_types.__all__
+        assert not hasattr(master_types, "ErrorCategory")
+        assert not hasattr(master_types, "KernelOneError")
+
+    def test_kernel_error_uses_canonical_error_category(self) -> None:
+        err = KernelError(category=ErrorCategory.NOT_FOUND, message="missing")
+
+        assert err.category is ErrorCategory.NOT_FOUND
+
+    def test_result_unwrap_raises_canonical_kernelone_error(self) -> None:
+        with pytest.raises(KernelOneError, match=r"Result\.unwrap"):
+            Result.err(KernelError(message="bad")).unwrap()
 
 
 class TestHealthTypes:

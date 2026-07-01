@@ -13,7 +13,7 @@ business wording, React `Suspense fallback`, and accepted config migration code.
 
 | Class | Count | Meaning |
 | --- | ---: | --- |
-| Closed in this convergence pass | 215 | Removed, retired, or converted into an audited sunset path and verified. |
+| Closed in this convergence pass | 216 | Removed, retired, or converted into an audited sunset path and verified. |
 | P1 open | 0 | Still close to execution, LLM/tool, QA, or state projection paths. |
 | P2 open | 0 | Exposed API/UI/CLI compatibility surfaces that should be retired after callers move. |
 | P3 accepted with sunset | 0 | Kept for user config or historical data migration; requires an expiry policy, not immediate deletion. |
@@ -286,6 +286,7 @@ Additional closed cuts: LS-14A, LS-15A, LS-16A, LS-17A, LS-18A, LS-19A, LS-20A, 
 
 | LS-55A | LS-55 | P2 | PM dispatch / internal error-classification re-export surface | Closed: `pm_dispatch.internal.error_classifier` no longer re-exports shared error taxonomy types beside canonical `orchestration.shared_types` / `kernelone.errors`. | Closed by limiting the internal module to pm_dispatch-local retry utilities, using the shared classifier privately inside `RetryExecutor`, migrating classification tests to canonical owners, and updating orchestration import fences to prove the internal module exposes retry helpers only. |
 | LS-56A | LS-56 | P2 | Orchestration / ErrorCategory re-export surfaces | Closed: `orchestration.shared_types` and `pm_dispatch` public/package exports no longer re-export `ErrorCategory`; the enum authority is only `polaris.kernelone.errors`. | Closed by removing the `shared_types.__getattr__` deprecation shim, moving workflow imports to KernelOne, keeping `shared_types` focused on `ErrorClassifier` / `ErrorRecord` / `RecoveryRecommendation`, migrating pm_dispatch public exports and tests, and updating import fences to prove the old re-export path is absent. |
+| LS-57A | LS-57 | P2 | KernelOne technical contracts / error type re-export surfaces | Closed: `kernelone.contracts.technical`, `master_types`, `kernelone.runtime`, and `application` no longer re-export `ErrorCategory` or deprecated `KernelOneError`; error taxonomy and base exception authority is only `polaris.kernelone.errors`. | Closed by removing the `master_types` deprecation shim and subclass, keeping `KernelError` / `TaggedError` / `Result` in technical contracts, migrating tests to canonical error imports, and adding fences that prove runtime and master_types no longer expose the retired error names. |
 
 ## Closure Order
 
