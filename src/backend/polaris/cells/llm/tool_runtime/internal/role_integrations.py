@@ -14,10 +14,10 @@ import logging
 import re
 from typing import Any, Self
 
-from polaris.kernelone.llm.toolkit.definitions import create_default_registry
 from polaris.kernelone.llm.toolkit.executor import AgentAccelToolExecutor
 from polaris.kernelone.llm.toolkit.parsers import format_tool_result
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
+from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +227,6 @@ class ChiefEngineerToolIntegration:
     def __init__(self, workspace: str) -> None:
         self.workspace = workspace
         self.executor = AgentAccelToolExecutor(workspace)
-        self.registry = create_default_registry()
         self._closed = False
 
     def close(self) -> None:
@@ -466,7 +465,6 @@ class DirectorToolIntegration:
     def __init__(self, workspace: str) -> None:
         self.workspace = workspace
         self.executor = AgentAccelToolExecutor(workspace)
-        self.registry = create_default_registry()
         self._closed = False
 
     def close(self) -> None:
@@ -499,7 +497,11 @@ class DirectorToolIntegration:
 
     def format_tools_for_native_calling(self) -> list[dict[str, Any]]:
         """格式化为原生 Function Calling 格式."""
-        return self.registry.to_openai_functions()
+        return ToolSpecRegistry.generate_llm_schemas(
+            format="openai",
+            include_arg_aliases=True,
+            deterministic=True,
+        )
 
     def build_tool_results_prompt(self, executed_tools: list[dict]) -> str:
         """构建工具结果提示，发送给 LLM.
@@ -588,7 +590,6 @@ class PMToolIntegration:
     def __init__(self, workspace: str) -> None:
         self.workspace = workspace
         self.executor = AgentAccelToolExecutor(workspace)
-        self.registry = create_default_registry()
         self._closed = False
 
     def close(self) -> None:
@@ -681,7 +682,6 @@ class ArchitectToolIntegration:
     def __init__(self, workspace: str) -> None:
         self.workspace = workspace
         self.executor = AgentAccelToolExecutor(workspace)
-        self.registry = create_default_registry()
         self._closed = False
 
     def close(self) -> None:
@@ -774,7 +774,6 @@ class QAToolIntegration:
     def __init__(self, workspace: str) -> None:
         self.workspace = workspace
         self.executor = AgentAccelToolExecutor(workspace)
-        self.registry = create_default_registry()
         self._closed = False
 
     def close(self) -> None:
@@ -891,7 +890,6 @@ class ScoutToolIntegration:
     def __init__(self, workspace: str) -> None:
         self.workspace = workspace
         self.executor = AgentAccelToolExecutor(workspace)
-        self.registry = create_default_registry()
         self._closed = False
 
     def close(self) -> None:

@@ -587,14 +587,15 @@ def restrict_tool_definitions_to_write(tool_definitions: list[dict[str, Any]]) -
 
 def _native_tool_schema(tool_name: str) -> dict[str, Any] | None:
     try:
-        from polaris.kernelone.llm.toolkit.definitions import create_default_registry
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
     except (ImportError, RuntimeError, ValueError):
         return None
-    definition = create_default_registry().get(str(tool_name or "").strip())
-    if definition is None:
-        return None
     try:
-        schema = definition.to_openai_function()
+        schema = ToolSpecRegistry.get_llm_schema(
+            str(tool_name or "").strip(),
+            include_arg_aliases=True,
+            deterministic=True,
+        )
     except (RuntimeError, TypeError, ValueError):
         return None
     return dict(schema) if isinstance(schema, dict) else None
@@ -854,7 +855,7 @@ def build_native_tool_schemas(profile: Any) -> list[dict[str, Any]]:
 
     if _ccr_retrieve_offering_enabled() and policy_opt_in and "context_retrieve" not in whitelist:
         # Flag-gated CCR consumer-loop closure (T1-A): ensure the spec is registered
-        # so the create_default_registry() lookup below resolves it, then offer the
+        # so the ToolSpecRegistry schema lookup below resolves it, then offer the
         # tool to the model. Inert unless KERNELONE_CCR_RETRIEVE is set AND the
         # role's tool policy has ccr_retrieve_opt_in=True. This fail-closed gate
         # prevents the env flag from silently overriding per-role tool policy
@@ -870,13 +871,12 @@ def build_native_tool_schemas(profile: Any) -> list[dict[str, Any]]:
             logger.debug("context_retrieve offering skipped: spec registration failed")
 
     try:
-        from polaris.kernelone.llm.toolkit.definitions import create_default_registry
         from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
         from polaris.kernelone.tool_execution import contracts as tool_contracts
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
     except (RuntimeError, ValueError):
         return []
 
-    registry = create_default_registry()
     tool_schemas: list[dict[str, Any]] = []
     seen: set[str] = set()
 
@@ -885,10 +885,17 @@ def build_native_tool_schemas(profile: Any) -> list[dict[str, Any]]:
         if not normalized_name or normalized_name in seen:
             continue
 
-        definition = registry.get(normalized_name)
-        if definition is not None:
-            seen.add(normalized_name)
-            tool_schemas.append(definition.to_openai_function())
+        registry_schema = ToolSpecRegistry.get_llm_schema(
+            normalized_name,
+            include_arg_aliases=True,
+            deterministic=True,
+        )
+        if registry_schema is not None:
+            registry_schema_name = str((registry_schema.get("function") or {}).get("name") or "").strip()
+            if not registry_schema_name or registry_schema_name in seen:
+                continue
+            seen.add(registry_schema_name)
+            tool_schemas.append(registry_schema)
             continue
 
         contract_schema = _build_contract_native_tool_schema(normalized_name, tool_contracts=tool_contracts)

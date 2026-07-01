@@ -318,11 +318,14 @@ class TestBuildNativeToolSchemas:
     """build_native_tool_schemas should expose canonical tool contracts."""
 
     def test_builds_repo_contract_schema_when_registry_missing(self, monkeypatch) -> None:
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
         profile = MockProfile(role_id="director")
         profile.tool_policy = SimpleNamespace(whitelist=["repo_read_head", "repo_rg"])
         monkeypatch.setattr(
-            "polaris.kernelone.llm.toolkit.definitions.create_default_registry",
-            lambda: SimpleNamespace(get=lambda _name: None),
+            ToolSpecRegistry,
+            "get_llm_schema",
+            classmethod(lambda cls, _name, **_kwargs: None),
         )
         monkeypatch.setattr(
             "polaris.kernelone.llm.toolkit.tool_normalization.normalize_tool_name",
@@ -336,11 +339,14 @@ class TestBuildNativeToolSchemas:
         assert "repo_rg" in names
 
     def test_repo_read_head_schema_exposes_alias_params(self, monkeypatch) -> None:
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
         profile = MockProfile(role_id="director")
         profile.tool_policy = SimpleNamespace(whitelist=["repo_read_head"])
         monkeypatch.setattr(
-            "polaris.kernelone.llm.toolkit.definitions.create_default_registry",
-            lambda: SimpleNamespace(get=lambda _name: None),
+            ToolSpecRegistry,
+            "get_llm_schema",
+            classmethod(lambda cls, _name, **_kwargs: None),
         )
         monkeypatch.setattr(
             "polaris.kernelone.llm.toolkit.tool_normalization.normalize_tool_name",

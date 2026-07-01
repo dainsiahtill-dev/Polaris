@@ -3,7 +3,7 @@ ToolSpecRegistry - 单一权威源头 for LLM Tool定义
 
 本模块作为Polaris LLM工具调用的单一事实来源（Single Source of Truth）。
 统一了之前分散在以下位置的Tool定义:
-- definitions.py (ToolDefinition类 - LLM-facing schemas)
+- retired llm.toolkit.definitions bridge (LLM-facing schemas)
 - historical contracts.py dictionary data (执行契约和别名)
 
 用法:
@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -121,6 +122,20 @@ def _tool_name_candidates(value: str) -> tuple[str, ...]:
             candidates.append(segment_folded)
 
     return tuple(candidates)
+
+
+def _sort_schema_keys(value: Any) -> Any:
+    """Return a copy with mapping keys sorted for deterministic schema emission.
+
+    Tool and argument lists keep their order because that order is part of the
+    prompt-facing contract. Only dictionary key order is normalized so repeated
+    provider requests can be compared and cached byte-for-byte.
+    """
+    if isinstance(value, dict):
+        return {key: _sort_schema_keys(value[key]) for key in sorted(value)}
+    if isinstance(value, list):
+        return [_sort_schema_keys(item) for item in value]
+    return value
 
 
 class ToolSpecRegistry:
@@ -316,18 +331,136 @@ class ToolSpecRegistry:
         cls,
         format: str = "openai",
         categories: tuple[str, ...] | None = None,
+        *,
+        include_arg_aliases: bool = False,
+        deterministic: bool = False,
     ) -> list[dict[str, Any]]:
-        """生成LLM-facing的tool schemas"""
+        """Generate provider-facing tool schemas from the canonical registry.
+
+        Args:
+            format: Provider schema format. Supported values are ``openai`` and
+                ``anthropic``.
+            categories: Optional category filter such as ``("read",)``.
+            include_arg_aliases: When true, expose safe argument aliases from
+                ``arg_aliases`` as optional schema properties. This preserves the
+                weak-model shaping previously provided by the retired
+                ``llm.toolkit.definitions`` bridge while keeping ToolSpecRegistry
+                as the single source of truth.
+            deterministic: When true, recursively sort schema object keys.
+
+        Raises:
+            ValueError: If ``format`` is not supported.
+        """
         specs = cls.get_all_tools()
         if categories:
             specs = [s for s in specs if any(c in s.categories for c in categories)]
 
+        schemas: list[dict[str, Any]] = []
+        for spec in specs:
+            schema = cls.get_llm_schema(
+                spec.canonical_name,
+                format=format,
+                include_arg_aliases=include_arg_aliases,
+                deterministic=deterministic,
+            )
+            if schema is not None:
+                schemas.append(schema)
+        return schemas
+
+    @classmethod
+    def get_llm_schema(
+        cls,
+        name: str,
+        *,
+        format: str = "openai",
+        include_arg_aliases: bool = False,
+        deterministic: bool = False,
+    ) -> dict[str, Any] | None:
+        """Return a provider-facing schema for one registered tool.
+
+        Args:
+            name: Canonical tool name or registered alias.
+            format: Provider schema format. Supported values are ``openai`` and
+                ``anthropic``.
+            include_arg_aliases: Include safe optional argument aliases from the
+                raw registry spec.
+            deterministic: Recursively sort mapping keys before returning.
+
+        Returns:
+            A schema dictionary or ``None`` when the tool is unknown.
+
+        Raises:
+            ValueError: If ``format`` is not supported.
+        """
+        spec = cls.get(name)
+        if spec is None:
+            canonical = cls.get_canonical(name)
+            spec = cls.get(canonical)
+        if spec is None:
+            return None
+
         if format == "openai":
-            return [spec.to_openai_function() for spec in specs]
+            schema = spec.to_openai_function()
         elif format == "anthropic":
-            return [spec.to_anthropic_tool() for spec in specs]
+            schema = spec.to_anthropic_tool()
         else:
             raise ValueError(f"Unknown format: {format}")
+
+        if include_arg_aliases:
+            schema = cls._schema_with_arg_aliases(
+                schema,
+                canonical_name=spec.canonical_name,
+                format=format,
+            )
+        if deterministic:
+            return _sort_schema_keys(schema)
+        return schema
+
+    @classmethod
+    def _schema_with_arg_aliases(
+        cls,
+        schema: dict[str, Any],
+        *,
+        canonical_name: str,
+        format: str,
+    ) -> dict[str, Any]:
+        """Return a schema copy with optional argument aliases exposed."""
+        raw_spec = cls._get_registry().get(canonical_name)
+        if not isinstance(raw_spec, dict):
+            return deepcopy(schema)
+
+        arg_aliases = raw_spec.get("arg_aliases")
+        if not isinstance(arg_aliases, dict) or not arg_aliases:
+            return deepcopy(schema)
+
+        schema_copy = deepcopy(schema)
+        if format == "openai":
+            function_payload = schema_copy.get("function")
+            parameters = function_payload.get("parameters") if isinstance(function_payload, dict) else None
+        elif format == "anthropic":
+            parameters = schema_copy.get("input_schema")
+        else:
+            raise ValueError(f"Unknown format: {format}")
+
+        if not isinstance(parameters, dict):
+            return schema_copy
+        properties = parameters.get("properties")
+        if not isinstance(properties, dict):
+            return schema_copy
+
+        for raw_alias, raw_canonical in arg_aliases.items():
+            alias_name = str(raw_alias or "").strip()
+            canonical_arg_name = str(raw_canonical or "").strip()
+            if not alias_name or not canonical_arg_name or alias_name in properties:
+                continue
+            canonical_schema = properties.get(canonical_arg_name)
+            if not isinstance(canonical_schema, dict):
+                continue
+            alias_schema = deepcopy(canonical_schema)
+            alias_schema["description"] = f"(alias for {canonical_arg_name})"
+            properties[alias_name] = alias_schema
+
+        return schema_copy
 
     @classmethod
     def generate_handler_registry(cls) -> dict[str, tuple[str, str]]:

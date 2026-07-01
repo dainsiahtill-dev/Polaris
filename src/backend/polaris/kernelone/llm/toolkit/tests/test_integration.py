@@ -49,10 +49,13 @@ class TestPhase3NativeFunctionCallingIntegration:
 
     def test_openai_tool_format(self) -> None:
         """Test OpenAI function format generation."""
-        from polaris.kernelone.llm.toolkit.definitions import create_default_registry
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
-        registry = create_default_registry()
-        functions = registry.to_openai_functions()
+        functions = ToolSpecRegistry.generate_llm_schemas(
+            format="openai",
+            include_arg_aliases=True,
+            deterministic=True,
+        )
 
         # 验证生成了正确的 OpenAI 格式
         assert len(functions) > 0

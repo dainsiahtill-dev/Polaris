@@ -222,10 +222,27 @@ jobs:
                 content = f.read()
             if 'ToolSpecRegistry' not in content:
                 raise Exception('executor/core.py should use ToolSpecRegistry')
-            # 不应该直接导入definitions或contracts
+            # 不应该直接导入 retired definitions bridge
             if 'from polaris.kernelone.llm.toolkit.definitions import' in content:
                 raise Exception('executor/core.py should not import definitions directly')
             print('Executor uses ToolSpecRegistry correctly')
+          "
+
+      - name: Check retired definitions bridge stays removed
+        run: |
+          test ! -f polaris/kernelone/llm/toolkit/definitions.py
+          python -c "
+            from pathlib import Path
+            offenders = []
+            for path in Path('polaris').rglob('*.py'):
+                if '__pycache__' in path.parts or 'tests' in path.parts:
+                    continue
+                content = path.read_text(encoding='utf-8')
+                if 'polaris.kernelone.llm.toolkit.definitions' in content or 'from .definitions import' in content:
+                    offenders.append(str(path))
+            if offenders:
+                raise Exception('retired definitions bridge imports remain: ' + ', '.join(offenders))
+            print('Retired definitions bridge is absent')
           "
 
       - name: Run Executor tests

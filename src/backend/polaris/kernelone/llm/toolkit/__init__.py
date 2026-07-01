@@ -65,17 +65,6 @@ from .contracts import (
     Usage,
 )
 
-# 工具定义
-# definitions.py keeps the ToolDefinition/ToolRegistry abstraction layer.
-# Canonical tool data lives in ToolSpecRegistry; callers should not read
-# historical contracts-level tool dictionaries directly.
-from .definitions import (
-    ToolDefinition,
-    ToolParameter,
-    ToolRegistry,
-    create_default_registry,
-)
-
 # 执行器
 from .executor import (
     AgentAccelToolExecutor,
@@ -200,9 +189,6 @@ __all__ = [
     # ═══════════════════════════════════════════════════════════════
     # 原生 Function Calling
     # ═══════════════════════════════════════════════════════════════
-    "ToolDefinition",
-    "ToolParameter",
-    "ToolRegistry",
     "Usage",
     "ValidationResult",
     "XMLToolParser",  # XML 格式 (MiniMax/Claude/Llama)
@@ -211,7 +197,6 @@ __all__ = [
     "apply_operations",
     "apply_protocol_output",
     "build_tool_feedback",  # 构建工具反馈
-    "create_default_registry",
     "create_tool_chain_prompt",
     "deduplicate_tool_calls",  # P0-002: 新增导出
     "execute_tool_call",

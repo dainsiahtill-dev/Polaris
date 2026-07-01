@@ -13,7 +13,7 @@ business wording, React `Suspense fallback`, and accepted config migration code.
 
 | Class | Count | Meaning |
 | --- | ---: | --- |
-| Closed in this convergence pass | 208 | Removed, retired, or converted into an audited sunset path and verified. |
+| Closed in this convergence pass | 209 | Removed, retired, or converted into an audited sunset path and verified. |
 | P1 open | 0 | Still close to execution, LLM/tool, QA, or state projection paths. |
 | P2 open | 0 | Exposed API/UI/CLI compatibility surfaces that should be retired after callers move. |
 | P3 accepted with sunset | 0 | Kept for user config or historical data migration; requires an expiry policy, not immediate deletion. |
@@ -273,6 +273,8 @@ Additional closed cuts: LS-14A, LS-15A, LS-16A, LS-17A, LS-18A, LS-19A, LS-20A, 
 | LS-47A | LS-47 | P2 | Context engine / search gateway ad-hoc ingest no-op | Closed: `SearchService.add_documents` no longer exists as a deprecated warning-backed no-op beside graph/catalog-backed search. | Closed by deleting the `add_documents` method and warning import from `context.engine` search gateway, updating behavior/governance tests to assert the ingest API is absent, and adding an architecture fence that blocks `add_documents`, `DeprecationWarning`, and `warnings.warn` from reappearing in the search gateway. |
 | LS-48A | LS-48 | P2 | KernelOne policy / deprecated package-root facade | Closed: `polaris.kernelone.policy` no longer exists as a warning-emitting package facade that points callers to upper-layer policy cells. | Closed by deleting the retired package root, removing it from the KernelOne reverse-dependency baseline, extending legacy cleanup coverage to assert `polaris.kernelone.policy` is not importable, updating active governance docs/gates to the current `roles.kernel` policy layer and `kernelone.security` owners, and adding an architecture fence that blocks policy package source files and baseline budget from reappearing. |
 | LS-49A | LS-49 | P2 | KernelOne LLM / error category re-export shim | Closed: `polaris.kernelone.llm.error_categories` no longer exists as a warning-backed `ErrorCategory` re-export and parallel classifier beside `polaris.kernelone.errors`. | Closed by migrating LLM toolkit contracts and engine resilience to import `ErrorCategory` / `classify_error` from `polaris.kernelone.errors`, deleting the retired LLM-local module and its self-preserving tests, and adding an architecture fence that blocks retired module imports while proving the canonical owner remains present. |
+
+| LS-50A | LS-50 | P2 | KernelOne LLM toolkit / retired tool definitions bridge | Closed: `polaris.kernelone.llm.toolkit.definitions` no longer exists as a deprecated `ToolDefinition` / `ToolRegistry` / `create_default_registry` bridge beside canonical `ToolSpecRegistry`. | Closed by moving alias-aware provider schema projection into `polaris.kernelone.tool_execution.tool_spec_registry.ToolSpecRegistry`, migrating Director quality repair, materialization retry, roles-kernel native tool schema assembly, and legacy role integration schema output to that owner, deleting the retired module and package-root exports, and adding an architecture fence against file/import reintroduction. |
 
 ## Closure Order
 

@@ -287,6 +287,61 @@ class TestToolSpecRegistry:
         assert schemas[0]["function"]["name"] == "my_tool"
         assert schemas[0]["type"] == "function"
 
+    def test_get_llm_schema_can_expose_argument_aliases(self) -> None:
+        """Alias expansion belongs to ToolSpecRegistry, not LLM toolkit shims."""
+        ToolSpecRegistry.register(
+            "alias_tool",
+            {
+                "description": "Alias-aware tool",
+                "category": "write",
+                "aliases": [],
+                "arg_aliases": {
+                    "path": "file",
+                    "body": "content",
+                },
+                "arguments": [
+                    {"name": "file", "type": "string", "required": True},
+                    {"name": "content", "type": "string", "required": True},
+                ],
+            },
+        )
+
+        schema = ToolSpecRegistry.get_llm_schema(
+            "alias_tool",
+            include_arg_aliases=True,
+            deterministic=True,
+        )
+
+        assert schema is not None
+        parameters = schema["function"]["parameters"]
+        properties = parameters["properties"]
+        assert sorted(parameters["required"]) == ["content", "file"]
+        assert properties["path"]["type"] == "string"
+        assert properties["path"]["description"] == "(alias for file)"
+        assert properties["body"]["description"] == "(alias for content)"
+
+    def test_generate_llm_schemas_keeps_alias_expansion_opt_in(self) -> None:
+        """Default schema output stays canonical; alias exposure is explicit."""
+        ToolSpecRegistry.register(
+            "canonical_only",
+            {
+                "description": "Canonical tool",
+                "category": "read",
+                "aliases": [],
+                "arg_aliases": {"q": "query"},
+                "arguments": [{"name": "query", "type": "string", "required": True}],
+            },
+        )
+
+        default_schema = ToolSpecRegistry.generate_llm_schemas(format="openai")[0]
+        alias_schema = ToolSpecRegistry.generate_llm_schemas(
+            format="openai",
+            include_arg_aliases=True,
+        )[0]
+
+        assert "q" not in default_schema["function"]["parameters"]["properties"]
+        assert "q" in alias_schema["function"]["parameters"]["properties"]
+
     def test_generate_llm_schemas_anthropic(self) -> None:
         """Test generating Anthropic format schemas."""
         spec = ToolSpec(

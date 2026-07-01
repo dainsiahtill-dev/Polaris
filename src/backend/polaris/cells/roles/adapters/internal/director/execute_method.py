@@ -563,14 +563,15 @@ def _pin_file_schema_to_declared_targets(definition: dict[str, Any], target_file
 
 def _registered_tool_definition(tool_name: str) -> dict[str, Any] | None:
     try:
-        from polaris.kernelone.llm.toolkit.definitions import create_default_registry
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
     except (ImportError, RuntimeError, ValueError):
         return None
-    definition = create_default_registry().get(str(tool_name or "").strip())
-    if definition is None:
-        return None
     try:
-        schema = definition.to_openai_function()
+        schema = ToolSpecRegistry.get_llm_schema(
+            str(tool_name or "").strip(),
+            include_arg_aliases=True,
+            deterministic=True,
+        )
     except (RuntimeError, TypeError, ValueError):
         return None
     return dict(schema) if isinstance(schema, dict) else None

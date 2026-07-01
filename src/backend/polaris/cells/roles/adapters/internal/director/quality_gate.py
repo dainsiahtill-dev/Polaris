@@ -122,14 +122,15 @@ def _safe_int(value: Any) -> int:
 
 def _provider_tool_definition(tool_name: str) -> dict[str, Any] | None:
     try:
-        from polaris.kernelone.llm.toolkit.definitions import create_default_registry
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
     except (ImportError, RuntimeError, ValueError):
         return None
-    definition = create_default_registry().get(str(tool_name or "").strip())
-    if definition is None:
-        return None
     try:
-        schema = definition.to_openai_function()
+        schema = ToolSpecRegistry.get_llm_schema(
+            str(tool_name or "").strip(),
+            include_arg_aliases=True,
+            deterministic=True,
+        )
     except (RuntimeError, TypeError, ValueError):
         return None
     return json.loads(json.dumps(schema, ensure_ascii=False)) if isinstance(schema, dict) else None
