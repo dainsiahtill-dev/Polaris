@@ -6,6 +6,7 @@ tool dispatch, and retired LLMCaller boundary for the current Role Kernel path.
 
 from __future__ import annotations
 
+import asyncio
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
@@ -77,16 +78,19 @@ class TestDependencyInjection:
             workspace=".",
             llm_invoker=mock_invoker,
         )
-        assert kernel._injected_llm_invoker is mock_invoker
+        assert get_llm_invoker(kernel) is mock_invoker
 
     def test_inject_tool_executor(self) -> None:
         """测试注入 Tool Executor"""
         mock_executor = MagicMock(spec=CellToolExecutorPort)
+        mock_executor.execute = AsyncMock(return_value={"success": True})
         kernel = RoleExecutionKernel(
             workspace=".",
             tool_executor=mock_executor,
         )
-        assert kernel._injected_tool_executor is mock_executor
+        result = asyncio.run(execute_single_tool(kernel, tool_name="read_file", args={"path": "test.py"}))
+        mock_executor.execute.assert_called_once()
+        assert result == {"success": True}
 
     def test_inject_prompt_builder(self) -> None:
         """测试注入 Prompt Builder"""
@@ -95,7 +99,7 @@ class TestDependencyInjection:
             workspace=".",
             prompt_builder=mock_builder,
         )
-        assert kernel._injected_prompt_builder is mock_builder
+        assert get_prompt_builder(kernel) is mock_builder
 
     def test_inject_output_parser(self) -> None:
         """测试注入 Output Parser"""
@@ -104,7 +108,7 @@ class TestDependencyInjection:
             workspace=".",
             output_parser=mock_parser,
         )
-        assert kernel._injected_output_parser is mock_parser
+        assert get_output_parser(kernel) is mock_parser
 
     def test_inject_quality_checker(self) -> None:
         """测试注入 Quality Checker"""
@@ -113,7 +117,7 @@ class TestDependencyInjection:
             workspace=".",
             quality_checker=mock_checker,
         )
-        assert kernel._injected_quality_checker is mock_checker
+        assert get_quality_checker(kernel) is mock_checker
 
     def test_inject_event_emitter(self) -> None:
         """测试注入 Event Emitter"""
@@ -122,25 +126,35 @@ class TestDependencyInjection:
             workspace=".",
             event_emitter=mock_emitter,
         )
-        assert kernel._injected_event_emitter is mock_emitter
+        assert get_kernel_event_emitter(kernel) is mock_emitter
 
     def test_inject_all_services(self) -> None:
         """测试同时注入所有服务"""
+        mock_llm_invoker = MagicMock(spec=ILLMInvoker)
+        mock_tool_executor = MagicMock(spec=CellToolExecutorPort)
+        mock_tool_executor.execute = AsyncMock(return_value={"success": True})
+        mock_prompt_builder = MagicMock(spec=IPromptBuilder)
+        mock_output_parser = MagicMock(spec=IOutputParser)
+        mock_quality_checker = MagicMock(spec=IQualityChecker)
+        mock_event_emitter = MagicMock(spec=IEventEmitter)
         kernel = RoleExecutionKernel(
             workspace=".",
-            llm_invoker=MagicMock(spec=ILLMInvoker),
-            tool_executor=MagicMock(spec=CellToolExecutorPort),
-            prompt_builder=MagicMock(spec=IPromptBuilder),
-            output_parser=MagicMock(spec=IOutputParser),
-            quality_checker=MagicMock(spec=IQualityChecker),
-            event_emitter=MagicMock(spec=IEventEmitter),
+            llm_invoker=mock_llm_invoker,
+            tool_executor=mock_tool_executor,
+            prompt_builder=mock_prompt_builder,
+            output_parser=mock_output_parser,
+            quality_checker=mock_quality_checker,
+            event_emitter=mock_event_emitter,
         )
-        assert kernel._injected_llm_invoker is not None
-        assert kernel._injected_tool_executor is not None
-        assert kernel._injected_prompt_builder is not None
-        assert kernel._injected_output_parser is not None
-        assert kernel._injected_quality_checker is not None
-        assert kernel._injected_event_emitter is not None
+        assert get_llm_invoker(kernel) is mock_llm_invoker
+        assert get_prompt_builder(kernel) is mock_prompt_builder
+        assert get_output_parser(kernel) is mock_output_parser
+        assert get_quality_checker(kernel) is mock_quality_checker
+        assert get_kernel_event_emitter(kernel) is mock_event_emitter
+
+        result = asyncio.run(execute_single_tool(kernel, tool_name="read_file", args={"path": "test.py"}))
+        mock_tool_executor.execute.assert_called_once()
+        assert result == {"success": True}
 
     def test_llm_invoker_provider_returns_invoker_without_deprecation(self) -> None:
         """Kernel LLM provider returns canonical LLMInvoker without warnings."""
