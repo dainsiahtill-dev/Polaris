@@ -48,7 +48,7 @@
       },
       {
         "path": "tests/architecture/test_kernelone_llm_contract_reexports.py",
-        "purpose": "Protect StreamEventType parity across shared contracts, engine contracts, and executor imports."
+        "purpose": "Protect StreamEventType parity across contracts.core, engine contracts, toolkit contracts, and executor imports."
       }
     ],
     "contracts": [
@@ -80,14 +80,10 @@
       "docs/governance/schemas/verify-pack.schema.yaml"
     ]
   },
-  "open_debt_ids": [
-    "DEBT-20260325-roles-kernel-turn-stage-contract",
-    "DEBT-20260325-kernelone-llm-reexport-parity"
-  ],
+  "open_debt_ids": [],
   "residual_risks": [
-    "raw_content is typed as str (not a dedicated wrapper), so downstream consumers can still pass unsanitized text if they bypass AssistantTurnArtifacts construction.",
+    "raw_content remains string-backed by design, but execution parser entrypoints now require AssistantRawContent and structural tests fence compatibility wrappers from authorization paths.",
     "internal/transcript_ir.py is now a compatibility re-export shim; new code must import from public/transcript_ir.py to be compliant with Chief Architect Ruling #3.",
-    "KernelOne llm contract re-exports are still manual, so future shared contract additions must extend the parity gate.",
     "Session continuity packs still use deterministic heuristics today; future tuning must preserve the single continuity-memory data model instead of adding a second memory path."
   ]
 }

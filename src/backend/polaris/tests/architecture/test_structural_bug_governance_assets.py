@@ -39,10 +39,6 @@ EXPECTED_DEBT_IDS = {
     "DEBT-20260325-kernelone-llm-reexport-parity",
     "DEBT-20260620-runtime-realtime-single-rail",
 }
-ROLE_KERNEL_VERIFY_PACK_DEBT_IDS = {
-    "DEBT-20260325-roles-kernel-turn-stage-contract",
-    "DEBT-20260325-kernelone-llm-reexport-parity",
-}
 EXPECTED_ACTIVE_DEBT_IDS: set[str] = set()
 EXPECTED_RULE_IDS = {
     "debt_register_schema_valid",
@@ -200,6 +196,54 @@ def test_roles_kernel_stream_visible_chunks_use_wrapper_filter() -> None:
     assert first_filter < first_visible_emit
 
 
+def test_roles_kernel_visible_stream_chunk_emitters_are_canonical() -> None:
+    """Only the guarded stream handler may emit raw visible content chunks.
+
+    The transaction projection layer may publish typed ``ContentChunkEvent``
+    objects, but new transports must not create ad-hoc ``content_chunk`` dicts
+    because that bypasses ``_BracketToolWrapperFilter``.
+    """
+
+    allowed_emitters = {
+        ROLE_KERNEL_STREAM_HANDLER_PATH,
+        POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "kernel" / "stream_event_projection.py",
+    }
+    findings: list[str] = []
+    role_kernel_internal = POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal"
+    for path in role_kernel_internal.rglob("*.py"):
+        if "tests" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if '"type": "content_chunk"' not in text:
+            continue
+        if path not in allowed_emitters:
+            findings.append(str(path.relative_to(POLARIS_ROOT)))
+
+    assert findings == []
+
+    projection_path = POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "kernel" / "stream_event_projection.py"
+    projection_text = projection_path.read_text(encoding="utf-8")
+    assert "async def _project_content_chunk(self, event: ContentChunkEvent)" in projection_text
+    assert "yield" not in projection_text
+
+
+def test_roles_kernel_transaction_stream_uses_guarded_stream_handler() -> None:
+    """Transaction streaming must consume visible chunks from StreamEventHandler."""
+
+    orchestrator_path = (
+        POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "transaction" / "stream_orchestrator.py"
+    )
+    text = orchestrator_path.read_text(encoding="utf-8")
+    required_order = (
+        "from polaris.cells.roles.kernel.internal.turn_engine.stream_handler import StreamEventHandler",
+        "handler = StreamEventHandler(workspace=shadow_workspace)",
+        "async for event in handler.process_stream(",
+        "yield ContentChunkEvent(turn_id=ledger.turn_id, chunk=content, is_thinking=False)",
+    )
+    positions = [text.index(fragment) for fragment in required_order]
+    assert positions == sorted(positions)
+
+
 def test_roles_kernel_verify_pack_shape_and_links() -> None:
     verify_pack = _read_json(VERIFY_PACK_PATH)
     debt_register = _read_yaml(DEBT_REGISTER_PATH)
@@ -241,9 +285,14 @@ def test_roles_kernel_verify_pack_shape_and_links() -> None:
 
     open_debt_ids = verify_pack.get("open_debt_ids")
     assert isinstance(open_debt_ids, list)
-    assert ROLE_KERNEL_VERIFY_PACK_DEBT_IDS.issubset(set(open_debt_ids))
+    debt_status_by_id = {
+        str(item.get("id") or ""): str(item.get("status") or "")
+        for item in debt_register.get("debts", [])
+        if isinstance(item, dict)
+    }
     for debt_id in open_debt_ids:
         assert debt_id in debt_ids, f"verify pack references unknown debt id {debt_id}"
+        assert debt_status_by_id.get(debt_id) in {"active", "monitoring"}
 
     residual_risks = verify_pack.get("residual_risks")
     assert isinstance(residual_risks, list) and residual_risks

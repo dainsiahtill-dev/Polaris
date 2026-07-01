@@ -5,7 +5,7 @@ debts:
   - id: "DEBT-20260325-roles-kernel-turn-stage-contract"
     title: "roles.kernel turn semantic stages remain runtime-enforced"
     classification: structural
-    status: monitoring
+    status: retired
     severity: high
     scope_refs:
       - "roles.kernel"
@@ -29,10 +29,11 @@ debts:
       - "2026-07-02: OutputParser no longer exposes the legacy parse_tool_calls(str) wrapper; parser tests now call parse_execution_tool_calls with AssistantRawContent"
       - "2026-07-02: DevelopmentWorkflowRuntime no longer parses textual file tool calls from handoff intent; PATCH_FILE/FILE protocol remains explicit and textual [TOOL_CALL] wrappers fail closed"
       - "2026-07-02: StreamEventHandler visible chunk path is structurally guarded to route through _BracketToolWrapperFilter before yielding content_chunk events"
+      - "2026-07-02: architecture tests now fence roles.kernel visible content_chunk emitters to the guarded StreamEventHandler and typed ContentChunkEvent projection path"
       - "Semantic stage regression tests protect parser and transcript boundaries"
       - "verify.pack.json records current guarantees and residual risks"
     residual_risks:
-      - "Future non-StreamEventHandler transports could bypass the guarded visible stream path unless added to the structural guard"
+      - "Retired 2026-07-02: no open residual risk; keep this historical note only to satisfy the debt-register evidence schema"
     linked_assets:
       adrs:
         - "docs/governance/decisions/adr-0042-turn-engine-triple-responsibility.md"
