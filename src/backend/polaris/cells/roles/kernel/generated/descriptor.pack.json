@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T08:40:46.407400Z",
-  "source_hash": "2258e5c71ed832ae",
+  "generated_at": "2026-07-01T08:49:30.274435Z",
+  "source_hash": "327e1dd7b6c2857c",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4165,6 +4165,36 @@
     },
     {
       "type": "function",
+      "name": "_validate_turn_output",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/non_stream_turn_flow.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_llm_latency",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/non_stream_turn_flow.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_quality_score",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/non_stream_turn_flow.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_retry",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/non_stream_turn_flow.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_execution",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/non_stream_turn_flow.py"
+    },
+    {
+      "type": "function",
       "name": "get_output_parser",
       "description": "Return the injected or lazily-created output parser for a kernel turn.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/output_parser_provider.py"
@@ -4395,6 +4425,134 @@
       "name": "append_role_turn_task_boundary_verdict",
       "description": "Append the task-boundary verdict implied by a completed role turn.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/task_boundary.py"
+    },
+    {
+      "type": "class",
+      "name": "_PromptBuilder",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_non_stream_turn_flow.py",
+      "methods": [
+        {
+          "name": "build_retry_prompt",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_EventEmitter",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_non_stream_turn_flow.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "resolve_observer_run_id",
+          "doc": ""
+        },
+        {
+          "name": "emit_runtime_llm_event",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_Metrics",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_non_stream_turn_flow.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "record_llm_latency",
+          "doc": ""
+        },
+        {
+          "name": "record_quality_score",
+          "doc": ""
+        },
+        {
+          "name": "record_retry",
+          "doc": ""
+        },
+        {
+          "name": "record_execution",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_Span",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_non_stream_turn_flow.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "set_tag",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_Tracer",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_non_stream_turn_flow.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "span",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_profile",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_non_stream_turn_flow.py"
+    },
+    {
+      "type": "function",
+      "name": "_kernel",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_non_stream_turn_flow.py"
+    },
+    {
+      "type": "function",
+      "name": "test_execute_non_stream_role_turn_returns_setup_error_without_transaction",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_non_stream_turn_flow.py"
+    },
+    {
+      "type": "function",
+      "name": "fail_setup",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_non_stream_turn_flow.py"
+    },
+    {
+      "type": "function",
+      "name": "test_execute_non_stream_role_turn_calls_transaction_and_projects_success",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_non_stream_turn_flow.py"
+    },
+    {
+      "type": "function",
+      "name": "setup",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_non_stream_turn_flow.py"
     },
     {
       "type": "class",

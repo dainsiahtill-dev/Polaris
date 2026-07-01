@@ -21,42 +21,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import time
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.internal.kernel.context_gateway_config_builder import (
     ContextGatewayConfigFactory,
 )
-from polaris.cells.roles.kernel.internal.kernel.context_request_builder import build_context_request
-from polaris.cells.roles.kernel.internal.kernel.error_handler import (
-    KernelEventEmitter,
-    LLMEventType,
-)
-from polaris.cells.roles.kernel.internal.kernel.event_emitter_provider import get_kernel_event_emitter
-from polaris.cells.roles.kernel.internal.kernel.helpers import (
-    quality_result_to_dict,
-)
-from polaris.cells.roles.kernel.internal.kernel.output_parser_provider import get_output_parser
-from polaris.cells.roles.kernel.internal.kernel.quality_checker_provider import get_quality_checker
-from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
-    role_turn_error_result,
-    role_turn_result_from_transaction_result,
-)
+from polaris.cells.roles.kernel.internal.kernel.error_handler import KernelEventEmitter
+from polaris.cells.roles.kernel.internal.kernel.non_stream_turn_flow import execute_non_stream_role_turn
 from polaris.cells.roles.kernel.internal.kernel.stream_run_id import resolve_stream_run_id
 from polaris.cells.roles.kernel.internal.kernel.suggestions import get_suggestions_for_error
-from polaris.cells.roles.kernel.internal.kernel.turn_execution import (
-    execute_transaction_kernel_stream,
-    execute_transaction_kernel_turn,
-)
-from polaris.cells.roles.kernel.internal.kernel.turn_prompt_setup import (
-    RoleTurnSetupError,
-    build_role_turn_prompt_setup,
-    format_role_turn_setup_error,
-)
-from polaris.cells.roles.kernel.internal.metrics import get_metrics_collector
+from polaris.cells.roles.kernel.internal.kernel.turn_execution import execute_transaction_kernel_stream
+from polaris.cells.roles.kernel.internal.kernel.turn_prompt_setup import build_role_turn_prompt_setup
 from polaris.cells.roles.kernel.internal.output_parser import OutputParser
 from polaris.cells.roles.kernel.internal.prompt_builder import PromptBuilder
-from polaris.cells.roles.kernel.internal.quality_checker import QualityChecker, QualityResult
+from polaris.cells.roles.kernel.internal.quality_checker import QualityChecker
 from polaris.cells.roles.kernel.public.config import KernelConfig, get_default_config
 from polaris.cells.roles.profile.public.service import (
     RoleProfileRegistry,
@@ -64,7 +42,6 @@ from polaris.cells.roles.profile.public.service import (
     RoleTurnResult,
 )
 from polaris.kernelone.events.uep_publisher import UEPEventPublisher
-from polaris.kernelone.trace import get_tracer
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -265,272 +242,11 @@ class RoleExecutionKernel:
         Returns:
             回合结果
         """
-        # 1. Build shared profile/prompt setup before TransactionKernel execution.
-        try:
-            turn_setup = build_role_turn_prompt_setup(
-                kernel=self,
-                role=role,
-                request=request,
-            )
-        except RoleTurnSetupError as e:
-            return role_turn_error_result(error=format_role_turn_setup_error(e), is_complete=True)
-
-        profile = turn_setup.profile
-        prompt_builder = turn_setup.prompt_builder
-        fingerprint = turn_setup.fingerprint
-        base_system_prompt = turn_setup.system_prompt
-
-        # 2. 构建上下文（验证可用性，结果由 TransactionKernel 使用）
-        try:
-            _ = build_context_request(request)
-        except (RuntimeError, ValueError) as e:
-            return role_turn_error_result(error=f"上下文构建失败: {e}", is_complete=True)
-
-        # Reset cached gateway for new turn (FailureBudget should not persist across turns)
-        self._cached_tool_gateway = None
-        self._cached_gateway_profile = None
-
-        # 3. 重试循环配置
-        max_retries = request.max_retries if request.max_retries > 0 else self._config.max_retries
-        validate_output = request.validate_output
-        last_validation: QualityResult | None = None
-        last_error: str | None = None
-
-        # 结构化输出相关
-        pre_validated_data: dict[str, Any] | None = None
-        instructor_validated = False
-
-        # 重试统计
-        total_platform_retry_count = 0
-        kernel_repair_retry_count = 0
-        kernel_repair_reasons: list[str] = []
-
-        # 获取 run_id
-        task_id = str(getattr(request, "task_id", None) or "").strip()
-        event_emitter = get_kernel_event_emitter(self)
-        observer_run_id = event_emitter.resolve_observer_run_id(role, getattr(request, "run_id", None))
-        # 将 resolved run_id 写回 request，确保下游（TransactionKernel/RoleToolGateway）能获取到
-        if request.run_id is None:
-            request.run_id = observer_run_id
-
-        for attempt in range(max_retries + 1):
-            # 构建当前尝试的系统提示词
-            system_prompt = prompt_builder.build_retry_prompt(
-                base_system_prompt, quality_result_to_dict(last_validation), attempt
-            )
-
-            response_schema: type | None = None
-
-            # Get tracer for OpenTelemetry integration
-            tracer = get_tracer()
-
-            # Track LLM latency
-            with tracer.span(
-                "role.kernel.llm_call",
-                tags={"role": role, "attempt": attempt, "model": profile.model},
-            ) as span:
-                llm_start_time = time.monotonic()
-                te_result = await execute_transaction_kernel_turn(
-                    self,
-                    role=role,
-                    profile=profile,
-                    request=request,
-                    system_prompt=system_prompt,
-                    fingerprint=fingerprint,
-                    observer_run_id=observer_run_id,
-                    response_schema=response_schema,
-                )
-                llm_latency = time.monotonic() - llm_start_time
-
-                # Record LLM latency to metrics
-                try:
-                    metrics = get_metrics_collector()
-                    metrics.record_llm_latency(llm_latency)
-                except (RuntimeError, ValueError):
-                    logger.warning("Failed to record LLM latency metric")
-
-                span.set_tag("llm_latency_seconds", llm_latency)
-                span.set_tag("has_content", bool(te_result.content))
-                span.set_tag("has_tool_calls", bool(te_result.tool_calls))
-
-            # TransactionKernel 返回错误，不重试
-            if te_result.error:
-                return role_turn_result_from_transaction_result(
-                    transaction_result=te_result,
-                    profile=profile,
-                    fingerprint=fingerprint,
-                    quality_result=last_validation,
-                    platform_retry_count=total_platform_retry_count,
-                    kernel_repair_retry_count=kernel_repair_retry_count,
-                    kernel_repair_reasons=kernel_repair_reasons,
-                    kernel_repair_exhausted=True,
-                    error=te_result.error,
-                    is_complete=False,
-                )
-
-            # Quality validation
-            effective_content = te_result.content or ""
-            last_validation = None
-            final_structured_output: dict[str, Any] | None = None
-            if validate_output:
-                tool_only_turn = not str(effective_content or "").strip() and bool(
-                    te_result.tool_calls or te_result.tool_results
-                )
-                if tool_only_turn:
-                    quality_result = QualityResult(
-                        success=True,
-                        errors=[],
-                        suggestions=[],
-                        data={"tool_only_turn": True},
-                        quality_score=100.0,
-                        quality_passed=True,
-                    )
-                else:
-                    pre_validated_data = None
-                    instructor_validated = False
-                    if response_schema is not None:
-                        try:
-                            candidate = get_output_parser(self).extract_json(effective_content)
-                            if candidate is None:
-                                raise ValueError("No JSON found in content")
-                            validated = response_schema(**candidate)
-                            pre_validated_data = validated.model_dump()
-                            instructor_validated = True
-                        except (RuntimeError, ValueError):
-                            pre_validated_data = None
-                            instructor_validated = False
-                    try:
-                        quality_result = get_quality_checker(self).validate_output(
-                            effective_content,
-                            profile,
-                            pre_validated_data=pre_validated_data,
-                            instructor_validated=instructor_validated,
-                        )
-                    except (RuntimeError, ValueError) as e:
-                        logger.warning("质量检查失败 (attempt=%d): %s", attempt, e)
-                        last_error = f"质量检查失败: {e}"
-                        quality_result = QualityResult(
-                            success=False,
-                            errors=[f"质量检查失败: {e}"],
-                            suggestions=["请确保输出内容完整准确"] if attempt < max_retries else [],
-                            data={"quality_check_error": True},
-                            quality_score=0.0,
-                            quality_passed=False,
-                        )
-
-                last_validation = quality_result
-                if isinstance(quality_result.data, dict):
-                    final_structured_output = dict(quality_result.data)
-
-                # Record quality score
-                try:
-                    metrics = get_metrics_collector()
-                    metrics.record_quality_score(quality_result.quality_score)
-                except (RuntimeError, ValueError):
-                    logger.warning("Failed to record quality score metric")
-
-                if not quality_result.success:
-                    event_emitter.emit_runtime_llm_event(
-                        event_type=LLMEventType.VALIDATION_FAIL,
-                        role=role,
-                        run_id=observer_run_id,
-                        task_id=task_id,
-                        attempt=attempt,
-                        workspace=self.workspace,
-                        errors=quality_result.errors,
-                        quality_score=quality_result.quality_score,
-                        model=profile.model,
-                        publish_realtime=False,
-                    )
-                    kernel_repair_retry_count += 1
-                    kernel_repair_reasons.append(
-                        f"attempt_{attempt}: "
-                        f"{quality_result.errors[-1] if quality_result.errors else 'validation_failed'}"
-                    )
-
-                    # Record retry
-                    try:
-                        metrics = get_metrics_collector()
-                        metrics.record_retry(role, "validation_failed")
-                    except (RuntimeError, ValueError):
-                        logger.warning("Failed to record retry metric")
-
-                    if attempt < max_retries:
-                        event_emitter.emit_runtime_llm_event(
-                            event_type=LLMEventType.CALL_RETRY,
-                            role=role,
-                            run_id=observer_run_id,
-                            task_id=task_id,
-                            attempt=attempt,
-                            workspace=self.workspace,
-                            error_category="validation_failed",
-                            model=profile.model,
-                            publish_realtime=False,
-                        )
-                        continue
-
-                    error_msg = f"验证失败，已重试{max_retries}次"
-                    if last_validation and last_validation.errors:
-                        error_msg += f": {last_validation.errors[-1]}"
-                    elif last_error:
-                        error_msg += f": {last_error}"
-
-                    # Record failed execution
-                    try:
-                        metrics = get_metrics_collector()
-                        metrics.record_execution(role, "validation_failed")
-                    except (RuntimeError, ValueError):
-                        logger.warning("Failed to record execution metric")
-
-                    return role_turn_result_from_transaction_result(
-                        transaction_result=te_result,
-                        profile=profile,
-                        fingerprint=fingerprint,
-                        quality_result=last_validation,
-                        platform_retry_count=total_platform_retry_count,
-                        kernel_repair_retry_count=kernel_repair_retry_count,
-                        kernel_repair_reasons=kernel_repair_reasons,
-                        kernel_repair_exhausted=True,
-                        error=error_msg,
-                        is_complete=True,
-                        content_override=effective_content,
-                    )
-
-                event_emitter.emit_runtime_llm_event(
-                    event_type=LLMEventType.VALIDATION_PASS,
-                    role=role,
-                    run_id=observer_run_id,
-                    task_id=task_id,
-                    attempt=attempt,
-                    workspace=self.workspace,
-                    quality_score=quality_result.quality_score,
-                    model=profile.model,
-                    publish_realtime=False,
-                )
-
-            # 最终结果
-            try:
-                metrics = get_metrics_collector()
-                metrics.record_execution(role, "success")
-            except (RuntimeError, ValueError):
-                logger.warning("Failed to record execution success metric")
-
-            return role_turn_result_from_transaction_result(
-                transaction_result=te_result,
-                profile=profile,
-                fingerprint=fingerprint,
-                quality_result=last_validation,
-                structured_output=final_structured_output,
-                platform_retry_count=total_platform_retry_count,
-                kernel_repair_retry_count=kernel_repair_retry_count,
-                kernel_repair_reasons=kernel_repair_reasons,
-                kernel_repair_exhausted=False,
-                error=None,
-                is_complete=True,
-            )
-
-        # unreachable
-        raise RuntimeError("Unexpected fallthrough in RoleExecutionKernel.run")
+        return await execute_non_stream_role_turn(
+            kernel=self,
+            role=role,
+            request=request,
+        )
 
     async def run_stream(
         self,

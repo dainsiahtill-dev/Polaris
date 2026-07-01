@@ -1229,7 +1229,7 @@ class TestExecuteTransactionKernelTurn:
         )
 
         with patch(
-            "polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn",
+            "polaris.cells.roles.kernel.internal.kernel.non_stream_turn_flow.execute_transaction_kernel_turn",
             new=AsyncMock(return_value=transaction_result),
         ):
             result = await kernel.run("pm", _MockRequest(run_id="run_123", validate_output=False))
