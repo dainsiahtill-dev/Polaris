@@ -3098,10 +3098,13 @@ cells:
     depends_on:
       - context.catalog
       - context.engine
+      - director.runtime
+      - director.tasking
       - llm.control_plane
       - llm.dialogue
       - policy.permission
       - policy.workspace_guard
+      - runtime.artifact_store
       - runtime.execution_broker
       - runtime.state_owner
       - runtime.projection

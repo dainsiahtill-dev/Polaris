@@ -29,14 +29,27 @@ public_contracts:
   errors:
   - ResidentAutonomyErrorV1
 depends_on:
+- context.catalog
 - context.engine
+- director.runtime
+- director.tasking
 - llm.control_plane
+- llm.dialogue
 - policy.permission
 - policy.workspace_guard
+- runtime.artifact_store
 - runtime.execution_broker
 - runtime.state_owner
 - runtime.projection
+- audit.diagnosis
 - audit.evidence
+- audit.verdict
+- control_plane.run_ledger
+- control_plane.verifier_execution
+- control_plane.verifier_policy
+- orchestration.pm_dispatch
+- roles.adapters
+- roles.runtime
 subgraphs: []
 state_owners:
 - runtime/state/resident/*
