@@ -13,7 +13,7 @@ business wording, React `Suspense fallback`, and accepted config migration code.
 
 | Class | Count | Meaning |
 | --- | ---: | --- |
-| Closed in this convergence pass | 210 | Removed, retired, or converted into an audited sunset path and verified. |
+| Closed in this convergence pass | 211 | Removed, retired, or converted into an audited sunset path and verified. |
 | P1 open | 0 | Still close to execution, LLM/tool, QA, or state projection paths. |
 | P2 open | 0 | Exposed API/UI/CLI compatibility surfaces that should be retired after callers move. |
 | P3 accepted with sunset | 0 | Kept for user config or historical data migration; requires an expiry policy, not immediate deletion. |
@@ -277,6 +277,8 @@ Additional closed cuts: LS-14A, LS-15A, LS-16A, LS-17A, LS-18A, LS-19A, LS-20A, 
 | LS-50A | LS-50 | P2 | KernelOne LLM toolkit / retired tool definitions bridge | Closed: `polaris.kernelone.llm.toolkit.definitions` no longer exists as a deprecated `ToolDefinition` / `ToolRegistry` / `create_default_registry` bridge beside canonical `ToolSpecRegistry`. | Closed by moving alias-aware provider schema projection into `polaris.kernelone.tool_execution.tool_spec_registry.ToolSpecRegistry`, migrating Director quality repair, materialization retry, roles-kernel native tool schema assembly, and legacy role integration schema output to that owner, deleting the retired module and package-root exports, and adding an architecture fence against file/import reintroduction. |
 
 | LS-51A | LS-51 | P2 | Director adapter tests / retired text-file fallback success path | Closed: Director materialization retry tests no longer expect Markdown/text file blocks to write files through the retired patch fallback path. | Closed by converting the stale retry tests to assert native-tool retry schema injection followed by fail-closed `incomplete_materialization` evidence when the model returns only text file blocks; existing patch/text fallback tests continue to assert `legacy_patch_file_protocol_disabled` and no write authority. |
+
+| LS-52A | LS-52 | P2 | Director interface / root and PM import shims | Closed: the old root `director_interface.py` shim and `polaris.delivery.cli.pm.director_interface` re-export shim are removed; internal callers already use `director_interface_core`. | Closed by deleting both shim files and adding an architecture fence that blocks file recreation or production imports through the retired root/PM paths while proving `director_interface_core` remains the canonical owner. |
 
 ## Closure Order
 
