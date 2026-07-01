@@ -39,6 +39,7 @@ from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
     _latest_user_content_preview,
     _text_requests_materialize_delivery,
 )
+from polaris.cells.roles.kernel.internal.kernel.task_boundary import append_director_task_boundary_verdict
 from polaris.cells.roles.kernel.internal.kernel.transaction_factory import create_transaction_kernel
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import _resolve_transaction_turn_id
 from polaris.cells.roles.kernel.internal.tool_loop_controller import ToolLoopController
@@ -98,146 +99,6 @@ def _tool_results_from_batch_receipt(batch_receipt: dict[str, Any] | None) -> li
             }
         )
     return tool_results
-
-
-def _clean_relative_paths(values: Any) -> list[str]:
-    raw_values = values if isinstance(values, (list, tuple, set)) else [values]
-    paths: list[str] = []
-    seen: set[str] = set()
-    for value in raw_values:
-        path = str(value or "").strip().replace("\\", "/")
-        if not path or path.startswith("/") or path.startswith("../") or "/../" in path:
-            continue
-        if "*" in path or "," in path:
-            continue
-        normalized = path[2:] if path.startswith("./") else path
-        if normalized and normalized not in seen:
-            seen.add(normalized)
-            paths.append(normalized)
-    return paths
-
-
-def _extend_context_paths(paths: list[str], value: Any) -> None:
-    for path in _clean_relative_paths(value):
-        if path not in paths:
-            paths.append(path)
-
-
-def _director_task_boundary_target_files(context_override: Any) -> list[str]:
-    if not isinstance(context_override, dict):
-        return []
-    paths: list[str] = []
-    for key in ("target_files", "repair_target_files"):
-        _extend_context_paths(paths, context_override.get(key))
-    for key in ("director_execution_profile", "task_execution_profile", "execution_profile"):
-        profile = context_override.get(key)
-        if isinstance(profile, dict):
-            _extend_context_paths(paths, profile.get("target_files"))
-    construction_step = context_override.get("construction_step")
-    if isinstance(construction_step, dict):
-        _extend_context_paths(paths, construction_step.get("target_file"))
-        _extend_context_paths(paths, construction_step.get("target_files"))
-    for key in ("task", "current_task", "pm_task_contract"):
-        task = context_override.get(key)
-        if isinstance(task, dict):
-            _extend_context_paths(paths, task.get("target_files"))
-    return paths
-
-
-def _completed_artifacts_from_tool_results(tool_results: list[dict[str, Any]]) -> list[str]:
-    artifacts: list[str] = []
-    for item in tool_results:
-        if not isinstance(item, dict) or item.get("success") is False:
-            continue
-        candidates: list[Any] = [item]
-        for key in ("result", "effect_receipt", "raw_result"):
-            value = item.get(key)
-            if isinstance(value, dict):
-                candidates.append(value)
-        for candidate in candidates:
-            for key in ("file", "path", "target_file"):
-                _extend_context_paths(artifacts, candidate.get(key))
-            for key in ("files_changed", "changed_files"):
-                _extend_context_paths(artifacts, candidate.get(key))
-    return artifacts
-
-
-def _director_task_boundary_verdict(
-    *,
-    role: str,
-    workspace: str,
-    task_id: str,
-    run_id: str,
-    context_override: Any,
-    tool_results: list[dict[str, Any]],
-    tool_dispatch: dict[str, Any] | None = None,
-    evidence_refs: list[str] | tuple[str, ...] | None = None,
-) -> dict[str, Any] | None:
-    if str(role or "").strip().lower() != "director":
-        return None
-    target_files = _director_task_boundary_target_files(context_override)
-    completed_artifacts = _completed_artifacts_from_tool_results(tool_results)
-    dispatch = dict(tool_dispatch or {})
-    if not target_files and not completed_artifacts and not bool(dispatch.get("dropped")):
-        return None
-    from polaris.cells.control_plane.run_ledger.public import evaluate_task_boundary_verdict
-
-    return evaluate_task_boundary_verdict(
-        workspace=workspace,
-        task_id=task_id,
-        run_id=run_id,
-        target_files=target_files,
-        completed_artifacts=completed_artifacts,
-        tool_dispatch=dispatch,
-        evidence_refs=evidence_refs,
-    ).to_dict()
-
-
-def _append_director_task_boundary_verdict(
-    *,
-    role: str,
-    workspace: str,
-    task_id: str,
-    run_id: str,
-    context_override: Any,
-    tool_results: list[dict[str, Any]],
-    tool_dispatch: dict[str, Any] | None = None,
-    evidence_refs: list[str] | tuple[str, ...] | None = None,
-) -> None:
-    verdict = _director_task_boundary_verdict(
-        role=role,
-        workspace=workspace,
-        task_id=task_id,
-        run_id=run_id,
-        context_override=context_override,
-        tool_results=tool_results,
-        tool_dispatch=tool_dispatch,
-        evidence_refs=evidence_refs,
-    )
-    if verdict is None:
-        return
-    from polaris.cells.control_plane.run_ledger.public import AppendRunLedgerEventCommandV1, append_run_ledger_event
-
-    append_run_ledger_event(
-        AppendRunLedgerEventCommandV1(
-            workspace=workspace,
-            run_id=run_id,
-            event={
-                "event_type": "task_boundary_verdict",
-                "stage": "task_boundary",
-                "task_id": task_id,
-                "run_id": run_id,
-                "task_boundary_verdict": verdict,
-                "job_token": {
-                    "run_id": run_id,
-                    "task_id": task_id,
-                    "project_id": task_id or "unknown",
-                    "capability_audit": {"ok": True, "issues": []},
-                    "gate_policy": {},
-                },
-            },
-        )
-    )
 
 
 def _forced_tool_choice_override(context_override: Any) -> Any | None:
@@ -385,7 +246,7 @@ def _append_tool_dispatch_dropped_control_plane_events(
             },
         )
     )
-    _append_director_task_boundary_verdict(
+    append_director_task_boundary_verdict(
         role=role,
         workspace=workspace,
         task_id=str(request.task_id or ""),
@@ -686,7 +547,7 @@ async def execute_transaction_kernel_turn(
     )
     if not bool(metadata.get("needs_followup_workflow")):
         try:
-            _append_director_task_boundary_verdict(
+            append_director_task_boundary_verdict(
                 role=role,
                 workspace=str(request.workspace or kernel.workspace or "."),
                 task_id=str(request.task_id or ""),
@@ -1029,7 +890,7 @@ async def execute_transaction_kernel_stream(
                 metadata=result_metadata,
             )
             try:
-                _append_director_task_boundary_verdict(
+                append_director_task_boundary_verdict(
                     role=role,
                     workspace=str(request.workspace or kernel.workspace or "."),
                     task_id=str(request.task_id or ""),

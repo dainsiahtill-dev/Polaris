@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from types import MethodType, SimpleNamespace
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -14,7 +14,6 @@ from polaris.cells.roles.kernel.internal.kernel.turn_execution import (
     execute_transaction_kernel_turn,
 )
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
-from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
 from polaris.cells.roles.kernel.public.turn_contracts import (
     FinalizeMode,
     TurnDecision,
@@ -94,42 +93,31 @@ class _SuccessfulNoMaterializationKernel(_DroppedToolDispatchKernel):
 
 class _DroppedToolDispatchStreamKernel(_DroppedToolDispatchKernel):
     def build_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:
-        controller = TurnTransactionController(
-            llm_provider=lambda *_args, **_kwargs: None,
-            tool_runtime=lambda *_args, **_kwargs: {},
-        )
+        class _TransactionKernel:
+            async def execute_stream(self, _turn_id: str, *_args: Any, **_kwargs: Any) -> Any:
+                if False:  # pragma: no cover - marks this as an async generator
+                    yield None
+                ledger = SimpleNamespace(
+                    llm_calls=[
+                        {
+                            "metadata": {
+                                "context_snapshot_ref": "runtime/contexts/aa/stream-context-snapshot.json",
+                            }
+                        }
+                    ],
+                    anomaly_flags=[
+                        {
+                            "type": "TOOL_DISPATCH_DROPPED",
+                            "native_tool_calls_count": 1,
+                            "provider_response_hash": "stream-provider-response-hash",
+                        }
+                    ],
+                )
+                exc = RuntimeError("tool_dispatch_dropped: stream provider emitted a tool call but none dispatched")
+                exc.turn_ledger = ledger  # type: ignore[attr-defined]
+                raise exc
 
-        async def _raise_stream(
-            self: Any,
-            _turn_id: str,
-            _context: list[dict[str, Any]],
-            _tool_definitions: list[dict[str, Any]],
-            _state_machine: Any,
-            ledger: Any,
-            *,
-            tool_choice_override: Any | None = None,
-        ) -> Any:
-            del self, tool_choice_override
-            if False:  # pragma: no cover - marks this as an async generator
-                yield None
-            ledger.llm_calls = [
-                {
-                    "metadata": {
-                        "context_snapshot_ref": "runtime/contexts/aa/stream-context-snapshot.json",
-                    }
-                }
-            ]
-            ledger.anomaly_flags = [
-                {
-                    "type": "TOOL_DISPATCH_DROPPED",
-                    "native_tool_calls_count": 1,
-                    "provider_response_hash": "stream-provider-response-hash",
-                }
-            ]
-            raise RuntimeError("tool_dispatch_dropped: stream provider emitted a tool call but none dispatched")
-
-        controller._execute_turn_stream = MethodType(_raise_stream, controller)  # type: ignore[method-assign]
-        return controller
+        return _TransactionKernel()
 
 
 class _SuccessfulStreamNoMaterializationKernel(_SuccessfulNoMaterializationKernel):
