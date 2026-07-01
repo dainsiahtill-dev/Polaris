@@ -1,9 +1,9 @@
 """Role Execution Kernel Core - 角色执行内核核心
 
-重构为 Facade 模式的 RoleExecutionKernel。
+RoleExecutionKernel is the public coordination entrypoint for role turns.
 
 架构:
-    - RoleExecutionKernel: Facade，协调各服务
+    - RoleExecutionKernel: public coordination entrypoint
     - LLMInvoker: LLM调用服务 (ILLMInvoker)
     - ToolExecutor: 工具执行服务 (IToolExecutor)
     - PromptBuilder: 提示词构建服务
@@ -85,14 +85,14 @@ ContextGatewayConfigFactory = Callable[[str, RoleProfile, RoleTurnRequest], Cont
 
 
 class RoleExecutionKernel:
-    """角色执行内核 - Facade 模式实现
+    """角色执行内核 - public coordination entrypoint
 
     统一执行角色对话的两种模式：
     - CHAT: 聊天模式（用户交互）
     - WORKFLOW: 工作流模式（自动化执行）
 
-    重构后架构（Facade 模式）:
-    - RoleExecutionKernel: Facade，提供统一接口，委托给服务层
+    当前架构:
+    - RoleExecutionKernel: public coordination entrypoint，提供统一接口并协调服务层
     - LLMInvoker (ILLMInvoker): LLM调用服务
     - ToolExecutor (IToolExecutor): 工具执行服务
     - PromptBuilder: 提示词构建服务
@@ -807,7 +807,7 @@ class RoleExecutionKernel:
                 raise
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # Facade 模式：服务层委托方法（新增）
+    # Public service entrypoints
     # ═══════════════════════════════════════════════════════════════════════════
 
     async def call(
@@ -815,7 +815,7 @@ class RoleExecutionKernel:
         request: Any,
         timeout_seconds: float | None = None,
     ) -> Any:
-        """Facade: LLM 非流式调用
+        """Execute a non-streaming LLM call through the injected invoker.
 
         委托给 llm_invoker.invoke()
 
@@ -835,7 +835,7 @@ class RoleExecutionKernel:
         request: Any,
         timeout_seconds: float | None = None,
     ) -> AsyncGenerator[Any, None]:
-        """Facade: LLM 流式调用
+        """Execute a streaming LLM call through the injected invoker.
 
         委托给 llm_invoker.invoke_stream()
 
@@ -904,7 +904,7 @@ class RoleExecutionKernel:
         args: dict[str, Any],
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Facade: 执行单个工具
+        """Execute one tool through the authorized tool path.
 
         委托给 tool_executor.execute_single()
 
@@ -1148,7 +1148,7 @@ class RoleExecutionKernel:
         request: RoleTurnRequest,
         prompt_appendix: str,
     ) -> str:
-        """Build system prompt with domain-aware fallback compatibility."""
+        """Build system prompt with domain-aware prompt construction."""
         domain = str(getattr(request, "domain", "") or "").strip().lower() or "code"
         context_override = getattr(request, "context_override", None)
         request_message = str(getattr(request, "message", "") or "")
