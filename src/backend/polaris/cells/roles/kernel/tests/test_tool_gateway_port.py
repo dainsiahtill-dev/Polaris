@@ -243,105 +243,105 @@ class TestKernelToolGatewayDI:
         assert kernel._tool_gateway is None
 
 
-# --- DelegatingToolGateway Tests ---
+# --- ToolGatewayPortAdapter Tests ---
 
 
-class TestDelegatingToolGateway:
-    """Test _DelegatingToolGateway wrapper for DI compatibility."""
+class TestToolGatewayPortAdapter:
+    """Test _ToolGatewayPortAdapter dependency-injection bridge."""
 
-    def test_delegating_gateway_importable(self) -> None:
-        """Verify _DelegatingToolGateway can be imported."""
+    def test_adapter_gateway_importable(self) -> None:
+        """Verify _ToolGatewayPortAdapter can be imported."""
         try:
-            from polaris.cells.roles.kernel.internal._tool_gateway_di import _DelegatingToolGateway
+            from polaris.cells.roles.kernel.internal._tool_gateway_di import _ToolGatewayPortAdapter
         except ImportError as e:
-            pytest.skip(f"Cannot import _DelegatingToolGateway: {e}")
+            pytest.skip(f"Cannot import _ToolGatewayPortAdapter: {e}")
 
-        assert _DelegatingToolGateway is not None
+        assert _ToolGatewayPortAdapter is not None
 
-    def test_delegating_gateway_is_role_tool_gateway_compatible(self) -> None:
-        """Verify DelegatingToolGateway is compatible with RoleToolGateway interface.
+    def test_adapter_gateway_is_role_tool_gateway_compatible(self) -> None:
+        """Verify ToolGatewayPortAdapter exposes the RoleToolGateway method shape.
 
-        Note: _DelegatingToolGateway is NOT a subclass of RoleToolGateway,
-        but provides the same interface for DI compatibility.
+        Note: _ToolGatewayPortAdapter is NOT a subclass of RoleToolGateway,
+        but provides the same method surface for injected ports.
         """
         try:
-            from polaris.cells.roles.kernel.internal._tool_gateway_di import _DelegatingToolGateway
+            from polaris.cells.roles.kernel.internal._tool_gateway_di import _ToolGatewayPortAdapter
         except ImportError as e:
-            pytest.skip(f"Cannot import _DelegatingToolGateway: {e}")
+            pytest.skip(f"Cannot import _ToolGatewayPortAdapter: {e}")
 
         mock_gateway = MockToolGatewayForPort()
-        delegating = _DelegatingToolGateway(mock_gateway)
+        adapter = _ToolGatewayPortAdapter(mock_gateway)
 
         # Verify it has the required interface methods (duck typing)
-        assert hasattr(delegating, "execute")
-        assert hasattr(delegating, "execute_tool")
-        assert hasattr(delegating, "check_tool_permission")
-        assert hasattr(delegating, "reset_execution_count")
-        assert hasattr(delegating, "requires_approval")
-        assert hasattr(delegating, "close")
+        assert hasattr(adapter, "execute")
+        assert hasattr(adapter, "execute_tool")
+        assert hasattr(adapter, "check_tool_permission")
+        assert hasattr(adapter, "reset_execution_count")
+        assert hasattr(adapter, "requires_approval")
+        assert hasattr(adapter, "close")
 
-    def test_delegating_execute_delegates_to_port(self) -> None:
-        """Verify execute() delegates to injected port."""
+    def test_adapter_execute_calls_port(self) -> None:
+        """Verify execute() calls injected port."""
         try:
-            from polaris.cells.roles.kernel.internal._tool_gateway_di import _DelegatingToolGateway
+            from polaris.cells.roles.kernel.internal._tool_gateway_di import _ToolGatewayPortAdapter
         except ImportError as e:
-            pytest.skip(f"Cannot import _DelegatingToolGateway: {e}")
+            pytest.skip(f"Cannot import _ToolGatewayPortAdapter: {e}")
 
         mock_gateway = MockToolGatewayForPort(
             results={
-                "read_file": {"success": True, "result": "delegated result"},
+                "read_file": {"success": True, "result": "adapter result"},
             }
         )
-        delegating = _DelegatingToolGateway(mock_gateway)
-        result = delegating.execute("read_file", {"path": "test.py"})
+        adapter = _ToolGatewayPortAdapter(mock_gateway)
+        result = adapter.execute("read_file", {"path": "test.py"})
         assert result["success"] is True
-        assert result["result"] == "delegated result"
+        assert result["result"] == "adapter result"
         assert mock_gateway.calls[0] == ("read_file", {"path": "test.py"})
 
-    def test_delegating_requires_approval_delegates(self) -> None:
-        """Verify requires_approval() delegates to injected port."""
+    def test_adapter_requires_approval_calls_port(self) -> None:
+        """Verify requires_approval() calls injected port."""
         try:
-            from polaris.cells.roles.kernel.internal._tool_gateway_di import _DelegatingToolGateway
+            from polaris.cells.roles.kernel.internal._tool_gateway_di import _ToolGatewayPortAdapter
         except ImportError as e:
-            pytest.skip(f"Cannot import _DelegatingToolGateway: {e}")
+            pytest.skip(f"Cannot import _ToolGatewayPortAdapter: {e}")
 
         mock_gateway = MockToolGatewayWithApproval(approval_map={"write_file": True})
-        delegating = _DelegatingToolGateway(mock_gateway)
-        assert delegating.requires_approval("write_file") is True
-        assert delegating.requires_approval("read_file") is False
+        adapter = _ToolGatewayPortAdapter(mock_gateway)
+        assert adapter.requires_approval("write_file") is True
+        assert adapter.requires_approval("read_file") is False
 
-    def test_delegating_check_tool_permission(self) -> None:
-        """Verify check_tool_permission delegates correctly."""
+    def test_adapter_check_tool_permission(self) -> None:
+        """Verify check_tool_permission checks permission through the injected port."""
         try:
-            from polaris.cells.roles.kernel.internal._tool_gateway_di import _DelegatingToolGateway
+            from polaris.cells.roles.kernel.internal._tool_gateway_di import _ToolGatewayPortAdapter
         except ImportError as e:
-            pytest.skip(f"Cannot import _DelegatingToolGateway: {e}")
+            pytest.skip(f"Cannot import _ToolGatewayPortAdapter: {e}")
 
         mock_gateway = MockToolGatewayWithApproval(approval_map={"write_file": True, "read_file": False})
-        delegating = _DelegatingToolGateway(mock_gateway)
+        adapter = _ToolGatewayPortAdapter(mock_gateway)
 
         # Tool requiring approval
-        allowed, reason = delegating.check_tool_permission("write_file")
+        allowed, reason = adapter.check_tool_permission("write_file")
         assert allowed is False
         assert "requires approval" in reason
 
         # Tool not requiring approval
-        allowed, reason = delegating.check_tool_permission("read_file")
+        allowed, reason = adapter.check_tool_permission("read_file")
         assert allowed is True
 
-    def test_delegating_reset_execution_count(self) -> None:
+    def test_adapter_reset_execution_count(self) -> None:
         """Verify reset_execution_count works."""
         try:
-            from polaris.cells.roles.kernel.internal._tool_gateway_di import _DelegatingToolGateway
+            from polaris.cells.roles.kernel.internal._tool_gateway_di import _ToolGatewayPortAdapter
         except ImportError as e:
-            pytest.skip(f"Cannot import _DelegatingToolGateway: {e}")
+            pytest.skip(f"Cannot import _ToolGatewayPortAdapter: {e}")
 
         mock_gateway = MockToolGatewayForPort()
-        delegating = _DelegatingToolGateway(mock_gateway)
-        delegating.execute("read_file", {"path": "test.py"})
-        assert delegating._execution_count == 1
-        delegating.reset_execution_count()
-        assert delegating._execution_count == 0
+        adapter = _ToolGatewayPortAdapter(mock_gateway)
+        adapter.execute("read_file", {"path": "test.py"})
+        assert adapter._execution_count == 1
+        adapter.reset_execution_count()
+        assert adapter._execution_count == 0
 
 
 # --- Service Export Tests ---
@@ -360,14 +360,14 @@ class TestServiceExports:
         assert ToolGatewayPort is not None
 
 
-# --- Backward Compatibility Tests ---
+# --- Default Gateway Path Tests ---
 
 
-class TestBackwardCompatibility:
-    """Test backward compatibility with existing RoleToolGateway usage."""
+class TestDefaultGatewayPath:
+    """Test existing RoleToolGateway creation without an injected adapter."""
 
     def test_kernel_without_di_injection_works(self) -> None:
-        """Verify kernel works without DI (existing behavior)."""
+        """Verify kernel works without an injected ToolGatewayPort."""
         try:
             from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
         except ImportError as e:

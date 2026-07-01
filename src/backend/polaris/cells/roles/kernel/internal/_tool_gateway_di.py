@@ -1,7 +1,7 @@
-"""ToolGatewayPort DI support module.
+"""ToolGatewayPort adapter for RoleExecutionKernel injection.
 
-This module provides _DelegatingToolGateway for backward compatibility
-when injecting ToolGatewayPort implementations into RoleExecutionKernel.
+This module adapts injected ``ToolGatewayPort`` implementations to the
+``RoleToolGateway`` method shape used by the Role Kernel execution path.
 """
 
 from __future__ import annotations
@@ -12,18 +12,17 @@ if TYPE_CHECKING:
     from polaris.cells.roles.kernel.public.contracts import ToolGatewayPort
 
 
-class _DelegatingToolGateway:
-    """Wrapper that adapts a ToolGatewayPort to RoleToolGateway interface.
+class _ToolGatewayPortAdapter:
+    """Adapter that exposes a ToolGatewayPort through RoleToolGateway methods.
 
-    This class allows any ToolGatewayPort implementation to be used
-    where a RoleToolGateway is expected, enabling DI flexibility
-    while maintaining backward compatibility.
+    This class allows any ToolGatewayPort implementation to be used where a
+    RoleToolGateway-shaped object is expected, keeping dependency injection
+    explicit without making the port a RoleToolGateway subclass.
 
     Example:
         >>> mock_gateway = MockToolGatewayForPort()
-        >>> delegating = _DelegatingToolGateway(mock_gateway)
-        >>> # Now delegating can be used wherever RoleToolGateway is expected
-        >>> result = delegating.execute("read_file", {"path": "test.py"})
+        >>> adapter = _ToolGatewayPortAdapter(mock_gateway)
+        >>> result = adapter.execute("read_file", {"path": "test.py"})
     """
 
     def __init__(self, port: ToolGatewayPort) -> None:
@@ -33,7 +32,8 @@ class _DelegatingToolGateway:
             port: A ToolGatewayPort-compliant implementation.
         """
         self._port = port
-        # Mimic RoleToolGateway interface for backward compatibility
+        # Per-request execution counter required by the RoleToolGateway method
+        # shape used in the execution path.
         self._execution_count = 0
 
     def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -84,7 +84,7 @@ class _DelegatingToolGateway:
         tool_name: str,
         tool_args: dict | None = None,
     ) -> tuple[bool, str]:
-        """Check tool permission (delegates to requires_approval).
+        """Check tool permission through the injected approval contract.
 
         Args:
             tool_name: Name of the tool to check.

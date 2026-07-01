@@ -17,7 +17,7 @@ from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway, To
 from polaris.kernelone.tools.tool_kinds import is_write_tool_name
 
 if TYPE_CHECKING:
-    from polaris.cells.roles.kernel.internal._tool_gateway_di import _DelegatingToolGateway
+    from polaris.cells.roles.kernel.internal._tool_gateway_di import _ToolGatewayPortAdapter
     from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
     from polaris.cells.roles.kernel.internal.output_parser import ToolCallResult
     from polaris.cells.roles.kernel.public.contracts import ToolGatewayPort
@@ -317,7 +317,7 @@ class KernelToolExecutor:
         profile: RoleProfile,
         request: RoleTurnRequest,
         tool_gateway: ToolGatewayPort | None = None,
-    ) -> RoleToolGateway | _DelegatingToolGateway:
+    ) -> RoleToolGateway | _ToolGatewayPortAdapter:
         """Create one per-request tool gateway with session-aware execution context.
 
         Args:
@@ -328,14 +328,14 @@ class KernelToolExecutor:
         Returns:
             工具网关实例
         """
-        from polaris.cells.roles.kernel.internal._tool_gateway_di import _DelegatingToolGateway
+        from polaris.cells.roles.kernel.internal._tool_gateway_di import _ToolGatewayPortAdapter
         from polaris.cells.roles.session.public import RoleSessionContextMemoryService
 
         # M1: 检查是否注入了外部 tool_gateway
         if tool_gateway is not None:
             if isinstance(tool_gateway, RoleToolGateway):
                 return tool_gateway
-            return _DelegatingToolGateway(tool_gateway)
+            return _ToolGatewayPortAdapter(tool_gateway)
 
         # 默认行为：每次请求创建新实例
         session_id = str((request.metadata or {}).get("session_id") or "").strip() or None
