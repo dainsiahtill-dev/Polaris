@@ -13,8 +13,8 @@ from polaris.kernelone.memory.memory_store import (
     SYNONYM_DICT,
     MemoryStore,
     QueryCache,
-    has_memory_refs,
 )
+from polaris.kernelone.memory.refs import has_memory_refs
 
 __all__ = [
     "BM25",

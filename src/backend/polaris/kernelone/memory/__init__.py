@@ -46,9 +46,6 @@ from .refs import has_memory_refs
 from .schema import MemoryItem, PromptContext, ReflectionNode
 from .thinking import ThinkingEngine, get_thinking_engine
 
-# Backward-compatible alias; prefer has_memory_refs in new code.
-_has_refs = has_memory_refs
-
 __all__ = [
     "CollaborationProfile",
     "DecisionPattern",
@@ -65,7 +62,6 @@ __all__ = [
     "TechStackProfile",
     # Thinking
     "ThinkingEngine",
-    "_has_refs",
     "analyze_project_profile",
     "get_anthropomorphic_context",
     "get_or_load_profile",

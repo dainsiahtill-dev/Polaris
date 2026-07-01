@@ -134,11 +134,6 @@ def _memory_refs_mode() -> str:
     return "soft"
 
 
-def _has_refs(context: dict[str, Any] | None) -> bool:
-    """Backward-compatible alias (deprecated)."""
-    return has_memory_refs(context)
-
-
 def _detect_query_type(query: str) -> str:
     text = str(query or "").strip().lower()
     if not text:
