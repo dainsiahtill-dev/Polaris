@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T06:23:03.645298Z",
-  "source_hash": "484d0fd1d94c2d09",
+  "generated_at": "2026-07-01T06:27:27.669694Z",
+  "source_hash": "5d60d25d699d99c2",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4287,6 +4287,12 @@
     },
     {
       "type": "function",
+      "name": "role_result_metadata_from_profile",
+      "description": "Project stable RoleTurnResult metadata from profile, ledger, and LLM evidence.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/role_result_projection.py"
+    },
+    {
+      "type": "function",
       "name": "resolve_stream_run_id",
       "description": "Resolve a stream run id from the request, workspace metadata, or a new id.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/stream_run_id.py"
@@ -4577,6 +4583,18 @@
     {
       "type": "function",
       "name": "test_batch_receipt_projection_ignores_invalid_shapes",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_role_result_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_result_metadata_projects_profile_and_llm_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_role_result_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_result_metadata_uses_monitoring_context_audit_when_not_already_set",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_role_result_projection.py"
     },

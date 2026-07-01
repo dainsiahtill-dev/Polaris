@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
+    role_result_metadata_from_profile,
     tool_calls_from_batch_receipt,
     tool_results_from_batch_receipt,
 )
@@ -60,3 +63,42 @@ def test_batch_receipt_projection_ignores_invalid_shapes() -> None:
             "raw_result": {"tool_name": "read_file"},
         }
     ]
+
+
+def test_role_result_metadata_projects_profile_and_llm_evidence() -> None:
+    profile = SimpleNamespace(provider_id="openai", model="gpt-test")
+    llm_metadata = {
+        "context_snapshot_ref": "runtime/contexts/ab/cd.json",
+        "usage": {"input_tokens": 12},
+        "context_os_audit": {"coverage": "ok"},
+    }
+
+    metadata = role_result_metadata_from_profile(
+        profile=profile,
+        tool_filter_audit={"status": "filtered"},
+        llm_response_metadata=llm_metadata,
+    )
+
+    assert metadata["provider_id"] == "openai"
+    assert metadata["model"] == "gpt-test"
+    assert metadata["tool_filter_audit"] == {"status": "filtered"}
+    assert metadata["context_snapshot_ref"] == "runtime/contexts/ab/cd.json"
+    assert metadata["usage"] == {"input_tokens": 12}
+    assert metadata["context_os_audit"] == {"coverage": "ok"}
+
+
+def test_role_result_metadata_uses_monitoring_context_audit_when_not_already_set() -> None:
+    profile = SimpleNamespace(provider_id="", model="")
+
+    metadata = role_result_metadata_from_profile(
+        profile=profile,
+        llm_response_metadata={"context_os_audit": {"source": "llm"}},
+        monitoring={"context_os_audit": {"source": "monitoring"}},
+    )
+    monitoring_only = role_result_metadata_from_profile(
+        profile=profile,
+        monitoring={"context_os_audit": {"source": "monitoring"}},
+    )
+
+    assert metadata["context_os_audit"] == {"source": "llm"}
+    assert monitoring_only["context_os_audit"] == {"source": "monitoring"}

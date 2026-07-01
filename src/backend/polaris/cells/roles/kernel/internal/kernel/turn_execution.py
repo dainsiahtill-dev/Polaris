@@ -42,6 +42,7 @@ from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
 )
 from polaris.cells.roles.kernel.internal.kernel.output_parser_provider import get_output_parser
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
+    role_result_metadata_from_profile,
     tool_calls_from_batch_receipt,
     tool_results_from_batch_receipt,
 )
@@ -54,7 +55,6 @@ from polaris.cells.roles.kernel.internal.kernel.transaction_factory import creat
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import _resolve_transaction_turn_id
 from polaris.cells.roles.kernel.internal.tool_loop_controller import ToolLoopController
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest, RoleTurnResult
-from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -255,39 +255,13 @@ async def execute_transaction_kernel_turn(
         **runtime_tool_policy_audit,
     }
 
-    metadata: dict[str, Any] = {}
-    # Propagate provider/model identity from the role profile so downstream
-    # evidence extractors (e.g. factory CE _ce_extract_llm_evidence) can
-    # resolve the real provider and model instead of defaulting to "unknown".
-    if profile.provider_id:
-        metadata["provider_id"] = str(profile.provider_id).strip()
-    if profile.model:
-        metadata["model"] = str(profile.model).strip()
-    if tool_filter_audit is not None:
-        metadata["tool_filter_audit"] = tool_filter_audit
-    context_os_audit_summary = summarize_context_os_audit_from_ledger(ledger)
-    if context_os_audit_summary:
-        metadata["context_os_audit"] = context_os_audit_summary
     llm_response_metadata = tk_result.get("llm_response_metadata")
-    if isinstance(llm_response_metadata, dict):
-        for key in (
-            "final_request_context_audit",
-            "context_snapshot_ref",
-            "context_snapshot_degraded",
-            "context_snapshot_degraded_reason",
-            "context_tokens_after",
-            "contextTokens",
-            "usage",
-            "usage_source",
-        ):
-            if key in llm_response_metadata and key not in metadata:
-                value = llm_response_metadata.get(key)
-                metadata[key] = dict(value) if isinstance(value, dict) else value
-        if "context_os_audit" in llm_response_metadata and "context_os_audit" not in metadata:
-            raw_context_os_audit = llm_response_metadata.get("context_os_audit")
-            metadata["context_os_audit"] = (
-                dict(raw_context_os_audit) if isinstance(raw_context_os_audit, dict) else raw_context_os_audit
-            )
+    metadata = role_result_metadata_from_profile(
+        profile=profile,
+        tool_filter_audit=tool_filter_audit,
+        ledger=ledger,
+        llm_response_metadata=llm_response_metadata if isinstance(llm_response_metadata, dict) else None,
+    )
     if kind == "handoff_workflow" and workflow_context is not None:
         handoff_pack = build_context_handoff_pack(kernel, tk_result, role, request)
         metadata["handoff_pack"] = handoff_pack.to_dict()
@@ -638,19 +612,12 @@ async def execute_transaction_kernel_stream(
             }
             if event.monitoring:
                 event_dict["monitoring"] = dict(event.monitoring)
-            result_metadata: dict[str, Any] = {}
-            # Propagate provider/model identity from the role profile for
-            # downstream evidence extractors.
-            if profile.provider_id:
-                result_metadata["provider_id"] = str(profile.provider_id).strip()
-            if profile.model:
-                result_metadata["model"] = str(profile.model).strip()
-            if tool_filter_audit is not None:
-                result_metadata["tool_filter_audit"] = tool_filter_audit
-            monitoring_payload = event.monitoring if isinstance(event.monitoring, dict) else {}
-            context_os_audit = monitoring_payload.get("context_os_audit")
-            if isinstance(context_os_audit, dict):
-                result_metadata["context_os_audit"] = dict(context_os_audit)
+            result_metadata = role_result_metadata_from_profile(
+                profile=profile,
+                tool_filter_audit=tool_filter_audit,
+                monitoring=event.monitoring if isinstance(event.monitoring, dict) else None,
+            )
+            if "context_os_audit" in result_metadata:
                 event_dict["metadata"] = dict(result_metadata)
             try:
                 result_metadata["projection_adaptive_weights_after_turn"] = context_gateway.record_projection_outcome(
