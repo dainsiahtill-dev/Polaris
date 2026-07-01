@@ -57,7 +57,7 @@ verification:
   - tests/test_runtime_role_binding.py
   - tests/test_role_kernel_write_budget.py
   gaps:
-  - Sequential compatibility shim remains intentionally minimal and should be validated
-    against any future role-runtime parity requirement.
+  - Sequential strategy is intentionally minimal; validate role-runtime parity before
+    expanding it beyond a single-shot fallback.
   smoke_commands: []
 generated_artifacts: []

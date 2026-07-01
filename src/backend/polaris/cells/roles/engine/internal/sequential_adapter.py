@@ -1,8 +1,8 @@
-"""Sequential Adapter - SequentialEngine compatibility shim.
+"""Sequential Adapter - single-shot sequential strategy.
 
-The historical adapter previously delegated into ``roles.runtime``. That
-cross-cell dependency is removed here so ``roles.engine`` remains self-contained
-and only depends on its own public/base abstractions.
+This strategy keeps sequential execution inside the ``roles.engine`` boundary.
+It provides the low-complexity fallback path used by ``HybridEngine`` without
+delegating into an external execution facade.
 """
 
 from __future__ import annotations
@@ -24,12 +24,12 @@ logger = logging.getLogger(__name__)
 
 
 class SequentialEngineAdapter(BaseEngine):
-    """SequentialEngine compatibility shim.
+    """Single-shot sequential engine strategy.
 
-    The old adapter wrapped a runtime-layer sequential executor. That coupling
-    is no longer allowed in ``roles.engine``. This shim keeps the public
-    strategy entrypoint available while executing as a simple single-shot
-    engine backed by the injected LLM caller.
+    The engine performs one LLM-backed step and records the result using the
+    shared ``BaseEngine`` accounting primitives. It is intentionally small so
+    callers can rely on it as the deterministic fallback strategy when more
+    complex ReAct/plan-solve/tree-of-thought engines are not selected.
     """
 
     def __init__(
@@ -48,10 +48,11 @@ class SequentialEngineAdapter(BaseEngine):
         context: EngineContext,
         initial_message: str = "",
     ) -> EngineResult:
-        """Execute the sequential compatibility path.
+        """Execute the sequential single-shot path.
 
-        The adapter keeps the sequential strategy name stable, but the actual
-        execution now stays within the roles.engine boundary.
+        The implementation is O(1) in engine steps and makes one LLM call.
+        Memory use is O(n) in the final response length stored in the step
+        observation and final result.
         """
         self._status = EngineStatus.RUNNING
         self._start_time = time.time()
@@ -93,7 +94,7 @@ class SequentialEngineAdapter(BaseEngine):
             )
 
     async def step(self, context: EngineContext) -> StepResult:
-        """Sequential strategy is single-shot in this compatibility shim."""
+        """Return the current no-op step state for this single-shot strategy."""
         return StepResult(
             step_index=self._current_step,
             status=EngineStatus.IDLE,
@@ -110,7 +111,7 @@ def create_sequential_adapter(
     max_tool_calls: int = 24,
     max_time: int = 120,
 ) -> SequentialEngineAdapter:
-    """Create a sequential compatibility shim with a bounded budget."""
+    """Create a sequential engine adapter with a bounded budget."""
     budget = EngineBudget(
         max_steps=max_steps,
         max_tool_calls_total=max_tool_calls,

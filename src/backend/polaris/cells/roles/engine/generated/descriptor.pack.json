@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
   "generated_at": "2026-06-19T14:36:49.462336Z",
-  "source_hash": "9de3fbf444fc7102",
+  "source_hash": "ea0ea5e120e2daea",
   "cell_id": "roles.engine",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -384,7 +384,7 @@
     {
       "type": "class",
       "name": "SequentialEngineAdapter",
-      "description": "SequentialEngine compatibility shim.",
+      "description": "Single-shot sequential engine strategy.",
       "defined_in": "polaris/cells/roles/engine/internal/sequential_adapter.py",
       "methods": [
         {
@@ -404,7 +404,7 @@
     {
       "type": "function",
       "name": "create_sequential_adapter",
-      "description": "Create a sequential compatibility shim with a bounded budget.",
+      "description": "Create a sequential engine adapter with a bounded budget.",
       "defined_in": "polaris/cells/roles/engine/internal/sequential_adapter.py"
     },
     {
