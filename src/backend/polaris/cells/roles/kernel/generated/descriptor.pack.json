@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T04:58:12.598962Z",
-  "source_hash": "2b32a8454dacc230",
+  "generated_at": "2026-07-01T05:04:01.485191Z",
+  "source_hash": "7cf2fccd448bc5d0",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4048,14 +4048,6 @@
           "doc": "获取 canonical LLMInvoker。"
         },
         {
-          "name": "_resolve_tool_gateway_turn_key",
-          "doc": "Resolve a stable per-turn cache key for gateway counters."
-        },
-        {
-          "name": "_normalize_id",
-          "doc": ""
-        },
-        {
           "name": "reset_tool_gateway_turn_boundary",
           "doc": "Explicitly reset cached gateway counters when the authoritative turn id changes."
         }
@@ -4505,6 +4497,10 @@
           "doc": "run_id 缺失时应优先使用显式 turn_id。"
         },
         {
+          "name": "test_resolve_tool_gateway_turn_key_includes_task_id",
+          "doc": "task_id 必须参与 key，避免同一 run 下不同任务共享工具预算。"
+        },
+        {
           "name": "test_resolve_tool_gateway_turn_key_falls_back_to_request_identity",
           "doc": "run_id 缺失时应回退到 request identity，避免跨回合计数串扰。"
         },
@@ -4733,6 +4729,24 @@
       "name": "derive_role_turn_capability_token",
       "description": "Derive immutable Job Token evidence for tool receipts.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_turn_key_part",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_gateway_turn_key.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_explicit_turn_key",
+      "description": "Return the cache key for an authoritative explicit turn id.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_gateway_turn_key.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_tool_gateway_turn_key",
+      "description": "Resolve a stable per-turn cache key for tool-gateway counters.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_gateway_turn_key.py"
     },
     {
       "type": "function",

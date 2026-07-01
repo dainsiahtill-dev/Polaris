@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.tool_gateway_turn_key import resolve_tool_gateway_turn_key
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
     _apply_runtime_tool_policy,
     _cognitive_runtime_blocked_tools,
@@ -428,7 +429,7 @@ class TestInjectedServiceEntrypoints:
         request.run_id = "run_123"
         request.turn_id = "ignored"
 
-        key = RoleExecutionKernel._resolve_tool_gateway_turn_key(request)
+        key = resolve_tool_gateway_turn_key(request)
 
         assert key == "run_123"
 
@@ -438,9 +439,20 @@ class TestInjectedServiceEntrypoints:
         request.run_id = None
         request.turn_id = "turn_456"
 
-        key = RoleExecutionKernel._resolve_tool_gateway_turn_key(request)
+        key = resolve_tool_gateway_turn_key(request)
 
         assert key == "turn_id:turn_456"
+
+    def test_resolve_tool_gateway_turn_key_includes_task_id(self) -> None:
+        """task_id 必须参与 key，避免同一 run 下不同任务共享工具预算。"""
+        request = MagicMock()
+        request.run_id = "run_123"
+        request.task_id = "task_456"
+        request.turn_id = "ignored"
+
+        key = resolve_tool_gateway_turn_key(request)
+
+        assert key == "run_123:task:task_456"
 
     def test_resolve_tool_gateway_turn_key_falls_back_to_request_identity(self) -> None:
         """run_id 缺失时应回退到 request identity，避免跨回合计数串扰。"""
@@ -451,8 +463,8 @@ class TestInjectedServiceEntrypoints:
         request_b.run_id = None
         request_b.turn_id = ""
 
-        key_a = RoleExecutionKernel._resolve_tool_gateway_turn_key(request_a)
-        key_b = RoleExecutionKernel._resolve_tool_gateway_turn_key(request_b)
+        key_a = resolve_tool_gateway_turn_key(request_a)
+        key_b = resolve_tool_gateway_turn_key(request_b)
 
         assert key_a.startswith("request_obj:")
         assert key_b.startswith("request_obj:")

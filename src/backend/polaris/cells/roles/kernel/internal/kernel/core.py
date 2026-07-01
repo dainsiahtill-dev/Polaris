@@ -42,6 +42,10 @@ from polaris.cells.roles.kernel.internal.kernel.prompt_assembly import (
 from polaris.cells.roles.kernel.internal.kernel.request_appendix import build_prompt_appendix_from_request
 from polaris.cells.roles.kernel.internal.kernel.stream_run_id import resolve_stream_run_id
 from polaris.cells.roles.kernel.internal.kernel.suggestions import get_suggestions_for_error
+from polaris.cells.roles.kernel.internal.kernel.tool_gateway_turn_key import (
+    resolve_explicit_turn_key,
+    resolve_tool_gateway_turn_key,
+)
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
     _cognitive_runtime_blocked_tools,
     _normalize_tool_policy_name,
@@ -839,40 +843,11 @@ class RoleExecutionKernel:
             return
         raise NotImplementedError("call_stream() requires injected llm_invoker")
 
-    @staticmethod
-    def _resolve_tool_gateway_turn_key(request_obj: Any) -> str:
-        """Resolve a stable per-turn cache key for gateway counters."""
-
-        def _normalize_id(value: Any) -> str:
-            if value is None or isinstance(value, bool):
-                return ""
-            if isinstance(value, str):
-                return value.strip()
-            if isinstance(value, int):
-                return str(value)
-            return ""
-
-        run_id = _normalize_id(getattr(request_obj, "run_id", None))
-        task_id = _normalize_id(getattr(request_obj, "task_id", None))
-        if run_id and task_id:
-            return f"{run_id}:task:{task_id}"
-        if run_id:
-            return run_id
-        turn_id = _normalize_id(getattr(request_obj, "turn_id", None))
-        if turn_id and task_id:
-            return f"turn_id:{turn_id}:task:{task_id}"
-        if turn_id:
-            return f"turn_id:{turn_id}"
-        if task_id:
-            return f"task_id:{task_id}"
-        return f"request_obj:{id(request_obj)}"
-
     def reset_tool_gateway_turn_boundary(self, turn_id: str) -> None:
         """Explicitly reset cached gateway counters when the authoritative turn id changes."""
-        normalized_turn_id = str(turn_id or "").strip()
-        if not normalized_turn_id:
+        current_turn_key = resolve_explicit_turn_key(turn_id)
+        if not current_turn_key:
             return
-        current_turn_key = f"turn_id:{normalized_turn_id}"
         if current_turn_key == self._cached_gateway_turn_id:
             return
         if self._cached_tool_gateway is not None:
@@ -924,7 +899,7 @@ class RoleExecutionKernel:
 
                 # Reuse only within the same task-scoped turn. A new turn may
                 # carry a different immutable capability scope.
-                current_turn_id = self._resolve_tool_gateway_turn_key(request)
+                current_turn_id = resolve_tool_gateway_turn_key(request)
                 if (
                     self._cached_tool_gateway is not None
                     and self._cached_gateway_profile is profile
@@ -1002,7 +977,7 @@ class RoleExecutionKernel:
         # gateway was reused across turns, causing permanent tool lockout.
         # Also reset FailureBudget on turn boundary to prevent stale failure state
         # from one task/turn affecting the next one.
-        current_turn_id = self._resolve_tool_gateway_turn_key(request)
+        current_turn_id = resolve_tool_gateway_turn_key(request)
         if (
             self._cached_tool_gateway is not None
             and self._cached_gateway_profile is profile
