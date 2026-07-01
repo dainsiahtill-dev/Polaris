@@ -35,8 +35,11 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     OrchestrationStageExecutor,
 )
 from polaris.cells.factory.pipeline.internal.run_ledger import load_run_ledger_projection
-from polaris.cells.roles.adapters.internal.director import quality_gate as director_quality_gate
-from polaris.cells.roles.adapters.public import extract_workspace_quality_summary
+from polaris.cells.roles.adapters.public import (
+    build_director_materialization_quality_repair_message,
+    extract_workspace_quality_summary,
+    resolve_director_semantic_quality_repair_target_files,
+)
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_logical_path
 
@@ -62,7 +65,7 @@ def test_materialization_quality_target_filter_prefers_ts_source_over_compiled_o
         )
     ]
 
-    targets = director_quality_gate._semantic_quality_repair_target_files(
+    targets = resolve_director_semantic_quality_repair_target_files(
         artifact_quality_errors=errors,
         changed_files=["tests/behavior.test.ts", "tests/behavior.test.js", "dist/main.js"],
         workspace_full=str(tmp_path),
@@ -1097,7 +1100,7 @@ class TestTextShapingHelpers:
             ]
         )
 
-        message = director_quality_gate._build_materialization_quality_repair_message(
+        message = build_director_materialization_quality_repair_message(
             original_message=original_message,
             artifact_quality_errors=["Artifact quality scan failed: npm run build references missing src/index.js"],
             changed_files=["package.json"],

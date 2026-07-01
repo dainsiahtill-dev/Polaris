@@ -281,6 +281,58 @@ def run_director_post_execution_repair_schedule(
     )
 
 
+def resolve_director_semantic_quality_repair_target_files(
+    *,
+    artifact_quality_errors: list[str],
+    changed_files: list[str],
+    workspace_full: str,
+) -> list[str]:
+    """Return semantic quality-repair target files through the public boundary."""
+
+    from ..internal.director.quality_gate import _semantic_quality_repair_target_files
+
+    return _semantic_quality_repair_target_files(
+        artifact_quality_errors=list(artifact_quality_errors),
+        changed_files=list(changed_files),
+        workspace_full=workspace_full,
+    )
+
+
+def build_director_materialization_quality_repair_message(
+    *,
+    original_message: str,
+    artifact_quality_errors: list[str],
+    directive_artifact_quality_errors: list[str] | None = None,
+    changed_files: list[str],
+    missing_target_files: list[str] | None = None,
+    repair_target_files: list[str] | None = None,
+    workspace_full: str = "",
+    interface_discrepancy_evidence: dict[str, Any] | None = None,
+) -> str:
+    """Build Director materialization-quality repair prompt text."""
+
+    from ..internal.director.quality_gate import _build_materialization_quality_repair_message
+
+    return _build_materialization_quality_repair_message(
+        original_message=original_message,
+        artifact_quality_errors=list(artifact_quality_errors),
+        directive_artifact_quality_errors=(
+            list(directive_artifact_quality_errors)
+            if directive_artifact_quality_errors is not None
+            else None
+        ),
+        changed_files=list(changed_files),
+        missing_target_files=list(missing_target_files) if missing_target_files is not None else None,
+        repair_target_files=list(repair_target_files) if repair_target_files is not None else None,
+        workspace_full=workspace_full,
+        interface_discrepancy_evidence=(
+            dict(interface_discrepancy_evidence)
+            if interface_discrepancy_evidence is not None
+            else None
+        ),
+    )
+
+
 def register_all_adapters(service: object) -> None:
     """Register role adapter factory to orchestration service if supported."""
     if hasattr(service, "set_role_adapter_factory"):
@@ -362,12 +414,14 @@ __all__ = [
     "ToolCall",
     "WorkflowRoleAdapter",
     "WorkflowRoleResult",
+    "build_director_materialization_quality_repair_message",
     "create_role_adapter",
     "execute_workflow_role",
     "extract_workspace_quality_summary",
     "get_schema_for_role",
     "get_supported_roles",
     "register_all_adapters",
+    "resolve_director_semantic_quality_repair_target_files",
     "run_director_materialization_quality_repair",
     "run_director_materialization_quality_repair_schedule",
     "run_director_materialization_quality_repair_schedule_result",

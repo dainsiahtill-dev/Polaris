@@ -160,7 +160,7 @@ class ArtifactStore:
             str(audit_entry.get("call_id") or f"{event_type}:{run_id}:{task_id}:{audit_entry.get('timestamp') or ''}"),
         )
         try:
-            from polaris.cells.roles.kernel.internal.events import LLMEventType, emit_llm_event
+            from polaris.cells.roles.kernel.public import LLMEventType, emit_llm_event
 
             emit_llm_event(
                 event_type=LLMEventType.CALL_END,
