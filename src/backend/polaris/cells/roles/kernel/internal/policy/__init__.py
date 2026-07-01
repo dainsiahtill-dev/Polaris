@@ -14,7 +14,7 @@ policy/
 ├── approval_policy.py  - ApprovalPolicy（人工审批闸门）
 ├── budget_policy.py    - BudgetPolicy（资源预算硬限制）
 ├── sandbox_policy.py   - SandboxPolicy（进程/FS/网络范围）
-└── redaction_policy.py - RedactionPolicy（日志/prompt 脱敏）
+└── layer/redaction.py - RedactionPolicy（日志/prompt 脱敏）
 
 核心约束
 ───────────
@@ -56,11 +56,9 @@ from polaris.cells.roles.kernel.internal.policy.layer import (
     PolicyLayer,
     PolicyResult,
     PolicyViolation,
+    RedactionPolicy,
     ToolPolicy,
     ToolPolicyConfig,
-)
-from polaris.cells.roles.kernel.internal.policy.redaction_policy import (
-    RedactionPolicy,
 )
 from polaris.cells.roles.kernel.internal.policy.sandbox_policy import (
     SandboxDecision,

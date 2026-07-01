@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T07:35:30.259038Z",
-  "source_hash": "e3017f938eac16da",
+  "generated_at": "2026-07-01T07:38:36.479969Z",
+  "source_hash": "6797e8ce551e45c6",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -8207,46 +8207,6 @@
         {
           "name": "_is_path_traversal",
           "doc": "检查路径是否包含穿越序列。"
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "RedactionPolicy",
-      "description": "Compatibility redaction policy for legacy imports.",
-      "defined_in": "polaris/cells/roles/kernel/internal/policy/redaction_policy.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "from_env",
-          "doc": ""
-        },
-        {
-          "name": "redact_log",
-          "doc": ""
-        },
-        {
-          "name": "redact_trace",
-          "doc": ""
-        },
-        {
-          "name": "redact_prompt",
-          "doc": ""
-        },
-        {
-          "name": "redact_tool_result",
-          "doc": ""
-        },
-        {
-          "name": "redact",
-          "doc": "Compatibility alias with `layer.RedactionPolicy.redact()`."
-        },
-        {
-          "name": "redact_dict",
-          "doc": ""
         }
       ]
     },
