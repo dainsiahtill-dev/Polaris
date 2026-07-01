@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 # Cell-internal port – no delivery dependency
 from polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils import (
@@ -30,9 +30,6 @@ from polaris.cells.runtime.state_owner.public.service import (
 from polaris.kernelone.events import emit_dialogue, emit_event, emit_llm_event
 from polaris.kernelone.fs.control_flags import pause_flag_path
 from polaris.kernelone.fs.jsonl.ops import append_jsonl
-
-if TYPE_CHECKING:
-    import argparse
 
 __all__ = [
     "clear_manual_intervention",
@@ -55,7 +52,6 @@ def _get_shangshuling_port() -> Any:
 
 
 def finalize_iteration(
-    args: argparse.Namespace,
     workspace_full: str,
     iteration: int,
     status: str,
@@ -71,7 +67,6 @@ def finalize_iteration(
     interface for the orchestration engine.
 
     Args:
-        args: Command line arguments namespace
         workspace_full: Absolute path to workspace
         iteration: Current iteration number
         status: Iteration status (completed, failed, etc.)
@@ -403,7 +398,7 @@ def handle_spin_guard(
     dialogue_full: str,
     run_id: str,
     iteration: int,
-    args: argparse.Namespace,
+    max_spin_rounds: int,
 ) -> bool:
     """Handle spin guard condition.
 
@@ -415,7 +410,7 @@ def handle_spin_guard(
         dialogue_full: Path to dialogue JSONL file
         run_id: Current run identifier
         iteration: Current iteration number
-        args: Command line arguments
+        max_spin_rounds: Configured maximum no-progress rounds.
 
     Returns:
         True if spin guard was handled successfully
@@ -428,7 +423,7 @@ def handle_spin_guard(
         dialogue_full=dialogue_full,
         run_id=run_id,
         iteration=iteration,
-        args=args,
+        max_spin_rounds=max_spin_rounds,
     )
 
 
@@ -440,7 +435,7 @@ def _handle_spin_guard(
     dialogue_full: str,
     run_id: str,
     iteration: int,
-    args: argparse.Namespace,
+    max_spin_rounds: int,
 ) -> bool:
     """Handle spin guard activation."""
     append_pm_report(
@@ -460,7 +455,7 @@ def _handle_spin_guard(
         output={
             "reason": reason,
             "pm_no_progress_count": pm_state.get("pm_no_progress_count", 0),
-            "max_spin_rounds": int(getattr(args, "max_spin_rounds", 0) or 0),
+            "max_spin_rounds": max(0, int(max_spin_rounds or 0)),
         },
         error=PM_SPIN_GUARD_STATUS,
     )

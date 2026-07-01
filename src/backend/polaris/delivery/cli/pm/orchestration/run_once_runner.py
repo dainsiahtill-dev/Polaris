@@ -215,7 +215,7 @@ def run_once_impl(args: argparse.Namespace, iteration: int = 1) -> int:
             dialogue_full=dialogue_full,
             run_id=run_id,
             iteration=iteration,
-            args=args,
+            max_spin_rounds=int(getattr(args, "max_spin_rounds", 0) or 0),
         )
         # Graceful degradation: reset counters and continue
         pm_state["consecutive_failures"] = 0
@@ -1033,7 +1033,6 @@ def run_once_impl(args: argparse.Namespace, iteration: int = 1) -> int:
         _oe.safe_reset(trace_service)
 
     _oe.finalize_iteration(
-        args=args,
         workspace_full=workspace_full,
         iteration=iteration,
         status="completed" if exit_code == 0 else "failed",

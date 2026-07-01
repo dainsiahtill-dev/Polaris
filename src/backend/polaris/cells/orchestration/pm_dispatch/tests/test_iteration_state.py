@@ -7,7 +7,6 @@ record_stop, handle_spin_guard, and finalize_iteration (with mocks).
 
 from __future__ import annotations
 
-import argparse
 from unittest.mock import MagicMock, patch
 
 from polaris.cells.orchestration.pm_dispatch.internal.iteration_state import (
@@ -29,7 +28,6 @@ class TestHandleSpinGuard:
     def test_appends_to_report(self, tmp_path) -> None:
         report_path = tmp_path / "pm_report.md"
         pm_state: dict = {"pm_no_progress_count": 2}
-        args = argparse.Namespace(max_spin_rounds=5)
 
         with (
             patch("polaris.cells.orchestration.pm_dispatch.internal.iteration_state.emit_event"),
@@ -43,7 +41,7 @@ class TestHandleSpinGuard:
                 dialogue_full=str(tmp_path / "dialogue.jsonl"),
                 run_id="run-1",
                 iteration=3,
-                args=args,
+                max_spin_rounds=5,
             )
 
         assert result is True
@@ -54,7 +52,6 @@ class TestHandleSpinGuard:
     def test_emits_events(self, tmp_path) -> None:
         report_path = tmp_path / "pm_report.md"
         pm_state: dict = {}
-        args = argparse.Namespace(max_spin_rounds=3)
         mock_emit = MagicMock()
         mock_dialogue = MagicMock()
 
@@ -70,7 +67,7 @@ class TestHandleSpinGuard:
                 dialogue_full=str(tmp_path / "dialogue.jsonl"),
                 run_id="run-2",
                 iteration=1,
-                args=args,
+                max_spin_rounds=3,
             )
 
         mock_emit.assert_called_once()
@@ -89,7 +86,6 @@ class TestHandleSpinGuardPublicWrapper:
     def test_delegates_to_internal(self, tmp_path) -> None:
         report_path = tmp_path / "pm_report.md"
         pm_state: dict = {}
-        args = argparse.Namespace(max_spin_rounds=1)
 
         with patch(
             "polaris.cells.orchestration.pm_dispatch.internal.iteration_state._handle_spin_guard"
@@ -103,7 +99,7 @@ class TestHandleSpinGuardPublicWrapper:
                 dialogue_full=str(tmp_path / "dialogue.jsonl"),
                 run_id="run-3",
                 iteration=2,
-                args=args,
+                max_spin_rounds=1,
             )
 
         assert result is True
@@ -310,7 +306,6 @@ class TestClearManualInterventionPublicWrapper:
 class TestFinalizeIteration:
     def test_sets_pm_iteration_and_exit_code(self, tmp_path) -> None:
         pm_state: dict = {}
-        args = argparse.Namespace()
         context = {
             "pm_state_full": str(tmp_path / "pm_state.json"),
             "pm_history_full": "",
@@ -344,7 +339,6 @@ class TestFinalizeIteration:
             mock_get_port.return_value = mock_port
 
             finalize_iteration(
-                args=args,
                 workspace_full=str(tmp_path),
                 iteration=1,
                 status="completed",
@@ -359,7 +353,6 @@ class TestFinalizeIteration:
         mock_write.assert_called()
 
     def test_non_dict_state_defaults_to_empty(self, tmp_path) -> None:
-        args = argparse.Namespace()
         context = {
             "pm_state_full": str(tmp_path / "pm_state.json"),
             "pm_history_full": "",
@@ -392,7 +385,6 @@ class TestFinalizeIteration:
             mock_get_port.return_value = mock_port
 
             result = finalize_iteration(
-                args=args,
                 workspace_full=str(tmp_path),
                 iteration=0,
                 status="completed",
@@ -404,7 +396,6 @@ class TestFinalizeIteration:
 
     def test_calls_archive_history(self, tmp_path) -> None:
         pm_state: dict = {}
-        args = argparse.Namespace()
         context = {
             "pm_state_full": str(tmp_path / "pm_state.json"),
             "pm_history_full": str(tmp_path / "pm_history.jsonl"),
@@ -438,7 +429,6 @@ class TestFinalizeIteration:
             mock_get_port.return_value = mock_port
 
             finalize_iteration(
-                args=args,
                 workspace_full=str(tmp_path),
                 iteration=2,
                 status="failed",
@@ -453,7 +443,6 @@ class TestFinalizeIteration:
 
     def test_injects_pre_provided_port(self, tmp_path) -> None:
         pm_state: dict = {}
-        args = argparse.Namespace()
         context = {
             "pm_state_full": str(tmp_path / "pm_state.json"),
             "pm_history_full": "",
@@ -481,7 +470,6 @@ class TestFinalizeIteration:
             ),
         ):
             finalize_iteration(
-                args=args,
                 workspace_full=str(tmp_path),
                 iteration=0,
                 status="completed",
