@@ -5,7 +5,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
-from polaris.cells.roles.kernel.internal.kernel.tool_gateway_turn_key import resolve_tool_gateway_turn_key
+from polaris.cells.roles.kernel.internal.kernel.tool_gateway_turn_key import (
+    resolve_explicit_turn_key,
+    resolve_tool_gateway_turn_key,
+)
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
     _cognitive_runtime_blocked_tools,
     _normalize_tool_policy_name,
@@ -128,6 +131,23 @@ async def execute_single_tool(
     return gateway.execute_tool(tool_name, args)
 
 
+def reset_cached_tool_gateway_turn_boundary(kernel: RoleExecutionKernel, turn_id: str) -> None:
+    """Reset cached gateway counters when the authoritative turn id changes."""
+    current_turn_key = resolve_explicit_turn_key(turn_id)
+    if not current_turn_key:
+        return
+    if current_turn_key == kernel._cached_gateway_turn_id:
+        return
+    reset_cached = getattr(kernel._cached_tool_gateway, "reset_execution_count", None)
+    if callable(reset_cached):
+        reset_cached()
+    cached_failure_budget = getattr(kernel._cached_tool_gateway, "_failure_budget", None)
+    reset_failure_budget = getattr(cached_failure_budget, "reset", None)
+    if callable(reset_failure_budget):
+        reset_failure_budget()
+    kernel._cached_gateway_turn_id = current_turn_key
+
+
 def _reset_cached_gateway(kernel: RoleExecutionKernel) -> None:
     reset_cached = getattr(kernel._cached_tool_gateway, "reset_execution_count", None)
     if callable(reset_cached):
@@ -141,4 +161,4 @@ def _reset_cached_gateway(kernel: RoleExecutionKernel) -> None:
         close_cached()
 
 
-__all__ = ["execute_single_tool"]
+__all__ = ["execute_single_tool", "reset_cached_tool_gateway_turn_boundary"]

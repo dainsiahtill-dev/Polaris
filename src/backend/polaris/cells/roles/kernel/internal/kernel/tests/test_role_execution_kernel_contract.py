@@ -25,7 +25,10 @@ from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
     _cognitive_runtime_blocked_tools,
     _filter_cognitive_blocked_tool_definitions,
 )
-from polaris.cells.roles.kernel.internal.kernel.tool_runtime_executor import execute_single_tool
+from polaris.cells.roles.kernel.internal.kernel.tool_runtime_executor import (
+    execute_single_tool,
+    reset_cached_tool_gateway_turn_boundary,
+)
 from polaris.cells.roles.kernel.public.config import KernelConfig
 from polaris.cells.roles.kernel.services.contracts import (
     CellToolExecutorPort,
@@ -445,8 +448,8 @@ class TestInjectedServiceEntrypoints:
         assert key_b.startswith("request_obj:")
         assert key_a != key_b
 
-    def test_reset_tool_gateway_turn_boundary_is_idempotent_per_turn(self) -> None:
-        """显式 turn reset 对同一 turn 不重复清零，对新 turn 必须清零。"""
+    def test_reset_cached_tool_gateway_turn_boundary_is_idempotent_per_turn(self) -> None:
+        """Owner reset 对同一 turn 不重复清零，对新 turn 必须清零。"""
         kernel = RoleExecutionKernel(workspace=".")
         mock_gateway = MagicMock()
         mock_gateway.reset_execution_count = MagicMock()
@@ -456,9 +459,9 @@ class TestInjectedServiceEntrypoints:
         kernel._cached_tool_gateway = mock_gateway
         kernel._cached_gateway_turn_id = "request_obj:previous"
 
-        kernel.reset_tool_gateway_turn_boundary("turn_a")
-        kernel.reset_tool_gateway_turn_boundary("turn_a")
-        kernel.reset_tool_gateway_turn_boundary("turn_b")
+        reset_cached_tool_gateway_turn_boundary(kernel, "turn_a")
+        reset_cached_tool_gateway_turn_boundary(kernel, "turn_a")
+        reset_cached_tool_gateway_turn_boundary(kernel, "turn_b")
 
         assert mock_gateway.reset_execution_count.call_count == 2
         assert mock_failure_budget.reset.call_count == 2

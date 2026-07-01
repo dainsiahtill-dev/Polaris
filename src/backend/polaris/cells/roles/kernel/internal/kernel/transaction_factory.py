@@ -8,7 +8,7 @@ Design notes (FROZEN behavior — do NOT change):
 - The nested ``_LLMProvider`` / ``_ToolRuntime`` / ``_LLMProviderStream``
   classes capture a ``weakref`` to the kernel so they never keep it alive, and
   tool execution enters through ``kernel.tool_runtime_executor.execute_single_tool``
-  while explicit turn-boundary resets remain on the kernel public boundary.
+  and explicit turn-boundary resets enter through the same runtime owner.
 - ``_LLMProvider``/``_ToolRuntime``/``_LLMProviderStream`` use ``__slots__ = ()``
   so they remain zero-attribute callables, identical to the in-class version.
 - The five helper closures (history dedup, context-override assembly, model
@@ -28,7 +28,10 @@ from typing import TYPE_CHECKING, Any, cast
 from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
 from polaris.cells.roles.kernel.internal.kernel.llm_invoker_provider import get_llm_invoker
-from polaris.cells.roles.kernel.internal.kernel.tool_runtime_executor import execute_single_tool
+from polaris.cells.roles.kernel.internal.kernel.tool_runtime_executor import (
+    execute_single_tool,
+    reset_cached_tool_gateway_turn_boundary,
+)
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
 from polaris.cells.roles.kernel.internal.transaction.recon_policy import resolve_recon_required
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
@@ -418,7 +421,7 @@ def create_transaction_kernel(
             if not normalized_turn_id:
                 return
             cast(Any, provider_request).turn_id = normalized_turn_id
-            kernel.reset_tool_gateway_turn_boundary(normalized_turn_id)
+            reset_cached_tool_gateway_turn_boundary(kernel, normalized_turn_id)
 
         async def __call__(self, tool_name: str, arguments: dict[str, Any]) -> Any:
             kernel = kernel_weakref()

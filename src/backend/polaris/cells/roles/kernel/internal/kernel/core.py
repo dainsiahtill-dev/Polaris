@@ -46,9 +46,6 @@ from polaris.cells.roles.kernel.internal.kernel.quality_checker_provider import 
 from polaris.cells.roles.kernel.internal.kernel.request_appendix import build_prompt_appendix_from_request
 from polaris.cells.roles.kernel.internal.kernel.stream_run_id import resolve_stream_run_id
 from polaris.cells.roles.kernel.internal.kernel.suggestions import get_suggestions_for_error
-from polaris.cells.roles.kernel.internal.kernel.tool_gateway_turn_key import (
-    resolve_explicit_turn_key,
-)
 from polaris.cells.roles.kernel.internal.kernel.turn_execution import (
     execute_transaction_kernel_stream,
     execute_transaction_kernel_turn,
@@ -748,21 +745,6 @@ class RoleExecutionKernel:
         except (RuntimeError, ValueError):
             if inner_error is None:
                 raise
-
-    def reset_tool_gateway_turn_boundary(self, turn_id: str) -> None:
-        """Explicitly reset cached gateway counters when the authoritative turn id changes."""
-        current_turn_key = resolve_explicit_turn_key(turn_id)
-        if not current_turn_key:
-            return
-        if current_turn_key == self._cached_gateway_turn_id:
-            return
-        if self._cached_tool_gateway is not None:
-            self._cached_tool_gateway.reset_execution_count()
-            if hasattr(self._cached_tool_gateway, "_failure_budget") and hasattr(
-                self._cached_tool_gateway._failure_budget, "reset"
-            ):
-                self._cached_tool_gateway._failure_budget.reset()
-        self._cached_gateway_turn_id = current_turn_key
 
 
 __all__ = [

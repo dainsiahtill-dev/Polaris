@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T06:16:57.991319Z",
-  "source_hash": "87bdb08f6416f866",
+  "generated_at": "2026-07-01T06:23:03.645298Z",
+  "source_hash": "484d0fd1d94c2d09",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4026,10 +4026,6 @@
         {
           "name": "inject_event_emitter",
           "doc": "注入事件发射器（支持测试和扩展）"
-        },
-        {
-          "name": "reset_tool_gateway_turn_boundary",
-          "doc": "Explicitly reset cached gateway counters when the authoritative turn id changes."
         }
       ]
     },
@@ -4515,8 +4511,8 @@
           "doc": "run_id 缺失时应回退到 request identity，避免跨回合计数串扰。"
         },
         {
-          "name": "test_reset_tool_gateway_turn_boundary_is_idempotent_per_turn",
-          "doc": "显式 turn reset 对同一 turn 不重复清零，对新 turn 必须清零。"
+          "name": "test_reset_cached_tool_gateway_turn_boundary_is_idempotent_per_turn",
+          "doc": "Owner reset 对同一 turn 不重复清零，对新 turn 必须清零。"
         }
       ]
     },
@@ -4805,6 +4801,12 @@
       "name": "_apply_forced_transaction_tool_definitions",
       "description": "Prefer explicit TransactionKernel forced tool scope over default role tools.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_cached_tool_gateway_turn_boundary",
+      "description": "Reset cached gateway counters when the authoritative turn id changes.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_runtime_executor.py"
     },
     {
       "type": "function",
