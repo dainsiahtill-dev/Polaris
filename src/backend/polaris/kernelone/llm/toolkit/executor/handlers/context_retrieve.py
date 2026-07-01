@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from threading import Lock
+from typing import TYPE_CHECKING, Any, Protocol
 
 from polaris.kernelone.llm.toolkit.original_payload_cache import (
     get_default_cache,
@@ -33,6 +34,34 @@ if TYPE_CHECKING:
     from polaris.kernelone.llm.toolkit.executor.core import AgentAccelToolExecutor
 
 logger = logging.getLogger(__name__)
+_RECEIPT_METADATA_LOOKUP: ReceiptMetadataLookup | None = None
+_RECEIPT_METADATA_LOOKUP_LOCK = Lock()
+
+
+class ReceiptMetadataLookup(Protocol):
+    """Lookup port for best-effort receipt metadata retrieval."""
+
+    def __call__(self, db_path: Path, ref: str) -> dict[str, Any] | None:
+        """Return receipt metadata for ``ref`` from ``db_path`` if available."""
+
+
+def configure_receipt_metadata_lookup(lookup: ReceiptMetadataLookup | None) -> None:
+    """Install or clear the receipt metadata lookup adapter.
+
+    The handler remains fully reversible through the CCR cache without this
+    adapter. Infrastructure may install a store-backed lookup to provide
+    metadata for expired receipt refs without creating a KernelOne reverse
+    dependency.
+    """
+    global _RECEIPT_METADATA_LOOKUP
+    with _RECEIPT_METADATA_LOOKUP_LOCK:
+        _RECEIPT_METADATA_LOOKUP = lookup
+
+
+def _get_receipt_metadata_lookup() -> ReceiptMetadataLookup | None:
+    with _RECEIPT_METADATA_LOOKUP_LOCK:
+        return _RECEIPT_METADATA_LOOKUP
+
 
 # Inline alias fallback. The authoritative alias mapping lives in the tool spec
 # ``arg_aliases`` and is applied by the SchemaDriven normalizer before dispatch.
@@ -148,13 +177,12 @@ def _lookup_receipt_metadata(workspace: str, ref: str) -> dict[str, Any] | None:
     db_path = _resolve_receipt_db_path(workspace)
     if db_path is None:
         return None
+    lookup = _get_receipt_metadata_lookup()
+    if lookup is None:
+        logger.debug("[context_retrieve] receipt lookup skipped: no metadata lookup adapter configured")
+        return None
     try:
-        from polaris.infrastructure.db.repositories.accel_session_receipt_store import (
-            SessionReceiptStore,
-        )
-
-        store = SessionReceiptStore(db_path)
-        return store.get_receipt(job_id=ref)
+        return lookup(db_path, ref)
     except (RuntimeError, ValueError, OSError) as exc:
         logger.debug("[context_retrieve] receipt lookup failed for ref=%s: %s", ref, exc)
         return None

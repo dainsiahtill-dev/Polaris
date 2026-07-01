@@ -244,6 +244,20 @@ def get_log_jetstream_publisher() -> JetStreamPublisher:
         return _publisher_singleton
 
 
+def install_file_event_broadcaster_publisher() -> None:
+    """Install the log pipeline publisher into the KernelOne file event port."""
+    from polaris.kernelone.events.file_event_broadcaster import configure_file_edit_event_publisher
+
+    configure_file_edit_event_publisher(get_log_jetstream_publisher())
+
+
+def clear_file_event_broadcaster_publisher() -> None:
+    """Clear the KernelOne file event publisher adapter."""
+    from polaris.kernelone.events.file_event_broadcaster import configure_file_edit_event_publisher
+
+    configure_file_edit_event_publisher(None)
+
+
 def shutdown_log_jetstream_publisher(timeout: float = 5.0) -> None:
     """Stop the process-wide publisher if it has been created."""
     global _publisher_singleton
@@ -257,6 +271,8 @@ def shutdown_log_jetstream_publisher(timeout: float = 5.0) -> None:
 __all__ = [
     "JetStreamPublishRequest",
     "JetStreamPublisher",
+    "clear_file_event_broadcaster_publisher",
     "get_log_jetstream_publisher",
+    "install_file_event_broadcaster_publisher",
     "shutdown_log_jetstream_publisher",
 ]

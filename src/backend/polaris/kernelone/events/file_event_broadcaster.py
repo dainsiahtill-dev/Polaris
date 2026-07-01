@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, Protocol
 
 from polaris.kernelone.constants import BROADCAST_MAX_SIZE_BYTES
 from polaris.kernelone.fs import KernelFileSystem
@@ -24,8 +24,34 @@ _MESSAGE_BUS_TYPES: tuple[Any, Any] | None = None
 _MESSAGE_BUS_TYPES_LOCK = Lock()
 _PENDING_BROADCAST_TASKS: set[Any] = set()
 _PENDING_BROADCAST_TASKS_LOCK = Lock()
+_FILE_EDIT_EVENT_PUBLISHER: "FileEditEventPublisher | None" = None
+_FILE_EDIT_EVENT_PUBLISHER_LOCK = Lock()
 logger = logging.getLogger(__name__)
 _JETSTREAM_PUBLISH_FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
+
+
+class FileEditEventPublisher(Protocol):
+    """Synchronous publisher port for durable runtime file-edit events."""
+
+    def publish(self, *, subject: str, payload: dict[str, Any]) -> bool:
+        """Publish one runtime event envelope.
+
+        Implementations own transport details. KernelOne deliberately depends
+        only on this protocol so realtime delivery can be installed by the
+        infrastructure layer without reverse imports.
+        """
+
+
+def configure_file_edit_event_publisher(publisher: FileEditEventPublisher | None) -> None:
+    """Install or clear the process-wide file edit publisher adapter."""
+    global _FILE_EDIT_EVENT_PUBLISHER
+    with _FILE_EDIT_EVENT_PUBLISHER_LOCK:
+        _FILE_EDIT_EVENT_PUBLISHER = publisher
+
+
+def _get_file_edit_event_publisher() -> FileEditEventPublisher | None:
+    with _FILE_EDIT_EVENT_PUBLISHER_LOCK:
+        return _FILE_EDIT_EVENT_PUBLISHER
 
 
 def _jetstream_publish_enabled() -> bool:
@@ -219,6 +245,10 @@ def _append_durable_file_edit_event(workspace: str | None, payload: dict[str, An
 def _publish_file_edit_to_jetstream(workspace: str, payload: dict[str, Any]) -> bool:
     if not _jetstream_publish_enabled():
         return False
+    publisher = _get_file_edit_event_publisher()
+    if publisher is None:
+        logger.debug("FILE_WRITTEN JetStream publish skipped: no publisher adapter configured.")
+        return False
     workspace_token = str(workspace or "").strip()
     if not workspace_token:
         return False
@@ -227,10 +257,6 @@ def _publish_file_edit_to_jetstream(workspace: str, payload: dict[str, Any]) -> 
         workspace_key = str(getattr(roots, "workspace_key", "") or "").strip()
         if not workspace_key:
             return False
-        from polaris.infrastructure.log_pipeline.jetstream_publisher import (
-            get_log_jetstream_publisher,
-        )
-
         envelope = {
             "schema_version": "runtime.v2",
             "event_id": f"file-edit-{uuid.uuid4().hex[:12]}",
@@ -244,11 +270,11 @@ def _publish_file_edit_to_jetstream(workspace: str, payload: dict[str, Any]) -> 
             "payload": payload,
             "meta": {"source": "file_event_broadcaster"},
         }
-        return get_log_jetstream_publisher().publish(
+        return publisher.publish(
             subject=f"hp.runtime.{workspace_key}.event.file_edit",
             payload=envelope,
         )
-    except Exception as exc:  # noqa: BLE001
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
         logger.debug("FILE_WRITTEN JetStream publish failed: %s", exc)
         return False
 

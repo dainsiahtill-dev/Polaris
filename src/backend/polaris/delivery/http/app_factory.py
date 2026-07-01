@@ -50,8 +50,14 @@ async def lifespan(app: FastAPI):
     from polaris.cells.instances.public.service import maybe_start_instance_watchdog
     from polaris.cells.resident.autonomy.public.service import reset_resident_services
     from polaris.delivery.http.resident_autotick import maybe_start_resident_autotick
+    from polaris.infrastructure.db.repositories.accel_session_receipt_store import (
+        clear_context_retrieve_receipt_lookup,
+        install_context_retrieve_receipt_lookup,
+    )
     from polaris.infrastructure.di.container import get_container, reset_container
     from polaris.infrastructure.log_pipeline.jetstream_publisher import (
+        clear_file_event_broadcaster_publisher,
+        install_file_event_broadcaster_publisher,
         shutdown_log_jetstream_publisher,
     )
     from polaris.infrastructure.messaging import close_default_client
@@ -65,6 +71,8 @@ async def lifespan(app: FastAPI):
     reset_resident_services()
     container = await get_container()
     os.environ.setdefault("KERNELONE_JETSTREAM_PUBLISH", "1")
+    install_file_event_broadcaster_publisher()
+    install_context_retrieve_receipt_lookup()
 
     nats_settings = getattr(app.state.settings, "nats", None)
     nats_enabled = bool(getattr(nats_settings, "enabled", True))
@@ -137,6 +145,10 @@ async def lifespan(app: FastAPI):
         resident_autotick_task.cancel()
         with suppress(asyncio.CancelledError, Exception):
             await resident_autotick_task
+    with suppress(Exception):
+        clear_context_retrieve_receipt_lookup()
+    with suppress(Exception):
+        clear_file_event_broadcaster_publisher()
     with suppress(Exception):
         await close_default_client()
     with suppress(Exception):

@@ -827,4 +827,30 @@ class SessionReceiptStore:
             conn.close()
 
 
-__all__ = ["SessionReceiptError", "SessionReceiptStore"]
+def lookup_session_receipt_metadata(db_path: Path, ref: str) -> dict[str, Any] | None:
+    """Return receipt metadata for ``ref`` from a session receipt database."""
+    store = SessionReceiptStore(db_path)
+    return store.get_receipt(job_id=ref)
+
+
+def install_context_retrieve_receipt_lookup() -> None:
+    """Install the receipt-store adapter into the KernelOne context retrieve port."""
+    from polaris.kernelone.llm.toolkit.executor.handlers.context_retrieve import configure_receipt_metadata_lookup
+
+    configure_receipt_metadata_lookup(lookup_session_receipt_metadata)
+
+
+def clear_context_retrieve_receipt_lookup() -> None:
+    """Clear the KernelOne context retrieve receipt-store adapter."""
+    from polaris.kernelone.llm.toolkit.executor.handlers.context_retrieve import configure_receipt_metadata_lookup
+
+    configure_receipt_metadata_lookup(None)
+
+
+__all__ = [
+    "SessionReceiptError",
+    "SessionReceiptStore",
+    "clear_context_retrieve_receipt_lookup",
+    "install_context_retrieve_receipt_lookup",
+    "lookup_session_receipt_metadata",
+]

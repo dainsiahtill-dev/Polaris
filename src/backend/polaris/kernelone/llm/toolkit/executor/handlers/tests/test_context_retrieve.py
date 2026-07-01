@@ -8,10 +8,12 @@ from typing import Any, cast
 import pytest
 from polaris.infrastructure.db.repositories.accel_session_receipt_store import (
     SessionReceiptStore,
+    lookup_session_receipt_metadata,
 )
 from polaris.kernelone.llm.toolkit.executor.core import AgentAccelToolExecutor
 from polaris.kernelone.llm.toolkit.executor.handlers.context_retrieve import (
     _handle_context_retrieve,
+    configure_receipt_metadata_lookup,
     ensure_context_retrieve_spec_registered,
     register_handlers,
 )
@@ -38,7 +40,9 @@ def _fake(workspace: str = "") -> AgentAccelToolExecutor:
 def _clean_default_cache() -> Any:
     cache = get_default_cache()
     cache.clear()
+    configure_receipt_metadata_lookup(lookup_session_receipt_metadata)
     yield
+    configure_receipt_metadata_lookup(None)
     cache.clear()
 
 
@@ -89,6 +93,28 @@ def test_missing_ref_fails_closed() -> None:
 
 def test_unknown_ref_fails_closed_not_retrievable() -> None:
     result = _handle_context_retrieve(_fake(), ref="<<ref:unknownhash>>")
+    assert result["ok"] is False
+    assert result["error_type"] == "not_retrievable"
+
+
+def test_receipt_lookup_without_adapter_fails_closed(tmp_path: Path) -> None:
+    configure_receipt_metadata_lookup(None)
+    workspace = tmp_path
+    state_dir = workspace / "runtime" / "state"
+    state_dir.mkdir(parents=True)
+    store = SessionReceiptStore(state_dir / "session_receipts.db")
+    store.open_session(run_id="run-no-adapter", session_id="s-no-adapter")
+    store.upsert_receipt(
+        job_id="job-no-adapter",
+        session_id="s-no-adapter",
+        run_id="run-no-adapter",
+        tool="write_file",
+        args_hash="abc",
+        status="succeeded",
+    )
+
+    result = _handle_context_retrieve(_fake(str(workspace)), ref="[receipt_ref:job-no-adapter]")
+
     assert result["ok"] is False
     assert result["error_type"] == "not_retrievable"
 
