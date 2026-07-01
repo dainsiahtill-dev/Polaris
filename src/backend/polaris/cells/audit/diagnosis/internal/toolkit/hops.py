@@ -32,10 +32,6 @@ def _get_dict(event: EventDict, key: str, default: dict[str, Any] | None = None)
     return default if default is not None else {}
 
 
-# Backward compatibility alias
-_utc_now_iso = utc_now_iso
-
-
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
         return int(value)
@@ -204,7 +200,7 @@ def build_failure_hops(
     payload: dict[str, Any] = {
         "schema_version": 1,
         "run_id": run_id,
-        "generated_at": _utc_now_iso(),
+        "generated_at": utc_now_iso(),
         "event_span": {
             "seq_start": int(event_seq_start or 0),
             "seq_end": int(event_seq_end or 0),

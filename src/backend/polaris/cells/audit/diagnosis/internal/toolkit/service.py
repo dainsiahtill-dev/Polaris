@@ -70,10 +70,6 @@ SUPPORTED_COMMANDS = {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-# Backward compatibility alias
-_utc_now_iso = utc_now_iso
-
-
 def _error_item(code: str, message: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "code": str(code or "unknown_error"),
@@ -97,7 +93,7 @@ def _build_envelope(
         "command": command,
         "status": status,
         "mode": mode,
-        "generated_at": _utc_now_iso(),
+        "generated_at": utc_now_iso(),
         "data": data,
         "errors": errors or [],
     }
@@ -332,7 +328,7 @@ def _normalize_hops_payload(payload: dict[str, Any], run_id: str) -> dict[str, A
     return {
         "schema_version": int(payload.get("schema_version", 2) or 2),
         "run_id": str(payload.get("run_id") or run_id),
-        "generated_at": str(payload.get("generated_at") or _utc_now_iso()),
+        "generated_at": str(payload.get("generated_at") or utc_now_iso()),
         "ready": bool(payload.get("ready", False)),
         "has_failure": bool(payload.get("has_failure", False)),
         "failure_code": str(payload.get("failure_code") or ""),
