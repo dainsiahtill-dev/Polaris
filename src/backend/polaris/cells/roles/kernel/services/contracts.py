@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
 from polaris.kernelone.llm.contracts import CellToolExecutorPort
-from polaris.kernelone.llm.shared_contracts import AIResponse, Usage
+from polaris.kernelone.llm.engine.contracts import AIResponse, Usage
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator

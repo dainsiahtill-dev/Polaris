@@ -19,8 +19,8 @@ from polaris.cells.roles.profile.public.service import RoleExecutionMode, RoleTu
 @pytest.fixture(autouse=True)
 def _patch_model_catalog(monkeypatch):
     """Patch ModelCatalog.resolve to avoid filesystem lookups for fake models."""
+    from polaris.kernelone.llm.engine.contracts import ModelSpec
     from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
-    from polaris.kernelone.llm.shared_contracts import ModelSpec
 
     fake_spec = ModelSpec(
         provider_id="openai",

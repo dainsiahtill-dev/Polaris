@@ -4,7 +4,7 @@ Defines provider-specific message and tool result formatting behavior.
 
 P1-TYPE-002: This module defines Cell-specific ProviderFormatter interfaces
 that are distinct from the canonical KernelOne ProviderFormatter in
-polaris.kernelone.llm.shared_contracts. The Cell layer uses ContextEvent
+polaris.kernelone.llm.engine.contracts. The Cell layer uses ContextEvent
 objects while the KernelOne layer uses dict representations.
 
 The canonical KernelOne ProviderFormatter is imported and can be used when
@@ -23,8 +23,8 @@ if TYPE_CHECKING:
 class ProviderFormatter(Protocol):
     """Cell-layer Provider-specific formatting interface.
 
-    This is distinct from the canonical KernelOne ProviderFormatter in
-    shared_contracts.py which operates on dict representations.
+    This is distinct from the canonical KernelOne ProviderFormatter exported by
+    engine.contracts, which operates on dict representations.
 
     This interface handles ContextEvent objects from the Cell layer.
     """

@@ -68,8 +68,8 @@ def loaded_registry() -> RoleProfileRegistry:
 @pytest.fixture(autouse=True)
 def _patch_model_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
     """Resolve any (provider, model) to a tools-capable spec (no llm_config files)."""
+    from polaris.kernelone.llm.engine.contracts import ModelSpec
     from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
-    from polaris.kernelone.llm.shared_contracts import ModelSpec
 
     fake_spec = ModelSpec(
         provider_id="openai",

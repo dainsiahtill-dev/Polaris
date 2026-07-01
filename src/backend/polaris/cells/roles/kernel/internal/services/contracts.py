@@ -29,8 +29,9 @@ P1-TYPE-004: ToolCall 统一
 
 P1-TYPE-006: StreamEventType 说明
     - 本地定义已移除
-    - canonical StreamEventType 位于 polaris.kernelone.llm.shared_contracts
-    - 从该模块导入使用
+    - canonical StreamEventType 经 polaris.kernelone.llm.engine.contracts 暴露
+    - roles.kernel 消费 KernelOne LLM engine.contracts re-export，避免绕过
+      LLM engine/toolkit contract parity gates。
 """
 
 from __future__ import annotations
@@ -41,10 +42,10 @@ from typing import TYPE_CHECKING, Any, Protocol, TypedDict, runtime_checkable
 
 # Import canonical types from KernelOne contracts
 # P1-TYPE-004: This is the single source of truth for tool call representation
-# P1-LLM-001: Usage is imported from shared_contracts (canonical)
+# P1-LLM-001: LLM shared types are consumed through engine.contracts re-export
 from polaris.kernelone.errors import KernelOneError
 from polaris.kernelone.llm.contracts.tool import CellToolExecutorPort, ToolCall
-from polaris.kernelone.llm.shared_contracts import StreamEventType, Usage
+from polaris.kernelone.llm.engine.contracts import StreamEventType, Usage
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Sequence
@@ -173,7 +174,7 @@ class PolicyError(KernelError):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-# StreamEventType is now imported from polaris.kernelone.llm.shared_contracts
+# StreamEventType is now imported from KernelOne LLM engine.contracts.
 
 
 class ToolExecutionStatus(Enum):
@@ -200,7 +201,7 @@ class ContextCompressionStrategy(Enum):
 # ═══════════════════════════════════════════════════════════════════════════════
 # 共享数据类
 # ═══════════════════════════════════════════════════════════════════════════════
-# Usage is now imported from polaris.kernelone.llm.shared_contracts (canonical)
+# Usage is now imported from KernelOne LLM engine.contracts.
 
 
 @dataclass(frozen=True)
