@@ -761,7 +761,3 @@ class ExplorationWorkflowRuntime:
         if self._cancel_token is None:
             self._cancel_token = CancelToken()
         self._cancel_token.cancel(reason)
-
-
-# Backward compatibility alias
-ExplorationWorkflow = ExplorationWorkflowRuntime

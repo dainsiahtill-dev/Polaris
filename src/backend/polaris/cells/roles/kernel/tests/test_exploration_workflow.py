@@ -15,7 +15,6 @@ from unittest.mock import AsyncMock
 import pytest
 from polaris.cells.roles.kernel.internal.exploration_workflow import (
     ExplorationStatus,
-    ExplorationWorkflow,
     ExplorationWorkflowRuntime,
 )
 from polaris.cells.roles.kernel.public.turn_contracts import (
@@ -53,7 +52,7 @@ def mock_synthesis_llm():
 @pytest.fixture
 def workflow(mock_executor, mock_synthesis_llm):
     """Create workflow with mocks"""
-    return ExplorationWorkflow(
+    return ExplorationWorkflowRuntime(
         tool_executor=mock_executor, synthesis_llm=mock_synthesis_llm, max_steps=5, timeout_ms=10000
     )
 
@@ -188,7 +187,11 @@ class TestStrategies:
     @pytest.mark.asyncio
     async def test_breadth_first_strategy(self, mock_executor, mock_synthesis_llm) -> None:
         """广度优先策略"""
-        workflow = ExplorationWorkflow(tool_executor=mock_executor, synthesis_llm=mock_synthesis_llm, max_steps=10)
+        workflow = ExplorationWorkflowRuntime(
+            tool_executor=mock_executor,
+            synthesis_llm=mock_synthesis_llm,
+            max_steps=10,
+        )
 
         decision = TurnDecision(
             turn_id=TurnId("turn_bfs"),
@@ -243,7 +246,7 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_timeout_handling(self, mock_executor, mock_synthesis_llm) -> None:
         """超时处理 - 单工具超时"""
-        workflow = ExplorationWorkflow(
+        workflow = ExplorationWorkflowRuntime(
             tool_executor=mock_executor,
             synthesis_llm=mock_synthesis_llm,
             timeout_ms=10000,  # workflow超时较长
@@ -303,7 +306,7 @@ class TestSynthesis:
     @pytest.mark.asyncio
     async def test_fallback_synthesis_without_llm(self, mock_executor, handoff_decision) -> None:
         """没有综合LLM时生成兜底摘要"""
-        workflow = ExplorationWorkflow(
+        workflow = ExplorationWorkflowRuntime(
             tool_executor=mock_executor,
             synthesis_llm=None,  # 没有综合LLM
         )
