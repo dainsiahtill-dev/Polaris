@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 from polaris.bootstrap.launch_validation import (
     LaunchValidationResult,
-    ValidationResult,
     bootstrap_validation,
     ensure_utf8_environment,
     validate_environment,
@@ -32,11 +31,6 @@ class TestLaunchValidationResult:
         result.add_warning("warn")
         assert result.is_valid is True
         assert result.warnings == ["warn"]
-
-
-class TestValidationResultAlias:
-    def test_alias(self) -> None:
-        assert ValidationResult is LaunchValidationResult
 
 
 @dataclass

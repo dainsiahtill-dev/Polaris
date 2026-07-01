@@ -46,11 +46,7 @@ class LaunchValidationResult:
         return self
 
 
-# Backward compatibility alias (deprecated)
-ValidationResult = LaunchValidationResult
-
-
-def validate_launch_request(request: Any) -> ValidationResult:
+def validate_launch_request(request: Any) -> LaunchValidationResult:
     """Unified configuration validation entry point.
 
     This function performs all configuration validation in one place,
@@ -60,7 +56,7 @@ def validate_launch_request(request: Any) -> ValidationResult:
         request: BackendLaunchRequest or any object with workspace/port attributes
 
     Returns:
-        ValidationResult with errors and warnings
+        LaunchValidationResult with errors and warnings
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -76,7 +72,7 @@ def validate_launch_request(request: Any) -> ValidationResult:
             # Check writable (best effort)
             try:
                 test_file = workspace_path / ".write_test"
-                test_file.write_text("")
+                test_file.write_text("", encoding="utf-8")
                 test_file.unlink()
             except (OSError, PermissionError):
                 warnings.append(f"Workspace may not be writable: {request.workspace}")
@@ -121,14 +117,14 @@ def validate_launch_request(request: Any) -> ValidationResult:
             if not origin.startswith(("http://", "https://")):
                 warnings.append(f"CORS origin '{origin}' may be missing protocol scheme")
 
-    return ValidationResult(errors=errors, warnings=warnings)
+    return LaunchValidationResult(errors=errors, warnings=warnings)
 
 
-def validate_environment() -> ValidationResult:
+def validate_environment() -> LaunchValidationResult:
     """Validate the runtime environment.
 
     Returns:
-        ValidationResult with environment-related errors and warnings
+        LaunchValidationResult with environment-related errors and warnings
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -146,10 +142,10 @@ def validate_environment() -> ValidationResult:
         if not os.environ.get(var):
             warnings.append(f"Environment variable {var} is not set")
 
-    return ValidationResult(errors=errors, warnings=warnings)
+    return LaunchValidationResult(errors=errors, warnings=warnings)
 
 
-def bootstrap_validation(request: Any) -> ValidationResult:
+def bootstrap_validation(request: Any) -> LaunchValidationResult:
     """Run all validation checks during bootstrap phase.
 
     This is the main entry point for validation during server bootstrap.
@@ -159,7 +155,7 @@ def bootstrap_validation(request: Any) -> ValidationResult:
         request: BackendLaunchRequest or compatible object
 
     Returns:
-        ValidationResult with all errors and warnings
+        LaunchValidationResult with all errors and warnings
     """
     # Validate environment first
     env_result = validate_environment()
@@ -168,7 +164,7 @@ def bootstrap_validation(request: Any) -> ValidationResult:
     request_result = validate_launch_request(request)
 
     # Combine results
-    return ValidationResult(
+    return LaunchValidationResult(
         errors=env_result.errors + request_result.errors,
         warnings=env_result.warnings + request_result.warnings,
     )
