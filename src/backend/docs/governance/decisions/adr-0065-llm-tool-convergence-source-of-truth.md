@@ -8,7 +8,11 @@
 > ⚠️ 收敛状态与路径勘误 (2026-06-07 审计，CODE-IS-TRUTH)：本 ADR 的目标收敛尚未完成。实际现状：
 > - `ToolSpecRegistry` 实际位于 `polaris/kernelone/tool_execution/tool_spec_registry.py`（非 `kernelone/tools/`）；
 > - 第二份 `ProviderManager` 仍存在于 `polaris/infrastructure/llm/providers/provider_registry.py`，§2.3 的 Provider 单一化未达成；
-> - `RolePolicyEngine` / `polaris/kernelone/policy/role_engine.py` 不存在，§2.4 角色策略统一未达成；
+> - `polaris/kernelone/policy/` 已退休；§2.4 的原 `RolePolicyEngine`
+>   目标被代码事实取代：角色运行策略由
+>   `polaris/cells/roles/kernel/internal/policy/layer/*` 持有，危险命令模式由
+>   `polaris/kernelone/security/dangerous_patterns.py` 持有，禁止重新创建
+>   `polaris.kernelone.policy` 包作为策略入口；
 > - `core_roles.yaml` 仍存在两处（`polaris/cells/roles/profile/config/roles/core_roles.yaml` 与 `polaris/cells/roles/profile/internal/config/core_roles.yaml`），未删除。
 
 ---
@@ -89,10 +93,12 @@ class ToolSpecRegistry:
 
 ---
 
-### 2.4 角色策略统一为RolePolicyEngine
+### 2.4 角色策略统一到现有 Policy Layer
 
 **架构**:
-- `polaris/kernelone/policy/role_engine.py`: 唯一策略执行点
+- `polaris/cells/roles/kernel/internal/policy/layer/*`: 角色运行策略执行层
+- `polaris/kernelone/security/dangerous_patterns.py`: 危险命令/导入模式的 KernelOne 安全源
+- `polaris/kernelone/policy/`: 已退休，禁止作为兼容 facade 或新策略入口重建
 - `builtin_profiles.py`: 唯一角色配置源
 - 删除 `core_roles.yaml`
 

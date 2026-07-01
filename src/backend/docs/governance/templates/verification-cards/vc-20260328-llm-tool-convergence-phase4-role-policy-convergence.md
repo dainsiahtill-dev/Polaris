@@ -11,17 +11,19 @@
 
 ## 验证目标
 
-RoleToolGateway + PolicyLayer收敛为单一RolePolicyEngine
+角色工具策略收敛到 `roles.kernel` policy layer；危险命令模式由
+`kernelone.security` 统一持有。`polaris.kernelone.policy` 包已退休，禁止
+作为 RolePolicyEngine 或兼容 facade 重建。
 
 ---
 
 ## 验证条件
 
-### 条件1: RolePolicyEngine正确实现
+### 条件1: roles.kernel policy layer 正确实现
 
 | 检查项 | 验证方法 | 预期结果 | 状态 |
 |--------|---------|---------|------|
-| RolePolicyEngine类 | 代码审查 | 单一策略执行点 | ⏳ |
+| Tool/approval/syntax/budget policy layer | 代码审查 | 角色运行策略在 `roles.kernel` 内聚 | ⏳ |
 | whitelist检查 | 单元测试 | 通配符支持正确 | ⏳ |
 | blacklist检查 | 单元测试 | 优先级正确 | ⏳ |
 | category权限检查 | 单元测试 | code_write/command_execution/file_delete正确 | ⏳ |
@@ -31,16 +33,18 @@ RoleToolGateway + PolicyLayer收敛为单一RolePolicyEngine
 
 | 检查项 | 验证方法 | 预期结果 | 状态 |
 |--------|---------|---------|------|
-| 统一Patterns定义 | 代码审查 | 一处定义 | ⏳ |
-| RoleToolGateway使用 | 代码审查 | 引用统一定义 | ⏳ |
+| 统一Patterns定义 | 代码审查 | `kernelone.security.dangerous_patterns` 一处定义 | ⏳ |
+| 角色工具策略使用 | 代码审查 | 通过 policy layer / command auditor 消费统一定义 | ⏳ |
 | BudgetPolicy使用 | 代码审查 | 引用统一定义 | ⏳ |
 | 无重复定义 | grep搜索 | 0个重复 | ⏳ |
 
-### 条件3: RoleToolGateway委托
+### 条件3: retired KernelOne policy package 不可回归
 
 | 检查项 | 验证方法 | 预期结果 | 状态 |
 |--------|---------|---------|------|
-| RoleToolGateway._engine委托 | 代码审查 | 委托RolePolicyEngine | ⏳ |
+| `polaris.kernelone.policy` | import 测试 | 不可导入 | ⏳ |
+| `polaris/kernelone/policy/*.py` | 文件检查 | 源文件不存在 | ⏳ |
+| reverse-dep baseline | 架构测试 | 不保留 retired package budget | ⏳ |
 | 原有功能不变 | 集成测试 | 行为一致 | ⏳ |
 | 单元测试通过 | pytest | 100%通过 | ⏳ |
 
@@ -72,9 +76,9 @@ RoleToolGateway + PolicyLayer收敛为单一RolePolicyEngine
 
 | 条件 | 结果 | 备注 |
 |------|------|------|
-| RolePolicyEngine正确实现 | ☐ | |
+| roles.kernel policy layer 正确实现 | ☐ | |
 | 危险命令Patterns统一 | ☐ | |
-| RoleToolGateway委托 | ☐ | |
+| retired KernelOne policy package 不可回归 | ☐ | |
 | YAML配置删除 | ☐ | |
 | TOOL_NAME_ALIASES正确使用 | ☐ | |
 

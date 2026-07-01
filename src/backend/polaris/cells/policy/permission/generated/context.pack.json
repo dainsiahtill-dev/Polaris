@@ -10,11 +10,7 @@
     "polaris/application/services/permission_service.py",
     "polaris/application/services/permission/**",
     "polaris/domain/entities/capability.py",
-    "polaris/domain/entities/policy.py",
-    "polaris/kernelone/policy/decision_engine.py",
-    "polaris/kernelone/policy/contracts.py",
-    "polaris/kernelone/policy/non_llm_gates.py",
-    "polaris/kernelone/policy/constitution_rules.py"
+    "polaris/domain/entities/policy.py"
   ],
   "public_contracts": {
     "commands": [
@@ -53,11 +49,7 @@
     "polaris/application/services/permission_service.py",
     "polaris/application/services/permission/**",
     "polaris/domain/entities/capability.py",
-    "polaris/domain/entities/policy.py",
-    "polaris/kernelone/policy/decision_engine.py",
-    "polaris/kernelone/policy/contracts.py",
-    "polaris/kernelone/policy/non_llm_gates.py",
-    "polaris/kernelone/policy/constitution_rules.py"
+    "polaris/domain/entities/policy.py"
   ],
   "test_targets": [
     "tests/test_permission_service.py",

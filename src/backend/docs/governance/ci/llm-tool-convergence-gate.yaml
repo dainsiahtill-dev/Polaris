@@ -159,33 +159,38 @@ jobs:
           if [ -f polaris/cells/roles/profile/internal/config/core_roles.yaml ]; then echo "ERROR: core_roles.yaml should be deleted"; exit 1; fi
           echo "YAML config deleted"
 
-      - name: Check RolePolicyEngine exists
+      - name: Check retired KernelOne policy package stays absent
         run: |
-          test -f polaris/kernelone/policy/role_engine.py && echo "OK" || exit 1
+          if [ -e polaris/kernelone/policy ]; then echo "ERROR: polaris/kernelone/policy is retired"; exit 1; fi
+          echo "KernelOne policy package retired"
 
       - name: Check dangerous patterns unified
         run: |
           python -c "
-            # 检查危险命令Patterns只有一处定义
-            import re
-            with open('polaris/kernelone/policy/dangerous_patterns.py') as f:
+            # 检查危险命令Patterns由 KernelOne security 层统一持有
+            with open('polaris/kernelone/security/dangerous_patterns.py') as f:
                 content = f.read()
-            if 'DANGEROUS_PATTERNS' not in content:
-                raise Exception('DANGEROUS_PATTERNS not found in dangerous_patterns.py')
+            if '_DANGEROUS_PATTERNS' not in content:
+                raise Exception('_DANGEROUS_PATTERNS not found in security/dangerous_patterns.py')
 
-            # 检查RoleToolGateway不再独立定义
-            with open('polaris/cells/roles/kernel/internal/tool_gateway.py') as f:
-                gateway_content = f.read()
-            # 应该委托给RolePolicyEngine
-            if 'RolePolicyEngine' not in gateway_content:
-                raise Exception('RoleToolGateway should delegate to RolePolicyEngine')
-            print('Dangerous patterns unified')
+            # 检查角色运行策略由 roles.kernel policy layer 持有，不回退到 KernelOne policy 包
+            required = [
+                'polaris/cells/roles/kernel/internal/policy/layer/tool.py',
+                'polaris/cells/roles/kernel/internal/policy/layer/approval.py',
+                'polaris/cells/roles/kernel/internal/policy/layer/syntax.py',
+                'polaris/cells/roles/kernel/internal/policy/budget_policy.py',
+            ]
+            for path in required:
+                with open(path) as f:
+                    if not f.read().strip():
+                        raise Exception(f'{path} is empty')
+            print('Dangerous patterns and role policy layers are unified')
           "
 
       - name: Run Role Policy tests
         run: |
-          pytest polaris/tests/unit/kernelone/policy/ -v --cov
-          pytest polaris/tests/unit/polaris/cells/roles/kernel/ -v --cov
+          pytest polaris/cells/roles/kernel/tests/test_policy_components.py -v --cov
+          pytest polaris/kernelone/security/tests/test_command_auditor_integration.py -v --cov
 
   # ========================================================================
   # Phase 5: Executor Convergence

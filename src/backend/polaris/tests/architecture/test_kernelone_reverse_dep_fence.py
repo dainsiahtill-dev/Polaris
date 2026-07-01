@@ -54,7 +54,6 @@ BASELINE_PRODUCTION_FILES: frozenset[str] = frozenset(
         "polaris/kernelone/llm/toolkit/__init__.py",
         "polaris/kernelone/multi_agent/bus_port.py",
         "polaris/kernelone/multi_agent/neural_syndicate/nats_broker.py",
-        "polaris/kernelone/policy/__init__.py",
         "polaris/kernelone/ports/__init__.py",
         "polaris/kernelone/ports/alignment.py",
         "polaris/kernelone/prompts/meta_prompting.py",
@@ -136,9 +135,7 @@ class TestKernelOneReverseDependencyFence:
         """Fail if any production file outside the baseline imports forbidden layers."""
         prod_violations, _ = _scan_violations()
         new_violations = {
-            path: modules
-            for path, modules in prod_violations.items()
-            if path not in BASELINE_PRODUCTION_FILES
+            path: modules for path, modules in prod_violations.items() if path not in BASELINE_PRODUCTION_FILES
         }
 
         if new_violations:
@@ -166,9 +163,7 @@ class TestKernelOneReverseDependencyFence:
         prod_violations, _ = _scan_violations()
         fixed = BASELINE_PRODUCTION_FILES - set(prod_violations.keys())
         if fixed:
-            lines = [
-                "Production baseline entries no longer needed (remove from BASELINE_PRODUCTION_FILES):"
-            ]
+            lines = ["Production baseline entries no longer needed (remove from BASELINE_PRODUCTION_FILES):"]
             for path in sorted(fixed):
                 lines.append(f"  {path}")
             pytest.skip("\n".join(lines))

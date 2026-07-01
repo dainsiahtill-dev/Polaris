@@ -61,6 +61,7 @@ def test_get_or_load_profile_returns_profile_instance_and_persists(tmp_path: Pat
 def test_removed_legacy_modules_are_no_longer_importable() -> None:
     removed_modules = (
         "polaris.kernelone.audit.unified_audit_core",
+        "polaris.kernelone.policy",
         "polaris.kernelone.policy.runtime_policy",
         "polaris.infrastructure.llm.providers.openai_compat_provider",
         "polaris.infrastructure.llm.providers.anthropic_compat_provider",
