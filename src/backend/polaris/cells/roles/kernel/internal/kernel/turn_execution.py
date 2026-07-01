@@ -40,6 +40,7 @@ from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
     _latest_user_content_preview,
     _text_requests_materialize_delivery,
 )
+from polaris.cells.roles.kernel.internal.kernel.output_parser_provider import get_output_parser
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     tool_calls_from_batch_receipt,
     tool_results_from_batch_receipt,
@@ -218,7 +219,7 @@ async def execute_transaction_kernel_turn(
     visible_content = tk_result.get("visible_content", "")
     thinking_text: str | None = None
     if visible_content:
-        parsed = kernel._get_output_parser().parse_thinking(visible_content)
+        parsed = get_output_parser(kernel).parse_thinking(visible_content)
         visible_content = str(parsed.clean_content or "")
         thinking_text = parsed.thinking
     batch_receipt = tk_result.get("batch_receipt")
@@ -239,7 +240,7 @@ async def execute_transaction_kernel_turn(
     structured_output: dict[str, Any] | None = None
     if response_schema is not None and visible_content:
         try:
-            candidate = kernel._get_output_parser().extract_json(visible_content)
+            candidate = get_output_parser(kernel).extract_json(visible_content)
             if candidate is not None:
                 validated = response_schema(**candidate)
                 structured_output = validated.model_dump()

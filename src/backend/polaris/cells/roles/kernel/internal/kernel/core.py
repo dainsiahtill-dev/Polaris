@@ -35,6 +35,7 @@ from polaris.cells.roles.kernel.internal.kernel.error_handler import (
 from polaris.cells.roles.kernel.internal.kernel.helpers import (
     quality_result_to_dict,
 )
+from polaris.cells.roles.kernel.internal.kernel.output_parser_provider import get_output_parser
 from polaris.cells.roles.kernel.internal.kernel.prompt_assembly import (
     append_prompt_profiles_for_request,
     build_system_prompt_for_request,
@@ -263,14 +264,6 @@ class RoleExecutionKernel:
         if self._prompt_builder is None:
             self._prompt_builder = PromptBuilder(self.workspace)
         return self._prompt_builder
-
-    def _get_output_parser(self) -> OutputParser:
-        """获取输出解析器（支持依赖注入）"""
-        if self._injected_output_parser is not None:
-            return self._injected_output_parser  # type: ignore[return-value]
-        if self._output_parser is None:
-            self._output_parser = OutputParser()
-        return self._output_parser
 
     def _get_quality_checker(self) -> QualityChecker:
         """获取质量检查器（支持依赖注入）"""
@@ -522,7 +515,7 @@ class RoleExecutionKernel:
                     instructor_validated = False
                     if response_schema is not None:
                         try:
-                            candidate = self._get_output_parser().extract_json(effective_content)
+                            candidate = get_output_parser(self).extract_json(effective_content)
                             if candidate is None:
                                 raise ValueError("No JSON found in content")
                             validated = response_schema(**candidate)

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T05:22:05.370104Z",
-  "source_hash": "8428f4adc45b3b62",
+  "generated_at": "2026-07-01T05:32:26.348775Z",
+  "source_hash": "f61238e8ca1de2eb",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4012,10 +4012,6 @@
           "doc": "获取提示词构建器（支持依赖注入）"
         },
         {
-          "name": "_get_output_parser",
-          "doc": "获取输出解析器（支持依赖注入）"
-        },
-        {
           "name": "_get_quality_checker",
           "doc": "获取质量检查器（支持依赖注入）"
         },
@@ -4194,6 +4190,12 @@
       "name": "quality_result_to_dict",
       "description": "Convert quality result to dictionary.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "get_output_parser",
+      "description": "Return the injected or lazily-created output parser for a kernel turn.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/output_parser_provider.py"
     },
     {
       "type": "function",
@@ -22309,10 +22311,6 @@
       "methods": [
         {
           "name": "build_transaction_kernel",
-          "doc": ""
-        },
-        {
-          "name": "_get_output_parser",
           "doc": ""
         }
       ]

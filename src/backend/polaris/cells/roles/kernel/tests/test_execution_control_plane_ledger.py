@@ -32,6 +32,11 @@ class _DroppedToolDispatchKernel:
     def __init__(self, workspace: str) -> None:
         self.workspace = workspace
         self.context_gateway_config_factory = None
+        self._output_parser = None
+        self._injected_output_parser = SimpleNamespace(
+            parse_thinking=lambda value: SimpleNamespace(clean_content=value, thinking=None),
+            extract_json=lambda _value: None,
+        )
 
     def build_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:
         class _TransactionKernel:
@@ -81,12 +86,6 @@ class _SuccessfulNoMaterializationKernel(_DroppedToolDispatchKernel):
                 }
 
         return _TransactionKernel()
-
-    def _get_output_parser(self) -> Any:
-        return SimpleNamespace(
-            parse_thinking=lambda value: SimpleNamespace(clean_content=value, thinking=None),
-            extract_json=lambda _value: None,
-        )
 
 
 class _DroppedToolDispatchStreamKernel(_DroppedToolDispatchKernel):

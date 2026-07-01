@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.output_parser_provider import get_output_parser
 from polaris.cells.roles.kernel.internal.kernel.tool_gateway_turn_key import resolve_tool_gateway_turn_key
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
     _apply_runtime_tool_policy,
@@ -516,9 +517,9 @@ class TestLazyLoading:
         kernel = RoleExecutionKernel(workspace=".")
         assert kernel._output_parser is None
 
-        parser = kernel._get_output_parser()
+        parser = get_output_parser(kernel)
         assert parser is not None
-        assert kernel._get_output_parser() is parser
+        assert get_output_parser(kernel) is parser
 
     def test_quality_checker_lazy_loaded(self) -> None:
         """测试 Quality Checker 懒加载"""
