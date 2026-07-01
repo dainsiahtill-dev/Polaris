@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+import pytest
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService, reset_runtime_task_records
 from polaris.kernelone.storage import resolve_runtime_path
 
@@ -412,6 +413,45 @@ def test_task_runtime_service_persists_sessions_under_canonical_task_namespace(t
 
     assert service._kernel_fs.exists(canonical_path)
     assert not service._kernel_fs.exists(legacy_path)
+
+
+def test_task_runtime_service_ignores_corrupt_session_snapshot(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create(subject="recover corrupt session")
+    service._kernel_fs.write_json_atomic(
+        f"runtime/tasks/task_{created.id}.session.json",
+        {
+            "session_id": "tx-corrupt",
+            "task_id": created.id,
+            "role_id": "director",
+            "status": "active",
+            "lease_expires_at": "2026-01-01T00:02:00+00:00",
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+
+    with caplog.at_level("WARNING"):
+        claimed = service.claim_execution(
+            created.id,
+            worker_id="director",
+            role_id="director",
+            run_id="run-recovered",
+            selection_source="task_id_lookup",
+        )
+
+    assert claimed["success"] is True
+    assert claimed["reason"] == "claimed"
+    assert claimed["session"]["task_id"] == created.id
+    assert claimed["session"]["session_id"] != "tx-corrupt"
+    assert "Failed to parse task runtime session" in caplog.text
+    assert "worker_id" in caplog.text
 
 
 def test_task_runtime_service_writes_sessions_atomically(tmp_path: Path, monkeypatch) -> None:

@@ -9,6 +9,7 @@ from uuid import uuid4
 logger = logging.getLogger(__name__)
 
 _MAX_SUMMARY_LENGTH = 400
+_VALID_SESSION_STATUSES = frozenset({"active", "completed", "failed", "suspended"})
 
 
 def utc_now() -> datetime:
@@ -54,7 +55,36 @@ def normalize_positive_int(value: Any, *, default: int, minimum: int = 1) -> int
         return max(minimum, int(value))
     except (TypeError, ValueError) as exc:
         logger.warning("normalize_positive_int: failed to convert %r: %s", value, exc)
-        return max(minimum, int(default))
+    return max(minimum, int(default))
+
+
+def require_non_empty_field(payload: dict[str, Any], field_name: str) -> str:
+    """Return a required non-empty persisted session field."""
+    token = str(payload.get(field_name) or "").strip()
+    if not token:
+        raise ValueError(f"TaskExecutionSession field {field_name!r} is required")
+    return token
+
+
+def require_positive_int_field(payload: dict[str, Any], field_name: str) -> int:
+    """Return a required positive integer persisted session field."""
+    if field_name not in payload:
+        raise ValueError(f"TaskExecutionSession field {field_name!r} is required")
+    try:
+        parsed = int(payload[field_name])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"TaskExecutionSession field {field_name!r} must be an integer") from exc
+    if parsed < 1:
+        raise ValueError(f"TaskExecutionSession field {field_name!r} must be >= 1")
+    return parsed
+
+
+def normalize_session_status(payload: dict[str, Any]) -> str:
+    """Return a required persisted session status."""
+    status = require_non_empty_field(payload, "status").lower()
+    if status not in _VALID_SESSION_STATUSES:
+        raise ValueError(f"TaskExecutionSession field 'status' must be one of: {sorted(_VALID_SESSION_STATUSES)}")
+    return status
 
 
 @dataclass(slots=True)
@@ -127,15 +157,15 @@ class TaskExecutionSession:
     def from_dict(cls, payload: dict[str, Any]) -> TaskExecutionSession:
         """Hydrate a session from storage."""
         return cls(
-            session_id=str(payload.get("session_id") or "").strip(),
-            task_id=int(payload.get("task_id") or 0),
-            role_id=str(payload.get("role_id") or "").strip(),
-            worker_id=str(payload.get("worker_id") or "").strip(),
+            session_id=require_non_empty_field(payload, "session_id"),
+            task_id=require_positive_int_field(payload, "task_id"),
+            role_id=require_non_empty_field(payload, "role_id"),
+            worker_id=require_non_empty_field(payload, "worker_id"),
             run_id=str(payload.get("run_id") or "").strip(),
-            status=str(payload.get("status") or "").strip().lower() or "active",
+            status=normalize_session_status(payload),
             claimed_at=str(payload.get("claimed_at") or "").strip(),
             last_heartbeat_at=str(payload.get("last_heartbeat_at") or "").strip(),
-            lease_expires_at=str(payload.get("lease_expires_at") or "").strip(),
+            lease_expires_at=require_non_empty_field(payload, "lease_expires_at"),
             attempt=normalize_positive_int(payload.get("attempt"), default=1),
             resume_count=max(0, int(payload.get("resume_count") or 0)),
             resumable=bool(payload.get("resumable", True)),
