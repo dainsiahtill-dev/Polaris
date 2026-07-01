@@ -634,8 +634,8 @@ async def execute_transaction_kernel_turn(
     error_msg: str | None = None
     is_complete = True
     if kind == "ask_user" and isinstance(finalization, dict):
-        # SUSPENDED state: model needs user clarification. Map to error for backward
-        # compat in the legacy kernel core facade (callers check error to retry).
+        # SUSPENDED state: model needs user clarification. Stream callers
+        # consume this as an error event so orchestration can retry or pause.
         error_msg = finalization.get("error") or finalization.get("suspended_reason")
         is_complete = False
     if isinstance(finalization, dict) and bool(finalization.get("needs_followup_workflow")):
@@ -763,7 +763,7 @@ async def execute_transaction_kernel_stream(
     stream_run_id: str,
     uep_publisher: UEPEventPublisher,
 ) -> AsyncGenerator[dict[str, Any], None]:
-    """Stream execution via TransactionKernel (compatibility shim)."""
+    """Stream execution via TransactionKernel."""
     from polaris.cells.roles.kernel.internal.transaction.tool_surface import plan_transaction_tool_surface
     from polaris.cells.roles.kernel.public.service import RoleContextGateway
     from polaris.cells.roles.kernel.public.turn_events import (
@@ -939,7 +939,8 @@ async def execute_transaction_kernel_stream(
             )
             completion_tool_calls = _tool_calls_from_batch_receipt(completion_batch_receipt) or stream_tool_calls
             completion_tool_results = _tool_results_from_batch_receipt(completion_batch_receipt) or stream_tool_results
-            # Backward compat: failed / suspended completions map to error events
+            # Failed / suspended completions are surfaced as error events for
+            # stream consumers.
             if event.status in ("failed", "suspended"):
                 try:
                     context_gateway.record_projection_outcome(
