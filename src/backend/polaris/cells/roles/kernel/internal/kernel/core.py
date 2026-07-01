@@ -154,7 +154,7 @@ class RoleExecutionKernel:
         self.workspace = workspace
         self.registry = registry or RoleProfileRegistry()  # type: ignore[no-untyped-call]
 
-        # 保存注入的服务（可能为 None，由 _get_* 方法处理）
+        # 保存注入的服务（可能为 None，由 provider owner 懒加载处理）
         self._injected_llm_invoker = llm_invoker
         self._injected_tool_executor = tool_executor
         self._injected_prompt_builder = prompt_builder
