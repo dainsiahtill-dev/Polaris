@@ -24,43 +24,44 @@ def main() -> None:
         sys.path.insert(0, str(src_backend))
 
     from polaris.kernelone.llm.toolkit.tool_normalization.normalizers import TOOL_NORMALIZERS
-    from polaris.kernelone.tools.contracts import _TOOL_SPECS
+    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
-    declared = set(_TOOL_SPECS.keys())
+    tool_specs = ToolSpecRegistry.get_all_specs()
+    declared = set(tool_specs.keys())
     registered = set(TOOL_NORMALIZERS.keys())
 
-    # 交集：既在 contracts 又在 TOOL_NORMALIZERS
+    # 交集：既在 ToolSpecRegistry 又在显式 TOOL_NORMALIZERS
     in_both = declared & registered
-    # 缺失：contracts 有但 TOOL_NORMALIZERS 没有
-    missing = declared - registered
-    # 孤儿：TOOL_NORMALIZERS 有但 contracts 没有（遗留注册）
+    # schema 驱动：ToolSpecRegistry 中存在，未注册显式 normalizer，走 canonical fallback
+    schema_driven = declared - registered
+    # 孤儿：TOOL_NORMALIZERS 有但 ToolSpecRegistry 没有（遗留注册）
     orphaned = registered - declared
 
-    print(f"contracts.py 声明工具数: {len(declared)}")
-    print(f"TOOL_NORMALIZERS 注册数: {len(registered)}")
-    print(f"交集 (已同步): {len(in_both)}")
-    print(f"缺失注册: {len(missing)}")
+    print(f"ToolSpecRegistry 声明工具数: {len(declared)}")
+    print(f"显式 TOOL_NORMALIZERS 注册数: {len(registered)}")
+    print(f"显式 normalizer 覆盖: {len(in_both)}")
+    print(f"schema-driven fallback 覆盖: {len(schema_driven)}")
     print(f"遗留注册 (orphaned): {len(orphaned)}")
 
-    if missing:
-        print("\n[FAIL] 以下工具在 contracts.py 中声明但未注册 normalizer:")
-        for t in sorted(missing):
-            spec = _TOOL_SPECS.get(t, {})
+    if schema_driven:
+        print("\n[PASS] 以下工具由 schema-driven fallback 规范化:")
+        for t in sorted(schema_driven):
+            spec = tool_specs.get(t, {})
             aliases = spec.get("arg_aliases", {})
             print(f"  - {t}: arg_aliases={aliases}")
     else:
-        print("\n[PASS] 所有 contracts.py 工具均有 normalizer 注册")
+        print("\n[PASS] 所有 ToolSpecRegistry 工具均有显式 normalizer 注册")
 
     if orphaned:
-        print("\n[WARN] 以下工具在 TOOL_NORMALIZERS 中注册但 contracts.py 中无声明 (legacy):")
+        print("\n[WARN] 以下工具在 TOOL_NORMALIZERS 中注册但 ToolSpecRegistry 中无声明 (legacy):")
         for t in sorted(orphaned):
             print(f"  - {t}")
 
-    # 检查 arg_aliases 处理
+    # 检查 arg_aliases 处理；同时覆盖显式 normalizer 与 schema fallback。
     print("\n检查 arg_aliases 处理:")
     issues = []
-    for tool_name in sorted(in_both):
-        spec = _TOOL_SPECS.get(tool_name, {})
+    for tool_name in sorted(declared):
+        spec = tool_specs.get(tool_name, {})
         aliases = spec.get("arg_aliases", {})
         if not aliases:
             continue
@@ -94,18 +95,17 @@ def main() -> None:
             "declared": sorted(declared),
             "registered": sorted(registered),
             "in_both": sorted(in_both),
-            "missing": sorted(missing),
+            "schema_driven": sorted(schema_driven),
             "orphaned": sorted(orphaned),
             "arg_alias_issues": issues,
-            "exit_code": 1 if missing else 0,
+            "exit_code": 1 if issues else 0,
         }
         Path(args.report).parent.mkdir(parents=True, exist_ok=True)
         with open(args.report, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2, ensure_ascii=False)
         print(f"\n报告已写入: {args.report}")
 
-    # 返回码：missing > 0 则失败
-    sys.exit(1 if missing else 0)
+    sys.exit(1 if issues else 0)
 
 
 if __name__ == "__main__":

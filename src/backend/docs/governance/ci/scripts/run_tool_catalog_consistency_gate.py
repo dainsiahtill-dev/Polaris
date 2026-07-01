@@ -68,27 +68,29 @@ def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _extract_tool_specs_from_contracts_py(contracts_path: Path) -> dict[str, dict[str, Any]]:
-    """Extract _TOOL_SPECS dict from contracts.py.
-
-    Uses direct import when possible, falls back to regex extraction for edge cases.
+def _extract_tool_specs_from_registry(backend_root: Path) -> dict[str, dict[str, Any]]:
+    """Load tool specs from the canonical ToolSpecRegistry.
 
     Returns:
-        Dict mapping canonical tool name to its spec (including aliases).
+        Dict mapping canonical tool name to its spec, including aliases.
     """
+    try:
+        backend_path = str(backend_root)
+        if backend_path not in sys.path:
+            sys.path.insert(0, backend_path)
+
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        return ToolSpecRegistry.get_all_specs()
+    except (ImportError, RuntimeError):
+        return {}
+
+
+def _extract_tool_specs_from_contracts_py(contracts_path: Path) -> dict[str, dict[str, Any]]:
+    """Extract tool specs from historical contracts.py text as a fallback."""
     if not contracts_path.exists():
         return {}
 
-    # Try direct import first (most reliable)
-    try:
-        from polaris.kernelone.tool_execution.contracts import _TOOL_SPECS
-
-        return dict(_TOOL_SPECS)
-    except ImportError:
-        pass
-
-    # Fallback: regex extraction for aliases only (lightweight)
-    # This is used when direct import fails (e.g., in isolated environments)
     source = contracts_path.read_text(encoding="utf-8")
 
     # Extract tool names and aliases using regex
@@ -582,12 +584,15 @@ def main() -> int:
     args = _parse_args()
     workspace = Path(args.workspace).resolve()
 
-    # Load tool specs from contracts.py
+    # Load tool specs from the canonical registry, falling back to historical
+    # text extraction only for isolated audit environments that cannot import.
     contracts_path = workspace / "polaris" / "kernelone" / "tool_execution" / "contracts.py"
-    tool_specs = _extract_tool_specs_from_contracts_py(contracts_path)
+    tool_specs = _extract_tool_specs_from_registry(workspace / "polaris")
+    if not tool_specs:
+        tool_specs = _extract_tool_specs_from_contracts_py(contracts_path)
 
     if not tool_specs:
-        print("[error] tool_catalog_load: failed to load _TOOL_SPECS from contracts.py")
+        print("[error] tool_catalog_load: failed to load tool specs from ToolSpecRegistry")
         return 1 if args.mode == _MODE_HARD_FAIL else 0
 
     # Get canonical names and alias mapping

@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import MagicMock, patch
-
 import pytest
 from polaris.kernelone.tool_execution.tool_categories import (
     CODE_WRITE_TOOLS,
@@ -23,94 +20,79 @@ from polaris.kernelone.tool_execution.tool_categories import (
 class TestBuildToolCategories:
     """Tests for _build_tool_categories function."""
 
-    @patch("polaris.kernelone.tool_execution.tool_categories._TOOL_SPECS")
-    def test_empty_registry(self, mock_specs: MagicMock) -> None:
+    def test_empty_registry(self) -> None:
         """Empty registry creates empty categories."""
-        mock_specs._data = {}
-        result = _build_tool_categories()
+        result = _build_tool_categories({})
         assert all(len(v) == 0 for v in result.values())
         assert set(result.keys()) == {"code_write", "command_execution", "file_delete", "read_only"}
 
-    @patch("polaris.kernelone.tool_execution.tool_categories._TOOL_SPECS")
-    def test_write_tools(self, mock_specs: MagicMock) -> None:
+    def test_write_tools(self) -> None:
         """Write category tools are mapped correctly."""
-        mock_specs._data = {
-            "write_file": {"category": "write"},
-            "edit_file": {"category": "write"},
-        }
-        result = _build_tool_categories()
+        result = _build_tool_categories(
+            {
+                "write_file": {"category": "write"},
+                "edit_file": {"category": "write"},
+            }
+        )
         assert "write_file" in result["code_write"]
         assert "edit_file" in result["code_write"]
 
-    @patch("polaris.kernelone.tool_execution.tool_categories._TOOL_SPECS")
-    def test_exec_tools(self, mock_specs: MagicMock) -> None:
+    def test_exec_tools(self) -> None:
         """Exec category tools are mapped correctly."""
-        mock_specs._data = {
-            "bash": {"category": "exec"},
-            "background_run": {"category": "exec"},
-        }
-        result = _build_tool_categories()
+        result = _build_tool_categories(
+            {
+                "bash": {"category": "exec"},
+                "background_run": {"category": "exec"},
+            }
+        )
         assert "bash" in result["command_execution"]
         assert "background_run" in result["command_execution"]
 
-    @patch("polaris.kernelone.tool_execution.tool_categories._TOOL_SPECS")
-    def test_delete_tools(self, mock_specs: MagicMock) -> None:
+    def test_delete_tools(self) -> None:
         """Delete category tools are mapped correctly."""
-        mock_specs._data = {
-            "delete_file": {"category": "delete"},
-        }
-        result = _build_tool_categories()
+        result = _build_tool_categories({"delete_file": {"category": "delete"}})
         assert "delete_file" in result["file_delete"]
 
-    @patch("polaris.kernelone.tool_execution.tool_categories._TOOL_SPECS")
-    def test_read_tools(self, mock_specs: MagicMock) -> None:
+    def test_read_tools(self) -> None:
         """Read category tools are mapped correctly."""
-        mock_specs._data = {
-            "read_file": {"category": "read"},
-            "glob": {"category": "read"},
-        }
-        result = _build_tool_categories()
+        result = _build_tool_categories(
+            {
+                "read_file": {"category": "read"},
+                "glob": {"category": "read"},
+            }
+        )
         assert "read_file" in result["read_only"]
         assert "glob" in result["read_only"]
 
-    @patch("polaris.kernelone.tool_execution.tool_categories._TOOL_SPECS")
-    def test_default_category(self, mock_specs: MagicMock) -> None:
+    def test_default_category(self) -> None:
         """Tools without category default to read_only."""
-        mock_specs._data = {
-            "unknown_tool": {},
-        }
-        result = _build_tool_categories()
+        result = _build_tool_categories({"unknown_tool": {}})
         assert "unknown_tool" in result["read_only"]
 
-    @patch("polaris.kernelone.tool_execution.tool_categories._TOOL_SPECS")
-    def test_mixed_categories(self, mock_specs: MagicMock) -> None:
+    def test_mixed_categories(self) -> None:
         """Mixed categories are sorted correctly."""
-        mock_specs._data = {
-            "write_file": {"category": "write"},
-            "bash": {"category": "exec"},
-            "read_file": {"category": "read"},
-            "delete_file": {"category": "delete"},
-        }
-        result = _build_tool_categories()
+        result = _build_tool_categories(
+            {
+                "write_file": {"category": "write"},
+                "bash": {"category": "exec"},
+                "read_file": {"category": "read"},
+                "delete_file": {"category": "delete"},
+            }
+        )
         assert "write_file" in result["code_write"]
         assert "bash" in result["command_execution"]
         assert "read_file" in result["read_only"]
         assert "delete_file" in result["file_delete"]
 
-    @patch("polaris.kernelone.tool_execution.tool_categories._TOOL_SPECS")
-    def test_returns_frozensets(self, mock_specs: MagicMock) -> None:
+    def test_returns_frozensets(self) -> None:
         """Result values are frozensets."""
-        mock_specs._data = {"tool1": {"category": "read"}}
-        result = _build_tool_categories()
+        result = _build_tool_categories({"tool1": {"category": "read"}})
         assert isinstance(result["read_only"], frozenset)
 
-    @patch("polaris.kernelone.tool_execution.tool_categories._TOOL_SPECS")
-    def test_dict_specs_without_data_attr(self, mock_specs: Any) -> None:
-        """Handle plain dict specs (no _data attr)."""
-        mock_specs = {"tool1": {"category": "write"}}
-        with patch("polaris.kernelone.tool_execution.tool_categories._TOOL_SPECS", mock_specs):
-            result = _build_tool_categories()
-            assert "tool1" in result["code_write"]
+    def test_explicit_specs_override_registry(self) -> None:
+        """Explicit specs make registry-independent tests possible."""
+        result = _build_tool_categories({"tool1": {"category": "write"}})
+        assert "tool1" in result["code_write"]
 
 
 class TestIsCodeWriteTool:

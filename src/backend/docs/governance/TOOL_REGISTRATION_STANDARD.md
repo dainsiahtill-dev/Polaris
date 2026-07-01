@@ -2,7 +2,7 @@
 
 ## 1. 单一事实来源 (SSOT)
 
-所有工具规范定义在 `polaris/kernelone/tool_execution/contracts.py` 的 `_TOOL_SPECS` 字典中。
+所有工具规范由 `polaris/kernelone/tool_execution/tool_spec_registry.py` 中的 `ToolSpecRegistry` 管理。
 
 **格式要求：**
 ```python
@@ -24,7 +24,7 @@
 
 ### 2.1 添加新工具
 
-1. 在 `contracts.py` 的 `_TOOL_SPECS` 中添加条目
+1. 在 `tool_spec_registry.py` 的内置 registry 中添加条目，并通过 `ToolSpecRegistry` 公开
 2. `arg_aliases` 定义参数别名映射
 3. `arguments` 定义参数 schema
 4. **不再需要**手动创建 `_*.py` normalizer 文件
@@ -34,7 +34,7 @@
 
 对于已有 `polaris/kernelone/llm/toolkit/tool_normalization/normalizers/_<tool>.py` 的工具：
 
-1. 先确保 `contracts.py` 中有完整 schema
+1. 先确保 `ToolSpecRegistry` 中有完整 schema
 2. `tool_normalization/__init__.py` 会自动使用 schema-driven fallback
 3. 观察运行时是否正常工作
 4. 测试通过后，可选择删除 `_<tool>.py` 文件（如果 schema 驱动已覆盖）

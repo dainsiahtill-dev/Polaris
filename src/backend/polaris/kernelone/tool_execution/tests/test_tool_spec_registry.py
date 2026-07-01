@@ -462,7 +462,7 @@ class TestToolSpecRegistry:
 
 
 class TestMigrationFromContracts:
-    """Tests for migration from contracts.py _TOOL_SPECS."""
+    """Tests for rebuilding the registry through the historical helper."""
 
     def setup_method(self) -> None:
         """Clear and re-migrate registry before each test."""
@@ -474,8 +474,7 @@ class TestMigrationFromContracts:
         tool_spec_registry.migrate_from_contracts_specs()
 
     def test_migration_registers_all_tools(self) -> None:
-        """Test that migration registers all tools from _TOOL_SPECS."""
-        # 从contracts.py我们知道有repo_tree, repo_rg, repo_read_head等工具
+        """Test that migration registers all built-in tools."""
         assert ToolSpecRegistry.count() > 0
 
         # 验证几个关键工具

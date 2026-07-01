@@ -5,12 +5,12 @@ verifying that parameter normalization, type coercion, and validation
 work correctly together.
 """
 
+from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments
 from polaris.kernelone.tool_execution.contracts import (
     ERROR_MAX_LENGTH,
     ERROR_REQUIRED_MISSING,
     ERROR_UNKNOWN_TOOL,
     canonicalize_tool_name,
-    normalize_tool_args,
     validate_tool_step,
 )
 
@@ -28,26 +28,26 @@ class TestContractsValidationIntegration:
         验证 pattern 被正确规范化（regex patterns preserved, not converted).
         """
         # Single keyword - no transformation
-        result = normalize_tool_args("repo_rg", {"pattern": "hello"})
+        result = normalize_tool_arguments("repo_rg", {"pattern": "hello"})
         assert result.get("pattern") == "hello"
 
         # Multiple keywords - preserved as-is (no space-to-OR conversion to avoid
         # breaking regex patterns like "^def " where trailing space is significant)
-        result = normalize_tool_args("repo_rg", {"pattern": "hello world"})
+        result = normalize_tool_arguments("repo_rg", {"pattern": "hello world"})
         assert result.get("pattern") == "hello world"
 
         # Keywords with regex chars - no transformation (preserved as-is)
-        result = normalize_tool_args("repo_rg", {"pattern": "hello|world"})
+        result = normalize_tool_arguments("repo_rg", {"pattern": "hello|world"})
         assert result.get("pattern") == "hello|world"
 
         # Keywords with special chars - no transformation
-        result = normalize_tool_args("repo_rg", {"pattern": "func() { }"})
+        result = normalize_tool_arguments("repo_rg", {"pattern": "func() { }"})
         assert result.get("pattern") == "func() { }"
 
     def test_repo_rg_max_results_range(self) -> None:
         """repo_rg 的 max_results 范围验证测试。
 
-        验证 max_results 参数在 normalize_tool_args 中的处理。
+        验证 max_results 参数在 normalize_tool_arguments 中的处理。
         注意: 范围验证 (minimum/maximum) 目前因参数名不匹配而未生效,
         validate_tool_step 使用 background_run 特殊逻辑进行超时验证。
         """
@@ -80,15 +80,15 @@ class TestContractsValidationIntegration:
         验证当未提供 n 参数时使用默认值 50。
         """
         # Without n parameter - should use default
-        result = normalize_tool_args("repo_read_head", {"file": "test.txt"})
+        result = normalize_tool_arguments("repo_read_head", {"file": "test.txt"})
         assert result.get("n") == 50  # Default value
 
         # With n parameter explicitly set
-        result = normalize_tool_args("repo_read_head", {"file": "test.txt", "n": 100})
+        result = normalize_tool_arguments("repo_read_head", {"file": "test.txt", "n": 100})
         assert result.get("n") == 100
 
         # With lines alias - should normalize to n
-        result = normalize_tool_args("repo_read_head", {"file": "test.txt", "lines": 25})
+        result = normalize_tool_arguments("repo_read_head", {"file": "test.txt", "lines": 25})
         assert result.get("n") == 25
 
     def test_background_run_timeout_validation(self) -> None:
@@ -133,7 +133,7 @@ class TestContractsValidationIntegration:
         """validate_tool_step 模式验证测试。
 
         验证 repo_rg 的 pattern 参数遵循正则约束。
-        注意: 空字符串被 _has_value() 视为 "missing" 而非触发 min_length 验证。
+        注意: 空字符串被 _is_present() helper 视为 "missing" 而非触发 min_length 验证。
         """
         # Valid pattern (matches [^\x00]+)
         is_valid, _error_code, _error_msg = validate_tool_step("repo_rg", {"pattern": "hello world"})
@@ -201,48 +201,48 @@ class TestContractsValidationIntegration:
     def test_string_to_integer_coercion(self) -> None:
         """字符串到整数类型转换测试。
 
-        验证 normalize_tool_args 将字符串参数正确转换为整数。
+        验证 normalize_tool_arguments 将字符串参数正确转换为整数。
         """
         # String to integer conversion
-        result = normalize_tool_args("repo_read_head", {"file": "test.txt", "n": "100"})
+        result = normalize_tool_arguments("repo_read_head", {"file": "test.txt", "n": "100"})
         assert result.get("n") == 100
         assert isinstance(result.get("n"), int)
 
         # Float that is integer value
-        result = normalize_tool_args("repo_read_head", {"file": "test.txt", "n": 50.0})
+        result = normalize_tool_arguments("repo_read_head", {"file": "test.txt", "n": 50.0})
         assert result.get("n") == 50
 
         # Already integer passes through
-        result = normalize_tool_args("repo_read_head", {"file": "test.txt", "n": 75})
+        result = normalize_tool_arguments("repo_read_head", {"file": "test.txt", "n": 75})
         assert result.get("n") == 75
 
     def test_string_to_boolean_coercion(self) -> None:
         """字符串到布尔类型转换测试。
 
-        验证 normalize_tool_args 将字符串参数正确转换为布尔值。
+        验证 normalize_tool_arguments 将字符串参数正确转换为布尔值。
         """
         # String "true" to boolean
-        result = normalize_tool_args("repo_apply_diff", {"diff": "test", "dry_run": "true"})
+        result = normalize_tool_arguments("repo_apply_diff", {"diff": "test", "dry_run": "true"})
         assert result.get("dry_run") is True
 
         # String "false" to boolean
-        result = normalize_tool_args("repo_apply_diff", {"diff": "test", "dry_run": "false"})
+        result = normalize_tool_arguments("repo_apply_diff", {"diff": "test", "dry_run": "false"})
         assert result.get("dry_run") is False
 
         # String "1" to boolean (true-like)
-        result = normalize_tool_args("repo_apply_diff", {"diff": "test", "dry_run": "1"})
+        result = normalize_tool_arguments("repo_apply_diff", {"diff": "test", "dry_run": "1"})
         assert result.get("dry_run") is True
 
         # String "0" to boolean (false-like)
-        result = normalize_tool_args("repo_apply_diff", {"diff": "test", "dry_run": "0"})
+        result = normalize_tool_arguments("repo_apply_diff", {"diff": "test", "dry_run": "0"})
         assert result.get("dry_run") is False
 
         # Integer to boolean (non-zero is true)
-        result = normalize_tool_args("repo_apply_diff", {"diff": "test", "dry_run": 1})
+        result = normalize_tool_arguments("repo_apply_diff", {"diff": "test", "dry_run": 1})
         assert result.get("dry_run") is True
 
         # Integer 0 to boolean
-        result = normalize_tool_args("repo_apply_diff", {"diff": "test", "dry_run": 0})
+        result = normalize_tool_arguments("repo_apply_diff", {"diff": "test", "dry_run": 0})
         assert result.get("dry_run") is False
 
     # =============================================================================
@@ -326,15 +326,15 @@ class TestContractsValidationIntegration:
         验证别名参数在规范化后仍能正确验证。
         """
         # Use alias "n" -> should normalize to n
-        result = normalize_tool_args("repo_read_head", {"file": "test.txt", "n": 25})
+        result = normalize_tool_arguments("repo_read_head", {"file": "test.txt", "n": 25})
         assert result.get("n") == 25
 
         # Use alias "limit" -> should normalize to n
-        result = normalize_tool_args("repo_read_head", {"file": "test.txt", "limit": 30})
+        result = normalize_tool_arguments("repo_read_head", {"file": "test.txt", "limit": 30})
         assert result.get("n") == 30
 
         # Use alias "lines" -> should normalize to n
-        result = normalize_tool_args("repo_read_head", {"file": "test.txt", "lines": 35})
+        result = normalize_tool_arguments("repo_read_head", {"file": "test.txt", "lines": 35})
         assert result.get("n") == 35
 
         # Verify alias still passes validation
@@ -388,11 +388,11 @@ class TestContractsValidationIntegration:
 
         验证当 args 为 None 时规范化仍能正常工作。
         """
-        result = normalize_tool_args("repo_rg", None)
+        result = normalize_tool_arguments("repo_rg", None)
         assert isinstance(result, dict)
 
         # Should fill in defaults
-        result = normalize_tool_args("repo_read_head", None)
+        result = normalize_tool_arguments("repo_read_head", None)
         assert result.get("n") == 50  # Default applied
 
     def test_normalize_with_empty_args(self) -> None:
@@ -400,10 +400,10 @@ class TestContractsValidationIntegration:
 
         验证当 args 为空字典时规范化能正常工作。
         """
-        result = normalize_tool_args("repo_rg", {})
+        result = normalize_tool_arguments("repo_rg", {})
         assert isinstance(result, dict)
 
-        result = normalize_tool_args("repo_read_head", {})
+        result = normalize_tool_arguments("repo_read_head", {})
         assert result.get("n") == 50  # Default applied
 
     def test_path_to_paths_conversion(self) -> None:
@@ -411,12 +411,12 @@ class TestContractsValidationIntegration:
 
         验证 repo_rg 的 path 参数被转换为 paths 数组。
         """
-        result = normalize_tool_args("repo_rg", {"pattern": "test", "path": "src"})
+        result = normalize_tool_arguments("repo_rg", {"pattern": "test", "path": "src"})
         assert result.get("path") == "src"
         assert result.get("paths") == ["src"]
 
         # Multiple paths via paths parameter
-        result = normalize_tool_args("repo_rg", {"pattern": "test", "paths": ["src", "tests"]})
+        result = normalize_tool_arguments("repo_rg", {"pattern": "test", "paths": ["src", "tests"]})
         assert result.get("paths") == ["src", "tests"]
 
     def test_repo_read_around_start_end_conversion(self) -> None:
@@ -425,14 +425,14 @@ class TestContractsValidationIntegration:
         验证 start 和 end 参数被转换为 line 和 radius。
         """
         # With start and end, should compute center line and radius
-        result = normalize_tool_args("repo_read_around", {"file": "test.py", "start": 10, "end": 20})
+        result = normalize_tool_arguments("repo_read_around", {"file": "test.py", "start": 10, "end": 20})
         # Center should be 15 (10 + (20-10)//2 = 15)
         assert result.get("line") == 15
         # Radius should be 5 ((20-10)//2 = 5)
         assert result.get("radius") == 5
 
         # Explicit line takes precedence
-        result = normalize_tool_args("repo_read_around", {"file": "test.py", "line": 50, "start": 10, "end": 20})
+        result = normalize_tool_arguments("repo_read_around", {"file": "test.py", "line": 50, "start": 10, "end": 20})
         assert result.get("line") == 50
 
     def test_validate_with_string_integer_in_pattern(self) -> None:
@@ -519,6 +519,6 @@ class TestContractsValidationIntegration:
         验证路径参数中的数字串被正确处理。
         """
         # Path with numeric segments
-        result = normalize_tool_args("repo_read_head", {"file": "test123.py", "n": "50"})
+        result = normalize_tool_arguments("repo_read_head", {"file": "test123.py", "n": "50"})
         assert result.get("file") == "test123.py"
         assert result.get("n") == 50

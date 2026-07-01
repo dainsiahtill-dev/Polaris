@@ -66,10 +66,9 @@ from .contracts import (
 )
 
 # 工具定义
-# DEPRECATED (2026-04-05): These exports come from definitions.py which re-exports
-# data from polaris.kernelone.tool_execution.contracts._TOOL_SPECS.
-# Migration: Use create_default_registry() or access _TOOL_SPECS directly.
-# NOTE: STANDARD_TOOLS has been removed. Use _TOOL_SPECS instead.
+# definitions.py keeps the ToolDefinition/ToolRegistry abstraction layer.
+# Canonical tool data lives in ToolSpecRegistry; callers should not read
+# historical contracts-level tool dictionaries directly.
 from .definitions import (
     ToolDefinition,
     ToolParameter,

@@ -8,8 +8,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments
 from polaris.kernelone.tool_execution.constants import KV_ALLOWED_KEYS, MAX_TOOL_READ_LINES
-from polaris.kernelone.tool_execution.contracts import canonicalize_tool_name, normalize_tool_args
+from polaris.kernelone.tool_execution.contracts import canonicalize_tool_name
 from polaris.kernelone.tool_execution.utils import safe_int, split_list_value, split_tool_step
 
 logger = logging.getLogger(__name__)
@@ -94,7 +95,7 @@ def _normalize_tool_plan_dict_step(item: dict[str, Any]) -> dict[str, Any] | Non
         if key in item and key not in args:
             args[key] = item.get(key)
     normalized["tool"] = tool
-    normalized["args"] = normalize_tool_args(tool, args)
+    normalized["args"] = normalize_tool_arguments(tool, args)
     return normalized
 
 
@@ -145,7 +146,7 @@ def parse_tool_plan_item(item: str) -> dict[str, Any] | None:
     if raw_tool == "cat" and len(tokens) >= 2:
         return {
             "tool": "repo_read_head",
-            "args": normalize_tool_args("repo_read_head", {"file": tokens[1], "n": MAX_TOOL_READ_LINES}),
+            "args": normalize_tool_arguments("repo_read_head", {"file": tokens[1], "n": MAX_TOOL_READ_LINES}),
         }
 
     tool = canonicalize_tool_name(raw_tool)
@@ -153,7 +154,7 @@ def parse_tool_plan_item(item: str) -> dict[str, Any] | None:
         return None
 
     def make_step(step_args: dict[str, Any]) -> dict[str, Any]:
-        return {"tool": tool, "args": normalize_tool_args(tool, step_args)}
+        return {"tool": tool, "args": normalize_tool_arguments(tool, step_args)}
 
     # repo_tree parsing
     if tool == "repo_tree":

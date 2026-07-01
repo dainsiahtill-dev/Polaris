@@ -4,7 +4,7 @@ ToolSpecRegistry - 单一权威源头 for LLM Tool定义
 本模块作为Polaris LLM工具调用的单一事实来源（Single Source of Truth）。
 统一了之前分散在以下位置的Tool定义:
 - definitions.py (ToolDefinition类 - LLM-facing schemas)
-- contracts.py (_TOOL_SPECS dict - 执行契约和别名)
+- historical contracts.py dictionary data (执行契约和别名)
 
 用法:
     from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
@@ -1156,7 +1156,7 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
     "edit_file": {
         "category": "write",
         "description": "Edit a file using one of three modes: 1) Line range mode (start_line+end_line+content), 2) Search-and-replace mode (search+replace), 3) SEARCH/REPLACE block mode (blocks). Block mode is recommended for complex edits.",
-        "aliases": ["file_edit", "replace_in_file", "modify_file", "update_file", "patch_file"],
+        "aliases": ["file_edit", "modify_file", "update_file", "patch_file"],
         "arg_aliases": {
             "filepath": "file",
             "filePath": "file",
@@ -1458,9 +1458,10 @@ def _tool_spec_to_dict(spec: ToolSpec) -> dict[str, Any]:
 
 def migrate_from_contracts_specs() -> None:
     """
-    从内置_TOOL_SPECS迁移到ToolSpecRegistry。
+    Rebuild the context-local registry from the built-in registry snapshot.
 
-    现在数据已内置于本模块，此函数用于测试隔离时重新填充。
+    现在数据已内置于本模块；函数名保留给测试隔离和历史调用点，
+    但不再从 contracts.py 读取工具规格。
     """
     ToolSpecRegistry.clear()
 

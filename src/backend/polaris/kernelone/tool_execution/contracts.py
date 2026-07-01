@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import re
-import warnings
-from collections.abc import Callable
-from functools import wraps
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from collections.abc import Iterable
+from typing import Any
 
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 from polaris.kernelone.tool_execution.validators import (
@@ -25,27 +23,6 @@ from polaris.kernelone.tool_execution.validators import (
 # Alias for internal use
 _get_validator = get_validator
 
-ToolSpec = dict[str, Any]
-F = TypeVar("F", bound=Callable[..., Any])
-
-
-def _deprecated(message: str) -> Callable[[F], F]:
-    """Return a deprecation decorator that works on Python 3.12 and 3.13."""
-    stdlib_deprecated = getattr(warnings, "deprecated", None)
-    if callable(stdlib_deprecated):
-        return cast(Callable[[F], F], stdlib_deprecated(message))
-
-    def decorator(func: F) -> F:
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            warnings.warn(message, DeprecationWarning, stacklevel=2)
-            return func(*args, **kwargs)
-
-        return cast(F, wrapper)
-
-    return decorator
-
-
 # Tool-level error codes (not in validators.py)
 ERROR_UNKNOWN_TOOL = "UNKNOWN_TOOL"
 ERROR_INVALID_TOOL_ARGS = "INVALID_TOOL_ARGS"
@@ -61,21 +38,6 @@ TS_DEPENDENT_TOOLS: frozenset[str] = frozenset(
     }
 )
 
-
-@_deprecated("Use ToolSpecRegistry.clear() instead.")
-def reset_tool_spec_registry_cache() -> None:
-    """Reset the cached ToolSpecRegistry reference for test isolation.
-
-    This clears the registry cache so that the next access will
-    re-initialize the registry. Should be called before ToolSpecRegistry.clear()
-    to ensure a fresh registry on re-initialization.
-    """
-    ToolSpecRegistry.clear()
-
-
-# Import type for type hints only
-if TYPE_CHECKING:
-    from collections.abc import Iterable
 
 # Backward-compatible aliases for external code that may use short names
 # These map to the descriptive names from validators.py
@@ -112,46 +74,6 @@ __all__ = [
 ]
 
 
-class _ToolSpecsProxy:
-    """Backward-compatible proxy over ToolSpecRegistry._registry.
-
-    DEPRECATED (2026-04-16): Direct _TOOL_SPECS access is deprecated.
-    Use ToolSpecRegistry methods instead.
-    """
-
-    def _get_registry(self) -> dict[str, dict[str, Any]]:
-        return ToolSpecRegistry._get_registry()
-
-    def get(self, key: str, default: Any = None) -> Any:
-        return self._get_registry().get(key, default)
-
-    def __getitem__(self, key: str) -> Any:
-        return self._get_registry()[key]
-
-    def __contains__(self, key: object) -> bool:
-        return key in self._get_registry()
-
-    def keys(self) -> Any:
-        return self._get_registry().keys()
-
-    def items(self) -> Any:
-        return self._get_registry().items()
-
-    def values(self) -> Any:
-        return self._get_registry().values()
-
-    def __iter__(self) -> Any:
-        return iter(self._get_registry())
-
-    def __len__(self) -> int:
-        return len(self._get_registry())
-
-
-# DEPRECATED (2026-04-16): _TOOL_SPECS is a thin backward-compatible wrapper
-# over ToolSpecRegistry. New code should use ToolSpecRegistry directly.
-_TOOL_SPECS: dict[str, Any] = _ToolSpecsProxy()  # type: ignore[assignment]
-
-
 def canonicalize_tool_name(name: str, *, keep_unknown: bool = True) -> str:
     """Resolve a tool name or alias to its canonical form.
 
@@ -170,48 +92,6 @@ def canonicalize_tool_name(name: str, *, keep_unknown: bool = True) -> str:
     if keep_unknown:
         return canonical
     return canonical if ToolSpecRegistry.is_registered(canonical) else ""
-
-
-@_deprecated(
-    "Use _coerce_int/_coerce_bool from polaris.kernelone.llm.toolkit.tool_normalization.normalizers._shared instead."
-)
-def _has_value(value: Any) -> bool:
-    """Check if a value is considered non-empty.
-
-    DEPRECATED (2026-04-05): Use _coerce_int/_coerce_bool from
-    polaris.kernelone.llm.toolkit.tool_normalization.normalizers._shared instead.
-    """
-    if value is None:
-        return False
-    if isinstance(value, str):
-        # NOTE: Empty string "" is a valid string value (e.g., creating an empty file)
-        # We only reject None and strings that are entirely whitespace.
-        return True
-    if isinstance(value, (list, tuple, set, dict)):
-        return len(value) > 0
-    return True
-
-
-@_deprecated("Use normalize_tool_arguments() from polaris.kernelone.llm.toolkit.tool_normalization instead.")
-def normalize_tool_args(tool: str, args: dict[str, Any] | None) -> dict[str, Any]:
-    """Normalize tool arguments by applying alias resolution, type conversions, and defaults.
-
-    DEPRECATED (2026-04-05): Use normalize_tool_arguments() from
-    polaris.kernelone.llm.toolkit.tool_normalization instead.
-    This function now delegates to the canonical implementation.
-
-    Args:
-        tool: The canonical or alias tool name.
-        args: The arguments dictionary to normalize. May be None.
-
-    Returns:
-        A normalized arguments dictionary with canonical names, proper types,
-        and default values filled in.
-    """
-    # Delegate to canonical implementation in llm/toolkit
-    from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments
-
-    return normalize_tool_arguments(tool, args)
 
 
 def _format_error(tool_name: str, description: str) -> str:
@@ -281,7 +161,7 @@ def validate_tool_step(tool: str, args: dict[str, Any] | None) -> tuple[bool, st
     from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments
 
     normalized = normalize_tool_arguments(canonical_tool, args if isinstance(args, dict) else {})
-    spec = _TOOL_SPECS.get(canonical_tool, {})
+    spec = ToolSpecRegistry.get_all_specs().get(canonical_tool, {})
 
     # Validate required arguments
     required_any = spec.get("required_any", [])
@@ -385,8 +265,9 @@ def list_tool_contracts(categories: Iterable[str] | None = None) -> list[dict[st
     else:
         allowed = {str(item).strip().lower() for item in categories if str(item or "").strip()}
     contracts: list[dict[str, Any]] = []
-    for name in sorted(_TOOL_SPECS.keys()):
-        spec = _TOOL_SPECS[name]
+    tool_specs = ToolSpecRegistry.get_all_specs()
+    for name in sorted(tool_specs.keys()):
+        spec = tool_specs[name]
         category = str(spec.get("category") or "").strip().lower()
         if category not in allowed:
             continue

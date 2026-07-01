@@ -1,6 +1,6 @@
 """Tool Categories SSOT - Single Source of Truth for tool classification.
 
-This module provides canonical tool category definitions derived from _TOOL_SPECS.
+This module provides canonical tool category definitions derived from ToolSpecRegistry.
 It replaces duplicate TOOL_CATEGORIES definitions in:
 - polaris/cells/roles/kernel/internal/tool_gateway.py
 - polaris/cells/roles/kernel/internal/policy/layer/tool.py
@@ -13,11 +13,16 @@ Usage:
 
 from __future__ import annotations
 
-from polaris.kernelone.tool_execution.contracts import _TOOL_SPECS
+from collections.abc import Mapping
+from typing import Any
+
+from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 
-def _build_tool_categories() -> dict[str, frozenset[str]]:
-    """Build tool categories from _TOOL_SPECS dynamically.
+def _build_tool_categories(
+    specs: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, frozenset[str]]:
+    """Build tool categories from registered tool specs dynamically.
 
     Maps spec.category values to canonical category keys:
       - "write" → "code_write"
@@ -35,11 +40,9 @@ def _build_tool_categories() -> dict[str, frozenset[str]]:
         "read_only": set(),
     }
 
-    specs = _TOOL_SPECS
-    if hasattr(specs, "_data"):
-        specs = specs._data
+    registry_specs = ToolSpecRegistry.get_all_specs() if specs is None else specs
 
-    for name, spec in specs.items():
+    for name, spec in registry_specs.items():
         cat = spec.get("category", "read")
         cat_key: str
         if cat == "write":
@@ -92,8 +95,8 @@ def is_read_only_tool(name: str) -> bool:
 #   - polaris/cells/roles/kernel/internal/transaction/contract_guards.py
 #     (has_successful_recon_execution — the recon-required finalize gate)
 # The judge and the kernel MUST agree on what counts as reconnaissance;
-# do not redefine this set locally. Curated (not derived from _TOOL_SPECS)
-# because it deliberately includes legacy aliases (grep/ripgrep/search_code)
+# do not redefine this set locally. Curated (not derived from registry category
+# metadata) because it deliberately includes legacy aliases (grep/ripgrep/search_code)
 # and the scout_probe sub-agent dispatch tool.
 # ---------------------------------------------------------------------------
 SCOUT_RECON_TOOLS: frozenset[str] = frozenset(

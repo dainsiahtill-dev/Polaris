@@ -55,10 +55,9 @@ jobs:
         run: |
           python -c "
             from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
-            from polaris.kernelone.tool_execution.contracts import _TOOL_SPECS
 
-            # 检查contracts中的工具是否都在Registry中
-            for name in _TOOL_SPECS:
+            # 检查registry中的工具是否都能按规范读取
+            for name in ToolSpecRegistry.get_all_canonical_names():
                 spec = ToolSpecRegistry.get(name)
                 if not spec:
                     raise Exception(f'{name} not in Registry')

@@ -71,7 +71,6 @@ from polaris.kernelone.tool_execution.contracts import (
     ERROR_UNKNOWN_TOOL,
     canonicalize_tool_name,
     list_tool_contracts,
-    normalize_tool_args,
     render_tool_contract_for_prompt,
     supported_tool_names,
     validate_tool_step,
@@ -218,7 +217,6 @@ __all__ = [
     "is_command_allowed",
     "is_command_blocked",
     "list_tool_contracts",
-    "normalize_tool_args",
     # Chain
     "normalize_tool_plan",
     "parse_tool_chain_step",

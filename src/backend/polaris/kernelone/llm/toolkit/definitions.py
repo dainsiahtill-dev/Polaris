@@ -395,7 +395,7 @@ def _make_tool_parameter(arg: dict[str, Any]) -> ToolParameter | None:
 # Migration path:
 #   1. Tool data (specs) -> polaris.kernelone.tool_execution.tool_spec_registry.ToolSpecRegistry
 #   2. Tool validation -> polaris.kernelone.tool_execution.contracts.validate_tool_step()
-#   3. Tool normalization -> polaris.kernelone.tool_execution.contracts.normalize_tool_args()
+#   3. Tool normalization -> polaris.kernelone.llm.toolkit.tool_normalization.normalize_tool_arguments()
 #   4. Tool registry -> use create_default_registry() (bridge to ToolSpecRegistry)
 #
 # This module provides:

@@ -5,12 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from polaris.kernelone.constants import DEFAULT_MAX_RETRIES
+from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments
 from polaris.kernelone.tool_execution.constants import (
     DEFAULT_READ_RADIUS,
     MAX_TOOL_READ_LINES,
     READ_ONLY_TOOLS,
 )
-from polaris.kernelone.tool_execution.contracts import canonicalize_tool_name, normalize_tool_args
+from polaris.kernelone.tool_execution.contracts import canonicalize_tool_name
 from polaris.kernelone.tool_execution.models import ToolChainStep
 from polaris.kernelone.tool_execution.utils import safe_int
 
@@ -20,7 +21,7 @@ def parse_tool_chain_step(step: dict[str, Any]) -> ToolChainStep:
     raw_tool = str(step.get("tool") or "").strip()
     tool = canonicalize_tool_name(raw_tool)
     args = step.get("args") if isinstance(step.get("args"), dict) else {}
-    args = normalize_tool_args(tool, args)
+    args = normalize_tool_arguments(tool, args)
 
     on_error = step.get("on_error", "stop")
     if on_error not in ("stop", "retry", "continue"):
@@ -54,7 +55,7 @@ def normalize_tool_plan(
         raw_tool = str(step.get("tool") or "").strip()
         tool = canonicalize_tool_name(raw_tool)
         args = step.get("args") if isinstance(step.get("args"), dict) else {}
-        args = normalize_tool_args(tool, args)
+        args = normalize_tool_arguments(tool, args)
         step = dict(step)
         step["tool"] = tool
         step["args"] = args
