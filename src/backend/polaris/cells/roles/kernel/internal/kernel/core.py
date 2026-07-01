@@ -22,7 +22,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.internal.kernel.context_gateway_config_builder import (
     ContextGatewayConfigFactory,
@@ -44,11 +44,6 @@ from polaris.cells.roles.kernel.internal.kernel.stream_run_id import resolve_str
 from polaris.cells.roles.kernel.internal.kernel.suggestions import get_suggestions_for_error
 from polaris.cells.roles.kernel.internal.kernel.tool_gateway_turn_key import (
     resolve_explicit_turn_key,
-    resolve_tool_gateway_turn_key,
-)
-from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
-    _cognitive_runtime_blocked_tools,
-    _normalize_tool_policy_name,
 )
 from polaris.cells.roles.kernel.internal.kernel.turn_execution import (
     execute_transaction_kernel_stream,
@@ -857,156 +852,6 @@ class RoleExecutionKernel:
             ):
                 self._cached_tool_gateway._failure_budget.reset()
         self._cached_gateway_turn_id = current_turn_key
-
-    async def _execute_single_tool(
-        self,
-        tool_name: str,
-        args: dict[str, Any],
-        context: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Execute one tool through the authorized tool path.
-
-        委托给 tool_executor.execute_single()
-
-        Args:
-            tool_name: 工具名称
-            args: 工具参数
-            context: 执行上下文，可包含 'profile' 和 'request' 用于工具执行上下文
-
-        Returns:
-            工具执行结果
-        """
-        request_for_policy = context.get("request") if context else None
-        if request_for_policy is not None:
-            cognitive_blocked_tools = _cognitive_runtime_blocked_tools(cast(RoleTurnRequest, request_for_policy))
-            if _normalize_tool_policy_name(tool_name) in cognitive_blocked_tools:
-                from polaris.cells.roles.kernel.internal.tool_gateway import ToolAuthorizationError
-
-                raise ToolAuthorizationError(f"Cognitive Runtime blocked tool '{tool_name}'")
-
-        if self._injected_tool_executor is not None:
-            # BUG FIX: Even injected executors must go through authorization.
-            # Previously bypassed RoleToolGateway entirely — no counting, whitelist,
-            # path traversal protection, or FailureBudget.
-            profile = context.get("profile") if context else None
-            if profile is not None:
-                from polaris.cells.roles.kernel.internal.kernel.tool_executor import KernelToolExecutor
-
-                executor = KernelToolExecutor(self, self.workspace)
-                request = context.get("request") if context else None
-                if request is None:
-                    request = RoleTurnRequest(message="")
-
-                # Reuse only within the same task-scoped turn. A new turn may
-                # carry a different immutable capability scope.
-                current_turn_id = resolve_tool_gateway_turn_key(request)
-                if (
-                    self._cached_tool_gateway is not None
-                    and self._cached_gateway_profile is profile
-                    and current_turn_id == self._cached_gateway_turn_id
-                ):
-                    gateway = self._cached_tool_gateway
-                else:
-                    reset_cached = getattr(self._cached_tool_gateway, "reset_execution_count", None)
-                    if callable(reset_cached):
-                        reset_cached()
-                    cached_failure_budget = getattr(self._cached_tool_gateway, "_failure_budget", None)
-                    reset_failure_budget = getattr(cached_failure_budget, "reset", None)
-                    if callable(reset_failure_budget):
-                        reset_failure_budget()
-                    close_cached = getattr(self._cached_tool_gateway, "close", None)
-                    if callable(close_cached):
-                        close_cached()
-                    gateway = executor.create_gateway(
-                        profile=profile,
-                        request=request,
-                        tool_gateway=self._tool_gateway,
-                    )
-                    self._cached_tool_gateway = gateway
-                    self._cached_gateway_profile = profile
-                    self._cached_gateway_turn_id = current_turn_id
-
-                can_execute, reason = gateway.check_tool_permission(tool_name, args)
-                if not can_execute:
-                    from polaris.cells.roles.kernel.internal.tool_gateway import ToolAuthorizationError
-
-                    raise ToolAuthorizationError(reason)
-
-            logger.debug(
-                "[_execute_single_tool] _injected_tool_executor (with auth gate): tool=%s",
-                tool_name,
-            )
-            return await self._injected_tool_executor.execute(tool_name, args, context=context)
-        # Default authorized execution path.
-        from polaris.cells.roles.kernel.internal.kernel.tool_executor import KernelToolExecutor
-
-        executor = KernelToolExecutor(self, self.workspace)
-
-        # FIX: 从context中获取profile和request，如果未提供则使用默认值
-        profile = None
-        request = None
-        if context:
-            profile = context.get("profile")
-            request = context.get("request")
-
-        # 如果没有提供profile，尝试获取第一个可用角色
-        if profile is None:
-            available_roles = ["director", "pm", "architect", "chief_engineer", "qa"]
-            for role in available_roles:
-                try:
-                    profile = self.registry.get_profile_or_raise(role)
-                    break
-                except ValueError:
-                    continue
-
-        if profile is None:
-            raise ValueError("No available role profile found for tool execution")
-
-        if request is None:
-            request = RoleTurnRequest(message="")
-
-        logger.debug(
-            "[_execute_single_tool] request.run_id=%s tool=%s",
-            getattr(request, "run_id", None),
-            tool_name,
-        )
-
-        # Reuse cached gateway if profile matches (FailureBudget persistence for HALLUCINATION_LOOP detection)
-        # BUG FIX: Reset execution_count on turn boundary to prevent cross-turn accumulation.
-        # The _execution_count tracks per-turn tool calls but was never reset when the
-        # gateway was reused across turns, causing permanent tool lockout.
-        # Also reset FailureBudget on turn boundary to prevent stale failure state
-        # from one task/turn affecting the next one.
-        current_turn_id = resolve_tool_gateway_turn_key(request)
-        if (
-            self._cached_tool_gateway is not None
-            and self._cached_gateway_profile is profile
-            and current_turn_id == self._cached_gateway_turn_id
-        ):
-            gateway = self._cached_tool_gateway
-        else:
-            # Create a new gateway at task/turn boundary so capability scope and
-            # FailureBudget cannot leak across independent tasks.
-            reset_cached = getattr(self._cached_tool_gateway, "reset_execution_count", None)
-            if callable(reset_cached):
-                reset_cached()
-            cached_failure_budget = getattr(self._cached_tool_gateway, "_failure_budget", None)
-            reset_failure_budget = getattr(cached_failure_budget, "reset", None)
-            if callable(reset_failure_budget):
-                reset_failure_budget()
-            close_cached = getattr(self._cached_tool_gateway, "close", None)
-            if callable(close_cached):
-                close_cached()
-            gateway = executor.create_gateway(
-                profile=profile,
-                request=request,
-                tool_gateway=self._tool_gateway,
-            )
-            self._cached_tool_gateway = gateway
-            self._cached_gateway_profile = profile
-            self._cached_gateway_turn_id = current_turn_id
-
-        return gateway.execute_tool(tool_name, args)
 
 
 __all__ = [

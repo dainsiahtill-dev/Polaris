@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T05:04:01.485191Z",
-  "source_hash": "7cf2fccd448bc5d0",
+  "generated_at": "2026-07-01T05:22:05.370104Z",
+  "source_hash": "8428f4adc45b3b62",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4795,6 +4795,12 @@
       "name": "_apply_forced_transaction_tool_definitions",
       "description": "Prefer explicit TransactionKernel forced tool scope over default role tools.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "_reset_cached_gateway",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_runtime_executor.py"
     },
     {
       "type": "class",
@@ -28614,7 +28620,7 @@
     {
       "type": "function",
       "name": "test_role_dispatch_reaches_scout_cell",
-      "description": "``RoleExecutionKernel._execute_single_tool`` — the exact method the",
+      "description": "The TransactionKernel tool-runtime owner authorizes ``scout_probe`` and",
       "defined_in": "polaris/cells/roles/kernel/tests/test_role_turn_invokes_scout_probe.py"
     },
     {

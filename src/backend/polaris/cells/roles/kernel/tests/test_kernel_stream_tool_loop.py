@@ -155,14 +155,17 @@ def test_stream_continues_after_tool_results_with_transcript_context(monkeypatch
     monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
     monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
-    async def _fake_execute_single_tool(tool_name, args, context):
+    async def _fake_execute_single_tool(_kernel, *, tool_name, args, context):
         return {
             "success": True,
             "tool": tool_name,
             "result": {"path": "README.md", "bytes": 128},
         }
 
-    monkeypatch.setattr(kernel, "_execute_single_tool", _fake_execute_single_tool)
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.kernel.transaction_factory.execute_single_tool",
+        _fake_execute_single_tool,
+    )
 
     request = RoleTurnRequest(
         mode=RoleExecutionMode.CHAT,
@@ -258,14 +261,17 @@ def test_stream_executes_native_tool_calls_without_text_wrapper(monkeypatch) -> 
     monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
     monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
-    async def _fake_execute_single_tool(tool_name, args, context):
+    async def _fake_execute_single_tool(_kernel, *, tool_name, args, context):
         return {
             "success": True,
             "tool": tool_name,
             "result": {"path": "README.md", "bytes": 256},
         }
 
-    monkeypatch.setattr(kernel, "_execute_single_tool", _fake_execute_single_tool)
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.kernel.transaction_factory.execute_single_tool",
+        _fake_execute_single_tool,
+    )
 
     request = RoleTurnRequest(
         mode=RoleExecutionMode.CHAT,
@@ -356,7 +362,7 @@ def test_stream_executes_normalized_tool_calls_even_with_anthropic_provider_meta
 
     executed_calls: list[tuple[str, dict[str, object]]] = []
 
-    async def _fake_execute_single_tool(tool_name, args, context):
+    async def _fake_execute_single_tool(_kernel, *, tool_name, args, context):
         executed_calls.append((str(tool_name or ""), dict(args or {})))
         return {
             "success": True,
@@ -364,7 +370,10 @@ def test_stream_executes_normalized_tool_calls_even_with_anthropic_provider_meta
             "result": {"path": "README.md", "bytes": 256},
         }
 
-    monkeypatch.setattr(kernel, "_execute_single_tool", _fake_execute_single_tool)
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.kernel.transaction_factory.execute_single_tool",
+        _fake_execute_single_tool,
+    )
 
     request = RoleTurnRequest(
         mode=RoleExecutionMode.CHAT,
@@ -448,7 +457,7 @@ def test_stream_repeated_identical_tool_cycle_emits_safety_error(monkeypatch) ->
     monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
     monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
-    async def _fake_execute_single_tool(tool_name, args, context):
+    async def _fake_execute_single_tool(_kernel, *, tool_name, args, context):
         return {
             "success": False,
             "tool": tool_name,
@@ -456,7 +465,10 @@ def test_stream_repeated_identical_tool_cycle_emits_safety_error(monkeypatch) ->
             "result": {"ok": False, "error": "File not found: missing.py"},
         }
 
-    monkeypatch.setattr(kernel, "_execute_single_tool", _fake_execute_single_tool)
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.kernel.transaction_factory.execute_single_tool",
+        _fake_execute_single_tool,
+    )
 
     request = RoleTurnRequest(
         mode=RoleExecutionMode.CHAT,
@@ -537,7 +549,7 @@ def test_stream_compacts_large_tool_receipts_in_transcript(monkeypatch) -> None:
 
     huge_content = "A" * 50000
 
-    async def _fake_execute_single_tool(tool_name, args, context):
+    async def _fake_execute_single_tool(_kernel, *, tool_name, args, context):
         return {
             "success": True,
             "tool": tool_name,
@@ -555,7 +567,10 @@ def test_stream_compacts_large_tool_receipts_in_transcript(monkeypatch) -> None:
             },
         }
 
-    monkeypatch.setattr(kernel, "_execute_single_tool", _fake_execute_single_tool)
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.kernel.transaction_factory.execute_single_tool",
+        _fake_execute_single_tool,
+    )
 
     request = RoleTurnRequest(
         mode=RoleExecutionMode.CHAT,
@@ -636,7 +651,7 @@ def test_stream_keeps_read_file_receipt_when_context_budget_allows(monkeypatch) 
     #  marker 放在内容开头，避免被 finalization context 的 3000 字截断截掉
     medium_content = marker + ("A" * 5000)
 
-    async def _fake_execute_single_tool(tool_name, args, context):
+    async def _fake_execute_single_tool(_kernel, *, tool_name, args, context):
         return {
             "success": True,
             "tool": tool_name,
@@ -647,7 +662,10 @@ def test_stream_keeps_read_file_receipt_when_context_budget_allows(monkeypatch) 
             },
         }
 
-    monkeypatch.setattr(kernel, "_execute_single_tool", _fake_execute_single_tool)
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.kernel.transaction_factory.execute_single_tool",
+        _fake_execute_single_tool,
+    )
 
     request = RoleTurnRequest(
         mode=RoleExecutionMode.CHAT,
@@ -889,15 +907,18 @@ def test_run_continues_after_tool_results_with_transcript_context(monkeypatch) -
 
     monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
-    async def _fake_execute_single_tool(tool_name, args, context):
-        """Mock _execute_single_tool (used by TurnEngine) - returns tool results without I/O."""
+    async def _fake_execute_single_tool(_kernel, *, tool_name, args, context):
+        """Mock execute_single_tool owner (used by TransactionKernel) - returns tool results without I/O."""
         return {
             "success": True,
             "tool": tool_name,
             "result": {"path": "README.md", "bytes": 128},
         }
 
-    monkeypatch.setattr(kernel, "_execute_single_tool", _fake_execute_single_tool)
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.kernel.transaction_factory.execute_single_tool",
+        _fake_execute_single_tool,
+    )
 
     request = RoleTurnRequest(
         mode=RoleExecutionMode.CHAT,
@@ -983,7 +1004,7 @@ def test_run_repeated_identical_tool_cycle_does_not_trigger_stall(monkeypatch) -
 
     monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
-    async def _fake_execute_single_tool(tool_name, args, context):
+    async def _fake_execute_single_tool(_kernel, *, tool_name, args, context):
         return {
             "success": False,
             "tool": tool_name,
@@ -991,7 +1012,10 @@ def test_run_repeated_identical_tool_cycle_does_not_trigger_stall(monkeypatch) -
             "result": {"ok": False, "error": "File not found: missing.py"},
         }
 
-    monkeypatch.setattr(kernel, "_execute_single_tool", _fake_execute_single_tool)
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.kernel.transaction_factory.execute_single_tool",
+        _fake_execute_single_tool,
+    )
 
     request = RoleTurnRequest(
         mode=RoleExecutionMode.CHAT,
@@ -1062,7 +1086,7 @@ def test_run_examples_inside_code_blocks_do_not_execute(monkeypatch) -> None:
 
     monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
-    async def _fake_execute_single_tool(tool_name, args, context):
+    async def _fake_execute_single_tool(_kernel, *, tool_name, args, context):
         nonlocal tool_executed
         tool_executed = True
         return {
@@ -1072,7 +1096,10 @@ def test_run_examples_inside_code_blocks_do_not_execute(monkeypatch) -> None:
             "result": {},
         }
 
-    monkeypatch.setattr(kernel, "_execute_single_tool", _fake_execute_single_tool)
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.kernel.transaction_factory.execute_single_tool",
+        _fake_execute_single_tool,
+    )
 
     request = RoleTurnRequest(
         mode=RoleExecutionMode.CHAT,

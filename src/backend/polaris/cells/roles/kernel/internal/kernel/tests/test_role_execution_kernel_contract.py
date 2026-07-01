@@ -19,6 +19,7 @@ from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
     _cognitive_runtime_blocked_tools,
     _filter_cognitive_blocked_tool_definitions,
 )
+from polaris.cells.roles.kernel.internal.kernel.tool_runtime_executor import execute_single_tool
 from polaris.cells.roles.kernel.public.config import KernelConfig
 from polaris.cells.roles.kernel.services.contracts import (
     CellToolExecutorPort,
@@ -250,7 +251,7 @@ class TestInjectedServiceEntrypoints:
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_uses_executor(self) -> None:
-        """测试 _execute_single_tool() 方法调用 tool_executor。"""
+        """测试 execute_single_tool() owner 调用 tool_executor。"""
         mock_executor = MagicMock(spec=CellToolExecutorPort)
         mock_executor.execute = AsyncMock(return_value={"success": True})
 
@@ -259,7 +260,7 @@ class TestInjectedServiceEntrypoints:
             tool_executor=mock_executor,
         )
 
-        result = await kernel._execute_single_tool("read_file", {"path": "test.py"})
+        result = await execute_single_tool(kernel, tool_name="read_file", args={"path": "test.py"})
 
         mock_executor.execute.assert_called_once()
         assert result == {"success": True}
@@ -284,9 +285,10 @@ class TestInjectedServiceEntrypoints:
         )
 
         with pytest.raises(ToolAuthorizationError, match="Cognitive Runtime blocked tool"):
-            await kernel._execute_single_tool(
-                "delete_file",
-                {"file": "src/app.py"},
+            await execute_single_tool(
+                kernel,
+                tool_name="delete_file",
+                args={"file": "src/app.py"},
                 context={"request": request},
             )
 
@@ -410,14 +412,16 @@ class TestInjectedServiceEntrypoints:
         request_b.run_id = None
         request_b.turn_id = ""
 
-        await kernel._execute_single_tool(
-            "read_file",
-            {"file": "a.py"},
+        await execute_single_tool(
+            kernel,
+            tool_name="read_file",
+            args={"file": "a.py"},
             context={"profile": profile, "request": request_a},
         )
-        await kernel._execute_single_tool(
-            "read_file",
-            {"file": "b.py"},
+        await execute_single_tool(
+            kernel,
+            tool_name="read_file",
+            args={"file": "b.py"},
             context={"profile": profile, "request": request_b},
         )
 

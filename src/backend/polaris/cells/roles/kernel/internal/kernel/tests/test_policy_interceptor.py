@@ -1,7 +1,7 @@
-"""Tests for RoleExecutionKernel pre-execution policy gate.
+"""Tests for the Role Kernel single-tool pre-execution policy gate.
 
 Verifies that RoleToolGateway.check_tool_permission() is enforced inside
-RoleExecutionKernel._execute_single_tool() BEFORE calling the injected executor,
+tool_runtime_executor.execute_single_tool() BEFORE calling the injected executor,
 closing the stream-transport bypass where injected_tool_executor skipped
 KernelToolExecutor's permission check entirely.
 """
@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.tool_runtime_executor import execute_single_tool
 from polaris.cells.roles.kernel.internal.tool_gateway import ToolAuthorizationError
 
 
@@ -46,8 +47,7 @@ class TestPolicyInterceptor:
 
         This is the primary regression test for the stream-transport bypass:
         kernel._injected_tool_executor was skipping KernelToolExecutor's permission check.
-        The pre-execution gate in RoleExecutionKernel._execute_single_tool()
-        closes this gap.
+        The pre-execution gate in execute_single_tool() closes this gap.
         """
         kernel = RoleExecutionKernel(workspace=".")
         # Simulate stream transport: injected executor bypasses KernelToolExecutor
@@ -61,7 +61,8 @@ class TestPolicyInterceptor:
         request.metadata = {}
 
         with pytest.raises(ToolAuthorizationError) as exc_info:
-            await kernel._execute_single_tool(
+            await execute_single_tool(
+                kernel,
                 tool_name="execute_command",
                 args={"command": "echo $API_KEY"},
                 context={"profile": profile, "request": request},
@@ -83,7 +84,8 @@ class TestPolicyInterceptor:
         request.metadata = {}
 
         with pytest.raises(ToolAuthorizationError) as exc_info:
-            await kernel._execute_single_tool(
+            await execute_single_tool(
+                kernel,
                 tool_name="delete_file",
                 args={"path": "important.py"},
                 context={"profile": profile, "request": request},
@@ -104,7 +106,8 @@ class TestPolicyInterceptor:
         request.metadata = {}
 
         with pytest.raises(ToolAuthorizationError) as exc_info:
-            await kernel._execute_single_tool(
+            await execute_single_tool(
+                kernel,
                 tool_name="execute_command",
                 args={"command": "ls"},
                 context={"profile": profile, "request": request},

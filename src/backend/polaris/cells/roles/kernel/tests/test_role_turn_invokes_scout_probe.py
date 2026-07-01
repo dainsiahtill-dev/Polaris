@@ -16,9 +16,8 @@ All three are proven here for pm / chief_engineer / director:
 
 1. ``test_role_offers_scout_probe_to_llm`` — the native tool schemas handed to the
    provider as ``tools=`` contain ``scout_probe``.
-2. ``test_role_dispatch_reaches_scout_cell`` — the kernel's own tool-execution
-   method (``_execute_single_tool``, the one the TransactionKernel calls for every
-   tool) authorizes against the real whitelist and runs the scout cell.
+2. ``test_role_dispatch_reaches_scout_cell`` — the kernel's tool-runtime owner
+   authorizes against the real whitelist and runs the scout cell.
 3. ``test_full_analyze_turn_invokes_scout_cell`` — a complete ``kernel.run()`` turn
    (model call -> tool dispatch -> tool result -> finalization) genuinely runs the
    scout cell and surfaces a real symbol.
@@ -40,6 +39,7 @@ from typing import Any
 import polaris.cells.roles.scout.public.service as scout_service
 import pytest
 from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.tool_runtime_executor import execute_single_tool
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import build_native_tool_schemas
 from polaris.cells.roles.profile.public.service import (
     RoleExecutionMode,
@@ -245,10 +245,9 @@ def test_role_dispatch_reaches_scout_cell(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``RoleExecutionKernel._execute_single_tool`` — the exact method the
-    TransactionKernel calls to run each tool — authorizes ``scout_probe`` against
-    the real role whitelist and dispatches it to the scout cell, which runs real
-    read tools against a temp workspace. Contract-mode independent."""
+    """The TransactionKernel tool-runtime owner authorizes ``scout_probe`` and
+    dispatches it to the scout cell, which runs real read tools against a temp
+    workspace. Contract-mode independent."""
     real_profile = loaded_registry.get_profile(role)
     assert real_profile is not None, f"role {role!r} missing from loaded registry"
 
@@ -260,10 +259,11 @@ def test_role_dispatch_reaches_scout_cell(
     request = RoleTurnRequest(mode=RoleExecutionMode.CHAT, workspace=str(tmp_path), message="audit")
 
     outcome = asyncio.run(
-        kernel._execute_single_tool(
-            "scout_probe",
-            {"query": "payment_gateway"},
-            {"profile": profile, "request": request},
+        execute_single_tool(
+            kernel,
+            tool_name="scout_probe",
+            args={"query": "payment_gateway"},
+            context={"profile": profile, "request": request},
         )
     )
 

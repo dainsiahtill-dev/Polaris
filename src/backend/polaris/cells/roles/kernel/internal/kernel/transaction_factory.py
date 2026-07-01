@@ -7,9 +7,8 @@ directly so transaction assembly has one implementation surface.
 Design notes (FROZEN behavior — do NOT change):
 - The nested ``_LLMProvider`` / ``_ToolRuntime`` / ``_LLMProviderStream``
   classes capture a ``weakref`` to the kernel so they never keep it alive, and
-  they reach back into the kernel at call time (``kernel._execute_single_tool``,
-  ``kernel.reset_tool_gateway_turn_boundary``). That call-time indirection is
-  what keeps instance-level monkeypatching of ``_execute_single_tool`` working.
+  tool execution enters through ``kernel.tool_runtime_executor.execute_single_tool``
+  while explicit turn-boundary resets remain on the kernel public boundary.
 - ``_LLMProvider``/``_ToolRuntime``/``_LLMProviderStream`` use ``__slots__ = ()``
   so they remain zero-attribute callables, identical to the in-class version.
 - The five helper closures (history dedup, context-override assembly, model
@@ -28,6 +27,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
+from polaris.cells.roles.kernel.internal.kernel.tool_runtime_executor import execute_single_tool
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
 from polaris.cells.roles.kernel.internal.transaction.recon_policy import resolve_recon_required
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
@@ -426,7 +426,8 @@ def create_transaction_kernel(
             if kernel is None:
                 raise RuntimeError("Kernel instance no longer exists")
             _assert_task_runtime_guard_allows_tool(provider_request)
-            return await kernel._execute_single_tool(
+            return await execute_single_tool(
+                kernel,
                 tool_name=tool_name,
                 args=arguments,
                 context={"profile": provider_profile, "request": provider_request},

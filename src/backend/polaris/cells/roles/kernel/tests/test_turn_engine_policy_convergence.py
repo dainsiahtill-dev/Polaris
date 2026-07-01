@@ -476,11 +476,13 @@ class TestTurnEnginePolicyIntegration:
         kernel._injected_llm_invoker = mock_llm_invoker
 
         async def _fake_execute_single_tool(
-            self: Any,
+            _kernel: RoleExecutionKernel,
+            *,
             tool_name: str,
             args: dict[str, Any],
             context: dict[str, Any] | None = None,
         ) -> dict[str, Any]:
+            del _kernel, args, context
             return {
                 "success": False,
                 "tool": tool_name,
@@ -488,7 +490,10 @@ class TestTurnEnginePolicyIntegration:
                 "result": {"ok": False, "error": "FileNotFound"},
             }
 
-        monkeypatch.setattr(RoleExecutionKernel, "_execute_single_tool", _fake_execute_single_tool)
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.internal.kernel.transaction_factory.execute_single_tool",
+            _fake_execute_single_tool,
+        )
 
         request = RoleTurnRequest(
             mode=RoleExecutionMode.CHAT,
@@ -550,11 +555,13 @@ class TestTurnEnginePolicyIntegration:
         kernel._injected_llm_invoker = mock_llm_invoker
 
         async def _fake_execute_single_tool(
-            self: Any,
+            _kernel: RoleExecutionKernel,
+            *,
             tool_name: str,
             args: dict[str, Any],
             context: dict[str, Any] | None = None,
         ) -> dict[str, Any]:
+            del _kernel, args, context
             return {
                 "success": False,
                 "tool": tool_name,
@@ -562,7 +569,10 @@ class TestTurnEnginePolicyIntegration:
                 "result": {"ok": False, "error": "FileNotFound"},
             }
 
-        monkeypatch.setattr(RoleExecutionKernel, "_execute_single_tool", _fake_execute_single_tool)
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.internal.kernel.transaction_factory.execute_single_tool",
+            _fake_execute_single_tool,
+        )
 
         request = RoleTurnRequest(
             mode=RoleExecutionMode.CHAT,

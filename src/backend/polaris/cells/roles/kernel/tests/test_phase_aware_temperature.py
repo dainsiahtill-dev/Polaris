@@ -531,10 +531,14 @@ class TestTransactionKernelTaskRuntimeGuard:
             assert session_id == "session-1"
             return {"success": True, "reason": "heartbeat_renewed"}
 
-        async def _execute_single_tool(
-            *, tool_name: str, args: dict[str, Any], context: dict[str, Any]
+        async def _fake_tool_runtime_executor(
+            _kernel: RoleExecutionKernel,
+            *,
+            tool_name: str,
+            args: dict[str, Any],
+            context: dict[str, Any],
         ) -> dict[str, Any]:
-            del context
+            del _kernel, context
             executed.append((tool_name, args))
             return {"success": True, "result": {"ok": True}}
 
@@ -542,7 +546,10 @@ class TestTransactionKernelTaskRuntimeGuard:
             "polaris.cells.runtime.task_runtime.internal.service.TaskRuntimeService.heartbeat_execution",
             _heartbeat,
         )
-        monkeypatch.setattr(kernel, "_execute_single_tool", _execute_single_tool)
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.internal.kernel.transaction_factory.execute_single_tool",
+            _fake_tool_runtime_executor,
+        )
 
         tk = create_transaction_kernel(kernel, "director", profile, request)
         result = await tk.tool_runtime("write_file", {"file": "src/index.ts", "content": "ok"})
@@ -575,10 +582,14 @@ class TestTransactionKernelTaskRuntimeGuard:
             assert session_id == "session-1"
             return {"success": False, "reason": "session_not_active"}
 
-        async def _execute_single_tool(
-            *, tool_name: str, args: dict[str, Any], context: dict[str, Any]
+        async def _fake_tool_runtime_executor(
+            _kernel: RoleExecutionKernel,
+            *,
+            tool_name: str,
+            args: dict[str, Any],
+            context: dict[str, Any],
         ) -> dict[str, Any]:
-            del args, context
+            del _kernel, args, context
             executed.append(tool_name)
             return {"success": True}
 
@@ -586,7 +597,10 @@ class TestTransactionKernelTaskRuntimeGuard:
             "polaris.cells.runtime.task_runtime.internal.service.TaskRuntimeService.heartbeat_execution",
             _heartbeat,
         )
-        monkeypatch.setattr(kernel, "_execute_single_tool", _execute_single_tool)
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.internal.kernel.transaction_factory.execute_single_tool",
+            _fake_tool_runtime_executor,
+        )
 
         tk = create_transaction_kernel(kernel, "director", profile, request)
         with pytest.raises(RuntimeError, match="director_tool_execution_cancelled"):
