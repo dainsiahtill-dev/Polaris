@@ -502,6 +502,8 @@ class TestParseExportType:
         assert parse_export_type("blueprint") == ExportType.BLUEPRINT
         assert parse_export_type("qa_memo") == ExportType.QA_MEMO
 
-    def test_invalid_fallback(self):
-        assert parse_export_type("unknown_type") == ExportType.PM_TASK_DRAFT
-        assert parse_export_type("") == ExportType.PM_TASK_DRAFT
+    def test_invalid_raises(self):
+        with pytest.raises(ValueError, match="unsupported export_type"):
+            parse_export_type("unknown_type")
+        with pytest.raises(ValueError, match="non-empty ExportType"):
+            parse_export_type("")

@@ -279,9 +279,17 @@ def create_qa_audit_draft(
 
 
 def parse_export_type(export_type: str) -> ExportType:
-    """解析导出类型"""
+    """Parse an export type value.
+
+    Raises:
+        ValueError: If ``export_type`` is empty or not one of the supported
+            :class:`ExportType` values.
+    """
+    normalized = export_type.strip()
+    if not normalized:
+        raise ValueError("export_type must be a non-empty ExportType value")
     try:
-        return ExportType(export_type)
-    except ValueError:
-        # 默认返回 None，让调用者处理
-        return ExportType.PM_TASK_DRAFT
+        return ExportType(normalized)
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in ExportType)
+        raise ValueError(f"unsupported export_type {export_type!r}; expected one of: {allowed}") from exc

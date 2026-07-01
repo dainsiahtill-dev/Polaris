@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from polaris.domain.entities.export_artifacts import (
     ExecutionNotes,
     ExportFormat,
@@ -186,5 +187,6 @@ class TestParseExportType:
     def test_valid(self) -> None:
         assert parse_export_type("plan_notes") == ExportType.PLAN_NOTES
 
-    def test_invalid_defaults_to_pm_task_draft(self) -> None:
-        assert parse_export_type("invalid") == ExportType.PM_TASK_DRAFT
+    def test_invalid_raises(self) -> None:
+        with pytest.raises(ValueError, match="unsupported export_type"):
+            parse_export_type("invalid")

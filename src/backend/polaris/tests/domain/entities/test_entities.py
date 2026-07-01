@@ -1070,8 +1070,9 @@ class TestParseExportType:
     def test_valid(self):
         assert parse_export_type("pm_task_draft") == ExportType.PM_TASK_DRAFT
 
-    def test_invalid_fallback(self):
-        assert parse_export_type("invalid") == ExportType.PM_TASK_DRAFT
+    def test_invalid_raises(self):
+        with pytest.raises(ValueError, match="unsupported export_type"):
+            parse_export_type("invalid")
 
 
 # ---------------------------------------------------------------------------
