@@ -1,7 +1,5 @@
 # cell.yaml - Director Task Consumer Cell
 # ARCH-001: Created to declare previously undeclared cell
-# DEPRECATED: This cell is deprecated per __init__.py docstring
-#             Use DirectorPool cell instead
 id: director.task_consumer
 title: Director Task Consumer
 kind: capability
@@ -9,10 +7,9 @@ visibility: public
 stateful: false
 owner: director
 purpose: >
-  DEPRECATED - Use DirectorPool instead.
-  Poll task market for PENDING_EXEC tasks and coordinate execution
-  with Safe Parallel support. Provides ScopeConflictDetector for
-  detecting scope path conflicts with other in-progress tasks.
+  Poll task market for PENDING_EXEC tasks and coordinate execution with Safe
+  Parallel support. Provides ScopeConflictDetector for detecting scope path
+  conflicts with other in-progress tasks.
 current_modules:
   - polaris.cells.director.task_consumer.internal.director_consumer
 owned_paths:
@@ -38,6 +35,4 @@ effects_allowed:
 verification:
   tests:
     - polaris/cells/director/task_consumer/internal/tests/**
-  gaps:
-    - "DEPRECATED: Cell marked for removal"
-    - DirectorPool integration pending
+  gaps: []

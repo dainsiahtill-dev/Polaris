@@ -13,7 +13,7 @@ business wording, React `Suspense fallback`, and accepted config migration code.
 
 | Class | Count | Meaning |
 | --- | ---: | --- |
-| Closed in this convergence pass | 191 | Removed, retired, or converted into an audited sunset path and verified. |
+| Closed in this convergence pass | 192 | Removed, retired, or converted into an audited sunset path and verified. |
 | P1 open | 0 | Still close to execution, LLM/tool, QA, or state projection paths. |
 | P2 open | 0 | Exposed API/UI/CLI compatibility surfaces that should be retired after callers move. |
 | P3 accepted with sunset | 0 | Kept for user config or historical data migration; requires an expiry policy, not immediate deletion. |
@@ -257,6 +257,7 @@ Additional closed cuts: LS-14A, LS-15A, LS-16A, LS-17A, LS-18A, LS-19A, LS-20A, 
 | LS-31A | LS-31 | P2 | KernelOne LLM / tool-contract re-export shim | Closed: `kernelone/llm/tools/contracts.py` no longer exists as a deprecated re-export of canonical tool contracts. | Closed by moving `tools.normalizer` and `tools.runtime` to canonical `polaris.kernelone.llm.contracts` imports, deleting the retired shim, and adding an architecture fence that blocks file recreation and production imports through the retired module path. |
 | LS-32A | LS-32 | P2 | KernelOne LLM / native-function-calling facade | Closed: `kernelone/llm/toolkit/native_function_calling.py` no longer exists as a deprecated facade over native parser/runtime behavior. | Closed by deleting the facade and its self-preserving tests, removing retired symbols from `toolkit.__all__`, preserving malformed-argument evidence in `NativeFunctionCallingParser` / parser adapter, blocking parse-error calls in `KernelToolCallingRuntime`, and adding an architecture fence for the retired path/export surface. |
 | LS-33A | LS-33 | P2 | Migration ledger / retired compatibility cell evidence | Closed: `mig-compatibility-cell-removal` no longer uses a vague directory-level note for the retired empty compatibility cell. | Closed by changing the source ref note to an explicit empty file list plus verification basis; `legacy_file_coverage_audit` passes without suppressing the directory granularity rule. |
+| LS-34A | LS-34 | P1 | Director task consumer / stale deprecation marker | Closed: `director.task_consumer` no longer marks the active TaskMarket `pending_exec` consumer as deprecated or as a compatibility adapter for `DirectorPool`. | Closed by removing the stale `DeprecationWarning`, `__deprecated__` map, package/cell metadata deprecation text, and README deprecation claim while preserving the canonical claim -> execute -> task-boundary behavior; added construction coverage proving the active consumer no longer emits deprecation warnings. Verified with targeted task-consumer tests, ruff, negative grep for deprecated task-consumer markers, and legacy/shim governance scripts. |
 
 ## Closure Order
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+import warnings
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -41,6 +42,18 @@ class TestDirectorExecutionConsumerInit:
             assert isinstance(consumer._work_event, threading.Event)
             assert consumer._enable_safe_parallel is False
             assert consumer._execution_timeout_seconds == 600.0
+
+    def test_construction_is_canonical_without_deprecation_warning(self) -> None:
+        with patch(
+            "polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service"
+        ) as mock_get:
+            mock_get.return_value = MagicMock()
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                DirectorExecutionConsumer(workspace="/test/workspace", worker_id="dir-1")
+
+        deprecated = [item for item in caught if issubclass(item.category, DeprecationWarning)]
+        assert deprecated == []
 
     def test_custom_params(self) -> None:
         with patch(

@@ -7,7 +7,6 @@ import logging
 import os
 import threading
 import time
-import warnings
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
@@ -948,11 +947,12 @@ class _LeaseHeartbeat:
 
 
 class DirectorExecutionConsumer:
-    """Director consumer with Safe Parallel support.
+    """Canonical TaskMarket consumer for ``pending_exec`` Director work.
 
-    .. deprecated::
-        Use :class:`polaris.cells.director.pool.internal.director_pool.DirectorPool` instead.
-        This compatibility adapter remains only until dispatch cutover is complete.
+    This class owns the synchronous claim -> execute -> boundary-verdict path
+    between ``runtime.task_market`` and the Director execution adapter. CE-side
+    Director pools may assign or observe work, but they do not replace this
+    stage consumer.
     """
 
     def __init__(
@@ -966,12 +966,6 @@ class DirectorExecutionConsumer:
         task_executor: DirectorTaskExecutor | None = None,
         wake_event: threading.Event | None = None,
     ) -> None:
-        warnings.warn(
-            "DirectorExecutionConsumer is deprecated. Use DirectorPool instead; "
-            "this compatibility adapter remains only until dispatch cutover is complete.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
         self._workspace = workspace
         self._worker_id = worker_id
         self._visibility_timeout = visibility_timeout_seconds
@@ -1639,8 +1633,3 @@ __all__ = [
     "InterfaceContractRepairRequiredError",
     "UnrecoverableExecutionError",
 ]
-__deprecated__ = {
-    "DirectorExecutionConsumer": (
-        "Use DirectorPool instead; this compatibility adapter remains only until dispatch cutover is complete."
-    )
-}

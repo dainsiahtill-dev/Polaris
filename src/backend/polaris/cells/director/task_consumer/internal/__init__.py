@@ -1,9 +1,8 @@
-"""Internal implementation for the Director task-consumer compatibility adapter.
+"""Internal implementation for the Director task-market consumer.
 
-The long-term execution worker is DirectorPool. This package still backs the
-current dispatch pipeline, so it is not a dead shim. Do not add new consumers;
-new orchestration should target DirectorPool/public execution contracts and keep
-this adapter as a migration boundary until dispatch cutover is complete.
+This package backs the current ``pending_exec`` dispatch pipeline. CE-side
+Director pools handle assignment/status concerns; they do not consume TaskMarket
+leases or replace this execution-stage consumer.
 """
 
 from __future__ import annotations
