@@ -2,8 +2,8 @@
 
 Owns the canonical free-function execution paths consumed by
 ``RoleExecutionKernel.run`` and ``RoleExecutionKernel.run_stream``. The public
-kernel entrypoint delegates to these functions directly so transaction
-execution has one implementation surface.
+kernel entrypoint calls these functions directly so transaction execution has
+one implementation surface.
 
 Behavior notes:
 - The turn body and the stream body share the tool-definitions preamble shape

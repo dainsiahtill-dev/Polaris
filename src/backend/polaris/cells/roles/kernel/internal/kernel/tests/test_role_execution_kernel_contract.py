@@ -200,8 +200,8 @@ class TestInjectedServiceEntrypoints:
     """Injected service entrypoint tests."""
 
     @pytest.mark.asyncio
-    async def test_call_delegates_to_invoker(self) -> None:
-        """测试 call() 方法委托给 llm_invoker。"""
+    async def test_call_uses_invoker(self) -> None:
+        """测试 call() 方法调用 llm_invoker。"""
         mock_invoker = MagicMock(spec=ILLMInvoker)
         mock_invoker.invoke = AsyncMock(return_value=MagicMock())
 
@@ -225,8 +225,8 @@ class TestInjectedServiceEntrypoints:
             await kernel.call(MagicMock())
 
     @pytest.mark.asyncio
-    async def test_call_stream_delegates_to_invoker(self) -> None:
-        """测试 call_stream() 方法委托给 llm_invoker。"""
+    async def test_call_stream_uses_invoker(self) -> None:
+        """测试 call_stream() 方法使用 llm_invoker。"""
         mock_invoker = MagicMock(spec=ILLMInvoker)
 
         async def mock_stream(*args, **kwargs):
@@ -248,8 +248,8 @@ class TestInjectedServiceEntrypoints:
         assert len(events) == 2
 
     @pytest.mark.asyncio
-    async def test_execute_single_tool_delegates_to_executor(self) -> None:
-        """测试 _execute_single_tool() 方法委托给 tool_executor。"""
+    async def test_execute_single_tool_uses_executor(self) -> None:
+        """测试 _execute_single_tool() 方法调用 tool_executor。"""
         mock_executor = MagicMock(spec=CellToolExecutorPort)
         mock_executor.execute = AsyncMock(return_value={"success": True})
 
