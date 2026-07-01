@@ -10,8 +10,8 @@ UNIFIED INTERFACE (P0-010):
     This module now uses polaris.kernelone.llm.contracts.CellToolExecutorPort
     as the canonical interface for Cells-layer tool execution.
 
-    Previously defined a duplicate ToolExecutorProtocol here.
-    Now imports from KernelOne for consistency.
+    Older test helpers exposed a duplicate tool-executor protocol name.
+    Tests now use the KernelOne port name directly.
 """
 
 from __future__ import annotations
@@ -466,5 +466,4 @@ __all__ = [
     "FakeToolExecutor",
     "FakeToolNotFoundError",
     "ToolCallRecord",
-    # P0-010: ToolExecutorProtocol removed, use CellToolExecutorPort from KernelOne
 ]

@@ -7,7 +7,7 @@ kernel components without requiring monkeypatching or external dependencies.
 UTF-8 encoding verified: All text uses UTF-8
 
 P0-010 Unified Interface:
-    ToolExecutorProtocol is now CellToolExecutorPort from KernelOne.
+    Tool execution tests use CellToolExecutorPort from KernelOne.
     Import from: polaris.kernelone.llm.contracts import CellToolExecutorPort
 
 Example:
@@ -49,10 +49,6 @@ from polaris.cells.roles.kernel.internal.testing.harness import (
 # Import unified interface from KernelOne (P0-010 fix)
 from polaris.kernelone.llm.contracts.tool import CellToolExecutorPort
 
-# Backward compatibility alias: ToolExecutorProtocol -> CellToolExecutorPort
-# (P0-010: Deprecated, will be removed in future. Use CellToolExecutorPort.)
-ToolExecutorProtocol = CellToolExecutorPort
-
 __all__ = [
     "CellToolExecutorPort",
     "ContextAssemblerProtocol",
@@ -73,6 +69,4 @@ __all__ = [
     "LLMInvokerProtocol",
     "LLMResponseBuilder",
     "ToolCallRecord",
-    # Backward compatibility (deprecated)
-    "ToolExecutorProtocol",
 ]

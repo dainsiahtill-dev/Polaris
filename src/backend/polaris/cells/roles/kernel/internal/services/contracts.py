@@ -2,7 +2,7 @@
 
 本模块定义了Kernel Cell内部服务层的核心接口契约，包括：
 1. LLM调用协议 (LLMInvokerProtocol)
-2. 工具执行协议 (ToolExecutorProtocol) - DEPRECATED: 使用 KernelOne CellToolExecutorPort
+2. 工具执行协议使用 KernelOne CellToolExecutorPort
 3. 上下文组装协议 (ContextAssemblerProtocol)
 4. 共享数据类 (请求/响应/事件/工具调用等)
 5. 异常层次结构
@@ -22,7 +22,7 @@ P0-010 Unified Interface:
         ToolExecutorPort,       # KernelOne 规范接口
         CellToolExecutorPort,   # Cells 层统一接口
     )
-    本文件的 ToolExecutorProtocol 将在后续版本移除。
+    本文件不再定义本地工具执行 Protocol。
 
 P1-TYPE-004: ToolCall 统一
     - ToolCall: 从 polaris.kernelone.llm.contracts.tool 导入（canonical）
@@ -35,7 +35,6 @@ P1-TYPE-006: StreamEventType 说明
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, runtime_checkable
@@ -44,7 +43,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypedDict, runtime_checkable
 # P1-TYPE-004: This is the single source of truth for tool call representation
 # P1-LLM-001: Usage is imported from shared_contracts (canonical)
 from polaris.kernelone.errors import KernelOneError
-from polaris.kernelone.llm.contracts.tool import ToolCall
+from polaris.kernelone.llm.contracts.tool import CellToolExecutorPort, ToolCall
 from polaris.kernelone.llm.shared_contracts import StreamEventType, Usage
 
 if TYPE_CHECKING:
@@ -436,66 +435,6 @@ class LLMInvokerProtocol(Protocol):
 
 
 @runtime_checkable
-class ToolExecutorProtocol(Protocol):
-    """工具执行器协议 [DEPRECATED - P0-010 已废弃, P0-NEW-017 统一命名]
-
-    此 Protocol 已被 P0-010 修复方案废弃。
-    请使用 CellToolExecutorPort:
-
-        from polaris.kernelone.llm.contracts import CellToolExecutorPort
-
-    本类将在后续版本中移除。
-    """
-
-    async def execute(self, tool_call: ToolCall) -> ToolResult:
-        """执行单个工具调用 [DEPRECATED]
-
-        Args:
-            tool_call: 工具调用定义
-
-        Returns:
-            工具执行结果
-
-        Raises:
-            ToolError: 当执行失败时抛出
-        """
-        ...
-
-    async def execute_batch(
-        self,
-        tool_calls: Sequence[ToolCall],
-    ) -> Sequence[ToolResult]:
-        """批量执行工具调用 [DEPRECATED]
-
-        实现类应决定执行策略：
-        - 只读工具可并行执行
-        - 写工具应串行执行
-        - 异步工具返回pending状态
-
-        Args:
-            tool_calls: 工具调用列表
-
-        Returns:
-            工具执行结果列表（与输入顺序一致）
-
-        Raises:
-            ToolError: 当批量执行失败时抛出
-        """
-        ...
-
-    def validate_tool_call(self, tool_call: ToolCall) -> tuple[bool, str | None]:
-        """验证工具调用是否合法 [DEPRECATED]
-
-        Args:
-            tool_call: 工具调用定义
-
-        Returns:
-            (是否合法, 错误信息)
-        """
-        ...
-
-
-@runtime_checkable
 class ContextAssemblerProtocol(Protocol):
     """上下文组装器协议
 
@@ -583,7 +522,7 @@ class KernelServiceProtocol(Protocol):
         ...
 
     @property
-    def tool_executor(self) -> ToolExecutorProtocol:
+    def tool_executor(self) -> CellToolExecutorPort:
         """获取工具执行器"""
         ...
 
@@ -596,25 +535,6 @@ class KernelServiceProtocol(Protocol):
 # ═══════════════════════════════════════════════════════════════════════════════
 # 导出列表
 # ═══════════════════════════════════════════════════════════════════════════════
-
-# Backward compatibility alias: ToolExecutorProtocol -> CellToolExecutorPort
-# (P0-NEW-017: Deprecated, will be removed in future. Use CellToolExecutorPort.)
-try:
-    from polaris.kernelone.llm.contracts import CellToolExecutorPort
-
-    def __getattr__(name: str) -> Any:
-        if name == "ToolExecutorProtocol":
-            warnings.warn(
-                "ToolExecutorProtocol is deprecated, use CellToolExecutorPort from "
-                "polaris.kernelone.llm.contracts instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return ToolExecutorProtocol
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-except ImportError:
-    CellToolExecutorPort = None  # type: ignore[assignment, misc]
-
 
 __all__ = [
     "CellToolExecutorPort",
@@ -640,7 +560,6 @@ __all__ = [
     "ToolCallDict",
     "ToolError",
     "ToolExecutionStatus",
-    "ToolExecutorProtocol",
     "ToolResult",
     "ToolResultDict",
     # 数据类

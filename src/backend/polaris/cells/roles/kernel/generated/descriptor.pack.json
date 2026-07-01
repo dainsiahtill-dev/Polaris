@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T06:31:36.017718Z",
-  "source_hash": "a27db1acee87fe99",
+  "generated_at": "2026-07-01T06:38:58.082165Z",
+  "source_hash": "ea552d815634af41",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -9389,18 +9389,6 @@
     },
     {
       "type": "class",
-      "name": "ToolExecutorProtocol",
-      "description": "工具执行器协议 [DEPRECATED - P0-010 已废弃, P0-NEW-017 统一命名]",
-      "defined_in": "polaris/cells/roles/kernel/internal/services/contracts.py",
-      "methods": [
-        {
-          "name": "validate_tool_call",
-          "doc": "验证工具调用是否合法 [DEPRECATED]"
-        }
-      ]
-    },
-    {
-      "type": "class",
       "name": "ContextAssemblerProtocol",
       "description": "上下文组装器协议",
       "defined_in": "polaris/cells/roles/kernel/internal/services/contracts.py",
@@ -9855,12 +9843,7 @@
       "name": "MockToolExecutor",
       "description": "Mock工具执行器实现",
       "defined_in": "polaris/cells/roles/kernel/internal/services/test_contracts.py",
-      "methods": [
-        {
-          "name": "validate_tool_call",
-          "doc": ""
-        }
-      ]
+      "methods": []
     },
     {
       "type": "class",
@@ -9892,17 +9875,13 @@
     },
     {
       "type": "class",
-      "name": "TestToolExecutorProtocol",
-      "description": "测试ToolExecutorProtocol",
+      "name": "TestCellToolExecutorPort",
+      "description": "测试CellToolExecutorPort",
       "defined_in": "polaris/cells/roles/kernel/internal/services/test_contracts.py",
       "methods": [
         {
-          "name": "test_mock_implements_protocol",
-          "doc": "测试Mock实现符合Protocol"
-        },
-        {
-          "name": "test_validate_tool_call",
-          "doc": "测试validate_tool_call方法"
+          "name": "test_canonical_port_is_exported",
+          "doc": "测试服务契约导出KernelOne统一工具端口"
         }
       ]
     },

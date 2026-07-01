@@ -9,10 +9,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from polaris.cells.roles.kernel.internal.services.contracts import (
+    CellToolExecutorPort,
     ContextAssemblerProtocol,
     ContextCompressionStrategy,
     ContextRequest,
@@ -31,7 +32,6 @@ from polaris.cells.roles.kernel.internal.services.contracts import (
     ToolCall,
     ToolError,
     ToolExecutionStatus,
-    ToolExecutorProtocol,
     ToolResult,
     # 数据类
     Usage,
@@ -296,30 +296,19 @@ class MockLLMInvoker:
 class MockToolExecutor:
     """Mock工具执行器实现"""
 
-    async def execute(self, tool_call: ToolCall) -> ToolResult:
-        return ToolResult(
-            call_id=tool_call.id,
-            status=ToolExecutionStatus.SUCCESS,
-            output="Mock result",
-        )
-
-    async def execute_batch(
+    async def execute(
         self,
-        tool_calls: Sequence[ToolCall],
-    ) -> Sequence[ToolResult]:
-        return [
-            ToolResult(
-                call_id=call.id,
-                status=ToolExecutionStatus.SUCCESS,
-                output="Mock",
-            )
-            for call in tool_calls
-        ]
-
-    def validate_tool_call(self, tool_call: ToolCall) -> tuple[bool, str | None]:
-        if not tool_call.name:
-            return False, "Tool name is required"
-        return True, None
+        tool_name: str,
+        args: dict[str, Any],
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "success": True,
+            "tool_name": tool_name,
+            "args": dict(args),
+            "context": dict(context or {}),
+        }
 
 
 class MockContextAssembler:
@@ -377,47 +366,28 @@ class TestLLMInvokerProtocol:
         assert events[1].is_final is True
 
 
-class TestToolExecutorProtocol:
-    """测试ToolExecutorProtocol"""
+class TestCellToolExecutorPort:
+    """测试CellToolExecutorPort"""
 
-    def test_mock_implements_protocol(self) -> None:
-        """测试Mock实现符合Protocol"""
-        executor = MockToolExecutor()
-        assert isinstance(executor, ToolExecutorProtocol)
+    def test_canonical_port_is_exported(self) -> None:
+        """测试服务契约导出KernelOne统一工具端口"""
+        assert CellToolExecutorPort.__name__ == "CellToolExecutorPort"
 
     @pytest.mark.asyncio
     async def test_execute_method(self) -> None:
         """测试execute方法"""
         executor = MockToolExecutor()
-        call = ToolCall(id="call_1", name="test_tool")
-        result = await executor.execute(call)
-        assert isinstance(result, ToolResult)
-        assert result.call_id == "call_1"
-
-    @pytest.mark.asyncio
-    async def test_execute_batch_method(self) -> None:
-        """测试execute_batch方法"""
-        executor = MockToolExecutor()
-        calls = [
-            ToolCall(id="call_1", name="tool1"),
-            ToolCall(id="call_2", name="tool2"),
-        ]
-        results = await executor.execute_batch(calls)
-        assert len(results) == 2
-
-    def test_validate_tool_call(self) -> None:
-        """测试validate_tool_call方法"""
-        executor = MockToolExecutor()
-        valid_call = ToolCall(id="call_1", name="valid_tool")
-        is_valid, error = executor.validate_tool_call(valid_call)
-        assert is_valid is True
-        assert error is None
-
-        # KernelOne ToolCall validates name in __post_init__, cannot create empty name
-        # For MockToolExecutor, it only validates non-empty name, so all named tools pass
-        another_call = ToolCall(id="call_2", name="another_tool")
-        is_valid, error = executor.validate_tool_call(another_call)
-        assert is_valid is True  # MockToolExecutor accepts any named tool
+        result = await executor.execute(
+            "test_tool",
+            {"path": "/tmp/test.txt"},
+            context={"task_id": "TASK-1"},
+        )
+        assert result == {
+            "success": True,
+            "tool_name": "test_tool",
+            "args": {"path": "/tmp/test.txt"},
+            "context": {"task_id": "TASK-1"},
+        }
 
 
 class TestContextAssemblerProtocol:
@@ -526,16 +496,15 @@ class TestIntegration:
             tool_calls=[raw_tool_call],
         )
 
-        # 4. 执行工具（将raw tool_calls转换为ToolCall对象）
+        # 4. 执行工具（使用KernelOne CellToolExecutorPort形态）
         executor = MockToolExecutor()
-        tool_calls_for_executor = [
-            ToolCall(id=tc["id"], name=tc["name"], arguments=tc.get("arguments", {})) for tc in llm_response.tool_calls
+        tool_results = [
+            await executor.execute(str(tc["name"]), dict(tc.get("arguments", {}))) for tc in llm_response.tool_calls
         ]
-        tool_results = await executor.execute_batch(tool_calls_for_executor)
 
         # 验证结果
         assert len(tool_results) == 1
-        assert tool_results[0].status == ToolExecutionStatus.SUCCESS
+        assert tool_results[0]["success"] is True
 
     def test_error_handling(self) -> None:
         """测试错误处理"""
