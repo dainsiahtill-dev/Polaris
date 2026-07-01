@@ -1,15 +1,9 @@
-"""Backward-compatibility shim for error classification types.
+"""PM dispatch retry utilities.
 
-The canonical implementations of `ErrorCategory`, `ErrorClassifier`,
-`ErrorRecord`, and `RecoveryRecommendation` now live in:
-
-    polaris.cells.orchestration.shared_types
-
-This module re-exports those types verbatim so that existing importers
-(tests, other internal modules) continue to work without modification.
-
-`ExponentialBackoff`, `CircuitBreaker`, and `RetryExecutor` remain here
-because they are pm_dispatch-internal utilities with no cross-cell exposure.
+The error taxonomy is owned by ``polaris.cells.orchestration.shared_types`` and
+``polaris.kernelone.errors``.  This module deliberately exposes only
+pm_dispatch-local retry helpers: ``ExponentialBackoff``, ``CircuitBreaker``,
+and ``RetryExecutor``.
 """
 
 from __future__ import annotations
@@ -22,12 +16,7 @@ import time
 from typing import TYPE_CHECKING, Any, TypeVar
 
 # Re-export canonical cross-cell types from neutral shared location.
-from polaris.cells.orchestration.shared_types import (
-    ErrorCategory,
-    ErrorClassifier,
-    ErrorRecord,
-    RecoveryRecommendation,
-)
+from polaris.cells.orchestration.shared_types import ErrorClassifier as _ErrorClassifier
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
@@ -181,7 +170,7 @@ class RetryExecutor:
                 return result
             except Exception as exc:
                 attempt += 1
-                category, recommendation = ErrorClassifier.analyze(exc)
+                category, recommendation = _ErrorClassifier.analyze(exc)
                 effective_max = max_retries if max_retries is not None else recommendation.max_retries
                 if not recommendation.can_retry or attempt > effective_max:
                     logger.error(
@@ -215,10 +204,6 @@ class RetryExecutor:
 
 __all__ = [
     "CircuitBreaker",
-    "ErrorCategory",
-    "ErrorClassifier",
-    "ErrorRecord",
     "ExponentialBackoff",
-    "RecoveryRecommendation",
     "RetryExecutor",
 ]

@@ -15,9 +15,9 @@ from polaris.cells.orchestration.pm_dispatch.internal.error_classifier import (
     RetryExecutor,
 )
 from polaris.cells.orchestration.shared_types import (
-    ErrorCategory,
     ErrorClassifier,
 )
+from polaris.kernelone.errors import ErrorCategory
 
 # ---------------------------------------------------------------------------
 # ExponentialBackoff

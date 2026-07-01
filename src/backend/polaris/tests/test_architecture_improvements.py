@@ -14,19 +14,19 @@ from pathlib import Path
 import pytest
 from polaris.cells.orchestration.pm_dispatch.internal.error_classifier import (
     CircuitBreaker,
-    ErrorCategory,
-    ErrorClassifier,
     ExponentialBackoff,
 )
 from polaris.cells.orchestration.pm_dispatch.internal.state_bridge import (
     StateConsistencyChecker,
     TaskBoardStateBridge,
 )
+from polaris.cells.orchestration.shared_types import ErrorClassifier
 from polaris.cells.orchestration.workflow_runtime.internal.models import TaskFailureRecord
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.runtime.embedded.store_sqlite import (
     SqliteRuntimeStore,
 )
 from polaris.cells.runtime.task_runtime.public.task_board_contract import TaskBoard
+from polaris.kernelone.errors import ErrorCategory
 
 
 class TestErrorClassifier:

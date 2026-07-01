@@ -9,8 +9,9 @@ Verifies that:
    can be imported without triggering a circular import.
 4. Both cells import ErrorCategory / ErrorClassifier from shared_types
    (not from each other), confirmed by identity checks.
-5. Re-importing the former path (pm_dispatch.public.service) still works
-   and yields the same objects (backward compat shim is live).
+5. pm_dispatch.public.service remains the public compatibility surface for
+   classification names while pm_dispatch.internal.error_classifier exposes
+   only pm_dispatch-local retry utilities.
 
 If any of these tests break due to a circular import, a circular dependency has
 been reintroduced. Fix the import, do not weaken the test.
@@ -217,15 +218,6 @@ class TestSharedTypesIdentity:
             "as in shared_types. The shim re-export is broken."
         )
 
-    def test_error_category_identity_shared_vs_pm_dispatch_internal(self) -> None:
-        """pm_dispatch.internal.error_classifier shim must re-export from shared_types."""
-        shared = _fresh_import(_SHARED_TYPES_PATH)
-        pm_int = _fresh_import(_PM_DISPATCH_INTERNAL_EC)
-        assert shared.ErrorCategory is pm_int.ErrorCategory, (
-            "ErrorCategory in pm_dispatch.internal.error_classifier is NOT the same "
-            "object as in shared_types. The shim re-export is broken."
-        )
-
     def test_error_classifier_identity_shared_vs_director_workflow(self) -> None:
         """director_workflow must use ErrorClassifier from shared_types."""
         shared = _fresh_import(_SHARED_TYPES_PATH)
@@ -242,34 +234,31 @@ class TestSharedTypesIdentity:
 
 
 # ---------------------------------------------------------------------------
-# 5. Backward-compat: pm_dispatch.public.service still exports both names
+# 5. Boundary checks for public classification exports and internal retry utilities
 # ---------------------------------------------------------------------------
 
 
-class TestBackwardCompatExports:
-    """Ensure nothing broke for existing consumers of pm_dispatch.public.service."""
+class TestPmDispatchErrorClassificationBoundaries:
+    """Ensure classification ownership does not drift back into pm_dispatch internals."""
 
-    def test_error_category_exported_from_internal_error_classifier(self) -> None:
+    def test_internal_error_classifier_does_not_re_export_shared_error_types(self) -> None:
         mod = _fresh_import(_PM_DISPATCH_INTERNAL_EC)
-        assert hasattr(mod, "ErrorCategory")
-
-    def test_error_classifier_exported_from_internal_error_classifier(self) -> None:
-        mod = _fresh_import(_PM_DISPATCH_INTERNAL_EC)
-        assert hasattr(mod, "ErrorClassifier")
+        assert not hasattr(mod, "ErrorCategory")
+        assert not hasattr(mod, "ErrorClassifier")
+        assert not hasattr(mod, "ErrorRecord")
+        assert not hasattr(mod, "RecoveryRecommendation")
 
     def test_exponential_backoff_still_in_internal_error_classifier(self) -> None:
         mod = _fresh_import(_PM_DISPATCH_INTERNAL_EC)
-        assert hasattr(mod, "ExponentialBackoff"), (
-            "ExponentialBackoff was accidentally removed from error_classifier shim."
-        )
+        assert hasattr(mod, "ExponentialBackoff"), "ExponentialBackoff was accidentally removed."
 
     def test_circuit_breaker_still_in_internal_error_classifier(self) -> None:
         mod = _fresh_import(_PM_DISPATCH_INTERNAL_EC)
-        assert hasattr(mod, "CircuitBreaker"), "CircuitBreaker was accidentally removed from error_classifier shim."
+        assert hasattr(mod, "CircuitBreaker"), "CircuitBreaker was accidentally removed."
 
     def test_retry_executor_still_in_internal_error_classifier(self) -> None:
         mod = _fresh_import(_PM_DISPATCH_INTERNAL_EC)
-        assert hasattr(mod, "RetryExecutor"), "RetryExecutor was accidentally removed from error_classifier shim."
+        assert hasattr(mod, "RetryExecutor"), "RetryExecutor was accidentally removed."
 
     def test_error_category_exported_from_pm_dispatch_public(self) -> None:
         try:
@@ -305,11 +294,12 @@ class TestSimultaneousImport:
         dw = _fresh_import(_DIRECTOR_WORKFLOW_PATH)
         assert dw is not None, "director_workflow failed to import"
 
-        # error_classifier shim must be independently importable.
+        # pm_dispatch retry utility module must be independently importable.
         ec = _fresh_import(_PM_DISPATCH_INTERNAL_EC)
-        assert ec is not None, "error_classifier shim failed to import"
+        assert ec is not None, "pm_dispatch retry utilities failed to import"
 
-        # Both must resolve to the same ErrorCategory class.
+        # Workflow runtime must still resolve to the shared ErrorCategory class,
+        # while pm_dispatch internals keep classification out of this module.
         shared = _fresh_import(_SHARED_TYPES_PATH)
-        assert ec.ErrorCategory is shared.ErrorCategory
         assert dw.ErrorCategory is shared.ErrorCategory
+        assert not hasattr(ec, "ErrorCategory")
