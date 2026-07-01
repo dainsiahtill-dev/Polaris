@@ -1,5 +1,5 @@
 """
-Turn Transaction Controller - 事务化Turn执行器 (Facade)
+Turn Transaction Controller - 事务化 Turn 执行控制边界
 
 # -*- coding: utf-8 -*-
 UTF-8 编码验证: 本文所有文本使用 UTF-8
@@ -33,10 +33,10 @@ TurnTransactionController 是**新架构**的事务化执行器。旧 TurnEngine
 - LLM_ONCE收口时tool_choice=none，LLM不能触发新工具
 - 复杂探索必须移交ExplorationWorkflow
 
-## Facade 架构
+## 控制边界架构
 
-本文件已从 3900+ 行的 God Class 瘦身为 Facade，所有子域逻辑已下沉到
-`transaction/` 子模块：
+本文件是当前 TransactionKernel 下的单次 turn 控制边界；所有可独立演进的
+子域逻辑已下沉到 `transaction/` 子模块：
 
 | 子域 | 模块 |
 |------|------|
@@ -146,7 +146,7 @@ _MONITORING_METRIC_KEYS: tuple[str, ...] = (
 
 class TurnTransactionController:
     """
-    事务化Turn执行控制器（Facade）
+    事务化 Turn 执行控制器。
 
     ## 职责边界（P0-012）
 
@@ -315,7 +315,8 @@ class TurnTransactionController:
     @llm_provider.setter
     def llm_provider(self, value: Callable) -> None:
         self._llm_provider = value
-        # Propagate to submodules so monkeypatching the facade works
+        # Propagate to submodules so owner-level tests and injected providers
+        # observe the same runtime dependency.
         if hasattr(self, "_finalization_handler") and self._finalization_handler is not None:
             self._finalization_handler.llm_provider = value
         if (
@@ -598,7 +599,7 @@ class TurnTransactionController:
                 pass
 
     # ---------------------------------------------------------------------------
-    # 意图分类（hybrid 版本保留在 Facade，纯 regex 版本已下沉到 intent_classifier）
+    # 意图分类（hybrid 版本保留在控制边界，纯 regex 版本已下沉到 intent_classifier）
     # ---------------------------------------------------------------------------
 
     @classmethod
@@ -850,7 +851,7 @@ class TurnTransactionController:
         logger.debug("[DEBUG] turn_phase: turn_id=%s phase=CONTEXT_BUILT", turn_id)
 
         # === Phase 1b: 解析交付契约 ===
-        # Facade-bound helpers are passed as callables so test-time monkeypatch
+        # Controller-bound helpers are passed as callables so test-time monkeypatch
         # of ``_resolve_delivery_mode_hybrid`` / ``_inherit_materialize_from_history``
         # on the instance still penetrates the resolver module.
         delivery_contract = await resolve_turn_delivery_contract(
@@ -873,7 +874,7 @@ class TurnTransactionController:
         )
 
         # === Phase 2+3: 请求决策 + 解码 ===
-        # Facade-bound helpers are passed as callables/objects so test-time
+        # Controller-bound helpers are passed as callables/objects so test-time
         # monkeypatch of decoder / _call_llm_for_decision / _apply_delivery_mode_filter
         # on the instance still penetrates the pipeline module.
         async def _call_llm_for_decision(
@@ -904,7 +905,7 @@ class TurnTransactionController:
         # === Phase 4: 执行决策 ===
         decision_kind = decision.get("kind")
         guard_mode = str(getattr(self.config, "mutation_guard_mode", "warn"))
-        # Phase-4 mutation-contract guard reconciliation. Facade-bound helpers are
+        # Phase-4 mutation-contract guard reconciliation. Controller-bound helpers are
         # passed as callables so test-time monkeypatch on the instance penetrates.
         # A non-None result is the blocking retry result to return directly.
         guard_result = await apply_mutation_contract_guard(
@@ -1102,9 +1103,9 @@ class TurnTransactionController:
     ) -> list[dict]:
         """Build decision-stage messages with single-batch execution constraints.
 
-        Delegates to ``decision_message_builder.build_decision_messages``; the
-        method is preserved on the facade because it is injected as a callback
-        into ``StreamOrchestrator`` and is monkeypatched by tests.
+        Calls ``decision_message_builder.build_decision_messages``; the method
+        remains on the controller because it is injected as a callback into
+        ``StreamOrchestrator`` and is monkeypatched by tests.
         """
         return _build_decision_messages_impl(context, tool_definitions, ledger)
 
@@ -1320,7 +1321,7 @@ class TurnTransactionController:
         )
 
     # ---------------------------------------------------------------------------
-    # Final answer handler（保留在 Facade，因需调用 _build_turn_result）
+    # Final answer handler（保留在控制边界，因需调用 _build_turn_result）
     # ---------------------------------------------------------------------------
 
     async def _handle_final_answer(
