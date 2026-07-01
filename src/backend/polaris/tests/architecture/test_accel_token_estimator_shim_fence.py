@@ -32,9 +32,19 @@ def _retired_accel_token_estimator_imports(path: Path) -> list[str]:
                 if alias.name == RETIRED_ACCEL_TOKEN_ESTIMATOR_MODULE:
                     violations.append(alias.name)
             continue
-        if isinstance(node, ast.ImportFrom) and node.module == RETIRED_ACCEL_TOKEN_ESTIMATOR_MODULE:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.module == RETIRED_ACCEL_TOKEN_ESTIMATOR_MODULE:
             imported = ", ".join(sorted(alias.name for alias in node.names))
             violations.append(f"{node.module} import {imported}")
+            continue
+        if (
+            path.relative_to(POLARIS_ROOT).as_posix() == "infrastructure/accel/__init__.py"
+            and node.level == 1
+            and node.module == "token_estimator"
+        ):
+            imported = ", ".join(sorted(alias.name for alias in node.names))
+            violations.append(f".{node.module} import {imported}")
     return violations
 
 
