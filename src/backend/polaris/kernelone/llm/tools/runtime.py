@@ -4,7 +4,7 @@ from dataclasses import replace
 from time import perf_counter
 from typing import TYPE_CHECKING
 
-from .contracts import (
+from polaris.kernelone.llm.contracts import (
     ToolCall,
     ToolCallParserPort,
     ToolExecutionResult,
@@ -13,6 +13,7 @@ from .contracts import (
     ToolRoundOutcome,
     ToolRoundRequest,
 )
+
 from .normalizer import allowed_tool_set, apply_call_limit, normalize_tool_calls
 
 if TYPE_CHECKING:

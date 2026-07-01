@@ -4,6 +4,7 @@ import json
 import re
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.llm.contracts import ToolCall, ToolPolicy
 from polaris.kernelone.llm.toolkit.executor.runtime import (
     _normalize_json_value,
 )
@@ -11,8 +12,6 @@ from polaris.kernelone.llm.toolkit.tool_normalization import (
     normalize_tool_arguments as normalize_tool_arguments_canonical,
     normalize_tool_name as normalize_tool_name_canonical,
 )
-
-from .contracts import ToolCall, ToolPolicy
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
