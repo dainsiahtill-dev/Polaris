@@ -116,15 +116,7 @@ def format_json(data: Any, indent: int = 2) -> str:
     return json.dumps(data, indent=indent, ensure_ascii=False)
 
 
-# Backward compatibility aliases
-_safe_json_loads = safe_json_loads
-_parse_json_payload = parse_json_payload
-
-
 __all__ = [
-    "_parse_json_payload",
-    # Backward compatibility
-    "_safe_json_loads",
     "format_json",
     "parse_json_payload",
     "safe_json_loads",

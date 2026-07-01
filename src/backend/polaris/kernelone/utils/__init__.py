@@ -48,12 +48,10 @@ from polaris.kernelone.utils.time_utils import (
     utc_now_str,
 )
 
-# Backward compatibility - expose old names at package level
+# Time helper compatibility aliases.
 _utc_now = utc_now
 _utc_now_iso = utc_now_iso
 _utc_now_str = utc_now_str
-_safe_json_loads = safe_json_loads
-_parse_json_payload = parse_json_payload
 
 
 __all__ = [
@@ -67,9 +65,7 @@ __all__ = [
     "PROCESS_COMMAND_TIMEOUT_SECONDS",
     "UTC_TZ_SUFFIX",
     "_now",
-    "_parse_json_payload",
-    "_safe_json_loads",
-    # Backward compatibility
+    # Time compatibility aliases
     "_utc_now",
     "_utc_now_iso",
     "_utc_now_str",

@@ -194,12 +194,5 @@ class TestModuleExports:
         assert hasattr(json_utils, "safe_json_loads")
         assert hasattr(json_utils, "parse_json_payload")
         assert hasattr(json_utils, "format_json")
-        assert hasattr(json_utils, "_safe_json_loads")
-        assert hasattr(json_utils, "_parse_json_payload")
-
-    def test_backward_compatibility_aliases(self) -> None:
-        """Backward compatibility aliases work."""
-        from polaris.kernelone.utils.json_utils import _parse_json_payload, _safe_json_loads
-
-        assert _safe_json_loads is safe_json_loads
-        assert _parse_json_payload is parse_json_payload
+        assert not hasattr(json_utils, "_safe_json_loads")
+        assert not hasattr(json_utils, "_parse_json_payload")
