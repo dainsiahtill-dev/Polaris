@@ -264,7 +264,7 @@ async def test_token_scoped_failed_tool_batch_appends_failed_run_ledger_event(tm
         "contract_hash": "contract-tool-failure",
         "blueprint_hash": "blueprint-tool-failure",
         "capability_audit": {"ok": True, "issues": []},
-        "allowed_paths": ["src/app.py"],
+        "allowed_write_paths": ["src/app.py"],
     }
 
     async def _runtime(_tool_name: str, _arguments: dict[str, Any]) -> dict[str, Any]:
@@ -311,8 +311,12 @@ async def test_token_scoped_failed_tool_batch_appends_failed_run_ledger_event(tm
     assert projection["ok"] is False
     assert projection["failed"] == 1
     assert projection["projects"][0]["latest_token_id"] == "jt-tool-failure"
-    assert projection["projects"][0]["failed_gate_count"] == 1
-    assert "failed gate" in projection["projects"][0]["detail"]
+    assert projection["projects"][0]["gate_count"] == 1
+    assert "TOOL_RESULT_FAILED" in projection["projects"][0]["failed_control_plane_events"]
+    assert "tool lifecycle failed" in projection["projects"][0]["detail"]
+    events = RunLedger(tmp_path, run_id="run-tool-failure").read_events()
+    gate_event = next(event for event in events if event.get("event_type") == "gate_evaluated")
+    assert gate_event["gate"]["ok"] is False
 
 
 # ---------------------------------------------------------------------------

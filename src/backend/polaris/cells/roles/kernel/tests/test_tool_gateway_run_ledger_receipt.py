@@ -12,6 +12,7 @@ from polaris.cells.roles.kernel.internal.kernel.tool_executor import (
     derive_role_turn_capability_token,
 )
 from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
+from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import _normalize_capability_token
 from polaris.cells.roles.profile.internal.schema import RoleTurnRequest
 
 
@@ -154,7 +155,8 @@ class TestRoleTurnCapabilityToken:
                 "execution_envelope_hash": "env-hash",
                 "job_token": {
                     "token_id": "job-1",
-                    "allowed_paths": ["src/main.py"],
+                    "allowed_paths": ["docs/context.md"],
+                    "allowed_write_paths": ["src/main.py"],
                     "allowed_commands": ["python --version"],
                     "execution_envelope_hash": "env-hash",
                 },
@@ -168,6 +170,26 @@ class TestRoleTurnCapabilityToken:
         assert capability_token["token_id"] == "job-1"
         assert capability_token["execution_envelope_hash"] == "env-hash"
         assert capability_token["allowed_commands"] == ["python --version"]
+
+    def test_allowed_paths_only_job_token_fails_closed_for_write_scope(self) -> None:
+        request = RoleTurnRequest(
+            message="write using old token shape",
+            metadata={
+                "execution_envelope_hash": "env-legacy",
+                "job_token": {
+                    "token_id": "job-legacy",
+                    "allowed_paths": ["src/main.py"],
+                    "execution_envelope_hash": "env-legacy",
+                },
+            },
+        )
+
+        capability_scope = derive_role_turn_capability_scope(request)
+        capability_token = derive_role_turn_capability_token(request, capability_scope)
+
+        assert capability_scope == ("__polaris_no_authorized_paths__",)
+        assert capability_token["token_id"] == "job-legacy"
+        assert capability_token["allowed_scope"] == ["__polaris_no_authorized_paths__"]
 
     def test_read_scope_does_not_expand_write_capability(self) -> None:
         request = RoleTurnRequest(
@@ -192,6 +214,24 @@ class TestRoleTurnCapabilityToken:
         assert capability_scope == ("package.json",)
         assert capability_token["token_id"] == "job-scope"
         assert capability_token["allowed_scope"] == ["package.json"]
+
+    def test_tool_batch_token_projection_uses_explicit_write_scope_only(self) -> None:
+        explicit_token = _normalize_capability_token(
+            {
+                "token_id": "batch-job",
+                "allowed_paths": ["docs/readme.md"],
+                "allowed_write_paths": ["src/main.py"],
+            }
+        )
+        read_only_token = _normalize_capability_token(
+            {
+                "token_id": "batch-read-only",
+                "allowed_paths": ["src/main.py"],
+            }
+        )
+
+        assert explicit_token["allowed_scope"] == ["src/main.py"]
+        assert read_only_token["allowed_scope"] == []
 
     def test_derives_capability_from_execution_envelope_authorization(self) -> None:
         request = RoleTurnRequest(

@@ -40,9 +40,6 @@ _READ_ONLY_SCOPE_KEYS: tuple[str, ...] = (
     "allowed_read_paths",
     "context_files",
     "scope_paths",
-)
-
-_LEGACY_SCOPE_KEYS: tuple[str, ...] = (
     "allowed_paths",
     "authorized_paths",
 )
@@ -74,7 +71,7 @@ def _scope_items(value: Any) -> list[str]:
         return [text] if text else []
     if isinstance(value, dict):
         items: list[str] = []
-        for key in (*_WRITE_SCOPE_KEYS, *_READ_ONLY_SCOPE_KEYS, *_LEGACY_SCOPE_KEYS):
+        for key in (*_WRITE_SCOPE_KEYS, *_READ_ONLY_SCOPE_KEYS):
             items.extend(_scope_items(value.get(key)))
         for key in ("path", "file", "target", "source"):
             raw = value.get(key)
@@ -142,28 +139,14 @@ def _collect_scope_from_mapping(mapping: dict[str, Any]) -> tuple[list[str], boo
     candidates: list[str] = []
     saw_scope_source = False
     direct_write_candidates: list[str] = []
-    token_like_mapping = any(
-        str(mapping.get(key) or "").strip()
-        for key in ("token_id", "contract_hash", "blueprint_hash", "stage")
-    )
     for key in _WRITE_SCOPE_KEYS:
         if key in mapping:
             saw_scope_source = True
             direct_write_candidates.extend(_scope_items(mapping.get(key)))
     read_only_seen = any(_scope_items(mapping.get(key)) for key in _READ_ONLY_SCOPE_KEYS if key in mapping)
-    legacy_seen = any(_scope_items(mapping.get(key)) for key in _LEGACY_SCOPE_KEYS if key in mapping)
-    legacy_candidates: list[str] = []
-    if legacy_seen and not read_only_seen and (not direct_write_candidates or token_like_mapping):
-        for key in _LEGACY_SCOPE_KEYS:
-            legacy_candidates.extend(_scope_items(mapping.get(key)))
-    if read_only_seen or legacy_seen:
+    if read_only_seen:
         saw_scope_source = True
-    if token_like_mapping:
-        candidates.extend(legacy_candidates)
-        candidates.extend(direct_write_candidates)
-    else:
-        candidates.extend(direct_write_candidates)
-        candidates.extend(legacy_candidates)
+    candidates.extend(direct_write_candidates)
     for key in _SCOPE_CONTAINER_KEYS:
         nested = _mapping_from_value(mapping.get(key))
         if nested is not None:

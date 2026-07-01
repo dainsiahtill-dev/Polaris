@@ -470,7 +470,13 @@ def _normalize_capability_token(value: dict[str, Any]) -> dict[str, Any]:
         return {}
     capability_audit = value.get("capability_audit")
     capability_audit_map = capability_audit if isinstance(capability_audit, dict) else {}
-    raw_scope_value = value.get("allowed_scope") or value.get("allowed_paths") or value.get("target_files") or []
+    raw_scope_value = (
+        value.get("allowed_scope")
+        or value.get("allowed_write_paths")
+        or value.get("authorized_write_paths")
+        or value.get("target_files")
+        or []
+    )
     raw_scope = [raw_scope_value] if isinstance(raw_scope_value, str) else list(raw_scope_value or [])
     allowed_scope = [str(item).replace("\\", "/").strip("/") for item in raw_scope if str(item).strip()]
     return {
@@ -524,6 +530,21 @@ def _append_tool_batch_receipts_to_run_ledger(
     decoded_count = len(invocations or [])
     dispatched_count = decoded_count
     merged_receipt = _merge_batch_receipts(receipts)
+    effect_receipts = _effect_receipts_from_batch_receipts(receipts) if merged_receipt else []
+    token = next(
+        (
+            candidate
+            for receipt in effect_receipts
+            if (candidate := _capability_token_from_effect_receipt(receipt)).get("token_id")
+        ),
+        {},
+    )
+    if not token:
+        token = _normalize_capability_token(capability_token or {})
+    envelope_hash = str(execution_envelope_hash or token.get("execution_envelope_hash") or "").strip()
+    if envelope_hash and token and not token.get("execution_envelope_hash"):
+        token["execution_envelope_hash"] = envelope_hash
+    stage = str(token.get("stage") or "tool_batch").strip() or "tool_batch"
     lifecycle = build_tool_call_lifecycle_receipt(
         run_id=str(run_id or turn_id or ""),
         task_id=task_id,
@@ -540,47 +561,39 @@ def _append_tool_batch_receipts_to_run_ledger(
     )
     resolved_lifecycle_run_id = str(run_id or lifecycle.run_id or turn_id or "").strip()
     if resolved_lifecycle_run_id:
+        lifecycle_event = {
+            "event_type": "tool_call_lifecycle",
+            "stage": "tool_batch",
+            "task_id": task_id,
+            "run_id": resolved_lifecycle_run_id,
+            "tool_call_lifecycle_receipt": lifecycle.to_dict(),
+        }
+        if token:
+            lifecycle_event["job_token"] = _job_token_from_capability_token(
+                token,
+                run_id=resolved_lifecycle_run_id,
+                stage=stage,
+            )
         append_run_ledger_event(
             AppendRunLedgerEventCommandV1(
                 workspace=workspace,
                 run_id=resolved_lifecycle_run_id,
-                event={
-                    "event_type": "tool_call_lifecycle",
-                    "stage": "tool_batch",
-                    "task_id": task_id,
-                    "run_id": resolved_lifecycle_run_id,
-                    "tool_call_lifecycle_receipt": lifecycle.to_dict(),
-                },
+                event=lifecycle_event,
             )
         )
     if not merged_receipt:
         return
-    effect_receipts = _effect_receipts_from_batch_receipts(receipts)
     failure_count = int(merged_receipt.get("failure_count") or 0)
     pending_async_count = int(merged_receipt.get("pending_async_count") or 0)
-    ok = failure_count == 0 and pending_async_count == 0
+    ok = bool(lifecycle.ok) and failure_count == 0 and pending_async_count == 0
     if not effect_receipts and ok:
         return
-    token = next(
-        (
-            candidate
-            for receipt in effect_receipts
-            if (candidate := _capability_token_from_effect_receipt(receipt)).get("token_id")
-        ),
-        {},
-    )
-    if not token:
-        token = _normalize_capability_token(capability_token or {})
     if not token:
         return
-    envelope_hash = str(execution_envelope_hash or token.get("execution_envelope_hash") or "").strip()
-    if envelope_hash and not token.get("execution_envelope_hash"):
-        token["execution_envelope_hash"] = envelope_hash
 
     resolved_run_id = str(token.get("run_id") or run_id or turn_id or "").strip()
     if not resolved_run_id:
         return
-    stage = str(token.get("stage") or "tool_batch").strip() or "tool_batch"
     append_run_ledger_event(
         AppendRunLedgerEventCommandV1(
             workspace=workspace,

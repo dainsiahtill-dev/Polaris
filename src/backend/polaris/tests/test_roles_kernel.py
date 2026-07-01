@@ -427,12 +427,19 @@ class TestRoleToolGateway:
                 task_id="task-scope",
                 metadata={
                     "job_token": {
-                        "allowed_paths": [
+                        "allowed_write_paths": [
                             "./src/allowed.py",
                             "../secret.py",
                             "src/allowed.py",
                             "/etc/passwd",
-                        ]
+                        ],
+                        "allowed_paths": [
+                            "docs/context.md",
+                            "./src/allowed.py",
+                            "../secret.py",
+                            "src/allowed.py",
+                            "/etc/passwd",
+                        ],
                     }
                 },
             ),
@@ -459,6 +466,7 @@ class TestRoleToolGateway:
             stage="director_mutation",
             target_files=["src/from-target.py"],
             allowed_paths=["src/from-token.py"],
+            allowed_write_paths=["src/from-token.py", "src/from-target.py"],
         )
 
         gateway = executor.create_gateway(
@@ -556,7 +564,7 @@ class TestRoleToolGateway:
                 message="run task",
                 run_id="run-scope-block",
                 task_id="task-scope-block",
-                metadata={"job_token": {"allowed_paths": ["src/allowed.py"]}},
+                metadata={"job_token": {"allowed_write_paths": ["src/allowed.py"]}},
             ),
         )
 
@@ -575,6 +583,45 @@ class TestRoleToolGateway:
         assert policy["scope_source"] == "runtime_capability"
         assert policy["allowed_scope"] == ["src/allowed.py"]
         assert escaped.read_text(encoding="utf-8") == "value = 'original'\n"
+
+    def test_kernel_gateway_legacy_allowed_paths_do_not_authorize_write(
+        self,
+        kernel: RoleExecutionKernel,
+        registry: RoleProfileRegistry,
+        temp_workspace: str,
+    ) -> None:
+        """Old read-oriented allowed_paths evidence must fail closed for writes."""
+        workspace = Path(temp_workspace)
+        blocked = workspace / "src" / "allowed.py"
+        blocked.parent.mkdir(parents=True, exist_ok=True)
+        blocked.write_text("value = 'original'\n", encoding="utf-8")
+        director_profile = registry.get_profile("director")
+        executor = KernelToolExecutor(kernel, temp_workspace)
+        gateway = executor.create_gateway(
+            director_profile,
+            RoleTurnRequest(
+                mode=RoleExecutionMode.CHAT,
+                message="run old token task",
+                run_id="run-old-scope",
+                task_id="task-old-scope",
+                metadata={"job_token": {"token_id": "old-job", "allowed_paths": ["src/allowed.py"]}},
+            ),
+        )
+
+        result = gateway.execute_tool(
+            "write_file",
+            {
+                "file": "src/allowed.py",
+                "content": "value = 'changed'\n",
+            },
+        )
+
+        assert result["success"] is False
+        assert result["error_type"] == "director_write_policy_denied"
+        policy = result["result"]["director_policy"]
+        assert policy["scope_source"] == "runtime_capability"
+        assert policy["allowed_scope"] == ["__polaris_no_authorized_paths__"]
+        assert blocked.read_text(encoding="utf-8") == "value = 'original'\n"
 
     def test_kernel_gateway_execution_envelope_blocks_write_scope_expansion(
         self,
@@ -690,14 +737,14 @@ class TestRoleToolGateway:
             message="run task A",
             run_id="run-shared",
             task_id="task-a",
-            metadata={"job_token": {"allowed_paths": ["src/task-a.py"]}},
+            metadata={"job_token": {"allowed_write_paths": ["src/task-a.py"]}},
         )
         request_b = RoleTurnRequest(
             mode=RoleExecutionMode.CHAT,
             message="run task B",
             run_id="run-shared",
             task_id="task-b",
-            metadata={"job_token": {"allowed_paths": ["src/task-b.py"]}},
+            metadata={"job_token": {"allowed_write_paths": ["src/task-b.py"]}},
         )
 
         result_a = await kernel._execute_single_tool(
