@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from polaris.infrastructure.llm.token_service import TokenService
+    from polaris.domain.services import TokenService
 
 
 class TokenTrackingWrapper:
@@ -46,7 +46,7 @@ class TokenTrackingWrapper:
     def _get_token_service(self) -> TokenService:
         """Lazily resolve the TokenService instance."""
         if self._token_service is None:
-            from polaris.infrastructure.llm.token_service import get_token_service
+            from polaris.domain.services import get_token_service
 
             self._token_service = get_token_service(budget_limit=self._budget_limit)
         return self._token_service

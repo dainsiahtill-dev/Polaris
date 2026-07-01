@@ -101,6 +101,7 @@ from polaris.domain.exceptions import (
     ValidationError,
 )
 from polaris.domain.models import ConfigSnapshot, ConfigValidationResult
+from polaris.domain.services import TokenService
 from polaris.domain.services.background_task import (
     BackgroundTask,
     BackgroundTaskService,
@@ -110,7 +111,6 @@ from polaris.domain.services.llm_compact_service import LLMCompactService
 from polaris.domain.services.security_service import SecurityService
 from polaris.domain.services.tool_timeout_service import ToolTimeoutService
 from polaris.domain.services.transcript_service import TranscriptService
-from polaris.infrastructure.llm.token_service import TokenService
 from polaris.kernelone.contracts.technical import (
     Effect,
     EffectTracker,
