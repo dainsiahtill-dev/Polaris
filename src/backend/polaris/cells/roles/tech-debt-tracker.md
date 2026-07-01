@@ -90,15 +90,20 @@ RoleRuntimeService -> RoleExecutionKernel (CHAT | WORKFLOW mode)
 
 | Item | Status | Notes |
 |------|--------|-------|
-| `role_agent_service.py` cleanup | ⏳ PENDING | DEPRECATED but still present; requires final deletion |
+| `role_agent_service.py` cleanup | ✅ COMPLETED | Retired during roles-runtime convergence; active internals remain under `roles.runtime.internal/**` without package-root compatibility re-exports. |
 
 ---
 
 ## Verification Commands
 
 ```bash
-# Check for deprecation warnings
-python -W default::DeprecationWarning -c "from polaris.cells.roles.runtime.internal import agent_service"
+# Check that retired runtime-internal package-root compatibility exports stay absent.
+python - <<'PY'
+import importlib
+module = importlib.import_module("polaris.cells.roles.runtime.internal")
+assert module.__all__ == []
+assert not hasattr(module, "__deprecated__")
+PY
 
 # Check for frozen markers
 grep -r "__frozen__\|DEPRECATED\|deprecated" polaris/cells/roles/runtime/internal/*.py

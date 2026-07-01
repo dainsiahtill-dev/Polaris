@@ -9,11 +9,14 @@ from polaris.cells.roles.runtime.internal import process_service as process_serv
 def test_spawn_process_emits_realtime_signal_on_exit(tmp_path, monkeypatch) -> None:
     calls: list[dict[str, str]] = []
 
-    class _FakeHub:
-        def notify_from_thread(self, **kwargs) -> None:
-            calls.append({k: str(v) for k, v in kwargs.items()})
+    def _capture_process_exit_status(**kwargs: str) -> None:
+        calls.append({k: str(v) for k, v in kwargs.items()})
 
-    monkeypatch.setattr(process_service, "REALTIME_SIGNAL_HUB", _FakeHub())
+    monkeypatch.setattr(
+        process_service,
+        "_publish_process_exit_status_from_thread",
+        _capture_process_exit_status,
+    )
 
     log_path = str(tmp_path / "proc.log")
     handle = process_service.spawn_process(
@@ -32,5 +35,5 @@ def test_spawn_process_emits_realtime_signal_on_exit(tmp_path, monkeypatch) -> N
         handle.log_handle.close()
 
     assert calls
-    assert calls[0]["source"] == "process_exit"
-    assert calls[0]["path"] == log_path
+    assert calls[0]["log_path"] == log_path
+    assert calls[0]["workspace"] == str(tmp_path)
