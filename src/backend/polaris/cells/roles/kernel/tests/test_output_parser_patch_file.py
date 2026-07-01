@@ -14,17 +14,20 @@ from polaris.cells.roles.kernel.internal.output_parser import OutputParser
 
 
 class TestExtractSearchReplace:
-    """extract_search_replace() delegates to unified parser or falls back to regex."""
+    """extract_search_replace() delegates to the canonical protocol parser."""
 
     def test_standard_search_replace_blocks(self) -> None:
         parser = OutputParser()
-        content = """<<<<<<< SEARCH
-def hello():
-    return "old"
-=======
-def hello():
-    return "new"
->>>>>>> REPLACE"""
+        content = (
+            "src/hello.py\n"
+            "<<<<<<< SEARCH\n"
+            "def hello():\n"
+            '    return "old"\n'
+            "=======\n"
+            "def hello():\n"
+            '    return "new"\n'
+            ">>>>>>> REPLACE"
+        )
         result = parser.extract_search_replace(content)
         assert result is not None
         assert len(result) == 1
@@ -33,17 +36,20 @@ def hello():
 
     def test_multiple_search_replace_blocks(self) -> None:
         parser = OutputParser()
-        content = """<<<<<<< SEARCH
-a = 1
-=======
-a = 2
->>>>>>> REPLACE
-
-<<<<<<< SEARCH
-b = 3
-=======
-b = 4
->>>>>>> REPLACE"""
+        content = (
+            "src/a.py\n"
+            "<<<<<<< SEARCH\n"
+            "a = 1\n"
+            "=======\n"
+            "a = 2\n"
+            ">>>>>>> REPLACE\n\n"
+            "src/b.py\n"
+            "<<<<<<< SEARCH\n"
+            "b = 3\n"
+            "=======\n"
+            "b = 4\n"
+            ">>>>>>> REPLACE"
+        )
         result = parser.extract_search_replace(content)
         assert result is not None
         assert len(result) == 2
@@ -51,7 +57,6 @@ b = 4
     def test_no_blocks_returns_none(self) -> None:
         parser = OutputParser()
         result = parser.extract_search_replace("just regular text")
-        # Falls back to regex — no blocks → None
         assert result is None
 
     def test_empty_content_returns_none(self) -> None:
@@ -61,11 +66,17 @@ b = 4
 
     def test_strips_whitespace(self) -> None:
         parser = OutputParser()
-        content = "<<<<<<< SEARCH\\n  old code  \\n=======\\n  new code  \\n>>>>>>> REPLACE"
+        content = "src/legacy.py\n<<<<<<< SEARCH\n  old code  \n=======\n  new code  \n>>>>>>> REPLACE"
         result = parser.extract_search_replace(content)
         assert result is not None
         assert "old code" in result[0]["search"]
         assert "new code" in result[0]["replace"]
+
+    def test_pathless_search_replace_returns_none(self) -> None:
+        parser = OutputParser()
+        content = "<<<<<<< SEARCH\nold code\n=======\nnew code\n>>>>>>> REPLACE"
+        result = parser.extract_search_replace(content)
+        assert result is None
 
 
 class TestExtractJSON:

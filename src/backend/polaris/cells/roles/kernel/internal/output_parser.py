@@ -410,8 +410,8 @@ class OutputParser:
     def extract_search_replace(self, content: str) -> list[dict[str, str]] | None:
         """提取SEARCH/REPLACE块
 
-        优先委托 unified_apply 的统一协议解析器，避免与执行层规则漂移。
-        若统一解析器不可用或未命中，再回退到 legacy 正则提取。
+        委托 KernelOne/Director 协议解析器，避免与执行层规则漂移。
+        无文件路径的 SEARCH/REPLACE 文本不会被提取为结构化补丁。
 
         Args:
             content: 包含补丁的文本
@@ -439,21 +439,7 @@ class OutputParser:
             if patches:
                 return patches
         except (RuntimeError, ValueError) as exc:
-            logger.debug(f"统一SEARCH/REPLACE解析失败，回退legacy正则: {exc}")
-
-        # legacy 回退：兼容无 FILE/PATCH_FILE 包装的旧输出
-        # DEPRECATED: 此正则回退路径仅用于保持向后兼容，将在 v2.0 中移除。
-        # 新输出必须使用 canonical patch/search-replace envelope。
-        logger.warning(
-            "Legacy regex SEARCH/REPLACE fallback triggered — "
-            "output is not using canonical patch envelope. "
-            "This fallback is deprecated and will be removed in v2.0. "
-            "Please emit PATCH_FILE or canonical SEARCH-REPLACE blocks instead."
-        )
-        pattern = r"<<<<<<< SEARCH\s*(.*?)\s*=======\s*(.*?)\s*>>>>>>> REPLACE"
-        matches = re.findall(pattern, str(content or ""), re.DOTALL)
-        if matches:
-            return [{"search": s.strip(), "replace": r.strip()} for s, r in matches]
+            logger.debug("Unified SEARCH/REPLACE parsing failed: %s", exc)
 
         return None
 

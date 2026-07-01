@@ -183,9 +183,9 @@ def test_extract_search_replace_delegates_to_unified_parser() -> None:
     ]
 
 
-def test_extract_search_replace_keeps_legacy_fallback() -> None:
+def test_extract_search_replace_rejects_pathless_search_replace() -> None:
     parser = OutputParser()
     content = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE\n"
 
     payload = parser.extract_search_replace(content)
-    assert payload == [{"search": "x = 1", "replace": "x = 2"}]
+    assert payload is None
