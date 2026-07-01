@@ -355,13 +355,10 @@ class TestShimMarkersIntegration:
             assert payload.get("passed") is True, "Rule should pass when no shim_only units exist"
 
     def test_ledger_contains_shim_only_units(self, shim_only_units: list[dict[str, Any]]) -> None:
-        """Ledger should contain at least one shim_only unit for testing."""
-        # This is informational - we expect at least mig-application-batch1
-        assert len(shim_only_units) >= 1, "Expected at least one shim_only unit in ledger (mig-application-batch1)"
-        unit_ids = [u.get("id") for u in shim_only_units]
-        assert "mig-application-batch1" in unit_ids, (
-            f"Expected mig-application-batch1 in shim_only units, got: {unit_ids}"
-        )
+        """Ledger may have zero shim_only units after full convergence."""
+        unit_ids = [str(unit.get("id") or "") for unit in shim_only_units]
+        assert all(unit_id for unit_id in unit_ids)
+        assert "mig-application-batch1" not in unit_ids
 
     def test_shim_only_files_exist_and_have_markers(self) -> None:
         """Files in shim_only units should have migration markers.

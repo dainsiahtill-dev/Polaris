@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCRIPTS_ROOT = os.path.join(BACKEND_ROOT, "scripts")
@@ -22,7 +21,7 @@ from polaris.cells.orchestration.workflow_runtime.internal.workflow_client impor
 from polaris.cells.runtime.artifact_store.public.service import resolve_artifact_path  # noqa: E402
 
 
-class _DummyEngine:
+class _StatusRecorder:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, bool, str]] = []
 
@@ -37,7 +36,7 @@ def _make_paths(tmp_path: Path) -> tuple[str, str]:
 
 
 def test_run_engine_dispatch_uses_workflow_client_contract(tmp_path: Path) -> None:
-    engine = _DummyEngine()
+    status_recorder = _StatusRecorder()
     captured: dict[str, object] = {}
     run_events, dialogue_full = _make_paths(tmp_path)
 
@@ -52,8 +51,7 @@ def test_run_engine_dispatch_uses_workflow_client_contract(tmp_path: Path) -> No
         )
 
     result = dispatch_pipeline.run_engine_dispatch(
-        args=SimpleNamespace(),
-        engine=engine,
+        callbacks=dispatch_pipeline.DispatchCallbacks(update_role_status=status_recorder.update_role_status),
         workspace_full=str(tmp_path),
         run_id="pm-001",
         iteration=3,
@@ -72,10 +70,11 @@ def test_run_engine_dispatch_uses_workflow_client_contract(tmp_path: Path) -> No
     assert result["director_result"]["status"] == "queued"
     assert result["director_result"]["workflow_id"] == "wf-1"
     assert result["director_result"]["workflow_run_id"] == "wf-run-1"
+    assert status_recorder.calls == [("Director", "running", True, "Executing 1 tasks")]
 
 
 def test_run_engine_dispatch_surfaces_failed_submission(tmp_path: Path) -> None:
-    engine = _DummyEngine()
+    status_recorder = _StatusRecorder()
     run_events, dialogue_full = _make_paths(tmp_path)
 
     def _fake_fail(workflow_input: PMWorkflowInput, config=None) -> WorkflowSubmissionResult:
@@ -86,8 +85,7 @@ def test_run_engine_dispatch_surfaces_failed_submission(tmp_path: Path) -> None:
         )
 
     result = dispatch_pipeline.run_engine_dispatch(
-        args=SimpleNamespace(),
-        engine=engine,
+        callbacks=dispatch_pipeline.DispatchCallbacks(update_role_status=status_recorder.update_role_status),
         workspace_full=str(tmp_path),
         run_id="pm-002",
         iteration=1,
@@ -100,3 +98,4 @@ def test_run_engine_dispatch_surfaces_failed_submission(tmp_path: Path) -> None:
     assert result["exit_code"] == 1
     assert result["error"] == "workspace and run_id are required"
     assert result["director_result"]["status"] == "invalid_request"
+    assert status_recorder.calls == [("Director", "running", True, "Executing 1 tasks")]

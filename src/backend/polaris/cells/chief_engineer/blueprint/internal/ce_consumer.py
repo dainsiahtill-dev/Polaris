@@ -1240,7 +1240,6 @@ class CEConsumer:
             tasks=[task_entry],
             run_events=events_path,
             dialogue_full=dialogue_path,
-            args=None,
             analysis_runner=self._analysis_runner,
             event_emitter=None,
         )

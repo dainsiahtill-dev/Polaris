@@ -16,7 +16,6 @@ import ipaddress
 import json
 import logging
 import os
-import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -149,9 +148,13 @@ class DispatchCallbacks:
     Attributes:
         update_role_status: Called when Director status changes.
             Signature: (role, *, status, running, detail, task_id, task_title, meta)
+        analysis_runner: Optional Chief Engineer analysis runner injected by
+            the host layer. Keeping it here prevents argparse namespaces from
+            crossing into the Cell boundary.
     """
 
     update_role_status: Callable[..., None] = field(default_factory=lambda: _nop_update_role_status)
+    analysis_runner: Callable[..., Any] | None = None
 
 
 def _endpoint_reachable(base_url: str, *, timeout: float = 4.0) -> bool:
@@ -1171,9 +1174,6 @@ def run_dispatch_pipeline(
     run_pm_tasks: str,
     run_director_result: str,
     docs_stage: dict[str, Any] | None = None,
-    # Deprecated: host-layer parameters kept for backward compatibility with existing tests.
-    args: Any | None = None,
-    engine: Any | None = None,
 ) -> dict[str, Any]:
     """Execute the full dispatch pipeline.
 
@@ -1196,36 +1196,12 @@ def run_dispatch_pipeline(
         run_pm_tasks: Run PM tasks path
         run_director_result: Director result path
         docs_stage: Docs stage configuration
-        args: DEPRECATED. Host-layer argparse.Namespace — use ``callbacks`` instead.
-        engine: DEPRECATED. Host-layer PolarisEngine — use ``callbacks`` instead.
 
     Returns:
         Pipeline outcome dict
     """
-    if args is not None:
-        warnings.warn(
-            "run_dispatch_pipeline: args= is deprecated; pass callbacks=DispatchCallbacks(...) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-    if engine is not None:
-        warnings.warn(
-            "run_dispatch_pipeline: engine= is deprecated; pass callbacks=DispatchCallbacks(...) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-    # Build callbacks — prefer explicit callbacks, bridge from engine if needed.
-    # This keeps backward compatibility with existing tests that pass engine=.
     if callbacks is None:
-        if engine is not None and hasattr(engine, "update_role_status"):
-            callbacks = DispatchCallbacks(
-                update_role_status=lambda role, *, status, running, detail, **kw: engine.update_role_status(
-                    role, status=status, running=running, detail=detail
-                ),
-            )
-        else:
-            callbacks = DispatchCallbacks()
+        callbacks = DispatchCallbacks()
 
     outcome: dict[str, Any] = {
         "used": False,
@@ -1248,7 +1224,7 @@ def run_dispatch_pipeline(
         return outcome
 
     outcome["chief_engineer_result"] = run_chief_engineer_preflight(
-        args=args,
+        analysis_runner=callbacks.analysis_runner,
         workspace_full=workspace_full,
         cache_root_full=cache_root_full,
         run_dir=run_dir,
@@ -1432,7 +1408,7 @@ def run_dispatch_pipeline(
                 if isinstance(task, dict) and str(task.get("id") or "").strip()
             )
             inline_result = _run_inline_task_market_consumers(
-                analysis_runner=getattr(args, "analysis_runner", None),
+                analysis_runner=callbacks.analysis_runner,
                 workspace_full=workspace_full,
                 run_id=run_id,
                 iteration=iteration,
@@ -1516,7 +1492,7 @@ def run_dispatch_pipeline(
 
 def run_chief_engineer_preflight(
     *,
-    args: Any,
+    analysis_runner: Callable[..., Any] | None = None,
     workspace_full: str,
     cache_root_full: str,
     run_dir: str,
@@ -1529,7 +1505,7 @@ def run_chief_engineer_preflight(
     """Run Chief Engineer preflight checks.
 
     Args:
-        args: Command line arguments
+        analysis_runner: Optional Chief Engineer analysis runner override.
         workspace_full: Workspace path
         cache_root_full: Cache root path
         run_dir: Run directory
@@ -1548,7 +1524,6 @@ def run_chief_engineer_preflight(
         else _get_chief_engineer_service()
     )
     return _run_pre_dispatch(
-        args=args,
         workspace_full=workspace_full,
         cache_root_full=cache_root_full,
         run_dir=run_dir,
@@ -1557,9 +1532,7 @@ def run_chief_engineer_preflight(
         tasks=tasks,
         run_events=run_events,
         dialogue_full=dialogue_full,
-        # Layering: cells never import delivery; the analysis runner rides in
-        # on args (driver/host injects e.g. run_chief_engineer_analysis).
-        analysis_runner=getattr(args, "analysis_runner", None),
+        analysis_runner=analysis_runner,
     )
 
 
@@ -1614,9 +1587,6 @@ def run_engine_dispatch(
     run_events: str,
     dialogue_full: str,
     _submit_fn: Any | None = None,
-    # Deprecated: host-layer parameters — use callbacks= instead.
-    args: Any | None = None,
-    engine: Any | None = None,
 ) -> dict[str, Any]:
     """Run engine dispatch for tasks.
 
@@ -1633,35 +1603,12 @@ def run_engine_dispatch(
         dialogue_full: Dialogue file path
         _submit_fn: Optional submit function for testing; when None the module-level
             cached lazy loader is used.
-        args: DEPRECATED. Host-layer argparse.Namespace — use callbacks= instead.
-        engine: DEPRECATED. Host-layer PolarisEngine — use callbacks= instead.
 
     Returns:
         Dispatch result dict
     """
-    if args is not None:
-        warnings.warn(
-            "run_engine_dispatch: args= is deprecated; pass callbacks=DispatchCallbacks(...) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-    if engine is not None:
-        warnings.warn(
-            "run_engine_dispatch: engine= is deprecated; pass callbacks=DispatchCallbacks(...) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-    # Build callbacks — prefer explicit callbacks, bridge from engine if needed.
     if callbacks is None:
-        if engine is not None and hasattr(engine, "update_role_status"):
-            callbacks = DispatchCallbacks(
-                update_role_status=lambda role, *, status, running, detail, **kw: engine.update_role_status(
-                    role, status=status, running=running, detail=detail
-                ),
-            )
-        else:
-            callbacks = DispatchCallbacks()
+        callbacks = DispatchCallbacks()
 
     resolved_submit_fn = _resolve_workflow_submit_fn(_submit_fn)
     pm_workflow_input_type, workflow_submission_result_type, _ = _get_workflow_runtime_ref()

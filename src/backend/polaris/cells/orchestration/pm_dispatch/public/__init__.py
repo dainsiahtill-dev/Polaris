@@ -13,6 +13,7 @@ from .contracts import (
 )
 from .service import (
     CommandResult,
+    DispatchCallbacks,
     ErrorClassifier,
     OrchestrationCommandService,
     clear_manual_intervention,
@@ -26,6 +27,7 @@ from .service import (
 
 __all__ = [
     "CommandResult",
+    "DispatchCallbacks",
     "DispatchPmTasksCommandV1",
     "ErrorClassifier",
     "GetPmDispatchStatusQueryV1",

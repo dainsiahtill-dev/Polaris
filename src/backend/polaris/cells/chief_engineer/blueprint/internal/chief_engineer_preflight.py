@@ -121,9 +121,6 @@ class PreflightContext:
     analysis_runner: Callable[..., Any] | None = field(default=None, repr=False)
     event_emitter: EventEmitter | None = field(default=None, repr=False)
 
-    # Legacy: args namespace carried for backward compat (ignored internally)
-    args: Any = field(default=None, repr=False)
-
     def effective_emitter(self) -> EventEmitter:
         if self.event_emitter is not None:
             return self.event_emitter
@@ -306,7 +303,8 @@ def _emit_preflight_events(ctx: PreflightContext, result: dict[str, Any]) -> Non
 def run_pre_dispatch_chief_engineer_ctx(ctx: PreflightContext) -> dict[str, Any]:
     """Execute Chief Engineer preflight from a PreflightContext.
 
-    Preferred over the legacy 10-argument form for new call sites.
+    Preferred when callers need to inject custom emitters or construct the
+    boundary object directly in tests.
     """
     result = _execute_preflight(ctx)
     _emit_preflight_events(ctx, result)
@@ -315,7 +313,6 @@ def run_pre_dispatch_chief_engineer_ctx(ctx: PreflightContext) -> dict[str, Any]
 
 def run_pre_dispatch_chief_engineer(
     *,
-    args: Any,
     workspace_full: str,
     cache_root_full: str,
     run_dir: str,
@@ -328,10 +325,9 @@ def run_pre_dispatch_chief_engineer(
 ) -> dict[str, Any]:
     """Execute Chief Engineer preflight using the canonical analysis pipeline.
 
-    Backward-compatible wrapper around run_pre_dispatch_chief_engineer_ctx.
+    Thin public wrapper around ``run_pre_dispatch_chief_engineer_ctx``.
 
     Args:
-        args: Command line arguments (retained for backward compat, unused)
         workspace_full: Workspace path
         cache_root_full: Cache root path
         run_dir: Run directory
@@ -346,7 +342,6 @@ def run_pre_dispatch_chief_engineer(
         Chief Engineer result dict
     """
     ctx = PreflightContext(
-        args=args,
         workspace_full=workspace_full,
         cache_root_full=cache_root_full,
         run_dir=run_dir,

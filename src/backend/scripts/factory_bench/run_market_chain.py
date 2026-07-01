@@ -134,20 +134,11 @@ def main() -> int:
         flush=True,
     )
 
-    from types import SimpleNamespace
-
-    from polaris.cells.orchestration.pm_dispatch.public import run_dispatch_pipeline
+    from polaris.cells.orchestration.pm_dispatch.public import DispatchCallbacks, run_dispatch_pipeline
     from polaris.delivery.cli.pm.chief_engineer import run_chief_engineer_analysis
 
-    driver_args = SimpleNamespace(
-        analysis_runner=run_chief_engineer_analysis,
-        run_director=True,
-        integration_qa=True,
-    )
-
     outcome = run_dispatch_pipeline(
-        callbacks=None,
-        args=driver_args,
+        callbacks=DispatchCallbacks(analysis_runner=run_chief_engineer_analysis),
         workspace_full=workspace_full,
         cache_root_full=cache_root_full,
         run_dir=run_dir,

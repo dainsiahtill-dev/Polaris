@@ -69,13 +69,12 @@ class ChiefEngineerNode(BaseRoleNode):
         run_events = context.events_path
         dialogue_full = context.dialogue_path
 
-        # Run CE stage via legacy-compatible implementation.
+        # Run CE stage through the typed Cell boundary.
         # analysis_runner is explicitly injected from delivery layer so that
         # cells/ never needs to import from delivery/ (ACGA 2.0 layer rule).
         start_time = time.time()
         try:
             result = run_pre_dispatch_chief_engineer(
-                args=args,
                 workspace_full=workspace,
                 cache_root_full=context.cache_root_full,
                 run_dir=run_dir,

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import sys
-from types import SimpleNamespace
 
 BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCRIPTS_ROOT = os.path.join(BACKEND_ROOT, "scripts")
@@ -11,10 +10,10 @@ for candidate in (BACKEND_ROOT, SCRIPTS_ROOT, CORE_ROOT):
     if candidate not in sys.path:
         sys.path.insert(0, candidate)
 
-from polaris.cells.chief_engineer.blueprint.internal.chief_engineer_preflight import (
+from polaris.cells.chief_engineer.blueprint.internal.chief_engineer_preflight import (  # noqa: E402
     run_pre_dispatch_chief_engineer,
 )
-from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (
+from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (  # noqa: E402
     run_chief_engineer_preflight,
 )
 from polaris.cells.runtime.artifact_store.public.service import resolve_artifact_path  # noqa: E402
@@ -53,7 +52,6 @@ def test_run_pre_dispatch_chief_engineer_uses_direct_analysis_runner(tmp_path) -
     )
 
     result = run_pre_dispatch_chief_engineer(
-        args=SimpleNamespace(),
         workspace_full=str(tmp_path),
         cache_root_full="",
         run_dir=str(run_dir),
@@ -80,6 +78,7 @@ def test_run_pre_dispatch_chief_engineer_uses_direct_analysis_runner(tmp_path) -
 
 def test_dispatch_pipeline_run_chief_engineer_preflight_delegates_to_canonical_entry(monkeypatch, tmp_path) -> None:
     captured: dict[str, object] = {}
+    analysis_runner = object()
 
     def _fake_preflight(**kwargs):
         captured.update(kwargs)
@@ -102,7 +101,7 @@ def test_dispatch_pipeline_run_chief_engineer_preflight_delegates_to_canonical_e
     )
 
     result = run_chief_engineer_preflight(
-        args=SimpleNamespace(),
+        analysis_runner=analysis_runner,
         workspace_full=str(tmp_path),
         cache_root_full="",
         run_dir=str(tmp_path / "run"),
@@ -114,5 +113,6 @@ def test_dispatch_pipeline_run_chief_engineer_preflight_delegates_to_canonical_e
     )
 
     assert result == {"ran": True, "hard_failure": False, "summary": "ok"}
+    assert captured["analysis_runner"] is analysis_runner
     assert captured["pm_iteration"] == 8
     assert captured["tasks"][0]["id"] == "TASK-B"
