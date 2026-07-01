@@ -158,10 +158,6 @@ class ContextBudgetAllocatorPort(Protocol):
         ...
 
 
-# Backward compatibility alias - use unique name to avoid conflict with llm.ports.ContextBudgetPort
-ContextAllocatorBudgetPort = ContextBudgetAllocatorPort
-
-
 class RoleContextIdentityPort(Protocol):
     """Abstract interface for role identity and persona resolution.
 
@@ -396,7 +392,6 @@ class ContextBuilderPort(Protocol):
 __all__ = [
     "ArtifactRecord",
     "CompactSnapshot",
-    "ContextAllocatorBudgetPort",  # Backward compat alias (unique name)
     "ContextBudget",
     "ContextBudgetAllocatorPort",
     "ContextBuilderPort",

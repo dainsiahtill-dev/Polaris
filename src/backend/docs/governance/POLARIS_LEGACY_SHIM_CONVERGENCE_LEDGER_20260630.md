@@ -13,7 +13,7 @@ business wording, React `Suspense fallback`, and accepted config migration code.
 
 | Class | Count | Meaning |
 | --- | ---: | --- |
-| Closed in this convergence pass | 226 | Removed, retired, or converted into an audited sunset path and verified. |
+| Closed in this convergence pass | 227 | Removed, retired, or converted into an audited sunset path and verified. |
 | P1 open | 0 | Still close to execution, LLM/tool, QA, or state projection paths. |
 | P2 open | 0 | Exposed API/UI/CLI compatibility surfaces that should be retired after callers move. |
 | P3 accepted with sunset | 0 | Kept for user config or historical data migration; requires an expiry policy, not immediate deletion. |
@@ -297,6 +297,7 @@ Additional closed cuts: LS-14A, LS-15A, LS-16A, LS-17A, LS-18A, LS-19A, LS-20A, 
 | LS-65A | LS-65 | P2 | Infrastructure accel / token-estimator metadata shim | Closed: `polaris.infrastructure.accel.token_estimator` no longer exists as a backward-compat metadata shim beside canonical KernelOne token estimation and domain token budget services. | Closed by deleting the retired shim, removing it from the FinOps Budget Guard catalog current modules/owned paths and generated packs, and adding `test_accel_token_estimator_shim_fence.py` to block file/import reintroduction. Verified with focused token-estimator tests, the architecture fence, catalog governance gate, ruff, mypy, py_compile, JSON/YAML validation, and active-path negative import scans. |
 | LS-65B | LS-65 | P1 | Infrastructure accel / package-root stale token-estimator import | Closed: `polaris.infrastructure.accel.__init__` no longer imports or re-exports the retired `token_estimator` module. | Closed by removing package-root token-estimator exports and hardening `test_accel_token_estimator_shim_fence.py` to detect relative imports from `infrastructure/accel/__init__.py`. Verified with the accel fence, `test_kernelone_security_hardening.py`, KernelOne release gate, catalog governance gate, ruff, mypy, py_compile, and active-path negative import scans. |
 | LS-66A | LS-66 | P2 | Roles engine / sequential strategy stale shim wording | Closed: `roles.engine.internal.sequential_adapter` remains the active single-shot sequential strategy, but no longer describes itself or its cell metadata as a compatibility shim. | Closed by rewording the implementation, cell gap, and descriptor capability descriptions around the canonical roles.engine fallback strategy, then adding `test_roles_engine_sequential_strategy_fence.py` to block stale shim wording from returning. Verified with focused roles.engine tests, the architecture fence, descriptor hash validation, catalog governance gate, ruff, mypy, py_compile, and active-path negative marker scans. |
+| LS-67A | LS-67 | P2 | KernelOne context / budget allocator alias | Closed: `polaris.kernelone.context.contracts` no longer exports the unused `ContextAllocatorBudgetPort` backward-compat alias beside canonical `ContextBudgetAllocatorPort`. | Closed by removing the alias from the public contract and `__all__`, then adding `test_kernelone_context_budget_alias_fence.py` to block reintroduction. Verified with focused context-budget tests, the architecture fence, canonical import smoke, KernelOne release gate, catalog governance gate, ruff, mypy, py_compile, and active-path negative scans. |
 
 ## Closure Order
 
