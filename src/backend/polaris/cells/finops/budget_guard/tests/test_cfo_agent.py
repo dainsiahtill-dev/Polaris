@@ -173,13 +173,21 @@ class TestBudgetRecord:
         assert restored.unit == "tokens"
         assert restored.status == "active"
 
-    def test_from_dict_missing_fields_use_defaults(self) -> None:
+    def test_from_dict_optional_fields_use_defaults(self) -> None:
         data = {"budget_id": "b2", "task_id": "t2", "limit": 300}
         record = BudgetRecord.from_dict(data)
         assert record.budget_type == "general"
         assert record.used == 0
         assert record.unit == "tokens"
         assert record.status == "active"
+
+    def test_from_dict_missing_limit_is_corrupt(self) -> None:
+        with pytest.raises(ValueError, match="limit"):
+            BudgetRecord.from_dict({"budget_id": "b2", "task_id": "t2"})
+
+    def test_from_dict_invalid_limit_is_corrupt(self) -> None:
+        with pytest.raises(ValueError, match="integer"):
+            BudgetRecord.from_dict({"budget_id": "b2", "task_id": "t2", "limit": None})
 
     def test_to_dict_typesafe(self) -> None:
         record = BudgetRecord(budget_id="b3", task_id="t3", budget_type="compute", limit=0)
@@ -203,11 +211,19 @@ class TestUsageRecord:
         assert restored.agent_id == "director"
         assert restored.amount == 150
 
-    def test_from_dict_missing_fields_use_defaults(self) -> None:
+    def test_from_dict_optional_fields_use_defaults(self) -> None:
         data = {"record_id": "u2", "task_id": "t2", "amount": 50}
         record = UsageRecord.from_dict(data)
         assert record.agent_id == ""
         assert record.resource_type == "general"
+
+    def test_from_dict_missing_amount_is_corrupt(self) -> None:
+        with pytest.raises(ValueError, match="amount"):
+            UsageRecord.from_dict({"record_id": "u2", "task_id": "t2"})
+
+    def test_from_dict_invalid_amount_is_corrupt(self) -> None:
+        with pytest.raises(ValueError, match="integer"):
+            UsageRecord.from_dict({"record_id": "u2", "task_id": "t2", "amount": None})
 
 
 # ── BudgetKFSStore ─────────────────────────────────────────────────────────────

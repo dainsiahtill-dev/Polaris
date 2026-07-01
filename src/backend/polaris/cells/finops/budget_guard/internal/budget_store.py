@@ -36,6 +36,22 @@ logger = logging.getLogger(__name__)
 _BUDGET_STATE_PATH_PREFIX = "runtime/state/budget"
 
 
+def _require_int_field(data: dict[str, Any], field_name: str, record_type: str) -> int:
+    """Return a required integer field from a persisted budget state record.
+
+    Persisted budget facts must not silently synthesize missing numeric values:
+    a missing budget limit or usage amount changes the meaning of the record.
+    Optional metadata fields can keep historical defaults, but numeric facts are
+    required to be present and parseable.
+    """
+    if field_name not in data:
+        raise ValueError(f"{record_type} field {field_name!r} is required")
+    try:
+        return int(data[field_name])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{record_type} field {field_name!r} must be an integer") from exc
+
+
 @dataclass
 class BudgetRecord:
     budget_id: str
@@ -67,7 +83,7 @@ class BudgetRecord:
             budget_id=str(data["budget_id"]),
             task_id=str(data["task_id"]),
             budget_type=str(data.get("budget_type", "general")),
-            limit=int(data.get("limit", 0)),
+            limit=_require_int_field(data, "limit", "BudgetRecord"),
             used=int(data.get("used", 0)),
             unit=str(data.get("unit", "tokens")),
             status=str(data.get("status", "active")),
@@ -102,7 +118,7 @@ class UsageRecord:
             task_id=str(data["task_id"]),
             agent_id=str(data.get("agent_id", "")),
             resource_type=str(data.get("resource_type", "general")),
-            amount=int(data.get("amount", 0)),
+            amount=_require_int_field(data, "amount", "UsageRecord"),
             timestamp=str(data.get("timestamp", utc_now_str())),
         )
 
