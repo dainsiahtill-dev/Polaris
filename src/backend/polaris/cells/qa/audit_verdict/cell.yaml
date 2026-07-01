@@ -38,6 +38,7 @@ public_contracts:
   - QaAuditErrorV1
 depends_on:
 - director.execution
+- control_plane.run_ledger
 - policy.permission
 - policy.workspace_guard
 - runtime.execution_broker
@@ -45,6 +46,9 @@ depends_on:
 - runtime.projection
 - audit.evidence
 - events.fact_stream
+- audit.verdict
+- roles.runtime
+- llm.dialogue
 subgraphs:
 - execution_governance_pipeline
 state_owners:

@@ -3010,6 +3010,7 @@ cells:
       - audit.verdict
       - roles.runtime
       - llm.dialogue
+      - control_plane.run_ledger
     subgraphs:
       - execution_governance_pipeline
     state_owners:
