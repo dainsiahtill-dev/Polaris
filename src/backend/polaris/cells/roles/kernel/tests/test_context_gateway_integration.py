@@ -10,6 +10,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+from polaris.cells.roles.kernel.internal.context_gateway.projection_formatter import ProjectionFormatter
 from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
 
 
@@ -580,20 +581,11 @@ class TestStateFirstContextOSIntegration:
 
 
 class TestMessagesFromProjection:
-    """Test the _messages_from_projection helper."""
+    """Test projection-to-message formatting used by the gateway."""
 
     def test_creates_head_anchor_message(self):
         """Verify head_anchor creates a system message."""
-        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
         from polaris.kernelone.context.context_os.models_v2 import ContextOSProjectionV2 as ContextOSProjection
-
-        mock_profile = MagicMock()
-        mock_profile.context_policy = MagicMock()
-        mock_profile.context_domain = None
-        mock_profile.provider_id = None
-        mock_profile.model = None
-
-        gateway = RoleContextGateway(mock_profile, workspace=".")
 
         mock_projection = MagicMock(spec=ContextOSProjection)
         mock_projection.head_anchor = "Test head"
@@ -602,7 +594,7 @@ class TestMessagesFromProjection:
         mock_projection.run_card = None
         mock_projection.snapshot = None
 
-        messages = gateway._messages_from_projection(mock_projection)
+        messages = ProjectionFormatter.messages_from_projection(mock_projection)
 
         # Should have head anchor message
         assert len(messages) >= 1
@@ -613,19 +605,10 @@ class TestMessagesFromProjection:
 
     def test_creates_active_window_messages(self):
         """Verify active_window events become messages."""
-        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
         from polaris.kernelone.context.context_os.models_v2 import (
             ContextOSProjectionV2 as ContextOSProjection,
             TranscriptEventV2 as TranscriptEvent,
         )
-
-        mock_profile = MagicMock()
-        mock_profile.context_policy = MagicMock()
-        mock_profile.context_domain = None
-        mock_profile.provider_id = None
-        mock_profile.model = None
-
-        gateway = RoleContextGateway(mock_profile, workspace=".")
 
         event = TranscriptEvent(
             event_id="test_1",
@@ -644,7 +627,7 @@ class TestMessagesFromProjection:
         mock_projection.run_card = None
         mock_projection.snapshot = None
 
-        messages = gateway._messages_from_projection(mock_projection)
+        messages = ProjectionFormatter.messages_from_projection(mock_projection)
 
         # Should have active window message
         assert len(messages) >= 1
@@ -653,28 +636,9 @@ class TestMessagesFromProjection:
         assert active_msg["content"] == "Test content"
         assert "metadata" in active_msg
 
-    @pytest.mark.parametrize(
-        ("role_id", "display_name"),
-        (
-            ("pm", "PM"),
-            ("chief_engineer", "Chief Engineer"),
-            ("director", "Director"),
-        ),
-    )
-    def test_empty_run_card_is_omitted_for_core_delivery_roles(self, role_id: str, display_name: str):
-        """PM/CE/Director must not receive empty Run Card system-message noise."""
-        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+    def test_empty_run_card_is_omitted(self):
+        """Empty run cards must not create system-message noise."""
         from polaris.kernelone.context.context_os.models_v2 import ContextOSProjectionV2 as ContextOSProjection
-
-        mock_profile = MagicMock()
-        mock_profile.context_policy = MagicMock()
-        mock_profile.context_domain = None
-        mock_profile.provider_id = None
-        mock_profile.model = None
-        mock_profile.role_id = role_id
-        mock_profile.display_name = display_name
-
-        gateway = RoleContextGateway(mock_profile, workspace=".")
 
         mock_projection = MagicMock(spec=ContextOSProjection)
         mock_projection.head_anchor = ""
@@ -688,25 +652,16 @@ class TestMessagesFromProjection:
         mock_projection.run_card.last_turn_outcome = ""
         mock_projection.snapshot = None
 
-        messages = gateway._messages_from_projection(mock_projection)
+        messages = ProjectionFormatter.messages_from_projection(mock_projection)
 
         assert not [message for message in messages if message.get("name") == "run_card"]
 
     def test_creates_run_card_message(self):
         """Verify run_card creates a system message."""
-        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
         from polaris.kernelone.context.context_os.models_v2 import (
             ContextOSProjectionV2 as ContextOSProjection,
             RunCardV2 as RunCard,
         )
-
-        mock_profile = MagicMock()
-        mock_profile.context_policy = MagicMock()
-        mock_profile.context_domain = None
-        mock_profile.provider_id = None
-        mock_profile.model = None
-
-        gateway = RoleContextGateway(mock_profile, workspace=".")
 
         run_card = RunCard(
             current_goal="Test goal",
@@ -723,7 +678,7 @@ class TestMessagesFromProjection:
         mock_projection.run_card = run_card
         mock_projection.snapshot = None
 
-        messages = gateway._messages_from_projection(mock_projection)
+        messages = ProjectionFormatter.messages_from_projection(mock_projection)
 
         # Should have run card message
         run_card_msgs = [m for m in messages if m.get("name") == "run_card"]

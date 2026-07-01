@@ -6,8 +6,8 @@ thin delegating shim ``_build_projection_dict`` (a frozen test reach-in).
 
 The builder reads the gateway's collaborators/state through a back-reference
 because this method folds together six signal readers, the budget-pressure
-estimate, the projection formatter, the security sanitizer and the projection
-engine — passing each one individually would just reconstruct the gateway. The
+estimate, the security sanitizer and the projection engine — passing each one
+individually would just reconstruct the gateway. The
 three in-method lazy imports (``make_offload_capture`` /
 ``role_signal_freshness`` / ``role_signals`` / ``SnapshotSummaryView``) are
 LOAD-BEARING (CCR producer-loop / circular-import avoidance) and preserved
@@ -234,7 +234,7 @@ class ProjectionDictBuilder:
                 from polaris.kernelone.context.context_os.models import SnapshotSummaryView
 
                 summary_dict = SnapshotSummaryView.from_snapshot(proj_snapshot)
-                snapshot_summary = gateway._projection_formatter.format_context_os_snapshot(summary_dict)
+                snapshot_summary = ProjectionFormatter.format_context_os_snapshot(summary_dict)
                 supplemental_turns.append(
                     {
                         "role": "system",
@@ -246,7 +246,7 @@ class ProjectionDictBuilder:
         else:
             strategy_receipt = request.strategy_receipt
             if strategy_receipt is not None:
-                receipt_content = gateway._projection_formatter.format_strategy_receipt_style(strategy_receipt)
+                receipt_content = ProjectionFormatter.format_strategy_receipt_style(strategy_receipt)
                 supplemental_turns.append(
                     {
                         "role": "system",

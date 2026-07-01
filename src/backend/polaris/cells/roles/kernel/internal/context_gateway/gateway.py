@@ -51,7 +51,6 @@ from .gateway_helpers import (
 )
 from .gateway_telemetry import GatewayTelemetry
 from .projection_dict_builder import ProjectionDictBuilder
-from .projection_formatter import ProjectionFormatter
 from .security import SecuritySanitizer
 from .signal_sources import SignalSourceProvider
 from .task_boundary_filter import filter_context_override_for_current_task
@@ -168,7 +167,6 @@ class RoleContextGateway:
         # Initialize collaborators
         self._token_estimator = TokenEstimator()
         self._security = SecuritySanitizer()
-        self._projection_formatter = ProjectionFormatter()
         # learning_key=role_id：让各角色的投影自适应权重跨 turn 按角色独立累积
         # （模块级状态存储，绕过 gateway/ProjectionEngine 每 turn 新建的清零）。
         self._projection_engine = ProjectionEngine(learning_key=str(getattr(profile, "role_id", "") or "default"))
@@ -753,10 +751,6 @@ class RoleContextGateway:
         """Backward-compatible delegate to ProjectionDictBuilder.build."""
         return self._projection_dict_builder.build(projection, request)
 
-    def _messages_from_projection(self, projection: Any) -> list[dict[str, Any]]:
-        """Backward-compatible delegate to ProjectionFormatter.messages_from_projection."""
-        return self._projection_formatter.messages_from_projection(projection)
-
     def _estimate_tokens(self, messages: list[dict[str, str]]) -> int:
         """Backward-compatible delegate to TokenEstimator.estimate."""
         return self._token_estimator.estimate(messages)
@@ -772,14 +766,6 @@ class RoleContextGateway:
     def _emergency_fallback(self, messages: list[dict[str, str]]) -> tuple[list[dict[str, str]], int]:
         """Backward-compatible delegate to CompressionEngine.emergency_fallback."""
         return self._compression_engine.emergency_fallback(messages)
-
-    def _format_context_os_snapshot(
-        self,
-        snapshot: dict[str, Any],
-        verbosity: str = "summary",
-    ) -> str:
-        """Backward-compatible delegate to ProjectionFormatter.format_context_os_snapshot."""
-        return ProjectionFormatter.format_context_os_snapshot(snapshot, verbosity=verbosity)
 
     async def _process_history(
         self,

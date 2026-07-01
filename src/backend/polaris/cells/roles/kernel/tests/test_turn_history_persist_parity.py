@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+from polaris.cells.roles.kernel.internal.context_gateway.projection_formatter import ProjectionFormatter
 from polaris.cells.roles.kernel.internal.tool_loop_controller import ToolLoopController
 from polaris.kernelone.context.contracts import (
     TurnEngineContextRequest,
@@ -342,10 +343,7 @@ class TestPhase3ContextOSDirectIntegration:
         assert result.context_os_snapshot["working_state"]["current_task"] == "test"
 
     def test_context_gateway_formats_context_os_snapshot(self) -> None:
-        """RoleContextGateway._format_context_os_snapshot produces system message."""
-
-        # Use real _format_context_os_snapshot without full gateway init
-        gateway = object.__new__(RoleContextGateway)
+        """ProjectionFormatter.format_context_os_snapshot produces system message."""
 
         snapshot = {
             "transcript_log": [
@@ -357,7 +355,7 @@ class TestPhase3ContextOSDirectIntegration:
             "pending_followup": {"description": "Review PR"},
         }
 
-        result = gateway._format_context_os_snapshot(snapshot)
+        result = ProjectionFormatter.format_context_os_snapshot(snapshot)
 
         assert "Context OS State" in result
         assert "transcript_events: 2 event(s)" in result
@@ -366,12 +364,10 @@ class TestPhase3ContextOSDirectIntegration:
         assert "pending_followup: Review PR" in result
 
     def test_context_gateway_empty_snapshot(self) -> None:
-        """RoleContextGateway handles empty context_os_snapshot gracefully."""
-
-        gateway = object.__new__(RoleContextGateway)
+        """ProjectionFormatter handles empty context_os_snapshot gracefully."""
 
         snapshot: dict[str, Any] = {}
-        result = gateway._format_context_os_snapshot(snapshot)
+        result = ProjectionFormatter.format_context_os_snapshot(snapshot)
 
         assert "transcript_events: (empty)" in result
 
