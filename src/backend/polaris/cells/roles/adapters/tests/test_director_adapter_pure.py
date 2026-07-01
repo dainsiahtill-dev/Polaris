@@ -2967,6 +2967,37 @@ def test_no_write_materialization_retry_message_pins_declared_targets() -> None:
     assert "write_file or edit_file" in message
 
 
+def _assert_retry_text_fallback_is_non_authoritative(
+    *,
+    adapter: Any,
+    task_id: str,
+    result: dict[str, Any],
+    summary_key: str,
+) -> dict[str, Any]:
+    """Assert retry text/file-block output did not bypass native tool execution."""
+    assert result["success"] is False
+    assert result["error_code"] == "incomplete_materialization"
+    assert result["failure_class"] == "INCOMPLETE_MATERIALIZATION"
+
+    updated = adapter.task_board.get_task(task_id)
+    assert updated is not None
+    raw_metadata = updated.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+    raw_adapter_result = metadata.get("adapter_result")
+    adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
+
+    assert adapter_result.get("materialization_error") == "director_no_materialized_changes"
+    assert adapter_result.get("materialization_error_code") == "incomplete_materialization"
+    assert adapter_result.get("failure_class") == "INCOMPLETE_MATERIALIZATION"
+    assert adapter_result.get("new_files") == []
+    assert adapter_result.get("modified_files") == []
+    retry_summary = adapter_result.get(summary_key)
+    assert isinstance(retry_summary, dict)
+    assert retry_summary.get("attempted") is True
+    assert ("patch_apply", 0) in retry_summary.get("write_args", [])
+    return adapter_result
+
+
 def test_target_candidates_include_explicit_scope_directories_with_target_files() -> None:
     task = {
         "target_files": ["package.json", "README.md"],
@@ -3048,11 +3079,8 @@ async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_p
         context={"run_id": "run-empty-write-retry"},
     )
 
-    assert (tmp_path / "src" / "app.py").read_text(encoding="utf-8") == (
-        "APP_STATUS = 'ok'\n\n\ndef main() -> str:\n    return APP_STATUS\n\n\n"
-        "if __name__ == '__main__':\n    print(main())\n"
-    )
-    assert len(seen_messages) == 2
+    assert (tmp_path / "src" / "app.py").exists() is False
+    assert len(seen_messages) >= 2
     assert "previous write tool call had blank content" in seen_messages[1]
     assert seen_contexts[1]["_transaction_kernel_forced_tool_choice"] == {
         "type": "function",
@@ -3065,7 +3093,12 @@ async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_p
         "tool": "write_file",
         "target_file": "src/app.py",
     }
-    assert result.get("error_code") != "director_no_materialized_changes"
+    _assert_retry_text_fallback_is_non_authoritative(
+        adapter=adapter,
+        task_id=str(task.id),
+        result=result,
+        summary_key="empty_write_content_retry",
+    )
 
 
 @pytest.mark.asyncio
@@ -3136,11 +3169,8 @@ async def test_execute_retries_no_write_probe_with_write_only_materialize_prompt
         context={"run_id": "run-no-write-probe-retry"},
     )
 
-    assert (tmp_path / "src" / "app.py").read_text(encoding="utf-8") == (
-        "APP_STATUS = 'ok'\n\n\ndef main() -> str:\n    return APP_STATUS\n\n\n"
-        "if __name__ == '__main__':\n    print(main())\n"
-    )
-    assert len(seen_messages) == 2
+    assert (tmp_path / "src" / "app.py").exists() is False
+    assert len(seen_messages) >= 2
     assert "completed without any write/edit receipt" in seen_messages[1]
     assert "Do not call read, search, tree, or shell tools" in seen_messages[1]
     assert seen_contexts[1]["_transaction_kernel_forced_tool_choice"] == {
@@ -3155,7 +3185,12 @@ async def test_execute_retries_no_write_probe_with_write_only_materialize_prompt
         "tool": "write_file",
         "target_files": ["src/app.py"],
     }
-    assert result.get("error_code") != "director_no_materialized_changes"
+    _assert_retry_text_fallback_is_non_authoritative(
+        adapter=adapter,
+        task_id=str(task.id),
+        result=result,
+        summary_key="no_write_materialization_retry",
+    )
 
 
 @pytest.mark.asyncio
@@ -3225,11 +3260,9 @@ async def test_execute_retries_multi_file_no_write_with_mutation_tools_only(tmp_
         context={"run_id": "run-multi-no-write-probe-retry"},
     )
 
-    assert (tmp_path / "src" / "utils.py").read_text(encoding="utf-8") == ("def status() -> str:\n    return 'ok'\n")
-    assert (tmp_path / "src" / "app.py").read_text(encoding="utf-8") == (
-        "from src.utils import status\n\n\ndef main() -> str:\n    return status()\n"
-    )
-    assert len(seen_messages) == 2
+    assert (tmp_path / "src" / "utils.py").exists() is False
+    assert (tmp_path / "src" / "app.py").exists() is False
+    assert len(seen_messages) >= 2
     assert "completed without any write/edit receipt" in seen_messages[1]
     assert "Do not call read, search, tree, or shell tools" in seen_messages[1]
     assert "write_file or edit_file" in seen_messages[1]
@@ -3250,7 +3283,12 @@ async def test_execute_retries_multi_file_no_write_with_mutation_tools_only(tmp_
         "required_write_tools": ["edit_file", "write_file"],
         "target_files": ["src/app.py", "src/utils.py"],
     }
-    assert result.get("error_code") != "director_no_materialized_changes"
+    _assert_retry_text_fallback_is_non_authoritative(
+        adapter=adapter,
+        task_id=str(task.id),
+        result=result,
+        summary_key="no_write_materialization_retry",
+    )
 
 
 @pytest.mark.asyncio
@@ -3302,11 +3340,8 @@ async def test_execute_retries_read_only_materialization_with_forced_write(tmp_p
         context={"run_id": "run-no-write-retry"},
     )
 
-    assert (tmp_path / "src" / "app.py").read_text(encoding="utf-8") == (
-        "APP_STATUS = 'ok'\n\n\ndef main() -> str:\n    return APP_STATUS\n\n\n"
-        "if __name__ == '__main__':\n    print(main())\n"
-    )
-    assert len(seen_messages) == 2
+    assert (tmp_path / "src" / "app.py").exists() is False
+    assert len(seen_messages) >= 2
     assert "previous Director turn completed without any write/edit receipt" in seen_messages[1]
     assert seen_contexts[1]["_transaction_kernel_forced_tool_choice"] == {
         "type": "function",
@@ -3320,7 +3355,12 @@ async def test_execute_retries_read_only_materialization_with_forced_write(tmp_p
         "tool": "write_file",
         "target_files": ["src/app.py"],
     }
-    assert result.get("error_code") != "director_no_materialized_changes"
+    _assert_retry_text_fallback_is_non_authoritative(
+        adapter=adapter,
+        task_id=str(task.id),
+        result=result,
+        summary_key="no_write_materialization_retry",
+    )
 
 
 @pytest.mark.asyncio
