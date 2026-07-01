@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T04:30:57.303813Z",
-  "source_hash": "39581376ad9d68be",
+  "generated_at": "2026-07-01T04:36:24.133220Z",
+  "source_hash": "3e48cf8ebf27acc3",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4000,10 +4000,6 @@
         {
           "name": "_build_context_gateway_config",
           "doc": "Build ContextGatewayConfig through the injected owner-agnostic runtime factory."
-        },
-        {
-          "name": "_get_response_schema",
-          "doc": "Resolve explicit structured output schema for this turn."
         },
         {
           "name": "_get_prompt_builder",

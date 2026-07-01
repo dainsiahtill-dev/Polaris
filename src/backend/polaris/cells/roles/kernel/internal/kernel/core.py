@@ -266,18 +266,6 @@ class RoleExecutionKernel:
             logger.debug("ContextGatewayConfig factory failed", exc_info=True)
             return None
 
-    def _get_response_schema(self, role: str) -> type | None:
-        """Resolve explicit structured output schema for this turn.
-
-        roles.kernel must not import role-specific schema bridges from
-        roles.adapters. Future structured-output contracts must be supplied
-        through roles.profile or roles.runtime public contracts.
-        """
-
-        if not self._use_structured_output:
-            return None
-        return None
-
     # ═══════════════════════════════════════════════════════════════════════════
     # 服务层访问器（懒加载 + 依赖注入支持）
     # ═══════════════════════════════════════════════════════════════════════════
@@ -464,7 +452,7 @@ class RoleExecutionKernel:
                 base_system_prompt, quality_result_to_dict(last_validation), attempt
             )
 
-            response_schema = self._get_response_schema(role)
+            response_schema: type | None = None
 
             # Get tracer for OpenTelemetry integration
             tracer = get_tracer()
