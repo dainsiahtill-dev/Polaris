@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from polaris.cells.llm.dialogue.public import get_registered_roles
-from polaris.cells.roles.kernel.public.prompt_templates_facade import ROLE_PROMPT_TEMPLATES
+from polaris.cells.roles.kernel.public import ROLE_PROMPT_TEMPLATES as EXPORTED_ROLE_PROMPT_TEMPLATES
+from polaris.cells.roles.kernel.public.prompt_templates import ROLE_PROMPT_TEMPLATES
 
 
 def test_registered_roles_include_resident_agi() -> None:
     roles = get_registered_roles()
 
     assert "resident_agi" in roles
+
+
+def test_role_prompt_templates_are_available_from_public_boundary() -> None:
+    assert EXPORTED_ROLE_PROMPT_TEMPLATES is ROLE_PROMPT_TEMPLATES
 
 
 def test_resident_agi_prompt_uses_shared_role_foundation() -> None:

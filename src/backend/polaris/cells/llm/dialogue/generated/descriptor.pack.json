@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:53.759824Z",
-  "source_hash": "75869218dadb283b",
+  "generated_at": "2026-07-01T07:21:59.862203Z",
+  "source_hash": "902da8b61e8716c4",
   "cell_id": "llm.dialogue",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -213,6 +213,10 @@
         },
         {
           "name": "_check_qa_output",
+          "doc": ""
+        },
+        {
+          "name": "_check_resident_agi_output",
           "doc": ""
         }
       ]
@@ -453,8 +457,38 @@
         {
           "name": "test_invalid_pm_priority_enum_fails",
           "doc": ""
+        },
+        {
+          "name": "test_valid_resident_agi_decision_passes",
+          "doc": ""
+        },
+        {
+          "name": "test_invalid_resident_agi_verdict_fails",
+          "doc": ""
+        },
+        {
+          "name": "test_resident_agi_downstream_allowed_must_be_boolean",
+          "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "test_registered_roles_include_resident_agi",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/tests/test_role_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_prompt_templates_are_available_from_public_boundary",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/tests/test_role_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_resident_agi_prompt_uses_shared_role_foundation",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/tests/test_role_registry.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

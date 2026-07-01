@@ -25,6 +25,8 @@ _EXPORT_TO_MODULE: dict[str, str] = {
     "RoleKernelPromptBuiltEventV1": "polaris.cells.roles.kernel.public.contracts",
     "RoleKernelQualityCheckedEventV1": "polaris.cells.roles.kernel.public.contracts",
     "RoleKernelResultV1": "polaris.cells.roles.kernel.public.contracts",
+    "ROLE_PROMPT_TEMPLATES": "polaris.cells.roles.kernel.public.prompt_templates",
+    "SHARED_SECURITY_BOUNDARY": "polaris.cells.roles.kernel.public.prompt_templates",
     "CONSTITUTION": "polaris.cells.roles.kernel.public.service",
     "AllocationResult": "polaris.cells.roles.kernel.public.service",
     "AntiPattern": "polaris.cells.roles.kernel.public.service",

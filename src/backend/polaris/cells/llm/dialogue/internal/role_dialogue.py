@@ -37,8 +37,7 @@ import os
 import re
 from typing import Any
 
-# ACGA-compliant: Import from public facade instead of internal module
-from polaris.cells.roles.kernel.public.prompt_templates_facade import (
+from polaris.cells.roles.kernel.public.prompt_templates import (
     ROLE_PROMPT_TEMPLATES,
     SHARED_SECURITY_BOUNDARY,
 )
