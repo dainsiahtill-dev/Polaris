@@ -143,10 +143,6 @@ def resolve_polaris_roots(workspace: str, ramdisk_root: str | None = None) -> Po
     )
 
 
-# Backward compatibility alias
-resolve_polaris_roots = resolve_polaris_roots
-
-
 # ─── Polaris storage roots dataclass ─────────────────────────────────────────────
 
 
