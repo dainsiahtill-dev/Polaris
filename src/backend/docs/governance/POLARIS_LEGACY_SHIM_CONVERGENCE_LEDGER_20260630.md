@@ -13,7 +13,7 @@ business wording, React `Suspense fallback`, and accepted config migration code.
 
 | Class | Count | Meaning |
 | --- | ---: | --- |
-| Closed in this convergence pass | 212 | Removed, retired, or converted into an audited sunset path and verified. |
+| Closed in this convergence pass | 213 | Removed, retired, or converted into an audited sunset path and verified. |
 | P1 open | 0 | Still close to execution, LLM/tool, QA, or state projection paths. |
 | P2 open | 0 | Exposed API/UI/CLI compatibility surfaces that should be retired after callers move. |
 | P3 accepted with sunset | 0 | Kept for user config or historical data migration; requires an expiry policy, not immediate deletion. |
@@ -281,6 +281,8 @@ Additional closed cuts: LS-14A, LS-15A, LS-16A, LS-17A, LS-18A, LS-19A, LS-20A, 
 | LS-52A | LS-52 | P2 | Director interface / root and PM import shims | Closed: the old root `director_interface.py` shim and `polaris.delivery.cli.pm.director_interface` re-export shim are removed; internal callers already use `director_interface_core`. | Closed by deleting both shim files and adding an architecture fence that blocks file recreation or production imports through the retired root/PM paths while proving `director_interface_core` remains the canonical owner. |
 
 | LS-53A | LS-53 | P2 | Delivery CLI / terminal_console import shim | Closed: `polaris.delivery.cli.terminal_console` no longer exists as a backward-compat re-export beside canonical `polaris.delivery.cli.terminal`. | Closed by migrating active tests to the canonical terminal package, keeping `Super*` task data types sourced from `polaris.delivery.cli.super_mode`, deleting the retired shim file, shrinking the delivery internal-import baseline, and upgrading the architecture fence to block file/import reintroduction. |
+
+| LS-54A | LS-54 | P2 | Director CLI / terminal_console re-export shim | Closed: `polaris.delivery.cli.director.terminal_console` no longer exists as a Director-local re-export beside canonical `polaris.delivery.cli.director` and `polaris.delivery.cli.terminal`. | Closed by deleting the unused Director submodule shim and adding an architecture fence that blocks file/import reintroduction while proving the canonical Director package root still exposes `run_director_console`. |
 
 ## Closure Order
 
