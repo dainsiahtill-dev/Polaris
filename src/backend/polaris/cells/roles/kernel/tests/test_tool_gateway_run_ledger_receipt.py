@@ -13,7 +13,7 @@ from polaris.cells.roles.kernel.internal.kernel.tool_executor import (
 )
 from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import _normalize_capability_token
-from polaris.cells.roles.profile.internal.schema import RoleTurnRequest
+from polaris.cells.roles.profile.public import RoleTurnRequest
 
 
 def _make_profile(tool_policy: dict[str, Any] | None = None) -> MagicMock:

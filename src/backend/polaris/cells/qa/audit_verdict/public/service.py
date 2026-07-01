@@ -112,6 +112,33 @@ def _build_qa_verdict_envelope(
         audit_result=audit_result,
     )
 
+
+def build_qa_verdict_envelope(
+    *,
+    workspace: str,
+    task_id: str,
+    payload: dict[str, Any],
+    gate_name: str = "",
+    gate_summary: str = "",
+    audit_result: dict[str, Any] | None = None,
+    ledger_projection: dict[str, Any] | None = None,
+    barrier: dict[str, Any] | None = None,
+) -> QaVerdictEnvelopeV1:
+    """Build a canonical QA verdict envelope through the public boundary."""
+
+    from polaris.cells.qa.audit_verdict.internal.verdict_engine import QAVerdictEngine
+
+    return QAVerdictEngine(workspace).build_envelope(
+        task_id=task_id,
+        payload=dict(payload),
+        gate_name=gate_name,
+        gate_summary=gate_summary,
+        audit_result=dict(audit_result or {}),
+        ledger_projection=dict(ledger_projection or {}),
+        barrier=dict(barrier or {}),
+    )
+
+
 def _result_with_envelope(
     result: QaAuditResultV1,
     envelope: QaVerdictEnvelopeV1,
@@ -269,12 +296,17 @@ def get_qa_verdict(query: GetQaVerdictQueryV1) -> QaAuditResultV1:
     )
 
 def _mapping_metadata_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    metadata = dict(payload.get("metadata")) if isinstance(payload.get("metadata"), dict) else {}
+    metadata = _dict_value(payload, "metadata")
     for key in ("qa_verdict_envelope", "failure_class", "responsible_layer"):
         value = payload.get(key)
         if value not in (None, ""):
             metadata[key] = value
     return metadata
+
+
+def _dict_value(payload: Mapping[str, Any], key: str) -> dict[str, Any]:
+    value = payload.get(key)
+    return dict(value) if isinstance(value, dict) else {}
 
 def get_qa_verdict_envelope(query: GetQaVerdictQueryV1) -> QaVerdictEnvelopeV1:
     """Read the latest canonical QA verdict envelope for a task."""
@@ -299,13 +331,11 @@ def get_qa_verdict_envelope(query: GetQaVerdictQueryV1) -> QaVerdictEnvelopeV1:
             ok=bool(envelope.get("ok", result.ok)),
             next_stage=str(envelope.get("next_stage") or ""),
             terminal_status=str(envelope.get("terminal_status") or ""),
-            authority=dict(envelope.get("authority")) if isinstance(envelope.get("authority"), dict) else {},
-            ledger=dict(envelope.get("ledger")) if isinstance(envelope.get("ledger"), dict) else {},
-            evidence=dict(envelope.get("evidence")) if isinstance(envelope.get("evidence"), dict) else {},
-            receipts=dict(envelope.get("receipts")) if isinstance(envelope.get("receipts"), dict) else {},
-            artifact_quality=dict(envelope.get("artifact_quality"))
-            if isinstance(envelope.get("artifact_quality"), dict)
-            else {},
+            authority=_dict_value(envelope, "authority"),
+            ledger=_dict_value(envelope, "ledger"),
+            evidence=_dict_value(envelope, "evidence"),
+            receipts=_dict_value(envelope, "receipts"),
+            artifact_quality=_dict_value(envelope, "artifact_quality"),
             classification=QaFailureClassificationV1(
                 failure_class=str(classification_map.get("failure_class") or "UNKNOWN"),
                 route=str(classification_map.get("route") or "waiting_human"),
@@ -327,7 +357,7 @@ def get_qa_verdict_envelope(query: GetQaVerdictQueryV1) -> QaVerdictEnvelopeV1:
                 lineage_hash=str(lineage_map.get("lineage_hash") or ""),
             ),
             findings=_string_tuple(envelope.get("findings")),
-            metrics=dict(envelope.get("metrics")) if isinstance(envelope.get("metrics"), dict) else {},
+            metrics=_dict_value(envelope, "metrics"),
             evidence_refs=_string_tuple(envelope.get("evidence_refs")),
             content_hash=str(envelope.get("content_hash") or ""),
         )
@@ -521,6 +551,7 @@ __all__ = [
     "TracebackFrameV1",
     "VisualAuditFindingV1",
     "VisualQaAuditResultV1",
+    "build_qa_verdict_envelope",
     "claim_qa_task",
     "get_quality_service",
     "get_review_gate",

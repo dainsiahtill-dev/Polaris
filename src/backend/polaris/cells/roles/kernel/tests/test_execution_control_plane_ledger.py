@@ -8,7 +8,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     ReadRunLedgerProjectionQueryV1,
     read_run_ledger_projection,
 )
-from polaris.cells.qa.audit_verdict.internal.verdict_engine import QAVerdictEngine
+from polaris.cells.qa.audit_verdict.public import build_qa_verdict_envelope
 from polaris.cells.roles.kernel.internal.kernel.turn_execution import (
     execute_transaction_kernel_stream,
     execute_transaction_kernel_turn,
@@ -218,7 +218,8 @@ async def test_role_execution_dropped_tool_dispatch_commits_ledger_and_blocks_qa
     assert projection["tool_lifecycle"]["events"][0]["provider_response_hash"] == "provider-response-hash"
     assert projection["task_boundary"]["latest"]["failure_class"] == "TOOL_DISPATCH_DROPPED"
 
-    qa_envelope = QAVerdictEngine(str(tmp_path)).build_envelope(
+    qa_envelope = build_qa_verdict_envelope(
+        workspace=str(tmp_path),
         task_id="TASK-1",
         payload={"run_id": "run-dropped", "job_token": {"run_id": "run-dropped"}},
         gate_name="legacy-pass",

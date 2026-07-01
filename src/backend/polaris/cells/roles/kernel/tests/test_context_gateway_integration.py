@@ -442,7 +442,7 @@ class TestStateFirstContextOSIntegration:
     @pytest.mark.asyncio
     async def test_director_context_includes_resident_agi_decision_trace(self, tmp_path):
         """Director final context should consume recent Resident/AGI decision guidance."""
-        from polaris.cells.resident.autonomy.internal.resident_runtime_service import (
+        from polaris.cells.resident.autonomy.public import (
             get_resident_service,
             reset_resident_services,
         )
