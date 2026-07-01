@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import tomllib
-from polaris.cells.director.tasking.internal.patch_apply_engine import validate_before_apply
+from polaris.cells.director.tasking.internal.patch_protocol import validate_before_apply
 from polaris.kernelone.llm.toolkit.write_policy import validate_tool_write_policy
 
 logger = logging.getLogger(__name__)

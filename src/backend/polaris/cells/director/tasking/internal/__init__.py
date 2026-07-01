@@ -16,7 +16,7 @@ from polaris.cells.director.tasking.internal.bootstrap_template_catalog import (
 from polaris.cells.director.tasking.internal.file_apply_service import (
     FileApplyService as FileApplyService,
 )
-from polaris.cells.director.tasking.internal.patch_apply_engine import (
+from polaris.cells.director.tasking.internal.patch_protocol import (
     ApplyIntegrity as ApplyIntegrity,
     ApplyResult as ApplyResult,
     apply_all_operations as apply_all_operations,

@@ -69,6 +69,13 @@ class TestCanonicalImports:
             spec = importlib.util.find_spec(f"polaris.cells.director.execution.internal.{module_name}")
             assert spec is None, module_name
 
+    def test_tasking_patch_apply_engine_compat_module_is_removed(self) -> None:
+        old_module_path = (
+            _BACKEND_ROOT / "polaris" / "cells" / "director" / "tasking" / "internal" / "patch_apply_engine.py"
+        )
+
+        assert not old_module_path.exists()
+
 
 class TestCallerImports:
     """Verify callers use the canonical public port."""

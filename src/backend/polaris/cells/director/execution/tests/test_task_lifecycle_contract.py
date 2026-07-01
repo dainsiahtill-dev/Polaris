@@ -7,7 +7,7 @@ Tests cover:
 - DirectorTaskStartedEventV1 / DirectorTaskCompletedEventV1: event guards
 - DirectorExecutionResultV1: ok/error invariant, evidence_paths coercion
 - DirectorExecutionError: structured exception attributes
-- patch_apply_engine helpers: parse_full_file_blocks, parse_search_replace_blocks
+- patch protocol helpers: parse_full_file_blocks, parse_search_replace_blocks
   (pure text transformations, no I/O)
 """
 
@@ -219,12 +219,12 @@ class TestDirectorExecutionError:
 
 
 # ---------------------------------------------------------------------------
-# Failure path: patch_apply_engine pure-text helpers
+# Failure path: patch protocol pure-text helpers
 # These are thin wrappers around ProtocolParser; test return type and shape.
 # ---------------------------------------------------------------------------
 
 
-class TestPatchApplyEnginePureTextHelpers:
+class TestPatchProtocolPureTextHelpers:
     """parse_full_file_blocks and parse_search_replace_blocks are pure getters."""
 
     def test_parse_full_file_blocks_returns_list(self) -> None:

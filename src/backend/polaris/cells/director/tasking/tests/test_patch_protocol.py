@@ -1,4 +1,4 @@
-"""Tests for patch_apply_engine module."""
+"""Tests for the Director tasking patch protocol adapter."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ class TestApplyIntegrity:
 
     def test_apply_integrity_valid(self) -> None:
         """Test ApplyIntegrity with valid state."""
-        from polaris.cells.director.tasking.internal.patch_apply_engine import ApplyIntegrity
+        from polaris.cells.director.tasking.internal.patch_protocol import ApplyIntegrity
 
         integrity = ApplyIntegrity(
             is_valid=True,
@@ -23,7 +23,7 @@ class TestApplyIntegrity:
 
     def test_apply_integrity_with_errors(self) -> None:
         """Test ApplyIntegrity with errors."""
-        from polaris.cells.director.tasking.internal.patch_apply_engine import ApplyIntegrity
+        from polaris.cells.director.tasking.internal.patch_protocol import ApplyIntegrity
 
         integrity = ApplyIntegrity(
             is_valid=False,
@@ -40,7 +40,7 @@ class TestValidateBeforeApply:
 
     def test_validate_empty_response(self) -> None:
         """Test validation with empty response."""
-        from polaris.cells.director.tasking.internal.patch_apply_engine import (
+        from polaris.cells.director.tasking.internal.patch_protocol import (
             validate_before_apply,
         )
 
@@ -51,7 +51,7 @@ class TestValidateBeforeApply:
 
     def test_validate_response_with_operations(self) -> None:
         """Test validation with a response carrying a real file operation."""
-        from polaris.cells.director.tasking.internal.patch_apply_engine import (
+        from polaris.cells.director.tasking.internal.patch_protocol import (
             validate_before_apply,
         )
 
@@ -71,7 +71,7 @@ Done."""
         """A bare ```python fence names no file — applying it would require
         guessing a target (the wave-3 task-drift attractor), so the engine
         must report no_valid_operations instead of inventing one."""
-        from polaris.cells.director.tasking.internal.patch_apply_engine import (
+        from polaris.cells.director.tasking.internal.patch_protocol import (
             validate_before_apply,
         )
 
@@ -88,7 +88,7 @@ Done."""
 
     def test_validate_unclosed_patch_file(self) -> None:
         """Test validation detects unclosed PATCH_FILE block."""
-        from polaris.cells.director.tasking.internal.patch_apply_engine import (
+        from polaris.cells.director.tasking.internal.patch_protocol import (
             validate_before_apply,
         )
 
@@ -111,7 +111,7 @@ class TestParseOperations:
 
     def test_parse_all_operations_empty(self) -> None:
         """Test parse_all_operations with empty input."""
-        from polaris.cells.director.tasking.internal.patch_apply_engine import (
+        from polaris.cells.director.tasking.internal.patch_protocol import (
             parse_all_operations,
         )
 
@@ -120,7 +120,7 @@ class TestParseOperations:
 
     def test_parse_full_file_blocks(self) -> None:
         """Test parse_full_file_blocks function."""
-        from polaris.cells.director.tasking.internal.patch_apply_engine import (
+        from polaris.cells.director.tasking.internal.patch_protocol import (
             parse_full_file_blocks,
         )
 
@@ -130,7 +130,7 @@ class TestParseOperations:
 
     def test_parse_search_replace_blocks(self) -> None:
         """Test parse_search_replace_blocks function."""
-        from polaris.cells.director.tasking.internal.patch_apply_engine import (
+        from polaris.cells.director.tasking.internal.patch_protocol import (
             parse_search_replace_blocks,
         )
 
@@ -140,7 +140,7 @@ class TestParseOperations:
 
     def test_parse_delete_operations(self) -> None:
         """Test parse_delete_operations function."""
-        from polaris.cells.director.tasking.internal.patch_apply_engine import (
+        from polaris.cells.director.tasking.internal.patch_protocol import (
             parse_delete_operations,
         )
 
@@ -154,7 +154,7 @@ class TestApplyOperation:
 
     def test_apply_operation_imports(self) -> None:
         """Test that apply_operation can be imported."""
-        from polaris.cells.director.tasking.internal.patch_apply_engine import (
+        from polaris.cells.director.tasking.internal.patch_protocol import (
             apply_operation,
         )
 
@@ -162,7 +162,7 @@ class TestApplyOperation:
 
     def test_apply_all_operations_imports(self) -> None:
         """Test that apply_all_operations can be imported."""
-        from polaris.cells.director.tasking.internal.patch_apply_engine import (
+        from polaris.cells.director.tasking.internal.patch_protocol import (
             apply_all_operations,
         )
 
@@ -174,7 +174,7 @@ class TestApplyResult:
 
     def test_apply_result_creation(self) -> None:
         """Test ApplyResult basic creation."""
-        from polaris.cells.director.tasking.internal.patch_apply_engine import (
+        from polaris.cells.director.tasking.internal.patch_protocol import (
             ApplyResult,
         )
 
@@ -189,7 +189,7 @@ class TestApplyResult:
 
     def test_apply_result_with_failures(self) -> None:
         """Test ApplyResult with failed operations."""
-        from polaris.cells.director.tasking.internal.patch_apply_engine import (
+        from polaris.cells.director.tasking.internal.patch_protocol import (
             ApplyResult,
         )
         from polaris.kernelone.llm.toolkit import EditType, FileOperation
@@ -217,7 +217,7 @@ class TestExports:
 
     def test_all_exports_present(self) -> None:
         """Test that expected exports are available."""
-        from polaris.cells.director.tasking.internal import patch_apply_engine
+        from polaris.cells.director.tasking.internal import patch_protocol
 
         expected = [
             "ApplyIntegrity",
@@ -232,31 +232,31 @@ class TestExports:
         ]
 
         for name in expected:
-            assert hasattr(patch_apply_engine, name), f"Missing export: {name}"
+            assert hasattr(patch_protocol, name), f"Missing export: {name}"
 
     def test_edit_type_exports(self) -> None:
         """Test that EditType is exported."""
-        from polaris.cells.director.tasking.internal import patch_apply_engine
+        from polaris.cells.director.tasking.internal import patch_protocol
 
-        assert hasattr(patch_apply_engine, "EditType")
+        assert hasattr(patch_protocol, "EditType")
 
     def test_error_code_exports(self) -> None:
         """Test that ErrorCode is exported."""
-        from polaris.cells.director.tasking.internal import patch_apply_engine
+        from polaris.cells.director.tasking.internal import patch_protocol
 
-        assert hasattr(patch_apply_engine, "ErrorCode")
+        assert hasattr(patch_protocol, "ErrorCode")
 
     def test_file_operation_exports(self) -> None:
         """Test that FileOperation is exported."""
-        from polaris.cells.director.tasking.internal import patch_apply_engine
+        from polaris.cells.director.tasking.internal import patch_protocol
 
-        assert hasattr(patch_apply_engine, "FileOperation")
+        assert hasattr(patch_protocol, "FileOperation")
 
     def test_operation_result_exports(self) -> None:
         """Test that OperationResult is exported."""
-        from polaris.cells.director.tasking.internal import patch_apply_engine
+        from polaris.cells.director.tasking.internal import patch_protocol
 
-        assert hasattr(patch_apply_engine, "OperationResult")
+        assert hasattr(patch_protocol, "OperationResult")
 
 
 if __name__ == "__main__":

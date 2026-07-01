@@ -36,7 +36,7 @@ from polaris.cells.director.tasking.internal.existence_gate import (
     is_pure_create,
 )
 from polaris.cells.director.tasking.internal.file_apply_service import FileApplyService
-from polaris.cells.director.tasking.internal.patch_apply_engine import (
+from polaris.cells.director.tasking.internal.patch_protocol import (
     ApplyIntegrity,
     ApplyResult,
     EditType,
