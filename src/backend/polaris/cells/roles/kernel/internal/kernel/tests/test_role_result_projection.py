@@ -6,9 +6,11 @@ from types import SimpleNamespace
 
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     role_result_metadata_from_profile,
+    role_turn_result_from_transaction_result,
     tool_calls_from_batch_receipt,
     tool_results_from_batch_receipt,
 )
+from polaris.cells.roles.profile.public.service import RoleTurnResult
 
 
 def test_batch_receipt_projects_tool_calls_and_results() -> None:
@@ -102,3 +104,71 @@ def test_role_result_metadata_uses_monitoring_context_audit_when_not_already_set
 
     assert metadata["context_os_audit"] == {"source": "llm"}
     assert monitoring_only["context_os_audit"] == {"source": "monitoring"}
+
+
+def test_role_turn_result_from_transaction_result_projects_common_fields() -> None:
+    profile = SimpleNamespace(
+        version="profile-v1",
+        tool_policy=SimpleNamespace(policy_id="policy-v1"),
+    )
+    fingerprint = SimpleNamespace(full_hash="fingerprint")
+    quality_result = SimpleNamespace(quality_score=88.0, suggestions=["tighten scope"])
+    transaction_result = RoleTurnResult(
+        content="transaction content",
+        thinking="analysis",
+        tool_calls=[{"tool": "write_file"}],
+        tool_results=[{"tool": "write_file", "success": True}],
+        batch_receipt={"results": [{"tool_name": "write_file"}]},
+        tool_execution_error="tool warning",
+        should_retry=True,
+        execution_stats={"transaction_kernel": True},
+        turn_history=[("user", "hello")],
+        turn_events_metadata=[{"event_id": "evt-1"}],
+        metadata={"context_snapshot_ref": "runtime/contexts/aa/bb.json"},
+    )
+
+    result = role_turn_result_from_transaction_result(
+        transaction_result=transaction_result,
+        profile=profile,
+        fingerprint=fingerprint,
+        quality_result=quality_result,
+        platform_retry_count=1,
+        kernel_repair_retry_count=2,
+        kernel_repair_reasons=["attempt_0: validation_failed"],
+        kernel_repair_exhausted=True,
+        error="validation failed",
+        is_complete=False,
+        structured_output={"parsed": True},
+        content_override="effective content",
+    )
+
+    assert result.content == "effective content"
+    assert result.thinking == "analysis"
+    assert result.structured_output == {"parsed": True}
+    assert result.profile_version == "profile-v1"
+    assert result.prompt_fingerprint is fingerprint
+    assert result.tool_policy_id == "policy-v1"
+    assert result.quality_score == 88.0
+    assert result.quality_suggestions == ["tighten scope"]
+    assert result.error == "validation failed"
+    assert result.is_complete is False
+    assert result.tool_execution_error == "tool warning"
+    assert result.should_retry is True
+    assert result.execution_stats == {
+        "platform_retry_count": 1,
+        "kernel_repair_retry_count": 2,
+        "kernel_repair_reasons": ["attempt_0: validation_failed"],
+        "kernel_repair_exhausted": True,
+        "transaction_kernel": True,
+    }
+    assert result.batch_receipt == {"results": [{"tool_name": "write_file"}]}
+    assert result.tool_calls == [{"tool": "write_file"}]
+    assert result.tool_results == [{"tool": "write_file", "success": True}]
+    assert result.turn_history == [("user", "hello")]
+    assert result.turn_events_metadata == [{"event_id": "evt-1"}]
+    assert result.metadata == {"context_snapshot_ref": "runtime/contexts/aa/bb.json"}
+
+    assert result.tool_calls is not transaction_result.tool_calls
+    assert result.tool_results is not transaction_result.tool_results
+    assert result.execution_stats is not transaction_result.execution_stats
+    assert result.metadata is not transaction_result.metadata

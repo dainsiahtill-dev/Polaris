@@ -1,9 +1,15 @@
-"""Projection helpers for RoleTurnResult fields."""
+"""Projection helpers for RoleTurnResult fields.
+
+The RoleExecutionKernel decides retry, validation, and completion semantics.
+This module owns the mechanical projection from TransactionKernel turn results
+into public RoleTurnResult values so result shape drift has one owner.
+"""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol
 
+from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
 
 _LLM_RESPONSE_METADATA_KEYS: tuple[str, ...] = (
@@ -16,6 +22,13 @@ _LLM_RESPONSE_METADATA_KEYS: tuple[str, ...] = (
     "usage",
     "usage_source",
 )
+
+
+class QualityProjection(Protocol):
+    """Minimal quality-result fields needed for RoleTurnResult projection."""
+
+    quality_score: float
+    suggestions: list[str]
 
 
 def tool_calls_from_batch_receipt(batch_receipt: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -107,3 +120,65 @@ def role_result_metadata_from_profile(
             metadata["context_os_audit"] = dict(context_os_audit)
 
     return metadata
+
+
+def role_turn_result_from_transaction_result(
+    *,
+    transaction_result: RoleTurnResult,
+    profile: Any,
+    fingerprint: Any,
+    quality_result: QualityProjection | None,
+    platform_retry_count: int,
+    kernel_repair_retry_count: int,
+    kernel_repair_reasons: list[str],
+    kernel_repair_exhausted: bool,
+    error: str | None,
+    is_complete: bool,
+    structured_output: dict[str, Any] | None = None,
+    content_override: str | None = None,
+) -> RoleTurnResult:
+    """Project a TransactionKernel result into the public role-turn result.
+
+    Boundary:
+        - Caller owns retry/exhaustion decisions and supplies explicit
+          ``error`` / ``is_complete`` / ``kernel_repair_exhausted`` values.
+        - This function owns stable field copying, quality projection, and
+          execution-stat merging.
+
+    Complexity:
+        O(n + m) time and memory where ``n`` is the number of tool/history
+        records and ``m`` is the number of execution-stat keys copied.
+    """
+    transaction_stats = getattr(transaction_result, "execution_stats", {}) or {}
+    execution_stats = {
+        "platform_retry_count": platform_retry_count,
+        "kernel_repair_retry_count": kernel_repair_retry_count,
+        "kernel_repair_reasons": list(kernel_repair_reasons),
+        "kernel_repair_exhausted": kernel_repair_exhausted,
+        **dict(transaction_stats),
+    }
+
+    batch_receipt = getattr(transaction_result, "batch_receipt", None)
+    return RoleTurnResult(
+        content=content_override if content_override is not None else (transaction_result.content or ""),
+        thinking=transaction_result.thinking,
+        structured_output=structured_output,
+        tool_calls=list(transaction_result.tool_calls or []),
+        tool_results=list(transaction_result.tool_results or []),
+        batch_receipt=dict(batch_receipt) if isinstance(batch_receipt, dict) else None,
+        profile_version=str(getattr(profile, "version", "") or ""),
+        prompt_fingerprint=fingerprint,
+        tool_policy_id=str(getattr(getattr(profile, "tool_policy", None), "policy_id", "") or ""),
+        quality_score=quality_result.quality_score if quality_result else 0.0,
+        quality_suggestions=list(quality_result.suggestions) if quality_result else [],
+        error=error,
+        is_complete=is_complete,
+        tool_execution_error=getattr(transaction_result, "tool_execution_error", None),
+        should_retry=bool(getattr(transaction_result, "should_retry", False)),
+        execution_stats=execution_stats,
+        turn_history=list(transaction_result.turn_history) if transaction_result.turn_history else [],
+        turn_events_metadata=list(transaction_result.turn_events_metadata)
+        if transaction_result.turn_events_metadata
+        else [],
+        metadata=dict(getattr(transaction_result, "metadata", {}) or {}),
+    )

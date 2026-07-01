@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T07:55:27.577435Z",
-  "source_hash": "d3e0dd6235c0554b",
+  "generated_at": "2026-07-01T08:15:38.174594Z",
+  "source_hash": "4638275383123698",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4254,6 +4254,13 @@
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/request_tool_gating.py"
     },
     {
+      "type": "class",
+      "name": "QualityProjection",
+      "description": "Minimal quality-result fields needed for RoleTurnResult projection.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/role_result_projection.py",
+      "methods": []
+    },
+    {
       "type": "function",
       "name": "tool_calls_from_batch_receipt",
       "description": "Project RoleTurnResult.tool_calls from a TransactionKernel batch receipt.",
@@ -4269,6 +4276,12 @@
       "type": "function",
       "name": "role_result_metadata_from_profile",
       "description": "Project stable RoleTurnResult metadata from profile, ledger, and LLM evidence.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/role_result_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "role_turn_result_from_transaction_result",
+      "description": "Project a TransactionKernel result into the public role-turn result.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/role_result_projection.py"
     },
     {
@@ -4593,6 +4606,12 @@
     {
       "type": "function",
       "name": "test_role_result_metadata_uses_monitoring_context_audit_when_not_already_set",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_role_result_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_turn_result_from_transaction_result_projects_common_fields",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_role_result_projection.py"
     },

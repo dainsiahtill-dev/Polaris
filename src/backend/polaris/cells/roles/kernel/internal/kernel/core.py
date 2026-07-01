@@ -44,6 +44,9 @@ from polaris.cells.roles.kernel.internal.kernel.prompt_assembly import (
 from polaris.cells.roles.kernel.internal.kernel.prompt_builder_provider import get_prompt_builder
 from polaris.cells.roles.kernel.internal.kernel.quality_checker_provider import get_quality_checker
 from polaris.cells.roles.kernel.internal.kernel.request_appendix import build_prompt_appendix_from_request
+from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
+    role_turn_result_from_transaction_result,
+)
 from polaris.cells.roles.kernel.internal.kernel.stream_run_id import resolve_stream_run_id
 from polaris.cells.roles.kernel.internal.kernel.suggestions import get_suggestions_for_error
 from polaris.cells.roles.kernel.internal.kernel.turn_execution import (
@@ -377,31 +380,17 @@ class RoleExecutionKernel:
 
             # TransactionKernel 返回错误，不重试
             if te_result.error:
-                return RoleTurnResult(
-                    content=te_result.content or "",
-                    thinking=te_result.thinking,
-                    tool_calls=te_result.tool_calls or [],
-                    tool_results=te_result.tool_results or [],
-                    batch_receipt=dict(te_result.batch_receipt) if isinstance(te_result.batch_receipt, dict) else None,
-                    profile_version=profile.version,
-                    prompt_fingerprint=fingerprint,
-                    tool_policy_id=profile.tool_policy.policy_id,
-                    quality_score=last_validation.quality_score if last_validation else 0.0,
-                    quality_suggestions=last_validation.suggestions if last_validation else [],
+                return role_turn_result_from_transaction_result(
+                    transaction_result=te_result,
+                    profile=profile,
+                    fingerprint=fingerprint,
+                    quality_result=last_validation,
+                    platform_retry_count=total_platform_retry_count,
+                    kernel_repair_retry_count=kernel_repair_retry_count,
+                    kernel_repair_reasons=kernel_repair_reasons,
+                    kernel_repair_exhausted=True,
                     error=te_result.error,
                     is_complete=False,
-                    tool_execution_error=getattr(te_result, "tool_execution_error", None),
-                    should_retry=getattr(te_result, "should_retry", False),
-                    execution_stats={
-                        "platform_retry_count": total_platform_retry_count,
-                        "kernel_repair_retry_count": kernel_repair_retry_count,
-                        "kernel_repair_reasons": kernel_repair_reasons,
-                        "kernel_repair_exhausted": True,
-                        **te_result.execution_stats,
-                    },
-                    turn_history=list(te_result.turn_history) if te_result.turn_history else [],
-                    turn_events_metadata=list(te_result.turn_events_metadata) if te_result.turn_events_metadata else [],
-                    metadata=dict(getattr(te_result, "metadata", {}) or {}),
                 )
 
             # Quality validation
@@ -518,33 +507,18 @@ class RoleExecutionKernel:
                     except (RuntimeError, ValueError):
                         logger.warning("Failed to record execution metric")
 
-                    return RoleTurnResult(
-                        content=effective_content,
-                        thinking=te_result.thinking,
-                        tool_calls=te_result.tool_calls or [],
-                        tool_results=te_result.tool_results or [],
-                        batch_receipt=dict(te_result.batch_receipt)
-                        if isinstance(te_result.batch_receipt, dict)
-                        else None,
-                        profile_version=profile.version,
-                        prompt_fingerprint=fingerprint,
-                        tool_policy_id=profile.tool_policy.policy_id,
-                        quality_score=last_validation.quality_score if last_validation else 0.0,
-                        quality_suggestions=last_validation.suggestions if last_validation else [],
+                    return role_turn_result_from_transaction_result(
+                        transaction_result=te_result,
+                        profile=profile,
+                        fingerprint=fingerprint,
+                        quality_result=last_validation,
+                        platform_retry_count=total_platform_retry_count,
+                        kernel_repair_retry_count=kernel_repair_retry_count,
+                        kernel_repair_reasons=kernel_repair_reasons,
+                        kernel_repair_exhausted=True,
                         error=error_msg,
                         is_complete=True,
-                        execution_stats={
-                            "platform_retry_count": total_platform_retry_count,
-                            "kernel_repair_retry_count": kernel_repair_retry_count,
-                            "kernel_repair_reasons": kernel_repair_reasons,
-                            "kernel_repair_exhausted": True,
-                            **te_result.execution_stats,
-                        },
-                        turn_history=list(te_result.turn_history) if te_result.turn_history else [],
-                        turn_events_metadata=list(te_result.turn_events_metadata)
-                        if te_result.turn_events_metadata
-                        else [],
-                        metadata=dict(getattr(te_result, "metadata", {}) or {}),
+                        content_override=effective_content,
                     )
 
                 event_emitter.emit_runtime_llm_event(
@@ -566,32 +540,18 @@ class RoleExecutionKernel:
             except (RuntimeError, ValueError):
                 logger.warning("Failed to record execution success metric")
 
-            return RoleTurnResult(
-                content=te_result.content or "",
-                thinking=te_result.thinking,
+            return role_turn_result_from_transaction_result(
+                transaction_result=te_result,
+                profile=profile,
+                fingerprint=fingerprint,
+                quality_result=last_validation,
                 structured_output=final_structured_output,
-                tool_calls=te_result.tool_calls or [],
-                tool_results=te_result.tool_results or [],
-                batch_receipt=dict(te_result.batch_receipt) if isinstance(te_result.batch_receipt, dict) else None,
-                profile_version=profile.version,
-                prompt_fingerprint=fingerprint,
-                tool_policy_id=profile.tool_policy.policy_id,
-                quality_score=last_validation.quality_score if last_validation else 0.0,
-                quality_suggestions=last_validation.suggestions if last_validation else [],
+                platform_retry_count=total_platform_retry_count,
+                kernel_repair_retry_count=kernel_repair_retry_count,
+                kernel_repair_reasons=kernel_repair_reasons,
+                kernel_repair_exhausted=False,
                 error=None,
                 is_complete=True,
-                tool_execution_error=getattr(te_result, "tool_execution_error", None),
-                should_retry=getattr(te_result, "should_retry", False),
-                execution_stats={
-                    "platform_retry_count": total_platform_retry_count,
-                    "kernel_repair_retry_count": kernel_repair_retry_count,
-                    "kernel_repair_reasons": kernel_repair_reasons,
-                    "kernel_repair_exhausted": False,
-                    **te_result.execution_stats,
-                },
-                turn_history=list(te_result.turn_history) if te_result.turn_history else [],
-                turn_events_metadata=list(te_result.turn_events_metadata) if te_result.turn_events_metadata else [],
-                metadata=dict(getattr(te_result, "metadata", {}) or {}),
             )
 
         # unreachable
