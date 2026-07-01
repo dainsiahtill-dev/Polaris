@@ -48,44 +48,6 @@ from .state_utils import (
 logger = logging.getLogger(__name__)
 
 
-async def generate_role_response(
-    *,
-    workspace: str,
-    settings: Any,
-    role: str,
-    message: str,
-    context: dict[str, Any] | None = None,
-    validate_output: bool = False,
-    max_retries: int = 1,
-    invoke_role_dialogue: Any = None,
-    **_: Any,
-) -> dict[str, Any]:
-    """Compatibility-compatible role response invocation used by test monkeypatches.
-
-    This wrapper keeps legacy module-level monkeypatch points alive while the
-    adapter can still route through runtime-first behavior by default.
-    """
-    del settings, validate_output  # preserve compatibility signature
-
-    invoke_strategy = invoke_role_dialogue
-    if callable(invoke_strategy):
-        return _normalize_director_role_response(await invoke_strategy(message=message, context=context))
-
-    # Fallback for non-fallback-callers: route directly through Role Runtime
-    # to keep behavior aligned with adapter policy and avoid drift from runtime path.
-    from polaris.cells.roles.adapters.internal.runtime_dialogue import invoke_role_runtime_first
-
-    runtime_payload = await invoke_role_runtime_first(
-        workspace=workspace,
-        role=role,
-        message=message,
-        context=context,
-        validate_output=False,
-        max_retries=max_retries,
-    )
-    return _normalize_director_role_response(runtime_payload)
-
-
 def _copy_mapping_payload(value: Any) -> dict[str, Any] | None:
     if isinstance(value, dict):
         return dict(value)
@@ -2117,50 +2079,6 @@ class DirectorAdapter(BaseRoleAdapter):
     def _build_taskboard_observation_snapshot(self, sample_limit: int = 5) -> dict[str, Any]:
         """Proxy to state tracker build_taskboard_observation_snapshot."""
         return self._state_tracker.build_taskboard_observation_snapshot(self.task_runtime, sample_limit=sample_limit)
-
-    async def _call_role_llm(
-        self,
-        message: str,
-        context: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Compatibility shim: invoke Director LLM with disable_internal_tool_rounds logic."""
-        ctx = dict(context) if isinstance(context, dict) else {}
-        if not os.environ.get("KERNELONE_DIRECTOR_ENABLE_INTERNAL_TOOL_ROUNDS"):
-            ctx["disable_internal_tool_rounds"] = True
-        max_retries = self._resolve_kernel_retry_budget(self.role_id)
-        from polaris.cells.roles.adapters.internal import director_adapter as director_adapter_module
-
-        generate_fn = getattr(director_adapter_module, "generate_role_response", None)
-        if not callable(generate_fn):
-            generate_fn = generate_role_response
-
-        raw_result = await generate_fn(
-            workspace=self.workspace,
-            settings=get_settings_safe(),
-            role=self.role_id,
-            message=message,
-            context=ctx,
-            validate_output=False,
-            max_retries=max_retries,
-            invoke_role_dialogue=self._invoke_role_dialogue,
-        )
-        return _normalize_director_role_response(raw_result)
-
-    async def _call_role_llm_with_timeout(
-        self,
-        message: str,
-        *,
-        context: dict[str, Any] | None = None,
-        timeout_seconds: float = _DEFAULT_LLM_CALL_TIMEOUT_SECONDS,
-        stage_label: str = "call",
-    ) -> dict[str, Any]:
-        """Compatibility alias for _invoke_role_dialogue_with_timeout."""
-        return await self._invoke_role_dialogue_with_timeout(
-            message,
-            context=context,
-            timeout_seconds=timeout_seconds,
-            stage_label=stage_label,
-        )
 
     async def _execute_tools(
         self,

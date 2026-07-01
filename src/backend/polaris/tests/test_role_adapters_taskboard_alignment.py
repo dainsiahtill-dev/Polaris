@@ -161,51 +161,13 @@ def test_director_adapter_removes_emergency_write_fallback_methods(tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_director_adapter_disables_internal_tool_rounds_by_default(
+async def test_director_adapter_removes_legacy_call_role_llm_shims(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
-    captured_context: dict[str, Any] = {}
 
-    async def _fake_invoke_role_dialogue(message: str, context: dict[str, Any] | None = None):
-        del message
-        captured_context.clear()
-        if isinstance(context, dict):
-            captured_context.update(context)
-        return {"response": "ok", "success": True}
-
-    monkeypatch.delenv("KERNELONE_DIRECTOR_ENABLE_INTERNAL_TOOL_ROUNDS", raising=False)
-    monkeypatch.setattr(adapter, "_invoke_role_dialogue", _fake_invoke_role_dialogue)
-
-    result = await adapter._call_role_llm("hello", context={})
-
-    assert result["success"] is True
-    assert captured_context.get("disable_internal_tool_rounds") is True
-
-
-@pytest.mark.asyncio
-async def test_director_adapter_can_enable_internal_tool_rounds_via_env(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adapter = DirectorAdapter(workspace=str(tmp_path))
-    captured_context: dict[str, Any] = {}
-
-    async def _fake_invoke_role_dialogue(message: str, context: dict[str, Any] | None = None):
-        del message
-        captured_context.clear()
-        if isinstance(context, dict):
-            captured_context.update(context)
-        return {"response": "ok", "success": True}
-
-    monkeypatch.setenv("KERNELONE_DIRECTOR_ENABLE_INTERNAL_TOOL_ROUNDS", "1")
-    monkeypatch.setattr(adapter, "_invoke_role_dialogue", _fake_invoke_role_dialogue)
-
-    result = await adapter._call_role_llm("hello", context={})
-
-    assert result["success"] is True
-    assert captured_context.get("disable_internal_tool_rounds") is not True
+    assert not hasattr(adapter, "_call_role_llm")
+    assert not hasattr(adapter, "_call_role_llm_with_timeout")
 
 
 def test_director_selects_pending_board_task_when_orchestration_task_missing(tmp_path: Path) -> None:
@@ -1103,7 +1065,7 @@ async def test_director_adapter_falls_back_when_kernel_tool_results_are_unsucces
 
 
 @pytest.mark.asyncio
-async def test_director_call_role_llm_uses_default_kernel_retry_budget(
+async def test_director_invoke_role_dialogue_uses_default_kernel_retry_budget(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1116,14 +1078,14 @@ async def test_director_call_role_llm_uses_default_kernel_retry_budget(
 
     adapter = DirectorAdapter(workspace=str(tmp_path))
     monkeypatch.setattr(adapter, "_invoke_role_runtime_session", _fake_runtime_session)
-    result = await adapter._call_role_llm("执行任务")
+    result = await adapter._invoke_role_dialogue("执行任务")
 
     assert result["success"] is True
     assert captured["max_retries"] == 1
 
 
 @pytest.mark.asyncio
-async def test_director_call_role_llm_honors_retry_budget_env(
+async def test_director_invoke_role_dialogue_honors_retry_budget_env(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1138,14 +1100,14 @@ async def test_director_call_role_llm_honors_retry_budget_env(
 
     adapter = DirectorAdapter(workspace=str(tmp_path))
     monkeypatch.setattr(adapter, "_invoke_role_runtime_session", _fake_runtime_session)
-    result = await adapter._call_role_llm("执行任务")
+    result = await adapter._invoke_role_dialogue("执行任务")
 
     assert result["success"] is True
     assert captured["max_retries"] == 0
 
 
 @pytest.mark.asyncio
-async def test_director_call_role_llm_marks_error_response_as_failed(
+async def test_director_invoke_role_dialogue_marks_error_response_as_failed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1160,14 +1122,14 @@ async def test_director_call_role_llm_marks_error_response_as_failed(
 
     adapter = DirectorAdapter(workspace=str(tmp_path))
     monkeypatch.setattr(adapter, "_invoke_role_runtime_session", _fake_runtime_session)
-    result = await adapter._call_role_llm("执行任务")
+    result = await adapter._invoke_role_dialogue("执行任务")
 
     assert result["success"] is False
     assert str(result.get("error") or "") == "验证失败"
 
 
 @pytest.mark.asyncio
-async def test_director_call_role_llm_with_timeout_returns_recoverable_error(
+async def test_director_invoke_role_dialogue_with_timeout_returns_recoverable_error(
     tmp_path: Path,
 ) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
@@ -1179,7 +1141,7 @@ async def test_director_call_role_llm_with_timeout_returns_recoverable_error(
 
     adapter._invoke_role_dialogue = _slow_invoke_role_dialogue  # type: ignore[method-assign]
 
-    result = await adapter._call_role_llm_with_timeout(
+    result = await adapter._invoke_role_dialogue_with_timeout(
         "执行任务",
         context=None,
         timeout_seconds=0.1,
@@ -1194,7 +1156,7 @@ async def test_director_call_role_llm_with_timeout_returns_recoverable_error(
 
 
 @pytest.mark.asyncio
-async def test_director_call_role_llm_with_timeout_normalizes_non_mapping_payload(
+async def test_director_invoke_role_dialogue_with_timeout_normalizes_non_mapping_payload(
     tmp_path: Path,
 ) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
@@ -1205,7 +1167,7 @@ async def test_director_call_role_llm_with_timeout_normalizes_non_mapping_payloa
 
     adapter._invoke_role_dialogue = _invalid_invoke_role_dialogue  # type: ignore[method-assign]
 
-    result = await adapter._call_role_llm_with_timeout(
+    result = await adapter._invoke_role_dialogue_with_timeout(
         "执行任务",
         context=None,
         timeout_seconds=1.0,
@@ -1225,7 +1187,7 @@ async def test_director_adapter_emits_trace_on_first_call_format_failure(
     """Verify that when the sequential engine terminates with an error, seq.start
     and seq.error events are emitted through the trace pipeline.
 
-    The key insight: patching _call_role_llm_with_timeout on the adapter instance
+    The key insight: patching _invoke_role_dialogue_with_timeout on the adapter instance
     only works when the sequential engine actually runs. Since KERNELONE_SEQ_ENABLED
     is false by default, _execute_sequential returns {"success": False} before
     invoking the engine. Therefore we patch _execute_sequential directly to
