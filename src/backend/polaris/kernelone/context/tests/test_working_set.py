@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from polaris.kernelone.context.budget_gate import ContextBudget, ContextBudgetGate
+from polaris.kernelone.context.budget_gate import ContextBudgetGate, ContextBudgetUsage
 from polaris.kernelone.context.exploration_policy import (
     AssetCandidate,
     AssetKind,
@@ -293,7 +293,7 @@ class TestDefaultExplorationPolicy:
 
     @pytest.mark.asyncio
     async def test_auto_approve_high_priority(self, policy: DefaultExplorationPolicy) -> None:
-        budget = ContextBudget(model_window=128_000, safety_margin=0.80, current_tokens=0)
+        budget = ContextBudgetUsage(model_window=128_000, safety_margin=0.80, current_tokens=0)
         ctx = ExplorationContext(phase=ExplorationPhase.SLICE, workspace="/repo")
         candidate = AssetCandidate(AssetKind.CODE_SLICE, "a.py", (1, 10), 100, priority=10)
         decision = await policy.should_expand(budget, candidate, ctx)
@@ -301,7 +301,7 @@ class TestDefaultExplorationPolicy:
 
     @pytest.mark.asyncio
     async def test_deny_seen_asset(self, policy: DefaultExplorationPolicy) -> None:
-        budget = ContextBudget(model_window=128_000, safety_margin=0.80, current_tokens=0)
+        budget = ContextBudgetUsage(model_window=128_000, safety_margin=0.80, current_tokens=0)
         ctx = ExplorationContext(
             phase=ExplorationPhase.SLICE,
             workspace="/repo",
@@ -313,7 +313,7 @@ class TestDefaultExplorationPolicy:
 
     @pytest.mark.asyncio
     async def test_defer_mid_priority(self, policy: DefaultExplorationPolicy) -> None:
-        budget = ContextBudget(model_window=128_000, safety_margin=0.80, current_tokens=0)
+        budget = ContextBudgetUsage(model_window=128_000, safety_margin=0.80, current_tokens=0)
         ctx = ExplorationContext(phase=ExplorationPhase.SLICE, workspace="/repo")
         candidate = AssetCandidate(AssetKind.CODE_SLICE, "a.py", (1, 10), 100, priority=3)
         decision = await policy.should_expand(budget, candidate, ctx)
@@ -321,7 +321,7 @@ class TestDefaultExplorationPolicy:
 
     @pytest.mark.asyncio
     async def test_defer_when_exceeds_budget(self, policy: DefaultExplorationPolicy) -> None:
-        budget = ContextBudget(model_window=128_000, safety_margin=0.80, current_tokens=100_000)
+        budget = ContextBudgetUsage(model_window=128_000, safety_margin=0.80, current_tokens=100_000)
         ctx = ExplorationContext(phase=ExplorationPhase.SLICE, workspace="/repo")
         candidate = AssetCandidate(AssetKind.CODE_SLICE, "a.py", (1, 10), 10_000, priority=5)
         decision = await policy.should_expand(budget, candidate, ctx)

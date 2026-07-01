@@ -6,35 +6,35 @@ import pytest
 from polaris.kernelone.context.budget_gate import (
     DEFAULT_SAFETY_MARGIN,
     MIN_BUDGET_TOKENS,
-    ContextBudget,
     ContextBudgetGate,
+    ContextBudgetUsage,
     _resolve_model_window_from_spec,
 )
 
 
-class TestContextBudget:
+class TestContextBudgetUsage:
     def test_effective_limit_applies_safety_margin(self) -> None:
-        b = ContextBudget(model_window=100_000, safety_margin=0.80, current_tokens=0)
+        b = ContextBudgetUsage(model_window=100_000, safety_margin=0.80, current_tokens=0)
         assert b.effective_limit == 80_000
 
     def test_headroom_is_effective_limit_minus_used(self) -> None:
-        b = ContextBudget(model_window=100_000, safety_margin=0.80, current_tokens=20_000)
+        b = ContextBudgetUsage(model_window=100_000, safety_margin=0.80, current_tokens=20_000)
         assert b.headroom == 60_000
 
     def test_headroom_never_negative(self) -> None:
-        b = ContextBudget(model_window=100_000, safety_margin=0.80, current_tokens=90_000)
+        b = ContextBudgetUsage(model_window=100_000, safety_margin=0.80, current_tokens=90_000)
         assert b.headroom == -10_000  # Can go negative
 
     def test_usage_ratio(self) -> None:
-        b = ContextBudget(model_window=100_000, safety_margin=0.80, current_tokens=40_000)
+        b = ContextBudgetUsage(model_window=100_000, safety_margin=0.80, current_tokens=40_000)
         assert b.usage_ratio == pytest.approx(0.5)
 
     def test_usage_ratio_zero_when_no_usage(self) -> None:
-        b = ContextBudget(model_window=100_000, safety_margin=0.80, current_tokens=0)
+        b = ContextBudgetUsage(model_window=100_000, safety_margin=0.80, current_tokens=0)
         assert b.usage_ratio == 0.0
 
     def test_usage_ratio_capped_at_zero_when_effective_zero(self) -> None:
-        b = ContextBudget(model_window=0, safety_margin=0.80, current_tokens=0)
+        b = ContextBudgetUsage(model_window=0, safety_margin=0.80, current_tokens=0)
         assert b.usage_ratio == 0.0
 
 

@@ -22,7 +22,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from polaris.kernelone.context.budget_gate import ContextBudget
+    from polaris.kernelone.context.budget_gate import ContextBudgetUsage
 
 from polaris.kernelone.context.compaction import (
     RoleContextCompressor,
@@ -149,7 +149,7 @@ class CompactionStrategy:
 
     def should_compact(
         self,
-        budget: ContextBudget,
+        budget: ContextBudgetUsage,
         history_size: int,
     ) -> CompactionDecision:
         """Decide whether compaction should be triggered.

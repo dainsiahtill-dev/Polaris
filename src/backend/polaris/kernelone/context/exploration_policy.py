@@ -23,7 +23,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from .budget_gate import ContextBudget
+    from .budget_gate import ContextBudgetUsage
 
 _logger = logging.getLogger(__name__)
 
@@ -184,7 +184,7 @@ class SelectorPolicy(Protocol):
         self,
         candidates: list[AssetCandidate],
         context: ExplorationContext,
-        budget: ContextBudget,
+        budget: ContextBudgetUsage,
     ) -> list[AssetCandidate]:
         """Select candidates for expansion.
 
@@ -234,7 +234,7 @@ class DefaultSelectorPolicy:
         self,
         candidates: list[AssetCandidate],
         context: ExplorationContext,
-        budget: ContextBudget,
+        budget: ContextBudgetUsage,
     ) -> list[AssetCandidate]:
         """Select candidates using default heuristic rules."""
         selected: list[AssetCandidate] = []
@@ -295,7 +295,7 @@ class GreedySelectorPolicy:
         self,
         candidates: list[AssetCandidate],
         context: ExplorationContext,
-        budget: ContextBudget,
+        budget: ContextBudgetUsage,
     ) -> list[AssetCandidate]:
         """Select candidates using greedy budget-efficient strategy."""
         # Filter eligible candidates
@@ -357,7 +357,7 @@ class SemanticRankSelectorPolicy:
         self,
         candidates: list[AssetCandidate],
         context: ExplorationContext,
-        budget: ContextBudget,
+        budget: ContextBudgetUsage,
     ) -> list[AssetCandidate]:
         """Select candidates using semantic relevance ranking."""
         # Filter eligible candidates
@@ -403,7 +403,7 @@ class ExplorationPolicyPort(Protocol):
 
     async def should_expand(
         self,
-        current_budget: ContextBudget,
+        current_budget: ContextBudgetUsage,
         candidate: AssetCandidate,
         ctx: ExplorationContext,
     ) -> ExpansionDecision:
@@ -483,7 +483,7 @@ class ExplorationPolicy:
 
     async def should_expand(
         self,
-        current_budget: ContextBudget,
+        current_budget: ContextBudgetUsage,
         candidate: AssetCandidate,
         ctx: ExplorationContext,
     ) -> ExpansionDecision:

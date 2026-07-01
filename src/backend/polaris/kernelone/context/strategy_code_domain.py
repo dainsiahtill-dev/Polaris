@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .budget_gate import ContextBudget, ContextBudgetGate
+from .budget_gate import ContextBudgetGate, ContextBudgetUsage
 from .cache_manager import CacheTier
 from .exploration_policy import (
     AssetCandidate,
@@ -94,7 +94,7 @@ class ReadEscalationStrategy(ReadEscalationStrategyPort):
     def should_read_full(
         self,
         asset: AssetCandidate,
-        budget: ContextBudget,
+        budget: ContextBudgetUsage,
     ) -> ReadEscalationDecision:
         """Return the read escalation decision for the asset.
 
@@ -203,7 +203,7 @@ class ExplorationStrategy(ExplorationStrategyPort):
     def decide_expansion(
         self,
         ctx: ExplorationContext,
-        budget: ContextBudget,
+        budget: ContextBudgetUsage,
     ) -> ExpansionDecisionResult:
         """Return expansion decision for the current exploration pass.
 
@@ -363,7 +363,7 @@ class ProfileDrivenBudgetGate(ContextBudgetGate):
     def check_escalation(
         self,
         asset: AssetCandidate,
-        budget: ContextBudget,
+        budget: ContextBudgetUsage,
     ) -> bool:
         """Check whether a read-file escalation is permitted.
 

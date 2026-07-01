@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from .exploration_policy import ExpansionDecision, ExplorationPhase
 
 if TYPE_CHECKING:
-    from .budget_gate import ContextBudget
+    from .budget_gate import ContextBudgetUsage
     from .exploration_policy import AssetCandidate, ExplorationContext
 
 
@@ -80,7 +80,7 @@ class ExplorationStrategyPort(Protocol):
     def decide_expansion(
         self,
         ctx: ExplorationContext,
-        budget: ContextBudget,
+        budget: ContextBudgetUsage,
     ) -> ExpansionDecisionResult:
         """Return expansion decision result for the current exploration pass."""
         ...
@@ -97,7 +97,7 @@ class ReadEscalationStrategyPort(Protocol):
     def should_read_full(
         self,
         asset: AssetCandidate,
-        budget: ContextBudget,
+        budget: ContextBudgetUsage,
     ) -> ReadEscalationDecision:
         """Return the read escalation decision for the asset."""
         ...
@@ -134,7 +134,7 @@ class CompactionStrategyPort(Protocol):
 
     def should_compact(
         self,
-        budget: ContextBudget,
+        budget: ContextBudgetUsage,
         history_size: int,
     ) -> CompactionDecision:
         """Return the compaction decision."""

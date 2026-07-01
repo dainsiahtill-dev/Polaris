@@ -21,7 +21,7 @@ from .strategy_contracts import (
 )
 
 if TYPE_CHECKING:
-    from .budget_gate import ContextBudget
+    from .budget_gate import ContextBudgetUsage
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -40,7 +40,7 @@ class StrategyRunContext:
     workspace: str = ""
     started_at: str = field(default_factory=_utc_now_iso)
     ended_at: str = ""
-    budget: ContextBudget | None = None
+    budget: ContextBudgetUsage | None = None
     resolved_overrides: dict[str, Any] = field(default_factory=dict)
 
     _budget_decisions: list[BudgetDecision] = field(default_factory=list, repr=False)
@@ -62,7 +62,7 @@ class StrategyRunContext:
         workspace: str = "",
         role: str | None = None,
         domain: str = "code",
-        budget: ContextBudget | None = None,
+        budget: ContextBudgetUsage | None = None,
     ) -> StrategyRunContext:
         """Build a run context from a resolved strategy."""
 

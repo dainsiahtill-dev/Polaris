@@ -25,7 +25,7 @@ from polaris.cells.roles.runtime.public.persistence import (
     resolve_session_override as _resolve_session_override_impl,
 )
 from polaris.kernelone.context import (
-    ContextBudget,
+    ContextBudgetUsage,
     ResolvedStrategy,
     StrategyRunContext,
     get_registry,
@@ -115,7 +115,7 @@ class _StrategyResolutionMixin:
         domain: str,
         role: str | None,
         session_id: str | None,
-        budget: ContextBudget | None,
+        budget: ContextBudgetUsage | None,
         workspace: str,
         domain_explicit: bool = False,
         include_session_override: bool = False,

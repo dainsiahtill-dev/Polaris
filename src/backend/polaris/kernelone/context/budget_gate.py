@@ -16,7 +16,7 @@ Safety margin:
 
 Design constraints:
     - All text uses UTF-8 encoding.
-    - Immutable budget state after construction (ContextBudget is a dataclass snapshot).
+    - Immutable budget state after construction (ContextBudgetUsage is a dataclass snapshot).
     - Thread-safe for async use (no shared mutable state in a single gate instance).
     - All token estimates use the kernelone token estimator when available.
 """
@@ -69,11 +69,6 @@ class ContextBudgetUsage:
         if self.effective_limit <= 0:
             return 0.0
         return self.current_tokens / self.effective_limit
-
-
-# Backward compatibility alias - ContextBudget was previously defined here
-# Now renamed to ContextBudgetUsage per P1-CTX-001 convergence
-ContextBudget = ContextBudgetUsage
 
 
 @dataclass
@@ -388,7 +383,6 @@ def _resolve_model_window_from_spec(provider_name: str, model_name: str, workspa
 __all__ = [
     "DEFAULT_SAFETY_MARGIN",
     "MIN_BUDGET_TOKENS",
-    "ContextBudget",
     "ContextBudgetGate",
     "ContextBudgetUsage",
     "SectionAllocation",
