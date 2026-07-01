@@ -122,6 +122,41 @@ def role_result_metadata_from_profile(
     return metadata
 
 
+def role_turn_error_result(
+    *,
+    error: str,
+    profile: Any | None = None,
+    fingerprint: Any = None,
+    is_complete: bool = False,
+    content: str = "",
+    execution_stats: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> RoleTurnResult:
+    """Build a public role-turn error result with stable profile projection.
+
+    Boundary:
+        This helper is for errors that occur at role-kernel adapter boundaries
+        before a normal TransactionKernel result can be projected. Callers own
+        the failure classification and evidence payload; this function only
+        applies the shared RoleTurnResult field shape.
+
+    Complexity:
+        O(n + m) time and memory for copying execution-stat and metadata keys.
+    """
+    return RoleTurnResult(
+        content=content,
+        error=error,
+        is_complete=is_complete,
+        profile_version=str(getattr(profile, "version", "") or "") if profile is not None else "",
+        prompt_fingerprint=fingerprint,
+        tool_policy_id=str(getattr(getattr(profile, "tool_policy", None), "policy_id", "") or "")
+        if profile is not None
+        else "",
+        execution_stats=dict(execution_stats or {}),
+        metadata=dict(metadata or {}),
+    )
+
+
 def role_turn_result_from_transaction_result(
     *,
     transaction_result: RoleTurnResult,

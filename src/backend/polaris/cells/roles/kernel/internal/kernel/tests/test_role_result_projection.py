@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     role_result_metadata_from_profile,
+    role_turn_error_result,
     role_turn_result_from_transaction_result,
     tool_calls_from_batch_receipt,
     tool_results_from_batch_receipt,
@@ -104,6 +105,38 @@ def test_role_result_metadata_uses_monitoring_context_audit_when_not_already_set
 
     assert metadata["context_os_audit"] == {"source": "llm"}
     assert monitoring_only["context_os_audit"] == {"source": "monitoring"}
+
+
+def test_role_turn_error_result_projects_profile_and_copies_evidence() -> None:
+    profile = SimpleNamespace(
+        version="profile-v2",
+        tool_policy=SimpleNamespace(policy_id="policy-v2"),
+    )
+    fingerprint = SimpleNamespace(full_hash="fingerprint")
+    execution_stats = {"transaction_kernel": True, "tool_filter_blocked": True}
+    metadata = {"tool_filter_audit": {"status": "conflict"}}
+
+    result = role_turn_error_result(
+        error="Tool schema filter conflict",
+        profile=profile,
+        fingerprint=fingerprint,
+        execution_stats=execution_stats,
+        metadata=metadata,
+    )
+
+    assert result.content == ""
+    assert result.error == "Tool schema filter conflict"
+    assert result.is_complete is False
+    assert result.profile_version == "profile-v2"
+    assert result.prompt_fingerprint is fingerprint
+    assert result.tool_policy_id == "policy-v2"
+    assert result.execution_stats == {
+        "transaction_kernel": True,
+        "tool_filter_blocked": True,
+    }
+    assert result.metadata == {"tool_filter_audit": {"status": "conflict"}}
+    assert result.execution_stats is not execution_stats
+    assert result.metadata is not metadata
 
 
 def test_role_turn_result_from_transaction_result_projects_common_fields() -> None:

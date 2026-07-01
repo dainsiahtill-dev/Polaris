@@ -43,6 +43,7 @@ from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
 from polaris.cells.roles.kernel.internal.kernel.output_parser_provider import get_output_parser
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     role_result_metadata_from_profile,
+    role_turn_error_result,
     tool_calls_from_batch_receipt,
     tool_results_from_batch_receipt,
 )
@@ -146,13 +147,8 @@ async def execute_transaction_kernel_turn(
             filter_error_metadata["provider_id"] = str(profile.provider_id).strip()
         if profile.model:
             filter_error_metadata["model"] = str(profile.model).strip()
-        return RoleTurnResult(
-            content="",
+        return role_turn_error_result(
             error=tool_surface.conflict_error,
-            is_complete=False,
-            profile_version=profile.version,
-            prompt_fingerprint=fingerprint,
-            tool_policy_id=profile.tool_policy.policy_id,
             execution_stats={
                 "duration_ms": 0,
                 "llm_calls": 0,
@@ -163,6 +159,8 @@ async def execute_transaction_kernel_turn(
                 **runtime_tool_policy_audit,
             },
             metadata=filter_error_metadata,
+            profile=profile,
+            fingerprint=fingerprint,
         )
 
     try:
@@ -205,14 +203,11 @@ async def execute_transaction_kernel_turn(
             error_metadata["model"] = str(profile.model).strip()
         if tool_filter_audit is not None:
             error_metadata["tool_filter_audit"] = tool_filter_audit
-        return RoleTurnResult(
-            content="",
+        return role_turn_error_result(
             error=f"TransactionKernel execution failed: {exc}",
-            is_complete=False,
-            profile_version=profile.version,
-            prompt_fingerprint=fingerprint,
-            tool_policy_id=profile.tool_policy.policy_id,
             metadata=error_metadata,
+            profile=profile,
+            fingerprint=fingerprint,
         )
 
     kind = tk_result.get("kind", "final_answer")

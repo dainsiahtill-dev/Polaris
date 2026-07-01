@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T08:15:38.174594Z",
-  "source_hash": "4638275383123698",
+  "generated_at": "2026-07-01T08:20:03.952727Z",
+  "source_hash": "a3ebfa89195c7ec6",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4280,6 +4280,12 @@
     },
     {
       "type": "function",
+      "name": "role_turn_error_result",
+      "description": "Build a public role-turn error result with stable profile projection.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/role_result_projection.py"
+    },
+    {
+      "type": "function",
       "name": "role_turn_result_from_transaction_result",
       "description": "Project a TransactionKernel result into the public role-turn result.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/role_result_projection.py"
@@ -4606,6 +4612,12 @@
     {
       "type": "function",
       "name": "test_role_result_metadata_uses_monitoring_context_audit_when_not_already_set",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_role_result_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_turn_error_result_projects_profile_and_copies_evidence",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_role_result_projection.py"
     },
