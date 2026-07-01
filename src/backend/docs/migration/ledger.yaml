@@ -636,7 +636,7 @@ units:
       - path: polaris/cells/compatibility/
         kind: directory
         coverage: full
-        note: Entire directory removed
+        note: "files: none; empty placeholder cell path removed after verifying zero source files, descriptors, imports, depends_on entries, and subgraph references"
     verification:
       checks:
         - "python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only"
