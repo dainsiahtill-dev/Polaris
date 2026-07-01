@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.event_emitter_provider import get_kernel_event_emitter
 from polaris.cells.roles.kernel.internal.kernel.output_parser_provider import get_output_parser
 from polaris.cells.roles.kernel.internal.kernel.prompt_builder_provider import get_prompt_builder
 from polaris.cells.roles.kernel.internal.kernel.quality_checker_provider import get_quality_checker
@@ -537,9 +538,9 @@ class TestLazyLoading:
         kernel = RoleExecutionKernel(workspace=".")
         assert kernel._event_emitter is None
 
-        emitter = kernel._get_event_emitter()
+        emitter = get_kernel_event_emitter(kernel)
         assert emitter is not None
-        assert kernel._get_event_emitter() is emitter
+        assert get_kernel_event_emitter(kernel) is emitter
 
     def test_injected_services_take_precedence(self) -> None:
         """测试注入的服务优先于懒加载"""

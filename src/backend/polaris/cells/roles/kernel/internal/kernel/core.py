@@ -32,6 +32,7 @@ from polaris.cells.roles.kernel.internal.kernel.error_handler import (
     KernelEventEmitter,
     LLMEventType,
 )
+from polaris.cells.roles.kernel.internal.kernel.event_emitter_provider import get_kernel_event_emitter
 from polaris.cells.roles.kernel.internal.kernel.helpers import (
     quality_result_to_dict,
 )
@@ -254,18 +255,6 @@ class RoleExecutionKernel:
         """Return the runtime-injected ContextGatewayConfig factory, if any."""
         return self._context_gateway_config_factory
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # 服务层访问器（懒加载 + 依赖注入支持）
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    def _get_event_emitter(self) -> KernelEventEmitter:
-        """获取事件发射器（支持依赖注入）"""
-        if self._injected_event_emitter is not None:
-            return self._injected_event_emitter  # type: ignore[return-value]
-        if self._event_emitter is None:
-            self._event_emitter = KernelEventEmitter()
-        return self._event_emitter
-
     # ─────────────────────────────────────────────────────────────────────────────
     # 公共 DI 注入方法（用于测试和扩展）
     # ─────────────────────────────────────────────────────────────────────────────
@@ -405,7 +394,8 @@ class RoleExecutionKernel:
 
         # 获取 run_id
         task_id = str(getattr(request, "task_id", None) or "").strip()
-        observer_run_id = self._get_event_emitter().resolve_observer_run_id(role, getattr(request, "run_id", None))
+        event_emitter = get_kernel_event_emitter(self)
+        observer_run_id = event_emitter.resolve_observer_run_id(role, getattr(request, "run_id", None))
         # 将 resolved run_id 写回 request，确保下游（TransactionKernel/RoleToolGateway）能获取到
         if request.run_id is None:
             request.run_id = observer_run_id
@@ -541,7 +531,7 @@ class RoleExecutionKernel:
                     logger.warning("Failed to record quality score metric")
 
                 if not quality_result.success:
-                    self._get_event_emitter().emit_runtime_llm_event(
+                    event_emitter.emit_runtime_llm_event(
                         event_type=LLMEventType.VALIDATION_FAIL,
                         role=role,
                         run_id=observer_run_id,
@@ -567,7 +557,7 @@ class RoleExecutionKernel:
                         logger.warning("Failed to record retry metric")
 
                     if attempt < max_retries:
-                        self._get_event_emitter().emit_runtime_llm_event(
+                        event_emitter.emit_runtime_llm_event(
                             event_type=LLMEventType.CALL_RETRY,
                             role=role,
                             run_id=observer_run_id,
@@ -622,7 +612,7 @@ class RoleExecutionKernel:
                         metadata=dict(getattr(te_result, "metadata", {}) or {}),
                     )
 
-                self._get_event_emitter().emit_runtime_llm_event(
+                event_emitter.emit_runtime_llm_event(
                     event_type=LLMEventType.VALIDATION_PASS,
                     role=role,
                     run_id=observer_run_id,

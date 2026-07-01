@@ -265,7 +265,11 @@ class TestStreamEventTranslationMatrix:
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def _make_run_kernel(profile: _MockProfile, quality_checker: Any | None = None) -> RoleExecutionKernel:
+def _make_run_kernel(
+    profile: _MockProfile,
+    quality_checker: Any | None = None,
+    event_emitter: Any | None = None,
+) -> RoleExecutionKernel:
     kernel = RoleExecutionKernel(workspace=".", quality_checker=quality_checker)  # type: ignore[arg-type]
     kernel.registry = MagicMock(get_profile_or_raise=MagicMock(return_value=profile))
     prompt_builder = SimpleNamespace(
@@ -274,6 +278,7 @@ def _make_run_kernel(profile: _MockProfile, quality_checker: Any | None = None) 
         build_retry_prompt=lambda _system_prompt, _quality_result, _attempt: "retry-prompt",
     )
     kernel.inject_prompt_builder(prompt_builder)  # type: ignore[arg-type]
+    kernel.inject_event_emitter(event_emitter or _event_emitter())  # type: ignore[arg-type]
     return kernel
 
 
@@ -295,7 +300,6 @@ class TestRunRetryQualityLoop:
                 return_value=MagicMock(),
             ),
             patch("polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn", new=turn_mock),
-            patch.object(kernel, "_get_event_emitter", _event_emitter),
         ):
             result = await kernel.run("pm", _MockRequest(max_retries=3, validate_output=True))
         assert result.error == "kernel exploded"
@@ -324,7 +328,6 @@ class TestRunRetryQualityLoop:
                 "polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn",
                 new=AsyncMock(return_value=te_result),
             ),
-            patch.object(kernel, "_get_event_emitter", _event_emitter),
         ):
             result = await kernel.run("pm", _MockRequest(validate_output=True))
         assert result.error is None
@@ -356,7 +359,6 @@ class TestRunRetryQualityLoop:
                 return_value=MagicMock(),
             ),
             patch("polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn", new=turn_mock),
-            patch.object(kernel, "_get_event_emitter", _event_emitter),
         ):
             result = await kernel.run("pm", _MockRequest(max_retries=2, validate_output=True))
         # max_retries=2 -> attempts 0,1,2 = 3 invocations before exhaustion.
@@ -393,7 +395,6 @@ class TestRunRetryQualityLoop:
                 "polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn",
                 new=AsyncMock(return_value=te_result),
             ),
-            patch.object(kernel, "_get_event_emitter", _event_emitter),
         ):
             result = await kernel.run("pm", _MockRequest(validate_output=True))
         assert result.error is None

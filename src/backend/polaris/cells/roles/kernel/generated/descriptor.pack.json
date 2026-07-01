@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T05:47:43.727588Z",
-  "source_hash": "681621f0bdc056af",
+  "generated_at": "2026-07-01T05:53:23.172997Z",
+  "source_hash": "fc8ffa13dcb0722b",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4008,10 +4008,6 @@
           "doc": "Return the runtime-injected ContextGatewayConfig factory, if any."
         },
         {
-          "name": "_get_event_emitter",
-          "doc": "获取事件发射器（支持依赖注入）"
-        },
-        {
           "name": "inject_llm_invoker",
           "doc": "注入 LLMInvoker（支持测试和扩展）"
         },
@@ -4134,6 +4130,12 @@
       "name": "normalize_observer_value",
       "description": "规范化观察值（便捷函数）",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/error_handler.py"
+    },
+    {
+      "type": "function",
+      "name": "get_kernel_event_emitter",
+      "description": "Return the injected or lazily-created event emitter for a kernel turn.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/event_emitter_provider.py"
     },
     {
       "type": "function",
