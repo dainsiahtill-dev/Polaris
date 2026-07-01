@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
 from polaris.cells.roles.kernel.internal.kernel.event_emitter_provider import get_kernel_event_emitter
+from polaris.cells.roles.kernel.internal.kernel.llm_invoker_provider import get_llm_invoker
 from polaris.cells.roles.kernel.internal.kernel.output_parser_provider import get_output_parser
 from polaris.cells.roles.kernel.internal.kernel.prompt_builder_provider import get_prompt_builder
 from polaris.cells.roles.kernel.internal.kernel.quality_checker_provider import get_quality_checker
@@ -141,15 +142,15 @@ class TestDependencyInjection:
         assert kernel._injected_quality_checker is not None
         assert kernel._injected_event_emitter is not None
 
-    def test_internal_llm_invoker_accessor_returns_invoker_without_deprecation(self) -> None:
-        """Kernel LLM accessor returns canonical LLMInvoker without warnings."""
+    def test_llm_invoker_provider_returns_invoker_without_deprecation(self) -> None:
+        """Kernel LLM provider returns canonical LLMInvoker without warnings."""
         from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
 
         kernel = RoleExecutionKernel(workspace=".")
 
         with warnings.catch_warnings(record=True) as captured:
             warnings.simplefilter("always")
-            caller = kernel._get_llm_invoker()
+            caller = get_llm_invoker(kernel)
 
         assert isinstance(caller, LLMInvoker)
         assert not any("LLMCaller" in str(item.message) for item in captured)

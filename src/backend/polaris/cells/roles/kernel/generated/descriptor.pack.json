@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T05:53:23.172997Z",
-  "source_hash": "fc8ffa13dcb0722b",
+  "generated_at": "2026-07-01T06:00:33.281605Z",
+  "source_hash": "9c651b4855043103",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4028,10 +4028,6 @@
           "doc": "注入事件发射器（支持测试和扩展）"
         },
         {
-          "name": "_get_llm_invoker",
-          "doc": "获取 canonical LLMInvoker。"
-        },
-        {
           "name": "reset_tool_gateway_turn_boundary",
           "doc": "Explicitly reset cached gateway counters when the authoritative turn id changes."
         }
@@ -4184,6 +4180,12 @@
       "name": "quality_result_to_dict",
       "description": "Convert quality result to dictionary.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "get_llm_invoker",
+      "description": "Return the injected or lazily-created canonical LLM invoker.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/llm_invoker_provider.py"
     },
     {
       "type": "function",
@@ -4441,8 +4443,8 @@
           "doc": "测试同时注入所有服务"
         },
         {
-          "name": "test_internal_llm_invoker_accessor_returns_invoker_without_deprecation",
-          "doc": "Kernel LLM accessor returns canonical LLMInvoker without warnings."
+          "name": "test_llm_invoker_provider_returns_invoker_without_deprecation",
+          "doc": "Kernel LLM provider returns canonical LLMInvoker without warnings."
         },
         {
           "name": "test_llm_caller_is_not_public_kernel_export",

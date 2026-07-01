@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
+from polaris.cells.roles.kernel.internal.kernel.llm_invoker_provider import get_llm_invoker
 from polaris.cells.roles.kernel.internal.kernel.tool_runtime_executor import execute_single_tool
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
 from polaris.cells.roles.kernel.internal.transaction.recon_policy import resolve_recon_required
@@ -168,7 +169,7 @@ def create_transaction_kernel(
     Uses explicit parameter passing instead of closures to avoid circular
     reference issues between nested classes and the kernel instance.
     """
-    llm_invoker = kernel._get_llm_invoker()
+    llm_invoker = get_llm_invoker(kernel)
     # Keep the canonical invoker entrypoint so TransactionKernel context
     # overrides (forced tool definitions/tool_choice) are preserved end-to-end.
     if not inspect.iscoroutinefunction(getattr(llm_invoker, "call", None)):

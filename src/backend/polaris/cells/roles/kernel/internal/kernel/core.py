@@ -53,7 +53,6 @@ from polaris.cells.roles.kernel.internal.kernel.turn_execution import (
     execute_transaction_kernel_stream,
     execute_transaction_kernel_turn,
 )
-from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
 from polaris.cells.roles.kernel.internal.metrics import get_metrics_collector
 from polaris.cells.roles.kernel.internal.output_parser import OutputParser
 from polaris.cells.roles.kernel.internal.prompt_builder import PromptBuilder
@@ -298,16 +297,6 @@ class RoleExecutionKernel:
             emitter: 事件发射器实例，传入 None 可清除注入
         """
         self._injected_event_emitter = emitter
-
-    def _get_llm_invoker(self) -> Any:
-        """获取 canonical LLMInvoker。"""
-        # 1. 优先使用注入的调用服务
-        if self._injected_llm_invoker is not None:
-            return self._injected_llm_invoker
-        # 2. 默认懒加载创建 canonical LLMInvoker
-        if self._llm_invoker is None:
-            self._llm_invoker = LLMInvoker(self.workspace)
-        return self._llm_invoker
 
     # ═══════════════════════════════════════════════════════════════════════════
     # 主要公开 API
