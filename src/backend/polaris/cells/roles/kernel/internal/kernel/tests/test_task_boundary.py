@@ -7,6 +7,7 @@ from typing import Any
 
 from polaris.cells.roles.kernel.internal.kernel.task_boundary import (
     append_deferred_followup_task_boundary_verdict,
+    append_role_turn_task_boundary_verdict,
     build_director_task_boundary_verdict,
 )
 
@@ -89,4 +90,76 @@ def test_deferred_followup_task_boundary_append_uses_owner_event_shape(
     assert verdict["status"] == "deferred_followup_required"
     assert verdict["failure_class"] == "DEFERRED_FOLLOWUP_REQUIRED"
     assert verdict["responsible_layer"] == "execution_control_plane"
+    assert verdict["evidence_refs"] == ["runtime/contexts/abc"]
+
+
+def test_role_turn_task_boundary_append_uses_director_event_shape(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    target = tmp_path / "src" / "index.py"
+    target.parent.mkdir()
+    target.write_text("print('planet weather')\n", encoding="utf-8")
+    captured: list[Any] = []
+
+    import polaris.cells.control_plane.run_ledger.public as run_ledger_public
+
+    monkeypatch.setattr(run_ledger_public, "append_run_ledger_event", captured.append)
+
+    append_role_turn_task_boundary_verdict(
+        role="director",
+        workspace=str(tmp_path),
+        task_id="TASK-1",
+        run_id="run-1",
+        context_override={"target_files": ["src/index.py"]},
+        tool_results=[
+            {
+                "tool": "write_file",
+                "success": True,
+                "effect_receipt": {"file": "src/index.py"},
+            }
+        ],
+        needs_followup_workflow=False,
+        evidence_refs=["runtime/contexts/abc"],
+    )
+
+    assert len(captured) == 1
+    command = captured[0]
+    assert command.workspace == str(tmp_path)
+    assert command.run_id == "run-1"
+    assert command.event["event_type"] == "task_boundary_verdict"
+    verdict = command.event["task_boundary_verdict"]
+    assert verdict["status"] == "completed_verified"
+    assert verdict["failure_class"] == "PASSED"
+    assert verdict["target_files"] == ["src/index.py"]
+    assert verdict["evidence_refs"] == ["runtime/contexts/abc"]
+
+
+def test_role_turn_task_boundary_append_uses_deferred_event_shape(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    captured: list[Any] = []
+
+    import polaris.cells.control_plane.run_ledger.public as run_ledger_public
+
+    monkeypatch.setattr(run_ledger_public, "append_run_ledger_event", captured.append)
+
+    append_role_turn_task_boundary_verdict(
+        role="director",
+        workspace=str(tmp_path),
+        task_id="TASK-1",
+        run_id="run-1",
+        context_override={"target_files": ["src/index.py"]},
+        tool_results=[],
+        needs_followup_workflow=True,
+        workflow_reason="needs_followup_workflow",
+        evidence_refs=["runtime/contexts/abc"],
+    )
+
+    assert len(captured) == 1
+    verdict = captured[0].event["task_boundary_verdict"]
+    assert verdict["status"] == "deferred_followup_required"
+    assert verdict["failure_class"] == "DEFERRED_FOLLOWUP_REQUIRED"
+    assert verdict["reason"] == "needs_followup_workflow"
     assert verdict["evidence_refs"] == ["runtime/contexts/abc"]

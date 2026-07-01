@@ -189,3 +189,43 @@ def append_deferred_followup_task_boundary_verdict(
         run_id=run_id,
         verdict=verdict,
     )
+
+
+def append_role_turn_task_boundary_verdict(
+    *,
+    role: str,
+    workspace: str,
+    task_id: str,
+    run_id: str,
+    context_override: Any,
+    tool_results: list[dict[str, Any]],
+    needs_followup_workflow: bool,
+    workflow_reason: str | None = None,
+    error_message: str | None = None,
+    evidence_refs: list[str] | tuple[str, ...] | None = None,
+) -> None:
+    """Append the task-boundary verdict implied by a completed role turn.
+
+    Normal Director turns are evaluated against target-file completion. Turns
+    intentionally handed to a governed follow-up record a deferred verdict so
+    the control plane does not mistake the turn for a successful completion.
+    """
+    if needs_followup_workflow:
+        append_deferred_followup_task_boundary_verdict(
+            workspace=workspace,
+            task_id=task_id,
+            run_id=run_id,
+            reason=str(workflow_reason or error_message or "needs_followup_workflow"),
+            evidence_refs=evidence_refs,
+        )
+        return
+
+    append_director_task_boundary_verdict(
+        role=role,
+        workspace=workspace,
+        task_id=task_id,
+        run_id=run_id,
+        context_override=context_override,
+        tool_results=tool_results,
+        evidence_refs=evidence_refs,
+    )

@@ -46,10 +46,7 @@ from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     tool_calls_from_batch_receipt,
     tool_results_from_batch_receipt,
 )
-from polaris.cells.roles.kernel.internal.kernel.task_boundary import (
-    append_deferred_followup_task_boundary_verdict,
-    append_director_task_boundary_verdict,
-)
+from polaris.cells.roles.kernel.internal.kernel.task_boundary import append_role_turn_task_boundary_verdict
 from polaris.cells.roles.kernel.internal.kernel.tool_dispatch_projection import (
     append_tool_dispatch_dropped_control_plane_events,
     llm_metadata_from_ledger_on_error,
@@ -324,30 +321,21 @@ async def execute_transaction_kernel_turn(
         tool_results=tool_results,
         ledger=ledger,
     )
-    if not bool(metadata.get("needs_followup_workflow")):
-        try:
-            append_director_task_boundary_verdict(
-                role=role,
-                workspace=str(request.workspace or kernel.workspace or "."),
-                task_id=str(request.task_id or ""),
-                run_id=str(request.run_id or turn_id),
-                context_override=getattr(request, "context_override", None),
-                tool_results=tool_results,
-                evidence_refs=[str(metadata.get("context_snapshot_ref") or "").strip()],
-            )
-        except (OSError, RuntimeError, TypeError, ValueError):
-            logger.debug("failed to append director task boundary verdict", exc_info=True)
-    if bool(metadata.get("needs_followup_workflow")):
-        try:
-            append_deferred_followup_task_boundary_verdict(
-                workspace=str(request.workspace or kernel.workspace or "."),
-                task_id=str(request.task_id or ""),
-                run_id=str(request.run_id or turn_id),
-                reason=str(metadata.get("workflow_reason") or error_msg or "needs_followup_workflow"),
-                evidence_refs=[str(metadata.get("context_snapshot_ref") or "").strip()],
-            )
-        except (OSError, RuntimeError, TypeError, ValueError):
-            logger.debug("failed to append deferred follow-up task boundary verdict", exc_info=True)
+    try:
+        append_role_turn_task_boundary_verdict(
+            role=role,
+            workspace=str(request.workspace or kernel.workspace or "."),
+            task_id=str(request.task_id or ""),
+            run_id=str(request.run_id or turn_id),
+            context_override=getattr(request, "context_override", None),
+            tool_results=tool_results,
+            needs_followup_workflow=bool(metadata.get("needs_followup_workflow")),
+            workflow_reason=str(metadata.get("workflow_reason") or ""),
+            error_message=error_msg,
+            evidence_refs=[str(metadata.get("context_snapshot_ref") or "").strip()],
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        logger.debug("failed to append role-turn task boundary verdict", exc_info=True)
 
     return RoleTurnResult(
         content=visible_content,
@@ -638,13 +626,14 @@ async def execute_transaction_kernel_stream(
                 metadata=result_metadata,
             )
             try:
-                append_director_task_boundary_verdict(
+                append_role_turn_task_boundary_verdict(
                     role=role,
                     workspace=str(request.workspace or kernel.workspace or "."),
                     task_id=str(request.task_id or ""),
                     run_id=str(request.run_id or turn_id),
                     context_override=getattr(request, "context_override", None),
                     tool_results=completion_tool_results,
+                    needs_followup_workflow=False,
                     evidence_refs=[str(result_metadata.get("context_snapshot_ref") or "").strip()],
                 )
             except (OSError, RuntimeError, TypeError, ValueError):

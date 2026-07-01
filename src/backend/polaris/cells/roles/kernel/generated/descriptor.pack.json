@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T07:04:18.270672Z",
-  "source_hash": "4caeb64c8a83ad6c",
+  "generated_at": "2026-07-01T07:17:40.991943Z",
+  "source_hash": "3b403632be409ba5",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4366,6 +4366,12 @@
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/task_boundary.py"
     },
     {
+      "type": "function",
+      "name": "append_role_turn_task_boundary_verdict",
+      "description": "Append the task-boundary verdict implied by a completed role turn.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/task_boundary.py"
+    },
+    {
       "type": "class",
       "name": "TestPolicyInterceptor",
       "description": "Pre-execution policy gate tests.",
@@ -4611,6 +4617,18 @@
     {
       "type": "function",
       "name": "test_deferred_followup_task_boundary_append_uses_owner_event_shape",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_turn_task_boundary_append_uses_director_event_shape",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_turn_task_boundary_append_uses_deferred_event_shape",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_task_boundary.py"
     },
