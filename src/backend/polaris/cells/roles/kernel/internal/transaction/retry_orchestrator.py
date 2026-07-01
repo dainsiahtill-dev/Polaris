@@ -7,13 +7,12 @@
 - 主重试循环
 
 本文件保持为 ``transaction`` 的规范入口（canonical）：``RetryOrchestrator``
-与两个 Protocol 仍物理定义在此处。重试策略 / read-loop 界 / 工具定义筛选 /
-上下文构建 / bootstrap follow-up 五块已无损拆分到同包子模块，并在此 re-export
-（包括测试依赖的私有 ``_``-前缀符号与常量），原导入路径保持不变。
+与两个 Protocol 仍物理定义在此处。重试策略、read-loop 边界、工具定义筛选、
+上下文构建、bootstrap follow-up 五块由同包子模块分别持有；本文件只作为
+``RetryOrchestrator`` 的实现层依赖这些 owner modules。
 
 CRITICAL: ``_READ_BOOTSTRAP_PROGRESS`` 这一唯一可变模块级缓存（the stall
-ceiling，live-incident-critical）由 ``read_bootstrap_progress`` 独家持有；此处
-re-export 的是同一实例引用，绝不复制。
+ceiling，live-incident-critical）由 ``read_bootstrap_progress`` 独家持有。
 """
 
 from __future__ import annotations
@@ -25,18 +24,8 @@ from typing import Any, Protocol, cast
 
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime, ToolExecutionContext
 from polaris.cells.roles.kernel.internal.transaction.bootstrap_followup import (
-    _DEFAULT_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS,
-    _LEAF_BOOTSTRAP_WRITE_FILE_EXTS,
-    _LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS_ENV,
-    _bootstrap_successful_file_contents,
     _extract_decision_invocations,
-    _extract_declared_step_card,
-    _extract_deterministic_bootstrap_write_targets,
-    _normalize_deterministic_bootstrap_target,
-    _read_leaf_write_file_max_chars,
     _should_force_leaf_bootstrap_followup_write_file,
-    _synthesize_deterministic_bootstrap_write_content,
-    _synthesize_deterministic_dag_service_content,
     build_deterministic_bootstrap_followup_write_decision,
     merge_bootstrap_receipt_into_result,
 )
@@ -60,18 +49,9 @@ from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
 )
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.read_bootstrap_progress import (
-    _FINGERPRINT_SKIP_DIRS,
-    _FINGERPRINT_SOURCE_EXTS,
-    _MAX_STALLED_READ_BOOTSTRAPS,
-    _READ_BOOTSTRAP_PROGRESS,
-    _READ_BOOTSTRAP_PROGRESS_MAX_KEYS,
-    _WRITE_ONLY_SINGLE_TARGET_REPAIR_MARKER,
     _clear_read_bootstrap_progress,
-    _read_bootstrap_makes_no_progress,
-    _requires_write_only_single_target_repair,
     _resolve_materialization_workspace,
     _should_bootstrap_original_read_batch,
-    _workspace_materialization_fingerprint,
 )
 from polaris.cells.roles.kernel.internal.transaction.receipt_utils import (
     merge_batch_receipts,
@@ -79,29 +59,12 @@ from polaris.cells.roles.kernel.internal.transaction.receipt_utils import (
     record_receipts_to_ledger,
 )
 from polaris.cells.roles.kernel.internal.transaction.retry_context_builders import (
-    _BOOTSTRAP_READ_MAX_CHARS_ENV,
-    _BOOTSTRAP_READ_TOTAL_CHARS_ENV,
-    _DEFAULT_BOOTSTRAP_READ_CONTENT_MAX_CHARS,
-    _DEFAULT_BOOTSTRAP_READ_CONTENT_TOTAL_CHARS,
-    _bootstrap_read_content_max_chars,
-    _bootstrap_read_content_total_chars,
-    _extract_latest_assistant_message,
-    _read_positive_int_env,
     append_retry_enforcement_hint,
     build_contract_retry_context,
     build_retry_write_after_bootstrap_context,
     extract_failed_files_from_bootstrap_receipt,
 )
 from polaris.cells.roles.kernel.internal.transaction.retry_escalation_policy import (
-    _DEFAULT_RETRY_CREATE_OUTPUT_FLOOR_TOKENS,
-    _DEFAULT_RETRY_ESCALATION_TEMPERATURE,
-    _DEFAULT_RETRY_OUTPUT_FLOOR_TOKENS,
-    _ESCALATION_START_ATTEMPT_INDEX,
-    _LINE_RANGE_EDIT_BLOCKS_PARAMETERS,
-    _RETRY_CREATE_OUTPUT_FLOOR_ENV,
-    _RETRY_ESCALATION_TEMPERATURE_ENV,
-    _RETRY_OUTPUT_FLOOR_ENV,
-    narrow_edit_blocks_schema_to_line_range,
     resolve_escalation_temperature,
     resolve_retry_create_output_floor,
     resolve_retry_escalation,
@@ -110,14 +73,6 @@ from polaris.cells.roles.kernel.internal.transaction.retry_escalation_policy imp
     resolve_retry_temperature_override,
 )
 from polaris.cells.roles.kernel.internal.transaction.retry_tool_definitions import (
-    _BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_FRAGMENTS,
-    _BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_TYPES,
-    _BOOTSTRAP_WHOLE_FILE_MAX_CHARS,
-    _BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS,
-    _build_scoped_write_file_tool_definition,
-    _extract_file_schema_from_tool_definition,
-    bootstrap_receipt_contains_whole_file_edit_error,
-    bootstrap_receipt_contains_whole_file_replacement_marker,
     build_forced_write_only_retry_tool_definitions,
     build_retry_tool_definitions_for_mutation,
     detect_creation_mode,
@@ -127,15 +82,12 @@ from polaris.cells.roles.kernel.internal.transaction.retry_tool_definitions impo
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     extract_allowed_tool_names_from_definitions,
     extract_latest_user_message,
-    extract_tool_name_from_definition,
 )
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnStateMachine
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
-    FinalizeMode,
     RawLLMResponse,
     ToolBatch,
-    ToolCallId,
     ToolEffectType,
     ToolExecutionMode,
     ToolInvocation,
@@ -170,91 +122,10 @@ def _is_transient_llm_provider_exception(exc: BaseException) -> bool:
     return any(marker in text for marker in _TRANSIENT_LLM_PROVIDER_ERROR_MARKERS)
 
 
-# Lossless re-export surface: every moved symbol (public AND the private
-# ``_``-prefixed functions/constants that tests and in-cell consumers import
-# from this canonical path) is named here so static linters keep the imports
-# above and the original import path stays byte-compatible. The bodies live in
-# the cohesive submodules; this is purely the compatibility surface.
-#
-# CRITICAL: ``_READ_BOOTSTRAP_PROGRESS`` is the single live-incident-critical
-# mutable cache — it is the SAME dict instance defined in
-# ``read_bootstrap_progress``; ``.clear()`` / mutation through either name hits
-# one object. NEVER rebind it to a copy here.
 __all__ = [
-    "WRITE_TOOLS",
-    "_BOOTSTRAP_READ_MAX_CHARS_ENV",
-    "_BOOTSTRAP_READ_TOTAL_CHARS_ENV",
-    "_BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_FRAGMENTS",
-    "_BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_TYPES",
-    "_BOOTSTRAP_WHOLE_FILE_MAX_CHARS",
-    "_BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS",
-    "_DEFAULT_BOOTSTRAP_READ_CONTENT_MAX_CHARS",
-    "_DEFAULT_BOOTSTRAP_READ_CONTENT_TOTAL_CHARS",
-    "_DEFAULT_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS",
-    "_DEFAULT_RETRY_CREATE_OUTPUT_FLOOR_TOKENS",
-    "_DEFAULT_RETRY_ESCALATION_TEMPERATURE",
-    "_DEFAULT_RETRY_OUTPUT_FLOOR_TOKENS",
-    "_ESCALATION_START_ATTEMPT_INDEX",
-    "_FINGERPRINT_SKIP_DIRS",
-    "_FINGERPRINT_SOURCE_EXTS",
-    "_LEAF_BOOTSTRAP_WRITE_FILE_EXTS",
-    "_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS_ENV",
-    "_LINE_RANGE_EDIT_BLOCKS_PARAMETERS",
-    "_MAX_STALLED_READ_BOOTSTRAPS",
-    "_READ_BOOTSTRAP_PROGRESS",
-    "_READ_BOOTSTRAP_PROGRESS_MAX_KEYS",
-    "_RETRY_CREATE_OUTPUT_FLOOR_ENV",
-    "_RETRY_ESCALATION_TEMPERATURE_ENV",
-    "_RETRY_OUTPUT_FLOOR_ENV",
-    "_WRITE_ONLY_SINGLE_TARGET_REPAIR_MARKER",
     "DevelopmentRuntimeProtocol",
-    "FinalizeMode",
     "RetryOrchestrator",
-    "ToolCallId",
     "WorkflowRuntimeProtocol",
-    "_bootstrap_read_content_max_chars",
-    "_bootstrap_read_content_total_chars",
-    "_bootstrap_successful_file_contents",
-    "_build_scoped_write_file_tool_definition",
-    "_clear_read_bootstrap_progress",
-    "_extract_decision_invocations",
-    "_extract_declared_step_card",
-    "_extract_deterministic_bootstrap_write_targets",
-    "_extract_file_schema_from_tool_definition",
-    "_extract_latest_assistant_message",
-    "_normalize_deterministic_bootstrap_target",
-    "_read_bootstrap_makes_no_progress",
-    "_read_leaf_write_file_max_chars",
-    "_read_positive_int_env",
-    "_requires_write_only_single_target_repair",
-    "_resolve_materialization_workspace",
-    "_should_bootstrap_original_read_batch",
-    "_should_force_leaf_bootstrap_followup_write_file",
-    "_should_use_original_read_bootstrap_for_retry",
-    "_synthesize_deterministic_bootstrap_write_content",
-    "_synthesize_deterministic_dag_service_content",
-    "_workspace_materialization_fingerprint",
-    "append_retry_enforcement_hint",
-    "bootstrap_receipt_contains_whole_file_edit_error",
-    "bootstrap_receipt_contains_whole_file_replacement_marker",
-    "build_contract_retry_context",
-    "build_deterministic_bootstrap_followup_write_decision",
-    "build_forced_write_only_retry_tool_definitions",
-    "build_retry_tool_definitions_for_mutation",
-    "build_retry_write_after_bootstrap_context",
-    "detect_creation_mode",
-    "extract_failed_files_from_bootstrap_receipt",
-    "extract_tool_name_from_definition",
-    "merge_bootstrap_receipt_into_result",
-    "narrow_edit_blocks_schema_to_line_range",
-    "resolve_escalation_temperature",
-    "resolve_retry_create_output_floor",
-    "resolve_retry_escalation",
-    "resolve_retry_model_override",
-    "resolve_retry_output_floor",
-    "resolve_retry_temperature_override",
-    "select_bootstrap_followup_write_tool_name",
-    "select_retry_forced_write_tool_name",
 ]
 
 
