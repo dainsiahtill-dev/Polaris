@@ -354,23 +354,23 @@ units:
     wave: 2
     category: application
     scope: cell
-    status: planned
-    current_impl_state: legacy_only
+    status: in_progress
+    current_impl_state: new_root_partial
     owner: architecture-engineer
     legacy_policy: no_new_shim
     depends_on:
       - mig-application-batch2a
     blockers:
-      - "polaris/cells/resident/autonomy/ Cell not yet created"
-      - "Requires cells.yaml update to declare resident.autonomy Cell"
+      - "Ledger target still references evidence_bundle_service.py and evidence_service.py, but current resident.autonomy implementation exposes evidence_models.py and AGI audit/evidence interfaces instead"
     notes:
       - "New Cell: polaris/cells/resident/autonomy/"
       - "Source: polaris/application/resident/* (15 files)"
       - "Batch 2B from docs/migration/application_cellization_batch2_ide_move_list_2026-03-21.md §3.1"
+      - "2026-07-02 audit: source directory is absent and most resident.autonomy target assets exist; evidence service target mapping still needs contract review"
     target:
       cell: resident.autonomy
-      catalog_status: missing
-      target_assets_status: absent
+      catalog_status: actual
+      target_assets_status: partial_impl
       root_dirs:
         - polaris/cells/resident/autonomy/
       target_paths:
@@ -417,23 +417,22 @@ units:
     wave: 2
     category: application
     scope: cell
-    status: planned
-    current_impl_state: legacy_only
+    status: verified
+    current_impl_state: new_root_primary
     owner: architecture-engineer
     legacy_policy: no_new_shim
     depends_on:
       - mig-application-batch2b-resident
-    blockers:
-      - "polaris/cells/architect/design/ Cell not yet created"
-      - "Requires cells.yaml update to declare architect.design Cell"
+    blockers: []
     notes:
       - "New Cell: polaris/cells/architect/design/"
       - "Source: architect_service.py, architect_agent.py, architect_cli.py"
       - "Batch 2B from docs/migration/application_cellization_batch2_ide_move_list_2026-03-21.md §3.2"
+      - "2026-07-02 audit: source_refs are absent, architect.design cell files and contract tests exist"
     target:
       cell: architect.design
-      catalog_status: missing
-      target_assets_status: absent
+      catalog_status: actual
+      target_assets_status: active_impl
       root_dirs:
         - polaris/cells/architect/design/
       target_paths:
@@ -442,8 +441,16 @@ units:
         - polaris/cells/architect/design/internal/architect_service.py
         - polaris/cells/architect/design/internal/architect_agent.py
         - polaris/cells/architect/design/internal/architect_cli.py
-      actual_impl_paths: []
-      subgraphs: []
+      actual_impl_paths:
+        - polaris/cells/architect/design/cell.yaml
+        - polaris/cells/architect/design/public/contracts.py
+        - polaris/cells/architect/design/public/service.py
+        - polaris/cells/architect/design/internal/architect_service.py
+        - polaris/cells/architect/design/internal/architect_agent.py
+        - polaris/cells/architect/design/internal/architect_cli.py
+        - polaris/cells/architect/design/tests/test_contracts.py
+      subgraphs:
+        - architect_design_cell
     source_refs:
       - path: polaris/application/services/architect_service.py
         kind: file
@@ -462,15 +469,17 @@ units:
         - "pytest polaris/cells/architect/design/tests/ -q"
         - "python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only"
       required_tests: []
+      verified_tests:
+        - polaris/cells/architect/design/tests/test_contracts.py
       docs_updates:
         - docs/graph/catalog/cells.yaml (declare architect.design)
         - polaris/cells/architect/design/README.agent.md
       graph_updates:
         - docs/graph/catalog/cells.yaml (new Cell declaration)
     delete_when:
-      - "polaris/application/services/architect_service.py removed"
-      - "polaris/application/role_agent/architect_agent.py removed"
-      - "architect.design Cell verified"
+      - "Satisfied 2026-07-02: polaris/application/services/architect_service.py absent"
+      - "Satisfied 2026-07-02: polaris/application/role_agent/architect_agent.py absent"
+      - "Satisfied 2026-07-02: architect.design Cell verified"
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Wave 3: Cross-cutting concerns
