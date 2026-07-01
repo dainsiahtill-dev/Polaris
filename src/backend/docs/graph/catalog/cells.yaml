@@ -2154,6 +2154,7 @@ cells:
       - control_plane.verifier_policy
       - control_plane.verifier_execution
       - runtime.projection
+      - director.runtime
     subgraphs:
       - storage_archive_pipeline
       - execution_governance_pipeline
