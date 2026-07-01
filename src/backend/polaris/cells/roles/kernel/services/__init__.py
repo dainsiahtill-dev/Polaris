@@ -21,7 +21,6 @@ from polaris.cells.roles.kernel.services.contracts import (
     IOutputParser,
     IPromptBuilder,
     IQualityChecker,
-    IToolExecutor,
     RoleInvokeResult,
     StreamEvent,
     StructuredResult,
@@ -35,7 +34,6 @@ __all__ = [
     "IOutputParser",
     "IPromptBuilder",
     "IQualityChecker",
-    "IToolExecutor",
     # Result types
     "RoleInvokeResult",
     "StreamEvent",

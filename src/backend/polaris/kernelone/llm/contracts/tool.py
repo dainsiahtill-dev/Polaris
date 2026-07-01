@@ -401,10 +401,7 @@ class CellToolExecutorPort(Protocol):
     tool_name and args are passed separately (not as a ToolCall object).
     It bridges to the canonical ToolExecutorPort via adapters.
 
-    This is the unified interface for:
-    - cells/roles/kernel/internal/testing/fake_tools.ToolExecutorProtocol
-    - cells/roles/kernel/services/contracts.IToolExecutor
-    - cells/roles/kernel/internal/services/contracts.ToolExecutorProtocol
+    This is the unified interface for Cells-layer tool execution.
     """
 
     async def execute(

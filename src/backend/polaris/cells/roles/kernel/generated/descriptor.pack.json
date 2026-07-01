@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T06:27:27.669694Z",
-  "source_hash": "5d60d25d699d99c2",
+  "generated_at": "2026-07-01T06:31:36.017718Z",
+  "source_hash": "a27db1acee87fe99",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -20480,18 +20480,6 @@
         {
           "name": "invoke_stream",
           "doc": "执行流式LLM调用"
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "IToolExecutor",
-      "description": "工具执行器协议 [DEPRECATED - P0-NEW-017 已废弃]",
-      "defined_in": "polaris/cells/roles/kernel/services/contracts.py",
-      "methods": [
-        {
-          "name": "split_by_write_budget",
-          "doc": "按写预算分割工具调用"
         }
       ]
     },

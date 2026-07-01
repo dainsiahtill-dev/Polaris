@@ -5,10 +5,10 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
+from polaris.kernelone.llm.contracts import CellToolExecutorPort
 from polaris.kernelone.llm.shared_contracts import AIResponse, Usage
 
 if TYPE_CHECKING:
@@ -75,71 +75,6 @@ class ILLMInvoker(Protocol):
 
         Returns:
             StructuredResult，包含验证后的数据
-        """
-        ...
-
-
-@runtime_checkable
-class IToolExecutor(Protocol):
-    """工具执行器协议 [DEPRECATED - P0-NEW-017 已废弃]
-
-    此 Protocol 已被 P0-NEW-017 修复方案废弃。
-    请使用 CellToolExecutorPort:
-
-        from polaris.kernelone.llm.contracts import CellToolExecutorPort
-
-    本类将在后续版本中移除。
-
-    负责工具调用执行、写预算分割、事件发射等。
-    """
-
-    async def execute_single(
-        self,
-        tool_name: str,
-        args: dict[str, Any],
-        context: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """执行单个工具调用
-
-        Args:
-            tool_name: 工具名称
-            args: 工具参数
-            context: 可选执行上下文
-
-        Returns:
-            工具执行结果字典
-        """
-        ...
-
-    async def execute_batch(
-        self,
-        tool_calls: list[tuple[str, dict[str, Any]]],
-        context: dict[str, Any] | None = None,
-    ) -> list[dict[str, Any]]:
-        """批量执行工具调用
-
-        Args:
-            tool_calls: 工具调用列表，每项为 (tool_name, args)
-            context: 可选执行上下文
-
-        Returns:
-            工具执行结果列表
-        """
-        ...
-
-    def split_by_write_budget(
-        self,
-        role_id: str,
-        tool_calls: list[Any],
-    ) -> tuple[list[Any], list[Any], int]:
-        """按写预算分割工具调用
-
-        Args:
-            role_id: 角色标识
-            tool_calls: 工具调用列表
-
-        Returns:
-            (executable_calls, deferred_calls, write_limit)
         """
         ...
 
@@ -320,26 +255,6 @@ class StreamEvent:
         self.done = done
 
 
-# Backward compatibility alias: IToolExecutor -> CellToolExecutorPort
-# (P0-NEW-017: Deprecated, will be removed in future. Use CellToolExecutorPort.)
-try:
-    from polaris.kernelone.llm.contracts import CellToolExecutorPort
-
-    # Emit deprecation warning when IToolExecutor is used
-    def __getattr__(name: str) -> Any:
-        if name == "IToolExecutor":
-            warnings.warn(
-                "IToolExecutor is deprecated, use CellToolExecutorPort from polaris.kernelone.llm.contracts instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            # Return the Protocol class itself for isinstance checks
-            return IToolExecutor
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-except ImportError:
-    CellToolExecutorPort = None  # type: ignore[assignment, misc]
-
-
 __all__ = [
     "CellToolExecutorPort",
     "IEventEmitter",
@@ -347,7 +262,6 @@ __all__ = [
     "IOutputParser",
     "IPromptBuilder",
     "IQualityChecker",
-    "IToolExecutor",
     "RoleInvokeResult",
     "StreamEvent",
     "StructuredResult",

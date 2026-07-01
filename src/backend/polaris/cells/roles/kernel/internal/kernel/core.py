@@ -5,7 +5,7 @@ RoleExecutionKernel is the public coordination entrypoint for role turns.
 架构:
     - RoleExecutionKernel: public coordination entrypoint
     - LLMInvoker: LLM调用服务 (ILLMInvoker)
-    - ToolExecutor: 工具执行服务 (IToolExecutor)
+    - ToolExecutor: 工具执行服务 (CellToolExecutorPort)
     - PromptBuilder: 提示词构建服务
     - OutputParser: 输出解析服务
     - QualityChecker: 质量检查服务
@@ -91,7 +91,7 @@ class RoleExecutionKernel:
     当前架构:
     - RoleExecutionKernel: public coordination entrypoint，提供统一接口并协调服务层
     - LLMInvoker (ILLMInvoker): LLM调用服务
-    - ToolExecutor (IToolExecutor): 工具执行服务
+    - ToolExecutor (CellToolExecutorPort): 工具执行服务
     - PromptBuilder: 提示词构建服务
     - OutputParser: 输出解析服务
     - QualityChecker: 质量检查服务
