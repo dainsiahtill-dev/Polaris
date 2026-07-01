@@ -559,35 +559,36 @@ units:
       - "KERNELONE_ aliases removed from bootstrap config"
 
   - id: mig-descriptor-pack
-    title: Descriptor pack generation for all 41 Cells
+    title: Descriptor pack generation for all 67 Cells
     wave: 3
     category: governance
     scope: capability_cluster
-    status: planned
-    current_impl_state: legacy_only
+    status: verified
+    current_impl_state: new_root_primary
     owner: documentation-engineer
     legacy_policy: utf8_mandatory
     depends_on:
       - mig-application-batch2a
       - mig-application-batch2b-resident
       - mig-application-batch2b-architect
-    blockers:
-      - "Current coverage: 0/41 (no generated descriptor.pack.json files)"
-      - "fitness-rules.yaml 16 blocker rules in seeded/draft status"
+    blockers: []
     notes:
       - "Use: python -m polaris.cells.context.catalog.internal.descriptor_pack_generator"
       - "Must run after each wave's code changes"
-      - "Coverage target: 41/41 Cells with generated descriptor.pack.json"
+      - "Coverage target: all Cells with generated descriptor.pack.json"
+      - "2026-07-02 audit: 67/67 cell.yaml manifests have generated descriptor.pack.json"
     target:
       cell: context.catalog
       catalog_status: actual
-      target_assets_status: absent
+      target_assets_status: active_impl
       root_dirs:
         - polaris/cells/*/generated/
       target_paths:
         - polaris/cells/*/generated/descriptor.pack.json
-      actual_impl_paths: []
-      subgraphs: []
+      actual_impl_paths:
+        - polaris/cells/*/generated/descriptor.pack.json
+      subgraphs:
+        - context_catalog_descriptor_generation
     source_refs:
       - path: polaris/cells/*/cell.yaml
         kind: glob
@@ -603,16 +604,18 @@ units:
         note: Internal modules with @public-annotated items as descriptor source
     verification:
       checks:
-        - "python -m polaris.cells.context.catalog.internal.descriptor_pack_generator --dry-run"
-        - "ls polaris/cells/*/generated/descriptor.pack.json | wc -l  (expect 41)"
+        - "python -m polaris.cells.context.catalog.internal.descriptor_pack_generator"
+        - "find polaris/cells -path '*/cell.yaml' count equals generated descriptor.pack.json count"
         - "python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only"
       required_tests: []
+      verified_tests:
+        - "2026-07-02 descriptor coverage audit: 67 cell.yaml, 0 missing descriptor.pack.json"
       docs_updates:
         - docs/governance/schemas/semantic-descriptor.schema.yaml
       graph_updates:
         - docs/graph/catalog/cells.yaml (descriptor asset status per Cell)
     delete_when:
-      - "All 41 Cells have generated/descriptor.pack.json"
+      - "Satisfied 2026-07-02: all 67 Cells have generated/descriptor.pack.json"
       - "Catalog governance gate passes with 0 errors"
 
   # ─────────────────────────────────────────────────────────────────────────────

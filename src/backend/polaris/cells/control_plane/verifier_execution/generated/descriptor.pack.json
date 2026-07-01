@@ -1,0 +1,121 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-07-01T20:42:48.597457Z",
+  "source_hash": "20287be8c32c4966",
+  "cell_id": "control_plane.verifier_execution",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "RunVerifierPolicyCommandV1",
+      "description": "Run enabled verifier providers for one workspace/policy snapshot.",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "VerifierExecutionResultV1",
+      "description": "Evidence patch returned by verifier execution.",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ControlPlaneVerifierExecutionV1Error",
+      "description": "Raised when verifier execution cannot be prepared safely.",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_bool_env",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_tail",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_script_path",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_command_for_script",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_file_hash",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_disabled_result",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_custom_script",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_enabled_custom_scripts",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "run_verifier_policy",
+      "description": "Run enabled verifier providers and return a Run Ledger gate patch.",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_policy",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_custom_script_verifier_is_disabled_without_environment_flag",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_custom_script_verifier_executes_when_explicitly_enabled",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_custom_script_verifier_accepts_gate_policy_fragment",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_custom_script_verifier_rejects_path_traversal",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_custom_script_verifier_reports_failure",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/verifier_execution/tests/test_public_service.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}
