@@ -354,31 +354,41 @@ units:
     wave: 2
     category: application
     scope: cell
-    status: in_progress
-    current_impl_state: new_root_partial
+    status: verified
+    current_impl_state: new_root_primary
     owner: architecture-engineer
     legacy_policy: no_new_shim
     depends_on:
       - mig-application-batch2a
-    blockers:
-      - "Ledger target still references evidence_bundle_service.py and evidence_service.py, but current resident.autonomy implementation exposes evidence_models.py and AGI audit/evidence interfaces instead"
+    blockers: []
     notes:
       - "New Cell: polaris/cells/resident/autonomy/"
       - "Source: polaris/application/resident/* (15 files)"
       - "Batch 2B from docs/migration/application_cellization_batch2_ide_move_list_2026-03-21.md §3.1"
-      - "2026-07-02 audit: source directory is absent and most resident.autonomy target assets exist; evidence service target mapping still needs contract review"
+      - "2026-07-02 audit: source directory is absent; resident.autonomy public contracts/service, AGI capability/audit interfaces, evidence_models.py, cell.yaml, context pack, descriptor pack and public tests are present"
+      - "2026-07-02 decision: retired evidence_bundle_service.py/evidence_service.py target names were stale ledger debt; current evidence boundary is public/service.py + public/contracts.py + internal/evidence_models.py + AGI audit/evidence interfaces"
     target:
       cell: resident.autonomy
       catalog_status: actual
-      target_assets_status: partial_impl
+      target_assets_status: active_impl
       root_dirs:
         - polaris/cells/resident/autonomy/
       target_paths:
         - polaris/cells/resident/autonomy/cell.yaml
+        - polaris/cells/resident/autonomy/README.agent.md
+        - polaris/cells/resident/autonomy/context.pack.json
+        - polaris/cells/resident/autonomy/generated/descriptor.pack.json
         - polaris/cells/resident/autonomy/public/contracts.py
+        - polaris/cells/resident/autonomy/public/service.py
+        - polaris/cells/resident/autonomy/public/tests/test_public_contracts.py
         - polaris/cells/resident/autonomy/internal/resident_runtime_service.py
         - polaris/cells/resident/autonomy/internal/resident_storage.py
         - polaris/cells/resident/autonomy/internal/resident_models.py
+        - polaris/cells/resident/autonomy/internal/agi_audit_pack.py
+        - polaris/cells/resident/autonomy/internal/agi_capability_surface.py
+        - polaris/cells/resident/autonomy/internal/agi_tactical_actions.py
+        - polaris/cells/resident/autonomy/internal/agi_tactical_chat.py
+        - polaris/cells/resident/autonomy/internal/autonomy_boundary.py
         - polaris/cells/resident/autonomy/internal/capability_graph.py
         - polaris/cells/resident/autonomy/internal/counterfactual_lab.py
         - polaris/cells/resident/autonomy/internal/decision_trace.py
@@ -388,21 +398,51 @@ units:
         - polaris/cells/resident/autonomy/internal/pm_bridge.py
         - polaris/cells/resident/autonomy/internal/self_improvement_lab.py
         - polaris/cells/resident/autonomy/internal/skill_foundry.py
-        - polaris/cells/resident/autonomy/internal/evidence_bundle_service.py
-        - polaris/cells/resident/autonomy/internal/evidence_service.py
         - polaris/cells/resident/autonomy/internal/evidence_models.py
-      actual_impl_paths: []
+      actual_impl_paths:
+        - polaris/cells/resident/autonomy/cell.yaml
+        - polaris/cells/resident/autonomy/README.agent.md
+        - polaris/cells/resident/autonomy/context.pack.json
+        - polaris/cells/resident/autonomy/generated/descriptor.pack.json
+        - polaris/cells/resident/autonomy/public/contracts.py
+        - polaris/cells/resident/autonomy/public/service.py
+        - polaris/cells/resident/autonomy/public/tests/test_public_contracts.py
+        - polaris/cells/resident/autonomy/internal/resident_runtime_service.py
+        - polaris/cells/resident/autonomy/internal/resident_storage.py
+        - polaris/cells/resident/autonomy/internal/resident_models.py
+        - polaris/cells/resident/autonomy/internal/agi_audit_pack.py
+        - polaris/cells/resident/autonomy/internal/agi_capability_surface.py
+        - polaris/cells/resident/autonomy/internal/agi_tactical_actions.py
+        - polaris/cells/resident/autonomy/internal/agi_tactical_chat.py
+        - polaris/cells/resident/autonomy/internal/autonomy_boundary.py
+        - polaris/cells/resident/autonomy/internal/capability_graph.py
+        - polaris/cells/resident/autonomy/internal/counterfactual_lab.py
+        - polaris/cells/resident/autonomy/internal/decision_trace.py
+        - polaris/cells/resident/autonomy/internal/execution_projection.py
+        - polaris/cells/resident/autonomy/internal/goal_governor.py
+        - polaris/cells/resident/autonomy/internal/meta_cognition.py
+        - polaris/cells/resident/autonomy/internal/pm_bridge.py
+        - polaris/cells/resident/autonomy/internal/self_improvement_lab.py
+        - polaris/cells/resident/autonomy/internal/skill_foundry.py
+        - polaris/cells/resident/autonomy/internal/evidence_models.py
       subgraphs: []
     source_refs:
       - path: polaris/application/resident/
         kind: directory
-        coverage: full
-        note: "15 files: service, storage, models, capability_graph, counterfactual_lab, decision_trace, execution_projection, goal_governor, meta_cognition, pm_bridge, self_improvement_lab, skill_foundry, evidence_bundle_service, evidence_service, evidence_models"
+        coverage: retired
+        note: "Source directory is absent; current implementation is resident.autonomy Cell public contracts/service plus internal runtime, storage, goal, decision, AGI audit/evidence and evidence model modules."
     verification:
       checks:
-        - "pytest polaris/cells/resident/autonomy/tests/ -q"
-        - "python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only"
-      required_tests: []
+        - "pytest src/backend/polaris/cells/resident/autonomy/public/tests/test_public_contracts.py -q"
+        - "pytest src/backend/polaris/tests/test_resident_service.py src/backend/polaris/tests/test_resident_evidence_integration.py src/backend/polaris/tests/test_resident_pm_bridge.py -q"
+        - "pytest src/backend/polaris/tests/architecture/test_resident_autonomy_migration_ledger.py -q"
+        - "cd src/backend && python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only"
+      required_tests:
+        - polaris/cells/resident/autonomy/public/tests/test_public_contracts.py
+        - polaris/tests/test_resident_service.py
+        - polaris/tests/test_resident_evidence_integration.py
+        - polaris/tests/test_resident_pm_bridge.py
+        - polaris/tests/architecture/test_resident_autonomy_migration_ledger.py
       docs_updates:
         - docs/graph/catalog/cells.yaml (declare resident.autonomy)
         - polaris/cells/resident/autonomy/README.agent.md
