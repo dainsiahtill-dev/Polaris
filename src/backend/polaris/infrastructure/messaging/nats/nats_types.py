@@ -28,6 +28,46 @@ from polaris.kernelone.events.constants import (
     EVENT_TYPE_TOOL_RESULT,
 )
 
+_RUNTIME_EVENT_SCHEMA_VERSION = "runtime.v2"
+
+
+def _require_event_string(data: dict[str, Any], field_name: str) -> str:
+    value = data.get(field_name)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"RuntimeEventEnvelope field '{field_name}' is required")
+    return value.strip()
+
+
+def _require_event_timestamp(data: dict[str, Any]) -> str:
+    timestamp = _require_event_string(data, "ts")
+    try:
+        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("RuntimeEventEnvelope field 'ts' must be ISO 8601") from exc
+    return timestamp
+
+
+def _optional_event_cursor(data: dict[str, Any]) -> int:
+    if "cursor" not in data or data.get("cursor") is None:
+        return 0
+    try:
+        cursor = int(data["cursor"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("RuntimeEventEnvelope field 'cursor' must be an integer") from exc
+    if cursor < 0:
+        raise ValueError("RuntimeEventEnvelope field 'cursor' must be non-negative")
+    return cursor
+
+
+def _optional_event_mapping(data: dict[str, Any], field_name: str) -> dict[str, Any]:
+    value = data.get(field_name, {})
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"RuntimeEventEnvelope field '{field_name}' must be an object")
+    return value
+
+
 # =============================================================================
 # JetStream Resource Constants
 # =============================================================================
@@ -164,18 +204,25 @@ class RuntimeEventEnvelope:
         Returns:
             RuntimeEventEnvelope instance.
         """
+        if not isinstance(data, dict):
+            raise ValueError("RuntimeEventEnvelope payload must be an object")
+        schema_version = _require_event_string(data, "schema_version")
+        if schema_version != _RUNTIME_EVENT_SCHEMA_VERSION:
+            raise ValueError(
+                f"RuntimeEventEnvelope field 'schema_version' must be {_RUNTIME_EVENT_SCHEMA_VERSION!r}",
+            )
         return cls(
-            schema_version=data.get("schema_version", "runtime.v2"),
-            event_id=data.get("event_id", str(uuid.uuid4())),
-            workspace_key=data.get("workspace_key", ""),
-            run_id=data.get("run_id", ""),
-            channel=data.get("channel", ""),
-            kind=data.get("kind", ""),
-            ts=data.get("ts", datetime.now(timezone.utc).isoformat()),
-            cursor=data.get("cursor", 0),
+            schema_version=schema_version,
+            event_id=_require_event_string(data, "event_id"),
+            workspace_key=_require_event_string(data, "workspace_key"),
+            run_id=_require_event_string(data, "run_id"),
+            channel=_require_event_string(data, "channel"),
+            kind=_require_event_string(data, "kind"),
+            ts=_require_event_timestamp(data),
+            cursor=_optional_event_cursor(data),
             trace_id=data.get("trace_id"),
-            payload=data.get("payload", {}),
-            meta=data.get("meta", {}),
+            payload=_optional_event_mapping(data, "payload"),
+            meta=_optional_event_mapping(data, "meta"),
         )
 
     def with_cursor(self, cursor: int) -> RuntimeEventEnvelope:

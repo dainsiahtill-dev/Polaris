@@ -10,6 +10,20 @@ from polaris.infrastructure.messaging.nats import ws_consumer_manager
 from polaris.infrastructure.messaging.nats.ws_consumer_manager import JetStreamConsumerManager
 
 
+def _runtime_event_payload(**overrides: Any) -> dict[str, Any]:
+    payload = ws_consumer_manager.RuntimeEventEnvelope(
+        schema_version="runtime.v2",
+        event_id="event-test",
+        workspace_key="workspace",
+        run_id="run-test",
+        channel="llm",
+        kind="task.updated",
+        payload={"task_id": "task-1"},
+    ).to_dict()
+    payload.update(overrides)
+    return payload
+
+
 class _FakeSubscription:
     async def next_msg(self) -> None:
         await asyncio.sleep(10)
@@ -283,13 +297,7 @@ async def test_queue_full_does_not_ack_dropped_jetstream_message(monkeypatch: py
     )
 
     msg = _FakeMessage(
-        payload={
-            "schema_version": "runtime.v2",
-            "workspace_key": "workspace",
-            "channel": "llm",
-            "kind": "task.updated",
-            "payload": {"task_id": "task-1"},
-        },
+        payload=_runtime_event_payload(),
         stream_seq=42,
     )
     manager._subscription = _OneShotSubscription(msg)
@@ -323,6 +331,29 @@ async def test_queue_full_does_not_ack_dropped_jetstream_message(monkeypatch: py
 
 
 @pytest.mark.asyncio
+async def test_invalid_runtime_event_wire_message_is_acked_and_dropped() -> None:
+    manager = JetStreamConsumerManager(
+        workspace_key="workspace",
+        client_id="client-1",
+        channels=["llm"],
+    )
+    payload = _runtime_event_payload()
+    payload.pop("run_id")
+    msg = _FakeMessage(payload=payload, stream_seq=42)
+    manager._subscription = _OneShotSubscription(msg)
+    manager._closed = False
+
+    manager._consumer_task = asyncio.create_task(manager._consume_messages_loop())
+    try:
+        await asyncio.wait_for(msg.acked.wait(), timeout=1.0)
+        assert msg.ack_calls == 1
+        assert manager._message_queue.empty() is True
+        assert manager._pending_acks == {}
+    finally:
+        await manager.disconnect()
+
+
+@pytest.mark.asyncio
 async def test_ack_cursor_does_not_advance_when_no_pending_ack_matches() -> None:
     manager = JetStreamConsumerManager(
         workspace_key="workspace",
@@ -345,13 +376,7 @@ async def test_ack_cursor_advances_only_to_acknowledged_pending_cursor() -> None
         initial_cursor=7,
     )
     msg = _FakeMessage(
-        payload={
-            "schema_version": "runtime.v2",
-            "workspace_key": "workspace",
-            "channel": "llm",
-            "kind": "task.updated",
-            "payload": {"task_id": "task-1"},
-        },
+        payload=_runtime_event_payload(),
         stream_seq=42,
     )
     manager._pending_acks = {42: msg}
