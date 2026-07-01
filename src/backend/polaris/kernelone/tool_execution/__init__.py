@@ -14,8 +14,7 @@ plan_parser : Tool plan parsing and extraction from text.
 cli_builder : CLI argument builders for repo_* tools.
 output    : Output processing, analysis, scoring, and persistence.
 chain     : Chain step parsing and plan normalization.
-executor  : ~~DEPRECATED~~ Removed 2026-04-17. Use AgentAccelToolExecutor.
-executor_core : ~~DEPRECATED~~ Removed 2026-04-17. Use AgentAccelToolExecutor.
+runtime_executor : Runtime bridge to the canonical AgentAccelToolExecutor.
 
 Consumers
 ---------
