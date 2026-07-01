@@ -1,4 +1,4 @@
-"""Tests for polaris.delivery.cli.terminal_console module."""
+"""Tests for polaris.delivery.cli.terminal module."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import os
 import sys
 from unittest.mock import MagicMock, patch
 
-from polaris.delivery.cli.terminal_console import (
+from polaris.delivery.cli.terminal import (
     _ANSI_BOLD,
     _ANSI_CYAN,
     _ANSI_DIM,
@@ -336,12 +336,12 @@ class TestResolveOutputFormat:
 
     def test_unset_non_tty(self) -> None:
         """Test _UNSET with non-TTY returns 'json'."""
-        with patch("polaris.delivery.cli.terminal_console._stdout_is_tty", return_value=False):
+        with patch("polaris.delivery.cli.terminal._base._stdout_is_tty", return_value=False):
             assert _resolve_output_format(_UNSET) == "json"
 
     def test_unset_tty(self) -> None:
         """Test _UNSET with TTY returns 'text'."""
-        with patch("polaris.delivery.cli.terminal_console._stdout_is_tty", return_value=True):
+        with patch("polaris.delivery.cli.terminal._base._stdout_is_tty", return_value=True):
             assert _resolve_output_format(_UNSET) == "text"
 
     def test_explicit_none(self) -> None:
@@ -463,7 +463,7 @@ class TestToolHelpers:
 
     def test_tool_name_default(self) -> None:
         """Test tool name default."""
-        payload = {}
+        payload: dict[str, object] = {}
         assert _tool_name(payload) == "tool"
 
     def test_tool_path_from_file_path(self) -> None:
@@ -571,12 +571,12 @@ class TestDebugHelpers:
 
     def test_style_debug_line_no_color(self) -> None:
         """Test style debug line without color support."""
-        with patch("polaris.delivery.cli.terminal_console._supports_dim_debug", return_value=False):
+        with patch("polaris.delivery.cli.terminal.renderers._supports_dim_debug", return_value=False):
             assert _style_debug_line("test") == "test"
 
     def test_style_debug_line_with_color(self) -> None:
         """Test style debug line with color support."""
-        with patch("polaris.delivery.cli.terminal_console._supports_dim_debug", return_value=True):
+        with patch("polaris.delivery.cli.terminal.renderers._supports_dim_debug", return_value=True):
             result = _style_debug_line("test")
             assert _ANSI_DIM in result
             assert "test" in result

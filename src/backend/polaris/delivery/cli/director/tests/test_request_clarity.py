@@ -8,7 +8,7 @@ from polaris.delivery.cli.director.console_host import (
 
 
 def test_assess_director_request_clarity_handles_file_path_regex() -> None:
-    clarity = _assess_director_request_clarity("请修改 polaris/delivery/cli/terminal_console.py 第120行")
+    clarity = _assess_director_request_clarity("请修改 polaris/delivery/cli/terminal/console.py 第120行")
     assert clarity in {
         RequestClarity.EXECUTABLE,
         RequestClarity.SEMI_CLEAR,

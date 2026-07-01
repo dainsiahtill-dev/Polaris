@@ -1,12 +1,12 @@
 """可视化控制台集成模块
 
-将可视化模块集成到 terminal_console。
+将可视化模块集成到 terminal console。
 
 提供：
 - DEBUG 信息折叠显示
 - 消息类型过滤
 - 快捷键处理
-- 与 terminal_console.py 的无缝集成
+- 与 terminal/console.py 的无缝集成
 
 Usage:
     from polaris.delivery.cli.visualization.console_integration import (
@@ -75,7 +75,7 @@ class DebugMessage:
 class VisualConsoleMixin:
     """可视化控制台混入类
 
-    用于扩展 terminal_console 的可视化能力。
+    用于扩展 terminal console 的可视化能力。
 
     Example:
         class MyConsole(VisualConsoleMixin):
@@ -260,7 +260,7 @@ class VisualConsoleMixin:
 def create_debug_handler(console: VisualConsoleMixin) -> Callable[[Any], None]:
     """创建 DEBUG 消息处理器
 
-    用于集成到 terminal_console 的事件流中。
+    用于集成到 terminal console 的事件流中。
 
     Args:
         console: 可视化控制台实例

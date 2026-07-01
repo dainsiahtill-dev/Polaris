@@ -1,4 +1,4 @@
-"""Tests for polaris.delivery.cli.terminal_console module."""
+"""Tests for polaris.delivery.cli.terminal module."""
 
 from __future__ import annotations
 
@@ -7,11 +7,10 @@ import logging
 import os
 import sys
 from pathlib import Path
-
-import pytest
 from unittest.mock import patch
 
-from polaris.delivery.cli.terminal_console import (
+import pytest
+from polaris.delivery.cli.terminal import (
     _ANSI_GREEN,
     _ANSI_RED,
     SUPER_ROLE,
@@ -140,16 +139,16 @@ class TestNormalization:
 
 class TestResolveOutputFormat:
     def test_resolve_unset_non_tty(self):
-        from polaris.delivery.cli.terminal_console import _UNSET
+        from polaris.delivery.cli.terminal import _UNSET
 
-        with patch("polaris.delivery.cli.terminal_console._stdout_is_tty", return_value=False):
+        with patch("polaris.delivery.cli.terminal._base._stdout_is_tty", return_value=False):
             assert _resolve_output_format(_UNSET) == "json"
 
     @pytest.mark.skipif(sys.platform == "win32", reason="TTY detection differs on Windows")
     def test_resolve_unset_tty(self):
-        from polaris.delivery.cli.terminal_console import _UNSET
+        from polaris.delivery.cli.terminal import _UNSET
 
-        with patch("polaris.delivery.cli.terminal_console._stdout_is_tty", return_value=True):
+        with patch("polaris.delivery.cli.terminal._base._stdout_is_tty", return_value=True):
             assert _resolve_output_format(_UNSET) == "text"
 
     def test_resolve_none(self):

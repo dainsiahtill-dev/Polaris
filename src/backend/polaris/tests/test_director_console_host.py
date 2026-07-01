@@ -499,7 +499,7 @@ def test_director_console_host_degrades_when_task_runtime_unavailable() -> None:
 
 def test_director_console_package_exports_canonical_host() -> None:
     from polaris.delivery.cli import director as director_package
-    from polaris.delivery.cli.terminal_console import PolarisLazyClaude as _NewPolarisLazyClaude
+    from polaris.delivery.cli.terminal import PolarisLazyClaude as _NewPolarisLazyClaude
 
     assert director_package.DirectorConsoleHost is DirectorConsoleHost
     assert director_package.PolarisLazyClaude is _NewPolarisLazyClaude
@@ -617,7 +617,7 @@ def test_director_cli_thin_main_routes_console_to_run_director_console(
 ) -> None:
     import sys
 
-    from polaris.delivery.cli import terminal_console
+    from polaris.delivery.cli import terminal as terminal_cli
     from polaris.delivery.cli.director import cli_thin
 
     captured: dict[str, Any] = {}
@@ -637,7 +637,7 @@ def test_director_cli_thin_main_routes_console_to_run_director_console(
         captured["session_title"] = session_title
         return 19
 
-    monkeypatch.setattr(terminal_console, "run_director_console", _fake_run_director_console)
+    monkeypatch.setattr(terminal_cli, "run_director_console", _fake_run_director_console)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -671,12 +671,12 @@ def test_run_director_console_accepts_non_textual_backend_but_runs(
 ) -> None:
     from io import StringIO
 
-    from polaris.delivery.cli import terminal_console
+    from polaris.delivery.cli import terminal as terminal_cli
 
     # Feed /exit so the console loop terminates immediately
     monkeypatch.setattr("sys.stdin", StringIO("/exit\n"))
 
-    exit_code = terminal_console.run_role_console(
+    exit_code = terminal_cli.run_role_console(
         workspace=str(tmp_path),
         role="architect",
         backend="plain",

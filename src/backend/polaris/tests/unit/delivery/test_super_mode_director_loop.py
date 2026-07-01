@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from polaris.delivery.cli.terminal_console import _director_output_suggests_more_work
+from polaris.delivery.cli.terminal import _director_output_suggests_more_work
 
 
 class TestDirectorOutputSuggestsMoreWork:

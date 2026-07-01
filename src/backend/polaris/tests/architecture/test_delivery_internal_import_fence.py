@@ -30,7 +30,6 @@ BASELINE_VIOLATIONS: frozenset[str] = frozenset(
     {
         "polaris/delivery/cli/pm/chief_engineer_llm_tools.py",
         "polaris/delivery/cli/director/director_llm_tools.py",
-        "polaris/delivery/cli/terminal_console.py",
         "polaris/delivery/cli/director/console_host.py",
         "polaris/delivery/http/routers/test_role_session_context_memory_router.py",
         "polaris/delivery/http/routers/test_agent_router_canonical.py",
@@ -98,11 +97,7 @@ class TestDeliveryInternalImportFence:
     def test_no_new_delivery_cells_internal_imports(self) -> None:
         """Fail if ANY file outside the baseline imports cells.*.internal."""
         all_violations = _scan_delivery_violations()
-        new_violations = {
-            path: modules
-            for path, modules in all_violations.items()
-            if path not in BASELINE_VIOLATIONS
-        }
+        new_violations = {path: modules for path, modules in all_violations.items() if path not in BASELINE_VIOLATIONS}
 
         if new_violations:
             lines = ["NEW delivery -> cells.*.internal imports detected (BLOCKER):"]
@@ -116,10 +111,9 @@ class TestDeliveryInternalImportFence:
 
     def test_baseline_is_not_growing(self) -> None:
         """Verify that no one silently added entries to the baseline."""
-        max_allowed = 13  # current count after retiring director audit_decorator
+        max_allowed = 12  # current count after retiring terminal_console
         assert len(BASELINE_VIOLATIONS) <= max_allowed, (
-            f"Baseline has {len(BASELINE_VIOLATIONS)} entries but max is "
-            f"{max_allowed}. Baseline must shrink, not grow."
+            f"Baseline has {len(BASELINE_VIOLATIONS)} entries but max is {max_allowed}. Baseline must shrink, not grow."
         )
 
     def test_baseline_violations_still_exist(self) -> None:
@@ -127,9 +121,7 @@ class TestDeliveryInternalImportFence:
         all_violations = _scan_delivery_violations()
         fixed = BASELINE_VIOLATIONS - set(all_violations.keys())
         if fixed:
-            lines = [
-                "Baseline entries no longer have violations (please remove from BASELINE_VIOLATIONS):"
-            ]
+            lines = ["Baseline entries no longer have violations (please remove from BASELINE_VIOLATIONS):"]
             for path in sorted(fixed):
                 lines.append(f"  {path}")
             # This is a soft warning, not a blocker

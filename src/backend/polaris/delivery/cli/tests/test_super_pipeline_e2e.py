@@ -24,7 +24,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from polaris.delivery.cli import terminal_console
+from polaris.delivery.cli import terminal as terminal_cli
 from polaris.delivery.cli.super_mode import (
     SuperBlueprintItem,
     SuperClaimedTask,
@@ -39,6 +39,7 @@ from polaris.delivery.cli.super_mode import (
     extract_task_list_from_pm_output,
     write_architect_blueprint_to_disk,
 )
+from polaris.delivery.cli.terminal import console as terminal_console_module
 
 # ---------------------------------------------------------------------------
 # Test infrastructure (mirrors test_terminal_console.py _FakeRoleConsoleHost)
@@ -159,19 +160,16 @@ def _install_market_mocks(
         log.append({"op": "ack", "next_stage": next_stage, "task_ids": task_ids})
         return len(task_ids)
 
-    monkeypatch.setattr(terminal_console, "_persist_super_tasks_to_board", _tracked_persist)
-    monkeypatch.setattr(terminal_console, "_claim_super_tasks_from_market", _tracked_claim)
-    monkeypatch.setattr(terminal_console, "_acknowledge_super_claims", _tracked_ack)
+    monkeypatch.setattr(terminal_console_module, "_persist_super_tasks_to_board", _tracked_persist)
+    monkeypatch.setattr(terminal_console_module, "_claim_super_tasks_from_market", _tracked_claim)
+    monkeypatch.setattr(terminal_console_module, "_acknowledge_super_claims", _tracked_ack)
     return log
 
 
 def _run_console(monkeypatch, inputs: list[str], *, super_mode: bool = True) -> int:
     scripted = iter(inputs)
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted))
-    try:
-        return terminal_console.run_role_console(workspace=".", role="director", super_mode=super_mode)
-    finally:
-        _PipelineHost.reset()
+    return terminal_cli.run_role_console(workspace=".", role="director", super_mode=super_mode)
 
 
 # ╔══════════════════════════════════════════════════════════════════╗
@@ -299,7 +297,7 @@ class TestFullPipelineE2E:
             lambda **kw: _yield_complete("ALL_TASKS_COMPLETE"),
         ]
 
-        exit_code = _run_console(monkeypatch, ["执行任务", "/exit"])
+        exit_code = _run_console(monkeypatch, ["进一步完善编排层，请先制定计划蓝图，然后开始落地执行。", "/exit"])
 
         assert exit_code == 0
         host = _PipelineHost.instances[0]
@@ -462,7 +460,7 @@ class TestLoopBPMToChiefEngineer:
                 subject="调度器", description="实现调度框架", target_files=("scheduler.py",), estimated_hours=8
             ),
         ]
-        task_ids = terminal_console._persist_super_tasks_to_board(
+        task_ids = terminal_console_module._persist_super_tasks_to_board(
             workspace=".",
             tasks=tasks,
             original_request="完善编排层",
@@ -530,10 +528,10 @@ class TestLoopCCEToDirector:
             return 1
 
         monkeypatch = pytest.MonkeyPatch()
-        monkeypatch.setattr(terminal_console, "_acknowledge_super_claims", _fake_ack)
+        monkeypatch.setattr(terminal_console_module, "_acknowledge_super_claims", _fake_ack)
         try:
             claims = [_make_claim("t-1", "pending_design", {"subject": "test", "target_files": ["x.py"]})]
-            terminal_console._acknowledge_super_claims(
+            terminal_console_module._acknowledge_super_claims(
                 workspace=".",
                 claims=claims,
                 next_stage="pending_exec",
@@ -570,7 +568,7 @@ class TestLoopCCEToDirector:
         assert "bp-1" in dir_msg
 
         # Verify continuation message format
-        from polaris.delivery.cli.terminal_console import _director_output_suggests_more_work
+        from polaris.delivery.cli.terminal import _director_output_suggests_more_work
 
         assert _director_output_suggests_more_work("已完成部分工作，下一回合将修改。")
         assert not _director_output_suggests_more_work("ALL_TASKS_COMPLETE")
@@ -593,10 +591,10 @@ class TestLoopDDirectorToQA:
             return 1
 
         monkeypatch = pytest.MonkeyPatch()
-        monkeypatch.setattr(terminal_console, "_acknowledge_super_claims", _fake_ack)
+        monkeypatch.setattr(terminal_console_module, "_acknowledge_super_claims", _fake_ack)
         try:
             claims = [_make_claim("t-1", "pending_exec", {"subject": "test", "target_files": ["x.py"]})]
-            terminal_console._acknowledge_super_claims(
+            terminal_console_module._acknowledge_super_claims(
                 workspace=".",
                 claims=claims,
                 next_stage="pending_qa",
@@ -612,7 +610,7 @@ class TestLoopDDirectorToQA:
 
     def test_director_output_suggests_more_work(self) -> None:
         """_director_output_suggests_more_work must detect continuation markers."""
-        from polaris.delivery.cli.terminal_console import _director_output_suggests_more_work
+        from polaris.delivery.cli.terminal import _director_output_suggests_more_work
 
         assert _director_output_suggests_more_work("下一回合将使用 edit_file 修改")
         assert _director_output_suggests_more_work("还有 2 个任务未完成")
@@ -644,7 +642,7 @@ class TestTaskMarketStateMachine:
             return [1]
 
         def _mock_claim(**kw: Any) -> list[SuperClaimedTask]:
-            stage = kw.get("stage")
+            stage = str(kw.get("stage") or "")
             lifecycle.append({"step": "claim", "stage": stage})
             return [_make_claim("1", stage, {"subject": "test", "target_files": ["x.py"]})]
 
@@ -652,27 +650,27 @@ class TestTaskMarketStateMachine:
             lifecycle.append({"step": "ack", "next_stage": kw.get("next_stage") or kw.get("terminal_status")})
             return 1
 
-        monkeypatch.setattr(terminal_console, "_persist_super_tasks_to_board", _mock_persist)
-        monkeypatch.setattr(terminal_console, "_claim_super_tasks_from_market", _mock_claim)
-        monkeypatch.setattr(terminal_console, "_acknowledge_super_claims", _mock_ack)
+        monkeypatch.setattr(terminal_console_module, "_persist_super_tasks_to_board", _mock_persist)
+        monkeypatch.setattr(terminal_console_module, "_claim_super_tasks_from_market", _mock_claim)
+        monkeypatch.setattr(terminal_console_module, "_acknowledge_super_claims", _mock_ack)
 
         # Simulate the SUPER pipeline lifecycle
-        terminal_console._persist_super_tasks_to_board(
+        terminal_console_module._persist_super_tasks_to_board(
             workspace=".",
             tasks=[SuperTaskItem(subject="test", description="desc", target_files=("x.py",), estimated_hours=1)],
             original_request="test",
             publish_stage="pending_design",
         )
-        ce_claims = terminal_console._claim_super_tasks_from_market(
+        ce_claims = terminal_console_module._claim_super_tasks_from_market(
             workspace=".", stage="pending_design", worker_role="ce", task_ids=[1]
         )
-        terminal_console._acknowledge_super_claims(
+        terminal_console_module._acknowledge_super_claims(
             workspace=".", claims=ce_claims, next_stage="pending_exec", summary="CE done"
         )
-        dir_claims = terminal_console._claim_super_tasks_from_market(
+        dir_claims = terminal_console_module._claim_super_tasks_from_market(
             workspace=".", stage="pending_exec", worker_role="director", task_ids=[1]
         )
-        terminal_console._acknowledge_super_claims(
+        terminal_console_module._acknowledge_super_claims(
             workspace=".", claims=dir_claims, next_stage="pending_qa", summary="Director done"
         )
 
@@ -718,10 +716,10 @@ class TestPipelineRecovery:
             lambda **kw: _yield_complete("收到任务，开始执行。"),
         ]
 
-        monkeypatch.setattr(terminal_console, "_persist_super_tasks_to_board", _noop_persist)
-        monkeypatch.setattr(terminal_console, "_claim_super_tasks_from_market", _noop_claim)
+        monkeypatch.setattr(terminal_console_module, "_persist_super_tasks_to_board", _noop_persist)
+        monkeypatch.setattr(terminal_console_module, "_claim_super_tasks_from_market", _noop_claim)
 
-        _run_console(monkeypatch, ["执行任务"])
+        _run_console(monkeypatch, ["进一步完善编排层，请先制定计划蓝图，然后开始落地执行。", "/exit"])
 
         host = _PipelineHost.instances[0]
         roles = [c["role"] for c in host.stream_calls]

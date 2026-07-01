@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from polaris.delivery.cli import terminal_console as tc
+from polaris.delivery.cli import terminal as tc
 
 
 class TestBannerVisual:

@@ -6,7 +6,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
-from polaris.delivery.cli import terminal_console
+from polaris.delivery.cli import terminal as terminal_cli
+from polaris.delivery.cli.super_mode import SuperClaimedTask, SuperTaskItem
+from polaris.delivery.cli.terminal import (
+    console as terminal_console_module,
+    events as terminal_events,
+    layout as terminal_layout,
+)
 
 if TYPE_CHECKING:
     from polaris.delivery.cli.director.console_host import RoleConsoleHost
@@ -126,7 +132,7 @@ class _FakeTTYStream:
 
 
 def test_capability_profile_contains_governance_scope() -> None:
-    profile = terminal_console._build_role_capability_profile(role="pm", host_kind="cli")
+    profile = terminal_cli._build_role_capability_profile(role="pm", host_kind="cli")
     assert profile["host_kind"] == "cli"
     assert profile["role"] == "pm"
     assert profile["metadata"]["governance_scope"] == "role:pm"
@@ -144,7 +150,7 @@ def test_run_role_console_switches_role_with_role_bound_session_and_profile(
     scripted_inputs = iter(["/role pm", "/session", "/exit"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
 
-    exit_code = terminal_console.run_role_console(
+    exit_code = terminal_cli.run_role_console(
         workspace=".",
         role="director",
         backend="auto",
@@ -177,7 +183,7 @@ def test_run_role_console_uses_explicit_session_id_for_resume(monkeypatch) -> No
     scripted_inputs = iter(["/exit"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
 
-    exit_code = terminal_console.run_role_console(
+    exit_code = terminal_cli.run_role_console(
         workspace=".",
         role="director",
         session_id="sess-explicit",
@@ -192,9 +198,9 @@ def test_run_role_console_uses_explicit_session_id_for_resume(monkeypatch) -> No
 
 
 def test_json_event_render_modes_roundtrip() -> None:
-    packet = terminal_console._json_event_packet("tool_call", {"tool": "read_file"})
-    raw = terminal_console._json_event_text(packet, mode="raw")
-    pretty = terminal_console._json_event_text(packet, mode="pretty")
+    packet = terminal_cli._json_event_packet("tool_call", {"tool": "read_file"})
+    raw = terminal_cli._json_event_text(packet, mode="raw")
+    pretty = terminal_cli._json_event_text(packet, mode="pretty")
 
     assert json.loads(raw) == {"type": "tool_call", "data": {"tool": "read_file"}}
     assert json.loads(pretty) == {"type": "tool_call", "data": {"tool": "read_file"}}
@@ -211,7 +217,7 @@ def test_run_role_console_supports_json_render_switch_command(monkeypatch, capsy
     scripted_inputs = iter(["/json pretty", "/json", "/exit"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
 
-    exit_code = terminal_console.run_role_console(
+    exit_code = terminal_cli.run_role_console(
         workspace=".",
         role="director",
         json_render="raw",
@@ -238,9 +244,9 @@ def test_run_role_console_omp_prompt_falls_back_to_plain(monkeypatch) -> None:
         raise OSError("oh-my-posh unavailable")
 
     monkeypatch.setattr("builtins.input", _fake_input)
-    monkeypatch.setattr(terminal_console.subprocess, "run", _raise_oserror)
+    monkeypatch.setattr(terminal_layout.subprocess, "run", _raise_oserror)
 
-    exit_code = terminal_console.run_role_console(
+    exit_code = terminal_cli.run_role_console(
         workspace=".",
         role="director",
         prompt_style="omp",
@@ -275,7 +281,7 @@ def test_run_role_console_does_not_print_complete_content_twice(monkeypatch, cap
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
 
     try:
-        exit_code = terminal_console.run_role_console(
+        exit_code = terminal_cli.run_role_console(
             workspace=".",
             role="director",
             json_render="raw",
@@ -311,7 +317,7 @@ def test_run_role_console_streams_thinking_blocks(monkeypatch, capsys) -> None:
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
 
     try:
-        exit_code = terminal_console.run_role_console(
+        exit_code = terminal_cli.run_role_console(
             workspace=".",
             role="director",
             json_render="raw",
@@ -344,7 +350,7 @@ def test_run_role_console_prints_complete_thinking_fallback(monkeypatch, capsys)
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
 
     try:
-        exit_code = terminal_console.run_role_console(
+        exit_code = terminal_cli.run_role_console(
             workspace=".",
             role="director",
             json_render="raw",
@@ -387,7 +393,7 @@ def test_run_role_console_keeps_tool_events_visible_between_thinking_and_answer(
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
 
     try:
-        exit_code = terminal_console.run_role_console(
+        exit_code = terminal_cli.run_role_console(
             workspace=".",
             role="director",
             json_render="raw",
@@ -439,7 +445,7 @@ def test_run_role_console_renders_debug_events_and_passes_debug_flag(monkeypatch
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
 
     try:
-        exit_code = terminal_console.run_role_console(
+        exit_code = terminal_cli.run_role_console(
             workspace=".",
             role="director",
             json_render="pretty",
@@ -463,7 +469,7 @@ def test_run_role_console_renders_debug_events_and_passes_debug_flag(monkeypatch
 
 def test_turn_spinner_writes_and_clears_line() -> None:
     stream = _FakeTTYStream()
-    spinner = terminal_console._TurnSpinner(
+    spinner = terminal_cli._TurnSpinner(
         enabled=True,
         stream=stream,
         label="LLM request in progress",
@@ -493,10 +499,10 @@ def test_prompt_renderer_spinner_label_uses_omp_secondary(monkeypatch) -> None:
             return _Completed("OMP-SECONDARY")
         return _Completed("")
 
-    monkeypatch.setattr(terminal_console.subprocess, "run", _fake_run)
+    monkeypatch.setattr(terminal_layout.subprocess, "run", _fake_run)
 
-    state = terminal_console._ConsoleRenderState(prompt_style="omp")
-    renderer = terminal_console._PromptRenderer(state)
+    state = terminal_cli._ConsoleRenderState(prompt_style="omp")
+    renderer = terminal_cli._PromptRenderer(state)
     label = renderer.render_spinner_label(
         role="director",
         session_id="sess-1",
@@ -533,13 +539,13 @@ def test_stream_turn_spinner_ignores_fingerprint_until_visible_event(monkeypatch
             self.stops.append(stage["value"])
 
     spinner = _RecorderSpinner()
-    monkeypatch.setattr(terminal_console, "_create_turn_spinner", lambda **_kwargs: spinner)
+    monkeypatch.setattr(terminal_events, "_create_turn_spinner", lambda **_kwargs: spinner)
 
     host = _FakeRoleConsoleHost(".")
     _FakeRoleConsoleHost.stream_factory = _stream_factory
     try:
         asyncio.run(
-            terminal_console._stream_turn(
+            terminal_cli._stream_turn(
                 cast("RoleConsoleHost", host),
                 role="director",
                 session_id="sess-1",
@@ -611,7 +617,7 @@ def test_run_role_console_super_mode_routes_code_change_full_pipeline(monkeypatc
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
 
     try:
-        exit_code = terminal_console.run_role_console(
+        exit_code = terminal_cli.run_role_console(
             workspace=".",
             role="director",
             super_mode=True,
@@ -645,7 +651,7 @@ def test_run_role_console_super_mode_routes_architecture_to_architect_only(monke
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
 
     try:
-        exit_code = terminal_console.run_role_console(
+        exit_code = terminal_cli.run_role_console(
             workspace=".",
             role="director",
             super_mode=True,
@@ -665,7 +671,7 @@ def test_run_role_console_super_mode_planning_stage_stops_on_first_complete(monk
     claim_batches = iter(
         [
             [
-                terminal_console.SuperClaimedTask(
+                SuperClaimedTask(
                     task_id="1",
                     stage="pending_design",
                     status="pending_design",
@@ -676,7 +682,7 @@ def test_run_role_console_super_mode_planning_stage_stops_on_first_complete(monk
                 )
             ],
             [
-                terminal_console.SuperClaimedTask(
+                SuperClaimedTask(
                     task_id="1",
                     stage="pending_exec",
                     status="pending_exec",
@@ -727,14 +733,16 @@ def test_run_role_console_super_mode_planning_stage_stops_on_first_complete(monk
     _FakeRoleConsoleHost.instances.clear()
     _FakeRoleConsoleHost.stream_factory = _stream_factory
     monkeypatch.setattr(console_host_module, "RoleConsoleHost", _FakeRoleConsoleHost)
-    monkeypatch.setattr(terminal_console, "_persist_super_tasks_to_board", lambda **_kwargs: [1])
-    monkeypatch.setattr(terminal_console, "_claim_super_tasks_from_market", lambda **_kwargs: next(claim_batches))
-    monkeypatch.setattr(terminal_console, "_acknowledge_super_claims", lambda **_kwargs: 1)
+    monkeypatch.setattr(terminal_console_module, "_persist_super_tasks_to_board", lambda **_kwargs: [1])
+    monkeypatch.setattr(
+        terminal_console_module, "_claim_super_tasks_from_market", lambda **_kwargs: next(claim_batches)
+    )
+    monkeypatch.setattr(terminal_console_module, "_acknowledge_super_claims", lambda **_kwargs: 1)
     scripted_inputs = iter(["进一步完善 session_orchestrator.py", "/exit"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
 
     try:
-        exit_code = terminal_console.run_role_console(
+        exit_code = terminal_cli.run_role_console(
             workspace=".",
             role="director",
             super_mode=True,
@@ -753,7 +761,7 @@ def test_run_role_console_super_mode_architect_delivery_loops_director_until_com
     claim_batches = iter(
         [
             [
-                terminal_console.SuperClaimedTask(
+                SuperClaimedTask(
                     task_id="ctx-1",
                     stage="pending_design",
                     status="pending_design",
@@ -768,7 +776,7 @@ def test_run_role_console_super_mode_architect_delivery_loops_director_until_com
                 )
             ],
             [
-                terminal_console.SuperClaimedTask(
+                SuperClaimedTask(
                     task_id="ctx-1",
                     stage="pending_exec",
                     status="pending_exec",
@@ -836,14 +844,16 @@ def test_run_role_console_super_mode_architect_delivery_loops_director_until_com
     _FakeRoleConsoleHost.instances.clear()
     _FakeRoleConsoleHost.stream_factory = _stream_factory
     monkeypatch.setattr(console_host_module, "RoleConsoleHost", _FakeRoleConsoleHost)
-    monkeypatch.setattr(terminal_console, "_persist_super_tasks_to_board", lambda **_kwargs: [1])
-    monkeypatch.setattr(terminal_console, "_claim_super_tasks_from_market", lambda **_kwargs: next(claim_batches))
-    monkeypatch.setattr(terminal_console, "_acknowledge_super_claims", lambda **_kwargs: 1)
+    monkeypatch.setattr(terminal_console_module, "_persist_super_tasks_to_board", lambda **_kwargs: [1])
+    monkeypatch.setattr(
+        terminal_console_module, "_claim_super_tasks_from_market", lambda **_kwargs: next(claim_batches)
+    )
+    monkeypatch.setattr(terminal_console_module, "_acknowledge_super_claims", lambda **_kwargs: 1)
     scripted_inputs = iter(["进一步完善ContextOS以及相关代码", "/exit"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
 
     try:
-        exit_code = terminal_console.run_role_console(
+        exit_code = terminal_cli.run_role_console(
             workspace=".",
             role="director",
             super_mode=True,
@@ -884,10 +894,10 @@ def test_persist_super_tasks_to_board_publishes_pending_design(monkeypatch) -> N
         lambda: _FakeMarket(),
     )
 
-    task_ids = terminal_console._persist_super_tasks_to_board(
+    task_ids = terminal_cli._persist_super_tasks_to_board(
         workspace=".",
         tasks=[
-            terminal_console.SuperTaskItem(
+            SuperTaskItem(
                 subject="ContextOS",
                 description="完善 ContextOS pipeline",
                 target_files=("polaris/delivery/cli/terminal/console.py",),
@@ -915,7 +925,7 @@ def test_run_role_console_super_mode_session_command_reports_super_role(monkeypa
     scripted_inputs = iter(["/session", "/exit"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
 
-    exit_code = terminal_console.run_role_console(
+    exit_code = terminal_cli.run_role_console(
         workspace=".",
         role="director",
         super_mode=True,
@@ -942,7 +952,7 @@ def test_run_role_console_prints_top_level_error_payload(monkeypatch, capsys) ->
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
 
     try:
-        exit_code = terminal_console.run_role_console(
+        exit_code = terminal_cli.run_role_console(
             workspace=".",
             role="director",
         )

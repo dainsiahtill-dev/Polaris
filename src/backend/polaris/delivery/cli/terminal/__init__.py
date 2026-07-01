@@ -1,8 +1,4 @@
-"""Terminal console subpackage for Polaris CLI.
-
-Re-exports all public and internal names previously available from
-terminal_console.py for backward compatibility.
-"""
+"""Canonical terminal console package for Polaris CLI."""
 
 from __future__ import annotations
 

@@ -20,7 +20,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from polaris.delivery.cli import terminal_console as tc
+from polaris.delivery.cli import terminal as tc
+from polaris.delivery.cli.terminal import _base as terminal_base, renderers as terminal_renderers
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -161,13 +162,18 @@ class TestTokenStatsDisplay:
                 "total_tokens": 150,
             },
             "model": "kimi-for-coding",
+            "context_budget": {
+                "model_context_window": 200_000,
+                "current_input_tokens": 100,
+            },
         }
+        monkeypatch.setattr(terminal_renderers, "render_context_panel", lambda *_args, **_kwargs: "")
 
         tc._print_token_stats(payload, elapsed_seconds=1.0)
 
         output = "\n".join(captured)
         # Check for key data (appears in both Rich panel and fallback text)
-        assert "kimi-for-coding" in output or "Model" in output
+        assert "[Token Stats]" in output
         assert "100" in output or "100.0" in output
 
     def test_print_token_stats_without_usage_data(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -201,7 +207,12 @@ class TestTokenStatsDisplay:
                 "total_tokens": 300,
             },
             "model": "gpt-4o",
+            "context_budget": {
+                "model_context_window": 128_000,
+                "current_input_tokens": 200,
+            },
         }
+        monkeypatch.setattr(terminal_renderers, "render_context_panel", lambda *_args, **_kwargs: "")
 
         tc._print_token_stats(payload, elapsed_seconds=2.0)
 
@@ -226,7 +237,12 @@ class TestTokenStatsDisplay:
                 "total_tokens": 600,
             },
             "model": "kimi-for-coding",
+            "context_budget": {
+                "model_context_window": 200_000,
+                "current_input_tokens": 300,
+            },
         }
+        monkeypatch.setattr(terminal_renderers, "render_context_panel", lambda *_args, **_kwargs: "")
 
         tc._print_token_stats(payload, elapsed_seconds=3.0)
 
@@ -280,7 +296,7 @@ class TestOnboardingFirstRun:
     def test_show_onboarding_skipped_when_not_tty(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Onboarding should be skipped when stdin is not a TTY."""
         marker_path = tmp_path / ".polaris_cli_onboarded"
-        monkeypatch.setattr(tc, "_ONBOARD_MARKER_PATH", str(marker_path))
+        monkeypatch.setattr(terminal_base, "_ONBOARD_MARKER_PATH", str(marker_path))
 
         monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
 
@@ -300,7 +316,7 @@ class TestOnboardingFirstRun:
         """Onboarding should be skipped if marker file exists."""
         marker_path = tmp_path / ".polaris_cli_onboarded"
         marker_path.write_text("", encoding="utf-8")
-        monkeypatch.setattr(tc, "_ONBOARD_MARKER_PATH", str(marker_path))
+        monkeypatch.setattr(terminal_base, "_ONBOARD_MARKER_PATH", str(marker_path))
 
         monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
 
@@ -326,7 +342,7 @@ class TestOnboardingFirstRun:
         The actual Rich output is visible in pytest's captured stdout.
         """
         marker_path = tmp_path / ".polaris_cli_onboarded"
-        monkeypatch.setattr(tc, "_ONBOARD_MARKER_PATH", str(marker_path))
+        monkeypatch.setattr(terminal_base, "_ONBOARD_MARKER_PATH", str(marker_path))
 
         monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
 
@@ -345,7 +361,7 @@ class TestOnboardingFirstRun:
     def test_show_onboarding_creates_marker_on_first_run(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Onboarding should create marker file after showing welcome."""
         marker_path = tmp_path / ".polaris_cli_onboarded"
-        monkeypatch.setattr(tc, "_ONBOARD_MARKER_PATH", str(marker_path))
+        monkeypatch.setattr(terminal_base, "_ONBOARD_MARKER_PATH", str(marker_path))
 
         monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
         monkeypatch.setattr("builtins.input", lambda _: "")
