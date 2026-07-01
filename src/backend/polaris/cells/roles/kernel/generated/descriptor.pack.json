@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T03:47:21.847216Z",
-  "source_hash": "0f3cbdf8ff346dcd",
+  "generated_at": "2026-07-01T03:53:31.587975Z",
+  "source_hash": "bdc45ac807e99084",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4094,30 +4094,6 @@
         {
           "name": "_forced_tool_choice_name",
           "doc": ""
-        },
-        {
-          "name": "_create_gateway",
-          "doc": "Create one per-request tool gateway (委托给 KernelToolExecutor)."
-        },
-        {
-          "name": "_split_tool_calls_by_write_budget",
-          "doc": "Split tool calls by write budget（委托给 KernelToolExecutor）"
-        },
-        {
-          "name": "_emit_tool_execute_events",
-          "doc": "发射工具执行前事件（委托给 KernelToolExecutor）"
-        },
-        {
-          "name": "_emit_tool_result_events_and_collect_errors",
-          "doc": "发射工具结果事件并收集错误（委托给 KernelToolExecutor）"
-        },
-        {
-          "name": "_append_deferred_notice",
-          "doc": "追加 deferred notice（委托给 KernelToolExecutor）"
-        },
-        {
-          "name": "_log_deferred_write_calls",
-          "doc": "记录 deferred write calls（委托给 KernelToolExecutor）"
         },
         {
           "name": "_parse_content_and_thinking_tool_calls",

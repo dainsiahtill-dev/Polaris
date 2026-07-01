@@ -134,7 +134,6 @@ polaris/cells/chief_engineer/blueprint/internal/blueprint_persistence.py=1
 polaris/cells/context/catalog/internal/descriptor_pack_generator.py=1
 polaris/cells/llm/evaluation/internal/baseline_library.py=1
 polaris/cells/roles/kernel/internal/events.py=1
-polaris/cells/roles/kernel/internal/patch_kernel.py=1
 polaris/cells/roles/kernel/internal/tool_gateway.py=1
 polaris/cells/roles/runtime/internal/session_orchestrator.py=1
 polaris/cells/roles/session/internal/artifact_service.py=1

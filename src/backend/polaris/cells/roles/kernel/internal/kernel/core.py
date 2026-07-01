@@ -65,8 +65,6 @@ from polaris.kernelone.trace import get_tracer
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
-    from polaris.cells.roles.kernel.internal._tool_gateway_di import _DelegatingToolGateway
-    from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
     from polaris.cells.roles.kernel.public.contracts import ToolGatewayPort
     from polaris.cells.roles.kernel.services.contracts import (
         CellToolExecutorPort,
@@ -1340,91 +1338,6 @@ class RoleExecutionKernel:
         if suppress_tool_policy:
             options["include_tool_policy"] = False
         return options
-
-    def _create_gateway(
-        self,
-        profile: RoleProfile,
-        request: RoleTurnRequest,
-    ) -> RoleToolGateway | _DelegatingToolGateway:
-        """Create one per-request tool gateway (委托给 KernelToolExecutor)."""
-        from polaris.cells.roles.kernel.internal.kernel.tool_executor import KernelToolExecutor
-
-        executor = KernelToolExecutor(self, self.workspace)
-        return executor.create_gateway(profile, request, self._tool_gateway)
-
-    async def _execute_tools(
-        self, profile: RoleProfile, request: RoleTurnRequest, tool_calls: list[ToolCallResult]
-    ) -> list[dict[str, Any]]:
-        """执行工具调用（委托给 KernelToolExecutor）"""
-        from polaris.cells.roles.kernel.internal.kernel.tool_executor import KernelToolExecutor
-
-        executor = KernelToolExecutor(self, self.workspace)
-        return await executor.execute_tools(profile, request, tool_calls, self._tool_gateway)
-
-    def _split_tool_calls_by_write_budget(
-        self,
-        role_id: str,
-        tool_calls: list[ToolCallResult],
-    ) -> tuple[list[ToolCallResult], list[ToolCallResult], int]:
-        """Split tool calls by write budget（委托给 KernelToolExecutor）"""
-        from polaris.cells.roles.kernel.internal.kernel.tool_executor import KernelToolExecutor
-
-        return KernelToolExecutor.split_tool_calls_by_write_budget(role_id, tool_calls)
-
-    def _emit_tool_execute_events(
-        self,
-        profile: RoleProfile,
-        run_id: str,
-        task_id: str | None,
-        attempt: int,
-        mode_value: str,
-        tool_calls: list[ToolCallResult],
-    ) -> None:
-        """发射工具执行前事件（委托给 KernelToolExecutor）"""
-        from polaris.cells.roles.kernel.internal.kernel.tool_executor import KernelToolExecutor
-
-        executor = KernelToolExecutor(self, self.workspace)
-        executor.emit_tool_execute_events(profile, run_id, task_id, attempt, mode_value, tool_calls, self._emit_event)
-
-    def _emit_tool_result_events_and_collect_errors(
-        self,
-        profile: RoleProfile,
-        run_id: str,
-        task_id: str | None,
-        attempt: int,
-        mode_value: str,
-        tool_calls: list[ToolCallResult],
-        executed_tool_results: list[dict[str, Any]],
-    ) -> tuple[list[str], list[dict[str, Any]]]:
-        """发射工具结果事件并收集错误（委托给 KernelToolExecutor）"""
-        from polaris.cells.roles.kernel.internal.kernel.tool_executor import KernelToolExecutor
-
-        executor = KernelToolExecutor(self, self.workspace)
-        return executor.emit_tool_result_events_and_collect_errors(
-            profile, run_id, task_id, attempt, mode_value, tool_calls, executed_tool_results, self._emit_event
-        )
-
-    @staticmethod
-    def _append_deferred_notice(
-        deferred_tool_calls: list[ToolCallResult],
-        write_call_limit: int,
-        executed_tool_results: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """追加 deferred notice（委托给 KernelToolExecutor）"""
-        from polaris.cells.roles.kernel.internal.kernel.tool_executor import KernelToolExecutor
-
-        return KernelToolExecutor.append_deferred_notice(deferred_tool_calls, write_call_limit, executed_tool_results)
-
-    @staticmethod
-    def _log_deferred_write_calls(
-        role_id: str,
-        deferred_tool_calls: list[ToolCallResult],
-        write_call_limit: int,
-    ) -> None:
-        """记录 deferred write calls（委托给 KernelToolExecutor）"""
-        from polaris.cells.roles.kernel.internal.kernel.tool_executor import KernelToolExecutor
-
-        KernelToolExecutor.log_deferred_write_calls(role_id, deferred_tool_calls, write_call_limit)
 
     def _parse_content_and_thinking_tool_calls(
         self,

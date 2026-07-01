@@ -928,7 +928,7 @@ class TestRoleExecutionKernel:
             message="执行写入",
             max_retries=0,
         )
-        results = await kernel._execute_tools(profile, request, calls)
+        results = await te_module.KernelToolExecutor(kernel, kernel.workspace).execute_tools(profile, request, calls)
 
         assert isinstance(results, list)
         assert len(results) == 1
