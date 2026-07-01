@@ -3,7 +3,7 @@
 This module owns the non-streaming RoleExecutionKernel run loop around
 TransactionKernel execution: prompt setup, context preflight, retry prompt
 construction, quality validation, metrics, and final RoleTurnResult projection.
-The public ``RoleExecutionKernel`` class remains the API facade only.
+The public ``RoleExecutionKernel`` class remains the API shell only.
 """
 
 from __future__ import annotations
