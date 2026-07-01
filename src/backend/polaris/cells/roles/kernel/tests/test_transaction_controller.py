@@ -21,13 +21,15 @@ import pytest
 from polaris.cells.roles.kernel.internal.kernel.turn_execution import _director_task_boundary_verdict
 from polaris.cells.roles.kernel.internal.metrics import MetricsCollector
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
+from polaris.cells.roles.kernel.internal.transaction.delivery_intent_resolver import (
+    enforce_explicit_materialize_delivery_marker,
+)
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import (
     CompletionEvent,
     TransactionConfig,
     TurnTransactionController,
-    _enforce_explicit_materialize_delivery_marker,
 )
 from polaris.cells.roles.kernel.public.turn_contracts import FinalizeMode, TurnDecisionKind
 from polaris.cells.storage.layout.public.service import resolve_polaris_roots
@@ -102,7 +104,7 @@ def test_director_task_boundary_verdict_skips_non_director(tmp_path: Path) -> No
 
 class TestExplicitDeliveryModeMarker:
     def test_materialize_marker_overrides_analyze_contract(self) -> None:
-        contract = _enforce_explicit_materialize_delivery_marker(
+        contract = enforce_explicit_materialize_delivery_marker(
             "[mode:materialize]\nCreate worker_1.txt",
             DeliveryContract(
                 mode=DeliveryMode.ANALYZE_ONLY,
@@ -125,7 +127,7 @@ class TestExplicitDeliveryModeMarker:
             allow_inline_code=True,
             allow_patch_proposal=False,
         )
-        contract = _enforce_explicit_materialize_delivery_marker("Analyze the architecture", original)
+        contract = enforce_explicit_materialize_delivery_marker("Analyze the architecture", original)
 
         assert contract is original
         assert contract.mode == DeliveryMode.ANALYZE_ONLY

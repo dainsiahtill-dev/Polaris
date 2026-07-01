@@ -3,15 +3,9 @@
 # -*- coding: utf-8 -*-
 UTF-8 编码验证: 本文所有文本使用 UTF-8
 
-Free-function implementations behind the delivery/intent helpers owned by
-:class:`TurnTransactionController`. The controller keeps thin static/class
-entrypoints delegating here so the by-class call sites
-(``TurnTransactionController._apply_delivery_mode_filter`` /
-``._inherit_materialize_from_history``) and canonical package-level
-``_enforce_explicit_materialize_delivery_marker`` symbol keep their behaviour.
-
-Bodies moved verbatim from ``turn_transaction_controller.py``; only ``self``/
-``cls`` plumbing was replaced by explicit arguments.
+Canonical delivery/intent helper implementations owned by the transaction
+package. Controller call sites consume this module for delivery-mode parsing,
+explicit materialization markers, and continuation intent inheritance.
 """
 
 from __future__ import annotations

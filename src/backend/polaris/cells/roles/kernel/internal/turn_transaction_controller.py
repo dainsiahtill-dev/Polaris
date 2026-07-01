@@ -97,11 +97,6 @@ from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract_resolver import (
     resolve_turn_delivery_contract,
 )
-from polaris.cells.roles.kernel.internal.transaction.delivery_intent_resolver import (
-    _EXPLICIT_MATERIALIZE_MODE_MARKERS,
-    enforce_explicit_materialize_delivery_marker as _enforce_explicit_materialize_delivery_marker,
-    has_explicit_materialize_delivery_marker as _has_explicit_materialize_delivery_marker,
-)
 from polaris.cells.roles.kernel.internal.transaction.final_answer_gates import (
     evaluate_materialize_violation_gate,
     evaluate_recon_required_gate,
@@ -137,22 +132,7 @@ from polaris.cells.roles.kernel.public.turn_events import (
 
 logger = logging.getLogger(__name__)
 
-# Backward-compatible re-exports. Canonical homes:
-#   transaction.delivery_intent_resolver — materialize-marker helpers
-#   transaction.correlation              — correlation ContextVars
-# Listed in __all__ so they remain importable from this module (tests import
-# ``_enforce_explicit_materialize_delivery_marker`` here) and so ruff treats the
-# imports as intentional re-exports rather than unused.
-__all__ = [
-    "_EXPLICIT_MATERIALIZE_MODE_MARKERS",
-    "_TURN_PARENT_SPAN_ID_CONTEXT",
-    "_TURN_REQUEST_ID_CONTEXT",
-    "_TURN_SPAN_ID_CONTEXT",
-    "TransactionConfig",
-    "TurnTransactionController",
-    "_enforce_explicit_materialize_delivery_marker",
-    "_has_explicit_materialize_delivery_marker",
-]
+__all__ = ["TransactionConfig", "TurnTransactionController"]
 
 _MONITORING_METRIC_KEYS: tuple[str, ...] = (
     "transaction_kernel.violation_count",
