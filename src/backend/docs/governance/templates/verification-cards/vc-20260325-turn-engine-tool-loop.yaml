@@ -43,8 +43,8 @@ assumptions:
     statement: "StreamEventType 已在 contracts.py 中定义，只是 executor.py 漏了导入"
     status: verified_true
     evidence: >
-      shared_contracts.py: StreamEventType 定义
-      contracts.py: from ..shared_contracts import StreamEventType（re-export）
+      contracts/core.py: StreamEventType 定义
+      contracts.py: from ..contracts.core import StreamEventType（re-export）
       executor.py: from .contracts import [...]（漏了 StreamEventType）
       → 验证方法：读 contracts.py line 1-30 和 executor.py line 1-40
 

@@ -487,11 +487,13 @@ rules:
   - id: kernelone_llm_contract_reexport_parity
     severity: blocker
     description: >
-      Shared llm contracts re-exported through engine contracts must stay in
+      Core llm contracts re-exported through engine/toolkit contracts must stay in
       parity, and executor must import the required stream contract symbols.
     evidence:
-      - polaris/kernelone/llm/shared_contracts.py
+      - polaris/kernelone/llm/contracts/core.py
+      - polaris/kernelone/llm/contracts/__init__.py
       - polaris/kernelone/llm/engine/contracts.py
+      - polaris/kernelone/llm/toolkit/contracts.py
       - polaris/kernelone/llm/engine/executor.py
       - tests/architecture/test_kernelone_llm_contract_reexports.py
     current_status: enforced_non_regressive

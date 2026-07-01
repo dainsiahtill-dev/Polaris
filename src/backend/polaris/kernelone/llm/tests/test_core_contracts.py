@@ -1,4 +1,4 @@
-"""Tests for polaris.kernelone.llm.shared_contracts module.
+"""Tests for polaris.kernelone.llm.contracts.core module.
 
 Covers:
 - TaskType enum values
@@ -15,7 +15,7 @@ Covers:
 from __future__ import annotations
 
 from polaris.kernelone.errors import ErrorCategory
-from polaris.kernelone.llm.shared_contracts import (
+from polaris.kernelone.llm.contracts.core import (
     AIRequest,
     AIResponse,
     CompressionResult,

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from polaris.kernelone.llm.contracts import CompressionResult, ModelSpec, TokenBudgetDecision
 from polaris.kernelone.llm.engine.prompt_budget import CompressionRouter, TokenBudgetManager
-from polaris.kernelone.llm.shared_contracts import CompressionResult, ModelSpec, TokenBudgetDecision
 
 
 class TestCompressionRouterInit:

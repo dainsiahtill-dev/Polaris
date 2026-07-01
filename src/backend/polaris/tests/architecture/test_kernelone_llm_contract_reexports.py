@@ -1,10 +1,10 @@
 """G-4 re-export parity gate for KernelOne LLM contracts.
 
 This module enforces that:
-1. All shared types live in shared_contracts.py (single source of truth).
+1. All LLM core types live in contracts/core.py (single source of truth).
 2. engine/contracts.py and toolkit/contracts.py re-export them without modification.
 3. Consumer files (executor.py, model_catalog.py) import from contracts,
-   never directly from shared_contracts.
+   never directly from contracts.core.
 4. StreamEventType values are identical across all re-export layers.
 
 Audit target: polaris/kernelone/llm/
@@ -15,7 +15,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from polaris.kernelone.llm import shared_contracts
+from polaris.kernelone.llm.contracts import core as core_contracts
 from polaris.kernelone.llm.engine import contracts as engine_contracts
 from polaris.kernelone.llm.engine.executor import AIExecutor
 from polaris.kernelone.llm.toolkit import contracts as toolkit_contracts
@@ -24,7 +24,9 @@ BACKEND_ROOT = Path(__file__).resolve().parents[3]
 LLM_ENGINE_ROOT = BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "engine"
 POLARIS_ROOT = BACKEND_ROOT / "polaris"
 ROLES_KERNEL_ROOT = BACKEND_ROOT / "polaris" / "cells" / "roles" / "kernel"
-ALLOWED_SHARED_CONTRACT_IMPORTERS = {
+CORE_CONTRACT_OWNER = BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "contracts" / "core.py"
+ALLOWED_CORE_CONTRACT_IMPORTERS = {
+    BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "contracts" / "__init__.py",
     BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "engine" / "contracts.py",
     BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "toolkit" / "contracts.py",
 }
@@ -58,8 +60,6 @@ def _imports_forbidden_module(file_path: Path, forbidden_module: str) -> bool:
                     return True
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
-            if node.level > 0 and module == "shared_contracts":
-                return True
             if module == forbidden_module or module.startswith(f"{forbidden_module}."):
                 return True
     return False
@@ -92,26 +92,26 @@ def test_executor_module_import_succeeds() -> None:
 
 def test_stream_event_type_reexport_identity() -> None:
     """engine.contracts must re-export (not redefine) StreamEventType."""
-    assert engine_contracts.StreamEventType is shared_contracts.StreamEventType
+    assert engine_contracts.StreamEventType is core_contracts.StreamEventType
 
 
 def test_toolkit_contracts_stream_event_type_identity() -> None:
     """toolkit.contracts must re-export the same StreamEventType."""
-    assert toolkit_contracts.StreamEventType is shared_contracts.StreamEventType
+    assert toolkit_contracts.StreamEventType is core_contracts.StreamEventType
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test 3: engine/contracts.__all__ covers all shared_contracts types
+# Test 3: engine/contracts.__all__ covers all contracts.core types
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_engine_contracts_all_includes_shared_types() -> None:
-    """engine/contracts.py __all__ must list every type from shared_contracts.__all__.
+def test_engine_contracts_all_includes_core_types() -> None:
+    """engine/contracts.py __all__ must list every type from contracts.core.__all__.
 
     Without __all__ the re-export imports are invisible to ruff --fix,
     which will delete them as "unused". This test detects that regression.
     """
-    shared = set(shared_contracts.__all__)
+    shared = set(core_contracts.__all__)
     engine_all = set(getattr(engine_contracts, "__all__", ()))
     missing = shared - engine_all
     assert not missing, (
@@ -120,24 +120,24 @@ def test_engine_contracts_all_includes_shared_types() -> None:
     )
 
 
-def test_toolkit_contracts_all_includes_shared_types() -> None:
-    """toolkit/contracts.py __all__ must list every shared contract type."""
+def test_toolkit_contracts_all_includes_core_types() -> None:
+    """toolkit/contracts.py __all__ must list every core contract type."""
 
-    shared = set(shared_contracts.__all__)
+    shared = set(core_contracts.__all__)
     toolkit_all = set(getattr(toolkit_contracts, "__all__", ()))
     missing = shared - toolkit_all
     assert not missing, (
         f"toolkit/contracts.py __all__ is missing re-exported shared types: {sorted(missing)}. "
-        "Add them to __all__ so toolkit consumers do not drift from shared_contracts."
+        "Add them to __all__ so toolkit consumers do not drift from contracts.core."
     )
 
 
-def test_shared_contract_reexport_identity_across_engine_and_toolkit() -> None:
-    """Every shared contract must be the same object through both re-export layers."""
+def test_core_contract_reexport_identity_across_engine_and_toolkit() -> None:
+    """Every core contract must be the same object through both re-export layers."""
 
     mismatches: list[str] = []
-    for name in shared_contracts.__all__:
-        shared_obj = getattr(shared_contracts, name)
+    for name in core_contracts.__all__:
+        shared_obj = getattr(core_contracts, name)
         engine_obj = getattr(engine_contracts, name, None)
         toolkit_obj = getattr(toolkit_contracts, name, None)
         if engine_obj is not shared_obj:
@@ -145,53 +145,53 @@ def test_shared_contract_reexport_identity_across_engine_and_toolkit() -> None:
         if toolkit_obj is not shared_obj:
             mismatches.append(f"toolkit.contracts.{name}")
 
-    assert not mismatches, f"shared contract re-export drift detected: {mismatches}"
+    assert not mismatches, f"core contract re-export drift detected: {mismatches}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test 4: consumer files import shared types via contracts, not directly
+# Test 4: consumer files import core types via contracts, not directly
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def test_executor_imports_stream_event_type_from_contracts() -> None:
-    """executor.py must import StreamEventType from .contracts, not shared_contracts."""
+    """executor.py must import StreamEventType from .contracts, not contracts.core."""
     executor = BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "engine" / "executor.py"
     names = _imported_names(executor, level=1, module="contracts")
     assert "StreamEventType" in names, (
         "executor.py must import StreamEventType from .contracts to keep "
-        "shared_contracts -> contracts -> executor parity explicit."
+        "contracts.core -> contracts -> executor parity explicit."
     )
 
 
 def test_model_catalog_imports_modelspec_from_contracts() -> None:
-    """model_catalog.py must import ModelSpec from .contracts, not shared_contracts."""
+    """model_catalog.py must import ModelSpec from .contracts, not contracts.core."""
     catalog = BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "engine" / "model_catalog.py"
     names = _imported_names(catalog, level=1, module="contracts")
     assert "ModelSpec" in names, (
         "model_catalog.py must import ModelSpec from .contracts to keep "
-        "shared_contracts -> contracts -> model_catalog parity explicit."
+        "contracts.core -> contracts -> model_catalog parity explicit."
     )
 
 
-def test_engine_production_code_does_not_import_shared_contracts_directly() -> None:
-    """Engine runtime code must consume shared contracts through engine.contracts."""
+def test_engine_production_code_does_not_import_core_contracts_directly() -> None:
+    """Engine runtime code must consume core contracts through engine.contracts."""
 
-    forbidden = "polaris.kernelone.llm.shared_contracts"
+    forbidden = "polaris.kernelone.llm.contracts.core"
     findings: list[str] = []
     for path in LLM_ENGINE_ROOT.rglob("*.py"):
         if "tests" in path.parts or path.name == "contracts.py":
             continue
         text = path.read_text(encoding="utf-8")
-        if forbidden in text or "from ..shared_contracts import" in text:
+        if forbidden in text or "from ..contracts.core import" in text:
             findings.append(str(path.relative_to(BACKEND_ROOT)))
 
     assert not findings, f"engine code bypasses engine.contracts re-export boundary: {findings}"
 
 
-def test_roles_kernel_production_code_does_not_import_shared_contracts_directly() -> None:
-    """roles.kernel must consume shared LLM types through engine.contracts."""
+def test_roles_kernel_production_code_does_not_import_core_contracts_directly() -> None:
+    """roles.kernel must consume LLM core types through engine.contracts."""
 
-    forbidden = "polaris.kernelone.llm.shared_contracts"
+    forbidden = "polaris.kernelone.llm.contracts.core"
     findings = [
         str(path.relative_to(BACKEND_ROOT))
         for path in _production_python_files(ROLES_KERNEL_ROOT)
@@ -201,37 +201,37 @@ def test_roles_kernel_production_code_does_not_import_shared_contracts_directly(
     assert not findings, f"roles.kernel bypasses engine.contracts re-export boundary: {findings}"
 
 
-def test_only_contract_modules_import_shared_contracts_directly() -> None:
+def test_only_contract_modules_import_core_contracts_directly() -> None:
     """Production code must not bypass the LLM contract re-export boundary."""
 
-    forbidden = "polaris.kernelone.llm.shared_contracts"
+    forbidden = "polaris.kernelone.llm.contracts.core"
     findings = [
         str(path.relative_to(BACKEND_ROOT))
         for path in _production_python_files(POLARIS_ROOT)
-        if path.name != "shared_contracts.py"
-        and path not in ALLOWED_SHARED_CONTRACT_IMPORTERS
+        if path != CORE_CONTRACT_OWNER
+        and path not in ALLOWED_CORE_CONTRACT_IMPORTERS
         and _imports_forbidden_module(path, forbidden)
     ]
 
-    assert not findings, f"production code imports shared_contracts directly instead of a contract surface: {findings}"
+    assert not findings, f"production code imports contracts.core directly instead of a contract surface: {findings}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 5: StreamEventType value-level parity — catches new enum members
-#        that are added to shared_contracts but not handled by consumers
+#        that are added to contracts.core but not handled by consumers
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def test_stream_event_type_values_match_across_layers() -> None:
-    """All enum values defined in shared_contracts.StreamEventType must exist
+    """All enum values defined in contracts.core StreamEventType must exist
     in both engine.contracts and toolkit.contracts.
 
-    If a new value (e.g. AUDIO_CHUNK) is added to shared_contracts but not
+    If a new value (e.g. AUDIO_CHUNK) is added to contracts.core but not
     imported by engine or toolkit contracts, consumer code that matches on
     StreamEventType may silently ignore it. This test forces an explicit
     decision at the re-export boundary.
     """
-    shared_values = {e.value for e in shared_contracts.StreamEventType}
+    shared_values = {e.value for e in core_contracts.StreamEventType}
     engine_values = {e.value for e in engine_contracts.StreamEventType}
     toolkit_values = {e.value for e in toolkit_contracts.StreamEventType}
 
@@ -251,10 +251,10 @@ def test_stream_event_type_values_match_across_layers() -> None:
 def test_stream_event_type_member_count() -> None:
     """Sanity-check: StreamEventType must have at least the current 7 values.
 
-    If a value is accidentally removed from shared_contracts, this test fails.
+    If a value is accidentally removed from contracts.core, this test fails.
     """
-    count = len(list(shared_contracts.StreamEventType))
+    count = len(list(core_contracts.StreamEventType))
     assert count >= 7, (
         f"StreamEventType has {count} values (expected ≥7). "
-        "A value may have been accidentally removed from shared_contracts.py."
+        "A value may have been accidentally removed from contracts/core.py."
     )

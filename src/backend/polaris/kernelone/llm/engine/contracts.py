@@ -13,8 +13,8 @@ from typing import Any
 from polaris.kernelone.errors import ErrorCategory
 
 # Re-export shared types so consumers can import from engine.contracts
-# without needing a direct dependency on shared_contracts.
-from ..shared_contracts import (
+# without needing a direct dependency on contracts.core.
+from ..contracts.core import (
     AIRequest,
     AIResponse,
     CompressionResult,
@@ -438,7 +438,7 @@ AIStreamGenerator = AsyncGenerator[AIStreamEvent, None]
 # EvaluationCase, EvaluationResult, EvaluationSuiteResult, EvaluationReport,
 # EvaluationRequest, AIStreamGenerator) are also exported here.
 __all__ = [
-    # Re-exported shared types (single source of truth: shared_contracts)
+    # Re-exported shared types (single source of truth: contracts.core)
     "AIRequest",
     "AIResponse",
     # Engine-specific types

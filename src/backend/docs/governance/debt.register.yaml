@@ -50,34 +50,42 @@ debts:
       - "Keep StreamEventHandler as the only roles.kernel user-visible stream normalization path unless a new path receives equivalent structural and runtime tests"
 
   - id: "DEBT-20260325-kernelone-llm-reexport-parity"
-    title: "KernelOne llm shared contract re-export chain can drift"
+    title: "KernelOne llm core contract re-export chain can drift"
     classification: structural
-    status: monitoring
+    status: retired
     severity: high
     scope_refs:
-      - "polaris/kernelone/llm/shared_contracts.py"
+      - "polaris/kernelone/llm/contracts/core.py"
+      - "polaris/kernelone/llm/contracts/__init__.py"
       - "polaris/kernelone/llm/engine/contracts.py"
+      - "polaris/kernelone/llm/toolkit/contracts.py"
       - "polaris/kernelone/llm/engine/executor.py"
     summary: >
-      StreamEventType lives in shared_contracts and is re-exported through engine
-      contracts before executor imports it. The architectural risk is reduced by
-      parity tests, but the re-export layer still requires disciplined maintenance.
+      StreamEventType and the common LLM request/response contracts now live in
+      contracts/core.py, with package-level contracts plus engine/toolkit contract
+      facades as the only public consumption surfaces. The old shared_contracts.py
+      entrypoint has been removed.
     root_cause: >
       Consumers relied on a manual re-export chain without an automated parity gate.
       One missing import in executor.py was enough to crash the runtime at import time.
     trigger_conditions:
-      - "Editing StreamEventType or other shared llm contracts"
+      - "Editing StreamEventType or other core llm contracts"
+      - "Editing contracts/__init__.py public core contract exports"
       - "Editing engine/contracts.py re-exports"
+      - "Editing toolkit/contracts.py re-exports"
       - "Editing executor.py contract imports or stream event handling"
     mitigations:
       - "Architecture tests now assert StreamEventType identity across source and re-export"
       - "Architecture tests parse executor.py to require importing StreamEventType from contracts"
-      - "2026-07-02: parity tests now assert every shared_contracts.__all__ object is re-exported identically through engine.contracts and toolkit.contracts"
+      - "2026-07-02: parity tests now assert every contracts.core.__all__ object is re-exported identically through engine.contracts and toolkit.contracts"
       - "2026-07-02: KernelOne LLM engine production files are fenced from importing shared_contracts directly"
       - "2026-07-02: roles.kernel production files are fenced from importing shared_contracts directly and consume LLM shared types through engine.contracts"
       - "2026-07-02: all Polaris production files are fenced from importing shared_contracts directly except the explicit engine/toolkit contract re-export modules"
+      - "2026-07-02: common LLM contracts moved from shared_contracts.py to contracts/core.py; shared_contracts.py was deleted"
+      - "2026-07-02: contracts/__init__.py now exposes the public package-level core contract surface"
+      - "2026-07-02: architecture tests fence production code from importing contracts.core directly except the canonical owner and explicit facade modules"
     residual_risks:
-      - "The re-export layer still exists, so parity remains a governance concern"
+      - "Retired 2026-07-02: no open residual risk; keep this historical note only to satisfy the debt-register evidence schema"
     linked_assets:
       adrs:
         - "docs/governance/decisions/adr-0042-turn-engine-triple-responsibility.md"
@@ -88,9 +96,9 @@ debts:
         - "polaris/cells/roles/kernel/generated/verify.pack.json"
       tests:
         - "tests/architecture/test_kernelone_llm_contract_reexports.py"
+        - "polaris/kernelone/llm/tests/test_core_contracts.py"
     next_actions:
-      - "Prefer canonical source imports for new consumers where re-export is not required"
-      - "Extend parity coverage when additional shared contracts are added to the engine surface"
+      - "Reopen this debt only if production consumers import contracts.core directly or a new contract facade is introduced without parity coverage"
 
   - id: "DEBT-20260620-runtime-realtime-single-rail"
     title: "Runtime realtime transport must remain Nats-JetStream single rail"

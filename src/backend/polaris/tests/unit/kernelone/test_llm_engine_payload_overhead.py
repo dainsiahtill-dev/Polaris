@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from polaris.kernelone.llm.contracts import ModelSpec
 from polaris.kernelone.llm.engine._executor_base import (
     clamp_output_tokens_to_window,
     estimate_payload_overhead_tokens,
 )
 from polaris.kernelone.llm.engine.prompt_budget import TokenBudgetManager
-from polaris.kernelone.llm.shared_contracts import ModelSpec
 
 
 def _spec(window: int = 16384) -> ModelSpec:

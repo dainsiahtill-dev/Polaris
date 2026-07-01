@@ -3,7 +3,13 @@
 # -*- coding: utf-8 -*-
 UTF-8 编码验证: 本文所有文本使用 UTF-8
 
-This subdirectory contains the provider-level and tool contracts.
+This package contains the canonical KernelOne LLM core and tool contracts.
+
+For core request/response contracts, import from this package or from the
+domain facade closest to your layer:
+    from polaris.kernelone.llm.contracts import AIRequest, AIResponse
+    from polaris.kernelone.llm.engine.contracts import AIRequest
+    from polaris.kernelone.llm.toolkit.contracts import ProviderPort
 
 For tool contracts, import from:
     from polaris.kernelone.llm.contracts.tool import (
@@ -20,7 +26,17 @@ For tool contracts, import from:
 
 from __future__ import annotations
 
-# Re-export tool contracts from tool.py
+from polaris.kernelone.llm.contracts.core import (
+    AIRequest,
+    AIResponse,
+    CompressionResult,
+    ModelSpec,
+    ProviderFormatter,
+    StreamEventType,
+    TaskType,
+    TokenBudgetDecision,
+    Usage,
+)
 from polaris.kernelone.llm.contracts.tool import (
     CellToolExecutorPort,
     ToolCall,
@@ -33,7 +49,15 @@ from polaris.kernelone.llm.contracts.tool import (
 )
 
 __all__ = [
+    "AIRequest",
+    "AIResponse",
     "CellToolExecutorPort",
+    "CompressionResult",
+    "ModelSpec",
+    "ProviderFormatter",
+    "StreamEventType",
+    "TaskType",
+    "TokenBudgetDecision",
     "ToolCall",
     "ToolCallParserPort",
     "ToolExecutionResult",
@@ -41,4 +65,5 @@ __all__ = [
     "ToolPolicy",
     "ToolRoundOutcome",
     "ToolRoundRequest",
+    "Usage",
 ]

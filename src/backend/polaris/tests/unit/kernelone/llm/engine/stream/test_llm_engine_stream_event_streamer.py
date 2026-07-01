@@ -7,13 +7,13 @@ import json
 from unittest.mock import patch
 
 import pytest
+from polaris.kernelone.llm.contracts import StreamEventType
 from polaris.kernelone.llm.engine.contracts import AIStreamEvent
 from polaris.kernelone.llm.engine.stream.event_streamer import (
     EventStreamer,
     SerializationFormat,
     infer_channel,
 )
-from polaris.kernelone.llm.shared_contracts import StreamEventType
 
 
 class TestInferChannel:

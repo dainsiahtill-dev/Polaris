@@ -165,7 +165,7 @@ class TestExtractJsonObject:
 
 class TestNormalizeResponse:
     def test_success(self) -> None:
-        from polaris.kernelone.llm.shared_contracts import AIResponse
+        from polaris.kernelone.llm.contracts import AIResponse
 
         payload = {"choices": [{"message": {"content": "hello"}}]}
         result = ResponseNormalizer.normalize_response(payload, latency_ms=100, trace_id="t1")
@@ -176,7 +176,7 @@ class TestNormalizeResponse:
         assert result.trace_id == "t1"
 
     def test_failure_on_exception(self) -> None:
-        from polaris.kernelone.llm.shared_contracts import AIResponse
+        from polaris.kernelone.llm.contracts import AIResponse
 
         # Pass something that causes extract_text to fail weirdly
         with patch.object(ResponseNormalizer, "extract_text", side_effect=ValueError("boom")):

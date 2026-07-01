@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from polaris.kernelone.llm.contracts import StreamEventType
 from polaris.kernelone.llm.engine.contracts import AIStreamEvent
 from polaris.kernelone.llm.engine.stream.config import LLMStreamResult, StreamState
 from polaris.kernelone.llm.engine.stream.result_tracker import _StreamResultTracker
-from polaris.kernelone.llm.shared_contracts import StreamEventType
 
 
 class TestStreamResultTrackerInit:

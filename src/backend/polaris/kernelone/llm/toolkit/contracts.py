@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.errors import ErrorCategory
 
-from ..shared_contracts import (
+from ..contracts.core import (
     AIRequest,
     AIResponse,
     CompressionResult,

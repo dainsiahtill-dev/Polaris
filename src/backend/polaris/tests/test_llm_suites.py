@@ -15,8 +15,8 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from polaris.kernelone.llm.contracts import Usage
 from polaris.kernelone.llm.providers.base_provider import BaseProvider
-from polaris.kernelone.llm.shared_contracts import Usage
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult
 
 # Direct import from internal module path using __import__ to bypass package __init__

@@ -30,6 +30,8 @@ from polaris.kernelone.llm.engine.resilience import (
     retry_with_jitter,
 )
 
+_THREADING_LOCK_TYPE = type(threading.Lock())
+
 
 class TestGlobalSemaphoreThreadSafety:
     """测试全局信号量的线程安全初始化"""
@@ -85,7 +87,7 @@ class TestWorkspaceExecutorManagerLockConsistency:
         manager = WorkspaceExecutorManager()
         # 验证只有一个锁
         assert hasattr(manager, "_lock")
-        assert isinstance(manager._lock, threading.Lock)
+        assert isinstance(manager._lock, _THREADING_LOCK_TYPE)
         # 不应存在 _sync_lock 或 asyncio.Lock
         assert not hasattr(manager, "_sync_lock")
 
@@ -133,8 +135,6 @@ class TestCancelledErrorPropagation:
         """AIExecutor.invoke 应传播 CancelledError"""
         # 重置 executor manager
         reset_executor_manager()
-
-        from polaris.kernelone.llm.shared_contracts import AIRequest, TaskType
 
         executor = AIExecutor(workspace=".")
         request = AIRequest(

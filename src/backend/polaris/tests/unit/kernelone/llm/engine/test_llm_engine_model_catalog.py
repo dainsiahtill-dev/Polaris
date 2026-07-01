@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from polaris.kernelone.llm.contracts import ModelSpec
 from polaris.kernelone.llm.engine.model_catalog import (
     ModelCatalog,
     _iter_longest_prefix_matches,
@@ -13,7 +14,6 @@ from polaris.kernelone.llm.engine.model_catalog import (
     _normalize_model_key,
     _to_int,
 )
-from polaris.kernelone.llm.shared_contracts import ModelSpec
 
 
 class TestToInt:

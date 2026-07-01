@@ -1,8 +1,12 @@
-"""Shared LLM contracts reused by multiple KernelOne subsystems.
+"""KernelOne LLM core contracts reused by engine and toolkit.
 
-This module is the single source of truth for the common request/response
-contracts that both ``engine`` and ``toolkit`` depend on. It exists to avoid
-contract drift and circular imports between the two packages.
+This module is the canonical owner for common request/response, model, token
+budget, and stream-event contracts shared by ``engine`` and ``toolkit``.
+Production consumers should normally import these types through the domain
+facade they already depend on, such as ``engine.contracts``,
+``toolkit.contracts``, or the package-level ``polaris.kernelone.llm.contracts``
+surface. Keeping the owner here avoids an engine <-> toolkit dependency cycle
+while still giving architecture tests one explicit source of truth to guard.
 
 ---
 边界规则 (TypedDict vs Dataclass):

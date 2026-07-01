@@ -104,7 +104,7 @@
   │  │  → request_options["tool_choice"] = "auto"                            │  │
   │  └────────────────────────────────────────────────────────────────────────┘  │
   │                                                                              │
-  │  AIRequest (kernelone/llm/shared_contracts.py)                              │
+  │  AIRequest (kernelone/llm/contracts/core.py)                                │
   │  ┌────────────────────────────────────────────────────────────────────────┐  │
   │  │  task_type: TaskType.DIALOGUE                                         │  │
   │  │  role: profile.role_id                                                 │  │

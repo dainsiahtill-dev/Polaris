@@ -58,7 +58,7 @@ class DummyProvider(BaseProvider):
         return ModelListResult(ok=True, supported=True, models=[])
 
     def invoke(self, prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
-        from polaris.kernelone.llm.shared_contracts import Usage
+        from polaris.kernelone.llm.contracts import Usage
 
         return InvokeResult(ok=True, output="dummy", latency_ms=1, usage=Usage())
 
@@ -100,7 +100,7 @@ class AnotherDummyProvider(BaseProvider):
         return ModelListResult(ok=True, supported=True, models=[])
 
     def invoke(self, prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
-        from polaris.kernelone.llm.shared_contracts import Usage
+        from polaris.kernelone.llm.contracts import Usage
 
         return InvokeResult(ok=True, output="another_dummy", latency_ms=1, usage=Usage())
 

@@ -695,7 +695,7 @@ class TestContextStoreInvokeFailure:
     @staticmethod
     def _make_executor_with_mock_catalog() -> Any:
         """Create an AIExecutor with a mocked model_catalog so it doesn't need llm_config.json."""
-        from polaris.kernelone.llm.shared_contracts import ModelSpec
+        from polaris.kernelone.llm.contracts import ModelSpec
 
         class _FakeModelCatalog:
             def resolve(self, *args: Any, **kwargs: Any) -> ModelSpec:
