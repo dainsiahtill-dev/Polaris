@@ -1631,6 +1631,7 @@ cells:
       errors:
         - RoleAdaptersErrorV1
     depends_on:
+      - chief_engineer.blueprint
       - roles.kernel
       - roles.profile
       - roles.session

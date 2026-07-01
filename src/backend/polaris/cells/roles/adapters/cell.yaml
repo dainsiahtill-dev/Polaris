@@ -38,6 +38,7 @@ public_contracts:
   errors:
   - RoleAdaptersErrorV1
 depends_on:
+- chief_engineer.blueprint
 - director.execution
 - director.runtime
 - director.tasking
