@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T09:20:14.846435Z",
-  "source_hash": "e992852bc618fed3",
+  "generated_at": "2026-07-01T09:25:28.953410Z",
+  "source_hash": "a4079b43ea4592ff",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4942,6 +4942,25 @@
     },
     {
       "type": "class",
+      "name": "_Profile",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_transaction_failure_projection.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_conflict_surface",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_transaction_failure_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "test_tool_filter_conflict_result_records_projection",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_transaction_failure_projection.py"
+    },
+    {
+      "type": "class",
       "name": "_Request",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_transaction_invocation_setup.py",
@@ -5390,6 +5409,36 @@
       "name": "_build_effective_profile",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_factory.py"
+    },
+    {
+      "type": "function",
+      "name": "build_tool_filter_conflict_result",
+      "description": "Build a non-streaming RoleTurnResult for a tool-filter conflict.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_failure_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "build_transaction_execution_error_result",
+      "description": "Build a non-streaming RoleTurnResult for a TransactionKernel exception.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_failure_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "build_transaction_exception_metadata",
+      "description": "Record projection failure and build metadata for a TransactionKernel exception.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_failure_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "record_projection_failure",
+      "description": "Record failed projection feedback without letting telemetry break execution.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_failure_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "_profile_error_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_failure_projection.py"
     },
     {
       "type": "class",

@@ -22,17 +22,17 @@ Behavior notes:
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from polaris.cells.roles.kernel.internal.kernel.role_result_projection import role_turn_error_result
 from polaris.cells.roles.kernel.internal.kernel.stream_event_projection import StreamEventProjector
-from polaris.cells.roles.kernel.internal.kernel.tool_dispatch_projection import (
-    append_tool_dispatch_dropped_control_plane_events,
-    llm_metadata_from_ledger_on_error,
-)
 from polaris.cells.roles.kernel.internal.kernel.transaction_factory import create_transaction_kernel
+from polaris.cells.roles.kernel.internal.kernel.transaction_failure_projection import (
+    build_tool_filter_conflict_result,
+    build_transaction_exception_metadata,
+    build_transaction_execution_error_result,
+    publish_tool_filter_conflict_stream_event,
+)
 from polaris.cells.roles.kernel.internal.kernel.transaction_invocation_setup import build_transaction_invocation_setup
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_completion import (
     build_transaction_turn_completion_result,
@@ -82,32 +82,12 @@ async def execute_transaction_kernel_turn(
     runtime_tool_policy_audit = tool_surface.runtime_tool_policy_audit
     tool_filter_audit = tool_surface.tool_filter_audit
     if tool_surface.conflict_error:
-        try:
-            context_gateway.record_projection_outcome(
-                success=False,
-                tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
-            )
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            logger.debug("Projection outcome feedback failed after tool-filter conflict", exc_info=True)
-        filter_error_metadata: dict[str, Any] = {"tool_filter_audit": tool_filter_audit or {}}
-        if profile.provider_id:
-            filter_error_metadata["provider_id"] = str(profile.provider_id).strip()
-        if profile.model:
-            filter_error_metadata["model"] = str(profile.model).strip()
-        return role_turn_error_result(
-            error=tool_surface.conflict_error,
-            execution_stats={
-                "duration_ms": 0,
-                "llm_calls": 0,
-                "tool_calls": 0,
-                "transaction_kernel": True,
-                "tool_filter_blocked": True,
-                "tool_filter_status": "conflict",
-                **runtime_tool_policy_audit,
-            },
-            metadata=filter_error_metadata,
+        return build_tool_filter_conflict_result(
             profile=profile,
             fingerprint=fingerprint,
+            tool_surface=tool_surface,
+            context_gateway=context_gateway,
+            context_result=context_result,
         )
 
     try:
@@ -119,42 +99,19 @@ async def execute_transaction_kernel_turn(
         )
     except Exception as exc:
         logger.exception("TransactionKernel execute failed: turn_id=%s", turn_id)
-        try:
-            context_gateway.record_projection_outcome(
-                success=False,
-                tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
-            )
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            logger.debug("Projection outcome feedback failed after TransactionKernel error", exc_info=True)
-        error_metadata = llm_metadata_from_ledger_on_error(
-            getattr(exc, "turn_ledger", None),
+        return build_transaction_execution_error_result(
+            exc=exc,
+            role=role,
+            profile=profile,
+            request=request,
+            fingerprint=fingerprint,
+            turn_id=turn_id,
             messages=messages,
             tool_definitions=tool_definitions,
-        )
-        if bool(error_metadata.get("tool_dispatch_dropped")):
-            try:
-                append_tool_dispatch_dropped_control_plane_events(
-                    role=role,
-                    workspace=str(request.workspace or kernel.workspace or "."),
-                    profile=profile,
-                    request=request,
-                    turn_id=turn_id,
-                    error_metadata=error_metadata,
-                    reason=str(exc),
-                )
-            except (OSError, RuntimeError, TypeError, ValueError):
-                logger.debug("failed to append tool_dispatch_dropped ledger event", exc_info=True)
-        if profile.provider_id:
-            error_metadata["provider_id"] = str(profile.provider_id).strip()
-        if profile.model:
-            error_metadata["model"] = str(profile.model).strip()
-        if tool_filter_audit is not None:
-            error_metadata["tool_filter_audit"] = tool_filter_audit
-        return role_turn_error_result(
-            error=f"TransactionKernel execution failed: {exc}",
-            metadata=error_metadata,
-            profile=profile,
-            fingerprint=fingerprint,
+            tool_filter_audit=tool_filter_audit,
+            context_gateway=context_gateway,
+            context_result=context_result,
+            workspace=str(request.workspace or kernel.workspace or "."),
         )
 
     return build_transaction_turn_completion_result(
@@ -204,28 +161,16 @@ async def execute_transaction_kernel_stream(
     runtime_tool_policy_audit = tool_surface.runtime_tool_policy_audit
     tool_filter_audit = tool_surface.tool_filter_audit
     if tool_surface.conflict_error:
-        try:
-            context_gateway.record_projection_outcome(
-                success=False,
-                tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
-            )
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            logger.debug("Projection outcome feedback failed after stream tool-filter conflict", exc_info=True)
-        error_event: dict[str, Any] = {
-            "type": "error",
-            "error": tool_surface.conflict_error,
-            "error_type": "tool_schema_filter_conflict",
-            "turn_id": turn_id,
-            "metadata": {"tool_filter_audit": tool_filter_audit or {}},
-        }
-        await uep_publisher.publish_stream_event(
-            workspace=kernel.workspace or os.getcwd(),
-            run_id=stream_run_id,
+        yield await publish_tool_filter_conflict_stream_event(
+            workspace=kernel.workspace,
             role=role,
-            event_type="error",
-            payload=error_event,
+            stream_run_id=stream_run_id,
+            turn_id=turn_id,
+            tool_surface=tool_surface,
+            context_gateway=context_gateway,
+            context_result=context_result,
+            uep_publisher=uep_publisher,
         )
-        yield error_event
         return
 
     event_projector = StreamEventProjector(
@@ -252,31 +197,21 @@ async def execute_transaction_kernel_stream(
             ):
                 yield stream_event
         except Exception as exc:
-            try:
-                context_gateway.record_projection_outcome(
-                    success=False,
-                    tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
-                )
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                logger.debug("Projection outcome feedback failed after stream TransactionKernel error", exc_info=True)
-            error_metadata = llm_metadata_from_ledger_on_error(
-                getattr(exc, "turn_ledger", None),
+            build_transaction_exception_metadata(
+                exc=exc,
+                role=role,
+                profile=profile,
+                request=request,
+                turn_id=turn_id,
                 messages=messages,
                 tool_definitions=tool_definitions,
+                tool_filter_audit=tool_filter_audit,
+                context_gateway=context_gateway,
+                context_result=context_result,
+                workspace=str(request.workspace or kernel.workspace or "."),
+                projection_reason="stream TransactionKernel error",
+                dropped_ledger_reason="failed to append stream tool_dispatch_dropped ledger event",
             )
-            if bool(error_metadata.get("tool_dispatch_dropped")):
-                try:
-                    append_tool_dispatch_dropped_control_plane_events(
-                        role=role,
-                        workspace=str(request.workspace or kernel.workspace or "."),
-                        profile=profile,
-                        request=request,
-                        turn_id=turn_id,
-                        error_metadata=error_metadata,
-                        reason=str(exc),
-                    )
-                except (OSError, RuntimeError, TypeError, ValueError):
-                    logger.debug("failed to append stream tool_dispatch_dropped ledger event", exc_info=True)
             raise
 
     async for event in _iter_transaction_stream_events():
