@@ -15,7 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
+from polaris.cells.roles.kernel.internal.transaction.read_bootstrap_progress import (
     _resolve_materialization_workspace,
     _workspace_materialization_fingerprint,
 )

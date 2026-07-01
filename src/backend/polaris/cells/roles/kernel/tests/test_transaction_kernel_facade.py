@@ -20,12 +20,14 @@ from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     DeliveryMode,
 )
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import requires_mutation_intent
-from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
+from polaris.cells.roles.kernel.internal.transaction.retry_context_builders import (
+    build_retry_write_after_bootstrap_context,
+)
+from polaris.cells.roles.kernel.internal.transaction.retry_escalation_policy import resolve_retry_model_override
+from polaris.cells.roles.kernel.internal.transaction.retry_tool_definitions import (
     bootstrap_receipt_contains_whole_file_replacement_marker,
     build_forced_write_only_retry_tool_definitions,
     build_retry_tool_definitions_for_mutation,
-    build_retry_write_after_bootstrap_context,
-    resolve_retry_model_override,
     select_bootstrap_followup_write_tool_name,
 )
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (

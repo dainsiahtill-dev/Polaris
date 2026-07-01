@@ -24,12 +24,12 @@ from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
 from polaris.cells.roles.kernel.internal.kernel.transaction_factory import create_transaction_kernel
 from polaris.cells.roles.kernel.internal.llm_caller.helpers import resolve_max_tokens, resolve_temperature
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
-from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
-    RetryOrchestrator,
+from polaris.cells.roles.kernel.internal.transaction.retry_escalation_policy import (
     resolve_escalation_temperature,
     resolve_retry_output_floor,
     resolve_retry_temperature_override,
 )
+from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import RetryOrchestrator
 from polaris.cells.roles.kernel.public.turn_contracts import RawLLMResponse
 
 _ENV = "KERNELONE_RETRY_ESCALATION_TEMPERATURE"

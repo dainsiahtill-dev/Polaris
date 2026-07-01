@@ -9,14 +9,20 @@ write-only, and the final attempt must force the selected write tool by name.
 
 from __future__ import annotations
 
-from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
-    detect_creation_mode,
+from typing import Any
+
+from polaris.cells.roles.kernel.internal.transaction.retry_escalation_policy import (
     narrow_edit_blocks_schema_to_line_range,
     resolve_escalation_temperature,
     resolve_retry_create_output_floor,
     resolve_retry_escalation,
     resolve_retry_output_floor,
     resolve_retry_temperature_override,
+)
+from polaris.cells.roles.kernel.internal.transaction.retry_tool_definitions import (
+    build_forced_write_only_retry_tool_definitions,
+    detect_creation_mode,
+    select_retry_forced_write_tool_name,
 )
 
 
@@ -43,7 +49,7 @@ class TestRetryCreateOutputFloor:
         assert resolve_retry_create_output_floor() is None
 
 
-_STRICT_DEFS = [
+_STRICT_DEFS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
@@ -54,7 +60,7 @@ _STRICT_DEFS = [
     },
     {"type": "function", "function": {"name": "write_file"}},
 ]
-_STRICT_DEFS_WITH_VERIFY = [
+_STRICT_DEFS_WITH_VERIFY: list[dict[str, Any]] = [
     *_STRICT_DEFS,
     {"type": "function", "function": {"name": "execute_command"}},
 ]
@@ -279,9 +285,6 @@ class TestMutationImpliesVerification:
     """
 
     def test_write_only_set_includes_execute_command_when_verification_enabled(self) -> None:
-        from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
-            build_forced_write_only_retry_tool_definitions,
-        )
 
         defs = [*_STRICT_DEFS, {"type": "function", "function": {"name": "execute_command"}}]
         narrowed = build_forced_write_only_retry_tool_definitions(
@@ -294,9 +297,6 @@ class TestMutationImpliesVerification:
         assert names == {"edit_blocks", "write_file", "execute_command"}
 
     def test_benchmark_forbidden_execute_command_stays_excluded(self) -> None:
-        from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
-            build_forced_write_only_retry_tool_definitions,
-        )
 
         defs = [*_STRICT_DEFS, {"type": "function", "function": {"name": "execute_command"}}]
         narrowed = build_forced_write_only_retry_tool_definitions(
@@ -326,9 +326,6 @@ class TestMutationImpliesVerification:
 def test_forced_edit_blocks_set_includes_write_file_companion() -> None:
     """factory-bench live deadlock: teaching error says 'use write_file' for
     new files, so the narrowed escalation set must actually offer it."""
-    from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
-        build_forced_write_only_retry_tool_definitions,
-    )
 
     defs = [*_STRICT_DEFS, {"type": "function", "function": {"name": "execute_command"}}]
     narrowed = build_forced_write_only_retry_tool_definitions(defs, "edit_blocks", include_verification_tools=True)
@@ -346,9 +343,6 @@ class TestExistenceAwareForcedTool:
     ]
 
     def test_missing_targets_force_write_file(self, tmp_path) -> None:
-        from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
-            select_retry_forced_write_tool_name,
-        )
 
         selected = select_retry_forced_write_tool_name(
             self._DEFS, workspace=str(tmp_path), target_files=("index.html", "script.js")
@@ -356,18 +350,12 @@ class TestExistenceAwareForcedTool:
         assert selected == "write_file"
 
     def test_existing_target_keeps_edit_blocks(self, tmp_path) -> None:
-        from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
-            select_retry_forced_write_tool_name,
-        )
 
         (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
         selected = select_retry_forced_write_tool_name(self._DEFS, workspace=str(tmp_path), target_files=("main.py",))
         assert selected == "edit_blocks"
 
     def test_no_target_info_keeps_legacy_order(self) -> None:
-        from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
-            select_retry_forced_write_tool_name,
-        )
 
         assert select_retry_forced_write_tool_name(self._DEFS) == "edit_blocks"
 
@@ -375,9 +363,6 @@ class TestExistenceAwareForcedTool:
 def test_partially_missing_targets_force_write_file(tmp_path) -> None:
     """Round-7 regression: one created file must not lock the remaining
     missing targets back onto edit_blocks (any-missing => creation mode)."""
-    from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
-        select_retry_forced_write_tool_name,
-    )
 
     defs = [
         {"type": "function", "function": {"name": "edit_blocks"}},

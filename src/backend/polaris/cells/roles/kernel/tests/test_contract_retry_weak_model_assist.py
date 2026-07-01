@@ -9,21 +9,25 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from polaris.cells.roles.kernel.internal.transaction import retry_orchestrator as _ro
+from polaris.cells.roles.kernel.internal.transaction import read_bootstrap_progress as _rbp
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     expand_bootstrap_read_candidates,
     extract_target_files_from_message,
 )
-from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
+from polaris.cells.roles.kernel.internal.transaction.read_bootstrap_progress import (
     _MAX_STALLED_READ_BOOTSTRAPS,
     _clear_read_bootstrap_progress,
-    _extract_latest_assistant_message,
     _read_bootstrap_makes_no_progress,
     _should_bootstrap_original_read_batch,
-    _should_use_original_read_bootstrap_for_retry,
     _workspace_materialization_fingerprint,
+)
+from polaris.cells.roles.kernel.internal.transaction.retry_context_builders import (
+    _extract_latest_assistant_message,
     append_retry_enforcement_hint,
     build_contract_retry_context,
+)
+from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
+    _should_use_original_read_bootstrap_for_retry,
 )
 
 _EDIT_TOOL_DEFS = [
@@ -420,7 +424,7 @@ def test_retry_context_lists_all_detected_target_files_for_large_repair() -> Non
 
 
 def test_original_read_bootstrap_allowed_without_single_target_marker(tmp_path) -> None:
-    _ro._READ_BOOTSTRAP_PROGRESS.clear()
+    _rbp._READ_BOOTSTRAP_PROGRESS.clear()
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
 
     assert _should_bootstrap_original_read_batch(
@@ -432,7 +436,7 @@ def test_original_read_bootstrap_allowed_without_single_target_marker(tmp_path) 
 
 
 def test_original_read_bootstrap_blocked_for_from_scratch_create(tmp_path) -> None:
-    _ro._READ_BOOTSTRAP_PROGRESS.clear()
+    _rbp._READ_BOOTSTRAP_PROGRESS.clear()
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
 
     assert not _should_use_original_read_bootstrap_for_retry(
@@ -445,7 +449,7 @@ def test_original_read_bootstrap_blocked_for_from_scratch_create(tmp_path) -> No
 
 
 def test_original_read_bootstrap_still_allowed_for_existing_file_repair(tmp_path) -> None:
-    _ro._READ_BOOTSTRAP_PROGRESS.clear()
+    _rbp._READ_BOOTSTRAP_PROGRESS.clear()
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "main.ts").write_text("export const value = 1;\n", encoding="utf-8")
 
@@ -459,7 +463,7 @@ def test_original_read_bootstrap_still_allowed_for_existing_file_repair(tmp_path
 
 
 def test_single_target_repair_blocks_original_read_bootstrap(tmp_path) -> None:
-    _ro._READ_BOOTSTRAP_PROGRESS.clear()
+    _rbp._READ_BOOTSTRAP_PROGRESS.clear()
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
 
     assert not _should_bootstrap_original_read_batch(
@@ -481,7 +485,7 @@ def test_single_target_repair_blocks_original_read_bootstrap(tmp_path) -> None:
 
 def test_unmeasurable_workspace_never_forces(tmp_path) -> None:
     # Safe default: "." / missing dir -> never force (== original behaviour).
-    _ro._READ_BOOTSTRAP_PROGRESS.clear()
+    _rbp._READ_BOOTSTRAP_PROGRESS.clear()
     for _ in range(5):
         assert _read_bootstrap_makes_no_progress("step-x", ".") is False
         assert _read_bootstrap_makes_no_progress("step-x", "/no/such/dir/zzz") is False
@@ -489,7 +493,7 @@ def test_unmeasurable_workspace_never_forces(tmp_path) -> None:
 
 def test_stalled_reads_force_after_threshold(tmp_path) -> None:
     # Workspace never changes -> stall trips after _MAX_STALLED_READ_BOOTSTRAPS.
-    _ro._READ_BOOTSTRAP_PROGRESS.clear()
+    _rbp._READ_BOOTSTRAP_PROGRESS.clear()
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
     ws = str(tmp_path)
     fired = [
@@ -504,7 +508,7 @@ def test_stalled_reads_force_after_threshold(tmp_path) -> None:
 def test_new_materialization_resets_streak(tmp_path) -> None:
     # A write between reads (fingerprint changes) keeps it from ever forcing —
     # this is exactly why normal L2 read-then-write flows are not regressed.
-    _ro._READ_BOOTSTRAP_PROGRESS.clear()
+    _rbp._READ_BOOTSTRAP_PROGRESS.clear()
     ws = str(tmp_path)
     (tmp_path / "a.js").write_text("const a = 1;", encoding="utf-8")
     assert _read_bootstrap_makes_no_progress("step-prog", ws) is False  # baseline
@@ -517,7 +521,7 @@ def test_new_materialization_resets_streak(tmp_path) -> None:
 
 
 def test_clear_resets_progress(tmp_path) -> None:
-    _ro._READ_BOOTSTRAP_PROGRESS.clear()
+    _rbp._READ_BOOTSTRAP_PROGRESS.clear()
     ws = str(tmp_path)
     (tmp_path / "x.py").write_text("x=1", encoding="utf-8")
     _read_bootstrap_makes_no_progress("step-clr", ws)

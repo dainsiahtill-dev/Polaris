@@ -19,14 +19,16 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
-from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
-    RetryOrchestrator,
+from polaris.cells.roles.kernel.internal.transaction.bootstrap_followup import (
     _should_force_leaf_bootstrap_followup_write_file,
     build_deterministic_bootstrap_followup_write_decision,
-    build_retry_write_after_bootstrap_context,
     merge_bootstrap_receipt_into_result,
 )
+from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
+from polaris.cells.roles.kernel.internal.transaction.retry_context_builders import (
+    build_retry_write_after_bootstrap_context,
+)
+from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import RetryOrchestrator
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import (
     _recent_edit_failure_in_context,
 )
@@ -71,10 +73,10 @@ def test_bootstrap_context_carries_real_file_content_beyond_old_fragment_limit(
 def test_bootstrap_content_window_sized_default_caps_injection(monkeypatch: pytest.MonkeyPatch) -> None:
     """I3-r22 (F10): the default read-content budget is small (sized for a 16k
     local-Director window) so a large transcription payload cannot collapse the
-    output budget. 120 lines (~6k chars) is truncated under the default."""
+    output budget. A large payload is truncated under the default."""
     monkeypatch.delenv("KERNELONE_BOOTSTRAP_READ_TOTAL_CHARS", raising=False)
     monkeypatch.delenv("KERNELONE_BOOTSTRAP_READ_MAX_CHARS", raising=False)
-    content = "\n".join(f"line {i}: db_table_models[model._meta.db_table].append(x)" for i in range(120))
+    content = "\n".join(f"line {i}: db_table_models[model._meta.db_table].append(x)" for i in range(320))
     context = build_retry_write_after_bootstrap_context(
         original_context=[{"role": "user", "content": "fix it"}],
         bootstrap_receipt=_receipt_with_content(content),
@@ -83,7 +85,7 @@ def test_bootstrap_content_window_sized_default_caps_injection(monkeypatch: pyte
     rendered = "\n".join(str(m.get("content") or "") for m in context)
     assert "[content truncated]" in rendered  # capped under the small default
     assert "line 0:" in rendered  # the head is still transcribable
-    assert "line 119:" not in rendered  # tail dropped to protect the output budget
+    assert "line 319:" not in rendered  # tail dropped to protect the output budget
 
 
 def test_bootstrap_context_unwraps_executor_envelope() -> None:

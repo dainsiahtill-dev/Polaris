@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
+from polaris.cells.roles.kernel.internal.transaction.retry_tool_definitions import (
     select_retry_forced_write_tool_name,
 )
 from polaris.cells.roles.kernel.internal.transaction.tool_sequence_templates import (

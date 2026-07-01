@@ -14,7 +14,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     extract_declared_step_target_files,
     pin_write_tool_file_param_to_targets,
 )
-from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
+from polaris.cells.roles.kernel.internal.transaction.retry_escalation_policy import (
     narrow_edit_blocks_schema_to_line_range,
 )
 
