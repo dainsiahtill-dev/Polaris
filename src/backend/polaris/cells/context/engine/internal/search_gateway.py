@@ -11,7 +11,6 @@ import json
 import logging
 import os
 import time
-import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -91,20 +90,6 @@ class SearchService:
     def available(self) -> bool:
         """True when the derived descriptor cache exists (``context.catalog`` output)."""
         return self._catalog.cache_path.is_file()
-
-    def add_documents(self, docs: list[dict[str, str]]) -> None:
-        """Deprecated: graph-constrained search does not ingest arbitrary documents."""
-        if docs:
-            warnings.warn(
-                "SearchService.add_documents is ignored: use context.catalog sync "
-                "and graph-backed descriptors instead of ad-hoc document indexing.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        logger.debug(
-            "SearchService.add_documents ignored (%d docs); catalog search is graph-bound",
-            len(docs),
-        )
 
     def _generate_query_hash(self, query_str: str, limit: int) -> str:
         """Generate a unique hash for the query and limit."""

@@ -210,21 +210,15 @@ class TestSearchServiceSearch:
 
 
 # ---------------------------------------------------------------------------
-# SearchService – add_documents (deprecated no-op)
+# SearchService – public surface
 # ---------------------------------------------------------------------------
 
 
-class TestSearchServiceAddDocuments:
-    def test_add_documents_issues_deprecation_warning(self, mock_workspace: Path) -> None:
-        """`add_documents` must emit a DeprecationWarning."""
+class TestSearchServicePublicSurface:
+    def test_add_documents_ingest_api_is_absent(self, mock_workspace: Path) -> None:
+        """SearchService must expose only catalog-backed search, not ad-hoc ingest."""
         svc = SearchService(workspace=mock_workspace)
-        with pytest.warns(DeprecationWarning, match="add_documents is ignored"):
-            svc.add_documents([{"text": "foo"}])
-
-    def test_add_documents_empty_list_no_warning(self, mock_workspace: Path) -> None:
-        """Empty list must not emit a warning."""
-        svc = SearchService(workspace=mock_workspace)
-        svc.add_documents([])
+        assert not hasattr(svc, "add_documents")
 
 
 # ---------------------------------------------------------------------------

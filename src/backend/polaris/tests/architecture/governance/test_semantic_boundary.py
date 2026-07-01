@@ -455,15 +455,12 @@ class TestMockSearchServiceCompliance:
         assert hasattr(svc, "_catalog")
         assert hasattr(svc, "_search_cache")
 
-    def test_search_service_deprecates_add_documents(self, mock_workspace: Path) -> None:
-        """SearchService.add_documents must be deprecated (no ad-hoc indexing)."""
+    def test_search_service_has_no_add_documents_ingest_api(self, mock_workspace: Path) -> None:
+        """SearchService must not expose ad-hoc document ingestion."""
         from polaris.cells.context.engine.internal.search_gateway import SearchService
 
         svc = SearchService(workspace=mock_workspace)
-
-        # Should emit deprecation warning
-        with pytest.warns(DeprecationWarning, match="add_documents is ignored"):
-            svc.add_documents([{"text": "test"}])
+        assert not hasattr(svc, "add_documents")
 
 
 # ---------------------------------------------------------------------------
