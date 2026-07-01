@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T07:41:39.942397Z",
-  "source_hash": "ce32f38a266b7ecd",
+  "generated_at": "2026-07-01T07:45:25.280905Z",
+  "source_hash": "2a8cea6fdcbebc17",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -7642,61 +7642,6 @@
       "name": "_normalize_allowed_tool_names",
       "description": "Normalize allowed tool names while retaining legacy raw aliases.",
       "defined_in": "polaris/cells/roles/kernel/internal/output_parser.py"
-    },
-    {
-      "type": "class",
-      "name": "ApprovalRequirement",
-      "description": "Approval request payload.",
-      "defined_in": "polaris/cells/roles/kernel/internal/policy/approval_policy.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ApprovalPolicy",
-      "description": "Compatibility approval policy for legacy imports.",
-      "defined_in": "polaris/cells/roles/kernel/internal/policy/approval_policy.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "from_env",
-          "doc": ""
-        },
-        {
-          "name": "_split_csv",
-          "doc": ""
-        },
-        {
-          "name": "requires_approval",
-          "doc": ""
-        },
-        {
-          "name": "request_approval",
-          "doc": ""
-        },
-        {
-          "name": "evaluate",
-          "doc": "Evaluate a call batch."
-        },
-        {
-          "name": "approve",
-          "doc": ""
-        },
-        {
-          "name": "reject",
-          "doc": ""
-        },
-        {
-          "name": "clear_pending",
-          "doc": ""
-        },
-        {
-          "name": "_build_approval_reason",
-          "doc": ""
-        }
-      ]
     },
     {
       "type": "class",

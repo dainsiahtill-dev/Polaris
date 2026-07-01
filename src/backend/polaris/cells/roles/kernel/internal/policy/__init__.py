@@ -11,7 +11,7 @@ Policy 必须在模型外部的确定性层，不得塞进 prompt patching。
 policy/
 ├── __init__.py         - 本文件，Policy Layer 入口与公共导出
 ├── tool_policy.py      - ToolPolicy（工具权限评估）
-├── approval_policy.py  - ApprovalPolicy（人工审批闸门）
+├── layer/approval.py   - ApprovalPolicy（人工审批闸门）
 ├── budget_policy.py    - BudgetPolicy（资源预算硬限制）
 ├── layer/sandbox.py    - SandboxPolicy（进程/FS/网络范围）
 └── layer/redaction.py - RedactionPolicy（日志/prompt 脱敏）
@@ -41,16 +41,13 @@ Task #3 完成后，ConversationState 将被具体化为 RoleTurnRequest + Runti
 
 from __future__ import annotations
 
-from polaris.cells.roles.kernel.internal.policy.approval_policy import (
-    ApprovalPolicy,
-    ApprovalRequirement,
-)
 from polaris.cells.roles.kernel.internal.policy.budget_policy import (
     BudgetDecision,
     BudgetPolicy,
     BudgetState,
 )
 from polaris.cells.roles.kernel.internal.policy.layer import (
+    ApprovalPolicy,
     CanonicalToolCall,
     ExplorationToolPolicy,
     PolicyLayer,
@@ -65,7 +62,6 @@ from polaris.cells.roles.kernel.internal.policy.layer import (
 __all__ = [
     # Approval
     "ApprovalPolicy",
-    "ApprovalRequirement",
     "BudgetDecision",
     # Budget
     "BudgetPolicy",
