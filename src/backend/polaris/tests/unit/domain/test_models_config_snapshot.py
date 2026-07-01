@@ -7,7 +7,6 @@ from polaris.domain.models.config_snapshot import (
     ConfigSnapshot,
     ConfigSnapshotImmutableError,
     ConfigValidationResult,
-    FrozenInstanceError,
     SourceType,
 )
 
@@ -194,6 +193,6 @@ class TestConfigSnapshot:
         assert "keys=1" in r
 
 
-class TestFrozenInstanceError:
-    def test_alias(self) -> None:
-        assert FrozenInstanceError is ConfigSnapshotImmutableError
+class TestConfigSnapshotImmutableError:
+    def test_error_type_is_programming_error(self) -> None:
+        assert issubclass(ConfigSnapshotImmutableError, TypeError)

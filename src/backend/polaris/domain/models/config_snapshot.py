@@ -63,14 +63,10 @@ class ConfigSnapshotImmutableError(TypeError):
 
     Note: Inherits from TypeError because this represents a programming error
     (attempting to assign to an immutable object's attribute), consistent with
-    Python's dataclasses.FrozenInstanceError which also inherits from TypeError.
+    frozen dataclass assignment errors.
     """
 
     pass
-
-
-# Backward compatibility alias
-FrozenInstanceError = ConfigSnapshotImmutableError
 
 
 @dataclass(frozen=True)

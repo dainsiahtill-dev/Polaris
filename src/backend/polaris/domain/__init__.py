@@ -105,8 +105,8 @@ from polaris.domain.exceptions import (
 )
 from polaris.domain.models import (
     ConfigSnapshot,
+    ConfigSnapshotImmutableError,
     ConfigValidationResult,
-    FrozenInstanceError,
     SourceType,
 )
 from polaris.domain.services import (
@@ -195,6 +195,7 @@ __all__ = [
     "BusinessRuleError",
     # Models
     "ConfigSnapshot",
+    "ConfigSnapshotImmutableError",
     "ConfigValidationResult",
     "ConfigurationError",
     "ConflictError",
@@ -207,7 +208,6 @@ __all__ = [
     "EffectTracker",
     "ExecutionResult",
     "ExternalServiceError",
-    "FrozenInstanceError",
     "InfrastructureError",
     "LLMCompactService",
     "LLMError",

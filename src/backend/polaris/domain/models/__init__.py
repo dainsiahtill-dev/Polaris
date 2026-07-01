@@ -6,14 +6,14 @@ the core business concepts of the Polaris system.
 
 from .config_snapshot import (
     ConfigSnapshot,
+    ConfigSnapshotImmutableError,
     ConfigValidationResult,
-    FrozenInstanceError,
     SourceType,
 )
 
 __all__ = [
     "ConfigSnapshot",
+    "ConfigSnapshotImmutableError",
     "ConfigValidationResult",
-    "FrozenInstanceError",
     "SourceType",
 ]
