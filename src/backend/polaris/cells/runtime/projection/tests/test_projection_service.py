@@ -975,7 +975,6 @@ class TestRuntimeProjectionServiceBuildAsync:
                         "gate_policy": {},
                     },
                     "tool_call_lifecycle_receipt": lifecycle,
-                    "tool_call_lifecycle": lifecycle,
                 },
             )
         )

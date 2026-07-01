@@ -199,7 +199,6 @@ def test_projection_exposes_tool_dispatch_dropped() -> None:
             {
                 "event_type": "tool_call_lifecycle",
                 "tool_call_lifecycle_receipt": lifecycle,
-                "tool_call_lifecycle": lifecycle,
             },
         ]
     )
@@ -335,7 +334,6 @@ def test_projection_exposes_failed_tool_lifecycle_without_dropped_dispatch() -> 
             {
                 "event_type": "tool_call_lifecycle",
                 "tool_call_lifecycle_receipt": lifecycle,
-                "tool_call_lifecycle": lifecycle,
             },
         ]
     )

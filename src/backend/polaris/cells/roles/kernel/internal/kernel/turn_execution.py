@@ -375,7 +375,6 @@ def _append_tool_dispatch_dropped_control_plane_events(
                 "task_id": str(request.task_id or ""),
                 "run_id": str(request.run_id or turn_id),
                 "tool_call_lifecycle_receipt": lifecycle.to_dict(),
-                "tool_call_lifecycle": lifecycle.to_dict(),
                 "job_token": {
                     "run_id": str(request.run_id or turn_id),
                     "task_id": str(request.task_id or ""),

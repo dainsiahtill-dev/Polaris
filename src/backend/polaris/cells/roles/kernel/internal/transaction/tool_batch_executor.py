@@ -550,8 +550,6 @@ def _append_tool_batch_receipts_to_run_ledger(
                     "task_id": task_id,
                     "run_id": resolved_lifecycle_run_id,
                     "tool_call_lifecycle_receipt": lifecycle.to_dict(),
-                    # Compatibility projection for existing readers.
-                    "tool_call_lifecycle": lifecycle.to_dict(),
                 },
             )
         )
