@@ -8,7 +8,6 @@ from polaris.cells.roles.adapters.internal.schemas.director_schema import (
     DirectorOutput,
     DirectorValidationResult,
     PatchOperation,
-    ValidationResult,
 )
 from pydantic import ValidationError
 
@@ -58,12 +57,6 @@ class TestDirectorValidationResult:
         result = DirectorValidationResult(passed=False, error="Test failed")
         assert result.passed is False
         assert result.error == "Test failed"
-
-    def test_validation_result_alias(self) -> None:
-        """ValidationResult is an alias for DirectorValidationResult."""
-        result = ValidationResult(passed=True)
-        assert isinstance(result, DirectorValidationResult)
-        assert result.passed is True
 
 
 class TestDirectorOutput:

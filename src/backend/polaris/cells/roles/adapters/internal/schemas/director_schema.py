@@ -40,7 +40,7 @@ class PatchOperation(BaseModel):
 class DirectorValidationResult(BaseModel):
     """Validation/test result for Director execution.
 
-    Note: This is a Pydantic model distinct from other ValidationResult dataclasses:
+    Note: This is a Pydantic model distinct from other validation-result dataclasses:
     - ToolArgValidationResult: Tool argument validation (dataclass)
     - ProviderConfigValidationResult: Provider configuration validation (dataclass)
     - FileOpValidationResult: File operation validation (dataclass)
@@ -52,10 +52,6 @@ class DirectorValidationResult(BaseModel):
     command: str | None = Field(default=None)
     output: str | None = Field(default=None)
     error: str | None = Field(default=None)
-
-
-# Backward compatibility alias (deprecated)
-ValidationResult = DirectorValidationResult
 
 
 class DirectorOutput(BaseModel):
@@ -72,7 +68,10 @@ class DirectorOutput(BaseModel):
 
     tool_calls: list[ToolCall] = Field(default_factory=list, description="Tool calls to execute")
 
-    validation: ValidationResult | None = Field(default=None, description="Validation/test results if any")
+    validation: DirectorValidationResult | None = Field(
+        default=None,
+        description="Validation/test results if any",
+    )
 
     next_steps: list[str] = Field(default_factory=list, description="Recommended next steps")
 
