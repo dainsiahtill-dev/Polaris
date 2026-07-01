@@ -287,7 +287,3 @@ def get_default_stream_config() -> StreamConfig:
         The default StreamConfig instance used for backward compatibility.
     """
     return _DEFAULT_CONFIG
-
-
-# Backward compatibility alias (deprecated, will be removed in future)
-StreamResult = LLMStreamResult

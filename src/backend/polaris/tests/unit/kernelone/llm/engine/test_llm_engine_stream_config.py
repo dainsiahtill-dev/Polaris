@@ -212,7 +212,7 @@ class TestBackwardCompatibility:
         cfg = get_default_stream_config()
         assert isinstance(cfg, StreamConfig)
 
-    def test_stream_result_alias(self) -> None:
-        from polaris.kernelone.llm.engine.stream.config import StreamResult
+    def test_stream_result_alias_is_retired(self) -> None:
+        import polaris.kernelone.llm.engine.stream.config as stream_config
 
-        assert StreamResult is LLMStreamResult
+        assert not hasattr(stream_config, "StreamResult")

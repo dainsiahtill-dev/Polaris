@@ -6,7 +6,7 @@ This module provides unified streaming LLM invocation capability:
 - StreamExecutor: Main streaming executor class
 - StreamConfig: Immutable configuration
 - StreamState: State machine enum
-- LLMStreamResult: Result validation dataclass (StreamResult is deprecated alias)
+- LLMStreamResult: Result validation dataclass
 - BackpressureBuffer: Thread-safe buffer with backpressure control
 """
 
@@ -26,7 +26,6 @@ from .config import (
     MAX_BUFFER_SIZE,
     LLMStreamResult,
     StreamConfig,
-    StreamResult,  # Backward compatibility alias
     StreamState,
     get_stream_timeout,
     reset_stream_timeout,
@@ -65,7 +64,6 @@ __all__ = [
     # Core classes
     "StreamEventType",
     "StreamExecutor",
-    "StreamResult",  # Backward compatibility alias
     "StreamState",
     # Result tracker (internal but exported for backward compatibility)
     "_StreamResultTracker",
