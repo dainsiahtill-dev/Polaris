@@ -415,7 +415,15 @@ def test_log_viewer_uses_runtime_transport_not_file_read_tail_polling() -> None:
     for token in ("/files/read", "tail_lines=", "tailLines=400"):
         if token in text:
             findings.append(f"{FRONTEND_LOG_VIEWER_FILE.relative_to(REPO_ROOT)} contains {token!r}")
-    for token in ("useRuntimeTransport", "subscribeChannels", "registerMessageHandler", "tailLines: 400"):
+    for token in (
+        "@/runtime/transport",
+        "useConnectionState",
+        "useTransportActions",
+        "useMessageHandler",
+        "subscribeChannels",
+        "registerMessageHandler",
+        "tailLines: 400",
+    ):
         if token not in text:
             findings.append(f"{FRONTEND_LOG_VIEWER_FILE.relative_to(REPO_ROOT)} missing {token!r}")
 
@@ -519,7 +527,10 @@ LLM_COMPONENTS_FORBIDDEN_PATTERNS = (
 )
 
 LLM_COMPONENTS_REQUIRED_TRANSPORT_MARKERS = (
-    "useRuntimeTransport",
+    "@/runtime/transport",
+    "useConnectionState",
+    "useTransportActions",
+    "useMessageHandler",
     "runtimeSocketManager",
 )
 

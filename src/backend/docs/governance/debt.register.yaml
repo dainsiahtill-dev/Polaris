@@ -115,6 +115,7 @@ debts:
     mitigations:
       - "ADR-0095 records Nats-JetStream as the only product realtime rail"
       - "test_realtime_single_rail_static_guard.py blocks legacy realtime tokens in product paths"
+      - "2026-07-02: static guard realigned with current frontend runtime transport hooks and Nats-JetStream Playwright audit spec naming"
       - "WebSocket tests verify runtime.v2 SUBSCRIBE, explicit EVENT query, and no process-local registration"
       - "Status workflow/process and file-edit producers publish runtime.v2 JetStream envelopes"
     residual_risks:
