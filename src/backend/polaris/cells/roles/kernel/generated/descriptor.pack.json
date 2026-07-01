@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T09:03:04.770984Z",
-  "source_hash": "0168373db10e66ab",
+  "generated_at": "2026-07-01T09:13:30.392603Z",
+  "source_hash": "7d0524871f8522d9",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4942,6 +4942,57 @@
     },
     {
       "type": "class",
+      "name": "_Request",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_transaction_invocation_setup.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_Profile",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_transaction_invocation_setup.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_Gateway",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_transaction_invocation_setup.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "fake_delivery_marker",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_transaction_invocation_setup.py"
+    },
+    {
+      "type": "function",
+      "name": "fake_platform_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_transaction_invocation_setup.py"
+    },
+    {
+      "type": "function",
+      "name": "fake_tool_surface",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_transaction_invocation_setup.py"
+    },
+    {
+      "type": "function",
+      "name": "fake_delivery_marker",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_transaction_invocation_setup.py"
+    },
+    {
+      "type": "function",
+      "name": "fake_platform_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_transaction_invocation_setup.py"
+    },
+    {
+      "type": "class",
       "name": "_Registry",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_turn_prompt_setup.py",
@@ -5319,6 +5370,25 @@
       "name": "_build_effective_profile",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_factory.py"
+    },
+    {
+      "type": "class",
+      "name": "TransactionInvocationSetup",
+      "description": "Prepared inputs for one TransactionKernel invocation.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_invocation_setup.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_log_delivery_mode_trace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_invocation_setup.py"
+    },
+    {
+      "type": "function",
+      "name": "_log_prong_trace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_invocation_setup.py"
     },
     {
       "type": "function",

@@ -6,18 +6,17 @@ kernel entrypoint calls these functions directly so transaction execution has
 one implementation surface.
 
 Behavior notes:
-- The turn body and the stream body share the tool-definitions preamble shape
-  but are NOT byte-identical: the turn body additionally emits the
-  ``PRONG_A_TRACE`` info log and the ``KERNELONE_DELIVERY_MODE_TRACE`` warning,
-  and restores the delivery-mode marker via ``_ensure_context_delivery_mode_marker``.
-  Tool-surface planning is shared through the transaction-layer planner, while
-  execution, projection feedback, and RoleTurnResult/stream event mapping stay
-  in this public-entrypoint adapter.
+- The turn body and the stream body share ContextOS/tool-surface setup through
+  ``kernel.transaction_invocation_setup``. They remain separate adapter
+  functions because non-streaming turns commit ContextOS snapshots and return a
+  ``RoleTurnResult``, while streaming turns translate typed stream events into
+  public stream dictionaries through ``kernel.stream_event_projection``.
 - §8 governance note: the embedded weak-Director Prong-A / R7 / Fix-11
   write-vs-edit heuristics live in the planner. They are not deleted here (a
   separate governance pass owns that decision).
-- Function-local lazy imports for RoleContextGateway / turn_events are preserved
-  to keep the original circular-import-avoidance and monkeypatch-target ordering.
+- Function-local lazy imports for ContextGateway live in
+  ``transaction_invocation_setup`` to keep circular-import avoidance and
+  monkeypatch-target ordering in one owner.
 """
 
 from __future__ import annotations
@@ -32,14 +31,6 @@ from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
     _commit_turn_to_snapshot,
 )
 from polaris.cells.roles.kernel.internal.kernel.context_assembly import build_context_handoff_pack
-from polaris.cells.roles.kernel.internal.kernel.context_gateway_config_builder import build_context_gateway_config
-from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
-    _context_requests_materialize_delivery,
-    _ensure_context_delivery_mode_marker,
-    _ensure_platform_tool_contract_metadata,
-    _latest_user_content_preview,
-    _text_requests_materialize_delivery,
-)
 from polaris.cells.roles.kernel.internal.kernel.output_parser_provider import get_output_parser
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     role_result_metadata_from_profile,
@@ -55,8 +46,8 @@ from polaris.cells.roles.kernel.internal.kernel.tool_dispatch_projection import 
     llm_metadata_from_ledger_on_error,
 )
 from polaris.cells.roles.kernel.internal.kernel.transaction_factory import create_transaction_kernel
+from polaris.cells.roles.kernel.internal.kernel.transaction_invocation_setup import build_transaction_invocation_setup
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import _resolve_transaction_turn_id
-from polaris.cells.roles.kernel.internal.tool_loop_controller import ToolLoopController
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest, RoleTurnResult
 
 if TYPE_CHECKING:
@@ -79,60 +70,24 @@ async def execute_transaction_kernel_turn(
     response_schema: type | None,
 ) -> RoleTurnResult:
     """Execute a single turn via TransactionKernel and map to RoleTurnResult."""
-    from polaris.cells.roles.kernel.internal.transaction.tool_surface import plan_transaction_tool_surface
-    from polaris.cells.roles.kernel.public.service import RoleContextGateway
-
     tk = create_transaction_kernel(kernel, role, profile, request)
     turn_id = _resolve_transaction_turn_id(request, observer_run_id)
 
-    controller = ToolLoopController.from_request(request=request, profile=profile)
-    context_request = controller.build_context_request()
-    context_gateway = RoleContextGateway(
-        profile,
-        kernel.workspace,
-        config=build_context_gateway_config(kernel.context_gateway_config_factory, role, profile, request),
-    )
-    # ADR-0090 I4.3: gateway budgets AND prepends the role system prompt — no
-    # second projection pass.
-    context_result = await context_gateway.build_context(context_request, system_prompt=system_prompt)
-    messages: list[dict[str, Any]] = list(context_result.messages)
-    messages = _ensure_context_delivery_mode_marker(
-        messages,
-        getattr(request, "context_override", None),
-        getattr(request, "message", None),
-    )
-    messages = _ensure_platform_tool_contract_metadata(
-        messages,
-        getattr(request, "context_override", None),
-    )
-    if os.getenv("KERNELONE_DELIVERY_MODE_TRACE") == "1":
-        context_override = getattr(request, "context_override", None)
-        logger.warning(
-            "delivery-mode-kernel-trace: role=%s request_marker=%s context_materialize=%s latest_marker=%s "
-            "latest_user_preview=%r",
-            role,
-            _text_requests_materialize_delivery(getattr(request, "message", None)),
-            _context_requests_materialize_delivery(context_override),
-            _text_requests_materialize_delivery(_latest_user_content_preview(messages)),
-            _latest_user_content_preview(messages),
-        )
-
-    _co_dbg = getattr(request, "context_override", None)
-    logger.info(
-        "PRONG_A_TRACE: ctx_override_dict=%s has_construction_step=%s keys=%s",
-        isinstance(_co_dbg, dict),
-        isinstance(_co_dbg, dict) and isinstance(_co_dbg.get("construction_step"), dict),
-        list(_co_dbg.keys())[:14] if isinstance(_co_dbg, dict) else None,
-    )
-    tool_surface = plan_transaction_tool_surface(
+    invocation_setup = await build_transaction_invocation_setup(
+        kernel=kernel,
         role=role,
         profile=profile,
         request=request,
-        context_result=context_result,
-        messages=messages,
-        workspace=str(request.workspace or kernel.workspace or "."),
+        system_prompt=system_prompt,
         mode="turn",
+        restore_delivery_mode_marker=True,
+        emit_delivery_mode_trace=True,
+        emit_prong_trace=True,
     )
+    context_gateway = invocation_setup.context_gateway
+    context_result = invocation_setup.context_result
+    messages = invocation_setup.messages
+    tool_surface = invocation_setup.tool_surface
     tool_definitions = tool_surface.tool_definitions
     runtime_tool_policy_audit = tool_surface.runtime_tool_policy_audit
     tool_filter_audit = tool_surface.tool_filter_audit
@@ -363,37 +318,22 @@ async def execute_transaction_kernel_stream(
     uep_publisher: UEPEventPublisher,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Stream execution via TransactionKernel."""
-    from polaris.cells.roles.kernel.internal.transaction.tool_surface import plan_transaction_tool_surface
-    from polaris.cells.roles.kernel.public.service import RoleContextGateway
-
     tk = create_transaction_kernel(kernel, role, profile, request)
     turn_id = str(request.run_id or stream_run_id or uuid.uuid4().hex[:12])
 
-    controller = ToolLoopController.from_request(request=request, profile=profile)
-    context_request = controller.build_context_request()
-    context_gateway = RoleContextGateway(
-        profile,
-        kernel.workspace,
-        config=build_context_gateway_config(kernel.context_gateway_config_factory, role, profile, request),
-    )
-    # ADR-0090 I4.3: gateway budgets AND prepends the role system prompt — no
-    # second projection pass.
-    context_result = await context_gateway.build_context(context_request, system_prompt=system_prompt)
-    messages: list[dict[str, Any]] = list(context_result.messages)
-    messages = _ensure_platform_tool_contract_metadata(
-        messages,
-        getattr(request, "context_override", None),
-    )
-
-    tool_surface = plan_transaction_tool_surface(
+    invocation_setup = await build_transaction_invocation_setup(
+        kernel=kernel,
         role=role,
         profile=profile,
         request=request,
-        context_result=context_result,
-        messages=messages,
-        workspace=str(request.workspace or kernel.workspace or "."),
+        system_prompt=system_prompt,
         mode="stream",
+        restore_delivery_mode_marker=False,
     )
+    context_gateway = invocation_setup.context_gateway
+    context_result = invocation_setup.context_result
+    messages = invocation_setup.messages
+    tool_surface = invocation_setup.tool_surface
     tool_definitions = tool_surface.tool_definitions
     runtime_tool_policy_audit = tool_surface.runtime_tool_policy_audit
     tool_filter_audit = tool_surface.tool_filter_audit
