@@ -35,11 +35,13 @@ public_contracts:
 depends_on:
 - runtime.execution_broker
 - runtime.task_runtime
+- control_plane.run_ledger
 - audit.evidence
 - llm.control_plane
 - llm.provider_runtime
 - policy.workspace_guard
 - audit.verdict
+- qa.audit_verdict
 - factory.cognitive_runtime
 - roles.runtime
 subgraphs: []
