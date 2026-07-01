@@ -63,23 +63,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _forced_tool_choice_override(context_override: Any) -> Any | None:
-    if not isinstance(context_override, dict):
-        return None
-
-    forced_choice = context_override.get("_transaction_kernel_forced_tool_choice")
-    if isinstance(forced_choice, dict):
-        forced_function = forced_choice.get("function")
-        if isinstance(forced_function, dict) and str(forced_function.get("name") or "").strip():
-            return forced_choice
-        return None
-
-    forced_token = str(forced_choice or "").strip().lower()
-    if forced_token == "required":
-        return "required"
-    return None
-
-
 async def execute_transaction_kernel_turn(
     kernel: RoleExecutionKernel,
     role: str,
@@ -185,7 +168,7 @@ async def execute_transaction_kernel_turn(
             turn_id,
             messages,
             tool_definitions,
-            tool_choice_override=_forced_tool_choice_override(getattr(request, "context_override", None)),
+            tool_choice_override=tool_surface.tool_choice_override,
         )
     except Exception as exc:
         logger.exception("TransactionKernel execute failed: turn_id=%s", turn_id)
@@ -519,7 +502,7 @@ async def execute_transaction_kernel_stream(
                 turn_id,
                 messages,
                 tool_definitions,
-                tool_choice_override=_forced_tool_choice_override(getattr(request, "context_override", None)),
+                tool_choice_override=tool_surface.tool_choice_override,
             ):
                 yield stream_event
         except Exception as exc:

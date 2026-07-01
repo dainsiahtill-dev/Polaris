@@ -48,6 +48,7 @@ class TransactionToolSurfacePlan:
 
     Attributes:
         tool_definitions: Provider-native tool schemas after all reductions.
+        tool_choice_override: Provider-native tool-choice override for this turn.
         runtime_tool_policy_audit: Cognitive/ContextGateway reduction audit.
         tool_filter_audit: Prompt/tool-filter conflict audit, when a filter ran.
         conflict_error: Human-readable error when a prompt-required tool was removed.
@@ -55,8 +56,32 @@ class TransactionToolSurfacePlan:
 
     tool_definitions: list[dict[str, Any]]
     runtime_tool_policy_audit: dict[str, Any]
+    tool_choice_override: Any | None = None
     tool_filter_audit: dict[str, Any] | None = None
     conflict_error: str | None = None
+
+
+def resolve_transaction_tool_choice_override(context_override: Any) -> Any | None:
+    """Resolve the TransactionKernel provider tool-choice override.
+
+    Only provider-native function choices and ``required`` are forwarded to
+    TransactionKernel. Text-only ``none`` remains a planning signal that removes
+    tool definitions but does not become a provider request override.
+    """
+    if not isinstance(context_override, dict):
+        return None
+
+    forced_choice = context_override.get("_transaction_kernel_forced_tool_choice")
+    if isinstance(forced_choice, dict):
+        forced_function = forced_choice.get("function")
+        if isinstance(forced_function, dict) and str(forced_function.get("name") or "").strip():
+            return forced_choice
+        return None
+
+    forced_token = str(forced_choice or "").strip().lower()
+    if forced_token == "required":
+        return "required"
+    return None
 
 
 def plan_transaction_tool_surface(
@@ -161,6 +186,7 @@ def plan_transaction_tool_surface(
     return TransactionToolSurfacePlan(
         tool_definitions=tool_definitions,
         runtime_tool_policy_audit=runtime_tool_policy_audit,
+        tool_choice_override=resolve_transaction_tool_choice_override(context_override),
         tool_filter_audit=tool_filter_audit,
         conflict_error=conflict_error,
     )

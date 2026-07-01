@@ -56,6 +56,7 @@ def test_plan_transaction_tool_surface_honors_forced_no_tools(monkeypatch: Any) 
     )
 
     assert plan.tool_definitions == []
+    assert plan.tool_choice_override is None
     assert plan.runtime_tool_policy_audit == {"runtime_tool_policy_applied": True}
     assert plan.conflict_error is None
 
@@ -106,3 +107,68 @@ def test_plan_transaction_tool_surface_uses_mode_specific_pin_targets(monkeypatc
         assert plan.tool_definitions == [native_schema]
 
     assert observed_targets == [("turn.py",), ("stream.py",)]
+
+
+def test_plan_transaction_tool_surface_projects_function_tool_choice(monkeypatch: Any) -> None:
+    """Function tool-choice override belongs to the tool-surface plan."""
+    native_schema = {"type": "function", "function": {"name": "write_file", "parameters": {}}}
+    forced_choice = {"type": "function", "function": {"name": "write_file"}}
+
+    monkeypatch.setattr(tool_surface, "build_native_tool_schemas", lambda _profile: [native_schema])
+    monkeypatch.setattr(
+        tool_surface,
+        "_apply_runtime_tool_policy",
+        lambda **kwargs: (kwargs["tool_definitions"], {"runtime_tool_policy_applied": True}),
+    )
+    monkeypatch.setattr(tool_surface, "resolve_from_scratch_write_target", lambda _context, _workspace: "")
+    monkeypatch.setattr(tool_surface, "resolve_repair_edit_target", lambda _context, _workspace: "")
+    monkeypatch.setattr(tool_surface, "should_use_weak_director_slim_tool_schema", lambda **_kwargs: False)
+
+    request = RoleTurnRequest(
+        workspace="/tmp/workspace",
+        message="implement",
+        context_override={"_transaction_kernel_forced_tool_choice": forced_choice},
+    )
+
+    plan = tool_surface.plan_transaction_tool_surface(
+        role="director",
+        profile=_profile(),
+        request=request,
+        context_result=_context_result(),
+        messages=[],
+        workspace="/tmp/workspace",
+        mode="turn",
+    )
+
+    assert plan.tool_choice_override == forced_choice
+
+
+def test_plan_transaction_tool_surface_projects_required_tool_choice(monkeypatch: Any) -> None:
+    """The provider-native required token is forwarded as a tool-choice override."""
+    monkeypatch.setattr(tool_surface, "build_native_tool_schemas", lambda _profile: [])
+    monkeypatch.setattr(
+        tool_surface,
+        "_apply_runtime_tool_policy",
+        lambda **kwargs: (kwargs["tool_definitions"], {"runtime_tool_policy_applied": True}),
+    )
+    monkeypatch.setattr(tool_surface, "resolve_from_scratch_write_target", lambda _context, _workspace: "")
+    monkeypatch.setattr(tool_surface, "resolve_repair_edit_target", lambda _context, _workspace: "")
+    monkeypatch.setattr(tool_surface, "should_use_weak_director_slim_tool_schema", lambda **_kwargs: False)
+
+    request = RoleTurnRequest(
+        workspace="/tmp/workspace",
+        message="implement",
+        context_override={"_transaction_kernel_forced_tool_choice": "required"},
+    )
+
+    plan = tool_surface.plan_transaction_tool_surface(
+        role="director",
+        profile=_profile(),
+        request=request,
+        context_result=_context_result(),
+        messages=[],
+        workspace="/tmp/workspace",
+        mode="turn",
+    )
+
+    assert plan.tool_choice_override == "required"
