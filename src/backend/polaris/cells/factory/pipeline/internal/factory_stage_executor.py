@@ -140,9 +140,9 @@ _DIRECTOR_BINDING_TIMEOUT_QUARANTINE_ENV = "KERNELONE_FACTORY_DIRECTOR_BINDING_T
 _DEFAULT_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT = 4
 _DIRECTOR_DISPATCH_TIMEOUT_GRACE_SECONDS = 60
 _DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS = 5
-_DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_ENV = "POLARIS_FACTORY_DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_SECONDS"
+_DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_ENV = "KERNELONE_FACTORY_DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_SECONDS"
 _DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_SECONDS = 150.0
-_QUALITY_GATE_RESERVED_BUDGET_ENV = "POLARIS_FACTORY_QUALITY_GATE_RESERVED_BUDGET_SECONDS"
+_QUALITY_GATE_RESERVED_BUDGET_ENV = "KERNELONE_FACTORY_QUALITY_GATE_RESERVED_BUDGET_SECONDS"
 _QUALITY_GATE_RESERVED_BUDGET_SECONDS = 120.0
 _QUALITY_GATE_MIN_PASS_SCORE = 70
 _QUALITY_GATE_MIN_START_BUDGET_SECONDS = 15.0
@@ -2088,7 +2088,7 @@ class OrchestrationStageExecutor:
     def _director_dispatch_timeout_settle_grace_seconds(context: dict[str, Any]) -> int:
         raw_value = context.get("director_dispatch_timeout_settle_grace_seconds")
         if raw_value is None:
-            raw_value = os.getenv("POLARIS_DIRECTOR_DISPATCH_TIMEOUT_SETTLE_GRACE_SECONDS")
+            raw_value = os.getenv("KERNELONE_DIRECTOR_DISPATCH_TIMEOUT_SETTLE_GRACE_SECONDS")
         try:
             value = int(float(str(raw_value).strip())) if raw_value is not None else 45
         except (TypeError, ValueError):
@@ -6909,7 +6909,7 @@ class OrchestrationStageExecutor:
             "qa_require_llm_judgement",
             "require_qa_llm_judgement",
             "factory_require_qa_llm_judgement",
-            env_var="POLARIS_FACTORY_QA_REQUIRE_LLM_JUDGEMENT",
+            env_var="KERNELONE_FACTORY_QA_REQUIRE_LLM_JUDGEMENT",
             default=True,
         )
         qa_llm_judgement_ready = not self._qa_report_has_warning(qa_payload, _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING)

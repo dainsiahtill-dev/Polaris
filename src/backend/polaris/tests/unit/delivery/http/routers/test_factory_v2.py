@@ -461,7 +461,7 @@ async def test_list_factory_runs_empty(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_start_factory_run_success(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """POST /v2/factory/runs should create and start a factory run."""
-    monkeypatch.delenv("POLARIS_FACTORY_LIVE_LLM_PREFLIGHT", raising=False)
+    monkeypatch.delenv("KERNELONE_FACTORY_LIVE_LLM_PREFLIGHT", raising=False)
     run = _make_factory_run(run_id="factory_new123", status="running")
 
     with (
@@ -523,7 +523,7 @@ async def test_start_factory_run_from_architect_requires_architect_readiness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Full factory runs must fail closed when Architect LLM readiness is blocked."""
-    monkeypatch.delenv("POLARIS_FACTORY_LIVE_LLM_PREFLIGHT", raising=False)
+    monkeypatch.delenv("KERNELONE_FACTORY_LIVE_LLM_PREFLIGHT", raising=False)
     run = _make_factory_run(run_id="factory_architect123", status="running")
 
     with (
@@ -584,7 +584,7 @@ async def test_start_factory_run_from_director_resume_uses_director_only_stage_g
     tmp_path: Path,
 ) -> None:
     """Director-only resume must not silently rerun PM or Chief Engineer."""
-    monkeypatch.delenv("POLARIS_FACTORY_LIVE_LLM_PREFLIGHT", raising=False)
+    monkeypatch.delenv("KERNELONE_FACTORY_LIVE_LLM_PREFLIGHT", raising=False)
     workspace = tmp_path / "project"
     workspace.mkdir()
     _write_director_resume_evidence(workspace)
@@ -685,7 +685,7 @@ async def test_start_factory_run_enables_live_llm_preflight_when_env_requests_it
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Factory start should only run live LLM probes when explicitly requested."""
-    monkeypatch.setenv("POLARIS_FACTORY_LIVE_LLM_PREFLIGHT", "1")
+    monkeypatch.setenv("KERNELONE_FACTORY_LIVE_LLM_PREFLIGHT", "1")
     run = _make_factory_run(run_id="factory_live123", status="running")
 
     with (

@@ -75,7 +75,7 @@ def _factory_jetstream_fanout_timeout_seconds() -> float:
     and constant were co-located, keeping the constant monkeypatch-able via
     ``factory_run_service._FACTORY_JETSTREAM_FANOUT_TIMEOUT_SECONDS``.
     """
-    raw = os.getenv("POLARIS_FACTORY_JETSTREAM_FANOUT_TIMEOUT_SECONDS")
+    raw = os.getenv("KERNELONE_FACTORY_JETSTREAM_FANOUT_TIMEOUT_SECONDS")
     if raw is None:
         return _FACTORY_JETSTREAM_FANOUT_TIMEOUT_SECONDS
     try:

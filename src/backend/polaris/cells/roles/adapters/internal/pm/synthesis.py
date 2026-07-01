@@ -525,6 +525,12 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
         project_slug = self._normalize_projection_project_slug(projection.get("project_slug"))
         requirement = str(projection.get("requirement") or directive or "").strip()
         project_root = f"experiments/{project_slug}"
+        scenario_token = re.sub(r"[^A-Za-z0-9_.-]+", "_", scenario_id).strip("._-") or "registry_scenario"
+        projection_manifest = f"{project_root}/projection_manifest.json"
+        projection_evidence = f"workspace/factory/projection_lab/{scenario_token}.projection.json"
+        projection_readme = f"{project_root}/README.md"
+        projection_quality_report = f"{project_root}/tests/projection_quality.json"
+        projection_delivery_note = f"{project_root}/DELIVERY.md"
 
         return [
             {
@@ -533,6 +539,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 "goal": "使用显式 projection_generate 后端生成传统代码基线并产出审计资产",
                 "description": "基于上游给定的 projection 契约生成基线项目，不在 Polaris 主仓内内置任何业务模板名称。",
                 "scope": [project_root, "workspace/factory/projection_lab"],
+                "target_files": [projection_manifest, projection_evidence],
                 "steps": [
                     "校验 projection 契约参数并归一化需求",
                     "执行 projection_generate 生成传统项目与隐藏 IR 资产",
@@ -561,6 +568,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 "goal": "检查投影结果是否满足当前工作区工程约束并补齐缺口",
                 "description": "在已生成基线之上做必要的传统代码收敛，避免生成结果与仓库约束脱节。",
                 "scope": [project_root, "tests/"],
+                "target_files": [projection_readme, projection_quality_report],
                 "steps": [
                     "检查生成目录、配置与测试布局是否符合当前工程约束",
                     "对生成结果进行必要的代码编辑或补强",
@@ -581,6 +589,12 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 "goal": "为投影结果固化回归验证、交付说明与后续操作边界",
                 "description": "补齐最终验证步骤、交付说明和已知风险记录，确保 QA 可以基于证据做最终裁决。",
                 "scope": [project_root, "tui_runtime.md", "tests/"],
+                "target_files": [
+                    projection_readme,
+                    projection_delivery_note,
+                    projection_quality_report,
+                    "tui_runtime.md",
+                ],
                 "steps": [
                     "整理可复现的验证命令与预期结果",
                     "补充必要测试或交付说明",
@@ -770,7 +784,6 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "tests/verify.test.ts",
                     "README.md",
                 ]
-                delivery_targets = [*visual_targets, *validation_targets]
                 root_contracts = [
                     {
                         "id": "TASK-1",
@@ -808,22 +821,19 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     {
                         "id": "TASK-2",
                         "title": f"实现 {domain_label} 模拟流程、Web 入口与验证资产",
-                        "goal": f"实现 {domain_label} 的需求流程、浏览器入口、自动验证与运行说明。",
+                        "goal": f"实现 {domain_label} 的需求流程和浏览器入口。",
                         "description": (
                             "补齐 src/engine/simulation、src/engine/renderer、index.html、"
-                            f"src/verify.ts、测试与 README，让页面、源码和验收脚本共同体现需求关键词：{keyword_summary}。"
+                            f"src/web.ts，让页面和源码共同体现需求关键词：{keyword_summary}。"
                         ),
-                        "scope": delivery_targets,
-                        "target_files": delivery_targets,
+                        "scope": visual_targets,
+                        "target_files": visual_targets,
                         "steps": [
                             "实现 src/engine/simulation.ts 的状态更新或计算流程",
                             "实现 src/engine/renderer.ts，将核心状态渲染为浏览器可见内容",
                             "实现 src/web.ts 或等价浏览器 bootstrap，在 DOM 可用后初始化引擎并绘制首帧",
                             "创建 index.html，包含有效 <html>、HTML5 canvas 与可视化容器",
                             'index.html 不得把 Node-only CLI 入口直接作为 <script type="module"> 引入；必须引用浏览器入口或内联浏览器 bootstrap',
-                            f"实现 src/verify.ts 与 tests/verify.test.ts，覆盖确定性检查：{check_summary}",
-                            "更新 package.json 的 test/verify 脚本，使其运行 Node-compatible verifier；不得依赖浏览器 document/window，也不得在 ESM 模式使用 require.main",
-                            "编写 README，说明 npm install/build/test/start 与浏览器运行方式",
                             f"在页面或源码中保留验收关键词：{keyword_summary}",
                         ],
                         "acceptance": [
@@ -832,6 +842,27 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                             "浏览器入口在首屏自动绘制非空 canvas，无需用户先点击",
                             "HTML 入口引用的脚本/资源在 build 后真实存在并能被浏览器加载",
                             f"源码或页面包含需求关键词：{keyword_summary}",
+                        ],
+                        "phase": "implementation",
+                        "depends_on": ["TASK-1"],
+                        "assigned_to": "Director",
+                        "metadata": dict(source_metadata),
+                    },
+                    {
+                        "id": "TASK-3",
+                        "title": f"固化 {domain_label} 验证脚本与交付说明",
+                        "goal": f"为 {domain_label} 固化自动验证、运行说明和 QA 交付证据。",
+                        "description": (
+                            f"实现 src/verify.ts、tests/verify.test.ts 与 README，覆盖确定性检查：{check_summary}。"
+                        ),
+                        "scope": validation_targets,
+                        "target_files": validation_targets,
+                        "steps": [
+                            f"实现 src/verify.ts 与 tests/verify.test.ts，覆盖确定性检查：{check_summary}",
+                            "更新 package.json 的 test/verify 脚本，使其运行 Node-compatible verifier；不得依赖浏览器 document/window，也不得在 ESM 模式使用 require.main",
+                            "编写 README，说明 npm install/build/test/start 与浏览器运行方式",
+                        ],
+                        "acceptance": [
                             "`npm run build` 通过且浏览器入口引用真实构建产物",
                             "`npm run test` 执行真实验证并返回 PASS",
                             "`npm test` 的验证入口可在当前 package module/tsconfig module 组合下由 Node 执行",
@@ -839,8 +870,8 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                             "`README.md` 包含安装、构建、测试、启动和浏览器查看步骤",
                             "交付物包含 TypeScript 源码、package.json、index.html、测试与 README",
                         ],
-                        "phase": "implementation",
-                        "depends_on": ["TASK-1"],
+                        "phase": "verification",
+                        "depends_on": ["TASK-2"],
                         "assigned_to": "Director",
                         "metadata": dict(source_metadata),
                     },

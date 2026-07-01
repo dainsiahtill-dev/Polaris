@@ -38,8 +38,8 @@ def test_factory_bench_sessions_disabled_without_internal_flag() -> None:
     with patch.dict(
         os.environ,
         {
-            "POLARIS_INTERNAL_BENCH_ENABLED": "0",
-            "POLARIS_FACTORY_BENCH_INTERNAL_ENABLED": "0",
+            "KERNELONE_INTERNAL_BENCH_ENABLED": "0",
+            "KERNELONE_FACTORY_BENCH_INTERNAL_ENABLED": "0",
             "VITE_POLARIS_INTERNAL_BENCH": "0",
         },
         clear=False,
@@ -56,7 +56,7 @@ class TestFactoryBenchRouter:
         self._tmp = tempfile.TemporaryDirectory()
         self._env = {
             "FACTORY_BENCH_SESSIONS_ROOT": self._tmp.name,
-            "POLARIS_INTERNAL_BENCH_ENABLED": "1",
+            "KERNELONE_INTERNAL_BENCH_ENABLED": "1",
         }
         self._patcher = patch.dict(os.environ, self._env, clear=False)
         self._patcher.start()

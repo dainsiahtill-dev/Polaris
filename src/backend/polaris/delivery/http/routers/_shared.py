@@ -675,10 +675,11 @@ def _env_flag_enabled(name: str) -> bool:
 
 def internal_bench_surface_enabled() -> bool:
     """Return whether internal Factory/Bench HTTP surfaces may be exposed."""
-    # Default enabled in dev; set POLARIS_INTERNAL_BENCH_ENABLED=false to disable
+    # Default enabled in dev; set KERNELONE_INTERNAL_BENCH_ENABLED=false to disable.
+    # VITE_POLARIS_INTERNAL_BENCH remains accepted because it is a frontend build flag.
     for name in (
-        "POLARIS_INTERNAL_BENCH_ENABLED",
-        "POLARIS_FACTORY_BENCH_INTERNAL_ENABLED",
+        "KERNELONE_INTERNAL_BENCH_ENABLED",
+        "KERNELONE_FACTORY_BENCH_INTERNAL_ENABLED",
         "VITE_POLARIS_INTERNAL_BENCH",
     ):
         raw = os.environ.get(name)
@@ -701,7 +702,7 @@ def require_internal_bench_surface() -> None:
         ),
         details={
             "internal_test_only": True,
-            "enable_env": "POLARIS_INTERNAL_BENCH_ENABLED",
+            "enable_env": "KERNELONE_INTERNAL_BENCH_ENABLED",
             "formal_projection": "/v2/control-plane/ledger/projection",
         },
     )

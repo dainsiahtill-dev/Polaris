@@ -42,7 +42,7 @@ _LAST_FACTORY_START_PAYLOAD: dict[str, Any] = {}
 
 @pytest.fixture(autouse=True)
 def _isolate_instance_registry(monkeypatch: Any, tmp_path: Path) -> None:
-    monkeypatch.setenv("POLARIS_INSTANCE_HOME", str(tmp_path / "instances-home"))
+    monkeypatch.setenv("KERNELONE_INSTANCE_HOME", str(tmp_path / "instances-home"))
     monkeypatch.setenv("FACTORY_BENCH_LAUNCHER_INSTANCE_MODE", "observed")
     bench.configure_bench_backend("", "", "")
 

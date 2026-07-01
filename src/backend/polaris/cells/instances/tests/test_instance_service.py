@@ -536,9 +536,9 @@ def test_start_instance_builds_backend_and_frontend_processes(
     assert frontend_call["env"]["VITE_POLARIS_INSTANCE_ID"] == "bench-l1-01"
     assert frontend_call["env"]["VITE_POLARIS_WORKSPACE"] == str((tmp_path / "bench" / "L1-01").resolve())
     assert frontend_call["env"]["VITE_WORKSPACE"] == str((tmp_path / "bench" / "L1-01").resolve())
-    assert backend_call["env"]["POLARIS_INSTANCE_ID"] == "bench-l1-01"
-    assert backend_call["env"]["POLARIS_INSTANCE_KIND"] == "bench_project"
-    assert backend_call["env"]["POLARIS_INSTANCE_WATCHDOG_ENABLED"] == "0"
+    assert backend_call["env"]["KERNELONE_INSTANCE_ID"] == "bench-l1-01"
+    assert backend_call["env"]["KERNELONE_INSTANCE_KIND"] == "bench_project"
+    assert backend_call["env"]["KERNELONE_INSTANCE_WATCHDOG_ENABLED"] == "0"
 
 
 def test_start_instance_recycled_pid_does_not_reuse_dead_backend(
@@ -636,16 +636,16 @@ def test_start_instance_recycled_pid_does_not_reuse_dead_backend(
 
 
 def test_instance_watchdog_default_scope(monkeypatch: Any) -> None:
-    monkeypatch.delenv("POLARIS_INSTANCE_ID", raising=False)
-    monkeypatch.delenv("POLARIS_INSTANCE_KIND", raising=False)
+    monkeypatch.delenv("KERNELONE_INSTANCE_ID", raising=False)
+    monkeypatch.delenv("KERNELONE_INSTANCE_KIND", raising=False)
     assert instance_service._instance_watchdog_default_enabled() is False
 
-    monkeypatch.setenv("POLARIS_INSTANCE_ID", "main")
-    monkeypatch.setenv("POLARIS_INSTANCE_KIND", "development")
+    monkeypatch.setenv("KERNELONE_INSTANCE_ID", "main")
+    monkeypatch.setenv("KERNELONE_INSTANCE_KIND", "development")
     assert instance_service._instance_watchdog_default_enabled() is True
 
-    monkeypatch.setenv("POLARIS_INSTANCE_ID", "factory-bench-l1-01")
-    monkeypatch.setenv("POLARIS_INSTANCE_KIND", "bench_project")
+    monkeypatch.setenv("KERNELONE_INSTANCE_ID", "factory-bench-l1-01")
+    monkeypatch.setenv("KERNELONE_INSTANCE_KIND", "bench_project")
     assert instance_service._instance_watchdog_default_enabled() is False
 
 

@@ -485,25 +485,23 @@ units:
   # Wave 3: Cross-cutting concerns
   # ─────────────────────────────────────────────────────────────────────────────
   - id: mig-env-var-prefix
-    title: Environment variable prefix KERNELONE_ → KERNELONE_ migration
+    title: Environment variable prefix POLARIS_ → KERNELONE_ migration
     wave: 3
     category: infrastructure
     scope: file_family
-    status: planned
-    current_impl_state: mixed
+    status: verified
+    current_impl_state: new_root_primary
     owner: infrastructure-engineer
     legacy_policy: KERNELONE_rename_required
     depends_on:
       - mig-kernelone-core
-    blockers:
-      - "249 unique KERNELONE_* var names referenced across 161 files (746 total occurrences)"
-      - "No complete KERNELONE_* equivalence mapping documented"
+    blockers: []
     notes:
-      - "Snapshot (2026-03-23): KERNELONE_=746 (polaris:483, tests:172) vs KERNELONE_=159 (polaris:143, tests:9, docs:4)"
-      - "Top files: config.py(86), _runtime_config.py(27), config_loader.py(24)"
-      - "KERNELONE_* may be kept as backward-compat aliases in bootstrap config only"
-      - "Never retain KERNELONE_* in polaris/ business logic"
-      - "Timeline: Wave 3 — after application cellization batches complete"
+      - "Canonical namespace: KERNELONE_*"
+      - "Deprecated boundary namespace: POLARIS_*"
+      - "POLARIS_* may be accepted only by polaris/env_prefix_normalization.py and mapped before kernel imports"
+      - "VITE_POLARIS_* remains a frontend build namespace and is outside the backend runtime env migration"
+      - "2026-07-02 audit: backend product Python code has 0 direct POLARIS_* env-token references outside the boundary ACL"
     target:
       cell: kernelone.base
       catalog_status: actual
@@ -512,6 +510,7 @@ units:
         - polaris/kernelone/
         - polaris/bootstrap/
       target_paths:
+        - polaris/env_prefix_normalization.py
         - polaris/kernelone/_runtime_config.py
         - polaris/bootstrap/config_loader.py
         - polaris/delivery/cli/pm/config.py
@@ -519,44 +518,55 @@ units:
         - polaris/delivery/cli/director/cli_thin.py
         - polaris/cells/storage/layout/internal/settings_utils.py
         - polaris/kernelone/process/codex_adapter.py
-      actual_impl_paths: []
-      subgraphs: []
+      actual_impl_paths:
+        - polaris/env_prefix_normalization.py
+        - polaris/kernelone/_runtime_config.py
+        - polaris/bootstrap/config_loader.py
+        - polaris/delivery/cli/pm/config.py
+        - polaris/delivery/cli/pm/cli.py
+        - polaris/delivery/cli/director/cli_thin.py
+        - polaris/cells/storage/layout/internal/settings_utils.py
+        - polaris/kernelone/process/codex_adapter.py
+      subgraphs:
+        - kernelone_env_prefix_normalization
     source_refs:
       - path: polaris/kernelone/_runtime_config.py
         kind: file
         coverage: partial
-        note: "27 KERNELONE_ occurrences — rename to KERNELONE_ equivalents"
+        note: "Canonical KERNELONE_* runtime config"
       - path: polaris/bootstrap/config_loader.py
         kind: file
         coverage: partial
-        note: "24 KERNELONE_ occurrences — add KERNELONE_ primary + KERNELONE_ alias"
+        note: "Bootstrap consumes canonical KERNELONE_* values after boundary normalization"
       - path: polaris/delivery/cli/pm/config.py
         kind: file
         coverage: partial
-        note: "13 KERNELONE_ occurrences — migrate to KERNELONE_"
-      - path: config.py
+        note: "Delivery CLI consumes canonical KERNELONE_* values"
+      - path: polaris/env_prefix_normalization.py
         kind: file
-        coverage: partial
-        note: "86 KERNELONE_ occurrences — root config; highest priority"
-      - path: tests/
+        coverage: full
+        note: "Boundary ACL maps deprecated POLARIS_* values to KERNELONE_* equivalents"
+      - path: polaris/tests/
         kind: directory
         coverage: partial
-        note: "172 KERNELONE_ occurrences — tests follow polaris/ migration"
+        note: "Tests may set deprecated POLARIS_* only when explicitly testing boundary normalization"
     verification:
       checks:
-        - "grep -r 'KERNELONE_' polaris/ | wc -l  (expect 0)"
+        - "backend product Python has 0 direct POLARIS_* env-token references outside polaris/env_prefix_normalization.py"
+        - "pytest polaris/tests/architecture/test_env_prefix_normalization_fence.py -q"
         - "pytest polaris/kernelone/tests/test_runtime_config.py -q"
         - "pytest polaris/bootstrap/tests/ -q"
       required_tests:
         - polaris/kernelone/tests/test_runtime_config.py
+        - polaris/tests/architecture/test_env_prefix_normalization_fence.py
       docs_updates:
         - docs/KERNELONE_ARCHITECTURE_SPEC.md (env var section)
         - README.md (env var reference)
       graph_updates:
         - docs/ARCHITECTURE_STANDARD.md (env var section updated)
     delete_when:
-      - "grep -r 'KERNELONE_' polaris/ returns 0 results"
-      - "KERNELONE_ aliases removed from bootstrap config"
+      - "Satisfied 2026-07-02: backend product Python reads KERNELONE_* directly"
+      - "Satisfied 2026-07-02: POLARIS_* compatibility is centralized in env_prefix_normalization.py"
 
   - id: mig-descriptor-pack
     title: Descriptor pack generation for all 67 Cells

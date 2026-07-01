@@ -31,9 +31,9 @@ SCHEMA_VERSION = 1
 DEFAULT_BACKEND_PORT = 49977
 DEFAULT_FRONTEND_PORT = 5173
 DEFAULT_HOST = "127.0.0.1"
-INSTANCE_HOME_ENV = "POLARIS_INSTANCE_HOME"
-INSTANCE_WATCHDOG_ENABLED_ENV = "POLARIS_INSTANCE_WATCHDOG_ENABLED"
-INSTANCE_WATCHDOG_INTERVAL_ENV = "POLARIS_INSTANCE_WATCHDOG_INTERVAL_SECONDS"
+INSTANCE_HOME_ENV = "KERNELONE_INSTANCE_HOME"
+INSTANCE_WATCHDOG_ENABLED_ENV = "KERNELONE_INSTANCE_WATCHDOG_ENABLED"
+INSTANCE_WATCHDOG_INTERVAL_ENV = "KERNELONE_INSTANCE_WATCHDOG_INTERVAL_SECONDS"
 DEFAULT_WATCHDOG_INTERVAL_SECONDS = 2.0
 PROCESS_TERMINATE_TIMEOUT_SECONDS = 5.0
 PORT_RELEASE_TIMEOUT_SECONDS = 8.0
@@ -719,8 +719,8 @@ class InstanceSupervisor:
             command.append("--reload")
         env = os.environ.copy()
         env["PYTHONPATH"] = str(backend_root) + os.pathsep + env.get("PYTHONPATH", "")
-        env["POLARIS_INSTANCE_ID"] = record.instance_id
-        env["POLARIS_INSTANCE_KIND"] = record.kind
+        env["KERNELONE_INSTANCE_ID"] = record.instance_id
+        env["KERNELONE_INSTANCE_KIND"] = record.kind
         if record.instance_id != "main":
             env.setdefault(INSTANCE_WATCHDOG_ENABLED_ENV, "0")
         env["KERNELONE_CORS_ORIGINS"] = ",".join(
@@ -887,7 +887,7 @@ class InstanceSupervisor:
         current_pid = os.getpid()
         if record.backend_pid and int(record.backend_pid) == current_pid:
             return True
-        env_instance_id = str(os.environ.get("POLARIS_INSTANCE_ID", "") or "").strip()
+        env_instance_id = str(os.environ.get("KERNELONE_INSTANCE_ID", "") or "").strip()
         return bool(env_instance_id and record.instance_id == env_instance_id)
 
     def _instance_dir(self, instance_id: str) -> Path:
@@ -1053,8 +1053,8 @@ def _watchdog_interval_seconds() -> float:
 
 
 def _instance_watchdog_default_enabled() -> bool:
-    instance_id = str(os.environ.get("POLARIS_INSTANCE_ID", "") or "").strip()
-    instance_kind = str(os.environ.get("POLARIS_INSTANCE_KIND", "") or "").strip()
+    instance_id = str(os.environ.get("KERNELONE_INSTANCE_ID", "") or "").strip()
+    instance_kind = str(os.environ.get("KERNELONE_INSTANCE_KIND", "") or "").strip()
     return instance_id == "main" or instance_kind == "development"
 
 

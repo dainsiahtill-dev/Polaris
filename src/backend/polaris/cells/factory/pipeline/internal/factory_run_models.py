@@ -134,7 +134,7 @@ def _signal_factory_cancel_event(workspace: str | Path, run_id: str) -> None:
 
 
 def _factory_jetstream_fanout_timeout_seconds() -> float:
-    raw = os.getenv("POLARIS_FACTORY_JETSTREAM_FANOUT_TIMEOUT_SECONDS")
+    raw = os.getenv("KERNELONE_FACTORY_JETSTREAM_FANOUT_TIMEOUT_SECONDS")
     if raw is None:
         return _FACTORY_JETSTREAM_FANOUT_TIMEOUT_SECONDS
     try:

@@ -190,7 +190,7 @@ def build_contract_retry_context(
         if authorized_scope_paths:
             user_content = (
                 user_content.rstrip()
-                + "\nPOLARIS_AUTHORIZED_SCOPE_PATHS: "
+                + "\nKERNELONE_AUTHORIZED_SCOPE_PATHS: "
                 + json.dumps({"scope_paths": authorized_scope_paths}, ensure_ascii=False)
             )
         retry_context.append({"role": "user", "content": user_content})

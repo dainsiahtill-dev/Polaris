@@ -50,7 +50,13 @@ def test_pm_typescript_package_contract_uses_requirement_checks_not_fixed_templa
     lowered_payload = payload.lower()
 
     assert len(contracts) == 3
-    assert "src/models/" not in payload
+    for model_target in (
+        "src/models/Firefly.ts",
+        "src/models/Flower.ts",
+        "src/models/MoonPhase.ts",
+        "src/models/Humidity.ts",
+    ):
+        assert model_target in payload
     assert "content_any:firefly|flower|moon|humidity" in payload
     assert "package_scripts" in payload
     for token in ("firefly", "flower", "moon", "humidity"):
@@ -368,6 +374,13 @@ async def test_pm_adapter_projection_hint_synthesizes_generic_projection_contrac
     assert first_metadata.get("execution_backend") == "projection_generate"
     assert projection.get("scenario_id") == "scenario_alpha"
     assert projection.get("project_slug") == "projection_lab"
+    for task in board_tasks:
+        raw_metadata = task.metadata
+        metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+        target_files = metadata.get("target_files")
+        assert isinstance(target_files, list)
+        assert target_files
+        assert all("." in str(path) for path in target_files)
 
 
 @pytest.mark.asyncio
@@ -394,7 +407,7 @@ async def test_pm_adapter_runtime_exception_is_fail_closed(tmp_path: Path) -> No
 @pytest.mark.asyncio
 async def test_pm_adapter_deterministic_contracts_bypass_llm(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     adapter = PMAdapter(workspace=str(tmp_path))
-    monkeypatch.setenv("POLARIS_PM_DETERMINISTIC_CONTRACTS", "1")
+    monkeypatch.setenv("KERNELONE_PM_DETERMINISTIC_CONTRACTS", "1")
 
     async def _boom_call_role_llm(message: str, context=None):
         del message, context

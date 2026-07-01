@@ -101,7 +101,7 @@ class TestHistoryRouter:
         with (
             patch.dict(
                 "os.environ",
-                {"POLARIS_INTERNAL_BENCH_ENABLED": "1"},
+                {"KERNELONE_INTERNAL_BENCH_ENABLED": "1"},
             ),
             patch(
                 "polaris.delivery.http.routers.history._load_merged_rounds",
@@ -129,7 +129,8 @@ class TestHistoryRouter:
     def test_history_factory_overview_disabled_by_default(self) -> None:
         """Factory/Bench history is not a formal product history surface."""
         client = _build_client()
-        response = client.get("/history/factory/overview")
+        with patch.dict("os.environ", {"KERNELONE_INTERNAL_BENCH_ENABLED": "0"}):
+            response = client.get("/history/factory/overview")
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "INTERNAL_BENCH_SURFACE_DISABLED"
@@ -266,7 +267,7 @@ class TestHistoryRouter:
         with (
             patch.dict(
                 "os.environ",
-                {"POLARIS_INTERNAL_BENCH_ENABLED": "1"},
+                {"KERNELONE_INTERNAL_BENCH_ENABLED": "1"},
             ),
             patch(
                 "polaris.delivery.http.routers.history.list_factory_runs",
@@ -282,7 +283,8 @@ class TestHistoryRouter:
     def test_v2_history_factory_snapshots_disabled_by_default(self) -> None:
         """Factory snapshot history is hidden outside internal test mode."""
         client = _build_client()
-        response = client.get("/v2/history/factory/snapshots")
+        with patch.dict("os.environ", {"KERNELONE_INTERNAL_BENCH_ENABLED": "0"}):
+            response = client.get("/v2/history/factory/snapshots")
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "INTERNAL_BENCH_SURFACE_DISABLED"
@@ -319,7 +321,7 @@ class TestHistoryRouter:
         with (
             patch.dict(
                 "os.environ",
-                {"POLARIS_INTERNAL_BENCH_ENABLED": "1"},
+                {"KERNELONE_INTERNAL_BENCH_ENABLED": "1"},
             ),
             patch(
                 "polaris.delivery.http.routers.history.get_factory_manifest",
@@ -333,7 +335,8 @@ class TestHistoryRouter:
     def test_history_factory_manifest_disabled_by_default(self) -> None:
         """Factory manifest history is hidden outside internal test mode."""
         client = _build_client()
-        response = client.get("/history/factory/f1/manifest")
+        with patch.dict("os.environ", {"KERNELONE_INTERNAL_BENCH_ENABLED": "0"}):
+            response = client.get("/history/factory/f1/manifest")
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "INTERNAL_BENCH_SURFACE_DISABLED"

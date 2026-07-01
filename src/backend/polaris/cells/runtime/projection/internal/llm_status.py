@@ -298,7 +298,7 @@ def _dedupe_index_candidates(candidates: list[dict[str, Any]]) -> list[dict[str,
 
 
 def _runtime_dispatch_skip_ttl_seconds() -> int:
-    raw = str(os.getenv("POLARIS_LLM_STATUS_RUNTIME_SKIP_TTL_SECONDS") or "").strip()
+    raw = str(os.getenv("KERNELONE_LLM_STATUS_RUNTIME_SKIP_TTL_SECONDS") or "").strip()
     if not raw:
         return RUNTIME_DISPATCH_SKIP_TTL_SECONDS
     try:

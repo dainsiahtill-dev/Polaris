@@ -338,6 +338,7 @@ def test_contract_retry_context_drops_scope_that_broadens_specific_target() -> N
     user = next(m["content"] for m in out if m["role"] == "user")
 
     assert "POLARIS_AUTHORIZED_SCOPE_PATHS" not in user
+    assert "KERNELONE_AUTHORIZED_SCOPE_PATHS" not in user
 
 
 def test_extract_target_files_includes_pyproject_toml() -> None:

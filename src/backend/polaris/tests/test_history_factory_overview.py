@@ -17,7 +17,7 @@ def test_history_factory_overview_aggregates_round_flow(tmp_path: Path, monkeypa
     test_token = "test-history-token"
     monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
     monkeypatch.setenv("KERNELONE_TOKEN", test_token)
-    monkeypatch.setenv("POLARIS_INTERNAL_BENCH_ENABLED", "1")
+    monkeypatch.setenv("KERNELONE_INTERNAL_BENCH_ENABLED", "1")
     workspace = tmp_path
     settings = Settings(workspace=str(workspace), ramdisk_root="")
     app = create_app(settings)

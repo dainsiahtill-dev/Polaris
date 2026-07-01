@@ -63,7 +63,7 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
         if not raw_flag and isinstance(context, dict):
             raw_flag = str(context.get("deterministic_pm_contracts") or "").strip().lower()
         if not raw_flag:
-            raw_flag = str(os.environ.get("POLARIS_PM_DETERMINISTIC_CONTRACTS", "")).strip().lower()
+            raw_flag = str(os.environ.get("KERNELONE_PM_DETERMINISTIC_CONTRACTS", "")).strip().lower()
         return raw_flag in {"1", "true", "yes", "on"}
 
     def _build_pm_message(

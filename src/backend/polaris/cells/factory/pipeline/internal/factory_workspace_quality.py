@@ -167,7 +167,7 @@ class WorkspaceQualityRunner:
             context,
             "workspace_validation_install_dependencies",
             "qa_workspace_validation_install_dependencies",
-            env_var="POLARIS_FACTORY_WORKSPACE_VALIDATION_INSTALL_DEPENDENCIES",
+            env_var="KERNELONE_FACTORY_WORKSPACE_VALIDATION_INSTALL_DEPENDENCIES",
             default=True,
         ):
             return []
@@ -199,7 +199,7 @@ class WorkspaceQualityRunner:
             context,
             "workspace_validation_delivery_depth_contract",
             "qa_workspace_validation_delivery_depth_contract",
-            env_var="POLARIS_FACTORY_WORKSPACE_VALIDATION_DELIVERY_DEPTH_CONTRACT",
+            env_var="KERNELONE_FACTORY_WORKSPACE_VALIDATION_DELIVERY_DEPTH_CONTRACT",
             default=True,
         ):
             return None
@@ -253,7 +253,7 @@ class WorkspaceQualityRunner:
             context,
             "workspace_validation",
             "qa_workspace_validation",
-            env_var="POLARIS_FACTORY_WORKSPACE_VALIDATION",
+            env_var="KERNELONE_FACTORY_WORKSPACE_VALIDATION",
             default=True,
         ):
             return []
@@ -279,7 +279,7 @@ class WorkspaceQualityRunner:
                 context,
                 "workspace_validation_entrypoint_smoke",
                 "qa_workspace_validation_entrypoint_smoke",
-                env_var="POLARIS_FACTORY_WORKSPACE_VALIDATION_ENTRYPOINT_SMOKE",
+                env_var="KERNELONE_FACTORY_WORKSPACE_VALIDATION_ENTRYPOINT_SMOKE",
                 default=True,
             )
             and "start" in scripts
@@ -312,7 +312,7 @@ class WorkspaceQualityRunner:
             context,
             "workspace_validation_entrypoint_smoke",
             "qa_workspace_validation_entrypoint_smoke",
-            env_var="POLARIS_FACTORY_WORKSPACE_VALIDATION_ENTRYPOINT_SMOKE",
+            env_var="KERNELONE_FACTORY_WORKSPACE_VALIDATION_ENTRYPOINT_SMOKE",
             default=True,
         ):
             commands.append(["go", "run", "."])
@@ -402,7 +402,7 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
             context,
             "workspace_validation_entrypoint_smoke",
             "qa_workspace_validation_entrypoint_smoke",
-            env_var="POLARIS_FACTORY_WORKSPACE_VALIDATION_ENTRYPOINT_SMOKE",
+            env_var="KERNELONE_FACTORY_WORKSPACE_VALIDATION_ENTRYPOINT_SMOKE",
             default=True,
         ):
             commands.extend(self._python_entrypoint_smoke_commands())
