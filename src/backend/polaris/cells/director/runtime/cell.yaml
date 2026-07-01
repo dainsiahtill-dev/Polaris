@@ -79,6 +79,7 @@ state_owners: []
 effects_allowed:
 - fs.read:workspace/**
 - fs.write:workspace/**
+- process.spawn:director/runtime/tests/*
 verification:
   gaps:
   - 'Migration in progress: implementation resides in director.execution/internal

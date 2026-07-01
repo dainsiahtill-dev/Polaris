@@ -2915,6 +2915,7 @@ cells:
     effects_allowed:
       - fs.read:workspace/**
       - fs.write:workspace/**
+      - process.spawn:director/runtime/tests/*
     verification:
       gaps:
         - 'Repair Kernel contracts, schedule metadata, composition primitives,
