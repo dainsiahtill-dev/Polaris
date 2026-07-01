@@ -15,7 +15,7 @@ import asyncio
 import inspect
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+_UNSET = object()
 
 
 @dataclass
@@ -31,7 +32,7 @@ class Registration:
 
     factory: Callable[..., Any]
     is_singleton: bool = True
-    instance: Any = None
+    instance: Any = _UNSET
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -76,7 +77,7 @@ class DIContainer:
         self._registrations[interface] = Registration(
             factory=factory,
             is_singleton=is_singleton,
-            instance=None,
+            instance=_UNSET,
         )
 
     def register_singleton(self, interface: type[T], factory: Callable[[DIContainer], T]) -> None:
@@ -115,8 +116,8 @@ class DIContainer:
         if reg is None:
             raise KeyError(f"No registration for {interface}")
 
-        if reg.is_singleton and reg.instance is not None:
-            return reg.instance
+        if reg.is_singleton and reg.instance is not _UNSET:
+            return cast("T", reg.instance)
 
         # For async factories, we need async resolve
         raise RuntimeError(f"Use resolve_async for {interface}")
@@ -128,13 +129,13 @@ class DIContainer:
             raise KeyError(f"No registration for {interface}")
 
         if reg.is_singleton:
-            if reg.instance is not None:
-                return reg.instance
+            if reg.instance is not _UNSET:
+                return cast("T", reg.instance)
 
             async with reg.lock:
                 # Double-check after acquiring lock
-                if reg.instance is not None:
-                    return reg.instance
+                if reg.instance is not _UNSET:
+                    return cast("T", reg.instance)
 
                 # Create instance
                 instance = reg.factory(self)

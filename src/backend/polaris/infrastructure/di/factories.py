@@ -10,8 +10,6 @@ Usage:
         create_tool_spec_registry,
         create_theme_manager,
         create_metrics_collector,
-        create_kernel_audit_runtime,
-        create_omniscient_audit_bus,
     )
 
     container.register_singleton(ToolSpecRegistry, create_tool_spec_registry)
@@ -26,7 +24,7 @@ Usage:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.public.service import MetricsCollector
@@ -191,39 +189,6 @@ def register_all_factories(container: DIContainer) -> None:
     # as singletons in the container. Use their get_instance() methods directly.
 
 
-# No-op stubs for functions removed during refactor but still referenced by
-# polaris.infrastructure.di.__init__ lazy loader and tests/conftest.py.
-# TODO(2026-04-17): Clean up __init__.py mapping and conftest.py once these
-# singletons have canonical reset paths.
-
-
-def create_kernel_audit_runtime(runtime_root: Any = None) -> Any:
-    """Stub: KernelAuditRuntime is now a multi-instance singleton; use get_instance()."""
-    raise NotImplementedError("create_kernel_audit_runtime is deprecated; use KernelAuditRuntime.get_instance()")
-
-
-def create_omniscient_audit_bus(name: str = "default") -> Any:
-    """Stub: OmniscientAuditBus is now a multi-instance singleton; use get_instance()."""
-    raise NotImplementedError("create_omniscient_audit_bus is deprecated; use OmniscientAuditBus.get_instance()")
-
-
-def create_provider_manager() -> Any:
-    """Stub: ProviderManager is no longer a DI singleton."""
-    raise NotImplementedError("create_provider_manager is deprecated")
-
-
-def reset_kernel_audit_runtime_for_test() -> None:
-    """Stub: no-op for test compatibility."""
-
-
-def reset_omniscient_audit_bus_for_test() -> None:
-    """Stub: no-op for test compatibility."""
-
-
-def reset_provider_manager_for_test() -> None:
-    """Stub: no-op for test compatibility."""
-
-
 def reset_role_profile_registry_for_test() -> None:
     """Stub: delegates to canonical location if available."""
     try:
@@ -235,17 +200,11 @@ def reset_role_profile_registry_for_test() -> None:
 
 
 __all__ = [
-    "create_kernel_audit_runtime",
     "create_metrics_collector",
-    "create_omniscient_audit_bus",
-    "create_provider_manager",
     "create_theme_manager",
     "create_tool_spec_registry",
     "register_all_factories",
-    "reset_kernel_audit_runtime_for_test",
     "reset_metrics_collector_for_test",
-    "reset_omniscient_audit_bus_for_test",
-    "reset_provider_manager_for_test",
     "reset_role_action_registry_for_test",
     "reset_role_profile_registry_for_test",
     "reset_theme_manager_for_test",

@@ -285,10 +285,7 @@ def reset_singletons():
     """
     # Reset before test
     from polaris.infrastructure.di import (
-        reset_kernel_audit_runtime_for_test,
         reset_metrics_collector_for_test,
-        reset_omniscient_audit_bus_for_test,
-        reset_provider_manager_for_test,
         reset_role_action_registry_for_test,
         reset_role_profile_registry_for_test,
         reset_theme_manager_for_test,
@@ -298,11 +295,8 @@ def reset_singletons():
     reset_tool_spec_registry_for_test()
     reset_theme_manager_for_test()
     reset_metrics_collector_for_test()
-    reset_provider_manager_for_test()
     reset_role_profile_registry_for_test()
     reset_role_action_registry_for_test()
-    reset_kernel_audit_runtime_for_test()
-    reset_omniscient_audit_bus_for_test()
 
     yield
 
@@ -310,11 +304,8 @@ def reset_singletons():
     reset_tool_spec_registry_for_test()
     reset_theme_manager_for_test()
     reset_metrics_collector_for_test()
-    reset_provider_manager_for_test()
     reset_role_profile_registry_for_test()
     reset_role_action_registry_for_test()
-    reset_kernel_audit_runtime_for_test()
-    reset_omniscient_audit_bus_for_test()
 
 
 @pytest.fixture
