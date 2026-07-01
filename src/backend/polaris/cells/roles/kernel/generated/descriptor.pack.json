@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T04:25:30.460586Z",
-  "source_hash": "672bf5b3eebdea8a",
+  "generated_at": "2026-07-01T04:30:57.303813Z",
+  "source_hash": "39581376ad9d68be",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4000,10 +4000,6 @@
         {
           "name": "_build_context_gateway_config",
           "doc": "Build ContextGatewayConfig through the injected owner-agnostic runtime factory."
-        },
-        {
-          "name": "_use_transaction_kernel",
-          "doc": "Return the canonical execution engine selection."
         },
         {
           "name": "_get_response_schema",
@@ -28176,20 +28172,12 @@
     },
     {
       "type": "class",
-      "name": "TestTransactionKernelFeatureFlag",
+      "name": "TestTransactionKernelSelection",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_role_kernel_transaction_wiring.py",
       "methods": [
         {
-          "name": "test_use_transaction_kernel_default_true",
-          "doc": ""
-        },
-        {
-          "name": "test_use_transaction_kernel_true_env",
-          "doc": ""
-        },
-        {
-          "name": "test_transaction_kernel_cannot_be_disabled_by_removed_env_escape_hatches",
+          "name": "test_transaction_kernel_selector_api_is_retired",
           "doc": ""
         },
         {

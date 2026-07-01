@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, cast
@@ -217,28 +216,10 @@ class TestForcedToolScopePolicy:
         assert result == [forced_write_tool]
 
 
-class TestTransactionKernelFeatureFlag:
-    def test_use_transaction_kernel_default_true(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
-            assert RoleExecutionKernel._use_transaction_kernel() is True
-
-    def test_use_transaction_kernel_true_env(self) -> None:
-        with patch.dict(os.environ, {"USE_TRANSACTION_KERNEL_PRIMARY": "true"}):
-            assert RoleExecutionKernel._use_transaction_kernel() is True
-        with patch.dict(os.environ, {"USE_TRANSACTION_KERNEL_PRIMARY": "1"}):
-            assert RoleExecutionKernel._use_transaction_kernel() is True
-        with patch.dict(os.environ, {"USE_TRANSACTION_KERNEL_PRIMARY": "yes"}):
-            assert RoleExecutionKernel._use_transaction_kernel() is True
-
-    def test_transaction_kernel_cannot_be_disabled_by_removed_env_escape_hatches(self) -> None:
-        with patch.dict(
-            os.environ,
-            {
-                "LEGACY_FALLBACK": "true",
-                "USE_TRANSACTION_KERNEL_PRIMARY": "false",
-            },
-        ):
-            assert RoleExecutionKernel._use_transaction_kernel() is True
+class TestTransactionKernelSelection:
+    def test_transaction_kernel_selector_api_is_retired(self) -> None:
+        assert not hasattr(RoleExecutionKernel, "_use_transaction_kernel")
+        assert callable(execute_transaction_kernel_turn)
 
     def test_request_forces_no_transaction_tools_for_proposal_bridge(self) -> None:
         request = _MockRequest(
@@ -1242,12 +1223,9 @@ class TestExecuteTransactionKernelTurn:
             metadata=expected_metadata,
         )
 
-        with (
-            patch.object(kernel, "_build_context", return_value=MagicMock()),
-            patch(
-                "polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn",
-                new=AsyncMock(return_value=transaction_result),
-            ),
+        with patch(
+            "polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn",
+            new=AsyncMock(return_value=transaction_result),
         ):
             result = await kernel.run("pm", _MockRequest(run_id="run_123", validate_output=False))
 

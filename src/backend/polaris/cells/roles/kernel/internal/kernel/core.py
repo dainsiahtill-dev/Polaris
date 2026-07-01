@@ -266,14 +266,6 @@ class RoleExecutionKernel:
             logger.debug("ContextGatewayConfig factory failed", exc_info=True)
             return None
 
-    @staticmethod
-    def _use_transaction_kernel() -> bool:
-        """Return the canonical execution engine selection.
-
-        TransactionKernel is now the only production role-turn execution path.
-        """
-        return True
-
     def _get_response_schema(self, role: str) -> type | None:
         """Resolve explicit structured output schema for this turn.
 
