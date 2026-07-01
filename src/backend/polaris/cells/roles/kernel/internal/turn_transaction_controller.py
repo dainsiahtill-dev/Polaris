@@ -778,13 +778,34 @@ class TurnTransactionController:
             effective_turn_span_id = scope.effective_turn_span_id
             truthlog_recorder = scope.truthlog_recorder
             try:
-                async for event in self._execute_turn_stream(
+
+                async def _call_stream_llm_with_turn_tool_choice(
+                    call_context: list[dict],
+                    call_tool_definitions: list[dict],
+                    call_ledger: TurnLedger,
+                    shadow_engine: StreamShadowEngine | None = None,
+                    **kwargs: Any,
+                ) -> AsyncIterator[TurnEvent]:
+                    effective_tool_choice = kwargs.pop("tool_choice_override", None)
+                    if tool_choice_override is not None:
+                        effective_tool_choice = tool_choice_override
+                    async for stream_event in self._stream_orchestrator._call_llm_for_decision_stream_impl(
+                        call_context,
+                        call_tool_definitions,
+                        call_ledger,
+                        shadow_engine=shadow_engine,
+                        tool_choice_override=effective_tool_choice,
+                        **kwargs,
+                    ):
+                        yield stream_event
+
+                async for event in self._stream_orchestrator.execute_turn_stream(
                     turn_id,
                     context,
                     tool_definitions,
                     state_machine,
                     ledger,
-                    tool_choice_override=tool_choice_override,
+                    call_llm_for_decision_stream=_call_stream_llm_with_turn_tool_choice,
                 ):
                     event_with_request_id = self._attach_event_correlation(
                         event,
@@ -970,48 +991,6 @@ class TurnTransactionController:
 
         else:
             raise ValueError(f"Unknown decision kind: {decision_kind}")
-
-    async def _execute_turn_stream(
-        self,
-        turn_id: str,
-        context: list[dict],
-        tool_definitions: list[dict],
-        state_machine: TurnStateMachine,
-        ledger: TurnLedger,
-        *,
-        tool_choice_override: Any | None = None,
-    ) -> AsyncIterator[TurnEvent]:
-        """Proxy to StreamOrchestrator.execute_turn_stream."""
-
-        async def _call_stream_llm_with_turn_tool_choice(
-            call_context: list[dict],
-            call_tool_definitions: list[dict],
-            call_ledger: TurnLedger,
-            shadow_engine: StreamShadowEngine | None = None,
-            **kwargs: Any,
-        ) -> AsyncIterator[TurnEvent]:
-            effective_tool_choice = kwargs.pop("tool_choice_override", None)
-            if tool_choice_override is not None:
-                effective_tool_choice = tool_choice_override
-            async for event in self._stream_orchestrator._call_llm_for_decision_stream_impl(
-                call_context,
-                call_tool_definitions,
-                call_ledger,
-                shadow_engine=shadow_engine,
-                tool_choice_override=effective_tool_choice,
-                **kwargs,
-            ):
-                yield event
-
-        async for event in self._stream_orchestrator.execute_turn_stream(
-            turn_id,
-            context,
-            tool_definitions,
-            state_machine,
-            ledger,
-            call_llm_for_decision_stream=_call_stream_llm_with_turn_tool_choice,
-        ):
-            yield event
 
     # ---------------------------------------------------------------------------
     # LLM 调用

@@ -2586,7 +2586,7 @@ async def test_execute_turn_stream_yields_completion_after_mutation_contract_ret
     )
 
     events: list[Any] = []
-    async for event in controller._execute_turn_stream(
+    async for event in controller._stream_orchestrator.execute_turn_stream(
         turn_id="turn_stream_retry",
         context=context,
         tool_definitions=tool_definitions,
@@ -2696,7 +2696,7 @@ async def test_execute_turn_stream_passes_narrowed_tool_names_to_direct_batch_ex
     )
 
     events: list[Any] = []
-    async for event in controller._execute_turn_stream(
+    async for event in controller._stream_orchestrator.execute_turn_stream(
         turn_id="turn_stream_allowed_tools",
         context=context,
         tool_definitions=tool_definitions,
@@ -2777,7 +2777,7 @@ async def test_execute_turn_stream_fails_closed_when_native_tool_call_decodes_wi
     monkeypatch.setattr(controller._stream_orchestrator.decoder, "decode", _fake_decode)
 
     with pytest.raises(RuntimeError, match="tool_dispatch_dropped"):
-        async for _event in controller._execute_turn_stream(
+        async for _event in controller._stream_orchestrator.execute_turn_stream(
             turn_id="turn_stream_dropped_tool",
             context=context,
             tool_definitions=tool_definitions,
