@@ -77,7 +77,9 @@ def plan_transaction_tool_surface(
     """
 
     context_override = getattr(request, "context_override", None)
-    transaction_tools_disabled = tool_contract_requires_no_tools(request) or request_forces_no_transaction_tools(request)
+    transaction_tools_disabled = tool_contract_requires_no_tools(request) or request_forces_no_transaction_tools(
+        request
+    )
     tool_definitions = [] if transaction_tools_disabled else build_native_tool_schemas(profile)
     tool_definitions, runtime_tool_policy_audit = _apply_runtime_tool_policy(
         request=request,

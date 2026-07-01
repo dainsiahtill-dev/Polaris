@@ -63,11 +63,6 @@ def tool_contract_requires_single_batch(context_override: object) -> bool:
     )
 
 
-def benchmark_requires_no_tools(request: RoleTurnRequest) -> bool:
-    """Compatibility shim for old callers; delegates to the platform contract."""
-    return tool_contract_requires_no_tools(request)
-
-
 def request_forces_no_transaction_tools(request: RoleTurnRequest) -> bool:
     """Return True when this turn must be handled as text-only output."""
     context_override = getattr(request, "context_override", None)
