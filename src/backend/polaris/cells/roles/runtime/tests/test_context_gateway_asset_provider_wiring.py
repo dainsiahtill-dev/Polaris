@@ -21,6 +21,11 @@ def test_runtime_kernel_injects_ce_and_qa_context_asset_readers(monkeypatch: Any
 
     blueprint_result = object()
     verdict_result = object()
+    resident_capability_surface = {
+        "schema_version": "resident.agi_capability_surface.v1",
+        "items": [],
+    }
+    resident_decision_trace = [{"actor": "resident", "stage": "goal_staging"}]
     calls: list[tuple[str, str, str]] = []
 
     def fake_blueprint_status(task_id: str, workspace: str) -> object:
@@ -39,18 +44,29 @@ def test_runtime_kernel_injects_ce_and_qa_context_asset_readers(monkeypatch: Any
     factory = getattr(kernel, "context_gateway_config_factory", None)
 
     assert factory is not None
+    request = MagicMock()
+    request.context_override = {
+        "resident_agi_audit_pack": {
+            "capability_surface": resident_capability_surface,
+            "recent_decisions": resident_decision_trace,
+        },
+    }
     config = build_context_gateway_config(
         factory,
         "chief_engineer",
         MagicMock(),
-        MagicMock(),
+        request,
     )
     assert isinstance(config, ContextGatewayConfig)
     assert config.blueprint_overview_provider is not None
     assert config.verdict_history_provider is not None
+    assert config.resident_agi_capability_provider is not None
+    assert config.resident_agi_decision_trace_provider is not None
 
     assert config.blueprint_overview_provider("task-1", str(tmp_path)) is blueprint_result
     assert config.verdict_history_provider("task-2", str(tmp_path)) is verdict_result
+    assert config.resident_agi_capability_provider(str(tmp_path)) is resident_capability_surface
+    assert config.resident_agi_decision_trace_provider(str(tmp_path)) is resident_decision_trace
     assert calls == [
         ("blueprint", "task-1", str(tmp_path)),
         ("qa", "task-2", str(tmp_path)),

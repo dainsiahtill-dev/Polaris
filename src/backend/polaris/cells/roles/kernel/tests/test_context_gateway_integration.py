@@ -442,22 +442,15 @@ class TestStateFirstContextOSIntegration:
     @pytest.mark.asyncio
     async def test_director_context_includes_resident_agi_decision_trace(self, tmp_path):
         """Director final context should consume recent Resident/AGI decision guidance."""
-        from polaris.cells.resident.autonomy.public import (
-            get_resident_service,
-            reset_resident_services,
-        )
-        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+        from polaris.cells.roles.kernel.internal.context_gateway import ContextGatewayConfig, RoleContextGateway
         from polaris.kernelone.context.context_os.models_v2 import (
             ContextOSProjectionV2 as ContextOSProjection,
             ContextOSSnapshotV2 as ContextOSSnapshot,
         )
 
-        reset_resident_services()
         workspace = tmp_path / "workspace"
         workspace.mkdir(parents=True, exist_ok=True)
-        service = get_resident_service(str(workspace))
-        service._auto_bundle_enabled = False
-        service.record_decision(
+        decision_trace = [
             {
                 "actor": "resident",
                 "stage": "goal_staging",
@@ -468,7 +461,7 @@ class TestStateFirstContextOSIntegration:
                 "confidence": 0.86,
                 "evidence_refs": ["workspace/meta/resident/decision_trace.jsonl"],
             }
-        )
+        ]
 
         mock_profile = MagicMock()
         mock_profile.context_policy = MagicMock()
@@ -483,7 +476,13 @@ class TestStateFirstContextOSIntegration:
         mock_profile.role_id = "director"
         mock_profile.display_name = "Director"
 
-        gateway = RoleContextGateway(mock_profile, workspace=workspace)
+        gateway = RoleContextGateway(
+            mock_profile,
+            workspace=workspace,
+            config=ContextGatewayConfig(
+                resident_agi_decision_trace_provider=lambda _workspace: decision_trace,
+            ),
+        )
         mock_snapshot = MagicMock(spec=ContextOSSnapshot)
         mock_snapshot.budget_plan = MagicMock()
         mock_snapshot.budget_plan.validation_error = ""
@@ -514,12 +513,11 @@ class TestStateFirstContextOSIntegration:
             for message in result.messages
             if isinstance(message, dict)
         )
-        reset_resident_services()
 
     @pytest.mark.asyncio
     async def test_resident_agi_context_includes_capability_decision_boundaries(self, tmp_path):
         """Resident AGI context must see capability surface plus hard/LLM decision boundaries."""
-        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+        from polaris.cells.roles.kernel.internal.context_gateway import ContextGatewayConfig, RoleContextGateway
         from polaris.kernelone.context.context_os.models_v2 import (
             ContextOSProjectionV2 as ContextOSProjection,
             ContextOSSnapshotV2 as ContextOSSnapshot,
@@ -541,7 +539,37 @@ class TestStateFirstContextOSIntegration:
         mock_profile.role_id = "resident_agi"
         mock_profile.display_name = "Resident AGI"
 
-        gateway = RoleContextGateway(mock_profile, workspace=workspace)
+        capability_surface = {
+            "schema_version": "resident.agi_capability_surface.v1",
+            "decision_boundary_schema": "resident.agi_decision_boundary.v1",
+            "role_id": "resident_agi",
+            "runtime_foundation": "roles.runtime + ContextOS + TransactionKernel",
+            "implementation_cell": "resident.autonomy",
+            "items": [
+                {
+                    "capability_id": "contextos.final_request_audit.read",
+                    "category": "llm_audit",
+                    "access": "read_only",
+                    "risk_level": "low",
+                }
+            ],
+            "decision_boundaries": [
+                {
+                    "boundary_id": "platform_hard_rule",
+                    "name": "Platform hard rule",
+                    "authority": "platform",
+                    "platform_hard_rule": "hard platform invariants are non-overridable",
+                    "agi_decision_scope": "agi_decision_scope",
+                }
+            ],
+        }
+        gateway = RoleContextGateway(
+            mock_profile,
+            workspace=workspace,
+            config=ContextGatewayConfig(
+                resident_agi_capability_provider=lambda _workspace: capability_surface,
+            ),
+        )
         mock_snapshot = MagicMock(spec=ContextOSSnapshot)
         mock_snapshot.budget_plan = MagicMock()
         mock_snapshot.budget_plan.validation_error = ""

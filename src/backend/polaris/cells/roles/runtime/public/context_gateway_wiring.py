@@ -1,10 +1,11 @@
 """Context-gateway asset-reader wiring for `roles.runtime` cell.
 
 Lossless split: this module holds the §8 helpers that mount role-owned asset
-reader ports (CE blueprint status, QA verdict history) for kernel-owned context
-signal assembly. The cross-cell reads go through the owner cells' PUBLIC
-contracts (ACGA-compliant) and the imports stay lazy/in-body to avoid import
-cycles.
+reader ports (CE blueprint status, QA verdict history, and Resident AGI
+capability/decision evidence) for kernel-owned context signal assembly. The
+cross-cell reads go through the owner cells' PUBLIC contracts
+(ACGA-compliant), or through evidence already carried by the current role turn,
+and the imports stay lazy/in-body to avoid import cycles.
 
 Monkeypatch contract (load-bearing): existing tests patch the reader functions
 on the ``service`` module namespace (``service._read_blueprint_status_for_context``
@@ -17,7 +18,7 @@ module's namespace.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from importlib import import_module
 from typing import Any, cast
 
@@ -59,14 +60,54 @@ def _resolve_reader(name: str) -> Callable[[str, str], Any]:
     return cast(Callable[[str, str], Any], getattr(service_module, name))
 
 
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _resident_agi_capability_surface_from_request(request: RoleTurnRequest) -> Mapping[str, Any] | None:
+    """Return Resident AGI capability evidence already carried by this role turn.
+
+    Resident-owned data must arrive through the role-turn context assembled by
+    `resident.autonomy`. Keeping the reader request-scoped avoids a reverse
+    dependency from `roles.kernel` or `roles.runtime` back into the Resident
+    Cell while still letting the kernel render its generic signal.
+    """
+
+    context_override = _mapping(getattr(request, "context_override", None))
+    direct_payload = _mapping(context_override.get("resident_agi_capability_surface"))
+    if direct_payload:
+        return direct_payload
+
+    audit_pack = _mapping(context_override.get("resident_agi_audit_pack"))
+    capability_surface = _mapping(audit_pack.get("capability_surface"))
+    return capability_surface or None
+
+
+def _resident_agi_decision_trace_from_request(request: RoleTurnRequest) -> list[Any] | Mapping[str, Any] | str | None:
+    """Return Resident AGI decision trace evidence carried by this role turn."""
+
+    context_override = _mapping(getattr(request, "context_override", None))
+    direct_payload = context_override.get("resident_agi_decision_trace")
+    if isinstance(direct_payload, (str, list, Mapping)) and direct_payload:
+        return direct_payload
+
+    audit_pack = _mapping(context_override.get("resident_agi_audit_pack"))
+    recent_decisions = audit_pack.get("recent_decisions")
+    if isinstance(recent_decisions, list) and recent_decisions:
+        return recent_decisions
+    return None
+
+
 def _build_context_gateway_config_for_role(
     role: str,
     profile: RoleProfile,
     request: RoleTurnRequest,
 ) -> ContextGatewayConfig:
     """Mount role asset reader ports for kernel-owned context signal assembly."""
-    del role, profile, request
+    del role, profile
     return ContextGatewayConfig(
         blueprint_overview_provider=_resolve_reader("_read_blueprint_status_for_context"),
         verdict_history_provider=_resolve_reader("_read_qa_verdict_for_context"),
+        resident_agi_capability_provider=lambda _workspace: _resident_agi_capability_surface_from_request(request),
+        resident_agi_decision_trace_provider=lambda _workspace: _resident_agi_decision_trace_from_request(request),
     )

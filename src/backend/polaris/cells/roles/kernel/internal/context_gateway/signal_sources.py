@@ -294,21 +294,16 @@ class SignalSourceProvider:
     def get_resident_agi_capabilities(self) -> str | None:
         """读取 Resident AGI 平台能力面（Role/ContextOS 同底座的决策契约）。
 
-        优先使用 ``ContextGatewayConfig`` 注入的 provider，便于未来把能力面升级为
-        由 Registry/AGI 自身审计模块动态产出；未注入时回退到 resident.autonomy 的
-        canonical capability surface。任何失败/缺失 → None（不阻断非 AGI turn）。
+        数据源必须由 ``ContextGatewayConfig`` 注入，通常来自当前 Resident
+        AGI role turn 的 ``context_override`` / audit pack。roles.kernel 只负责
+        signal 编排与渲染，不反向 import resident.autonomy owner Cell。
+        任何失败/缺失 → None（不阻断非 AGI turn）。
         """
         try:
             result: Any | None = None
             provider = self._config.resident_agi_capability_provider
             if provider is not None:
                 result = provider(str(self._workspace))
-            if result is None:
-                from polaris.cells.resident.autonomy.public.service import (
-                    resident_agi_capability_surface_payload,
-                )
-
-                result = resident_agi_capability_surface_payload()
             if isinstance(result, str):
                 return result.strip() or None
             if isinstance(result, Mapping):
@@ -398,22 +393,15 @@ class SignalSourceProvider:
     def get_resident_agi_decision_trace(self) -> str | None:
         """读取最近 Resident AGI 决策交接卡（CE/Director/QA 消费）。
 
-        该信号只投影 ``decision_trace.jsonl`` 的摘要，不替代 Resident decision
-        trace 事实源。优先使用配置注入 provider；未注入时通过 resident.autonomy
-        public service 读取最近决策并筛选执行相关的 AGI/Resident 判断。
+        该信号只投影 ``decision_trace.jsonl`` / audit pack 中的摘要，不替代
+        Resident decision trace 事实源。数据源必须由 ``ContextGatewayConfig``
+        注入，roles.kernel 不反向 import resident.autonomy owner Cell。
         """
         try:
             result: Any | None = None
             provider = self._config.resident_agi_decision_trace_provider
             if provider is not None:
                 result = provider(str(self._workspace))
-            if result is None:
-                from polaris.cells.resident.autonomy.public.service import (
-                    get_resident_service,
-                )
-
-                decisions = get_resident_service(str(self._workspace)).list_decisions(limit=20)
-                result = [item.to_dict() for item in decisions]
             if isinstance(result, str):
                 return result.strip() or None
             if isinstance(result, Mapping):

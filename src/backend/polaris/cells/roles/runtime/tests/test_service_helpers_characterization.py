@@ -370,11 +370,25 @@ def test_build_context_gateway_config_uses_module_namespace_providers(monkeypatc
 
     from unittest.mock import MagicMock
 
-    config = runtime_service._build_context_gateway_config_for_role("pm", MagicMock(), MagicMock())
+    request = MagicMock()
+    resident_capability_surface = {
+        "schema_version": "resident.agi_capability_surface.v1",
+        "items": [],
+    }
+    resident_decision_trace = [{"actor": "resident", "stage": "goal_staging"}]
+    request.context_override = {
+        "resident_agi_capability_surface": resident_capability_surface,
+        "resident_agi_decision_trace": resident_decision_trace,
+    }
+    config = runtime_service._build_context_gateway_config_for_role("pm", MagicMock(), request)
     assert config.blueprint_overview_provider is not None
     assert config.verdict_history_provider is not None
+    assert config.resident_agi_capability_provider is not None
+    assert config.resident_agi_decision_trace_provider is not None
     assert config.blueprint_overview_provider("t1", ".") is blueprint_sentinel
     assert config.verdict_history_provider("t2", ".") is verdict_sentinel
+    assert config.resident_agi_capability_provider(".") is resident_capability_surface
+    assert config.resident_agi_decision_trace_provider(".") is resident_decision_trace
 
 
 def test_read_blueprint_and_qa_return_none_for_blank_task() -> None:

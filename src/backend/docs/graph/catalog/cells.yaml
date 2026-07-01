@@ -1814,6 +1814,7 @@ cells:
       - llm.control_plane
       - policy.permission
       - audit.evidence
+      - control_plane.run_ledger
       - director.execution
       - roles.profile
       - roles.session

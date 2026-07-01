@@ -50,12 +50,19 @@ public_contracts:
   errors:
   - RoleKernelErrorV1
 depends_on:
+- context.engine
+- llm.control_plane
+- policy.permission
+- audit.evidence
+- control_plane.run_ledger
 - director.execution
 - roles.profile
 - roles.session
+- runtime.execution_broker
 - runtime.task_runtime
 - factory.cognitive_runtime
 - storage.layout
+- roles.scout
 subgraphs:
 - execution_governance_pipeline
 state_owners: []
