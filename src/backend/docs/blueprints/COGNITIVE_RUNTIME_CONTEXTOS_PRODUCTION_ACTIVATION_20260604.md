@@ -482,10 +482,10 @@ $env:PYTHONPATH=(Resolve-Path src/backend).Path; python -m pytest src/backend/po
 python -m ruff check src/backend/polaris/cells/director/tasking/internal/worker_executor.py src/backend/polaris/cells/director/tasking/internal/code_generation_engine.py src/backend/polaris/cells/director/execution/internal/code_generation_engine.py src/backend/polaris/cells/director/tasking/tests/test_worker_executor.py --fix
 python -m ruff format src/backend/polaris/cells/director/tasking/internal/worker_executor.py src/backend/polaris/cells/director/tasking/internal/code_generation_engine.py src/backend/polaris/cells/director/execution/internal/code_generation_engine.py src/backend/polaris/cells/director/tasking/tests/test_worker_executor.py
 python -m mypy src/backend/polaris/cells/director/tasking/internal/worker_executor.py src/backend/polaris/cells/director/tasking/internal/code_generation_engine.py src/backend/polaris/cells/director/execution/internal/code_generation_engine.py src/backend/polaris/cells/director/tasking/tests/test_worker_executor.py
-$env:PYTHONPATH=(Resolve-Path src/backend).Path; python -m pytest src/backend/polaris/kernelone/cognitive/tests/test_middleware.py src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py -q
-python -m ruff check src/backend/polaris/kernelone/cognitive/middleware.py src/backend/polaris/kernelone/cognitive/tests/test_middleware.py src/backend/polaris/cells/roles/runtime/public/service.py src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py
-python -m ruff format src/backend/polaris/kernelone/cognitive/middleware.py src/backend/polaris/kernelone/cognitive/tests/test_middleware.py src/backend/polaris/cells/roles/runtime/public/service.py src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py
-python -m mypy src/backend/polaris/kernelone/cognitive/middleware.py src/backend/polaris/kernelone/cognitive/tests/test_middleware.py src/backend/polaris/cells/roles/runtime/public/service.py src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py
+$env:PYTHONPATH=(Resolve-Path src/backend).Path; python -m pytest src/backend/polaris/kernelone/cognitive/tests/test_middleware.py src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py -q
+python -m ruff check src/backend/polaris/kernelone/cognitive/middleware.py src/backend/polaris/kernelone/cognitive/tests/test_middleware.py src/backend/polaris/cells/roles/runtime/public/service.py src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py
+python -m ruff format src/backend/polaris/kernelone/cognitive/middleware.py src/backend/polaris/kernelone/cognitive/tests/test_middleware.py src/backend/polaris/cells/roles/runtime/public/service.py src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py
+python -m mypy src/backend/polaris/kernelone/cognitive/middleware.py src/backend/polaris/kernelone/cognitive/tests/test_middleware.py src/backend/polaris/cells/roles/runtime/public/service.py src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py
 $env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/tests/test_llm_dialogue_public_service.py src/backend/polaris/tests/test_loop_pm_backend_resolution.py src/backend/polaris/tests/test_pm_doc_rendering_role_runtime.py src/backend/polaris/cells/director/execution/tests/test_code_generation.py -q
 python -m ruff check src/backend/polaris/cells/llm/dialogue/public/service.py src/backend/polaris/tests/test_llm_dialogue_public_service.py src/backend/polaris/tests/test_loop_pm_backend_resolution.py src/backend/polaris/tests/test_pm_doc_rendering_role_runtime.py src/backend/polaris/cells/director/execution/tests/test_code_generation.py src/backend/polaris/cells/director/tasking/internal/code_generation_engine.py src/backend/polaris/delivery/cli/pm/backend.py src/backend/polaris/delivery/cli/pm/orchestration/doc_rendering.py src/backend/polaris/delivery/cli/agentic_eval.py
 python -m ruff format src/backend/polaris/cells/llm/dialogue/public/service.py src/backend/polaris/tests/test_llm_dialogue_public_service.py src/backend/polaris/tests/test_loop_pm_backend_resolution.py src/backend/polaris/tests/test_pm_doc_rendering_role_runtime.py src/backend/polaris/cells/director/execution/tests/test_code_generation.py src/backend/polaris/cells/director/tasking/internal/code_generation_engine.py src/backend/polaris/delivery/cli/pm/backend.py src/backend/polaris/delivery/cli/pm/orchestration/doc_rendering.py src/backend/polaris/delivery/cli/agentic_eval.py
@@ -498,16 +498,16 @@ python -m ruff check src/backend/polaris/kernelone/context/contracts.py src/back
 python -m ruff format src/backend/polaris/kernelone/context/contracts.py src/backend/polaris/cells/roles/kernel/internal/tool_loop_controller.py src/backend/polaris/cells/roles/kernel/internal/context_gateway/gateway.py src/backend/polaris/cells/roles/kernel/tests/test_tool_loop_controller.py src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py
 $env:PYTHONPATH='src/backend'; python -m mypy src/backend/polaris/kernelone/context/contracts.py src/backend/polaris/cells/roles/kernel/internal/tool_loop_controller.py src/backend/polaris/cells/roles/kernel/internal/context_gateway/gateway.py src/backend/polaris/cells/roles/kernel/tests/test_tool_loop_controller.py src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py
 $env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/kernel/tests/test_tool_loop_controller.py src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py -q
-python -m ruff check src/backend/polaris/cells/roles/kernel/internal/context_gateway/gateway.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py --fix
-python -m ruff format src/backend/polaris/cells/roles/kernel/internal/context_gateway/gateway.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py
-$env:PYTHONPATH='src/backend'; python -m mypy src/backend/polaris/cells/roles/kernel/internal/context_gateway/gateway.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py
-$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py -q
+python -m ruff check src/backend/polaris/cells/roles/kernel/internal/context_gateway/gateway.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py --fix
+python -m ruff format src/backend/polaris/cells/roles/kernel/internal/context_gateway/gateway.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py
+$env:PYTHONPATH='src/backend'; python -m mypy src/backend/polaris/cells/roles/kernel/internal/context_gateway/gateway.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py
+$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py -q
 python -m ruff check src/backend/polaris/cells/roles/kernel/internal/turn_transaction_controller.py src/backend/polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py --fix
 python -m ruff format src/backend/polaris/cells/roles/kernel/internal/turn_transaction_controller.py src/backend/polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py
 $env:PYTHONPATH='src/backend'; python -m mypy src/backend/polaris/cells/roles/kernel/internal/turn_transaction_controller.py src/backend/polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py
 $env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py -k "narrowed_tool_names" -q
 $env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py -q
-$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py -q
+$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py -q
 python -m ruff check src/backend/polaris/kernelone/context/context_os/runtime/engine.py src/backend/polaris/kernelone/context/context_os/runtime/state.py src/backend/polaris/kernelone/context/context_os/pipeline/stages.py src/backend/polaris/kernelone/context/context_os/pipeline/attention_aware_stages.py src/backend/polaris/kernelone/context/context_os/pipeline/phase_aware_stages.py src/backend/polaris/kernelone/context/context_os/runtime/scheduler.py src/backend/polaris/kernelone/context/context_os/helpers.py src/backend/polaris/kernelone/context/context_os/domain_adapters/generic.py src/backend/polaris/cells/roles/runtime/public/persistence.py src/backend/polaris/kernelone/context/session_continuity.py --fix
 python -m ruff format src/backend/polaris/kernelone/context/context_os/runtime/engine.py src/backend/polaris/kernelone/context/context_os/runtime/state.py src/backend/polaris/kernelone/context/context_os/pipeline/stages.py src/backend/polaris/kernelone/context/context_os/pipeline/attention_aware_stages.py src/backend/polaris/kernelone/context/context_os/pipeline/phase_aware_stages.py src/backend/polaris/kernelone/context/context_os/runtime/scheduler.py src/backend/polaris/kernelone/context/context_os/helpers.py src/backend/polaris/kernelone/context/context_os/domain_adapters/generic.py src/backend/polaris/cells/roles/runtime/public/persistence.py src/backend/polaris/kernelone/context/session_continuity.py
 $env:PYTHONPATH='src/backend'; python -m mypy src/backend/polaris/kernelone/context/context_os/runtime/engine.py src/backend/polaris/kernelone/context/context_os/runtime/state.py src/backend/polaris/kernelone/context/context_os/pipeline/stages.py src/backend/polaris/kernelone/context/context_os/pipeline/attention_aware_stages.py src/backend/polaris/kernelone/context/context_os/pipeline/phase_aware_stages.py src/backend/polaris/kernelone/context/context_os/runtime/scheduler.py src/backend/polaris/kernelone/context/context_os/helpers.py src/backend/polaris/kernelone/context/context_os/domain_adapters/generic.py src/backend/polaris/cells/roles/runtime/public/persistence.py src/backend/polaris/kernelone/context/session_continuity.py
@@ -559,7 +559,7 @@ Results:
 - Cognitive Runtime MAINLINE tool-policy enforcement:
   `src/backend/polaris/kernelone/cognitive/tests/test_middleware.py`,
   `src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py`,
-  and `src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py`
+  and `src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py`
   -> `66 passed`
 - Public llm.dialogue RoleRuntime facade and no-legacy metadata regression:
   `src/backend/polaris/tests/test_llm_dialogue_public_service.py`,
@@ -577,7 +577,7 @@ Results:
 - ContextGateway decision hints drive Kernel tool-surface reduction:
   `src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py`,
   `src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py`,
-  and `src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py`
+  and `src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py`
   -> `65 passed`
 - Direct TransactionKernel tool dispatch receives narrowed executor allow-list:
   `src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py -k "narrowed_tool_names"`
@@ -588,7 +588,7 @@ Results:
 - RoleRuntime/ContextGateway/Kernel/TransactionKernel combined regression:
   `src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py`,
   `src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py`,
-  `src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py`,
+  `src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py`,
   and `src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py`
   -> `107 passed`
 - Context OS structured policy runtime migration:
@@ -610,7 +610,7 @@ Results:
   -> `35 passed`.
 - RoleExecutionKernel facade, run/stream parity, and stream compatibility
   regression:
-  `src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py`,
+  `src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py`,
   `src/backend/polaris/cells/roles/kernel/tests/test_run_stream_parity.py`,
   `src/backend/polaris/cells/roles/kernel/tests/test_stream_parity.py`,
   and `src/backend/polaris/cells/roles/kernel/tests/test_role_kernel_transaction_wiring.py`
@@ -622,7 +622,7 @@ Results:
   -> `14 passed`.
 - RoleRuntime Cognitive Runtime and Kernel tool-surface regression:
   `src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py`
-  and `src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py`
+  and `src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py`
   -> `57 passed`.
 - Production RoleExecutionKernel fallback scan:
   `LEGACY_FALLBACK|USE_TRANSACTION_KERNEL_PRIMARY|TurnEngine\(|old TurnEngine`

@@ -1,6 +1,7 @@
-"""向后兼容性测试 - RoleExecutionKernel Facade 重构
+"""RoleExecutionKernel public contract tests.
 
-验证重构后的 RoleExecutionKernel 保持向后兼容性。
+These tests describe the supported public construction, dependency injection,
+tool dispatch, and retired LLMCaller boundary for the current Role Kernel path.
 """
 
 from __future__ import annotations
@@ -29,11 +30,11 @@ from polaris.cells.roles.kernel.services.contracts import (
 from polaris.cells.roles.profile.public.service import RoleProfileRegistry
 
 
-class TestBackwardCompatibility:
-    """向后兼容性测试"""
+class TestRoleExecutionKernelConstruction:
+    """RoleExecutionKernel construction contract."""
 
     def test_basic_initialization(self) -> None:
-        """测试基本初始化（向后兼容）"""
+        """测试基本初始化。"""
         kernel = RoleExecutionKernel(workspace=".")
         assert kernel.workspace == "."
         assert kernel.registry is not None
@@ -135,7 +136,7 @@ class TestDependencyInjection:
         assert kernel._injected_event_emitter is not None
 
     def test_internal_llm_invoker_accessor_returns_invoker_without_deprecation(self) -> None:
-        """Kernel compatibility accessor returns canonical LLMInvoker."""
+        """Kernel LLM accessor returns canonical LLMInvoker without warnings."""
         from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
 
         kernel = RoleExecutionKernel(workspace=".")
@@ -145,7 +146,7 @@ class TestDependencyInjection:
             caller = kernel._get_llm_invoker()
 
         assert isinstance(caller, LLMInvoker)
-        assert not any("LLMCaller is deprecated" in str(item.message) for item in captured)
+        assert not any("LLMCaller" in str(item.message) for item in captured)
 
     def test_llm_caller_is_not_public_kernel_export(self) -> None:
         """LLMCaller must not be exported from any kernel boundary."""
@@ -162,8 +163,8 @@ class TestDependencyInjection:
             kernel_public.__getattr__("LLMCaller")
         assert "LLMCaller" not in vars(llm_caller_package)
 
-    def test_llm_caller_facade_file_is_retired(self) -> None:
-        """The retired LLMCaller facade must not reappear as an implementation-local shim."""
+    def test_llm_caller_shell_file_is_retired(self) -> None:
+        """The retired LLMCaller shell file must not reappear."""
         import polaris
 
         package_root = Path(polaris.__file__).resolve().parent
@@ -172,7 +173,7 @@ class TestDependencyInjection:
         assert not caller_file.exists()
 
     def test_llm_caller_direct_imports_are_retired(self) -> None:
-        """New production callers must not depend on the retired LLMCaller facade."""
+        """New production callers must not depend on retired LLMCaller."""
         import polaris
 
         package_root = Path(polaris.__file__).resolve().parent
@@ -195,12 +196,12 @@ class TestDependencyInjection:
         assert not hasattr(RoleExecutionKernel, "_get_llm_caller")
 
 
-class TestFacadeMethods:
-    """Facade 方法测试"""
+class TestInjectedServiceEntrypoints:
+    """Injected service entrypoint tests."""
 
     @pytest.mark.asyncio
     async def test_call_delegates_to_invoker(self) -> None:
-        """测试 call() 方法委托给 llm_invoker"""
+        """测试 call() 方法委托给 llm_invoker。"""
         mock_invoker = MagicMock(spec=ILLMInvoker)
         mock_invoker.invoke = AsyncMock(return_value=MagicMock())
 
@@ -225,7 +226,7 @@ class TestFacadeMethods:
 
     @pytest.mark.asyncio
     async def test_call_stream_delegates_to_invoker(self) -> None:
-        """测试 call_stream() 方法委托给 llm_invoker"""
+        """测试 call_stream() 方法委托给 llm_invoker。"""
         mock_invoker = MagicMock(spec=ILLMInvoker)
 
         async def mock_stream(*args, **kwargs):
@@ -248,7 +249,7 @@ class TestFacadeMethods:
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_delegates_to_executor(self) -> None:
-        """测试 _execute_single_tool() 方法委托给 tool_executor"""
+        """测试 _execute_single_tool() 方法委托给 tool_executor。"""
         mock_executor = MagicMock(spec=CellToolExecutorPort)
         mock_executor.execute = AsyncMock(return_value={"success": True})
 
@@ -466,7 +467,7 @@ class TestFacadeMethods:
         mock_failure_budget.reset = MagicMock()
         mock_gateway._failure_budget = mock_failure_budget
         kernel._cached_tool_gateway = mock_gateway
-        kernel._cached_gateway_turn_id = "request_obj:legacy"
+        kernel._cached_gateway_turn_id = "request_obj:previous"
 
         kernel.reset_tool_gateway_turn_boundary("turn_a")
         kernel.reset_tool_gateway_turn_boundary("turn_a")
@@ -534,8 +535,8 @@ class TestLazyLoading:
         assert kernel._prompt_builder is None  # 从未创建
 
 
-class TestExistingAPICompatibility:
-    """现有 API 兼容性测试"""
+class TestPublicKernelApi:
+    """Public RoleExecutionKernel API contract tests."""
 
     def test_run_method_exists(self) -> None:
         """测试 run() 方法存在"""
@@ -556,7 +557,7 @@ class TestExistingAPICompatibility:
         assert kernel.config is not None
 
     def test_tool_gateway_injection(self) -> None:
-        """测试 tool_gateway 注入（原有功能）"""
+        """测试 tool_gateway 注入。"""
         mock_gateway = MagicMock()
         kernel = RoleExecutionKernel(
             workspace=".",

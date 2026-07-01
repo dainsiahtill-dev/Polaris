@@ -589,7 +589,7 @@ pre_mortem:
     - "src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py"
     - "src/backend/polaris/cells/roles/kernel/internal/prompt_builder.py"
     - "src/backend/polaris/cells/roles/kernel/internal/kernel/core.py"
-    - "src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py"
+    - "src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py"
     - "src/backend/polaris/cells/roles/kernel/internal/turn_transaction_controller.py"
     - "src/backend/polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py"
     - "src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
@@ -699,7 +699,7 @@ verification_plan:
       description: "CognitiveMiddleware must preserve cognitive blocked_tools from the orchestrator."
       expected: "Middleware blocked tools test passes."
       status: completed
-    - file: "src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py"
+    - file: "src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py"
       description: "RoleExecutionKernel must filter blocked native tool schemas and reject blocked tool execution."
       expected: "Kernel cognitive tool-policy tests pass."
       status: completed
@@ -719,7 +719,7 @@ verification_plan:
       description: "ContextGateway must consume cognitive strategy overrides as control-plane data and expand the ContextOS projection window."
       expected: "test_cognitive_strategy_override_expands_context_os_window and control-plane isolation tests pass."
       status: completed
-    - file: "src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py"
+    - file: "src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py"
       description: "RoleExecutionKernel must apply ContextGateway decision hints to native tool definitions."
       expected: "Context budget-pressure and read-only tool-surface reduction tests pass."
       status: completed
@@ -806,7 +806,7 @@ verification_plan:
       expected: "125 passed"
       status: completed
     - description: "Cognitive Runtime MAINLINE tool-policy enforcement."
-      command: "$env:PYTHONPATH=(Resolve-Path src/backend).Path; python -m pytest src/backend/polaris/kernelone/cognitive/tests/test_middleware.py src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py -q"
+      command: "$env:PYTHONPATH=(Resolve-Path src/backend).Path; python -m pytest src/backend/polaris/kernelone/cognitive/tests/test_middleware.py src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py -q"
       expected: "66 passed"
       status: completed
     - description: "Public llm.dialogue RoleRuntime facade and no-legacy metadata regression."
@@ -822,7 +822,7 @@ verification_plan:
       expected: "15 passed"
       status: completed
     - description: "ContextGateway decision hints drive Kernel tool-surface reduction."
-      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py -q"
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py -q"
       expected: "65 passed"
       status: completed
     - description: "Direct TransactionKernel dispatch receives narrowed ToolBatchExecutor allow-list."
@@ -830,7 +830,7 @@ verification_plan:
       expected: "2 passed"
       status: completed
     - description: "RoleRuntime/ContextGateway/Kernel/TransactionKernel combined regression."
-      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py -q"
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py -q"
       expected: "107 passed"
       status: completed
     - description: "Context OS structured policy runtime migration."
@@ -842,7 +842,7 @@ verification_plan:
       expected: "37 passed"
       status: completed
     - description: "RoleExecutionKernel facade, run/stream parity, and stream compatibility regression."
-      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py src/backend/polaris/cells/roles/kernel/tests/test_run_stream_parity.py src/backend/polaris/cells/roles/kernel/tests/test_stream_parity.py src/backend/polaris/cells/roles/kernel/tests/test_role_kernel_transaction_wiring.py -q"
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py src/backend/polaris/cells/roles/kernel/tests/test_run_stream_parity.py src/backend/polaris/cells/roles/kernel/tests/test_stream_parity.py src/backend/polaris/cells/roles/kernel/tests/test_role_kernel_transaction_wiring.py -q"
       expected: "72 passed, 1 skipped"
       status: completed
     - description: "Cognitive terminology governance and middleware regression."
@@ -850,7 +850,7 @@ verification_plan:
       expected: "14 passed"
       status: completed
     - description: "RoleRuntime Cognitive Runtime and Kernel tool-surface regression."
-      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py -q"
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py -q"
       expected: "57 passed"
       status: completed
     - description: "Adapter/runtime/PM/Director focused hardening suite."
@@ -918,7 +918,7 @@ verification_plan:
       expected: "27 passed"
       status: completed
     - description: "Internal LLMCaller compatibility adapter remains silent while direct legacy API still warns."
-      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/kernel/tests/test_llm_caller.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py -q"
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/kernel/tests/test_llm_caller.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py -q"
       expected: "102 passed"
       status: completed
     - description: "Director runtime codegen Cognitive Runtime write gate and target-project graph soft mapping."

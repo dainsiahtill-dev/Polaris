@@ -43,7 +43,7 @@ STEP 0 characterization → 1 closures→funcs → 2 nested classes→factory bu
 Hot-path (per-turn/per-tool); preserve load-bearing function-local lazy imports (circular-import avoidance); weakref+closure+`__slots__` capture semantics; monkeypatch/bound-method shims mandatory; frozen `_create_transaction_kernel` cross-module signature; **§8 violation flagged**: embedded weak-Director Prong-A/R7/Fix-11 write-vs-edit heuristics + trace logging live in the turn/stream bodies — move verbatim, do NOT delete (separate governance pass); preserve turn-vs-stream PRONG_A_TRACE asymmetry when deduping.
 
 ## 6. Test guard & coverage gaps
-Guards: test_facade_refactor.py, test_policy_interceptor.py, test_roles_kernel.py, test_role_kernel_write_budget.py, test_run_stream_parity.py, test_turn_engine_compat_methods.py, architecture/test_kernelone_release_gates.py.
+Guards: test_role_execution_kernel_contract.py, test_policy_interceptor.py, test_roles_kernel.py, test_role_kernel_write_budget.py, test_run_stream_parity.py, test_turn_engine_compat_methods.py, architecture/test_kernelone_release_gates.py.
 Gaps requiring characterization tests BEFORE extraction: the 4 big bodies (turn result-mapping branches, stream event-translation matrix, run retry/quality loop, `_create_transaction_kernel` closures) and the integrated tool-definitions preamble heuristics. Write these in STEP 0.
 
 ## 7. Effort: large (4 big bodies + dispatch + helpers; gated by characterization tests).

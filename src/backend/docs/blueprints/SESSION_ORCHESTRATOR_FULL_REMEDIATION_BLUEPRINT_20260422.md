@@ -8,7 +8,7 @@
 - `polaris/cells/roles/kernel/internal/kernel/core.py`
 - `polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py`
 - `polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py`
-- `polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py`
+- `polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py`
 
 ## 1. Objective
 
