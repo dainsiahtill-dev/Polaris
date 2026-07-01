@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
-BACKEND_ROOT = ROOT / "src" / "backend"
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
@@ -36,8 +35,8 @@ from polaris.kernelone.workflow.contracts import RetryPolicy, TaskSpec  # noqa: 
 
 class _FakeProvider:
     def __init__(self) -> None:
-        self.generate_requests = []
-        self.stream_requests = []
+        self.generate_requests: list[object] = []
+        self.stream_requests: list[object] = []
 
     async def generate(self, request):
         self.generate_requests.append(request)

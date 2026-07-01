@@ -22,7 +22,7 @@ from polaris.cells.roles.runtime.public.contracts import (
 
 
 class _FakeRoleKernel:
-    def __init__(self, workspace: str, registry: object) -> None:
+    def __init__(self, workspace: str, registry: object, **_: object) -> None:
         self.workspace = workspace
         self.registry = registry
         self.calls: list[tuple[str, object]] = []

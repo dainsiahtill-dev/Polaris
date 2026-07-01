@@ -101,6 +101,25 @@ class TUILLMClient:
             logger.debug("[TUI LLM] ServiceLocator not available")
             return None
 
+    def _resolve_role_model_binding(self) -> tuple[str, str]:
+        """Return the globally configured provider/model pair for this role."""
+        try:
+            from polaris.kernelone.llm.runtime_config import get_role_model
+
+            provider_id, model = get_role_model(self.role)
+            return str(provider_id or "").strip(), str(model or "").strip()
+        except (RuntimeError, ValueError, TypeError) as exc:
+            logger.debug("[TUI LLM] failed to resolve role binding for %s: %s", self.role, exc)
+            return "", ""
+
+    @staticmethod
+    def _stream_event_value(event_type: object) -> str:
+        """Normalize enum and string stream event types to the canonical value."""
+        if isinstance(event_type, StreamEventType):
+            return event_type.value
+        value = getattr(event_type, "value", event_type)
+        return str(value or "")
+
     def _build_prompt(self, messages: list[LLMMessage]) -> str:
         parts: list[str] = []
 
@@ -148,21 +167,21 @@ class TUILLMClient:
 
         try:
             async for chunk in provider.generate_stream(request):
-                event_type = getattr(chunk, "event_type", StreamEventType.CHUNK)
+                event_type = self._stream_event_value(getattr(chunk, "event_type", StreamEventType.CHUNK))
                 text = str(getattr(chunk, "content", "") or "")
 
-                if event_type == StreamEventType.ERROR:
+                if event_type == StreamEventType.ERROR.value:
                     error_msg = f"[LLM 错误] {text or 'stream_failed'}"
                     if on_token:
                         on_token(error_msg)
                     return error_msg
 
-                if event_type == StreamEventType.REASONING_CHUNK:
+                if event_type == StreamEventType.REASONING_CHUNK.value:
                     if text:
                         logger.debug("[TUI LLM] reasoning chunk: %s", text[:80])
                     continue
 
-                if event_type == StreamEventType.COMPLETE:
+                if event_type == StreamEventType.COMPLETE.value:
                     break
 
                 if text:
@@ -201,7 +220,8 @@ class TUILLMClient:
         """通过 Cell 公共服务检查角色是否已配置."""
         config = self._resolve_provider_config()
         if not config.get("ok"):
-            return self._get_provider() is not None
+            provider_id, model = self._resolve_role_model_binding()
+            return bool(provider_id and model) or self._get_provider() is not None
 
         provider_id = str(config.get("provider_id") or "").strip()
         provider_type = str(config.get("provider_type") or "").strip()
