@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from polaris.cells.roles.kernel.internal.context_gateway.gateway import (
-    ContextGatewayConfig,
-    RoleContextGateway,
+from polaris.cells.roles.kernel.internal.context_gateway.gateway import ContextGatewayConfig, RoleContextGateway
+from polaris.cells.roles.kernel.internal.context_gateway.gateway_helpers import (
     render_blueprint_overview,
     render_verdict_history,
 )

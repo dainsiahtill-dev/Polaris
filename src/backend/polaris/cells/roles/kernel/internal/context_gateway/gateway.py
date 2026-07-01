@@ -48,10 +48,6 @@ from .gateway_helpers import (
     _capability_profile_ref_from_request,
     _coerce_float,
     _deep_merge_strategy_payload,
-    # render_blueprint_overview / render_verdict_history are re-exported here so
-    # test_blueprint_overview_render.py can keep importing them from `gateway`.
-    render_blueprint_overview,  # noqa: F401  (re-exported for test import compatibility)
-    render_verdict_history,  # noqa: F401  (re-exported for test import compatibility)
 )
 from .gateway_telemetry import GatewayTelemetry
 from .projection_dict_builder import ProjectionDictBuilder
