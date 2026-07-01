@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .shared_contracts import Usage
+from .engine.contracts import Usage
 
 
 @dataclass
@@ -84,7 +84,7 @@ class ModelListResult:
 
 
 # Re-export Usage.estimate as module-level function for backward compatibility.
-# The canonical implementation lives in shared_contracts.Usage.estimate().
+# The canonical implementation is exposed through engine.contracts.Usage.estimate().
 def estimate_usage(prompt: str, output: str) -> Usage:
     """Estimate token usage for a prompt/output pair.
 

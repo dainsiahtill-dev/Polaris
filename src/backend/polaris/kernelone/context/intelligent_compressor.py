@@ -526,7 +526,7 @@ class IntelligentCompressor:
         prompt = self._build_summary_prompt(combined_content)
 
         try:
-            from polaris.kernelone.llm.shared_contracts import AIRequest, TaskType
+            from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
 
             request = AIRequest(
                 task_type=TaskType.GENERATION,
@@ -540,10 +540,9 @@ class IntelligentCompressor:
             response = await self._llm.invoke(request)
             if response.ok and response.output:
                 return str(response.output).strip()
-        except (RuntimeError, ValueError):
+        except (RuntimeError, ValueError) as exc:
             # Fallback: deterministic truncation on LLM failure
-            logger.warning("LLM summarization failed, using deterministic fallback")
-            pass
+            logger.warning("LLM summarization failed, using deterministic fallback: %s", exc)
 
         return self._fallback_summarize(items)
 

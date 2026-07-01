@@ -22,7 +22,12 @@ from polaris.kernelone.llm.toolkit import contracts as toolkit_contracts
 
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 LLM_ENGINE_ROOT = BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "engine"
+POLARIS_ROOT = BACKEND_ROOT / "polaris"
 ROLES_KERNEL_ROOT = BACKEND_ROOT / "polaris" / "cells" / "roles" / "kernel"
+ALLOWED_SHARED_CONTRACT_IMPORTERS = {
+    BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "engine" / "contracts.py",
+    BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "toolkit" / "contracts.py",
+}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -53,6 +58,8 @@ def _imports_forbidden_module(file_path: Path, forbidden_module: str) -> bool:
                     return True
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
+            if node.level > 0 and module == "shared_contracts":
+                return True
             if module == forbidden_module or module.startswith(f"{forbidden_module}."):
                 return True
     return False
@@ -192,6 +199,21 @@ def test_roles_kernel_production_code_does_not_import_shared_contracts_directly(
     ]
 
     assert not findings, f"roles.kernel bypasses engine.contracts re-export boundary: {findings}"
+
+
+def test_only_contract_modules_import_shared_contracts_directly() -> None:
+    """Production code must not bypass the LLM contract re-export boundary."""
+
+    forbidden = "polaris.kernelone.llm.shared_contracts"
+    findings = [
+        str(path.relative_to(BACKEND_ROOT))
+        for path in _production_python_files(POLARIS_ROOT)
+        if path.name != "shared_contracts.py"
+        and path not in ALLOWED_SHARED_CONTRACT_IMPORTERS
+        and _imports_forbidden_module(path, forbidden)
+    ]
+
+    assert not findings, f"production code imports shared_contracts directly instead of a contract surface: {findings}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
