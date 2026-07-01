@@ -4,7 +4,7 @@ These tests pin the CURRENT observable behavior of the core run/stream
 coordinators after extraction into sibling collaborator modules. They are
 behavior-preserving guards:
 
-- ``execute_transaction_kernel_stream`` event-translation matrix
+- ``TransactionTurnExecutor.execute_stream`` event-translation matrix
   (TurnPhaseEvent / ContentChunkEvent / ToolBatchEvent / CompletionEvent /
   ErrorEvent -> emitted dicts), including the failed-completion early-return
   and the finalization-chunk reset semantics.
@@ -25,7 +25,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
-from polaris.cells.roles.kernel.internal.kernel.turn_execution import execute_transaction_kernel_stream
+from polaris.cells.roles.kernel.internal.kernel.transaction_turn_executor import TransactionTurnExecutor
 from polaris.cells.roles.kernel.public.turn_events import (
     CompletionEvent,
     ContentChunkEvent,
@@ -39,7 +39,7 @@ from polaris.cells.roles.profile.public.service import RoleTurnResult
 
 def _patch_transaction_kernel_factory(return_value: Any) -> Any:
     return patch(
-        "polaris.cells.roles.kernel.internal.kernel.turn_execution.create_transaction_kernel",
+        "polaris.cells.roles.kernel.internal.kernel.transaction_turn_executor.create_transaction_kernel",
         return_value=return_value,
     )
 
@@ -94,6 +94,17 @@ def _event_emitter() -> SimpleNamespace:
     )
 
 
+def _transaction_executor_class_for_turn(turn_mock: Any) -> type:
+    class _TransactionExecutor:
+        def __init__(self, _kernel: Any) -> None:
+            pass
+
+        async def execute_turn(self, **kwargs: Any) -> RoleTurnResult:
+            return await turn_mock(**kwargs)
+
+    return _TransactionExecutor
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Stream event-translation matrix
 # ──────────────────────────────────────────────────────────────────────────
@@ -115,8 +126,7 @@ async def _drive_stream(kernel: RoleExecutionKernel, events: list[Any]) -> list[
         ),
     ):
         collected: list[dict[str, Any]] = []
-        async for event_dict in execute_transaction_kernel_stream(
-            kernel,
+        async for event_dict in TransactionTurnExecutor(kernel).execute_stream(
             role="pm",
             profile=_MockProfile(),
             request=_MockRequest(),
@@ -303,8 +313,8 @@ class TestRunRetryQualityLoop:
                 return_value=MagicMock(),
             ),
             patch(
-                "polaris.cells.roles.kernel.internal.kernel.non_stream_turn_flow.execute_transaction_kernel_turn",
-                new=turn_mock,
+                "polaris.cells.roles.kernel.internal.kernel.non_stream_turn_flow.TransactionTurnExecutor",
+                new=_transaction_executor_class_for_turn(turn_mock),
             ),
         ):
             result = await kernel.run("pm", _MockRequest(max_retries=3, validate_output=True))
@@ -331,8 +341,8 @@ class TestRunRetryQualityLoop:
                 return_value=MagicMock(),
             ),
             patch(
-                "polaris.cells.roles.kernel.internal.kernel.non_stream_turn_flow.execute_transaction_kernel_turn",
-                new=AsyncMock(return_value=te_result),
+                "polaris.cells.roles.kernel.internal.kernel.non_stream_turn_flow.TransactionTurnExecutor",
+                new=_transaction_executor_class_for_turn(AsyncMock(return_value=te_result)),
             ),
         ):
             result = await kernel.run("pm", _MockRequest(validate_output=True))
@@ -365,8 +375,8 @@ class TestRunRetryQualityLoop:
                 return_value=MagicMock(),
             ),
             patch(
-                "polaris.cells.roles.kernel.internal.kernel.non_stream_turn_flow.execute_transaction_kernel_turn",
-                new=turn_mock,
+                "polaris.cells.roles.kernel.internal.kernel.non_stream_turn_flow.TransactionTurnExecutor",
+                new=_transaction_executor_class_for_turn(turn_mock),
             ),
         ):
             result = await kernel.run("pm", _MockRequest(max_retries=2, validate_output=True))
@@ -401,8 +411,8 @@ class TestRunRetryQualityLoop:
                 return_value=MagicMock(),
             ),
             patch(
-                "polaris.cells.roles.kernel.internal.kernel.non_stream_turn_flow.execute_transaction_kernel_turn",
-                new=AsyncMock(return_value=te_result),
+                "polaris.cells.roles.kernel.internal.kernel.non_stream_turn_flow.TransactionTurnExecutor",
+                new=_transaction_executor_class_for_turn(AsyncMock(return_value=te_result)),
             ),
         ):
             result = await kernel.run("pm", _MockRequest(validate_output=True))

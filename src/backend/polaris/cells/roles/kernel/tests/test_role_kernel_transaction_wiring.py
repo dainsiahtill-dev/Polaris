@@ -15,8 +15,8 @@ from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
 from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import request_forces_no_transaction_tools
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import _apply_forced_transaction_tool_definitions
 from polaris.cells.roles.kernel.internal.kernel.transaction_factory import create_transaction_kernel
+from polaris.cells.roles.kernel.internal.kernel.transaction_turn_executor import TransactionTurnExecutor
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import _resolve_transaction_turn_id
-from polaris.cells.roles.kernel.internal.kernel.turn_execution import execute_transaction_kernel_turn
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.finalization import FinalizationHandler
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
@@ -100,9 +100,20 @@ def _file_param_enum(tool_definitions: list[dict[str, Any]], tool_name: str) -> 
 
 def _patch_transaction_kernel_factory(return_value: Any) -> Any:
     return patch(
-        "polaris.cells.roles.kernel.internal.kernel.turn_execution.create_transaction_kernel",
+        "polaris.cells.roles.kernel.internal.kernel.transaction_turn_executor.create_transaction_kernel",
         return_value=return_value,
     )
+
+
+def _transaction_executor_class_for_turn(turn_mock: Any) -> type:
+    class _TransactionExecutor:
+        def __init__(self, _kernel: Any) -> None:
+            pass
+
+        async def execute_turn(self, **kwargs: Any) -> RoleTurnResult:
+            return await turn_mock(**kwargs)
+
+    return _TransactionExecutor
 
 
 class TestForcedToolScopePolicy:
@@ -219,7 +230,7 @@ class TestForcedToolScopePolicy:
 class TestTransactionKernelSelection:
     def test_transaction_kernel_selector_api_is_retired(self) -> None:
         assert not hasattr(RoleExecutionKernel, "_use_transaction_kernel")
-        assert callable(execute_transaction_kernel_turn)
+        assert callable(TransactionTurnExecutor.execute_turn)
 
     def test_request_forces_no_transaction_tools_for_proposal_bridge(self) -> None:
         request = _MockRequest(
@@ -610,7 +621,7 @@ class TestTransactionKernelPrebuiltContextPassThrough:
 
 class TestExecuteTransactionKernelTurn:
     @pytest.mark.asyncio
-    async def test_execute_transaction_kernel_turn_uses_forced_tool_definitions(self) -> None:
+    async def test_transaction_turn_executor_uses_forced_tool_definitions(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(
             role_id="director",
@@ -666,8 +677,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=context_gateway,
             ),
         ):
-            result = await execute_transaction_kernel_turn(
-                kernel,
+            result = await TransactionTurnExecutor(kernel).execute_turn(
                 role="director",
                 profile=profile,
                 request=request,
@@ -682,9 +692,7 @@ class TestExecuteTransactionKernelTurn:
         assert mock_execute.await_args.args[2] == [forced_write_tool]
 
     @pytest.mark.asyncio
-    async def test_execute_transaction_kernel_turn_injects_write_file_for_missing_from_scratch_target(
-        self, tmp_path
-    ) -> None:
+    async def test_transaction_turn_executor_injects_write_file_for_missing_from_scratch_target(self, tmp_path) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=str(tmp_path))
         profile = _MockProfile(
             role_id="director",
@@ -735,8 +743,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=read_only_tools,
             ),
         ):
-            result = await execute_transaction_kernel_turn(
-                kernel,
+            result = await TransactionTurnExecutor(kernel).execute_turn(
                 role="director",
                 profile=profile,
                 request=request,
@@ -770,7 +777,7 @@ class TestExecuteTransactionKernelTurn:
         assert scope["target_file"] == "tests/test_product.py"
 
     @pytest.mark.asyncio
-    async def test_execute_transaction_kernel_turn_preserves_existing_first_call_forced_scope(self, tmp_path) -> None:
+    async def test_transaction_turn_executor_preserves_existing_first_call_forced_scope(self, tmp_path) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=str(tmp_path))
         profile = _MockProfile(
             role_id="director",
@@ -812,8 +819,7 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            result = await execute_transaction_kernel_turn(
-                kernel,
+            result = await TransactionTurnExecutor(kernel).execute_turn(
                 role="director",
                 profile=profile,
                 request=request,
@@ -847,7 +853,7 @@ class TestExecuteTransactionKernelTurn:
         assert "director_first_call_materialization_scope" not in request.context_override
 
     @pytest.mark.asyncio
-    async def test_execute_transaction_kernel_turn_slims_tools_for_qwen_director_materialize(self) -> None:
+    async def test_transaction_turn_executor_slims_tools_for_qwen_director_materialize(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(
             role_id="director",
@@ -903,8 +909,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=full_tool_definitions,
             ),
         ):
-            result = await execute_transaction_kernel_turn(
-                kernel,
+            result = await TransactionTurnExecutor(kernel).execute_turn(
                 role="director",
                 profile=profile,
                 request=request,
@@ -934,7 +939,7 @@ class TestExecuteTransactionKernelTurn:
         assert tool_filter_audit["removed_prompt_required_tool_names"] == []
 
     @pytest.mark.asyncio
-    async def test_execute_transaction_kernel_turn_blocks_slimming_prompt_required_tool(self) -> None:
+    async def test_transaction_turn_executor_blocks_slimming_prompt_required_tool(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(
             role_id="director",
@@ -991,8 +996,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=full_tool_definitions,
             ),
         ):
-            result = await execute_transaction_kernel_turn(
-                kernel,
+            result = await TransactionTurnExecutor(kernel).execute_turn(
                 role="director",
                 profile=profile,
                 request=request,
@@ -1014,7 +1018,7 @@ class TestExecuteTransactionKernelTurn:
         assert tool_filter_audit["removed_prompt_required_tool_names"] == ["repo_rg"]
 
     @pytest.mark.asyncio
-    async def test_execute_transaction_kernel_turn_returns_role_turn_result(self) -> None:
+    async def test_transaction_turn_executor_returns_role_turn_result(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(role_id="pm")
         request = _MockRequest(run_id="run_123")
@@ -1046,8 +1050,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=context_gateway,
             ),
         ):
-            result = await execute_transaction_kernel_turn(
-                kernel,
+            result = await TransactionTurnExecutor(kernel).execute_turn(
                 role="pm",
                 profile=profile,
                 request=request,
@@ -1065,7 +1068,7 @@ class TestExecuteTransactionKernelTurn:
         assert result.metadata["projection_adaptive_weights_after_turn"] == {"route_weight": 0.31}
 
     @pytest.mark.asyncio
-    async def test_execute_transaction_kernel_turn_exposes_context_os_audit_metadata(self) -> None:
+    async def test_transaction_turn_executor_exposes_context_os_audit_metadata(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(role_id="pm")
         request = _MockRequest(run_id="run_123")
@@ -1113,8 +1116,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
             ),
         ):
-            result = await execute_transaction_kernel_turn(
-                kernel,
+            result = await TransactionTurnExecutor(kernel).execute_turn(
                 role="pm",
                 profile=profile,
                 request=request,
@@ -1183,8 +1185,7 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            result = await execute_transaction_kernel_turn(
-                kernel,
+            result = await TransactionTurnExecutor(kernel).execute_turn(
                 role="director",
                 profile=profile,
                 request=request,
@@ -1229,8 +1230,8 @@ class TestExecuteTransactionKernelTurn:
         )
 
         with patch(
-            "polaris.cells.roles.kernel.internal.kernel.non_stream_turn_flow.execute_transaction_kernel_turn",
-            new=AsyncMock(return_value=transaction_result),
+            "polaris.cells.roles.kernel.internal.kernel.non_stream_turn_flow.TransactionTurnExecutor",
+            new=_transaction_executor_class_for_turn(AsyncMock(return_value=transaction_result)),
         ):
             result = await kernel.run("pm", _MockRequest(run_id="run_123", validate_output=False))
 
@@ -1238,7 +1239,7 @@ class TestExecuteTransactionKernelTurn:
         assert result.metadata == expected_metadata
 
     @pytest.mark.asyncio
-    async def test_execute_transaction_kernel_turn_hides_tools_for_proposal_bridge(self) -> None:
+    async def test_transaction_turn_executor_hides_tools_for_proposal_bridge(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(
             role_id="director",
@@ -1274,8 +1275,7 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            result = await execute_transaction_kernel_turn(
-                kernel,
+            result = await TransactionTurnExecutor(kernel).execute_turn(
                 role="director",
                 profile=profile,
                 request=request,
@@ -1290,7 +1290,7 @@ class TestExecuteTransactionKernelTurn:
         assert mock_execute.await_args.args[2] == []
 
     @pytest.mark.asyncio
-    async def test_execute_transaction_kernel_turn_hides_tools_for_pm_route_probe(self) -> None:
+    async def test_transaction_turn_executor_hides_tools_for_pm_route_probe(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(
             role_id="pm",
@@ -1339,8 +1339,7 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            result = await execute_transaction_kernel_turn(
-                kernel,
+            result = await TransactionTurnExecutor(kernel).execute_turn(
                 role="pm",
                 profile=profile,
                 request=request,
@@ -1355,7 +1354,7 @@ class TestExecuteTransactionKernelTurn:
         assert mock_execute.await_args.args[2] == []
 
     @pytest.mark.asyncio
-    async def test_execute_transaction_kernel_turn_restores_materialize_marker_from_request_message(self) -> None:
+    async def test_transaction_turn_executor_restores_materialize_marker_from_request_message(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(
             role_id="director",
@@ -1387,8 +1386,7 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            await execute_transaction_kernel_turn(
-                kernel,
+            await TransactionTurnExecutor(kernel).execute_turn(
                 role="director",
                 profile=profile,
                 request=request,
@@ -1403,7 +1401,7 @@ class TestExecuteTransactionKernelTurn:
         assert passed_messages[-1]["content"].startswith("[mode:materialize]\n")
 
     @pytest.mark.asyncio
-    async def test_execute_transaction_kernel_turn_projects_tool_contract_metadata(self) -> None:
+    async def test_transaction_turn_executor_projects_tool_contract_metadata(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(
             role_id="director",
@@ -1440,8 +1438,7 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            await execute_transaction_kernel_turn(
-                kernel,
+            await TransactionTurnExecutor(kernel).execute_turn(
                 role="director",
                 profile=profile,
                 request=request,
@@ -1457,7 +1454,7 @@ class TestExecuteTransactionKernelTurn:
         assert passed_messages[-1]["metadata"]["tool_contract"] == tool_contract
 
     @pytest.mark.asyncio
-    async def test_execute_transaction_kernel_turn_handoff_populates_metadata(self) -> None:
+    async def test_transaction_turn_executor_handoff_populates_metadata(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(role_id="director")
         request = _MockRequest(run_id="run_123")
@@ -1486,8 +1483,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
             ),
         ):
-            result = await execute_transaction_kernel_turn(
-                kernel,
+            result = await TransactionTurnExecutor(kernel).execute_turn(
                 role="director",
                 profile=profile,
                 request=request,
@@ -1504,7 +1500,7 @@ class TestExecuteTransactionKernelTurn:
         assert handoff_pack.reason == "exploration"
 
     @pytest.mark.asyncio
-    async def test_execute_transaction_kernel_turn_maps_tool_results(self) -> None:
+    async def test_transaction_turn_executor_maps_tool_results(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(role_id="director")
         request = _MockRequest(run_id="run_123")
@@ -1532,8 +1528,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
             ),
         ):
-            result = await execute_transaction_kernel_turn(
-                kernel,
+            result = await TransactionTurnExecutor(kernel).execute_turn(
                 role="director",
                 profile=profile,
                 request=request,
@@ -1550,7 +1545,7 @@ class TestExecuteTransactionKernelTurn:
         assert result.batch_receipt == mock_tk_result["batch_receipt"]
 
     @pytest.mark.asyncio
-    async def test_execute_transaction_kernel_turn_preserves_followup_workflow(self) -> None:
+    async def test_transaction_turn_executor_preserves_followup_workflow(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(role_id="director")
         request = _MockRequest(run_id="run_123")
@@ -1584,8 +1579,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
             ),
         ):
-            result = await execute_transaction_kernel_turn(
-                kernel,
+            result = await TransactionTurnExecutor(kernel).execute_turn(
                 role="director",
                 profile=profile,
                 request=request,
@@ -1602,7 +1596,7 @@ class TestExecuteTransactionKernelTurn:
         assert len(result.tool_calls) == 1
 
     @pytest.mark.asyncio
-    async def test_execute_transaction_kernel_turn_failure_returns_error_result(self) -> None:
+    async def test_transaction_turn_executor_failure_returns_error_result(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(role_id="pm")
         request = _MockRequest(run_id="run_123")
@@ -1617,8 +1611,7 @@ class TestExecuteTransactionKernelTurn:
                 return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
             ),
         ):
-            result = await execute_transaction_kernel_turn(
-                kernel,
+            result = await TransactionTurnExecutor(kernel).execute_turn(
                 role="pm",
                 profile=profile,
                 request=request,

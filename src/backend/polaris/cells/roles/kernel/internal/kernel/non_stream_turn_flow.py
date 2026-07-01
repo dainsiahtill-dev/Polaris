@@ -22,7 +22,7 @@ from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     role_turn_error_result,
     role_turn_result_from_transaction_result,
 )
-from polaris.cells.roles.kernel.internal.kernel.turn_execution import execute_transaction_kernel_turn
+from polaris.cells.roles.kernel.internal.kernel.transaction_turn_executor import TransactionTurnExecutor
 from polaris.cells.roles.kernel.internal.kernel.turn_prompt_setup import (
     RoleTurnSetupError,
     build_role_turn_prompt_setup,
@@ -100,6 +100,7 @@ async def execute_non_stream_role_turn(
     observer_run_id = event_emitter.resolve_observer_run_id(role, getattr(request, "run_id", None))
     if request.run_id is None:
         request.run_id = observer_run_id
+    transaction_executor = TransactionTurnExecutor(kernel)
 
     for attempt in range(max_retries + 1):
         system_prompt = prompt_builder.build_retry_prompt(
@@ -115,8 +116,7 @@ async def execute_non_stream_role_turn(
             tags={"role": role, "attempt": attempt, "model": profile.model},
         ) as span:
             llm_start_time = time.monotonic()
-            te_result = await execute_transaction_kernel_turn(
-                kernel,
+            te_result = await transaction_executor.execute_turn(
                 role=role,
                 profile=profile,
                 request=request,

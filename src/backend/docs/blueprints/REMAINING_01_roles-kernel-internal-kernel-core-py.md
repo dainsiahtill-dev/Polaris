@@ -1,6 +1,6 @@
 # polaris/cells/roles/kernel/internal/kernel/core.py — class RoleExecutionKernel
 
-kind=god-class-split effort=large
+kind=completed-refactor-record effort=closed
 
 # Blueprint G3 — Decompose `RoleExecutionKernel` (core.py) into Thin Coordinator + Collaborators
 
@@ -8,33 +8,39 @@ kind=god-class-split effort=large
 - Target: `polaris/cells/roles/kernel/internal/kernel/core.py`, class `RoleExecutionKernel` (line 138 → EOF, 2509-line file, ~57 methods).
 - Behavior-preserving, atomic-green: suite stays green after EACH step.
 - ACGA 2.0: all new modules are siblings under `internal/kernel/` (same cell, internal). No new cross-cell imports. roles.kernel must NOT import roles.runtime (release-gate enforced).
-- Style: extract-to-sibling-module, leave delegating shim on the class.
+- Style: extract-to-sibling-module, leave the class as a thin API shell.
 
 ## 1. Current state
-A previous wave already extracted `commit_protocol.py`, `delivery_mode.py`, `tool_policy.py`, `error_handler.py`, `helpers.py`, `suggestions.py`, `tool_executor.py`, turning ~13 methods into one-line delegators. The residual bulk is 4 large in-class bodies (~1200 lines):
-- `_create_transaction_kernel` (431→768, ~337 lines; 5 closures + 3 weakref-bound nested classes)
-- `_execute_transaction_kernel_turn` (910→1180, ~270 lines)
-- `_execute_transaction_kernel_stream` (1182→1447, ~265 lines)
-- `run` (1572→1898, ~326 lines; retry + quality loop)
-Plus `_execute_single_tool` (2057→2185, ~128 lines) and a long tail of prompt/parse/event/tool helper shims.
+This blueprint has been completed and is retained as a historical refactor record.
+`RoleExecutionKernel` is now a thin public API shell: construction/configuration
+state lives in `core.py`, while execution behavior is owned by sibling modules.
+The active turn path is:
+
+- `RoleExecutionKernel.run` -> `non_stream_turn_flow.execute_non_stream_role_turn`
+- `RoleExecutionKernel.run_stream` -> `stream_turn_flow.execute_stream_role_turn`
+- both flows instantiate `transaction_turn_executor.TransactionTurnExecutor`
+- `TransactionTurnExecutor` creates and calls the canonical `TransactionKernel`
+  through `transaction_factory.create_transaction_kernel`
 
 ## 2. Target module map (new siblings)
 | Module | Responsibility | Holds |
 |---|---|---|
 | `transaction_factory.py` | TransactionKernel assembly | closures-as-funcs + `build_llm_provider/tool_runtime/llm_provider_stream` (weakref callbacks) |
-| `turn_execution.py` | single-turn + stream exec | `execute_transaction_kernel_turn/_stream` + shared `build_turn_tool_definitions` preamble |
+| `transaction_turn_executor.py` | TransactionKernel-backed turn application service | `TransactionTurnExecutor.execute_turn` / `execute_stream` |
 | `turn_orchestrator.py` | public run loop | `run_turn`, `run_turn_stream` (retry/quality) |
 | `tool_dispatch.py` | per-tool dispatch | `execute_single_tool`, gateway turn-boundary helpers |
 | `prompt_parse_event.py` | prompt/context/event/parse helpers | the small leaf helpers |
 
-`core.py` retains: `__init__`, `create_default`, `config`, all `_get_*` accessors, all `inject_*`, and thin delegating shims for every externally-referenced method.
+`core.py` retains: `__init__`, `create_default`, `config`,
+`context_gateway_config_factory`, `run`, and `run_stream`.
 
 ## 3. Public surface (FROZEN)
 - `RoleExecutionKernel` re-exported by `internal/kernel/__init__.py`, `public/service.py`, lazy `cells/roles/kernel/__init__.py`. Module `__all__` constants byte-identical.
 - `__init__` keyword names + all `self._*` attributes frozen (read by siblings/tests).
-- Cross-module 'private' contract: `runtime/public/service.py` calls `kernel._create_transaction_kernel(role, profile, request) -> TransactionKernel` and `kernel.run/run_stream`.
-- Active callback protocols: `OutputParser` owns visible tool-call sanitation; `_ToolRuntime` weakref → `kernel._execute_single_tool(...)`, `kernel.reset_tool_gateway_turn_boundary(...)`.
-- Monkeypatch targets (must remain bound-method attrs): `_execute_single_tool`.
+- Cross-module contract: external callers use `kernel.run/run_stream`; TransactionKernel
+  assembly stays inside roles.kernel via `transaction_factory.create_transaction_kernel`.
+- Active callback protocols: `OutputParser` owns visible tool-call sanitation; tool
+  execution enters through `kernel.tool_runtime_executor.execute_single_tool`.
 
 ## 4. Plan (atomic-green; see plan_steps for the ordered list)
 STEP 0 characterization → 1 closures→funcs → 2 nested classes→factory builders → 3 turn/stream exec + dedupe preamble → 4 run/run_stream loop → 5 tool dispatch → 6 leaf helpers → 7 slim & verify gates.

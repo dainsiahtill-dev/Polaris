@@ -1,8 +1,8 @@
 """Turn-id resolution helpers for RoleExecutionKernel.
 
 Extracted verbatim (behavior-preserving) from ``core.py`` so both the
-coordinator (``core.py``) and the turn-execution collaborator
-(``turn_execution.py``) can share them without a circular import.
+coordinator (``core.py``) and the transaction-turn executor
+(``transaction_turn_executor.py``) can share them without a circular import.
 
 Callers import these helpers from this module directly.
 """

@@ -100,14 +100,18 @@ def _kernel() -> Any:
 
 
 def test_execute_non_stream_role_turn_returns_setup_error_without_transaction(monkeypatch: Any) -> None:
-    async def fail_if_called(*_: Any, **__: Any) -> RoleTurnResult:
-        raise AssertionError("TransactionKernel should not run after setup failure")
+    class _FailingTransactionTurnExecutor:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        async def execute_turn(self, **_: Any) -> RoleTurnResult:
+            raise AssertionError("TransactionKernel should not run after setup failure")
 
     def fail_setup(*_: Any, **__: Any) -> Any:
         raise RoleTurnSetupError("profile", "missing profile")
 
     monkeypatch.setattr(flow, "build_role_turn_prompt_setup", fail_setup)
-    monkeypatch.setattr(flow, "execute_transaction_kernel_turn", fail_if_called)
+    monkeypatch.setattr(flow, "TransactionTurnExecutor", _FailingTransactionTurnExecutor)
 
     result = asyncio.run(
         flow.execute_non_stream_role_turn(
@@ -138,23 +142,26 @@ def test_execute_non_stream_role_turn_calls_transaction_and_projects_success(mon
             system_prompt="base",
         )
 
-    async def execute_transaction(kernel: Any, **kwargs: Any) -> RoleTurnResult:
-        captured["kernel"] = kernel
-        captured.update(kwargs)
-        return RoleTurnResult(
-            content="done",
-            thinking="",
-            profile_version=profile.version,
-            prompt_fingerprint=fingerprint,
-            is_complete=True,
-        )
+    class _CapturingTransactionTurnExecutor:
+        def __init__(self, kernel: Any) -> None:
+            captured["kernel"] = kernel
+
+        async def execute_turn(self, **kwargs: Any) -> RoleTurnResult:
+            captured.update(kwargs)
+            return RoleTurnResult(
+                content="done",
+                thinking="",
+                profile_version=profile.version,
+                prompt_fingerprint=fingerprint,
+                is_complete=True,
+            )
 
     monkeypatch.setattr(flow, "build_role_turn_prompt_setup", setup)
     monkeypatch.setattr(flow, "build_context_request", lambda request: {"request": request})
     monkeypatch.setattr(flow, "get_kernel_event_emitter", lambda kernel: event_emitter)
     monkeypatch.setattr(flow, "get_metrics_collector", lambda: metrics)
     monkeypatch.setattr(flow, "get_tracer", lambda: tracer)
-    monkeypatch.setattr(flow, "execute_transaction_kernel_turn", execute_transaction)
+    monkeypatch.setattr(flow, "TransactionTurnExecutor", _CapturingTransactionTurnExecutor)
 
     kernel = _kernel()
     request = RoleTurnRequest(message="hello", validate_output=False)

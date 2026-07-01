@@ -63,15 +63,18 @@ def test_execute_stream_role_turn_yields_fingerprint_then_transaction_events(mon
             system_prompt="system",
         )
 
-    async def stream_transaction(kernel: Any, **kwargs: Any) -> Any:
-        captured["kernel"] = kernel
-        captured.update(kwargs)
-        yield {"type": "delta", "content": "done"}
+    class _CapturingTransactionTurnExecutor:
+        def __init__(self, kernel: Any) -> None:
+            captured["kernel"] = kernel
+
+        async def execute_stream(self, **kwargs: Any) -> Any:
+            captured.update(kwargs)
+            yield {"type": "delta", "content": "done"}
 
     monkeypatch.setattr(flow, "resolve_stream_run_id", lambda run_id, workspace: run_id or "run:stream")
     monkeypatch.setattr(flow, "UEPEventPublisher", _Publisher)
     monkeypatch.setattr(flow, "build_role_turn_prompt_setup", setup)
-    monkeypatch.setattr(flow, "execute_transaction_kernel_stream", stream_transaction)
+    monkeypatch.setattr(flow, "TransactionTurnExecutor", _CapturingTransactionTurnExecutor)
 
     kernel = _kernel()
     request = RoleTurnRequest(message="hello")
@@ -105,15 +108,19 @@ def test_execute_stream_role_turn_converts_transaction_error_to_stream_event(mon
             system_prompt="system",
         )
 
-    async def stream_transaction(*_: Any, **__: Any) -> Any:
-        if False:
-            yield {}
-        raise RuntimeError("stream failed")
+    class _FailingTransactionTurnExecutor:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        async def execute_stream(self, **_: Any) -> Any:
+            if False:
+                yield {}
+            raise RuntimeError("stream failed")
 
     monkeypatch.setattr(flow, "resolve_stream_run_id", lambda run_id, workspace: run_id or "run:stream")
     monkeypatch.setattr(flow, "UEPEventPublisher", _Publisher)
     monkeypatch.setattr(flow, "build_role_turn_prompt_setup", setup)
-    monkeypatch.setattr(flow, "execute_transaction_kernel_stream", stream_transaction)
+    monkeypatch.setattr(flow, "TransactionTurnExecutor", _FailingTransactionTurnExecutor)
 
     events = asyncio.run(_collect_events(_kernel(), RoleTurnRequest(message="hello")))
 

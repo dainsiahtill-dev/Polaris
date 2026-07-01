@@ -8,10 +8,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     ReadRunLedgerProjectionQueryV1,
     read_run_ledger_projection,
 )
-from polaris.cells.roles.kernel.internal.kernel.turn_execution import (
-    execute_transaction_kernel_stream,
-    execute_transaction_kernel_turn,
-)
+from polaris.cells.roles.kernel.internal.kernel.transaction_turn_executor import TransactionTurnExecutor
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.public.turn_contracts import (
     FinalizeMode,
@@ -144,7 +141,7 @@ def _route_transaction_factory_to_test_kernel(monkeypatch: pytest.MonkeyPatch) -
         return kernel.build_transaction_kernel(role, profile, request)
 
     monkeypatch.setattr(
-        "polaris.cells.roles.kernel.internal.kernel.turn_execution.create_transaction_kernel",
+        "polaris.cells.roles.kernel.internal.kernel.transaction_turn_executor.create_transaction_kernel",
         _factory,
     )
 
@@ -194,8 +191,7 @@ async def test_role_execution_dropped_tool_dispatch_commits_ledger_and_blocks_qa
         },
     )
 
-    result = await execute_transaction_kernel_turn(
-        _DroppedToolDispatchKernel(str(tmp_path)),  # type: ignore[arg-type]
+    result = await TransactionTurnExecutor(_DroppedToolDispatchKernel(str(tmp_path))).execute_turn(  # type: ignore[arg-type]
         "director",
         profile,  # type: ignore[arg-type]
         request,
@@ -264,8 +260,7 @@ async def test_stream_role_execution_dropped_tool_dispatch_commits_ledger(
     )
 
     with pytest.raises(RuntimeError, match="tool_dispatch_dropped"):
-        async for _event in execute_transaction_kernel_stream(
-            _DroppedToolDispatchStreamKernel(str(tmp_path)),  # type: ignore[arg-type]
+        async for _event in TransactionTurnExecutor(_DroppedToolDispatchStreamKernel(str(tmp_path))).execute_stream(  # type: ignore[arg-type]
             "director",
             profile,  # type: ignore[arg-type]
             request,
@@ -331,8 +326,7 @@ async def test_role_execution_successful_turn_with_missing_target_commits_task_b
         },
     )
 
-    result = await execute_transaction_kernel_turn(
-        _SuccessfulNoMaterializationKernel(str(tmp_path)),  # type: ignore[arg-type]
+    result = await TransactionTurnExecutor(_SuccessfulNoMaterializationKernel(str(tmp_path))).execute_turn(  # type: ignore[arg-type]
         "director",
         profile,  # type: ignore[arg-type]
         request,
@@ -402,8 +396,7 @@ async def test_role_execution_successful_turn_with_missing_entrypoint_commits_ta
         },
     )
 
-    result = await execute_transaction_kernel_turn(
-        _SuccessfulNoMaterializationKernel(str(tmp_path)),  # type: ignore[arg-type]
+    result = await TransactionTurnExecutor(_SuccessfulNoMaterializationKernel(str(tmp_path))).execute_turn(  # type: ignore[arg-type]
         "director",
         profile,  # type: ignore[arg-type]
         request,
@@ -471,8 +464,9 @@ async def test_stream_role_execution_successful_turn_with_missing_target_commits
 
     events = [
         event
-        async for event in execute_transaction_kernel_stream(
-            _SuccessfulStreamNoMaterializationKernel(str(tmp_path)),  # type: ignore[arg-type]
+        async for event in TransactionTurnExecutor(
+            _SuccessfulStreamNoMaterializationKernel(str(tmp_path))
+        ).execute_stream(  # type: ignore[arg-type]
             "director",
             profile,  # type: ignore[arg-type]
             request,
@@ -544,8 +538,9 @@ async def test_stream_role_execution_successful_turn_with_missing_entrypoint_com
 
     events = [
         event
-        async for event in execute_transaction_kernel_stream(
-            _SuccessfulStreamNoMaterializationKernel(str(tmp_path)),  # type: ignore[arg-type]
+        async for event in TransactionTurnExecutor(
+            _SuccessfulStreamNoMaterializationKernel(str(tmp_path))
+        ).execute_stream(  # type: ignore[arg-type]
             "director",
             profile,  # type: ignore[arg-type]
             request,

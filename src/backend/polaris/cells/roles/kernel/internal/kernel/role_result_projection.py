@@ -177,9 +177,9 @@ def role_turn_completion_result(
     """Build a public role-turn completion result from committed turn facts.
 
     Boundary:
-        ``turn_execution`` owns side effects such as ContextOS commits and
-        task-boundary verdicts. This helper owns only the final public result
-        projection after those facts are available.
+        ``TransactionTurnExecutor`` coordinates committed transaction facts.
+        This helper owns only the final public result projection after those
+        facts are available.
 
     Complexity:
         O(n + m) time and memory for copying list/dict projections.

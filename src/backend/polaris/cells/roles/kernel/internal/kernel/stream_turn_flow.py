@@ -8,7 +8,7 @@ from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.internal.kernel.stream_run_id import resolve_stream_run_id
-from polaris.cells.roles.kernel.internal.kernel.turn_execution import execute_transaction_kernel_stream
+from polaris.cells.roles.kernel.internal.kernel.transaction_turn_executor import TransactionTurnExecutor
 from polaris.cells.roles.kernel.internal.kernel.turn_prompt_setup import build_role_turn_prompt_setup
 from polaris.cells.roles.profile.public.service import RoleTurnRequest
 from polaris.kernelone.events.uep_publisher import UEPEventPublisher
@@ -74,8 +74,7 @@ async def execute_stream_role_turn(
         yield {"type": "fingerprint", "fingerprint": fingerprint}
 
         try:
-            async for event in execute_transaction_kernel_stream(
-                kernel,
+            async for event in TransactionTurnExecutor(kernel).execute_stream(
                 role=role,
                 profile=profile,
                 request=request,
