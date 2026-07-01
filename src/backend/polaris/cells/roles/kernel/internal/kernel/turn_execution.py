@@ -46,7 +46,10 @@ from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     tool_calls_from_batch_receipt,
     tool_results_from_batch_receipt,
 )
-from polaris.cells.roles.kernel.internal.kernel.task_boundary import append_director_task_boundary_verdict
+from polaris.cells.roles.kernel.internal.kernel.task_boundary import (
+    append_deferred_followup_task_boundary_verdict,
+    append_director_task_boundary_verdict,
+)
 from polaris.cells.roles.kernel.internal.kernel.tool_dispatch_projection import (
     append_tool_dispatch_dropped_control_plane_events,
     llm_metadata_from_ledger_on_error,
@@ -336,36 +339,12 @@ async def execute_transaction_kernel_turn(
             logger.debug("failed to append director task boundary verdict", exc_info=True)
     if bool(metadata.get("needs_followup_workflow")):
         try:
-            from polaris.cells.control_plane.run_ledger.public import (
-                AppendRunLedgerEventCommandV1,
-                append_run_ledger_event,
-                build_deferred_followup_task_boundary_verdict,
-            )
-
-            verdict = build_deferred_followup_task_boundary_verdict(
+            append_deferred_followup_task_boundary_verdict(
+                workspace=str(request.workspace or kernel.workspace or "."),
                 task_id=str(request.task_id or ""),
                 run_id=str(request.run_id or turn_id),
                 reason=str(metadata.get("workflow_reason") or error_msg or "needs_followup_workflow"),
-            ).to_dict()
-            append_run_ledger_event(
-                AppendRunLedgerEventCommandV1(
-                    workspace=str(request.workspace or kernel.workspace or "."),
-                    run_id=str(request.run_id or turn_id),
-                    event={
-                        "event_type": "task_boundary_verdict",
-                        "stage": "task_boundary",
-                        "task_id": str(request.task_id or ""),
-                        "run_id": str(request.run_id or turn_id),
-                        "task_boundary_verdict": verdict,
-                        "job_token": {
-                            "run_id": str(request.run_id or turn_id),
-                            "task_id": str(request.task_id or ""),
-                            "project_id": str(request.task_id or "unknown"),
-                            "capability_audit": {"ok": True, "issues": []},
-                            "gate_policy": {},
-                        },
-                    },
-                )
+                evidence_refs=[str(metadata.get("context_snapshot_ref") or "").strip()],
             )
         except (OSError, RuntimeError, TypeError, ValueError):
             logger.debug("failed to append deferred follow-up task boundary verdict", exc_info=True)

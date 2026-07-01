@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T06:38:58.082165Z",
-  "source_hash": "ea552d815634af41",
+  "generated_at": "2026-07-01T06:43:30.946202Z",
+  "source_hash": "c6bfcd4a3f8e1a0e",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4369,8 +4369,20 @@
     },
     {
       "type": "function",
+      "name": "_append_task_boundary_verdict_event",
+      "description": "Append a task-boundary verdict event using the canonical Run Ledger shape.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/task_boundary.py"
+    },
+    {
+      "type": "function",
       "name": "append_director_task_boundary_verdict",
       "description": "Append a Director task-boundary verdict to the Run Ledger when applicable.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "append_deferred_followup_task_boundary_verdict",
+      "description": "Append the task-boundary verdict for turns deferred to a governed follow-up.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/task_boundary.py"
     },
     {
@@ -4613,6 +4625,12 @@
     {
       "type": "function",
       "name": "test_director_task_boundary_verdict_skips_non_director",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "test_deferred_followup_task_boundary_append_uses_owner_event_shape",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_task_boundary.py"
     },

@@ -102,6 +102,38 @@ def build_director_task_boundary_verdict(
     ).to_dict()
 
 
+def _append_task_boundary_verdict_event(
+    *,
+    workspace: str,
+    task_id: str,
+    run_id: str,
+    verdict: dict[str, Any],
+) -> None:
+    """Append a task-boundary verdict event using the canonical Run Ledger shape."""
+    from polaris.cells.control_plane.run_ledger.public import AppendRunLedgerEventCommandV1, append_run_ledger_event
+
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=workspace,
+            run_id=run_id,
+            event={
+                "event_type": "task_boundary_verdict",
+                "stage": "task_boundary",
+                "task_id": task_id,
+                "run_id": run_id,
+                "task_boundary_verdict": verdict,
+                "job_token": {
+                    "run_id": run_id,
+                    "task_id": task_id,
+                    "project_id": task_id or "unknown",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+            },
+        )
+    )
+
+
 def append_director_task_boundary_verdict(
     *,
     role: str,
@@ -126,25 +158,34 @@ def append_director_task_boundary_verdict(
     )
     if verdict is None:
         return
-    from polaris.cells.control_plane.run_ledger.public import AppendRunLedgerEventCommandV1, append_run_ledger_event
+    _append_task_boundary_verdict_event(
+        workspace=workspace,
+        task_id=task_id,
+        run_id=run_id,
+        verdict=verdict,
+    )
 
-    append_run_ledger_event(
-        AppendRunLedgerEventCommandV1(
-            workspace=workspace,
-            run_id=run_id,
-            event={
-                "event_type": "task_boundary_verdict",
-                "stage": "task_boundary",
-                "task_id": task_id,
-                "run_id": run_id,
-                "task_boundary_verdict": verdict,
-                "job_token": {
-                    "run_id": run_id,
-                    "task_id": task_id,
-                    "project_id": task_id or "unknown",
-                    "capability_audit": {"ok": True, "issues": []},
-                    "gate_policy": {},
-                },
-            },
-        )
+
+def append_deferred_followup_task_boundary_verdict(
+    *,
+    workspace: str,
+    task_id: str,
+    run_id: str,
+    reason: str,
+    evidence_refs: list[str] | tuple[str, ...] | None = None,
+) -> None:
+    """Append the task-boundary verdict for turns deferred to a governed follow-up."""
+    from polaris.cells.control_plane.run_ledger.public import build_deferred_followup_task_boundary_verdict
+
+    verdict = build_deferred_followup_task_boundary_verdict(
+        task_id=task_id,
+        run_id=run_id,
+        reason=reason,
+        evidence_refs=evidence_refs,
+    ).to_dict()
+    _append_task_boundary_verdict_event(
+        workspace=workspace,
+        task_id=task_id,
+        run_id=run_id,
+        verdict=verdict,
     )
