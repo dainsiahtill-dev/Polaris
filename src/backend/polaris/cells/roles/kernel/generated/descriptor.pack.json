@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T14:52:57.749337Z",
-  "source_hash": "92662170090bb2d5",
+  "generated_at": "2026-07-01T14:59:27.656345Z",
+  "source_hash": "def6087359c34842",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -3488,34 +3488,59 @@
     },
     {
       "type": "class",
-      "name": "_ErrorCategoryCompatibility",
-      "description": "错误类别枚举（兼容旧代码）",
-      "defined_in": "polaris/cells/roles/kernel/internal/error_category.py",
+      "name": "ErrorCategory",
+      "description": "Retry-policy error categories owned by the retry engine.",
+      "defined_in": "polaris/cells/roles/kernel/internal/retry_policy_engine.py",
       "methods": []
     },
     {
       "type": "function",
-      "name": "_should_emit_deprecation_warning",
-      "description": "Emit deprecation warning only when imported from outside the kernel package.",
-      "defined_in": "polaris/cells/roles/kernel/internal/error_category.py"
-    },
-    {
-      "type": "function",
       "name": "classify_error",
-      "description": "根据错误字符串分类错误类型",
-      "defined_in": "polaris/cells/roles/kernel/internal/error_category.py"
+      "description": "Classify a raw error string for retry-policy decisions.",
+      "defined_in": "polaris/cells/roles/kernel/internal/retry_policy_engine.py"
     },
     {
       "type": "function",
       "name": "is_retryable_compat",
-      "description": "判断错误是否可重试（兼容旧 API）",
-      "defined_in": "polaris/cells/roles/kernel/internal/error_category.py"
+      "description": "Return whether a retry-policy category can be retried.",
+      "defined_in": "polaris/cells/roles/kernel/internal/retry_policy_engine.py"
     },
     {
       "type": "function",
       "name": "get_max_retries",
-      "description": "获取错误类别的最大重试次数",
-      "defined_in": "polaris/cells/roles/kernel/internal/error_category.py"
+      "description": "Return the retry budget for a retry-policy category.",
+      "defined_in": "polaris/cells/roles/kernel/internal/retry_policy_engine.py"
+    },
+    {
+      "type": "class",
+      "name": "RetryDecision",
+      "description": "重试决策结果",
+      "defined_in": "polaris/cells/roles/kernel/internal/retry_policy_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RetryPolicyEngine",
+      "description": "重试策略引擎",
+      "defined_in": "polaris/cells/roles/kernel/internal/retry_policy_engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "should_retry",
+          "doc": "决策是否应该重试"
+        },
+        {
+          "name": "calculate_backoff",
+          "doc": "计算退避时间（指数退避 + 抖动）"
+        },
+        {
+          "name": "get_suggestions",
+          "doc": "根据错误类别获取修复建议"
+        }
+      ]
     },
     {
       "type": "class",
@@ -9522,37 +9547,6 @@
       "name": "reset_recovery_state_machine",
       "description": "Reset the global recovery state machine.",
       "defined_in": "polaris/cells/roles/kernel/internal/recovery_state_machine.py"
-    },
-    {
-      "type": "class",
-      "name": "RetryDecision",
-      "description": "重试决策结果",
-      "defined_in": "polaris/cells/roles/kernel/internal/retry_policy_engine.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "RetryPolicyEngine",
-      "description": "重试策略引擎",
-      "defined_in": "polaris/cells/roles/kernel/internal/retry_policy_engine.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "should_retry",
-          "doc": "决策是否应该重试"
-        },
-        {
-          "name": "calculate_backoff",
-          "doc": "计算退避时间（指数退避 + 抖动）"
-        },
-        {
-          "name": "get_suggestions",
-          "doc": "根据错误类别获取修复建议"
-        }
-      ]
     },
     {
       "type": "class",

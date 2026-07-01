@@ -5,8 +5,81 @@
 
 import random
 from dataclasses import dataclass
+from enum import Enum
 
-from .error_category import AUTO_RETRY_CATEGORIES, LIMITED_RETRY_CATEGORIES, ErrorCategory
+
+class ErrorCategory(str, Enum):
+    """Retry-policy error categories owned by the retry engine."""
+
+    TIMEOUT = "timeout"
+    RATE_LIMIT = "rate_limit"
+    NETWORK = "network"
+    AUTH = "auth"
+    PROVIDER = "provider"
+    PARSE = "parse"
+    QUALITY = "quality"
+    TOOL = "tool"
+    UNKNOWN = "unknown"
+
+
+AUTO_RETRY_CATEGORIES = {
+    ErrorCategory.TIMEOUT,
+    ErrorCategory.RATE_LIMIT,
+    ErrorCategory.NETWORK,
+}
+
+LIMITED_RETRY_CATEGORIES = {
+    ErrorCategory.AUTH: 1,
+    ErrorCategory.PROVIDER: 2,
+}
+
+FEEDBACK_RETRY_CATEGORIES = {
+    ErrorCategory.PARSE,
+    ErrorCategory.QUALITY,
+    ErrorCategory.TOOL,
+}
+
+
+def classify_error(error_str: str) -> ErrorCategory:
+    """Classify a raw error string for retry-policy decisions."""
+
+    error_lower = error_str.lower()
+    if "timeout" in error_lower or "timed out" in error_lower:
+        return ErrorCategory.TIMEOUT
+    if "rate limit" in error_lower or "429" in error_lower or "too many requests" in error_lower:
+        return ErrorCategory.RATE_LIMIT
+    if "connection" in error_lower or "network" in error_lower or "dns" in error_lower or "socket" in error_lower:
+        return ErrorCategory.NETWORK
+    if (
+        "auth" in error_lower
+        or "api key" in error_lower
+        or "unauthorized" in error_lower
+        or "invalid token" in error_lower
+    ):
+        return ErrorCategory.AUTH
+    if "model" in error_lower or "provider" in error_lower:
+        return ErrorCategory.PROVIDER
+    return ErrorCategory.UNKNOWN
+
+
+def is_retryable_compat(category: ErrorCategory) -> bool:
+    """Return whether a retry-policy category can be retried."""
+
+    if category in AUTO_RETRY_CATEGORIES:
+        return True
+    if category in LIMITED_RETRY_CATEGORIES:
+        return True
+    return category in FEEDBACK_RETRY_CATEGORIES
+
+
+def get_max_retries(category: ErrorCategory, default: int = 3) -> int:
+    """Return the retry budget for a retry-policy category."""
+
+    if category in LIMITED_RETRY_CATEGORIES:
+        return LIMITED_RETRY_CATEGORIES[category]
+    if category in AUTO_RETRY_CATEGORIES:
+        return default
+    return 0
 
 
 @dataclass

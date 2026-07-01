@@ -17,7 +17,6 @@ current_modules:
 - polaris.cells.roles.kernel.internal.quality_checker
 - polaris.cells.roles.kernel.internal.llm_caller
 - polaris.cells.roles.kernel.internal.llm_cache
-- polaris.cells.roles.kernel.internal.error_category
 - polaris.cells.roles.kernel.internal.retry_policy_engine
 - polaris.cells.roles.kernel.internal.token_budget
 - polaris.cells.roles.kernel.internal.events

@@ -40,12 +40,6 @@ from polaris.cells.roles.kernel.internal.context_models import (
     SystemContext,
     TaskContext,
 )
-from polaris.cells.roles.kernel.internal.error_category import (
-    ErrorCategory,
-    classify_error,
-    get_max_retries,
-    is_retryable,
-)
 from polaris.cells.roles.kernel.internal.events import (
     LLMCallEvent,
     LLMEventEmitter,
@@ -72,7 +66,14 @@ from polaris.cells.roles.kernel.internal.output_parser import (
 )
 from polaris.cells.roles.kernel.internal.prompt_builder import PromptBuilder, PromptContext
 from polaris.cells.roles.kernel.internal.quality_checker import QualityChecker, QualityResult
-from polaris.cells.roles.kernel.internal.retry_policy_engine import RetryDecision, RetryPolicyEngine
+from polaris.cells.roles.kernel.internal.retry_policy_engine import (
+    ErrorCategory,
+    RetryDecision,
+    RetryPolicyEngine,
+    classify_error,
+    get_max_retries,
+    is_retryable_compat as is_retryable,
+)
 from polaris.cells.roles.kernel.internal.speculation.events import (
     SpeculationEvent,
     emit as _emit_speculation_event,

@@ -25,10 +25,9 @@ from unittest.mock import MagicMock
 
 import pytest
 from polaris.cells.roles.kernel.internal.conversation_state import ConversationState
-from polaris.cells.roles.kernel.internal.error_category import ErrorCategory
 from polaris.cells.roles.kernel.internal.output_parser import ToolCallResult
 from polaris.cells.roles.kernel.internal.policy import PolicyLayer, PolicyResult
-from polaris.cells.roles.kernel.internal.retry_policy_engine import RetryPolicyEngine
+from polaris.cells.roles.kernel.internal.retry_policy_engine import ErrorCategory, RetryPolicyEngine
 from polaris.cells.roles.kernel.internal.tool_loop_controller import (
     ToolLoopController,
     ToolLoopSafetyPolicy,
@@ -382,11 +381,7 @@ class TestRetryPolicyEngine:
         # Act & Assert - use categories that are actually auto-retryable
         for category in [ErrorCategory.TIMEOUT, ErrorCategory.RATE_LIMIT]:
             decision = engine.should_retry(category, attempt=0)
-            # The retry engine checks against AUTO_RETRY_CATEGORIES
-            # which uses PlatformRetryCategory values
-            # If the category is not recognized, it may return False
-            # We just verify the decision is returned correctly
-            assert isinstance(decision.should_retry, bool)
+            assert decision.should_retry is True
             assert decision.category == category
 
     def test_should_not_retry_auth_errors(self) -> None:
