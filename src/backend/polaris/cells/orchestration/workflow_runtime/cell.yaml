@@ -33,6 +33,7 @@ public_contracts:
 depends_on:
 - archive.run_archive
 - audit.evidence
+- control_plane.run_ledger
 - events.fact_stream
 - factory.cognitive_runtime
 - orchestration.workflow_activity

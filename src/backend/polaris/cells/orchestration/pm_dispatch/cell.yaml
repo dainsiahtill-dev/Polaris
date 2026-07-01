@@ -35,6 +35,7 @@ depends_on:
 - director.execution
 - archive.task_snapshot_archive
 - chief_engineer.blueprint
+- control_plane.run_ledger
 - factory.cognitive_runtime
 - roles.adapters
 - qa.audit_verdict

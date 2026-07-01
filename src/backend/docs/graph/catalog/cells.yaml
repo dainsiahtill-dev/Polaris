@@ -2369,6 +2369,7 @@ cells:
       - roles.adapters
       - director.task_consumer
       - factory.pipeline
+      - control_plane.run_ledger
     subgraphs:
       - execution_governance_pipeline
     state_owners:
@@ -3360,6 +3361,7 @@ cells:
       - runtime.artifact_store
       - runtime.task_runtime
       - workspace.integrity
+      - control_plane.run_ledger
     subgraphs:
       - execution_governance_pipeline
     state_owners:
@@ -3450,6 +3452,7 @@ cells:
       - orchestration.pm_planning
       - resident.autonomy
       - roles.adapters
+      - qa.audit_verdict
     subgraphs:
       - execution_governance_pipeline
     state_owners: []
