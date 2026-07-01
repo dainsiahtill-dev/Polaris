@@ -131,7 +131,7 @@ def print_summary():
   ⏳ 批量资产压缩
 
 使用方式:
-  1. 启动后端: python src/backend/server.py
+  1. 启动后端: cd src/backend && python -m polaris.delivery.server
   2. 启动前端: npm run dev
 """)
 

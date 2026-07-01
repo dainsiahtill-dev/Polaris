@@ -9,11 +9,8 @@
 ### 1.1 Run the backend
 
 ```bash
-# From repo root
+# From src/backend
 python -m polaris.delivery.server --host 127.0.0.1 --port 49977
-
-# Legacy shim (still works)
-python src/backend/server.py --host 127.0.0.1 --port 49977
 ```
 
 ### 1.2 Open Swagger UI

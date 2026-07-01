@@ -5,7 +5,7 @@ const { ensureLocalNatsServer } = require("./nats-server");
 
 const repoRoot = path.join(__dirname, "..", "..");
 const electronMain = path.join(repoRoot, "src", "electron", "main.cjs");
-const backendScript = path.join(repoRoot, "src", "backend", "server.py");
+const backendModule = "polaris.delivery.server";
 const backendSourcePath = path.join(repoRoot, "src", "backend");
 const venvRoot = path.join(repoRoot, ".venv");
 
@@ -14,7 +14,7 @@ function normalizeForMatch(value) {
 }
 
 const normalizedElectronMain = normalizeForMatch(electronMain);
-const normalizedBackendScript = normalizeForMatch(backendScript);
+const normalizedBackendModule = normalizeForMatch(backendModule);
 
 function parseProcessJson(raw) {
   const text = String(raw || "").trim();
@@ -46,7 +46,7 @@ function listWindowsProcessesByName(imageName) {
 }
 
 function isPolarisBackendProcess(proc) {
-  return normalizeForMatch(proc && proc.CommandLine).includes(normalizedBackendScript);
+  return normalizeForMatch(proc && proc.CommandLine).includes(normalizedBackendModule);
 }
 
 function isPolarisElectronProcess(proc) {
@@ -99,7 +99,7 @@ function killExistingBackend() {
     } else {
       // Unix-like systems
       try {
-        execFileSync("pkill", ["-f", backendScript], { timeout: 5000, stdio: "ignore" });
+        execFileSync("pkill", ["-f", backendModule], { timeout: 5000, stdio: "ignore" });
         console.log("[run-electron] killed Polaris backend processes");
       } catch {
         // ignore

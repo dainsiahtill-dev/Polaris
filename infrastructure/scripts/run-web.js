@@ -7,7 +7,7 @@ const path = require("path");
 const { formatLogLine } = require("./log-pretty");
 
 const repoRoot = path.join(__dirname, "..", "..");
-const backendScript = path.join(repoRoot, "src", "backend", "server.py");
+const backendModule = "polaris.delivery.server";
 const backendSourcePath = path.join(repoRoot, "src", "backend");
 const venvRoot = path.join(repoRoot, ".venv");
 const viteConfig = path.join(repoRoot, "src", "frontend", "vite.config.ts");
@@ -280,7 +280,7 @@ async function main() {
   }
 
   const backendArgs = [
-    backendScript,
+    "-m", backendModule,
     "--host", backendHost,
     "--port", String(backendPort),
     "--token", token,

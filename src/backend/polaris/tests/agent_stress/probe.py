@@ -18,17 +18,16 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Self
 
-from .paths import ensure_backend_root_on_syspath
-
-ensure_backend_root_on_syspath()
-
 import httpx
 
 from .backend_bootstrap import (
     BackendBootstrapError,
     ensure_backend_session,
 )
+from .paths import ensure_backend_root_on_syspath
 from .preflight import BackendPreflightProbe, BackendPreflightStatus
+
+ensure_backend_root_on_syspath()
 
 DEFAULT_GENERATION_CHECK_ATTEMPTS = 2
 MAX_GENERATION_CHECK_ATTEMPTS = 3
@@ -241,14 +240,14 @@ class RoleAvailabilityProbe:
     async def probe_all(self) -> ProbeReport:
         """探测所有角色"""
         timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
-        results = []
+        results: list[RoleProbeResult] = []
 
         # 并行探测所有角色
         tasks = [self._probe_role(role) for role in self.ROLES]
         role_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for role, result in zip(self.ROLES, role_results, strict=False):
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 results.append(
                     RoleProbeResult(
                         role=role,
@@ -475,7 +474,7 @@ class RoleAvailabilityProbe:
                 return {"error": f"HTTP {response.status_code}"}
         except httpx.HTTPError as e:
             return {"error": str(e)}
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             # Unexpected error - catch-all to prevent crashes in health probe
             return {"error": f"Unexpected: {type(e).__name__}: {e}"}
 
@@ -533,7 +532,7 @@ async def main(argv: list[str] | None = None):
     parser.add_argument(
         "--no-auto-bootstrap",
         action="store_true",
-        help="禁用 backend context 自动自举（默认会在 context 缺失时用官方 server.py CLI 自动拉起本地 backend）",
+        help="禁用 backend context 自动自举（默认会在 context 缺失时用 python -m polaris.delivery.server 自动拉起本地 backend）",
     )
     args = parser.parse_args(argv)
 

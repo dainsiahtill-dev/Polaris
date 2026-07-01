@@ -25,11 +25,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import re
 import sys
 from pathlib import Path
-from typing import List, Set, Tuple
 
 # Project root
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -62,22 +59,23 @@ class ArchitectureChecker:
 
     # Key paths that must exist (relative to project root)
     REQUIRED_PATHS = [
-        "src/backend/app/main.py",
-        "src/backend/server.py",
-        "src/backend/api/main.py",
-        "src/backend/core/llm_toolkit/definitions.py",
-        "src/backend/app/llm/usecases/role_dialogue.py",
+        "src/backend/polaris/delivery/server.py",
+        "src/backend/polaris/delivery/http/app_factory.py",
+        "src/backend/polaris/delivery/http/v2/pm.py",
+        "src/backend/polaris/delivery/http/v2/director.py",
+        "src/backend/polaris/kernelone/tool_execution/tool_spec_registry.py",
+        "src/backend/polaris/cells/llm/dialogue/internal/role_dialogue.py",
     ]
 
     # V2 API requirement - PM/Director routes should be in /v2/*
     V2_API_REQUIRED = True
 
-    def __init__(self, verbose: bool = False, fix: bool = False):
+    def __init__(self, verbose: bool = False, fix: bool = False) -> None:
         self.verbose = verbose
         self.fix = fix
-        self.errors: List[str] = []
-        self.warnings: List[str] = []
-        self.fixed: List[str] = []
+        self.errors: list[str] = []
+        self.warnings: list[str] = []
+        self.fixed: list[str] = []
 
     def log(self, message: str) -> None:
         """Log message."""
@@ -95,7 +93,7 @@ class ArchitectureChecker:
         for filepath in all_files:
             try:
                 content = filepath.read_text(encoding="utf-8")
-            except Exception:
+            except (OSError, UnicodeDecodeError):
                 continue
 
             # Check for deleted modules (hard error)
@@ -167,7 +165,7 @@ class ArchitectureChecker:
             for filepath in prod_dir.rglob("*.py"):
                 try:
                     content = filepath.read_text(encoding="utf-8")
-                except Exception:
+                except (OSError, UnicodeDecodeError):
                     continue
 
                 rel_path = filepath.relative_to(PROJECT_ROOT)
@@ -244,14 +242,14 @@ class ArchitectureChecker:
             if "deprecated" not in content.lower():
                 issues.append("  app/routers/director.py: should mark deprecated endpoints")
 
-        # Check V2 routers exist
-        v2_pm_router = BACKEND_DIR / "api" / "v2" / "pm.py"
-        v2_director_router = BACKEND_DIR / "api" / "v2" / "director.py"
+        # Check canonical V2 routers exist.
+        v2_pm_router = BACKEND_DIR / "polaris" / "delivery" / "http" / "v2" / "pm.py"
+        v2_director_router = BACKEND_DIR / "polaris" / "delivery" / "http" / "v2" / "director.py"
 
         if not v2_pm_router.exists():
-            issues.append("  api/v2/pm.py: V2 PM router not found")
+            issues.append("  polaris/delivery/http/v2/pm.py: V2 PM router not found")
         if not v2_director_router.exists():
-            issues.append("  api/v2/director.py: V2 Director router not found")
+            issues.append("  polaris/delivery/http/v2/director.py: V2 Director router not found")
 
         if issues:
             self.warnings.append("API route convention issues (non-blocking):")
@@ -303,8 +301,8 @@ class ArchitectureChecker:
             try:
                 result = check()
                 results.append(result)
-            except Exception as e:
-                self.errors.append(f"Error in {name}: {str(e)}")
+            except (OSError, RuntimeError, ValueError) as e:
+                self.errors.append(f"Error in {name}: {e!s}")
                 results.append(False)
             print()
 

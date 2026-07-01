@@ -775,7 +775,7 @@ units:
       - "2026-05-07 Squad A: deleted untracked structural pollution at backend root"
       - "Files removed: None (audit log spew), tmp_write.py (one-shot), tmp_writer.py (broken stub), src/ (empty mirror tree)"
       - "All deleted files were untracked and had 0 inbound references"
-      - "Annotated migration shims with MIGRATION-SHIM marker: server.py, director_interface.py"
+      - "2026-07-02: retired root server.py and director_interface.py shims; canonical delivery entrypoints are fenced by architecture tests"
     target:
       cell: ""
       catalog_status: not_applicable
@@ -804,7 +804,7 @@ units:
     verification:
       checks:
         - "ls src/backend/None src/backend/tmp_write.py src/backend/tmp_writer.py src/backend/src/  (expect: all not found)"
-        - "grep -l 'MIGRATION-SHIM' src/backend/server.py src/backend/director_interface.py  (expect: both)"
+        - "python -m pytest src/backend/polaris/tests/architecture/test_backend_server_shim_fence.py src/backend/polaris/tests/architecture/test_director_interface_shim_fence.py"
       required_tests: []
       docs_updates: []
       graph_updates: []

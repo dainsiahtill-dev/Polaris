@@ -18,25 +18,21 @@ Options:
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List, Set
-
 
 # Files to archive (legacy implementations)
-LEGACY_FILES: List[tuple[str, str]] = [
+LEGACY_FILES: list[tuple[str, str]] = [
     # (source_path, archive_subpath)
-    ("src/backend/server.py.legacy", "src/backend/server_legacy.py"),
     ("src/backend/process.py", "src/backend/process_legacy.py"),
     ("src/backend/scripts/pm/cli.py.legacy", "src/backend/scripts/pm/cli_legacy.py"),
     ("src/backend/scripts/director/main.py", "src/backend/scripts/director/main_legacy.py"),
 ]
 
 # Patterns to remove from active code
-DEPRECATED_PATTERNS: List[str] = [
+DEPRECATED_PATTERNS: list[str] = [
     "KERNELONE_USE_NEW_BOOTSTRAP",
     "USE_NEW_BOOTSTRAP",
     "_use_legacy_bootstrap",
@@ -44,8 +40,8 @@ DEPRECATED_PATTERNS: List[str] = [
 ]
 
 # Entry points to update
-ENTRY_POINTS: List[str] = [
-    "src/backend/server.py",
+ENTRY_POINTS: list[str] = [
+    "src/backend/polaris/delivery/server.py",
     "polaris.py",
 ]
 
@@ -53,12 +49,12 @@ ENTRY_POINTS: List[str] = [
 class Phase6Cleanup:
     """Phase 6 cleanup executor."""
 
-    def __init__(self, project_root: Path, archive_path: Path, dry_run: bool = False):
+    def __init__(self, project_root: Path, archive_path: Path, dry_run: bool = False) -> None:
         self.project_root = project_root
         self.archive_path = archive_path
         self.dry_run = dry_run
-        self.changes_made: List[str] = []
-        self.warnings: List[str] = []
+        self.changes_made: list[str] = []
+        self.warnings: list[str] = []
 
     def log(self, message: str) -> None:
         """Log a message."""
@@ -130,11 +126,11 @@ For the current implementation, see:
         self.log(f"Archived {archived_count} legacy files")
         return True
 
-    def scan_for_deprecated_patterns(self) -> Set[str]:
+    def scan_for_deprecated_patterns(self) -> set[str]:
         """Scan codebase for deprecated patterns."""
         self.log("Scanning for deprecated patterns...")
 
-        found_files: Set[str] = set()
+        found_files: set[str] = set()
 
         # Scan Python files
         for py_file in self.project_root.rglob("*.py"):
@@ -153,7 +149,7 @@ For the current implementation, see:
                         rel_path = py_file.relative_to(self.project_root)
                         self.warn(f"Found deprecated pattern '{pattern}' in {rel_path}")
                         found_files.add(str(rel_path))
-            except Exception as e:
+            except (OSError, UnicodeDecodeError) as e:
                 self.warn(f"Could not read {py_file}: {e}")
 
         return found_files

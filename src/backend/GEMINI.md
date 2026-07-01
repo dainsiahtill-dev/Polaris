@@ -184,7 +184,7 @@
 
 ### 6.7 CLI 入口点（已更新）
 
-- 后端服务：`python -m polaris.delivery.server --host 127.0.0.1 --port 49977`（兼容：`python src/backend/server.py`）
+- 后端服务：`python -m polaris.delivery.server --host 127.0.0.1 --port 49977`
 - PM CLI：`python -m polaris.delivery.cli.pm.cli`
 - Director CLI：`python -m polaris.delivery.cli.director.cli_thin`
 - Architect CLI：`python -m polaris.cells.architect.design.internal.architect_cli`

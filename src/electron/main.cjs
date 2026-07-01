@@ -48,7 +48,7 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
 }
 
 const repoRoot = path.join(__dirname, "..", "..");
-const backendScript = path.join(__dirname, "..", "backend", "server.py");
+const backendModule = "polaris.delivery.server";
 const backendSourcePath = path.join(repoRoot, "src", "backend");
 const venvRoot = path.join(repoRoot, ".venv");
 const frontendDist = path.join(__dirname, "..", "frontend", "dist", "index.html");
@@ -977,7 +977,7 @@ async function startBackend(options = {}) {
       });
     }
   }
-  const args = [backendScript, "--host", "127.0.0.1", "--port", String(port), "--token", token];
+  const args = ["-m", backendModule, "--host", "127.0.0.1", "--port", String(port), "--token", token];
 
   const workspaceOverride = resolveStartupWorkspaceOverride();
   if (workspaceOverride) {

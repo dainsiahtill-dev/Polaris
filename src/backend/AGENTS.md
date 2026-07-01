@@ -194,8 +194,8 @@ Cell 是最小自治边界。
 旧根迁移状态（2026-04-24，Squad V 完成）：
 
 - `app/`、`core/`、`api/`：已不存在于本仓库。
-- `director_interface.py`：已迁移至 `polaris/delivery/cli/pm/director_interface_core.py`，旧根保留 shim 兼容层。
-- `server.py`：已迁移至 `polaris/delivery/server.py`，旧根保留 shim 兼容层。
+- `director_interface.py`：旧根 shim 已退役；唯一实现入口为 `polaris/delivery/cli/pm/director_interface_core.py`。
+- `server.py`：旧根 shim 已退役；唯一后端服务入口为 `python -m polaris.delivery.server` / `polaris/delivery/server.py`。
 - `scripts/`：仍保留（86 个文件），仅作为历史工具/诊断脚本；新功能必须写入 `polaris/delivery/cli/` 或对应 Cell 目录。
 
 ## 6. 开工前必做
@@ -466,7 +466,7 @@ Cell 是最小自治边界。
 
 ### 15.7 CLI 入口点（已更新）
 
-- 后端服务：`python -m polaris.delivery.server --host 127.0.0.1 --port 49977`（兼容：`python src/backend/server.py`）
+- 后端服务：`python -m polaris.delivery.server --host 127.0.0.1 --port 49977`
 - PM CLI：`python -m polaris.delivery.cli.pm.cli`
 - Director CLI：`python -m polaris.delivery.cli.director.cli_thin`
 - Architect CLI：`python -m polaris.cells.architect.design.internal.architect_cli`

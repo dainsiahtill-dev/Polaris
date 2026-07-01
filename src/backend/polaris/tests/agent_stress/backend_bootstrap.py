@@ -11,25 +11,20 @@ import secrets
 import sys
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-
-from .paths import (
-    BACKEND_ROOT,
-    REPO_ROOT,
-    ensure_backend_root_on_syspath,
-)
-
-ensure_backend_root_on_syspath()
-
-PROJECT_ROOT = BACKEND_ROOT
 
 from .backend_context import (
     BackendContext,
     get_desktop_backend_info_path,
     resolve_backend_context,
+)
+from .paths import (
+    BACKEND_ROOT,
+    REPO_ROOT,
+    ensure_backend_root_on_syspath,
 )
 from .preflight import BackendPreflightProbe, BackendPreflightStatus
 from .stress_path_policy import (
@@ -41,11 +36,15 @@ from .stress_path_policy import (
 
 logger = logging.getLogger(__name__)
 
+ensure_backend_root_on_syspath()
+
+PROJECT_ROOT = BACKEND_ROOT
+
 BOOTSTRAP_CONTEXT_SOURCE = "terminal-auto-bootstrap"
 DEFAULT_BOOTSTRAP_TIMEOUT_SECONDS = 30.0
 DEFAULT_BOOTSTRAP_WORKSPACE_PREFIX = "tests-agent-stress-backend"
 DEFAULT_BOOTSTRAP_RAMDISK = default_stress_runtime_root("tests-agent-stress-runtime")
-BACKEND_SERVER_SCRIPT = BACKEND_ROOT / "server.py"
+BACKEND_SERVER_MODULE = "polaris.delivery.server"
 
 
 def _fresh_bootstrap_workspace() -> Path:
@@ -311,8 +310,8 @@ class ManagedBackendSession:
     _stdout_task: asyncio.Task[None] | None = None
     _stderr_task: asyncio.Task[None] | None = None
     _watch_task: asyncio.Task[None] | None = None
-    _recent_stdout: deque[str] | None = None
-    _recent_stderr: deque[str] | None = None
+    _recent_stdout: deque[str] = field(default_factory=lambda: deque(maxlen=80))
+    _recent_stderr: deque[str] = field(default_factory=lambda: deque(maxlen=80))
     _startup_port: int | None = None
     _startup_error: str = ""
 
@@ -505,7 +504,8 @@ async def _auto_bootstrap_backend(
     command = [
         python_executable,
         "-B",
-        str(BACKEND_SERVER_SCRIPT),
+        "-m",
+        BACKEND_SERVER_MODULE,
         "--host",
         "127.0.0.1",
         "--port",

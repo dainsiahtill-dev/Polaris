@@ -9,7 +9,7 @@ from polaris.kernelone.storage import (
     resolve_storage_roots,
 )
 
-from .backend_bootstrap import BACKEND_SERVER_SCRIPT
+from .backend_bootstrap import BACKEND_SERVER_MODULE
 from .observer.constants import BACKEND_DIR, PROJECT_ROOT
 from .paths import BACKEND_ROOT, REPO_ROOT
 from .stress_path_policy import (
@@ -19,15 +19,15 @@ from .stress_path_policy import (
 
 
 def test_agent_stress_paths_point_to_current_backend_root() -> None:
-    expected_backend_root = Path(__file__).resolve().parents[2]
+    expected_backend_root = Path(__file__).resolve().parents[3]
 
     assert expected_backend_root == BACKEND_ROOT
     assert expected_backend_root == BACKEND_DIR
     assert expected_backend_root == PROJECT_ROOT
     assert expected_backend_root.parents[1] == REPO_ROOT
 
-    assert expected_backend_root / "server.py" == BACKEND_SERVER_SCRIPT
-    assert BACKEND_SERVER_SCRIPT.is_file()
+    assert BACKEND_SERVER_MODULE == "polaris.delivery.server"
+    assert (expected_backend_root / "polaris" / "delivery" / "server.py").is_file()
 
 
 def test_agent_stress_registers_polaris_storage_layout(tmp_path: Path) -> None:
@@ -46,7 +46,7 @@ def test_agent_stress_registers_polaris_storage_layout(tmp_path: Path) -> None:
 
         assert Path(roots.project_root).name == ".polaris"
         assert ".polaris" in Path(roots.runtime_root).parts
-        assert str(Path(roots.runtime_base)).startswith(str(Path("X:/")))
+        assert ".kernelone" not in Path(roots.project_root).parts
     finally:
         clear_storage_roots_cache()
         clear_business_roots_resolver()

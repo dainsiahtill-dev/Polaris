@@ -369,7 +369,8 @@ export const test = base.extend<WebFixtures>({
       ].filter(Boolean).join(","),
     };
     const backend = spawn(resolvePython(), [
-      path.join(repoRoot, "src", "backend", "server.py"),
+      "-m",
+      "polaris.delivery.server",
       "--host",
       "127.0.0.1",
       "--port",
