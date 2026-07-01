@@ -39,14 +39,9 @@ from polaris.cells.roles.kernel.internal.kernel.suggestions import (
     get_suggestion_provider,
 )
 from polaris.cells.roles.kernel.internal.kernel.tool_executor import KernelToolExecutor
-from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
-
-# 向后兼容：_WRITE_TOOL_NAMES 重定向到统一的 WRITE_TOOLS
-_WRITE_TOOL_NAMES: frozenset[str] = WRITE_TOOLS
 
 __all__ = [
     "_DEFAULT_ROLE_WRITE_CALL_LIMITS",
-    "_WRITE_TOOL_NAMES",
     # Suggestions
     "ErrorSuggestionProvider",
     # Error Handler
