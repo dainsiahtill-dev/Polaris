@@ -45,6 +45,7 @@ from polaris.cells.roles.kernel.internal.kernel.prompt_builder_provider import g
 from polaris.cells.roles.kernel.internal.kernel.quality_checker_provider import get_quality_checker
 from polaris.cells.roles.kernel.internal.kernel.request_appendix import build_prompt_appendix_from_request
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
+    role_turn_error_result,
     role_turn_result_from_transaction_result,
 )
 from polaris.cells.roles.kernel.internal.kernel.stream_run_id import resolve_stream_run_id
@@ -269,13 +270,13 @@ class RoleExecutionKernel:
         try:
             profile = self.registry.get_profile_or_raise(role)
         except (RuntimeError, ValueError) as e:
-            return RoleTurnResult(error=f"角色加载失败: {e}", is_complete=True)
+            return role_turn_error_result(error=f"角色加载失败: {e}", is_complete=True)
 
         # 2. 处理请求附录
         try:
             prompt_appendix = build_prompt_appendix_from_request(request)
         except (RuntimeError, ValueError) as e:
-            return RoleTurnResult(error=f"参数处理失败: {e}", is_complete=True)
+            return role_turn_error_result(error=f"参数处理失败: {e}", is_complete=True)
 
         prompt_appendix = append_prompt_profiles_for_request(
             profile=profile,
@@ -291,7 +292,7 @@ class RoleExecutionKernel:
             prompt_builder = get_prompt_builder(self)
             fingerprint = prompt_builder.build_fingerprint(profile, prompt_appendix)
         except (RuntimeError, ValueError) as e:
-            return RoleTurnResult(error=f"提示词构建失败: {e}", is_complete=True)
+            return role_turn_error_result(error=f"提示词构建失败: {e}", is_complete=True)
 
         # 4. 构建基础系统提示词
         try:
@@ -303,13 +304,13 @@ class RoleExecutionKernel:
                 workspace=self.workspace,
             )
         except (RuntimeError, ValueError) as e:
-            return RoleTurnResult(error=f"系统提示词构建失败: {e}", is_complete=True)
+            return role_turn_error_result(error=f"系统提示词构建失败: {e}", is_complete=True)
 
         # 5. 构建上下文（验证可用性，结果由 TransactionKernel 使用）
         try:
             _ = build_context_request(request)
         except (RuntimeError, ValueError) as e:
-            return RoleTurnResult(error=f"上下文构建失败: {e}", is_complete=True)
+            return role_turn_error_result(error=f"上下文构建失败: {e}", is_complete=True)
 
         # Reset cached gateway for new turn (FailureBudget should not persist across turns)
         self._cached_tool_gateway = None

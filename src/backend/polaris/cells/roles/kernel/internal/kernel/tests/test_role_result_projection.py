@@ -140,6 +140,26 @@ def test_role_turn_error_result_projects_profile_and_copies_evidence() -> None:
     assert result.metadata is not metadata
 
 
+def test_role_turn_error_result_supports_pre_profile_setup_failures() -> None:
+    result = role_turn_error_result(
+        error="角色加载失败: missing profile",
+        is_complete=True,
+    )
+
+    assert result.error == "角色加载失败: missing profile"
+    assert result.is_complete is True
+    assert result.profile_version == ""
+    assert result.prompt_fingerprint is None
+    assert result.tool_policy_id == ""
+    assert result.execution_stats == {
+        "platform_retry_count": 0,
+        "kernel_repair_retry_count": 0,
+        "kernel_repair_reasons": [],
+        "kernel_repair_exhausted": False,
+    }
+    assert result.metadata == {}
+
+
 def test_role_turn_completion_result_projects_committed_turn_facts() -> None:
     profile = SimpleNamespace(
         version="profile-v3",
