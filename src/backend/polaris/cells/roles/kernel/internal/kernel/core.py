@@ -23,10 +23,11 @@ import json
 import logging
 import os
 import time
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from polaris.cells.roles.kernel.internal.context_gateway import ContextGatewayConfig
+from polaris.cells.roles.kernel.internal.kernel.context_gateway_config_builder import (
+    ContextGatewayConfigFactory,
+)
 from polaris.cells.roles.kernel.internal.kernel.context_request_builder import build_context_request
 from polaris.cells.roles.kernel.internal.kernel.error_handler import (
     KernelEventEmitter,
@@ -56,7 +57,6 @@ from polaris.cells.roles.kernel.internal.prompt_builder import PromptBuilder
 from polaris.cells.roles.kernel.internal.quality_checker import QualityChecker, QualityResult
 from polaris.cells.roles.kernel.public.config import KernelConfig, get_default_config
 from polaris.cells.roles.profile.public.service import (
-    RoleProfile,
     RoleProfileRegistry,
     RoleTurnRequest,
     RoleTurnResult,
@@ -82,8 +82,6 @@ if TYPE_CHECKING:
     from polaris.kernelone.context.compaction import RoleContextCompressor
 
 logger = logging.getLogger(__name__)
-
-ContextGatewayConfigFactory = Callable[[str, RoleProfile, RoleTurnRequest], ContextGatewayConfig | None]
 
 
 class RoleExecutionKernel:
@@ -251,20 +249,10 @@ class RoleExecutionKernel:
         """获取当前 Kernel 配置"""
         return self._config
 
-    def _build_context_gateway_config(
-        self,
-        role: str,
-        profile: RoleProfile,
-        request: RoleTurnRequest,
-    ) -> ContextGatewayConfig | None:
-        """Build ContextGatewayConfig through the injected owner-agnostic runtime factory."""
-        if self._context_gateway_config_factory is None:
-            return None
-        try:
-            return self._context_gateway_config_factory(role, profile, request)
-        except Exception:  # noqa: BLE001 - context asset providers must degrade to baseline context
-            logger.debug("ContextGatewayConfig factory failed", exc_info=True)
-            return None
+    @property
+    def context_gateway_config_factory(self) -> ContextGatewayConfigFactory | None:
+        """Return the runtime-injected ContextGatewayConfig factory, if any."""
+        return self._context_gateway_config_factory
 
     # ═══════════════════════════════════════════════════════════════════════════
     # 服务层访问器（懒加载 + 依赖注入支持）

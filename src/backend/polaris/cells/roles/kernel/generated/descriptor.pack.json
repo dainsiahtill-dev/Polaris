@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T04:36:24.133220Z",
-  "source_hash": "3e48cf8ebf27acc3",
+  "generated_at": "2026-07-01T04:40:51.042954Z",
+  "source_hash": "250d5dcd55c989fe",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -3975,6 +3975,12 @@
     },
     {
       "type": "function",
+      "name": "build_context_gateway_config",
+      "description": "Resolve ContextGatewayConfig through the injected runtime factory.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/context_gateway_config_builder.py"
+    },
+    {
+      "type": "function",
       "name": "build_context_request",
       "description": "Project a role turn request into the ContextOS gateway request.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/context_request_builder.py"
@@ -3998,8 +4004,8 @@
           "doc": "获取当前 Kernel 配置"
         },
         {
-          "name": "_build_context_gateway_config",
-          "doc": "Build ContextGatewayConfig through the injected owner-agnostic runtime factory."
+          "name": "context_gateway_config_factory",
+          "doc": "Return the runtime-injected ContextGatewayConfig factory, if any."
         },
         {
           "name": "_get_prompt_builder",
@@ -22268,10 +22274,6 @@
         },
         {
           "name": "build_transaction_kernel",
-          "doc": ""
-        },
-        {
-          "name": "_build_context_gateway_config",
           "doc": ""
         }
       ]

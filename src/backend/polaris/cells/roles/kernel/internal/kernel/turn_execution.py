@@ -32,6 +32,7 @@ from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
     _commit_turn_to_snapshot,
 )
 from polaris.cells.roles.kernel.internal.kernel.context_assembly import build_context_handoff_pack
+from polaris.cells.roles.kernel.internal.kernel.context_gateway_config_builder import build_context_gateway_config
 from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
     _context_requests_materialize_delivery,
     _ensure_context_delivery_mode_marker,
@@ -85,7 +86,7 @@ async def execute_transaction_kernel_turn(
     context_gateway = RoleContextGateway(
         profile,
         kernel.workspace,
-        config=kernel._build_context_gateway_config(role, profile, request),
+        config=build_context_gateway_config(kernel.context_gateway_config_factory, role, profile, request),
     )
     # ADR-0090 I4.3: gateway budgets AND prepends the role system prompt — no
     # second projection pass.
@@ -443,7 +444,7 @@ async def execute_transaction_kernel_stream(
     context_gateway = RoleContextGateway(
         profile,
         kernel.workspace,
-        config=kernel._build_context_gateway_config(role, profile, request),
+        config=build_context_gateway_config(kernel.context_gateway_config_factory, role, profile, request),
     )
     # ADR-0090 I4.3: gateway budgets AND prepends the role system prompt — no
     # second projection pass.

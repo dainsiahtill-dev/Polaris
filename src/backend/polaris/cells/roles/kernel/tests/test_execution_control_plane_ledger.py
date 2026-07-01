@@ -31,6 +31,7 @@ from polaris.cells.roles.profile.public.service import (
 class _DroppedToolDispatchKernel:
     def __init__(self, workspace: str) -> None:
         self.workspace = workspace
+        self.context_gateway_config_factory = None
 
     def build_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:
         class _TransactionKernel:
@@ -56,9 +57,6 @@ class _DroppedToolDispatchKernel:
                 raise exc
 
         return _TransactionKernel()
-
-    def _build_context_gateway_config(self, _role: str, _profile: Any, _request: Any) -> None:
-        return None
 
 
 class _SuccessfulNoMaterializationKernel(_DroppedToolDispatchKernel):
