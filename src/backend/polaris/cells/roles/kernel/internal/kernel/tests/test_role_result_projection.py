@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     role_result_metadata_from_profile,
+    role_turn_completion_result,
     role_turn_error_result,
     role_turn_result_from_transaction_result,
     tool_calls_from_batch_receipt,
@@ -136,6 +137,64 @@ def test_role_turn_error_result_projects_profile_and_copies_evidence() -> None:
     }
     assert result.metadata == {"tool_filter_audit": {"status": "conflict"}}
     assert result.execution_stats is not execution_stats
+    assert result.metadata is not metadata
+
+
+def test_role_turn_completion_result_projects_committed_turn_facts() -> None:
+    profile = SimpleNamespace(
+        version="profile-v3",
+        tool_policy=SimpleNamespace(policy_id="policy-v3"),
+    )
+    fingerprint = SimpleNamespace(full_hash="fingerprint")
+    structured_output = {"parsed": True}
+    tool_calls = [{"tool": "read_file"}]
+    tool_results = [{"tool": "read_file", "success": True}]
+    batch_receipt = {"results": [{"tool_name": "read_file"}]}
+    execution_stats = {"transaction_kernel": True, "llm_calls": 1}
+    turn_history = [("assistant", "done")]
+    turn_events_metadata = [{"event_id": "evt-2"}]
+    metadata = {"context_snapshot_ref": "runtime/contexts/cc/dd.json"}
+
+    result = role_turn_completion_result(
+        content="done",
+        thinking="internal reasoning",
+        structured_output=structured_output,
+        tool_calls=tool_calls,
+        tool_results=tool_results,
+        batch_receipt=batch_receipt,
+        profile=profile,
+        fingerprint=fingerprint,
+        error=None,
+        is_complete=True,
+        execution_stats=execution_stats,
+        turn_history=turn_history,
+        turn_events_metadata=turn_events_metadata,
+        metadata=metadata,
+    )
+
+    assert result.content == "done"
+    assert result.thinking == "internal reasoning"
+    assert result.structured_output == {"parsed": True}
+    assert result.tool_calls == [{"tool": "read_file"}]
+    assert result.tool_results == [{"tool": "read_file", "success": True}]
+    assert result.batch_receipt == {"results": [{"tool_name": "read_file"}]}
+    assert result.profile_version == "profile-v3"
+    assert result.prompt_fingerprint is fingerprint
+    assert result.tool_policy_id == "policy-v3"
+    assert result.error is None
+    assert result.is_complete is True
+    assert result.execution_stats == {"transaction_kernel": True, "llm_calls": 1}
+    assert result.turn_history == [("assistant", "done")]
+    assert result.turn_events_metadata == [{"event_id": "evt-2"}]
+    assert result.metadata == {"context_snapshot_ref": "runtime/contexts/cc/dd.json"}
+
+    assert result.structured_output is not structured_output
+    assert result.tool_calls is not tool_calls
+    assert result.tool_results is not tool_results
+    assert result.batch_receipt is not batch_receipt
+    assert result.execution_stats is not execution_stats
+    assert result.turn_history is not turn_history
+    assert result.turn_events_metadata is not turn_events_metadata
     assert result.metadata is not metadata
 
 

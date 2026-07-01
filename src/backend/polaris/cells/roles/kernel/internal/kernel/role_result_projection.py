@@ -157,6 +157,52 @@ def role_turn_error_result(
     )
 
 
+def role_turn_completion_result(
+    *,
+    content: str,
+    thinking: str | None,
+    structured_output: dict[str, Any] | None,
+    tool_calls: list[dict[str, Any]],
+    tool_results: list[dict[str, Any]],
+    batch_receipt: dict[str, Any] | None,
+    profile: Any,
+    fingerprint: Any,
+    error: str | None,
+    is_complete: bool,
+    execution_stats: dict[str, Any],
+    turn_history: list[tuple[str, str]],
+    turn_events_metadata: list[dict[str, Any]],
+    metadata: dict[str, Any],
+) -> RoleTurnResult:
+    """Build a public role-turn completion result from committed turn facts.
+
+    Boundary:
+        ``turn_execution`` owns side effects such as ContextOS commits and
+        task-boundary verdicts. This helper owns only the final public result
+        projection after those facts are available.
+
+    Complexity:
+        O(n + m) time and memory for copying list/dict projections.
+    """
+    return RoleTurnResult(
+        content=content,
+        thinking=thinking,
+        structured_output=dict(structured_output) if isinstance(structured_output, dict) else None,
+        tool_calls=list(tool_calls),
+        tool_results=list(tool_results),
+        batch_receipt=dict(batch_receipt) if isinstance(batch_receipt, dict) else None,
+        profile_version=str(getattr(profile, "version", "") or ""),
+        prompt_fingerprint=fingerprint,
+        tool_policy_id=str(getattr(getattr(profile, "tool_policy", None), "policy_id", "") or ""),
+        error=error,
+        is_complete=is_complete,
+        execution_stats=dict(execution_stats),
+        turn_history=list(turn_history),
+        turn_events_metadata=list(turn_events_metadata),
+        metadata=dict(metadata),
+    )
+
+
 def role_turn_result_from_transaction_result(
     *,
     transaction_result: RoleTurnResult,

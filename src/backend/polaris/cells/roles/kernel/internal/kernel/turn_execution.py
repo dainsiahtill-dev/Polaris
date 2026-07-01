@@ -43,6 +43,7 @@ from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
 from polaris.cells.roles.kernel.internal.kernel.output_parser_provider import get_output_parser
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     role_result_metadata_from_profile,
+    role_turn_completion_result,
     role_turn_error_result,
     tool_calls_from_batch_receipt,
     tool_results_from_batch_receipt,
@@ -332,16 +333,15 @@ async def execute_transaction_kernel_turn(
     except (OSError, RuntimeError, TypeError, ValueError):
         logger.debug("failed to append role-turn task boundary verdict", exc_info=True)
 
-    return RoleTurnResult(
+    return role_turn_completion_result(
         content=visible_content,
         thinking=final_thinking,
         structured_output=structured_output,
         tool_calls=tool_calls,
         tool_results=tool_results,
         batch_receipt=normalized_batch_receipt,
-        profile_version=profile.version,
-        prompt_fingerprint=fingerprint,
-        tool_policy_id=profile.tool_policy.policy_id,
+        profile=profile,
+        fingerprint=fingerprint,
         error=error_msg,
         is_complete=is_complete,
         execution_stats=execution_stats,
