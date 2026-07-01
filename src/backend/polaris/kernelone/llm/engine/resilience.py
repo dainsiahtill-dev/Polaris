@@ -44,9 +44,13 @@ from polaris.kernelone.constants import (
     RETRY_JITTER_MAX,
     RETRY_JITTER_MIN,
 )
-from polaris.kernelone.errors import CircuitBreakerOpenError, NonRetryableError, RetryableError
+from polaris.kernelone.errors import (
+    CircuitBreakerOpenError,
+    NonRetryableError,
+    RetryableError,
+    classify_error as _classify_error_fn,
+)
 
-from ..error_categories import classify_error as _classify_error_fn
 from .contracts import AIResponse, ErrorCategory, Usage
 
 if TYPE_CHECKING:
@@ -892,7 +896,7 @@ class ResilienceManager:
         return delay
 
     def _classify_error(self, error: Exception) -> ErrorCategory:
-        """Delegate to the canonical error classifier in error_categories."""
+        """Delegate to the canonical KernelOne error classifier."""
         return _classify_error_fn(error)
 
     def should_attempt_repair(self, output: str) -> bool:

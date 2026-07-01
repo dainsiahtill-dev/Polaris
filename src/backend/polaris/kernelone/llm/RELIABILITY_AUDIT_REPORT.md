@@ -306,7 +306,7 @@ async def invoke_stream(...):
 ```python
 # toolkit/executor.py 建议修改
 
-from polaris.kernelone.llm.error_categories import classify_error, ErrorCategory
+from polaris.kernelone.errors import ErrorCategory, classify_error
 
 class ToolExecutionError(Exception):
     """工具执行错误，包含分类信息"""
@@ -325,7 +325,7 @@ async def execute_tool(...) -> dict:
         return {
             "ok": False,
             "error": str(e),
-            "category": ErrorCategory.INVALID_REQUEST.value,
+            "category": ErrorCategory.INVALID_ARGUMENT.value,
             "retryable": False
         }
     except (OSError, IOError) as e:
@@ -540,7 +540,7 @@ async def test_network_failure():
     mock_provider.generate_stream.side_effect = ConnectionError('Network down')
 
     # 测试错误分类
-    from polaris.kernelone.llm.error_categories import classify_error
+    from polaris.kernelone.errors import classify_error
     error = ConnectionError('Network down')
     category = classify_error(error)
     print(f'ConnectionError classified as: {category}')

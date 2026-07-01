@@ -11,7 +11,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from ..error_categories import ErrorCategory
+from polaris.kernelone.errors import ErrorCategory
+
 from ..shared_contracts import (
     AIRequest,
     AIResponse,
