@@ -33,13 +33,20 @@ public_contracts:
   errors:
   - ChiefEngineerBlueprintErrorV1
 depends_on:
+- context.catalog
 - context.engine
+- control_plane.run_ledger
+- control_plane.verifier_policy
+- director.tasking
 - llm.control_plane
 - policy.permission
 - policy.workspace_guard
 - finops.budget_guard
 - audit.evidence
+- roles.runtime
+- runtime.artifact_store
 - runtime.task_market
+- orchestration.workflow_runtime
 subgraphs:
 - execution_governance_pipeline
 state_owners:
@@ -62,6 +69,7 @@ effects_allowed:
 - fs.delete:runtime/blueprints/*
 - fs.write:runtime/events/runtime.events.jsonl
 - llm.invoke:chief_engineer/*
+- process.spawn:git/*
 verification:
   tests:
   - tests/test_chief_engineer_preflight.py

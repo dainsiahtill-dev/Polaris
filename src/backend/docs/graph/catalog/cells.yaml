@@ -2481,6 +2481,9 @@ cells:
     depends_on:
       - context.catalog
       - context.engine
+      - control_plane.run_ledger
+      - control_plane.verifier_policy
+      - director.tasking
       - llm.control_plane
       - policy.permission
       - policy.workspace_guard
