@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:45.059924Z",
-  "source_hash": "1c1f8c3421a6ae0d",
+  "generated_at": "2026-07-01T15:28:00.730995Z",
+  "source_hash": "3391f1564e3f7a32",
   "cell_id": "director.execution",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -1564,12 +1564,6 @@
       "description": "Side-effect-free Director desktop readiness snapshot.",
       "defined_in": "polaris/delivery/http/v2/director.py",
       "methods": []
-    },
-    {
-      "type": "function",
-      "name": "_merge_director_status",
-      "description": "",
-      "defined_in": "polaris/delivery/http/v2/director.py"
     },
     {
       "type": "function",

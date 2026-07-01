@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+from polaris.cells.runtime.projection.public.service import merge_director_status
 from polaris.delivery.http.v2 import director as v2_director
 
 
@@ -24,7 +25,7 @@ def test_merge_director_status_prefers_workflow_snapshot() -> None:
         "token_budget": {"used": 32},
     }
 
-    merged = v2_director._merge_director_status(local_status, workflow_status)
+    merged = merge_director_status(local_status, workflow_status)
 
     assert merged["state"] == "RUNNING"
     assert merged["tasks"]["total"] == 2
@@ -45,7 +46,7 @@ def test_merge_director_status_keeps_local_when_workflow_unavailable() -> None:
         "token_budget": {"remaining": 256},
     }
 
-    merged = v2_director._merge_director_status(local_status, None)
+    merged = merge_director_status(local_status, None)
     # Result should contain all original fields (may add source field)
     assert merged["state"] == local_status["state"]
     assert merged["workspace"] == local_status["workspace"]
@@ -73,7 +74,7 @@ def test_merge_director_status_uses_local_workers_when_workflow_workers_missing(
         "token_budget": {},
     }
 
-    merged = v2_director._merge_director_status(local_status, workflow_status)
+    merged = merge_director_status(local_status, workflow_status)
 
     assert merged["state"] == "PENDING"
     assert merged["workers"]["total"] == 3
@@ -98,7 +99,7 @@ def test_merge_director_status_preserves_local_running_state() -> None:
         "token_budget": {},
     }
 
-    merged = v2_director._merge_director_status(local_status, workflow_status)
+    merged = merge_director_status(local_status, workflow_status)
 
     assert merged["state"] == "RUNNING"
 
@@ -124,7 +125,7 @@ def test_merge_director_status_keeps_local_tasks_when_workflow_rows_are_stale() 
         "workers": {"total": 1, "busy": 0},
     }
 
-    merged = v2_director._merge_director_status(local_status, workflow_status)
+    merged = merge_director_status(local_status, workflow_status)
 
     assert merged["state"] == "RUNNING"
     assert merged["tasks"]["task_rows"][0]["id"] == "local-1"

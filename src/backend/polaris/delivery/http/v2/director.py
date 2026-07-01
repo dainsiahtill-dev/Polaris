@@ -9,7 +9,6 @@ import asyncio
 import logging
 import os
 import time
-import warnings
 from pathlib import Path  # patched via director.Path / dereferenced by support helpers
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal
@@ -287,7 +286,6 @@ __all__ = [
     "_load_all_blueprint_payloads",
     "_load_blueprint_payload_by_id",
     "_load_blueprint_payload_by_path",
-    "_merge_director_status",
     "_merge_task_rows_by_identity",
     "_normalize_task_status_token",
     "_parse_task_priority",
@@ -367,23 +365,6 @@ __all__ = [
     "stop_director",
     "workspace_values_match",
 ]
-
-
-# Deprecation removal target: 2026-06-30.
-# Backward-compat re-export for tests.
-# Tests should import merge_director_status directly from
-# polaris.cells.runtime.projection.public.service.
-# This alias will be removed in v2.0.
-def _merge_director_status(*args: Any, **kwargs: Any) -> Any:
-    warnings.warn(
-        "_merge_director_status re-export is deprecated. "
-        "Import merge_director_status from "
-        "polaris.cells.runtime.projection.public.service instead. "
-        "Will be removed in v2.0.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return merge_director_status(*args, **kwargs)
 
 
 router = APIRouter(prefix="/director", tags=["Director v2"])
