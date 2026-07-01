@@ -83,6 +83,34 @@ def test_engine_contracts_all_includes_shared_types() -> None:
     )
 
 
+def test_toolkit_contracts_all_includes_shared_types() -> None:
+    """toolkit/contracts.py __all__ must list every shared contract type."""
+
+    shared = set(shared_contracts.__all__)
+    toolkit_all = set(getattr(toolkit_contracts, "__all__", ()))
+    missing = shared - toolkit_all
+    assert not missing, (
+        f"toolkit/contracts.py __all__ is missing re-exported shared types: {sorted(missing)}. "
+        "Add them to __all__ so toolkit consumers do not drift from shared_contracts."
+    )
+
+
+def test_shared_contract_reexport_identity_across_engine_and_toolkit() -> None:
+    """Every shared contract must be the same object through both re-export layers."""
+
+    mismatches: list[str] = []
+    for name in shared_contracts.__all__:
+        shared_obj = getattr(shared_contracts, name)
+        engine_obj = getattr(engine_contracts, name, None)
+        toolkit_obj = getattr(toolkit_contracts, name, None)
+        if engine_obj is not shared_obj:
+            mismatches.append(f"engine.contracts.{name}")
+        if toolkit_obj is not shared_obj:
+            mismatches.append(f"toolkit.contracts.{name}")
+
+    assert not mismatches, f"shared contract re-export drift detected: {mismatches}"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 4: consumer files import shared types via contracts, not directly
 # ─────────────────────────────────────────────────────────────────────────────

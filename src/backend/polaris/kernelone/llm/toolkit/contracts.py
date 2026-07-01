@@ -18,6 +18,7 @@ from ..shared_contracts import (
     AIResponse,
     CompressionResult,
     ModelSpec,
+    ProviderFormatter,
     StreamEventType,
     TaskType,
     TokenBudgetDecision,
@@ -256,17 +257,14 @@ __all__ = [
     "AIResponse",
     "CompressionResult",
     "ErrorCategory",
-    # 数据类
     "ModelSpec",
+    "ProviderFormatter",
     "ProviderPort",
-    # 服务定位器
     "ServiceLocator",
     "StreamChunk",
     "StreamEventType",
-    # 枚举
     "TaskType",
     "TokenBudgetDecision",
-    # 接口
     "TokenEstimatorPort",
     "Usage",
 ]
