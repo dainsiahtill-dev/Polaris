@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.audit.contracts import KernelAuditEventType
+
 if TYPE_CHECKING:
     from collections.abc import Generator
 
@@ -315,9 +317,7 @@ def watch_events(
 
     while True:
         try:
-            from polaris.infrastructure.audit.stores.audit_store import AuditEventType
-
-            etype = AuditEventType(event_type) if event_type else None
+            etype = KernelAuditEventType(event_type) if event_type else None
             events = store.query(event_type=etype, limit=100)
 
             new_events = []

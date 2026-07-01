@@ -5,11 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from polaris.infrastructure.audit.stores.audit_store import (
-    AuditEvent,
-    AuditEventType,
-    AuditStore,
-)
+from polaris.infrastructure.audit.stores.audit_store import AuditStore
 from polaris.kernelone.audit.contracts import (
     KernelAuditEvent,
     KernelAuditEventType,
@@ -19,6 +15,24 @@ from polaris.kernelone.audit.contracts import (
 
 if TYPE_CHECKING:
     from datetime import datetime
+
+
+def _copy_kernel_event(event: KernelAuditEvent) -> KernelAuditEvent:
+    """Copy an audit event so storage signing cannot mutate caller-owned state."""
+    return KernelAuditEvent(
+        event_id=event.event_id,
+        timestamp=event.timestamp,
+        event_type=event.event_type,
+        version=event.version,
+        source=dict(event.source),
+        task=dict(event.task),
+        resource=dict(event.resource),
+        action=dict(event.action),
+        data=dict(event.data),
+        context=dict(event.context),
+        prev_hash=event.prev_hash,
+        signature=event.signature,
+    )
 
 
 class AuditStoreAdapter(KernelAuditStorePort):
@@ -38,35 +52,8 @@ class AuditStoreAdapter(KernelAuditStorePort):
         return self._store
 
     def append(self, event: KernelAuditEvent) -> KernelAuditEvent:
-        legacy = AuditEvent(
-            event_id=event.event_id,
-            timestamp=event.timestamp,
-            event_type=AuditEventType(event.event_type.value),
-            version=event.version,
-            source=dict(event.source),
-            task=dict(event.task),
-            resource=dict(event.resource),
-            action=dict(event.action),
-            data=dict(event.data),
-            context=dict(event.context),
-            prev_hash=event.prev_hash,
-            signature=event.signature,
-        )
-        persisted = self._store.append(legacy)
-        return KernelAuditEvent(
-            event_id=persisted.event_id,
-            timestamp=persisted.timestamp,
-            event_type=KernelAuditEventType(persisted.event_type.value),
-            version=persisted.version,
-            source=dict(persisted.source),
-            task=dict(persisted.task),
-            resource=dict(persisted.resource),
-            action=dict(persisted.action),
-            data=dict(persisted.data),
-            context=dict(persisted.context),
-            prev_hash=persisted.prev_hash,
-            signature=persisted.signature,
-        )
+        persisted = self._store.append(_copy_kernel_event(event))
+        return _copy_kernel_event(persisted)
 
     def query(
         self,
@@ -79,35 +66,16 @@ class AuditStoreAdapter(KernelAuditStorePort):
         limit: int = 100,
         offset: int = 0,
     ) -> list[KernelAuditEvent]:
-        legacy_event_type: AuditEventType | None = None
-        if event_type is not None:
-            legacy_event_type = AuditEventType(event_type.value)
         events = self._store.query(
             start_time=start_time,
             end_time=end_time,
-            event_type=legacy_event_type,
+            event_type=event_type,
             role=role,
             task_id=task_id,
             limit=limit,
             offset=offset,
         )
-        return [
-            KernelAuditEvent(
-                event_id=item.event_id,
-                timestamp=item.timestamp,
-                event_type=KernelAuditEventType(item.event_type.value),
-                version=item.version,
-                source=dict(item.source),
-                task=dict(item.task),
-                resource=dict(item.resource),
-                action=dict(item.action),
-                data=dict(item.data),
-                context=dict(item.context),
-                prev_hash=item.prev_hash,
-                signature=item.signature,
-            )
-            for item in events
-        ]
+        return [_copy_kernel_event(item) for item in events]
 
     def export_json(
         self,
@@ -117,13 +85,10 @@ class AuditStoreAdapter(KernelAuditStorePort):
         event_types: list[KernelAuditEventType] | None = None,
         include_data: bool = True,
     ) -> dict[str, Any]:
-        legacy_types: list[AuditEventType] | None = None
-        if event_types is not None:
-            legacy_types = [AuditEventType(item.value) for item in event_types]
         return self._store.export_json(
             start_time=start_time,
             end_time=end_time,
-            event_types=legacy_types,
+            event_types=event_types,
             include_data=include_data,
         )
 

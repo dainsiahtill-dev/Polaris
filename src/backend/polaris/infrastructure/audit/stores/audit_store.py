@@ -4,9 +4,8 @@ Implements tamper-proof audit logging with cryptographic integrity verification.
 
 CRITICAL: All text file I/O must use UTF-8 encoding.
 
-[P1-AUDIT-001] Converged to canonical types from polaris.kernelone.audit.contracts:
-- KernelAuditEvent, KernelAuditEventType (canonical)
-- AuditEvent, AuditEventType (backward compatibility aliases via adapter)
+Converged to canonical types from polaris.kernelone.audit.contracts:
+- KernelAuditEvent, KernelAuditEventType, KernelChainVerificationResult
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import Any
 
 from polaris.kernelone.audit.contracts import (
     KernelAuditEvent,
@@ -29,19 +28,6 @@ from polaris.kernelone.audit.contracts import (
 from polaris.kernelone.utils.constants import DEFAULT_AUDIT_RETENTION_DAYS, GENESIS_HASH
 
 logger = logging.getLogger(__name__)
-
-# =============================================================================
-# Backward Compatibility Aliases (P1-AUDIT-001)
-# =============================================================================
-
-AuditEventType: TypeAlias = KernelAuditEventType
-"""Canonical audit event types. Prefer KernelAuditEventType."""
-
-AuditEvent: TypeAlias = KernelAuditEvent
-"""Canonical audit event. Prefer KernelAuditEvent."""
-
-ChainVerificationResult: TypeAlias = KernelChainVerificationResult
-"""Chain verification result. Prefer KernelChainVerificationResult."""
 
 # Default retention period alias
 DEFAULT_RETENTION_DAYS = DEFAULT_AUDIT_RETENTION_DAYS
@@ -96,57 +82,6 @@ class ResourceOperation(str, Enum):
     UPDATE = "update"
     DELETE = "delete"
     EXECUTE = "execute"
-
-
-# =============================================================================
-# Adapter Functions (P1-AUDIT-001)
-# =============================================================================
-
-
-def audit_event_to_kernel(event: AuditEvent) -> KernelAuditEvent:
-    """Convert AuditEvent to canonical KernelAuditEvent.
-
-    Args:
-        event: Legacy AuditEvent instance.
-
-    Returns:
-        Canonical KernelAuditEvent instance.
-    """
-    if isinstance(event, KernelAuditEvent):
-        return event
-
-    # Parse event_type if it's a string
-    event_type = event.event_type
-    if isinstance(event_type, str):
-        event_type = KernelAuditEventType(event_type)
-
-    return KernelAuditEvent(
-        event_id=event.event_id,
-        timestamp=event.timestamp,
-        event_type=event_type,
-        version=event.version,
-        source=dict(event.source),
-        task=dict(event.task),
-        resource=dict(event.resource),
-        action=dict(event.action),
-        data=dict(event.data),
-        context=dict(event.context),
-        prev_hash=event.prev_hash,
-        signature=event.signature,
-    )
-
-
-def kernel_event_to_audit(event: KernelAuditEvent) -> AuditEvent:
-    """Convert KernelAuditEvent to AuditEvent (for backward compatibility).
-
-    Args:
-        event: Canonical KernelAuditEvent instance.
-
-    Returns:
-        AuditEvent instance (same type, for external compatibility).
-    """
-    # Both types are now the same, this is a no-op
-    return event  # type: ignore[return-value]
 
 
 class AuditStore:
@@ -230,7 +165,7 @@ class AuditStore:
         files = sorted(self._audit_dir.glob(pattern))
         return [f for f in files if f.name != "audit-temp.jsonl"]
 
-    def _compute_signature(self, event: AuditEvent) -> str:
+    def _compute_signature(self, event: KernelAuditEvent) -> str:
         """Compute HMAC-SHA256 signature for event."""
         payload = json.dumps(
             {
