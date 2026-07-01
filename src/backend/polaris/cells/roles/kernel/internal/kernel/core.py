@@ -749,54 +749,6 @@ class RoleExecutionKernel:
             if inner_error is None:
                 raise
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Public service entrypoints
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    async def call(
-        self,
-        request: Any,
-        timeout_seconds: float | None = None,
-    ) -> Any:
-        """Execute a non-streaming LLM call through the injected invoker.
-
-        委托给 llm_invoker.invoke()
-
-        Args:
-            request: AI 请求
-            timeout_seconds: 超时时间
-
-        Returns:
-            InvokeResult
-        """
-        if self._injected_llm_invoker is not None:
-            return await self._injected_llm_invoker.invoke(request, timeout_seconds)
-        raise NotImplementedError("call() requires injected llm_invoker")
-
-    async def call_stream(
-        self,
-        request: Any,
-        timeout_seconds: float | None = None,
-    ) -> AsyncGenerator[Any, None]:
-        """Execute a streaming LLM call through the injected invoker.
-
-        委托给 llm_invoker.invoke_stream()
-
-        Args:
-            request: AI 请求
-            timeout_seconds: 超时时间
-
-        Yields:
-            StreamEvent
-        """
-        if self._injected_llm_invoker is not None:
-            # Use async for delegation pattern with proper type handling
-            stream_gen = self._injected_llm_invoker.invoke_stream(request, timeout_seconds)
-            async for event in stream_gen:
-                yield event
-            return
-        raise NotImplementedError("call_stream() requires injected llm_invoker")
-
     def reset_tool_gateway_turn_boundary(self, turn_id: str) -> None:
         """Explicitly reset cached gateway counters when the authoritative turn id changes."""
         current_turn_key = resolve_explicit_turn_key(turn_id)

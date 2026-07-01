@@ -218,55 +218,7 @@ class TestDependencyInjection:
 
 
 class TestInjectedServiceEntrypoints:
-    """Injected service entrypoint tests."""
-
-    @pytest.mark.asyncio
-    async def test_call_uses_invoker(self) -> None:
-        """测试 call() 方法调用 llm_invoker。"""
-        mock_invoker = MagicMock(spec=ILLMInvoker)
-        mock_invoker.invoke = AsyncMock(return_value=MagicMock())
-
-        kernel = RoleExecutionKernel(
-            workspace=".",
-            llm_invoker=mock_invoker,
-        )
-
-        mock_request = MagicMock()
-        result = await kernel.call(mock_request, timeout_seconds=30.0)
-
-        mock_invoker.invoke.assert_called_once_with(mock_request, 30.0)
-        assert result is not None
-
-    @pytest.mark.asyncio
-    async def test_call_raises_without_invoker(self) -> None:
-        """测试 call() 在没有注入 invoker 时抛出异常"""
-        kernel = RoleExecutionKernel(workspace=".")
-
-        with pytest.raises(NotImplementedError):
-            await kernel.call(MagicMock())
-
-    @pytest.mark.asyncio
-    async def test_call_stream_uses_invoker(self) -> None:
-        """测试 call_stream() 方法使用 llm_invoker。"""
-        mock_invoker = MagicMock(spec=ILLMInvoker)
-
-        async def mock_stream(*args, **kwargs):
-            yield MagicMock()
-            yield MagicMock()
-
-        mock_invoker.invoke_stream = mock_stream
-
-        kernel = RoleExecutionKernel(
-            workspace=".",
-            llm_invoker=mock_invoker,
-        )
-
-        mock_request = MagicMock()
-        events = []
-        async for event in kernel.call_stream(mock_request):
-            events.append(event)
-
-        assert len(events) == 2
+    """Injected tool-execution owner tests."""
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_uses_executor(self) -> None:

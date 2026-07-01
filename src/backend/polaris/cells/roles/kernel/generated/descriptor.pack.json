@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T06:13:03.370453Z",
-  "source_hash": "1c11e0c597fbd412",
+  "generated_at": "2026-07-01T06:16:57.991319Z",
+  "source_hash": "87bdb08f6416f866",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4483,7 +4483,7 @@
     {
       "type": "class",
       "name": "TestInjectedServiceEntrypoints",
-      "description": "Injected service entrypoint tests.",
+      "description": "Injected tool-execution owner tests.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_role_execution_kernel_contract.py",
       "methods": [
         {
