@@ -656,10 +656,6 @@ class TurnTransactionController:
         """判定用户请求是否要求验证/测试（需要 test/verify 类工具）。"""
         return delivery_intent_resolver.requires_verification_intent(message)
 
-    def _build_finalization_context(self, original_context: list[dict], receipts: list[dict]) -> list[dict]:
-        """Proxy to FinalizationHandler._build_finalization_context."""
-        return FinalizationHandler._build_finalization_context(original_context, receipts)
-
     # ---------------------------------------------------------------------------
     # Public API
     # ---------------------------------------------------------------------------
