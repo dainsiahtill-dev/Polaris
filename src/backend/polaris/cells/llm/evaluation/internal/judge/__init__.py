@@ -1,8 +1,8 @@
 """Deterministic judge implementation package.
 
 This package holds the implementation of the deterministic agentic-benchmark
-judge, decomposed from the historical single-module
-``internal/deterministic_judge.py`` (which is now a thin re-export shim).
+judge, decomposed from the retired historical single-module
+``internal/deterministic_judge.py``.
 
 Module layout:
     - :mod:`json_safety`   — hardened JSON parsing + serialization helpers
@@ -15,7 +15,9 @@ IMPORTANT — import-time side effect:
     Importing this package imports :mod:`validators`, which executes the
     ``@VALIDATOR_REGISTRY.register(...)`` decorators and the scout-validator
     bridge at import time. This reproduces the historical side effect whereby
-    importing ``deterministic_judge`` populated the global validator registry.
+    importing the retired ``deterministic_judge`` module populated the global
+    validator registry. Importing this canonical package preserves that
+    side effect without keeping the old re-export module alive.
 """
 
 from __future__ import annotations

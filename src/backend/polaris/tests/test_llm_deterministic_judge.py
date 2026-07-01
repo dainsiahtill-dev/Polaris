@@ -23,7 +23,7 @@ from polaris.cells.llm.evaluation.internal.benchmark_models import (
     ToolArgumentRule,
     ToolCallObservation,
 )
-from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+from polaris.cells.llm.evaluation.internal.judge import (
     _check_output_substrings,
     _check_required_tools,
     _check_tool_arguments,
@@ -1133,7 +1133,7 @@ class TestValidatorRegistry:
 
     def test_registry_singleton_instance(self) -> None:
         """Test that validator_registry is a valid instance."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             ValidatorRegistry,
             validator_registry,
         )
@@ -1146,7 +1146,7 @@ class TestValidatorRegistry:
 
     def test_registry_register_decorator(self) -> None:
         """Test registering a validator via decorator."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             ValidatorCategory,
             ValidatorRegistry,
         )
@@ -1167,7 +1167,7 @@ class TestValidatorRegistry:
 
     def test_registry_get_validator(self) -> None:
         """Test getting a validator from registry."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             ValidatorCategory,
             ValidatorRegistry,
         )
@@ -1187,7 +1187,7 @@ class TestValidatorRegistry:
 
     def test_registry_get_nonexistent(self) -> None:
         """Test getting a non-existent validator returns None."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             ValidatorRegistry,
         )
 
@@ -1196,7 +1196,7 @@ class TestValidatorRegistry:
 
     def test_registry_list_validators(self) -> None:
         """Test listing all registered validators."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             ValidatorCategory,
             ValidatorRegistry,
         )
@@ -1221,7 +1221,7 @@ class TestValidatorRegistry:
 
     def test_registry_validate(self) -> None:
         """Test executing a validator via registry."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             ValidatorRegistry,
         )
 
@@ -1251,7 +1251,7 @@ class TestValidatorRegistry:
 
     def test_registry_unregister(self) -> None:
         """Test unregistering a validator."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             ValidatorRegistry,
         )
 
@@ -1270,7 +1270,7 @@ class TestValidatorRegistry:
 
     def test_registry_clear(self) -> None:
         """Test clearing all validators."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             ValidatorRegistry,
         )
 
@@ -1294,7 +1294,7 @@ class TestValidatorMetadata:
 
     def test_metadata_default_values(self) -> None:
         """Test metadata with default values."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             ValidatorCategory,
             ValidatorMetadata,
         )
@@ -1307,7 +1307,7 @@ class TestValidatorMetadata:
 
     def test_metadata_with_values(self) -> None:
         """Test metadata with custom values."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             ValidatorCategory,
             ValidatorMetadata,
         )
@@ -1325,7 +1325,7 @@ class TestValidatorMetadata:
 
     def test_metadata_to_dict(self) -> None:
         """Test converting metadata to dictionary."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             ValidatorCategory,
             ValidatorMetadata,
         )
@@ -1344,7 +1344,7 @@ class TestValidatorMetadata:
 
     def test_metadata_immutable(self) -> None:
         """Test that metadata is immutable (frozen dataclass)."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             ValidatorMetadata,
         )
 
@@ -1358,7 +1358,7 @@ class TestCompositeValidator:
 
     def test_composite_validator_creation(self) -> None:
         """Test creating a composite validator."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             CompositeValidator,
             ValidatorCategory,
             ValidatorMetadata,
@@ -1376,7 +1376,7 @@ class TestCompositeValidator:
 
     def test_composite_validator_get_func(self) -> None:
         """Test getting composite validator function."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             CompositeValidator,
             ValidatorCategory,
             ValidatorMetadata,
@@ -1411,7 +1411,7 @@ class TestValidatorCategory:
 
     def test_category_values(self) -> None:
         """Test category enum values."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             ValidatorCategory,
         )
 
@@ -1422,7 +1422,7 @@ class TestValidatorCategory:
 
     def test_category_from_string(self) -> None:
         """Test creating category from string."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             ValidatorCategory,
         )
 
@@ -1431,7 +1431,7 @@ class TestValidatorCategory:
 
     def test_category_invalid_string(self) -> None:
         """Test invalid category string raises ValueError."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             ValidatorCategory,
         )
 
@@ -1444,7 +1444,7 @@ class TestBackwardCompatibility:
 
     def test_validators_dict_exists(self) -> None:
         """Test that legacy VALIDATORS dict still exists."""
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             VALIDATORS,
         )
 
@@ -1460,7 +1460,7 @@ class TestBackwardCompatibility:
             AgenticJudgeConfig,
             ObservedBenchmarkRun,
         )
-        from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+        from polaris.cells.llm.evaluation.internal.judge import (
             judge_agentic_case,
             validator_registry,
         )

@@ -62,7 +62,7 @@ from .benchmark_models import (
     ObservedBenchmarkRun,
     ToolCallObservation,
 )
-from .deterministic_judge import judge_agentic_case
+from .judge.orchestrator import judge_agentic_case
 from .path_validators import PathTraversalError, validate_base_workspace, validate_case_id, validate_run_id
 from .utils import new_test_run_id, utc_now, write_json_atomic
 

@@ -22,7 +22,7 @@ from polaris.cells.llm.evaluation.internal.benchmark_models import (
     ObservedBenchmarkRun,
     ToolCallObservation,
 )
-from polaris.cells.llm.evaluation.internal.deterministic_judge import (
+from polaris.cells.llm.evaluation.internal.judge.orchestrator import (
     judge_agentic_case,
 )
 

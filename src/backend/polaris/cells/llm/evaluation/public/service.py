@@ -21,7 +21,6 @@ from polaris.cells.llm.evaluation.internal.benchmark_models import (
 from polaris.cells.llm.evaluation.internal.context_projection_matrix import (
     run_context_projection_matrix_suite,
 )
-from polaris.cells.llm.evaluation.internal.deterministic_judge import judge_agentic_case
 from polaris.cells.llm.evaluation.internal.index import (
     load_llm_test_index,
     load_llm_test_index_candidates,
@@ -36,6 +35,7 @@ from polaris.cells.llm.evaluation.internal.interview import (
     generate_interview_answer_streaming,
     save_interview_report,
 )
+from polaris.cells.llm.evaluation.internal.judge.orchestrator import judge_agentic_case
 from polaris.cells.llm.evaluation.internal.projection_adaptive_matrix import (
     run_projection_adaptive_matrix_suite,
 )
