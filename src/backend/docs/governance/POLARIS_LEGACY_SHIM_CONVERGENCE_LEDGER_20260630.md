@@ -13,7 +13,7 @@ business wording, React `Suspense fallback`, and accepted config migration code.
 
 | Class | Count | Meaning |
 | --- | ---: | --- |
-| Closed in this convergence pass | 196 | Removed, retired, or converted into an audited sunset path and verified. |
+| Closed in this convergence pass | 197 | Removed, retired, or converted into an audited sunset path and verified. |
 | P1 open | 0 | Still close to execution, LLM/tool, QA, or state projection paths. |
 | P2 open | 0 | Exposed API/UI/CLI compatibility surfaces that should be retired after callers move. |
 | P3 accepted with sunset | 0 | Kept for user config or historical data migration; requires an expiry policy, not immediate deletion. |
@@ -262,6 +262,7 @@ Additional closed cuts: LS-14A, LS-15A, LS-16A, LS-17A, LS-18A, LS-19A, LS-20A, 
 | LS-36A | LS-36 | P2 | KernelOne LLM tools / package-root re-export shim | Closed: `polaris.kernelone.llm.tools` no longer re-exports tool contracts/toolkit runtime symbols or emits a package-import `DeprecationWarning`. | Closed by making the package root namespace-only while keeping explicit submodule owners (`message_normalizer`, `normalizer`, `schema_validator`) intact; architecture fence now blocks reintroducing root re-export behavior. Verified with LLM tool submodule tests, architecture fence tests, ruff, mypy, py_compile, and negative import scans. |
 | LS-37A | LS-37 | P2 | Director CLI / retired stream-audit decorator | Closed: `polaris.delivery.cli.director.audit_decorator` no longer exists as a deprecated no-op wrapper beside UEP v2 stream audit sinks. | Closed by deleting the unused CLI decorator module, shrinking the delivery-internal-import baseline, and adding an architecture fence that blocks file/import reintroduction. Verified with director audit fence, delivery internal import fence, stream audit tests, ruff, mypy, py_compile, and active-marker scan. |
 | LS-38A | LS-38 | P2 | Roles runtime / internal package-root compatibility facade | Closed: `polaris.cells.roles.runtime.internal` is no longer a package-root deprecation facade or dynamic re-export surface for retired `RoleExecution*` names. | Closed by making the package root namespace-only, preserving active internal submodules such as `process_service` and `session_orchestrator`, updating stale tech-debt verification notes, and adding an architecture fence that blocks package-root warning/re-export reintroduction. |
+| LS-39A | LS-39 | P2 | Roles kernel / LLM caller removed-module warning marker | Closed: `polaris.cells.roles.kernel.internal.llm_caller` no longer emits `DeprecationWarning` for already-removed module names such as `call_sync`; removed module access fails closed with a clear `ModuleNotFoundError`. | Closed by replacing the warning helper with a direct removed-module error path while preserving active `LLMInvoker` package-root exports; added an architecture fence that blocks warning marker reintroduction. |
 
 ## Closure Order
 

@@ -18,7 +18,6 @@ Migration Notice (2026-03-31):
     request construction belongs to LLMRequestPreparer.
 """
 
-import warnings
 from typing import Any
 
 from ..events import emit_llm_event
@@ -89,20 +88,15 @@ __all__ = [
 ]
 
 
-# Emit deprecation warning for the removed modules if they are imported
-def _warn_removed_module(name: str) -> None:
-    """Warn about removed modules."""
+def _raise_removed_module(name: str) -> None:
+    """Raise a clear error for retired module-level compatibility imports."""
+
     removed_modules = {
         "call_sync": "Functionality merged into LLMInvoker.call()",
         "call_structured": "Functionality merged into LLMInvoker.call_structured()",
         "call_stream": "Functionality merged into LLMInvoker.call_stream()",
     }
     if name in removed_modules:
-        warnings.warn(
-            f"Module '{name}' has been removed. {removed_modules[name]}. Use LLMInvoker instead.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
         raise ModuleNotFoundError(
             f"No module named '{name}' in 'polaris.cells.roles.kernel.internal.llm_caller'. "
             f"{removed_modules[name]}. Use LLMInvoker instead."
@@ -111,5 +105,5 @@ def _warn_removed_module(name: str) -> None:
 
 def __getattr__(name: str) -> Any:
     """Handle removed module imports."""
-    _warn_removed_module(name)
+    _raise_removed_module(name)
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

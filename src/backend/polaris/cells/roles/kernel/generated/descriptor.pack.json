@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T09:25:28.953410Z",
-  "source_hash": "a4079b43ea4592ff",
+  "generated_at": "2026-07-01T14:52:57.749337Z",
+  "source_hash": "92662170090bb2d5",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -5665,8 +5665,8 @@
     },
     {
       "type": "function",
-      "name": "_warn_removed_module",
-      "description": "Warn about removed modules.",
+      "name": "_raise_removed_module",
+      "description": "Raise a clear error for retired module-level compatibility imports.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/__init__.py"
     },
     {
