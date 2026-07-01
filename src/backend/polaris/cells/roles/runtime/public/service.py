@@ -114,12 +114,6 @@ from polaris.cells.roles.runtime.internal.sequential_engine import (
 from polaris.cells.roles.runtime.internal.session_orchestrator import (
     RoleSessionOrchestrator as RoleSessionOrchestrator,
 )
-from polaris.cells.roles.runtime.internal.skill_loader import (
-    RoleSkillManager,
-    SkillLoader,
-    create_role_skill_manager,
-    create_skill_loader,
-)
 from polaris.cells.roles.runtime.internal.worker_pool import (
     AsyncWorker,
     AsyncWorkerConfig,
@@ -1384,7 +1378,6 @@ __all__ = [
     "RolePromptPolicy",
     "RoleRuntimeObjectResultV1",
     "RoleRuntimeService",
-    "RoleSkillManager",
     "RoleTaskMarketLifecycleResultV1",
     "RoleToolGateway",
     "RoleToolPolicy",
@@ -1401,7 +1394,6 @@ __all__ = [
     "SequentialStats",
     "SequentialStatsResult",
     "SequentialTraceLevel",
-    "SkillLoader",
     "StepDecision",
     "StepResult",
     "StepStatus",
@@ -1424,9 +1416,7 @@ __all__ = [
     "create_protocol_bus",
     "create_protocol_fsm",
     "create_role_cli_parser",
-    "create_role_skill_manager",
     "create_sequential_budget",
-    "create_skill_loader",
     "create_worker_pool",
     "emit_seq_event",
     "execute_role_capability_invocation",
