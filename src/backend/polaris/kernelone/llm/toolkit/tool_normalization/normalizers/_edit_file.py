@@ -7,6 +7,7 @@ from typing import Any
 from ._file_path import normalize_file_path_args
 
 _LINE_RANGE_CONTENT_KEYS: tuple[str, ...] = (
+    "replace",
     "new_text",
     "replacement",
     "code",
@@ -35,7 +36,7 @@ def normalize_edit_file_args(tool_args: dict[str, Any]) -> dict[str, Any]:
     has_line_range = normalized.get("start_line") is not None or normalized.get("end_line") is not None
     has_search = normalized.get("search") is not None
 
-    if has_line_range and not normalized.get("content"):
+    if has_line_range and not has_search and not normalized.get("content"):
         match = _first_non_empty(normalized, _LINE_RANGE_CONTENT_KEYS)
         if match is not None:
             key, value = match
