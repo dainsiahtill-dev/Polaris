@@ -89,7 +89,7 @@ class ErrorSuggestionProvider:
         return dict(self._suggestion_map)
 
 
-# 全局实例（向后兼容）
+# Module-level provider instance.
 _global_provider: ErrorSuggestionProvider | None = None
 
 
@@ -102,7 +102,7 @@ def get_suggestion_provider() -> ErrorSuggestionProvider:
 
 
 def get_suggestions_for_error(error_category: str) -> list[str]:
-    """根据错误类别提供修复建议（向后兼容函数）
+    """根据错误类别提供修复建议的便捷函数。
 
     Args:
         error_category: 错误类别

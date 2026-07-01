@@ -241,7 +241,7 @@ class RoleExecutionKernel:
         )
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # 属性访问器（向后兼容）
+    # Public configuration accessors
     # ═══════════════════════════════════════════════════════════════════════════
 
     @property
@@ -399,7 +399,7 @@ class RoleExecutionKernel:
         except (RuntimeError, ValueError) as e:
             return RoleTurnResult(error=f"角色加载失败: {e}", is_complete=True)
 
-        # 2. 处理请求附录与历史兼容输入
+        # 2. 处理请求附录
         try:
             prompt_appendix = build_prompt_appendix_from_request(request)
         except (RuntimeError, ValueError) as e:
@@ -754,7 +754,7 @@ class RoleExecutionKernel:
             self._cached_tool_gateway = None
             self._cached_gateway_profile = None
 
-            # 2. 处理请求附录与历史兼容输入
+            # 2. 处理请求附录
             prompt_appendix = build_prompt_appendix_from_request(request)
             prompt_appendix = self._append_prompt_profiles_for_request(
                 profile=profile,
@@ -977,7 +977,7 @@ class RoleExecutionKernel:
                 tool_name,
             )
             return await self._injected_tool_executor.execute(tool_name, args, context=context)
-        # 向后兼容：使用旧的 KernelToolExecutor
+        # Default authorized execution path.
         from polaris.cells.roles.kernel.internal.kernel.tool_executor import KernelToolExecutor
 
         executor = KernelToolExecutor(self, self.workspace)

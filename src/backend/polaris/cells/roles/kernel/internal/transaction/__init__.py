@@ -25,7 +25,7 @@ Transaction Kernel 子模块 — 事务化 Turn 执行的核心组件。
 
 from __future__ import annotations
 
-# Re-export 核心公共类型，保持兼容
+# Public package exports.
 from polaris.cells.roles.kernel.internal.transaction.constants import (
     ANALYSIS_ONLY_SIGNALS,
     ASYNC_TOOLS,
