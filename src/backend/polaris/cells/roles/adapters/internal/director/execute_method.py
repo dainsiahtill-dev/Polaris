@@ -79,7 +79,7 @@ def _run_materialization_quality_public_boundary(
             convergence_verifier=convergence_verifier,
         )
     )
-    return result.to_legacy_tuple()
+    return [dict(item) for item in result.tool_results], dict(result.summary)
 
 
 _TRANSIENT_LLM_PROVIDER_ERROR_MARKERS = (
