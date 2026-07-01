@@ -959,7 +959,7 @@ export function buildContextOSModel(input: {
   // 真实 ContextOS 内部计数（来自 WS 实时遥测）。
   // projectionCount = 实时流里识别为上下文装配/投影的事件（context.build / prompt_context / projection）。
   const projectionCount = telemetryActive ? telemetry.projectionCount : 0;
-  // receiptCount / contextItemsCount：来自 runtime_events 的 context.snapshot/context.build 结构化签名；
+  // receiptCount / contextItemsCount：来自 system 的 context.snapshot/context.build 结构化签名；
   // 后端未发这些事件（如弱模型 PM-only run 仅发 prompt_context）时诚实为 0 / null，不臆造。
   const receiptCount = telemetry.receiptCount;
   const realLatencyMs = telemetry.lastLatencyMs ?? telemetry.avgLatencyMs;

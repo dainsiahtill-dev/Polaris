@@ -12,14 +12,14 @@ import { toast } from 'sonner';
 import { devLogger } from '@/app/utils/devLogger';
 
 export const DEFAULT_LOG_SOURCES = [
-  { id: 'pm-subprocess', label: 'PM 案牍', path: 'runtime/logs/pm.process.log', channel: 'pm_subprocess', llmChannel: 'llm' },
-  { id: 'pm-report', label: 'PM 禀报', path: 'runtime/results/pm.report.md', channel: 'pm_report', llmChannel: '' },
-  { id: 'pm-log', label: 'PM 纪要（jsonl）', path: 'runtime/events/pm.events.jsonl', channel: 'pm_log', llmChannel: '' },
-  { id: 'director', label: 'Director 子进程', path: 'runtime/logs/director.process.log', channel: 'director_console', llmChannel: 'llm' },
-  { id: 'planner', label: '谋划稿', path: 'runtime/results/planner.output.md', channel: 'planner', llmChannel: '' },
-  { id: 'ollama', label: 'Ollama', path: 'runtime/results/director_llm.output.md', channel: 'ollama', llmChannel: '' },
-  { id: 'qa', label: '审校', path: 'runtime/results/qa.review.md', channel: 'qa', llmChannel: '' },
-  { id: 'runlog', label: '运行纪要', path: 'runtime/logs/director.runlog.md', channel: 'runlog', llmChannel: '' },
+  { id: 'pm-subprocess', label: 'PM 案牍', path: 'runtime/logs/pm.process.log', channel: 'process', llmChannel: 'llm' },
+  { id: 'pm-report', label: 'PM 禀报', path: 'runtime/results/pm.report.md', channel: '', llmChannel: '' },
+  { id: 'pm-log', label: 'PM 纪要（jsonl）', path: 'runtime/events/pm.events.jsonl', channel: '', llmChannel: '' },
+  { id: 'director', label: 'Director 子进程', path: 'runtime/logs/director.process.log', channel: 'process', llmChannel: 'llm' },
+  { id: 'planner', label: '谋划稿', path: 'runtime/results/planner.output.md', channel: '', llmChannel: '' },
+  { id: 'ollama', label: 'Ollama', path: 'runtime/results/director_llm.output.md', channel: 'llm', llmChannel: '' },
+  { id: 'qa', label: '审校', path: 'runtime/results/qa.review.md', channel: '', llmChannel: '' },
+  { id: 'runlog', label: '运行纪要', path: 'runtime/logs/director.runlog.md', channel: 'process', llmChannel: '' },
 ];
 
 interface LogViewerProps {
@@ -130,10 +130,13 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
   };
 
   useEffect(() => {
-      const channels: string[] = [source.channel];
-      if (source.llmChannel) channels.push(source.llmChannel);
+      const channels = Array.from(new Set([source.channel, source.llmChannel].filter(Boolean)));
 
       if (!transportConnected) {
+        setLive(false);
+        return;
+      }
+      if (channels.length === 0) {
         setLive(false);
         return;
       }
@@ -163,13 +166,12 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
           || (payload && typeof payload.line === 'string' ? (payload.line as string) : '')
           || (payload ? JSON.stringify(payload) : '');
 
-        if (ch === source.channel) {
+        if (source.channel && ch === source.channel) {
           if (kind === 'snapshot' && payload && Array.isArray((payload as { lines?: unknown }).lines)) {
             setRawLines((payload as { lines: string[] }).lines);
           } else if (
             (kind === 'line'
               || kind === 'process_stream'
-              || kind === 'runtime_event'
               || kind === 'dialogue_event'
               || kind === 'process_line')
             && text

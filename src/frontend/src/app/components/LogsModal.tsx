@@ -19,14 +19,14 @@ interface LogsModalProps {
 }
 
 const DEFAULT_LOG_SOURCES = [
-  { id: 'pm-subprocess', label: 'PM 子进程', path: 'runtime/logs/pm.process.log', channel: 'pm_subprocess' },
-  { id: 'pm-report', label: 'PM 禀报', path: 'runtime/results/pm.report.md', channel: 'pm_report' },
-  { id: 'pm-log', label: 'PM 纪要（jsonl）', path: 'runtime/events/pm.events.jsonl', channel: 'pm_log' },
-  { id: 'director', label: 'Director 子进程', path: 'runtime/logs/director.process.log', channel: 'director_console' },
-  { id: 'planner', label: '谋划稿', path: 'runtime/results/planner.output.md', channel: 'planner' },
-  { id: 'ollama', label: 'Ollama', path: 'runtime/results/director_llm.output.md', channel: 'ollama' },
-  { id: 'qa', label: '审校', path: 'runtime/results/qa.review.md', channel: 'qa' },
-  { id: 'runlog', label: '运行纪要', path: 'runtime/logs/director.runlog.md', channel: 'runlog' },
+  { id: 'pm-subprocess', label: 'PM 子进程', path: 'runtime/logs/pm.process.log', channel: 'process' },
+  { id: 'pm-report', label: 'PM 禀报', path: 'runtime/results/pm.report.md', channel: '' },
+  { id: 'pm-log', label: 'PM 纪要（jsonl）', path: 'runtime/events/pm.events.jsonl', channel: '' },
+  { id: 'director', label: 'Director 子进程', path: 'runtime/logs/director.process.log', channel: 'process' },
+  { id: 'planner', label: '谋划稿', path: 'runtime/results/planner.output.md', channel: '' },
+  { id: 'ollama', label: 'Ollama', path: 'runtime/results/director_llm.output.md', channel: 'llm' },
+  { id: 'qa', label: '审校', path: 'runtime/results/qa.review.md', channel: '' },
+  { id: 'runlog', label: '运行纪要', path: 'runtime/logs/director.runlog.md', channel: 'process' },
 ];
 
 function SmartText({ text }: { text: string }) {
@@ -426,10 +426,13 @@ export function LogsModal({
 
   useEffect(() => {
     if (!isOpen) return;
-    const channels = [activeSource.channel];
-    if (llmChannel) channels.push(llmChannel);
+    const channels = Array.from(new Set([activeSource.channel, llmChannel].filter(Boolean)));
 
     if (!transportConnected) {
+      setLive(false);
+      return;
+    }
+    if (channels.length === 0) {
       setLive(false);
       return;
     }
@@ -451,7 +454,7 @@ export function LogsModal({
         || (payload && typeof payload.line === 'string' ? (payload.line as string) : '')
         || (payload ? JSON.stringify(payload) : '');
 
-      if (ch === activeSource.channel) {
+      if (activeSource.channel && ch === activeSource.channel) {
         if (kind === 'snapshot' && payload && Array.isArray((payload as { lines?: unknown }).lines)) {
           setLines((payload as { lines: string[] }).lines);
           const parser = new CodexCliStreamParser();
@@ -461,7 +464,6 @@ export function LogsModal({
         } else if (
           (kind === 'line'
             || kind === 'process_stream'
-            || kind === 'runtime_event'
             || kind === 'dialogue_event'
             || kind === 'process_line')
           && text

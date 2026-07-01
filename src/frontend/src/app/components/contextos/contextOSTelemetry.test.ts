@@ -89,7 +89,7 @@ const THINKING_CHUNK: LogEntry = logEntry({
   tags: ['thinking_chunk'],
 });
 
-// 运行时事件流（channel=runtime_events，emit_event 经总线推送）。真实弱模型 run 发 prompt_context。
+// 运行时事件流（channel=system，emit_event 经总线推送）。真实弱模型 run 发 prompt_context。
 const PROMPT_CONTEXT: LogEntry = logEntry({
   id: 'rt-build-1',
   timestamp: '2026-06-15T10:00:00Z',
@@ -99,7 +99,7 @@ const PROMPT_CONTEXT: LogEntry = logEntry({
   // 但 meta(=output) 保真携带 persona_id / strategy 等投影签名（真实 run 的 prompt_context 输出）。
   message: 'Prompt Context Injection',
   meta: {
-    channel: 'runtime_events',
+    channel: 'system',
     run_id: 'pm-00001',
     phase: 'pm.planning',
     persona_id: 'pm.v1',
@@ -113,7 +113,7 @@ const RUNTIME_ERROR: LogEntry = logEntry({
   level: 'error',
   source: 'Director',
   message: '任务执行失败',
-  meta: { channel: 'runtime_events' },
+  meta: { channel: 'system' },
 });
 
 // 进程流（channel=process）
@@ -209,7 +209,7 @@ describe('buildTelemetryFromStream', () => {
       message: 'LLM call_error',
       details: 'circuit_open:57s_remaining',
       meta: {
-        channel: 'runtime_events',
+        channel: 'system',
         event_type: 'llm_error',
         role: 'director',
         model: 'qwen3.6-27b-code-gpu0',
@@ -344,7 +344,7 @@ describe('buildTelemetryFromStream', () => {
     expect(t.contextTokensLatest).toBe(1932);
   });
 
-  it('recovers runtime_events role LLM usage from event_type and snake_case fields', () => {
+  it('recovers system role LLM usage from event_type and snake_case fields', () => {
     const pmRoleCall = logEntry({
       id: 'rt-pm-llm-end',
       timestamp: '2026-06-21T22:16:12Z',
@@ -352,7 +352,7 @@ describe('buildTelemetryFromStream', () => {
       source: 'pm',
       message: 'llm_call_end',
       meta: {
-        channel: 'runtime_events',
+        channel: 'system',
         event_type: 'llm_call_end',
         role: 'pm',
         model: 'kimi-for-coding',
@@ -403,7 +403,7 @@ describe('buildTelemetryFromStream', () => {
       source: 'director',
       message: 'llm_call_end',
       meta: {
-        channel: 'runtime_events',
+        channel: 'system',
         event_type: 'llm_call_end',
         role: 'director',
         usage: {
@@ -432,7 +432,7 @@ describe('buildTelemetryFromStream', () => {
       source: 'pm',
       message: 'content_preview',
       meta: {
-        channel: 'runtime_events',
+        channel: 'system',
         event_type: 'content_preview',
         role: 'pm',
         completion_tokens: 1954,
@@ -448,7 +448,7 @@ describe('buildTelemetryFromStream', () => {
       source: 'pm',
       message: 'llm_call_end',
       meta: {
-        channel: 'runtime_events',
+        channel: 'system',
         event_type: 'llm_call_end',
         role: 'pm',
         prompt_tokens: 2732,
@@ -473,7 +473,7 @@ describe('buildTelemetryFromStream', () => {
       source: 'pm',
       message: 'llm_call_start',
       meta: {
-        channel: 'runtime_events',
+        channel: 'system',
         event_type: 'llm_call_start',
         role: 'pm',
         prompt_tokens: 2732,
@@ -492,21 +492,21 @@ describe('buildTelemetryFromStream', () => {
     expect(t.events[0].callId).toBe('call-start-1');
   });
 
-  it('recovers structured signals (items_count / snapshot) from runtime_events meta', () => {
+  it('recovers structured signals (items_count / snapshot) from system meta', () => {
     // parseRuntimeEvent 把事件 name 覆盖成 summary，但 meta = data/output 仍保真携带结构化字段。
     const build = logEntry({
       id: 'b1',
       timestamp: '2026-06-15T10:00:01Z',
       source: 'System',
       message: 'ContextPack built (5 items)', // 注意：文本里没有 "context.build"
-      meta: { channel: 'runtime_events', request_hash: 'rh', items_count: 5, total_tokens: 3200, snapshot_path: 'runtime/snap/rh.json' },
+      meta: { channel: 'system', request_hash: 'rh', items_count: 5, total_tokens: 3200, snapshot_path: 'runtime/snap/rh.json' },
     });
     const snap = logEntry({
       id: 's1',
       timestamp: '2026-06-15T10:00:02Z',
       source: 'System',
       message: 'Context snapshot stored',
-      meta: { channel: 'runtime_events', request_hash: 'rh', snapshot_path: 'runtime/snap/rh.json', snapshot_hash: 'sh1' },
+      meta: { channel: 'system', request_hash: 'rh', snapshot_path: 'runtime/snap/rh.json', snapshot_hash: 'sh1' },
     });
     const t = buildTelemetryFromStream([], [build, snap], []);
     expect(t.projectionCount).toBe(1); // build via items_count; snapshot is a receipt, not a projection
@@ -522,7 +522,7 @@ describe('buildTelemetryFromStream', () => {
       source: 'System',
       message: 'ContextPack built',
       meta: {
-        channel: 'runtime_events',
+        channel: 'system',
         output: {
           request_hash: 'rh2',
           items_count: 7,
@@ -732,7 +732,7 @@ describe('buildTelemetryFromStream', () => {
       source: 'pm',
       message: 'llm_call_end',
       meta: {
-        channel: 'runtime_events',
+        channel: 'system',
         event_type: 'llm_call_end',
         role: 'pm',
         call_id: 'stable-call-1',
@@ -789,7 +789,7 @@ describe('buildTelemetryFromStream', () => {
   it('flags windowed when a stream reaches its ring-buffer cap', () => {
     expect(buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS).windowed).toBe(false);
     const bigExecution = Array.from({ length: 100 }, (_, i) =>
-      logEntry({ id: `rt-${i}`, timestamp: '2026-06-15T10:00:00Z', source: 'System', message: 'tick', meta: { channel: 'runtime_events' } }),
+      logEntry({ id: `rt-${i}`, timestamp: '2026-06-15T10:00:00Z', source: 'System', message: 'tick', meta: { channel: 'system' } }),
     );
     expect(buildTelemetryFromStream([], bigExecution, []).windowed).toBe(true);
   });
@@ -1122,7 +1122,7 @@ describe('provider usage compatibility', () => {
       source: 'Director',
       message: 'llm_call_end without provider usage',
       meta: {
-        channel: 'runtime_events',
+        channel: 'system',
         event_type: 'llm_call_end',
         role: 'director',
         final_request_context_audit: {

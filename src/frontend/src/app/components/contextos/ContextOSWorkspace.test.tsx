@@ -44,7 +44,7 @@ const EXECUTION_STREAM: LogEntry[] = [
     level: 'info',
     source: 'System',
     message: 'context.build',
-    meta: { channel: 'runtime_events' },
+    meta: { channel: 'system' },
   },
 ];
 

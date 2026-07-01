@@ -3,7 +3,7 @@
  *
  * 数据来源是 Polaris **既有的实时框架**，不是文件轮询：
  *   emit_event / emit_llm_event
- *     → _publish_runtime_event_to_bus(MessageBus)
+ *     → runtime bus publisher
  *     → WebSocket /v2/ws/runtime
  *     → useRuntime hook（store）
  *     → llmStreamEvents / executionLogs / processStreamEvents（LogEntry[]，WS 推送）
@@ -17,7 +17,7 @@
  *     raw.data.{prompt_tokens, completion_tokens, context_tokens_after}、
  *     raw.data.metadata.elapsed_ms。这些经 parseLlmStreamLine 注入 LogEntry.meta 实时送达。
  *     → 据此实时还原：调用次数、真实 token 聚合、真实时延、按角色用量、错误数、上下文规模。
- *   - runtime_events 通道（emit_event）携带 prompt_context / context.build（含 items_count /
+ *   - system 通道携带 prompt_context / context.build（含 items_count /
  *     total_tokens / snapshot_hash）等装配观测，经 parseRuntimeEvent 的 meta=data/output 保真送达。
  *     → 据此识别投影/在窗项数/快照回执。注意：弱模型 PM-only 真实 run 仅发 prompt_context（无
  *     items_count/snapshot），故投影计数可得、in-window items/快照随后端是否发 context.build 而定，
@@ -44,7 +44,7 @@ export interface ContextOSEvent {
   roleHints: string[];
   name: string;
   kind: string;
-  /** 流通道 / 事件子类（llm / runtime_events / process …），缺省 unknown。 */
+  /** 流通道 / 事件子类（llm / system / process …），缺省 unknown。 */
   mode: string;
   iteration: number | null;
   summary: string;
@@ -69,7 +69,7 @@ export interface ContextOSEvent {
   /** 是否为落盘快照回执。WS 展示级流无法可靠区分，恒 false（诚实，不过度声明）。 */
   hasReceipt: boolean;
   contextHash: string | null;
-  /** 上下文项数（context.build 的 items_count，经 runtime_events meta 送达）；缺失 null。 */
+  /** 上下文项数（context.build 的 items_count，经 system meta 送达）；缺失 null。 */
   contextItems: number | null;
   /** 上下文 token 规模（context.build total_tokens 或 llm context_tokens_after）；缺失 null。 */
   contextTokens: number | null;
@@ -627,12 +627,12 @@ function collectRoleHints(params: {
 /**
  * 把一条 WS 推送的 LogEntry 适配成 ContextOSEvent。
  *
- * 关键：runtime_events 通道的 LogEntry.meta = 后端事件的 data/output（见 parseRuntimeEvent），
+ * 关键：system 通道的 LogEntry.meta = 后端事件的 data/output（见 parseRuntimeEvent），
  * 因此 context.build 的 items_count / total_tokens、context.snapshot 的 snapshot_hash 等**结构化信号**
  * 确实经 WS 保真送达——据此识别投影/装配规模/快照回执，而不仅靠文本匹配（事件名在 LogEntry 里会被
  * summary 覆盖，故文本匹配不可靠）。
  *
- * @param channelFallback 当 LogEntry.meta 未携带 channel 时的回退（llm / runtime_events / process）。
+ * @param channelFallback 当 LogEntry.meta 未携带 channel 时的回退（llm / system / process）。
  */
 function logEntryToEvent(log: LogEntry, index: number, channelFallback: string): ContextOSEvent | null {
   const rawMeta = isRecord(log.meta) ? log.meta : {};
@@ -709,7 +709,7 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   const exceptionType = nonEmptyString(meta['exception_type']) || nonEmptyString(meta['exceptionType']) || null;
 
   // 真实 per-call 用量（来自 journal `llm` 通道 raw.data，经 parseLlmStreamLine 注入 meta）。
-  // 兼容 snake_case（runtime_events 通道可能用 prompt_tokens/completion_tokens/total_tokens）。
+  // 兼容 snake_case（system 通道可能用 prompt_tokens/completion_tokens/total_tokens）。
   const nestedUsage = isRecord(meta['usage']) ? meta['usage'] : {};
   const inputTokenDetails = firstRecord(
     meta['input_tokens_details'],
@@ -1295,7 +1295,7 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
 
   const lastWithLatency = sorted.find((event) => event.durationMs !== null);
   const lastEventEpoch = sorted.length > 0 ? sorted[0].epoch || null : null;
-  // 最近一次装配（context.build）的真实在窗项数（items_count），经 runtime_events meta 送达。
+  // 最近一次装配（context.build）的真实在窗项数（items_count），经 system meta 送达。
   const lastContextBuild = sorted.find((event) => event.contextItems !== null);
   // 最近一次上下文规模（context.build total_tokens 或 llm 通道 context_tokens_after）。
   const lastContextSize = sorted.find(
@@ -1344,7 +1344,7 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
  * 完全无轮询：组件随 llmStreamEvents / executionLogs / processStreamEvents 这些 props 变化即重渲染。
  *
  * @param llmStreamEvents   LLM 流（channel=llm；invoke / tool / chunk 等子事件）。
- * @param executionLogs     运行时事件流（channel=runtime_events，emit_event 经总线推送的规范事件）。
+ * @param executionLogs     运行时事件流（channel=system，emit_event 经总线推送的规范事件）。
  * @param processStreamEvents 进程/系统流（channel=process）。
  */
 export function buildTelemetryFromStream(
@@ -1360,7 +1360,7 @@ export function buildTelemetryFromStream(
   let cursor = 0;
 
   for (const log of execution) {
-    const event = logEntryToEvent(log, cursor++, 'runtime_events');
+    const event = logEntryToEvent(log, cursor++, 'system');
     if (event) events.push(event);
   }
   for (const log of llm) {

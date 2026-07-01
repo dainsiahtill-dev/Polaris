@@ -1366,7 +1366,6 @@ export interface FilePayload {
 export type WebSocketEventType =
   | "status"
   | "dialogue_event"
-  | "runtime_event"
   | "llm_stream"
   | "process_stream"
   | "file_edit"

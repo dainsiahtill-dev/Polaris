@@ -352,7 +352,7 @@ describe('useRuntimeStore', () => {
         level: 'info',
         source: 'PM',
         message: 'Prompt Context Injection',
-        meta: { channel: 'runtime_events', streamEvent: 'prompt_context', role: 'PM' },
+        meta: { channel: 'system', streamEvent: 'prompt_context', role: 'PM' },
       };
 
       act(() => {

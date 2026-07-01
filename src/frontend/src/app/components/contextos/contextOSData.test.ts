@@ -299,8 +299,8 @@ describe('buildContextOSModel with real WS telemetry', () => {
     wsLog({ id: 'l2', timestamp: '2026-06-15T10:00:04Z', level: 'success', source: 'Director', message: 'LLM 响应已返回', details: 'chars=80 1800ms', meta: { channel: 'llm', streamEvent: 'invoke_done', role: 'Director' }, tags: ['invoke_done'] }),
   ];
   const EXECUTION: LogEntry[] = [
-    wsLog({ id: 'cb1', timestamp: '2026-06-15T10:00:00Z', source: 'System', message: 'context.build', meta: { channel: 'runtime_events' } }),
-    wsLog({ id: 'p1', timestamp: '2026-06-15T10:00:01Z', source: 'PM', message: 'prompt_context', meta: { channel: 'runtime_events' } }),
+    wsLog({ id: 'cb1', timestamp: '2026-06-15T10:00:00Z', source: 'System', message: 'context.build', meta: { channel: 'system' } }),
+    wsLog({ id: 'p1', timestamp: '2026-06-15T10:00:01Z', source: 'PM', message: 'prompt_context', meta: { channel: 'system' } }),
   ];
   const telemetryOf = (llm = LLM_STREAM, exec = EXECUTION, proc: LogEntry[] = []) =>
     buildTelemetryFromStream(llm, exec, proc);
@@ -616,7 +616,7 @@ describe('buildContextOSModel with real WS telemetry', () => {
       source: 'PM',
       message: 'llm_call_end',
       meta: {
-        channel: 'runtime_events',
+        channel: 'system',
         event_type: 'llm_call_end',
         role: 'pm',
         prompt_tokens: 1000,
@@ -640,7 +640,7 @@ describe('buildContextOSModel with real WS telemetry', () => {
   it('flags windowed when a WS stream reaches its ring-buffer cap', () => {
     expect(buildContextOSModel(baseInput({ telemetry: telemetryOf() })).telemetryWindowed).toBe(false);
     const bigExec = Array.from({ length: 100 }, (_, i) =>
-      wsLog({ id: `rt-${i}`, timestamp: '2026-06-15T10:00:00Z', message: 'tick', meta: { channel: 'runtime_events' } }),
+      wsLog({ id: `rt-${i}`, timestamp: '2026-06-15T10:00:00Z', message: 'tick', meta: { channel: 'system' } }),
     );
     expect(buildContextOSModel(baseInput({ telemetry: telemetryOf([], bigExec) })).telemetryWindowed).toBe(true);
   });
@@ -684,7 +684,7 @@ describe('buildContextOSModel with real WS telemetry', () => {
         source: 'PM',
         message: 'context projection refreshed',
         meta: {
-          channel: 'runtime_events',
+          channel: 'system',
           role: 'PM',
           contextSnapshotRef: 'projection-only-newer',
         },
@@ -845,14 +845,14 @@ describe('buildContextOSModel with real WS telemetry', () => {
       timestamp: '2026-06-15T10:00:00Z',
       source: 'PM',
       message: 'ContextPack built',
-      meta: { channel: 'runtime_events', items_count: 5, total_tokens: 3200 },
+      meta: { channel: 'system', items_count: 5, total_tokens: 3200 },
     });
     const snap = wsLog({
       id: 's1',
       timestamp: '2026-06-15T10:00:01Z',
       source: 'PM',
       message: 'Context snapshot stored',
-      meta: { channel: 'runtime_events', snapshot_hash: 'sh1' },
+      meta: { channel: 'system', snapshot_hash: 'sh1' },
     });
     const telemetry = telemetryOf([], [build, snap]);
     const model = buildContextOSModel(baseInput({ telemetry }));
@@ -874,14 +874,14 @@ describe('buildContextOSModel with real WS telemetry', () => {
       timestamp: '2026-06-15T10:00:00Z',
       source: 'PM',
       message: 'ContextPack built',
-      meta: { channel: 'runtime_events', items_count: 5, total_tokens: 3200 },
+      meta: { channel: 'system', items_count: 5, total_tokens: 3200 },
     });
     const directorBuild = wsLog({
       id: 'director-build',
       timestamp: '2026-06-15T10:00:01Z',
       source: 'Director',
       message: 'ContextPack built',
-      meta: { channel: 'runtime_events', items_count: 2, total_tokens: 900 },
+      meta: { channel: 'system', items_count: 2, total_tokens: 900 },
     });
     const telemetry = telemetryOf([], [pmBuild, directorBuild]);
     const model = buildContextOSModel(baseInput({ telemetry }));
