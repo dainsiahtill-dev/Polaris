@@ -48,7 +48,7 @@ class BackendBootstrapPort(Protocol):
             BackendLaunchResult with process handle or error details
 
         Raises:
-            BackendBootstrapError: If bootstrap fails catastrophically
+            polaris.kernelone.errors.BackendBootstrapError: If bootstrap fails catastrophically
         """
         ...
 
@@ -90,10 +90,6 @@ class BackendBootstrapPort(Protocol):
         """
         ...
 
-
-# BackendBootstrapError is defined in polaris.kernelone.errors for consistency
-# Import here for backwards compatibility
-from polaris.kernelone.errors import BackendBootstrapError  # noqa: E402, F401
 
 # Type alias for the port
 BootstrapPort = BackendBootstrapPort
