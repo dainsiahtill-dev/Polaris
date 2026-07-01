@@ -420,11 +420,6 @@ class NATSBroker:
         self._dead_letter_count += 1
 
 
-# Alias for backward compatibility
-NATSMessageBroker = NATSBroker
-
-
 __all__ = [
     "NATSBroker",
-    "NATSMessageBroker",
 ]
