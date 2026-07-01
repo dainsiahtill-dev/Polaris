@@ -84,6 +84,7 @@ properties:
             - workflow
             - capability_cluster
             - file_family
+            - governance_infrastructure
         status:
           type: string
           enum:
@@ -103,6 +104,7 @@ properties:
             - new_root_partial
             - new_root_primary
             - retired
+            - legacy_removed
         owner:
           type: string
           minLength: 2
@@ -136,12 +138,20 @@ properties:
           properties:
             cell:
               type: string
-              pattern: "^[a-z0-9_]+\\.[a-z0-9_]+$"
+              pattern: "^$|^[a-z0-9_]+\\.[a-z0-9_]+$"
+            cells:
+              type: array
+              items:
+                type: string
+                pattern: "^[a-z0-9_]+\\.[a-z0-9_]+$"
+              uniqueItems: true
             catalog_status:
               type: string
               enum:
                 - actual
                 - missing
+                - removed
+                - not_applicable
             target_assets_status:
               type: string
               enum:
@@ -150,12 +160,10 @@ properties:
                 - active_impl
             root_dirs:
               type: array
-              minItems: 1
               items:
                 type: string
             target_paths:
               type: array
-              minItems: 1
               items:
                 type: string
             actual_impl_paths:
@@ -217,12 +225,10 @@ properties:
                 type: string
             docs_updates:
               type: array
-              minItems: 1
               items:
                 type: string
             graph_updates:
               type: array
-              minItems: 1
               items:
                 type: string
         delete_when:

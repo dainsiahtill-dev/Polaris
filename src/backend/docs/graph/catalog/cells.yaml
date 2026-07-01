@@ -9,6 +9,55 @@ owners:
   - backend-engine
 migration_status: phase1_public_phase2_composite_phase3_business_cells_declared
 cells:
+  - id: bootstrap.assembly
+    title: Bootstrap Assembly
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: bootstrap
+    purpose: >
+      Own backend startup assembly, settings validation, provider runtime
+      injection, and process bootstrap contracts. This capability is the
+      canonical owner for the retired bootstrap root migration target.
+    current_modules:
+      - polaris.bootstrap.assembly
+      - polaris.bootstrap.backend_bootstrap
+      - polaris.bootstrap.config
+      - polaris.bootstrap.config_loader
+      - polaris.bootstrap.launch_validation
+      - polaris.bootstrap.uvicorn_server
+    owned_paths:
+      - polaris/bootstrap/**
+    public_contracts:
+      modules:
+        - polaris.bootstrap
+        - polaris.bootstrap.contracts.backend_launch
+      commands: []
+      queries: []
+      events: []
+      results:
+        - BackendLaunchResult
+        - ValidationResult
+      errors: []
+    depends_on:
+      - kernelone.core
+      - llm.provider_runtime
+    subgraphs:
+      - backend_bootstrap
+    state_owners: []
+    effects_allowed:
+      - process.spawn:backend
+      - network.http_outbound:ollama/*
+      - fs.read:workspace/**
+      - fs.read:runtime/**
+    verification:
+      tests:
+        - polaris/bootstrap/tests/**
+      gaps:
+        - Provider runtime injection still crosses into infrastructure during
+          process startup; keep this boundary explicit until bootstrap ports are
+          fully factored.
+
   - id: context.catalog
     title: Context Catalog
     kind: capability

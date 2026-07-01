@@ -64,6 +64,8 @@ units:
       - "polaris/bootstrap/ now the sole bootstrap root (13 Python files)"
     target:
       cell: bootstrap.assembly
+      cells:
+        - bootstrap.assembly
       catalog_status: actual
       target_assets_status: active_impl
       root_dirs:
@@ -112,7 +114,9 @@ units:
       - "2026-03-23: 211 Python files, except Exception: 206, bare pass: 53"
       - "io_utils refs: 0; LLM contracts unified in shared_contracts.py"
     target:
-      cell: kernelone.base
+      cell: kernelone.core
+      cells:
+        - kernelone.core
       catalog_status: actual
       target_assets_status: active_impl
       root_dirs:
@@ -138,7 +142,7 @@ units:
         - docs/KERNELONE_ARCHITECTURE_SPEC.md
         - docs/ARCHITECTURE_SPEC.md
       graph_updates:
-        - docs/graph/catalog/cells.yaml (kernelone.base owned_paths updated)
+        - docs/graph/catalog/cells.yaml (kernelone.core owned_paths updated)
     delete_when:
       - "kernelone_release_gate --mode all passes with 0 errors"
       - "No src/backend/core/ references in polaris/ code"
@@ -269,7 +273,17 @@ units:
       - "2026-07-02 boundary: the remaining polaris/application files are health/admin/cognitive_runtime surfaces and are not batch-2A source_refs"
       - "2026-07-02 verification scope: broad architecture/service alignment tests currently expose separate runtime-test drift and are not used as batch-2A hard evidence"
     target:
-      cell: multiple
+      cell: director.planning
+      cells:
+        - director.execution
+        - director.planning
+        - audit.evidence
+        - runtime.projection
+        - kernelone.core
+        - delivery.cli
+        - orchestration.pm_planning
+        - llm.control_plane
+        - finops.budget_guard
       catalog_status: actual
       target_assets_status: active_impl
       root_dirs:
@@ -458,7 +472,7 @@ units:
     source_refs:
       - path: polaris/application/resident/
         kind: directory
-        coverage: retired
+        coverage: full
         note: "Source directory is absent; current implementation is resident.autonomy Cell public contracts/service plus internal runtime, storage, goal, decision, AGI audit/evidence and evidence model modules."
     verification:
       checks:
@@ -537,8 +551,7 @@ units:
       checks:
         - "pytest polaris/cells/architect/design/tests/ -q"
         - "python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only"
-      required_tests: []
-      verified_tests:
+      required_tests:
         - polaris/cells/architect/design/tests/test_contracts.py
       docs_updates:
         - docs/graph/catalog/cells.yaml (declare architect.design)
@@ -572,7 +585,12 @@ units:
       - "VITE_POLARIS_* remains a frontend build namespace and is outside the backend runtime env migration"
       - "2026-07-02 audit: backend product Python code has 0 direct POLARIS_* env-token references outside the boundary ACL"
     target:
-      cell: kernelone.base
+      cell: kernelone.core
+      cells:
+        - kernelone.core
+        - bootstrap.assembly
+        - delivery.cli
+        - storage.layout
       catalog_status: actual
       target_assets_status: active_impl
       root_dirs:
@@ -686,9 +704,8 @@ units:
         - "python -m polaris.cells.context.catalog.internal.descriptor_pack_generator"
         - "find polaris/cells -path '*/cell.yaml' count equals generated descriptor.pack.json count"
         - "python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only"
-      required_tests: []
-      verified_tests:
         - "2026-07-02 descriptor coverage audit: 67 cell.yaml, 0 missing descriptor.pack.json"
+      required_tests: []
       docs_updates:
         - docs/governance/schemas/semantic-descriptor.schema.yaml
       graph_updates:
@@ -704,7 +721,7 @@ units:
     title: polaris.compatibility cell removal (legacy placeholder cleanup)
     wave: 4
     category: cells
-    scope: cell_unit
+    scope: cell
     status: retired
     current_impl_state: legacy_removed
     owner: governance-engineer
@@ -761,7 +778,7 @@ units:
       - "Annotated migration shims with MIGRATION-SHIM marker: server.py, director_interface.py"
     target:
       cell: ""
-      catalog_status: actual
+      catalog_status: not_applicable
       target_assets_status: absent
       root_dirs: []
       target_paths: []
@@ -816,7 +833,7 @@ units:
       - "polaris/tests/performance/ test directory PRESERVED (real tests still exist; future Wave 2 may add a properly-positioned performance workflow at repo root)"
     target:
       cell: ""
-      catalog_status: actual
+      catalog_status: not_applicable
       target_assets_status: active_impl
       root_dirs:
         - .github/workflows/

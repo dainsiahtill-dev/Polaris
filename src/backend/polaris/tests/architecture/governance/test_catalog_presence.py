@@ -176,6 +176,28 @@ def test_real_workspace_ledger_yaml_accessible() -> None:
     assert isinstance(data["units"], list), "units should be a list"
 
 
+def test_actual_migration_target_cells_are_declared_in_catalog() -> None:
+    """Every actual migration target cell must exist in the Cell catalog."""
+    catalog = yaml.safe_load(CELLS_YAML_PATH.read_text(encoding="utf-8")) or {}
+    ledger = yaml.safe_load(LEDGER_YAML_PATH.read_text(encoding="utf-8")) or {}
+    catalog_cells = {str(cell.get("id") or "").strip() for cell in catalog.get("cells", []) if isinstance(cell, dict)}
+
+    missing: list[str] = []
+    for unit in ledger.get("units", []):
+        if not isinstance(unit, dict):
+            continue
+        target = unit.get("target") or {}
+        if not isinstance(target, dict) or target.get("catalog_status") != "actual":
+            continue
+        declared_cells = [str(target.get("cell") or "").strip()]
+        declared_cells.extend(str(cell or "").strip() for cell in target.get("cells", []) or [])
+        for cell_id in sorted({cell for cell in declared_cells if cell}):
+            if cell_id not in catalog_cells:
+                missing.append(f"{unit.get('id', '<unknown>')}:{cell_id}")
+
+    assert missing == []
+
+
 def test_real_workspace_has_missing_catalog_units() -> None:
     """Test that the real workspace ledger has some units with catalog_status=missing.
 

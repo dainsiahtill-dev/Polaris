@@ -62,6 +62,26 @@ class CatalogPresenceChecker(FitnessRuleChecker):
             sys.exit(1)
         return []
 
+    @staticmethod
+    def _target_cells(unit: dict) -> list[str]:
+        """Return the declared catalog cells for a migration unit.
+
+        ``target.cell`` is the historical single-owner field. Newer multi-cell
+        migration units may additionally declare ``target.cells`` to make every
+        affected catalog cell explicit without using vague sentinel values such
+        as ``multiple``.
+        """
+        target = unit.get("target", {})
+        cells: list[str] = []
+        primary = str(target.get("cell", "") or "").strip()
+        if primary:
+            cells.append(primary)
+        for cell in target.get("cells", []) or []:
+            value = str(cell or "").strip()
+            if value and value not in cells:
+                cells.append(value)
+        return cells
+
     def check_catalog_presence(self) -> FitnessCheckResult:
         """Check that all migration targets are present in catalog.
 
@@ -95,18 +115,21 @@ class CatalogPresenceChecker(FitnessRuleChecker):
         for unit in units:
             unit_id = unit.get("id", "unknown")
             target = unit.get("target", {})
-            target_cell = target.get("cell", "")
+            target_cells = self._target_cells(unit)
+            target_cell_label = ", ".join(target_cells) if target_cells else "<none>"
             catalog_status = target.get("catalog_status", "unknown")
             current_status = unit.get("status", "")
 
             # Check if target cell is in catalog
             if catalog_status == "missing":
                 missing_catalog_units.append(unit_id)
-                result.evidence.append(f"Unit '{unit_id}' targets cell '{target_cell}' with catalog_status=missing")
+                result.evidence.append(
+                    f"Unit '{unit_id}' targets cell(s) '{target_cell_label}' with catalog_status=missing"
+                )
 
                 # Check if this unit has advanced to verified/retired
                 if current_status in non_advanceable_states:
-                    advanced_missing_units.append(f"{unit_id} (status={current_status}, cell={target_cell})")
+                    advanced_missing_units.append(f"{unit_id} (status={current_status}, cell={target_cell_label})")
 
         # Report violations
         if missing_catalog_units:
@@ -123,16 +146,19 @@ class CatalogPresenceChecker(FitnessRuleChecker):
         undeclared_targets: list[str] = []
         for unit in units:
             target = unit.get("target", {})
-            target_cell = target.get("cell", "")
-            if target_cell and target_cell not in catalog_cells:
-                # Only flag if it's a planned target with actual catalog_status
-                catalog_status = target.get("catalog_status", "unknown")
-                if catalog_status == "actual":
+            catalog_status = target.get("catalog_status", "unknown")
+            if catalog_status != "actual":
+                continue
+            for target_cell in self._target_cells(unit):
+                if target_cell and target_cell not in catalog_cells:
                     undeclared_targets.append(target_cell)
 
         if undeclared_targets:
-            result.warnings.append(
-                f"{len(undeclared_targets)} target cells declared as 'actual' but not found in catalog"
+            result.passed = False
+            target_list = ", ".join(sorted(set(undeclared_targets)))
+            result.violations.append(
+                f"{len(set(undeclared_targets))} target cell(s) declared as 'actual' but not found in catalog: "
+                f"{target_list}"
             )
 
         return result
