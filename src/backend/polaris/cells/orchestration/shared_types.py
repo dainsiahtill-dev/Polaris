@@ -1,8 +1,8 @@
 """Shared domain types for orchestration cells.
 
-This module is the single source of truth for error classification types that are
-consumed by both `pm_dispatch` and `workflow_runtime`.  Neither cell may import
-these types from the other cell; both must import from here.
+This module owns orchestration-local error classification helpers consumed by
+both `pm_dispatch` and `workflow_runtime`.  Neither cell may import these helper
+types from the other cell; both must import from here.
 
 Dependency rule (enforced by tests/test_orchestration_import_fence.py):
   polaris.cells.orchestration.shared_types
@@ -10,47 +10,27 @@ Dependency rule (enforced by tests/test_orchestration_import_fence.py):
     <- polaris.cells.orchestration.workflow_runtime.*
   (no reverse edges allowed)
 
-Note:
-    ErrorCategory has been moved to polaris.kernelone.errors.
-    Please update imports to use: from polaris.kernelone.errors import ErrorCategory
+Error category enum ownership lives in ``polaris.kernelone.errors``.  Callers
+that need the enum must import it from that canonical owner directly.
 """
 
 from __future__ import annotations
 
 import logging
-import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, TypeAlias
+from typing import Any
 
-from polaris.kernelone.errors import ErrorCategory as _CanonicalErrorCategory
+from polaris.kernelone.errors import ErrorCategory as KernelErrorCategory
 
 logger = logging.getLogger(__name__)
-
-
-# Re-export for backward compatibility with deprecation warning
-def __getattr__(name: str) -> Any:
-    """Provide deprecation warnings for direct module imports."""
-    if name == "ErrorCategory":
-        warnings.warn(
-            "ErrorCategory has been moved to polaris.kernelone.errors. "
-            "Please update imports to use: from polaris.kernelone.errors import ErrorCategory",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return _CanonicalErrorCategory
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-# For type checking and runtime compatibility
-ErrorCategory: TypeAlias = _CanonicalErrorCategory
 
 
 @dataclass
 class ErrorRecord:
     """Record of an error occurrence."""
 
-    category: ErrorCategory
+    category: KernelErrorCategory
     message: str
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     context: dict[str, Any] = field(default_factory=dict)
@@ -75,8 +55,8 @@ class ErrorClassifier:
     without pulling in either pm_dispatch or workflow_runtime internals.
     """
 
-    _ERROR_PATTERNS: dict[ErrorCategory, list[str]] = {
-        ErrorCategory.TRANSIENT_NETWORK: [
+    _ERROR_PATTERNS: dict[KernelErrorCategory, list[str]] = {
+        KernelErrorCategory.TRANSIENT_NETWORK: [
             "connection refused",
             "connection reset",
             "broken pipe",
@@ -84,126 +64,126 @@ class ErrorClassifier:
             "temporary failure",
             "try again",
         ],
-        ErrorCategory.TRANSIENT_RATE_LIMIT: [
+        KernelErrorCategory.TRANSIENT_RATE_LIMIT: [
             "rate limit",
             "too many requests",
             "429",
             "throttled",
         ],
-        ErrorCategory.TRANSIENT_RESOURCE: [
+        KernelErrorCategory.TRANSIENT_RESOURCE: [
             "resource temporarily unavailable",
             "out of memory",
             "disk full",
         ],
-        ErrorCategory.PERMANENT_AUTH: [
+        KernelErrorCategory.PERMANENT_AUTH: [
             "unauthorized",
             "forbidden",
             "invalid token",
             "authentication failed",
             "permission denied",
         ],
-        ErrorCategory.PERMANENT_VALIDATION: [
+        KernelErrorCategory.PERMANENT_VALIDATION: [
             "invalid argument",
             "validation failed",
             "bad request",
             "malformed",
         ],
-        ErrorCategory.PERMANENT_NOT_FOUND: [
+        KernelErrorCategory.PERMANENT_NOT_FOUND: [
             "not found",
             "does not exist",
             "no such",
         ],
-        ErrorCategory.SYSTEM_TIMEOUT: [
+        KernelErrorCategory.SYSTEM_TIMEOUT: [
             "timeout",
             "timed out",
             "deadline exceeded",
         ],
-        ErrorCategory.WORKFLOW_DEADLOCK: [
+        KernelErrorCategory.WORKFLOW_DEADLOCK: [
             "dependency graph cannot converge",
             "deadlock detected",
             "circular dependency",
         ],
     }
 
-    _RECOVERY_STRATEGIES: dict[ErrorCategory, RecoveryRecommendation] = {
-        ErrorCategory.TRANSIENT_NETWORK: RecoveryRecommendation(
+    _RECOVERY_STRATEGIES: dict[KernelErrorCategory, RecoveryRecommendation] = {
+        KernelErrorCategory.TRANSIENT_NETWORK: RecoveryRecommendation(
             can_retry=True,
             retry_delay_seconds=1.0,
             max_retries=3,
             strategy="backoff",
             reason="Network issues are usually transient",
         ),
-        ErrorCategory.TRANSIENT_RATE_LIMIT: RecoveryRecommendation(
+        KernelErrorCategory.TRANSIENT_RATE_LIMIT: RecoveryRecommendation(
             can_retry=True,
             retry_delay_seconds=5.0,
             max_retries=5,
             strategy="backoff",
             reason="Rate limits require backoff",
         ),
-        ErrorCategory.TRANSIENT_RESOURCE: RecoveryRecommendation(
+        KernelErrorCategory.TRANSIENT_RESOURCE: RecoveryRecommendation(
             can_retry=True,
             retry_delay_seconds=10.0,
             max_retries=3,
             strategy="backoff",
             reason="Resource constraints may resolve",
         ),
-        ErrorCategory.PERMANENT_AUTH: RecoveryRecommendation(
+        KernelErrorCategory.PERMANENT_AUTH: RecoveryRecommendation(
             can_retry=False,
             retry_delay_seconds=0.0,
             max_retries=0,
             strategy="manual",
             reason="Authentication errors require credential update",
         ),
-        ErrorCategory.PERMANENT_VALIDATION: RecoveryRecommendation(
+        KernelErrorCategory.PERMANENT_VALIDATION: RecoveryRecommendation(
             can_retry=False,
             retry_delay_seconds=0.0,
             max_retries=0,
             strategy="manual",
             reason="Validation errors require input correction",
         ),
-        ErrorCategory.PERMANENT_NOT_FOUND: RecoveryRecommendation(
+        KernelErrorCategory.PERMANENT_NOT_FOUND: RecoveryRecommendation(
             can_retry=False,
             retry_delay_seconds=0.0,
             max_retries=0,
             strategy="abort",
             reason="Resource not found, retry won't help",
         ),
-        ErrorCategory.PERMANENT_CONFLICT: RecoveryRecommendation(
+        KernelErrorCategory.PERMANENT_CONFLICT: RecoveryRecommendation(
             can_retry=False,
             retry_delay_seconds=0.0,
             max_retries=0,
             strategy="manual",
             reason="State conflict requires manual resolution",
         ),
-        ErrorCategory.SYSTEM_TIMEOUT: RecoveryRecommendation(
+        KernelErrorCategory.SYSTEM_TIMEOUT: RecoveryRecommendation(
             can_retry=True,
             retry_delay_seconds=2.0,
             max_retries=2,
             strategy="backoff",
             reason="Timeouts may be transient, limited retries",
         ),
-        ErrorCategory.SYSTEM_CAPACITY: RecoveryRecommendation(
+        KernelErrorCategory.SYSTEM_CAPACITY: RecoveryRecommendation(
             can_retry=True,
             retry_delay_seconds=30.0,
             max_retries=3,
             strategy="backoff",
             reason="System overloaded, longer backoff",
         ),
-        ErrorCategory.SYSTEM_UNKNOWN: RecoveryRecommendation(
+        KernelErrorCategory.SYSTEM_UNKNOWN: RecoveryRecommendation(
             can_retry=True,
             retry_delay_seconds=5.0,
             max_retries=2,
             strategy="backoff",
             reason="Unknown errors, limited retries",
         ),
-        ErrorCategory.WORKFLOW_DEADLOCK: RecoveryRecommendation(
+        KernelErrorCategory.WORKFLOW_DEADLOCK: RecoveryRecommendation(
             can_retry=False,
             retry_delay_seconds=0.0,
             max_retries=0,
             strategy="manual",
             reason="Deadlock requires dependency graph review",
         ),
-        ErrorCategory.WORKFLOW_CANCELED: RecoveryRecommendation(
+        KernelErrorCategory.WORKFLOW_CANCELED: RecoveryRecommendation(
             can_retry=False,
             retry_delay_seconds=0.0,
             max_retries=0,
@@ -213,7 +193,7 @@ class ErrorClassifier:
     }
 
     @classmethod
-    def classify(cls, error: Exception) -> ErrorCategory:
+    def classify(cls, error: Exception) -> KernelErrorCategory:
         """Classify an error based on its type and message."""
         error_str = f"{type(error).__name__}: {error!s}".lower()
 
@@ -223,18 +203,18 @@ class ErrorClassifier:
                     return category
 
         if isinstance(error, TimeoutError):
-            return ErrorCategory.SYSTEM_TIMEOUT
+            return KernelErrorCategory.SYSTEM_TIMEOUT
         if isinstance(error, PermissionError):
-            return ErrorCategory.PERMANENT_AUTH
+            return KernelErrorCategory.PERMANENT_AUTH
         if isinstance(error, FileNotFoundError):
-            return ErrorCategory.PERMANENT_NOT_FOUND
+            return KernelErrorCategory.PERMANENT_NOT_FOUND
         if isinstance(error, ValueError):
-            return ErrorCategory.PERMANENT_VALIDATION
+            return KernelErrorCategory.PERMANENT_VALIDATION
 
-        return ErrorCategory.SYSTEM_UNKNOWN
+        return KernelErrorCategory.SYSTEM_UNKNOWN
 
     @classmethod
-    def get_recovery_recommendation(cls, category: ErrorCategory) -> RecoveryRecommendation:
+    def get_recovery_recommendation(cls, category: KernelErrorCategory) -> RecoveryRecommendation:
         """Get recovery recommendation for an error category."""
         return cls._RECOVERY_STRATEGIES.get(
             category,
@@ -248,14 +228,14 @@ class ErrorClassifier:
         )
 
     @classmethod
-    def analyze(cls, error: Exception) -> tuple[ErrorCategory, RecoveryRecommendation]:
+    def analyze(cls, error: Exception) -> tuple[KernelErrorCategory, RecoveryRecommendation]:
         """Full analysis: classify and recommend."""
         category = cls.classify(error)
         recommendation = cls.get_recovery_recommendation(category)
         return category, recommendation
 
     @classmethod
-    def classify_from_message(cls, message: str) -> tuple[ErrorCategory, RecoveryRecommendation]:
+    def classify_from_message(cls, message: str) -> tuple[KernelErrorCategory, RecoveryRecommendation]:
         """Classify from a message string and return recommendation."""
 
         class _TemporaryError(Exception):
@@ -268,7 +248,6 @@ class ErrorClassifier:
 
 
 __all__ = [
-    "ErrorCategory",
     "ErrorClassifier",
     "ErrorRecord",
     "RecoveryRecommendation",

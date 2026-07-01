@@ -7,7 +7,7 @@ import logging
 from datetime import timedelta
 from typing import Any
 
-from polaris.cells.orchestration.shared_types import ErrorCategory, ErrorClassifier
+from polaris.cells.orchestration.shared_types import ErrorClassifier
 from polaris.cells.orchestration.workflow_runtime.internal.models import (
     DirectorTaskInput,
     DirectorTaskResult,
@@ -18,6 +18,7 @@ from polaris.cells.orchestration.workflow_runtime.internal.models import (
 )
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_queries import WorkflowQueryState
 from polaris.cells.orchestration.workflow_runtime.internal.workflow_client import get_workflow_api
+from polaris.kernelone.errors import ErrorCategory
 from polaris.kernelone.workflow.task_payload import _task_dependencies
 from polaris.kernelone.workflow.timeout_policy import _task_run_timeout_seconds
 

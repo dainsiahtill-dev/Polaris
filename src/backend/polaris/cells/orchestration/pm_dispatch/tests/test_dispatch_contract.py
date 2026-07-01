@@ -9,7 +9,7 @@ Tests cover:
 - PmDispatchError: structured exception
 - OrchestrationCommandService: CommandResult structure
 - resolve_director_dispatch_tasks: task filtering (empty input, whitespace task IDs)
-- ErrorCategory / ErrorClassifier: shared type imports from polaris.cells.orchestration.shared_types
+- ErrorClassifier: shared type import from polaris.cells.orchestration.shared_types
 """
 
 from __future__ import annotations
@@ -28,11 +28,10 @@ from polaris.cells.orchestration.pm_dispatch.public.contracts import (
 )
 from polaris.cells.orchestration.pm_dispatch.public.service import (
     CommandResult,
-    ErrorCategory,
     ErrorClassifier,
     resolve_director_dispatch_tasks,
 )
-from polaris.cells.orchestration.shared_types import ErrorCategory as SharedErrorCategory
+from polaris.kernelone.errors import ErrorCategory
 
 # ---------------------------------------------------------------------------
 # Happy path: command construction
@@ -278,16 +277,18 @@ class TestOrchestrationCommandServiceResult:
 
 
 # ---------------------------------------------------------------------------
-# ErrorCategory / ErrorClassifier from shared_types
+# ErrorCategory / ErrorClassifier ownership
 # ---------------------------------------------------------------------------
 
 
 class TestSharedErrorCategory:
-    """shared_types ErrorCategory is accessible through the pm_dispatch export."""
+    """ErrorCategory is imported from KernelOne rather than pm_dispatch."""
 
-    # Verify both aliases point to the same enum
-    def test_local_alias_matches_shared(self) -> None:
-        assert ErrorCategory is SharedErrorCategory
+    def test_pm_dispatch_public_does_not_export_error_category(self) -> None:
+        from polaris.cells.orchestration.pm_dispatch.public import service
+
+        assert not hasattr(service, "ErrorCategory")
+        assert ErrorCategory.PERMANENT_AUTH.value == "permanent_auth"
 
     def test_error_classifier_exists(self) -> None:
         # ErrorClassifier is a protocol / callable in shared_types

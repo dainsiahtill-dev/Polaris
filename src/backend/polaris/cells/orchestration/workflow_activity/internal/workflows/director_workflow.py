@@ -14,7 +14,7 @@ import logging
 from datetime import timedelta
 from typing import Any
 
-from polaris.cells.orchestration.shared_types import ErrorCategory, ErrorClassifier
+from polaris.cells.orchestration.shared_types import ErrorClassifier
 from polaris.cells.orchestration.workflow_activity.internal.embedded_api import get_workflow_api
 from polaris.cells.orchestration.workflow_activity.internal.models import (
     DirectorTaskInput,
@@ -29,6 +29,7 @@ from polaris.cells.orchestration.workflow_activity.internal.workflows.director_t
     DirectorTaskWorkflow,
 )
 from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
+from polaris.kernelone.errors import ErrorCategory
 from polaris.kernelone.workflow.task_payload import _task_dependencies
 from polaris.kernelone.workflow.timeout_policy import _task_run_timeout_seconds
 

@@ -14,6 +14,20 @@ from polaris.cells.orchestration.pm_dispatch.internal.iteration_state import (
     handle_spin_guard,
     record_stop,
 )
+from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import (
+    CommandResult,
+    OrchestrationCommandService,
+)
+from polaris.cells.orchestration.pm_dispatch.public.contracts import (
+    DispatchPmTasksCommandV1,
+    GetPmDispatchStatusQueryV1,
+    PmDispatchError,
+    PmDispatchResultV1,
+    PmIterationAdvancedEventV1,
+    PmTaskDispatchedEventV1,
+    ResumePmIterationCommandV1,
+)
+from polaris.cells.orchestration.shared_types import ErrorClassifier
 
 
 def reachable_provider_pool(pool: tuple[str, ...], *, probe_timeout: float = 3.0) -> list[str]:
@@ -24,23 +38,11 @@ def reachable_provider_pool(pool: tuple[str, ...], *, probe_timeout: float = 3.0
     canonical internal symbol.
     """
     return _dispatch_pipeline._reachable_provider_pool(pool, probe_timeout=probe_timeout)
-from polaris.cells.orchestration.shared_types import ErrorCategory, ErrorClassifier
 
-from ..internal.orchestration_command_service import CommandResult, OrchestrationCommandService
-from .contracts import (
-    DispatchPmTasksCommandV1,
-    GetPmDispatchStatusQueryV1,
-    PmDispatchError,
-    PmDispatchResultV1,
-    PmIterationAdvancedEventV1,
-    PmTaskDispatchedEventV1,
-    ResumePmIterationCommandV1,
-)
 
 __all__ = [
     "CommandResult",
     "DispatchPmTasksCommandV1",
-    "ErrorCategory",
     "ErrorClassifier",
     "GetPmDispatchStatusQueryV1",
     "OrchestrationCommandService",
@@ -49,10 +51,10 @@ __all__ = [
     "PmIterationAdvancedEventV1",
     "PmTaskDispatchedEventV1",
     "ResumePmIterationCommandV1",
-    "reachable_provider_pool",
     "clear_manual_intervention",
     "finalize_iteration",
     "handle_spin_guard",
+    "reachable_provider_pool",
     "record_stop",
     "resolve_director_dispatch_tasks",
     "run_dispatch_pipeline",

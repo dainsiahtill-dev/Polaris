@@ -5,7 +5,6 @@ from __future__ import annotations
 from .public import (
     CommandResult,
     DispatchPmTasksCommandV1,
-    ErrorCategory,
     ErrorClassifier,
     GetPmDispatchStatusQueryV1,
     OrchestrationCommandService,
@@ -25,7 +24,6 @@ from .public import (
 __all__ = [
     "CommandResult",
     "DispatchPmTasksCommandV1",
-    "ErrorCategory",
     "ErrorClassifier",
     "GetPmDispatchStatusQueryV1",
     "OrchestrationCommandService",

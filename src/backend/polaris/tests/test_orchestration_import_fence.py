@@ -7,11 +7,10 @@ Verifies that:
    reasons unrelated to this fix — those are out of scope here).
 3. polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.workflows.director_workflow
    can be imported without triggering a circular import.
-4. Both cells import ErrorCategory / ErrorClassifier from shared_types
-   (not from each other), confirmed by identity checks.
-5. pm_dispatch.public.service remains the public compatibility surface for
-   classification names while pm_dispatch.internal.error_classifier exposes
-   only pm_dispatch-local retry utilities.
+4. Both cells import ErrorClassifier from shared_types and ErrorCategory from
+   polaris.kernelone.errors, confirmed by identity checks.
+5. pm_dispatch.internal.error_classifier exposes only pm_dispatch-local retry
+   utilities; pm_dispatch public surfaces do not re-export ErrorCategory.
 
 If any of these tests break due to a circular import, a circular dependency has
 been reintroduced. Fix the import, do not weaken the test.
@@ -86,9 +85,9 @@ class TestSharedTypesStandalone:
         mod = _fresh_import(_SHARED_TYPES_PATH)
         assert mod is not None, "shared_types failed to import"
 
-    def test_exports_error_category(self) -> None:
+    def test_does_not_export_error_category(self) -> None:
         mod = _fresh_import(_SHARED_TYPES_PATH)
-        assert hasattr(mod, "ErrorCategory"), "ErrorCategory missing from shared_types"
+        assert not hasattr(mod, "ErrorCategory"), "ErrorCategory must be imported from polaris.kernelone.errors"
 
     def test_exports_error_classifier(self) -> None:
         mod = _fresh_import(_SHARED_TYPES_PATH)
@@ -202,21 +201,17 @@ class TestWorkflowRuntimeImport:
 
 
 class TestSharedTypesIdentity:
-    """ErrorCategory from shared_types and director_workflow must be the same object."""
+    """Workflow modules use shared classifiers and canonical KernelOne categories."""
 
-    def test_error_category_identity_shared_vs_pm_dispatch_public(self) -> None:
-        """pm_dispatch.public.service must re-export from shared_types."""
+    def test_pm_dispatch_public_does_not_re_export_error_category(self) -> None:
+        """pm_dispatch public service must not re-export KernelOne ErrorCategory."""
         try:
-            shared = _fresh_import(_SHARED_TYPES_PATH)
             pm_pub = _fresh_import(_PM_DISPATCH_PUBLIC_SERVICE)
         except ImportError as exc:
             if _is_preexisting_error(exc):
                 return
             raise
-        assert shared.ErrorCategory is pm_pub.ErrorCategory, (
-            "ErrorCategory in pm_dispatch.public.service is NOT the same object "
-            "as in shared_types. The shim re-export is broken."
-        )
+        assert not hasattr(pm_pub, "ErrorCategory")
 
     def test_error_classifier_identity_shared_vs_director_workflow(self) -> None:
         """director_workflow must use ErrorClassifier from shared_types."""
@@ -260,14 +255,14 @@ class TestPmDispatchErrorClassificationBoundaries:
         mod = _fresh_import(_PM_DISPATCH_INTERNAL_EC)
         assert hasattr(mod, "RetryExecutor"), "RetryExecutor was accidentally removed."
 
-    def test_error_category_exported_from_pm_dispatch_public(self) -> None:
+    def test_error_category_not_exported_from_pm_dispatch_public(self) -> None:
         try:
             mod = _fresh_import(_PM_DISPATCH_PUBLIC_SERVICE)
         except ImportError as exc:
             if _is_preexisting_error(exc):
                 return
             raise
-        assert hasattr(mod, "ErrorCategory")
+        assert not hasattr(mod, "ErrorCategory")
 
     def test_error_classifier_exported_from_pm_dispatch_public(self) -> None:
         try:
@@ -301,5 +296,8 @@ class TestSimultaneousImport:
         # Workflow runtime must still resolve to the shared ErrorCategory class,
         # while pm_dispatch internals keep classification out of this module.
         shared = _fresh_import(_SHARED_TYPES_PATH)
-        assert dw.ErrorCategory is shared.ErrorCategory
+        from polaris.kernelone.errors import ErrorCategory
+
+        assert dw.ErrorCategory is ErrorCategory
+        assert not hasattr(shared, "ErrorCategory")
         assert not hasattr(ec, "ErrorCategory")

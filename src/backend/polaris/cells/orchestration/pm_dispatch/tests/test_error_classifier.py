@@ -316,7 +316,7 @@ class TestRetryExecutorCircuitBreakerIntegration:
 
 
 # ---------------------------------------------------------------------------
-# ErrorClassifier / ErrorCategory / RecoveryRecommendation from shared_types
+# ErrorClassifier / RecoveryRecommendation from shared_types; ErrorCategory from KernelOne
 # ---------------------------------------------------------------------------
 
 

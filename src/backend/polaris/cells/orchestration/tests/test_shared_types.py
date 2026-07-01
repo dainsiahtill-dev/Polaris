@@ -2,51 +2,29 @@
 
 from __future__ import annotations
 
-import warnings
 from datetime import datetime, timezone
 
-import pytest
 from polaris.cells.orchestration.shared_types import (
-    ErrorCategory,
     ErrorClassifier,
     ErrorRecord,
     RecoveryRecommendation,
 )
-from polaris.kernelone.errors import ErrorCategory as CanonicalErrorCategory
+from polaris.kernelone.errors import ErrorCategory
 
 
-class TestErrorCategory:
-    """Tests for ErrorCategory type alias and re-export."""
+class TestErrorCategoryOwnership:
+    """ErrorCategory is owned by polaris.kernelone.errors, not shared_types."""
 
-    def test_error_category_is_canonical(self) -> None:
-        assert ErrorCategory is CanonicalErrorCategory
-
-    def test_error_category_values(self) -> None:
+    def test_error_category_is_canonical_kernelone_enum(self) -> None:
         assert ErrorCategory.TRANSIENT_NETWORK.value == "transient_network"
         assert ErrorCategory.PERMANENT_AUTH.value == "permanent_auth"
         assert ErrorCategory.SYSTEM_TIMEOUT.value == "system_timeout"
 
-    def test_error_category_is_str_enum(self) -> None:
-        assert issubclass(ErrorCategory, str)
-        assert issubclass(ErrorCategory, CanonicalErrorCategory)
-
-    def test_deprecation_warning_on_direct_import(self) -> None:
-        # Direct import from module triggers deprecation
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            from polaris.cells.orchestration import shared_types
-
-            # The actual deprecation happens when accessing ErrorCategory
-            # through the module's __getattr__
-            with pytest.warns(DeprecationWarning):
-                cat = shared_types.__getattr__("ErrorCategory")
-                assert cat is CanonicalErrorCategory
-
-    def test_attribute_error_for_unknown(self) -> None:
+    def test_shared_types_does_not_re_export_error_category(self) -> None:
         from polaris.cells.orchestration import shared_types
 
-        with pytest.raises(AttributeError):
-            shared_types.__getattr__("NonExistent")
+        assert not hasattr(shared_types, "ErrorCategory")
+        assert "ErrorCategory" not in shared_types.__all__
 
 
 class TestErrorRecord:
@@ -325,8 +303,8 @@ class TestModuleExports:
         from polaris.cells.orchestration import shared_types as mod
 
         assert hasattr(mod, "__all__")
-        assert "ErrorCategory" in mod.__all__
+        assert "ErrorCategory" not in mod.__all__
         assert "ErrorClassifier" in mod.__all__
         assert "ErrorRecord" in mod.__all__
         assert "RecoveryRecommendation" in mod.__all__
-        assert len(mod.__all__) == 4
+        assert len(mod.__all__) == 3

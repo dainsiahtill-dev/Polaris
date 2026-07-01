@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from datetime import datetime, timezone
 
 import pytest
@@ -188,28 +187,11 @@ def test_classify_from_message_unknown():
     assert rec.strategy == "backoff"
 
 
-# =============================================================================
-# Deprecation re-export via __getattr__
-# =============================================================================
-def test_error_category_deprecation_warning():
-    import polaris.cells.orchestration.shared_types as _st
+def test_error_category_is_not_re_exported():
+    from polaris.cells.orchestration import shared_types
 
-    # Remove the runtime attribute so __getattr__ is invoked
-    old = _st.ErrorCategory
-    object.__delattr__(_st, "ErrorCategory")
-    try:
-        with pytest.warns(DeprecationWarning, match="has been moved to polaris.kernelone.errors"):
-            _ = _st.ErrorCategory
-    finally:
-        _st.ErrorCategory = old
-
-
-def test_error_category_is_same_enum():
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        from polaris.cells.orchestration import shared_types
-
-        assert shared_types.ErrorCategory is ErrorCategory
+    assert not hasattr(shared_types, "ErrorCategory")
+    assert "ErrorCategory" not in shared_types.__all__
 
 
 def test_invalid_attr_raises():
