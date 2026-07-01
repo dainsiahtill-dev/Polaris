@@ -331,9 +331,9 @@ export const EXPANDED_TECH_CANDIDATES: ExpandedTechCandidate[] = [
     source: "graph-governance-audit",
     paths: ["src/backend/polaris/cells/events/fact_stream", "src/backend/docs/graph/subgraphs/event_pipeline.yaml"],
     gates: [
-      "python -m pytest -q polaris/tests/test_runtime_event_fanout.py polaris/tests/test_realtime_hub_v2.py",
+      "python -m pytest -q polaris/tests/test_realtime_single_rail_static_guard.py polaris/delivery/tests/test_ws_stream_delivery.py",
     ],
-    e2eFields: ["runtime_events_owner", "direct_event_writer_count", "fanout_delivery_count"],
+    e2eFields: ["runtime_events_owner", "direct_event_writer_count", "runtime_v2_delivery_count"],
   },
   {
     id: "kernelone_traceability_matrix",

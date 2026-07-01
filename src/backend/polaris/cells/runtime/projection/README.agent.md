@@ -50,4 +50,5 @@ Build read-only runtime status projections and transport payloads without hidden
 
 ## Verification
 
-- `tests/test_websocket_signal_hub.py`
+- `tests/test_realtime_single_rail_static_guard.py`
+- `tests/test_runtime_projection_observability.py`

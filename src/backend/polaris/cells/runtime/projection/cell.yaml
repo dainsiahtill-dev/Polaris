@@ -55,7 +55,7 @@ effects_allowed:
 - ws.outbound:runtime/*
 verification:
   tests:
-  - tests/test_websocket_signal_hub.py
+  - tests/test_realtime_single_rail_static_guard.py
   - tests/test_runtime_projection_observability.py
   gaps:
   - Projection still contains projection read-joins pending cleanup.

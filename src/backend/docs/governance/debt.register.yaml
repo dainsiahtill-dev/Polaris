@@ -123,12 +123,14 @@ debts:
       - "ADR-0095 records Nats-JetStream as the only product realtime rail"
       - "test_realtime_single_rail_static_guard.py blocks legacy realtime tokens in product paths"
       - "2026-07-02: static guard realigned with current frontend runtime transport hooks and Nats-JetStream Playwright audit spec naming"
+      - "2026-07-02: product Python sources are structurally guarded from importing infrastructure.realtime.process_local modules"
+      - "2026-07-02: event-stream implementation tokens are structurally allowlisted to upstream LLM provider integrations, not product delivery paths"
+      - "2026-07-02: process-local realtime fanout/signal-hub modules and their dedicated legacy tests were removed; fact_stream context pack now points at runtime.v2/Nats-JetStream tests"
       - "WebSocket tests verify runtime.v2 SUBSCRIBE, explicit EVENT query, and no process-local registration"
       - "Status workflow/process and file-edit producers publish runtime.v2 JetStream envelopes"
     residual_risks:
       - "Full Factory L1-L8 and Playwright page-by-page realtime audit still need to be completed"
-      - "Legacy process-local modules remain in isolated infrastructure/tests until a follow-up deletion plan retires them"
-      - "Provider SSE parsing still exists for upstream LLM APIs and must not be confused with product SSE transport"
+      - "Upstream LLM provider streaming may require event-stream headers; product delivery paths must keep relying on the provider-only allowlist guard"
     linked_assets:
       adrs:
         - "docs/governance/decisions/adr-0095-runtime-realtime-single-rail-nats-jetstream.md"
@@ -144,4 +146,4 @@ debts:
     next_actions:
       - "Run Factory L1-L8 after focused backend/frontend realtime tests are green"
       - "Run Playwright audit for Home, Factory, PM, ChiefEngineer, Director, and ContextOS realtime updates"
-      - "Plan deletion or archival of process-local realtime infrastructure once no internal tests or adapters depend on it"
+      - "Keep process-local realtime infrastructure deleted; reintroduction must fail the single-rail static guard"

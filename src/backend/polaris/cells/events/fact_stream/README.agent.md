@@ -34,6 +34,6 @@ Provide append-only runtime fact stream ingestion, fanout, and query infrastruct
 
 ## Verification
 
-- `tests/test_runtime_event_fanout.py`
-- `tests/test_realtime_hub_v2.py`
-- `tests/test_websocket_signal_hub.py`
+- `tests/test_realtime_single_rail_static_guard.py`
+- `delivery/tests/test_ws_stream_delivery.py`
+- `tests/test_websocket_architecture_integration.py`

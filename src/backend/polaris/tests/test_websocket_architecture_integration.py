@@ -155,23 +155,6 @@ class TestWebSocketErrorHandling:
             assert "Unknown message type" in str(response.get("payload", {}).get("error", ""))
 
 
-class TestRealtimeSingleRail:
-    def test_runtime_connection_does_not_register_process_local_fanout_or_watch(self, client) -> None:
-        from polaris.infrastructure.realtime.process_local.message_event_fanout import RUNTIME_EVENT_FANOUT
-        from polaris.infrastructure.realtime.process_local.signal_hub import REALTIME_SIGNAL_HUB
-
-        initial_connections = len(RUNTIME_EVENT_FANOUT.list_connections())
-        initial_watches = len(REALTIME_SIGNAL_HUB.list_watches())
-
-        with client.websocket_connect("/v2/ws/runtime?token=valid") as websocket:
-            _receive_until_type(websocket, {"STATUS"})
-            assert len(RUNTIME_EVENT_FANOUT.list_connections()) == initial_connections
-            assert len(REALTIME_SIGNAL_HUB.list_watches()) == initial_watches
-
-        assert len(RUNTIME_EVENT_FANOUT.list_connections()) == initial_connections
-        assert len(REALTIME_SIGNAL_HUB.list_watches()) == initial_watches
-
-
 class TestErrorObservability:
     @pytest.mark.asyncio
     async def test_audit_events_written(self) -> None:

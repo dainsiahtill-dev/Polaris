@@ -1346,7 +1346,7 @@ describe('useRuntime llm filtering and dedup', () => {
     });
   });
 
-  it('populates file edit events from schema-tagged direct fanout messages', () => {
+  it('populates file edit events from schema-tagged runtime v2 messages', () => {
     const { result } = renderHook(() =>
       useRuntime({ autoConnect: false, workspace: '/test/workspace' })
     );
@@ -1358,7 +1358,7 @@ describe('useRuntime llm filtering and dedup', () => {
       event_schema: 'runtime.event.file_edit.v1',
       channel: 'event.file_edit',
       kind: 'file_edit',
-      source: 'process_local_fanout',
+      source: 'runtime_v2_jetstream',
       timestamp: '2026-05-07T01:00:00.000Z',
       event: {
         file_path: 'src/fanout.ts',
@@ -1380,7 +1380,7 @@ describe('useRuntime llm filtering and dedup', () => {
       eventSchema: 'runtime.event.file_edit.v1',
       sourceChannel: 'event.file_edit',
       eventKind: 'file_edit',
-      provenance: 'process_local_fanout',
+      provenance: 'runtime_v2_jetstream',
     });
   });
 

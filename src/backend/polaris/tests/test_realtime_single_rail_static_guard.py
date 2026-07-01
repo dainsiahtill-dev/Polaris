@@ -18,6 +18,13 @@ BACKEND_PRODUCT_REALTIME_FILES = (
     REPO_ROOT / "src" / "backend" / "polaris" / "cells" / "roles" / "runtime" / "internal" / "process_service.py",
     REPO_ROOT / "src" / "backend" / "polaris" / "kernelone" / "events" / "file_event_broadcaster.py",
 )
+BACKEND_PROCESS_LOCAL_REALTIME_DIR = (
+    REPO_ROOT / "src" / "backend" / "polaris" / "infrastructure" / "realtime" / "process_local"
+)
+BACKEND_PROCESS_LOCAL_IMPORT_TOKENS = (
+    "polaris.infrastructure.realtime.process_local",
+    "from polaris.infrastructure.realtime import process_local",
+)
 FRONTEND_WORKSPACE_REALTIME_FILES = (
     FRONTEND_SRC / "app" / "App.tsx",
     FRONTEND_SRC / "app" / "components" / "ControlPanel.tsx",
@@ -212,6 +219,16 @@ BACKEND_ROUTER_FORBIDDEN = (
     "text/event-stream",
 )
 
+BACKEND_EVENT_STREAM_IMPLEMENTATION_TOKENS = (
+    "text/event-stream",
+    "EventSource",
+    "StreamingResponse",
+)
+
+BACKEND_EVENT_STREAM_ALLOWED_FILES = {
+    REPO_ROOT / "src" / "backend" / "polaris" / "infrastructure" / "llm" / "providers" / "anthropic_provider.py",
+}
+
 BACKEND_PRODUCT_REALTIME_FORBIDDEN = (
     "REALTIME_SIGNAL_HUB",
     "RUNTIME_EVENT_FANOUT",
@@ -381,6 +398,26 @@ def test_backend_http_routers_do_not_expose_sse_streams() -> None:
     assert findings == []
 
 
+def test_backend_event_stream_tokens_are_provider_only() -> None:
+    """Event-stream implementation tokens must not return to product delivery paths."""
+
+    backend_root = REPO_ROOT / "src" / "backend" / "polaris"
+    findings: list[str] = []
+
+    for path in backend_root.rglob("*.py"):
+        if "tests" in path.parts or "generated" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        matched_tokens = [token for token in BACKEND_EVENT_STREAM_IMPLEMENTATION_TOKENS if token in text]
+        if not matched_tokens:
+            continue
+        if path in BACKEND_EVENT_STREAM_ALLOWED_FILES:
+            continue
+        findings.append(f"{path.relative_to(REPO_ROOT)} contains event-stream tokens {matched_tokens}")
+
+    assert findings == []
+
+
 def test_backend_product_realtime_has_no_legacy_push_or_polling_sources() -> None:
     """Product realtime must be JetStream -> runtime.v2 WebSocket only."""
 
@@ -390,6 +427,27 @@ def test_backend_product_realtime_has_no_legacy_push_or_polling_sources() -> Non
         for token in BACKEND_PRODUCT_REALTIME_FORBIDDEN:
             if token in text:
                 findings.append(f"{path.relative_to(REPO_ROOT)} contains {token!r}")
+
+    assert findings == []
+
+
+def test_backend_product_code_does_not_import_process_local_realtime() -> None:
+    """Production code must not consume process-local realtime infrastructure."""
+
+    backend_root = REPO_ROOT / "src" / "backend" / "polaris"
+    findings: list[str] = []
+
+    for path in backend_root.rglob("*.py"):
+        if "tests" in path.parts or "generated" in path.parts:
+            continue
+        if path == BACKEND_PROCESS_LOCAL_REALTIME_DIR / "__init__.py":
+            continue
+        if BACKEND_PROCESS_LOCAL_REALTIME_DIR in path.parents:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for token in BACKEND_PROCESS_LOCAL_IMPORT_TOKENS:
+            if token in text:
+                findings.append(f"{path.relative_to(REPO_ROOT)} imports process-local realtime via {token!r}")
 
     assert findings == []
 
