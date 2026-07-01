@@ -14,7 +14,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Sequence, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.context.context_os import StateFirstContextOS
 from polaris.kernelone.context.context_os.domain_adapters import get_context_domain_adapter
@@ -383,7 +383,7 @@ class RoleContextGateway:
 
         # ── Fallback: Include tool messages from history when not in state-first mode ──
         if not state_first_mode_active and not has_snapshot and request.history:
-            history_tool_messages = self._extract_tool_messages_from_history(request.history)
+            history_tool_messages = self._override_processor.extract_tool_messages_from_history(request.history)
             logger.debug(
                 "[DEBUG][ContextGateway] fallback: state_first=%s has_snapshot=%s history_len=%d tool_msgs=%d",
                 state_first_mode_active,
@@ -393,7 +393,7 @@ class RoleContextGateway:
             )
             if history_tool_messages:
                 # Pre-process tool messages: truncate if too large, add CONTEXT_TRUNCATED marker
-                processed_tool_messages = self._process_tool_messages_for_fallback(
+                processed_tool_messages = self._override_processor.process_tool_messages_for_fallback(
                     history_tool_messages,
                     max_chars=2000,  # Allow some chars for the tool result
                 )
@@ -406,7 +406,7 @@ class RoleContextGateway:
             filtered_context_override, filtered_count = filter_context_override_for_current_task(
                 request, context_override
             )
-            override_msg = self._process_context_override(filtered_context_override)
+            override_msg = self._override_processor.process_context_override(filtered_context_override)
             if override_msg:
                 messages.insert(0, override_msg)
                 sources.append("context_override")
@@ -744,24 +744,6 @@ class RoleContextGateway:
             parts.append("\n\n【追加上下文】\n" + appendix)
 
         return "\n".join(parts)
-
-    def _process_context_override(self, context_override: dict[str, Any]) -> dict[str, Any] | None:
-        """Backward-compatible delegate to ContextOverrideProcessor.process_context_override."""
-        return self._override_processor.process_context_override(context_override)
-
-    def _extract_tool_messages_from_history(
-        self, history: Sequence[tuple[str, str] | dict[str, str]]
-    ) -> list[dict[str, Any]]:
-        """Backward-compatible delegate to ContextOverrideProcessor.extract_tool_messages_from_history."""
-        return self._override_processor.extract_tool_messages_from_history(history)
-
-    def _process_tool_messages_for_fallback(
-        self,
-        tool_messages: list[dict[str, Any]],
-        max_chars: int = 2000,
-    ) -> list[dict[str, Any]]:
-        """Backward-compatible delegate to ContextOverrideProcessor.process_tool_messages_for_fallback."""
-        return self._override_processor.process_tool_messages_for_fallback(tool_messages, max_chars)
 
     def _build_projection_dict(
         self,

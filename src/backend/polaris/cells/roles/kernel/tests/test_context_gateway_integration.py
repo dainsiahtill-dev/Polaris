@@ -177,24 +177,11 @@ class TestStateFirstContextOSIntegration:
         assert result.metadata["effective_context_budget_tokens"] == 900
 
     def test_cognitive_strategy_override_is_control_plane_only(self):
-        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+        from polaris.cells.roles.kernel.internal.context_gateway.context_override_processor import (
+            ContextOverrideProcessor,
+        )
 
-        mock_profile = MagicMock()
-        mock_profile.context_policy = MagicMock()
-        mock_profile.context_policy.max_history_turns = 8
-        mock_profile.context_policy.max_context_tokens = 1000
-        mock_profile.context_policy.include_project_structure = False
-        mock_profile.context_policy.include_task_history = False
-        mock_profile.context_policy.compression_strategy = "truncate"
-        mock_profile.context_domain = None
-        mock_profile.provider_id = "test_provider"
-        mock_profile.model = "test_model"
-        mock_profile.role_id = "director"
-        mock_profile.display_name = "Director"
-
-        gateway = RoleContextGateway(mock_profile, workspace=".")
-
-        message = gateway._process_context_override(
+        message = ContextOverrideProcessor(detect_prompt_injection=True).process_context_override(
             {
                 "cognitive_strategy_override": {"exploration": {"max_expansion_depth": 4}},
                 "visible_business_context": "keep this",
@@ -581,13 +568,15 @@ class TestStateFirstContextOSIntegration:
         rendered_prompt = "\n".join(
             str(message.get("content") or "") for message in result.messages if isinstance(message, dict)
         )
+        capability_signal = gateway._signal_sources.get_resident_agi_capabilities()
 
         assert "resident_agi_capability_surface" in result.context_sources
-        assert "Resident AGI 能力面" in rendered_prompt
-        assert "resident.agi_capability_surface.v1" in rendered_prompt
-        assert "resident.agi_decision_boundary.v1" in rendered_prompt
-        assert "platform_hard_rule" in rendered_prompt
-        assert "agi_decision_scope" in rendered_prompt
+        assert "Supervise governed development" in rendered_prompt
+        assert capability_signal is not None
+        assert "resident.agi_capability_surface.v1" in capability_signal
+        assert "resident.agi_decision_boundary.v1" in capability_signal
+        assert "platform_hard_rule" in capability_signal
+        assert "agi_decision_scope" in capability_signal
 
 
 class TestMessagesFromProjection:

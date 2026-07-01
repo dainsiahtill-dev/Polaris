@@ -1,10 +1,9 @@
 """context_override + history tool-message fallback processing.
 
 Extracted (behavior-preserving) from ``gateway.py`` during the G8 god-class
-decomposition (blueprint REMAINING_04_gateway-py.md, step 5). The gateway keeps
-delegating shims (``_process_context_override`` /
-``_extract_tool_messages_from_history`` / ``_process_tool_messages_for_fallback``)
-with identical signatures — those names are frozen by test reach-ins.
+decomposition (blueprint REMAINING_04_gateway-py.md, step 5). The gateway calls
+this owner directly for context overrides and history tool-message fallback
+materialization.
 
 Per the type-hygiene rule, the symbols this module needs (``SecuritySanitizer``,
 ``_context_override_value_char_cap``, ``_CONTROL_PLANE_CONTEXT_KEYS``) are
