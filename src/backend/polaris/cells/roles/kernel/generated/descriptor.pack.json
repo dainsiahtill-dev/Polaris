@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T08:54:57.723246Z",
-  "source_hash": "ccff4fe755f051a4",
+  "generated_at": "2026-07-01T09:03:04.770984Z",
+  "source_hash": "0168373db10e66ab",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4325,6 +4325,29 @@
       "name": "role_turn_result_from_transaction_result",
       "description": "Project a TransactionKernel result into the public role-turn result.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/role_result_projection.py"
+    },
+    {
+      "type": "class",
+      "name": "StreamEventProjectionResult",
+      "description": "Projected stream event plus flow-control metadata.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/stream_event_projection.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StreamEventProjector",
+      "description": "Translate typed stream events into public role-stream dictionaries.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/stream_event_projection.py",
+      "methods": [
+        {
+          "name": "_record_projection_outcome",
+          "doc": ""
+        },
+        {
+          "name": "_append_task_boundary_verdict",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "function",

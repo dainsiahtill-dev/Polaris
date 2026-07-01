@@ -48,6 +48,7 @@ from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     tool_calls_from_batch_receipt,
     tool_results_from_batch_receipt,
 )
+from polaris.cells.roles.kernel.internal.kernel.stream_event_projection import StreamEventProjector
 from polaris.cells.roles.kernel.internal.kernel.task_boundary import append_role_turn_task_boundary_verdict
 from polaris.cells.roles.kernel.internal.kernel.tool_dispatch_projection import (
     append_tool_dispatch_dropped_control_plane_events,
@@ -364,14 +365,6 @@ async def execute_transaction_kernel_stream(
     """Stream execution via TransactionKernel."""
     from polaris.cells.roles.kernel.internal.transaction.tool_surface import plan_transaction_tool_surface
     from polaris.cells.roles.kernel.public.service import RoleContextGateway
-    from polaris.cells.roles.kernel.public.turn_events import (
-        CompletionEvent,
-        ContentChunkEvent,
-        ErrorEvent,
-        FinalizationEvent,
-        ToolBatchEvent,
-        TurnPhaseEvent,
-    )
 
     tk = create_transaction_kernel(kernel, role, profile, request)
     turn_id = str(request.run_id or stream_run_id or uuid.uuid4().hex[:12])
@@ -429,10 +422,19 @@ async def execute_transaction_kernel_stream(
         yield error_event
         return
 
-    accumulated_content: list[str] = []
-    accumulated_thinking: list[str] = []
-    stream_tool_calls: list[dict[str, Any]] = []
-    stream_tool_results: list[dict[str, Any]] = []
+    event_projector = StreamEventProjector(
+        kernel=kernel,
+        role=role,
+        profile=profile,
+        request=request,
+        fingerprint=fingerprint,
+        context_gateway=context_gateway,
+        context_result=context_result,
+        stream_run_id=stream_run_id,
+        uep_publisher=uep_publisher,
+        runtime_tool_policy_audit=runtime_tool_policy_audit,
+        tool_filter_audit=tool_filter_audit,
+    )
 
     async def _iter_transaction_stream_events():
         try:
@@ -472,188 +474,9 @@ async def execute_transaction_kernel_stream(
             raise
 
     async for event in _iter_transaction_stream_events():
-        event_dict: dict[str, Any]
-        if isinstance(event, TurnPhaseEvent):
-            event_dict = {
-                "type": event.phase,
-                "turn_id": event.turn_id,
-                "metadata": dict(event.metadata),
-            }
-        elif isinstance(event, ContentChunkEvent):
-            if event.is_thinking:
-                accumulated_thinking.append(event.chunk)
-                event_dict = {
-                    "type": "thinking_chunk",
-                    "content": event.chunk,
-                    "turn_id": event.turn_id,
-                }
-            else:
-                if getattr(event, "is_finalization", False):
-                    accumulated_content = [event.chunk]
-                else:
-                    accumulated_content.append(event.chunk)
-                event_dict = {
-                    "type": "content_chunk",
-                    "content": event.chunk,
-                    "turn_id": event.turn_id,
-                }
-        elif isinstance(event, ToolBatchEvent):
-            arguments = dict(event.arguments) if isinstance(event.arguments, dict) else {}
-            if event.status == "started":
-                stream_tool_calls.append(
-                    {
-                        "tool": event.tool_name,
-                        "args": arguments,
-                        "call_id": event.call_id,
-                    }
-                )
-            else:
-                stream_tool_results.append(
-                    {
-                        "tool": event.tool_name,
-                        "result": event.result,
-                        "success": event.status == "success",
-                        "call_id": event.call_id,
-                    }
-                )
-            event_dict = {
-                "type": "tool_result" if event.status in ("success", "error") else "tool_call",
-                "tool": event.tool_name,
-                "call_id": event.call_id,
-                "status": event.status,
-                "progress": event.progress,
-                "turn_id": event.turn_id,
-                "args": arguments,
-                "result": event.result,
-                "error": event.error,
-            }
-        elif isinstance(event, FinalizationEvent):
+        projection = await event_projector.project(event)
+        if projection is None:
             continue
-        elif isinstance(event, CompletionEvent):
-            final_content = "".join(accumulated_content)
-            final_thinking = "".join(accumulated_thinking) or None
-            completion_batch_receipt = (
-                dict(event.batch_receipt) if isinstance(getattr(event, "batch_receipt", None), dict) else None
-            )
-            completion_tool_calls = tool_calls_from_batch_receipt(completion_batch_receipt) or stream_tool_calls
-            completion_tool_results = tool_results_from_batch_receipt(completion_batch_receipt) or stream_tool_results
-            # Failed / suspended completions are surfaced as error events for
-            # stream consumers.
-            if event.status in ("failed", "suspended"):
-                try:
-                    context_gateway.record_projection_outcome(
-                        success=False,
-                        tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
-                    )
-                except (AttributeError, RuntimeError, TypeError, ValueError):
-                    logger.debug("Projection outcome feedback failed after stream failure", exc_info=True)
-                event_dict = {
-                    "type": "error",
-                    "error": event.error or "execution_failed",
-                    "error_type": "stream_execution_failed",
-                    "turn_id": event.turn_id,
-                }
-                await uep_publisher.publish_stream_event(
-                    workspace=kernel.workspace or os.getcwd(),
-                    run_id=stream_run_id,
-                    role=role,
-                    event_type="error",
-                    payload=event_dict,
-                )
-                yield event_dict
-                return
-            event_dict = {
-                "type": "complete",
-                "status": event.status,
-                "content": final_content,
-                "thinking": final_thinking,
-                "duration_ms": event.duration_ms,
-                "llm_calls": event.llm_calls,
-                "tool_calls": event.tool_calls,
-                "turn_id": event.turn_id,
-            }
-            if event.monitoring:
-                event_dict["monitoring"] = dict(event.monitoring)
-            result_metadata = role_result_metadata_from_profile(
-                profile=profile,
-                tool_filter_audit=tool_filter_audit,
-                monitoring=event.monitoring if isinstance(event.monitoring, dict) else None,
-            )
-            if "context_os_audit" in result_metadata:
-                event_dict["metadata"] = dict(result_metadata)
-            try:
-                result_metadata["projection_adaptive_weights_after_turn"] = context_gateway.record_projection_outcome(
-                    success=event.status == "success",
-                    tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
-                )
-                event_dict["metadata"] = dict(result_metadata)
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                logger.debug("Projection outcome feedback failed after stream completion", exc_info=True)
-            # Include RoleTurnResult so that stream consumers can persist turn state
-            turn_history, turn_events_metadata = _build_turn_history_and_events(
-                turn_id=turn_id,
-                request=request,
-                visible_content=final_content,
-                thinking=final_thinking,
-                tool_results=completion_tool_results,
-            )
-            event_dict["result"] = role_turn_completion_result(
-                content=final_content,
-                thinking=final_thinking,
-                structured_output=None,
-                tool_calls=completion_tool_calls,
-                tool_results=completion_tool_results,
-                batch_receipt=completion_batch_receipt,
-                profile=profile,
-                fingerprint=fingerprint,
-                error=None,
-                is_complete=True,
-                execution_stats={
-                    "duration_ms": event.duration_ms,
-                    "llm_calls": event.llm_calls,
-                    "tool_calls": event.tool_calls,
-                    "transaction_kernel": True,
-                    **runtime_tool_policy_audit,
-                },
-                turn_history=turn_history,
-                turn_events_metadata=turn_events_metadata,
-                metadata=result_metadata,
-            )
-            try:
-                append_role_turn_task_boundary_verdict(
-                    role=role,
-                    workspace=str(request.workspace or kernel.workspace or "."),
-                    task_id=str(request.task_id or ""),
-                    run_id=str(request.run_id or turn_id),
-                    context_override=getattr(request, "context_override", None),
-                    tool_results=completion_tool_results,
-                    needs_followup_workflow=False,
-                    evidence_refs=[str(result_metadata.get("context_snapshot_ref") or "").strip()],
-                )
-            except (OSError, RuntimeError, TypeError, ValueError):
-                logger.debug("failed to append stream director task boundary verdict", exc_info=True)
-        elif isinstance(event, ErrorEvent):
-            try:
-                context_gateway.record_projection_outcome(
-                    success=False,
-                    tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
-                )
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                logger.debug("Projection outcome feedback failed after stream error", exc_info=True)
-            event_dict = {
-                "type": "error",
-                "error": event.message,
-                "error_type": event.error_type,
-                "turn_id": event.turn_id,
-            }
-        else:
-            continue
-
-        await uep_publisher.publish_stream_event(
-            workspace=kernel.workspace or os.getcwd(),
-            run_id=stream_run_id,
-            role=role,
-            event_type=event_dict.get("type", "unknown"),
-            payload=event_dict,
-        )
-        yield event_dict
+        yield projection.event
+        if projection.should_stop:
+            return
