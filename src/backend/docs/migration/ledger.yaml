@@ -255,41 +255,64 @@ units:
     wave: 2
     category: application
     scope: file_family
-    status: in_progress
-    current_impl_state: mixed
+    status: verified
+    current_impl_state: new_root_primary
     owner: architecture-engineer
     legacy_policy: no_new_shim
     depends_on:
       - mig-application-batch1
-    blockers:
-      - "polaris/application/ still has 91 unclaimed implementation files"
+    blockers: []
     notes:
       - "Batch 2A (2026-03-21): director_logic, audit_llm_runtime, workspace_context, skill, agent_tui, __main__, pm_agent, hr_agent, llm_client, cfo_agent → existing cells"
       - "Report: docs/migration/application_cellization_batch2_ide_move_list_2026-03-21.md"
+      - "2026-07-02 audit: all batch-2A source_refs are absent; target facts are current Cell/KernelOne/delivery paths instead of the stale March target filenames"
+      - "2026-07-02 boundary: the remaining polaris/application files are health/admin/cognitive_runtime surfaces and are not batch-2A source_refs"
+      - "2026-07-02 verification scope: broad architecture/service alignment tests currently expose separate runtime-test drift and are not used as batch-2A hard evidence"
     target:
-      cell: director.execution
+      cell: multiple
       catalog_status: actual
       target_assets_status: active_impl
       root_dirs:
-        - polaris/cells/director/execution/internal/
+        - polaris/domain/services/
+        - polaris/cells/director/execution/
+        - polaris/cells/director/planning/internal/
         - polaris/cells/audit/evidence/internal/
         - polaris/cells/runtime/projection/internal/
-        - polaris/cells/roles/runtime/internal/
+        - polaris/kernelone/single_agent/
+        - polaris/delivery/cli/
         - polaris/cells/orchestration/pm_planning/internal/
         - polaris/cells/llm/control_plane/internal/
         - polaris/cells/finops/budget_guard/internal/
       target_paths:
-        - polaris/cells/director/execution/internal/director_logic_rules.py
+        - polaris/domain/services/director_logic_service.py
+        - polaris/cells/director/execution/logic.py
+        - polaris/cells/director/planning/internal/director_logic.py
+        - polaris/cells/director/planning/internal/director_logic_rules.py
+        - polaris/cells/director/planning/internal/director_logic_rules_execution.py
         - polaris/cells/audit/evidence/internal/task_audit_llm_binding.py
         - polaris/cells/runtime/projection/internal/workspace_runtime_context.py
-        - polaris/cells/roles/runtime/internal/skill_loader.py
-        - polaris/cells/roles/runtime/internal/tui_console.py
-        - polaris/cells/roles/runtime/internal/standalone_entry.py
+        - polaris/kernelone/single_agent/skill_system.py
+        - polaris/delivery/cli/textual/console.py
+        - polaris/delivery/cli/__main__.py
         - polaris/cells/orchestration/pm_planning/internal/pm_agent.py
         - polaris/cells/llm/control_plane/internal/llm_config_agent.py
         - polaris/cells/llm/control_plane/internal/tui_llm_client.py
         - polaris/cells/finops/budget_guard/internal/budget_agent.py
-      actual_impl_paths: []
+      actual_impl_paths:
+        - polaris/domain/services/director_logic_service.py
+        - polaris/cells/director/execution/logic.py
+        - polaris/cells/director/planning/internal/director_logic.py
+        - polaris/cells/director/planning/internal/director_logic_rules.py
+        - polaris/cells/director/planning/internal/director_logic_rules_execution.py
+        - polaris/cells/audit/evidence/internal/task_audit_llm_binding.py
+        - polaris/cells/runtime/projection/internal/workspace_runtime_context.py
+        - polaris/kernelone/single_agent/skill_system.py
+        - polaris/delivery/cli/textual/console.py
+        - polaris/delivery/cli/__main__.py
+        - polaris/cells/orchestration/pm_planning/internal/pm_agent.py
+        - polaris/cells/llm/control_plane/internal/llm_config_agent.py
+        - polaris/cells/llm/control_plane/internal/tui_llm_client.py
+        - polaris/cells/finops/budget_guard/internal/budget_agent.py
       subgraphs:
         - execution_governance_pipeline
     source_refs:
@@ -335,19 +358,25 @@ units:
         note: Merge into finops.budget_guard
     verification:
       checks:
-        - "pytest tests/test_pm_orchestration_api.py -q"
-        - "pytest tests/test_plan_sync.py -q"
-        - "pytest polaris/cells/roles/runtime/tests/ -q"
+        - "pytest src/backend/polaris/tests/architecture/test_application_batch2a_migration_ledger.py -q"
+        - "pytest src/backend/polaris/tests/architecture/test_roles_runtime_skill_loader_fence.py -q"
+        - "pytest src/backend/polaris/tests/test_director_logic.py -q"
+        - "pytest src/backend/polaris/tests/test_pm_orchestration_api.py -q"
+        - "pytest src/backend/polaris/tests/test_plan_sync.py -q"
+        - "pytest src/backend/polaris/cells/roles/runtime/tests/ -q"
       required_tests:
-        - tests/test_pm_orchestration_api.py
-        - tests/test_plan_sync.py
+        - polaris/tests/architecture/test_application_batch2a_migration_ledger.py
+        - polaris/tests/architecture/test_roles_runtime_skill_loader_fence.py
+        - polaris/tests/test_director_logic.py
+        - polaris/tests/test_pm_orchestration_api.py
+        - polaris/tests/test_plan_sync.py
       docs_updates:
         - docs/migration/application_cellization_batch2_ide_move_list_2026-03-21.md
       graph_updates:
         - docs/graph/catalog/cells.yaml (affected Cells owned_paths)
     delete_when:
-      - "All batch-2A source files physically removed from polaris/application/"
-      - "Verification targets pass"
+      - "Satisfied 2026-07-02: all batch-2A source_refs physically removed from polaris/application/"
+      - "Satisfied 2026-07-02: current target paths exist and verification targets pass"
 
   - id: mig-application-batch2b-resident
     title: Application cellization batch 2B — resident.autonomy Cell creation
