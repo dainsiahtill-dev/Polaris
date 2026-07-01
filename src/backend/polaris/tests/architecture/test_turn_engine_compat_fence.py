@@ -22,6 +22,8 @@ REMOVED_TURN_ENGINE_LOOP_COMPONENT_PATHS = (
 REMOVED_KERNEL_BRIDGE_PATH = POLARIS_ROOT / "cells/roles/kernel/internal/kernel_bridge.py"
 REMOVED_KERNEL_TURN_ENGINE_PATH = POLARIS_ROOT / "cells/roles/kernel/internal/kernel/turn_engine.py"
 REMOVED_TURN_ENGINE_EXECUTOR = "TurnEngineExecutor"
+REMOVED_INTERNAL_TRANSCRIPT_IR_MODULE = "polaris.cells.roles.kernel.internal.transcript_ir"
+REMOVED_INTERNAL_TRANSCRIPT_IR_PATH = POLARIS_ROOT / "cells/roles/kernel/internal/transcript_ir.py"
 
 
 def _production_python_files() -> list[Path]:
@@ -128,6 +130,29 @@ def test_turn_engine_package_root_does_not_export_empty_stubs() -> None:
     assert "build_stream_complete_result" not in locally_defined
     assert "make_error_result" not in locally_defined
     assert "TurnEngine" not in exported_names
+
+
+def test_internal_transcript_ir_reexport_shim_is_not_reintroduced() -> None:
+    """Transcript IR is owned by roles.kernel.public.transcript_ir."""
+    assert not REMOVED_INTERNAL_TRANSCRIPT_IR_PATH.exists(), "Retired internal transcript_ir.py shim was recreated."
+
+    violations: list[str] = []
+    for path in _production_python_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == REMOVED_INTERNAL_TRANSCRIPT_IR_MODULE:
+                        violations.append(f"{path.relative_to(BACKEND_ROOT).as_posix()}: import {alias.name}")
+                continue
+            if isinstance(node, ast.ImportFrom) and node.module == REMOVED_INTERNAL_TRANSCRIPT_IR_MODULE:
+                imported = ", ".join(sorted(alias.name for alias in node.names))
+                violations.append(f"{path.relative_to(BACKEND_ROOT).as_posix()}: {node.module} import {imported}")
+
+    assert violations == [], (
+        "roles.kernel.internal.transcript_ir is retired. Import Transcript IR from "
+        "polaris.cells.roles.kernel.public.transcript_ir instead:\n" + "\n".join(violations)
+    )
 
 
 def test_policy_conversation_state_placeholder_is_removed() -> None:

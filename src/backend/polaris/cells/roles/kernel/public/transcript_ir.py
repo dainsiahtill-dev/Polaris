@@ -26,7 +26,7 @@ P1-TYPE-003/004: 类型统一
 迁移说明（Chief Architect 裁决 #3）:
     本模块从 `roles.kernel.internal` 迁移至 `roles.kernel.public`。
     原因：ToolCall / ToolResult 被外部 Cell（如 llm.tool_runtime orchestrator）使用。
-    旧路径 `roles.kernel.internal.transcript_ir` 保留为兼容重导出（短期过渡）。
+    旧路径 `roles.kernel.internal.transcript_ir` 已退休；新代码必须导入本 public 边界。
 """
 
 from __future__ import annotations
