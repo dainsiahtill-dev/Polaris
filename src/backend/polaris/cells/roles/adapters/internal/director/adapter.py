@@ -2079,20 +2079,3 @@ class DirectorAdapter(BaseRoleAdapter):
     def _build_taskboard_observation_snapshot(self, sample_limit: int = 5) -> dict[str, Any]:
         """Proxy to state tracker build_taskboard_observation_snapshot."""
         return self._state_tracker.build_taskboard_observation_snapshot(self.task_runtime, sample_limit=sample_limit)
-
-    async def _execute_tools(
-        self,
-        response: str,
-        task_id: str,
-        *,
-        allowed_tool_names: set[str] | None = None,
-        allow_patch_fallback: bool = True,
-    ) -> list[dict[str, Any]]:
-        """Compatibility proxy for _execution.execute_tools."""
-        return await self._execution.execute_tools(
-            response,
-            task_id,
-            self._update_task_progress,
-            allowed_tool_names=allowed_tool_names,
-            allow_patch_fallback=allow_patch_fallback,
-        )

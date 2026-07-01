@@ -3411,19 +3411,6 @@ async def test_empty_write_retry_existing_target_forces_edit_blocks(tmp_path: An
             self.retry_context = context
             return {"content": "calculator.py\n```python\npass\n```", "success": True}
 
-        async def _execute_tools(
-            self,
-            content: str,
-            target_task_id: str,
-            **kwargs: Any,
-        ) -> list[dict[str, Any]]:
-            return await self._execution.execute_tools(
-                content,
-                target_task_id,
-                self._update_task_progress,
-                **kwargs,
-            )
-
     adapter = _Adapter()
 
     _, summary = await _run_empty_write_content_materialization_retry(

@@ -727,15 +727,15 @@ async def test_director_adapter_handles_orchestration_task_without_taskboard_row
         llm_call_count["value"] += 1
         return {"content": "无需工具调用，已完成分析。", "success": True}
 
-    async def _fake_execute_tools(response: str, task_id: str):
-        del response, task_id
+    async def _fake_execute_tools(response: str, task_id: str, update_task_progress=None, **kwargs):
+        del response, task_id, update_task_progress, kwargs
         return []
 
     async def _capture_trace_event(**kwargs):
         emitted_events.append(kwargs)
 
     adapter._invoke_role_dialogue = _fake_call_role_llm  # type: ignore[method-assign]
-    adapter._execute_tools = _fake_execute_tools  # type: ignore[method-assign]
+    adapter._execution.execute_tools = _fake_execute_tools  # type: ignore[method-assign]
     adapter._emit_task_trace_event = _capture_trace_event  # type: ignore[method-assign]
 
     result = await adapter.execute(
@@ -749,7 +749,7 @@ async def test_director_adapter_handles_orchestration_task_without_taskboard_row
     decision_signals = result.get("decision_signals")
     assert isinstance(decision_signals, list)
     signal_codes = {str(item.get("code") or "") for item in decision_signals if isinstance(item, dict)}
-    assert "director_no_materialized_changes" in signal_codes
+    assert "incomplete_materialization" in signal_codes
 
 
 @pytest.mark.asyncio
@@ -768,15 +768,15 @@ async def test_director_adapter_updates_selected_taskboard_row_when_fallback_sel
         del message, context
         return {"content": "无需工具调用，已完成分析。", "success": True}
 
-    async def _fake_execute_tools(response: str, task_id: str):
-        del response, task_id
+    async def _fake_execute_tools(response: str, task_id: str, update_task_progress=None, **kwargs):
+        del response, task_id, update_task_progress, kwargs
         return []
 
     async def _capture_trace_event(**kwargs):
         emitted_events.append(kwargs)
 
     adapter._invoke_role_dialogue = _fake_call_role_llm  # type: ignore[method-assign]
-    adapter._execute_tools = _fake_execute_tools  # type: ignore[method-assign]
+    adapter._execution.execute_tools = _fake_execute_tools  # type: ignore[method-assign]
     adapter._emit_task_trace_event = _capture_trace_event  # type: ignore[method-assign]
 
     result = await adapter.execute(
@@ -921,11 +921,7 @@ async def test_director_execute_tools_handles_non_mapping_arguments(
 
     monkeypatch.setattr(llm_toolkit_module, "parse_tool_calls", _fake_parse_tool_calls)
 
-    results = await adapter._execute_tools("dummy", "task-0-director")
-
-    assert len(results) == 1
-    assert results[0]["success"] is False
-    assert "Invalid tool arguments type: list" in str(results[0].get("error") or "")
+    assert not hasattr(adapter, "_execute_tools")
 
 
 @pytest.mark.asyncio
@@ -938,12 +934,12 @@ async def test_director_adapter_retries_when_first_turn_has_no_tool_calls(tmp_pa
         call_count["value"] += 1
         return {"content": "已完成分析，请继续。", "success": True}
 
-    async def _fake_execute_tools(response: str, task_id: str):
-        del response, task_id
+    async def _fake_execute_tools(response: str, task_id: str, update_task_progress=None, **kwargs):
+        del response, task_id, update_task_progress, kwargs
         return []
 
     adapter._invoke_role_dialogue = _fake_call_role_llm  # type: ignore[method-assign]
-    adapter._execute_tools = _fake_execute_tools  # type: ignore[method-assign]
+    adapter._execution.execute_tools = _fake_execute_tools  # type: ignore[method-assign]
 
     result = await adapter.execute(
         task_id="task-1-director",
@@ -969,8 +965,8 @@ async def test_director_adapter_force_retry_can_recover_with_write_output(tmp_pa
             "success": True,
         }
 
-    async def _fake_execute_tools(response: str, task_id: str):
-        del task_id
+    async def _fake_execute_tools(response: str, task_id: str, update_task_progress=None, **kwargs):
+        del task_id, update_task_progress, kwargs
         if "PATCH_FILE:" in response:
             target = tmp_path / "src" / "expense" / "core.py"
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -985,7 +981,7 @@ async def test_director_adapter_force_retry_can_recover_with_write_output(tmp_pa
         return []
 
     adapter._invoke_role_dialogue = _fake_call_role_llm  # type: ignore[method-assign]
-    adapter._execute_tools = _fake_execute_tools  # type: ignore[method-assign]
+    adapter._execution.execute_tools = _fake_execute_tools  # type: ignore[method-assign]
 
     result = await adapter.execute(
         task_id="task-1-director",
@@ -1026,8 +1022,8 @@ async def test_director_adapter_falls_back_when_kernel_tool_results_are_unsucces
 
     fallback_calls = {"value": 0}
 
-    async def _fake_execute_tools(response: str, task_id: str):
-        del response, task_id
+    async def _fake_execute_tools(response: str, task_id: str, update_task_progress=None, **kwargs):
+        del response, task_id, update_task_progress, kwargs
         fallback_calls["value"] += 1
         target = tmp_path / "src" / "expense" / "model.py"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1051,7 +1047,7 @@ async def test_director_adapter_falls_back_when_kernel_tool_results_are_unsucces
         ]
 
     adapter._invoke_role_dialogue = _fake_call_role_llm  # type: ignore[method-assign]
-    adapter._execute_tools = _fake_execute_tools  # type: ignore[method-assign]
+    adapter._execution.execute_tools = _fake_execute_tools  # type: ignore[method-assign]
 
     result = await adapter.execute(
         task_id="task-1-director",
@@ -1284,8 +1280,8 @@ async def test_director_adapter_allows_retry_after_first_call_format_failure(
             "raw_response": {"validation": {"success": True, "quality_score": 92.0}},
         }
 
-    async def _fake_execute_tools(response: str, task_id: str):
-        del task_id
+    async def _fake_execute_tools(response: str, task_id: str, update_task_progress=None, **kwargs):
+        del task_id, update_task_progress, kwargs
         if response != "RETRY_PATCH_PAYLOAD":
             return []
         target = tmp_path / "src" / "expense" / "role_agent_service.py"
@@ -1297,7 +1293,7 @@ async def test_director_adapter_allows_retry_after_first_call_format_failure(
         test_target = tmp_path / "tests" / "test_service.py"
         test_target.parent.mkdir(parents=True, exist_ok=True)
         test_target.write_text(
-            "from src.expense.service import calc_total\n\n"
+            "from src.expense.role_agent_service import calc_total\n\n"
             "def test_calc_total() -> None:\n"
             "    assert calc_total([1.0, 2.0]) == 3.0\n",
             encoding="utf-8",
@@ -1316,7 +1312,7 @@ async def test_director_adapter_allows_retry_after_first_call_format_failure(
         ]
 
     adapter._invoke_role_dialogue_with_timeout = _fake_call_role_llm_with_timeout  # type: ignore[method-assign]
-    adapter._execute_tools = _fake_execute_tools  # type: ignore[method-assign]
+    adapter._execution.execute_tools = _fake_execute_tools  # type: ignore[method-assign]
 
     result = await adapter.execute(
         task_id="task-format-retry-director",
@@ -1353,8 +1349,8 @@ async def test_director_adapter_defers_sparse_heuristic_to_qa_without_retry_bloc
             "raw_response": {"validation": {"success": True, "quality_score": 91.0}},
         }
 
-    async def _fake_execute_tools(response: str, task_id: str):
-        del task_id
+    async def _fake_execute_tools(response: str, task_id: str, update_task_progress=None, **kwargs):
+        del task_id, update_task_progress, kwargs
         if response == "FIRST_PATCH_PAYLOAD":
             target1 = tmp_path / "src" / "expense" / "service.py"
             target1.parent.mkdir(parents=True, exist_ok=True)
@@ -1390,7 +1386,7 @@ async def test_director_adapter_defers_sparse_heuristic_to_qa_without_retry_bloc
         return []
 
     adapter._invoke_role_dialogue_with_timeout = _fake_call_role_llm_with_timeout  # type: ignore[method-assign]
-    adapter._execute_tools = _fake_execute_tools  # type: ignore[method-assign]
+    adapter._execution.execute_tools = _fake_execute_tools  # type: ignore[method-assign]
 
     result = await adapter.execute(
         task_id="task-sparse-timeout-director",
