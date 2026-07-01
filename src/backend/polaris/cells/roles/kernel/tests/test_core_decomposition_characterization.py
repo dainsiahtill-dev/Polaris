@@ -87,6 +87,13 @@ def _context_gateway(token_estimate: int = 37) -> MagicMock:
     )
 
 
+def _event_emitter() -> SimpleNamespace:
+    return SimpleNamespace(
+        resolve_observer_run_id=lambda _role, run_id: str(run_id or "run_123"),
+        emit_runtime_llm_event=MagicMock(),
+    )
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Stream event-translation matrix
 # ──────────────────────────────────────────────────────────────────────────
@@ -283,8 +290,12 @@ class TestRunRetryQualityLoop:
         )
         turn_mock = AsyncMock(return_value=te_result)
         with (
-            patch.object(kernel, "_build_context", return_value=MagicMock()),
+            patch(
+                "polaris.cells.roles.kernel.internal.kernel.core.build_context_request",
+                return_value=MagicMock(),
+            ),
             patch("polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn", new=turn_mock),
+            patch.object(kernel, "_get_event_emitter", _event_emitter),
         ):
             result = await kernel.run("pm", _MockRequest(max_retries=3, validate_output=True))
         assert result.error == "kernel exploded"
@@ -305,11 +316,15 @@ class TestRunRetryQualityLoop:
             execution_stats={"transaction_kernel": True},
         )
         with (
-            patch.object(kernel, "_build_context", return_value=MagicMock()),
+            patch(
+                "polaris.cells.roles.kernel.internal.kernel.core.build_context_request",
+                return_value=MagicMock(),
+            ),
             patch(
                 "polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn",
                 new=AsyncMock(return_value=te_result),
             ),
+            patch.object(kernel, "_get_event_emitter", _event_emitter),
         ):
             result = await kernel.run("pm", _MockRequest(validate_output=True))
         assert result.error is None
@@ -336,10 +351,13 @@ class TestRunRetryQualityLoop:
         quality_checker = SimpleNamespace(validate_output=lambda *_a, **_k: failing_quality)
         turn_mock = AsyncMock(return_value=te_result)
         with (
-            patch.object(kernel, "_build_context", return_value=MagicMock()),
+            patch(
+                "polaris.cells.roles.kernel.internal.kernel.core.build_context_request",
+                return_value=MagicMock(),
+            ),
             patch("polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn", new=turn_mock),
             patch.object(kernel, "_get_quality_checker", lambda: quality_checker),
-            patch.object(kernel, "_emit_event"),
+            patch.object(kernel, "_get_event_emitter", _event_emitter),
         ):
             result = await kernel.run("pm", _MockRequest(max_retries=2, validate_output=True))
         # max_retries=2 -> attempts 0,1,2 = 3 invocations before exhaustion.
@@ -368,13 +386,16 @@ class TestRunRetryQualityLoop:
         )
         quality_checker = SimpleNamespace(validate_output=lambda *_a, **_k: passing_quality)
         with (
-            patch.object(kernel, "_build_context", return_value=MagicMock()),
+            patch(
+                "polaris.cells.roles.kernel.internal.kernel.core.build_context_request",
+                return_value=MagicMock(),
+            ),
             patch(
                 "polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn",
                 new=AsyncMock(return_value=te_result),
             ),
             patch.object(kernel, "_get_quality_checker", lambda: quality_checker),
-            patch.object(kernel, "_emit_event"),
+            patch.object(kernel, "_get_event_emitter", _event_emitter),
         ):
             result = await kernel.run("pm", _MockRequest(validate_output=True))
         assert result.error is None

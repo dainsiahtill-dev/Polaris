@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T04:49:04.213396Z",
-  "source_hash": "a767374959393df9",
+  "generated_at": "2026-07-01T04:58:12.598962Z",
+  "source_hash": "2b32a8454dacc230",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4058,10 +4058,6 @@
         {
           "name": "reset_tool_gateway_turn_boundary",
           "doc": "Explicitly reset cached gateway counters when the authoritative turn id changes."
-        },
-        {
-          "name": "_emit_event",
-          "doc": "发射 LLM 事件（委托到 KernelEventEmitter）"
         }
       ]
     },
@@ -21716,6 +21712,12 @@
     {
       "type": "function",
       "name": "_context_gateway",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_core_decomposition_characterization.py"
+    },
+    {
+      "type": "function",
+      "name": "_event_emitter",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_core_decomposition_characterization.py"
     },

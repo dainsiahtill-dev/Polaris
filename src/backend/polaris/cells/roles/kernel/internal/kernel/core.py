@@ -563,12 +563,13 @@ class RoleExecutionKernel:
                     logger.warning("Failed to record quality score metric")
 
                 if not quality_result.success:
-                    self._emit_event(
+                    self._get_event_emitter().emit_runtime_llm_event(
                         event_type=LLMEventType.VALIDATION_FAIL,
                         role=role,
                         run_id=observer_run_id,
                         task_id=task_id,
                         attempt=attempt,
+                        workspace=self.workspace,
                         errors=quality_result.errors,
                         quality_score=quality_result.quality_score,
                         model=profile.model,
@@ -588,12 +589,13 @@ class RoleExecutionKernel:
                         logger.warning("Failed to record retry metric")
 
                     if attempt < max_retries:
-                        self._emit_event(
+                        self._get_event_emitter().emit_runtime_llm_event(
                             event_type=LLMEventType.CALL_RETRY,
                             role=role,
                             run_id=observer_run_id,
                             task_id=task_id,
                             attempt=attempt,
+                            workspace=self.workspace,
                             error_category="validation_failed",
                             model=profile.model,
                             publish_realtime=False,
@@ -642,12 +644,13 @@ class RoleExecutionKernel:
                         metadata=dict(getattr(te_result, "metadata", {}) or {}),
                     )
 
-                self._emit_event(
+                self._get_event_emitter().emit_runtime_llm_event(
                     event_type=LLMEventType.VALIDATION_PASS,
                     role=role,
                     run_id=observer_run_id,
                     task_id=task_id,
                     attempt=attempt,
+                    workspace=self.workspace,
                     quality_score=quality_result.quality_score,
                     model=profile.model,
                     publish_realtime=False,
@@ -1029,33 +1032,6 @@ class RoleExecutionKernel:
             self._cached_gateway_turn_id = current_turn_id
 
         return gateway.execute_tool(tool_name, args)
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # 辅助方法（委托到各模块）
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    def _emit_event(
-        self,
-        *,
-        event_type: str,
-        role: str,
-        run_id: str,
-        task_id: str | None,
-        attempt: int = 0,
-        publish_realtime: bool = True,
-        **kwargs: Any,
-    ) -> None:
-        """发射 LLM 事件（委托到 KernelEventEmitter）"""
-        self._get_event_emitter().emit_runtime_llm_event(
-            event_type=event_type,
-            role=role,
-            run_id=run_id,
-            task_id=task_id,
-            attempt=attempt,
-            publish_realtime=publish_realtime,
-            workspace=self.workspace,
-            **kwargs,
-        )
 
 
 __all__ = [
