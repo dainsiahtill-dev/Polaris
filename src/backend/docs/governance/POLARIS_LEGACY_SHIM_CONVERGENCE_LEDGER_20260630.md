@@ -13,7 +13,7 @@ business wording, React `Suspense fallback`, and accepted config migration code.
 
 | Class | Count | Meaning |
 | --- | ---: | --- |
-| Closed in this convergence pass | 193 | Removed, retired, or converted into an audited sunset path and verified. |
+| Closed in this convergence pass | 194 | Removed, retired, or converted into an audited sunset path and verified. |
 | P1 open | 0 | Still close to execution, LLM/tool, QA, or state projection paths. |
 | P2 open | 0 | Exposed API/UI/CLI compatibility surfaces that should be retired after callers move. |
 | P3 accepted with sunset | 0 | Kept for user config or historical data migration; requires an expiry policy, not immediate deletion. |
@@ -259,6 +259,7 @@ Additional closed cuts: LS-14A, LS-15A, LS-16A, LS-17A, LS-18A, LS-19A, LS-20A, 
 | LS-33A | LS-33 | P2 | Migration ledger / retired compatibility cell evidence | Closed: `mig-compatibility-cell-removal` no longer uses a vague directory-level note for the retired empty compatibility cell. | Closed by changing the source ref note to an explicit empty file list plus verification basis; `legacy_file_coverage_audit` passes without suppressing the directory granularity rule. |
 | LS-34A | LS-34 | P1 | Director task consumer / stale deprecation marker | Closed: `director.task_consumer` no longer marks the active TaskMarket `pending_exec` consumer as deprecated or as a compatibility adapter for `DirectorPool`. | Closed by removing the stale `DeprecationWarning`, `__deprecated__` map, package/cell metadata deprecation text, and README deprecation claim while preserving the canonical claim -> execute -> task-boundary behavior; added construction coverage proving the active consumer no longer emits deprecation warnings. Verified with targeted task-consumer tests, ruff, negative grep for deprecated task-consumer markers, and legacy/shim governance scripts. |
 | LS-35A | LS-35 | P1 | PM dispatch / duplicate TaskMarket lazy import owners | Closed: `dispatch_pipeline.py` no longer carries duplicate TaskMarket lazy-import implementations beside canonical `internal.dispatch._lazy_imports`. | Closed by routing `_get_task_market_services`, `_get_task_market_revision_services`, and `_get_task_market_consumers` through the extracted lazy-import owner while preserving `dispatch_pipeline` module attributes for existing patch seams. Verified with dispatch pipeline/contract tests, ruff, mypy, py_compile, and negative grep proving those function definitions now exist only in `_lazy_imports.py`. |
+| LS-36A | LS-36 | P2 | KernelOne LLM tools / package-root re-export shim | Closed: `polaris.kernelone.llm.tools` no longer re-exports tool contracts/toolkit runtime symbols or emits a package-import `DeprecationWarning`. | Closed by making the package root namespace-only while keeping explicit submodule owners (`message_normalizer`, `normalizer`, `schema_validator`) intact; architecture fence now blocks reintroducing root re-export behavior. Verified with LLM tool submodule tests, architecture fence tests, ruff, mypy, py_compile, and negative import scans. |
 
 ## Closure Order
 

@@ -8,6 +8,7 @@ from pathlib import Path
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 POLARIS_ROOT = BACKEND_ROOT / "polaris"
 RETIRED_TOOLS_CONTRACTS_PATH = POLARIS_ROOT / "kernelone/llm/tools/contracts.py"
+TOOLS_PACKAGE_ROOT = POLARIS_ROOT / "kernelone/llm/tools/__init__.py"
 RETIRED_TOOLS_CONTRACTS_IMPORT = "polaris.kernelone.llm.tools.contracts"
 RETIRED_TOOLS_PACKAGE_IMPORT = "polaris.kernelone.llm.tools"
 
@@ -50,6 +51,25 @@ def test_retired_kernelone_llm_tools_contracts_shim_is_removed() -> None:
         "contracts from polaris.kernelone.llm.contracts or "
         "polaris.kernelone.llm.contracts.tool instead."
     )
+
+
+def test_kernelone_llm_tools_package_root_is_namespace_only() -> None:
+    """The package root must not recreate deprecated re-export behavior."""
+    source = TOOLS_PACKAGE_ROOT.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    imported_modules: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_modules.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_modules.append(node.module)
+
+    assert "warnings" not in imported_modules
+    assert "polaris.kernelone.llm.contracts" not in imported_modules
+    assert "polaris.kernelone.llm.toolkit" not in imported_modules
+    assert "DeprecationWarning" not in source
+    assert "ToolCall" not in source
 
 
 def test_production_code_does_not_import_retired_tools_contracts_shim() -> None:
