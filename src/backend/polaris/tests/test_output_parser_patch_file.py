@@ -1,13 +1,32 @@
 from __future__ import annotations
 
+from typing import Any
+
 from polaris.cells.roles.kernel.internal.output_parser import OutputParser
+from polaris.cells.roles.kernel.internal.turn_engine import assistant_raw_content
+
+
+def _parse_execution_tool_calls(
+    parser: OutputParser,
+    content: str,
+    *,
+    allowed_tool_names: list[str] | None = None,
+    native_tool_calls: list[dict[str, Any]] | None = None,
+    native_provider: str = "auto",
+):
+    return parser.parse_execution_tool_calls(
+        assistant_raw_content(content),
+        allowed_tool_names=allowed_tool_names,
+        native_tool_calls=native_tool_calls,
+        native_provider=native_provider,
+    )
 
 
 def _to_payload(calls):
     return [(call.tool, dict(call.args)) for call in calls]
 
 
-def test_parse_tool_calls_ignores_patch_file_search_replace_text() -> None:
+def test_parse_execution_tool_calls_ignores_patch_file_search_replace_text() -> None:
     parser = OutputParser()
     content = (
         "PATCH_FILE: src/role_agent_service.py\n"
@@ -21,14 +40,15 @@ def test_parse_tool_calls_ignores_patch_file_search_replace_text() -> None:
         "END PATCH_FILE\n"
     )
 
-    calls = parser.parse_tool_calls(
+    calls = _parse_execution_tool_calls(
+        parser,
         content,
         allowed_tool_names=["edit_file", "write_file"],
     )
     assert calls == []
 
 
-def test_parse_tool_calls_ignores_empty_search_patch_text() -> None:
+def test_parse_execution_tool_calls_ignores_empty_search_patch_text() -> None:
     parser = OutputParser()
     content = (
         "PATCH_FILE: src/new_module.py\n"
@@ -40,14 +60,15 @@ def test_parse_tool_calls_ignores_empty_search_patch_text() -> None:
         "END PATCH_FILE\n"
     )
 
-    calls = parser.parse_tool_calls(
+    calls = _parse_execution_tool_calls(
+        parser,
         content,
         allowed_tool_names=["write_file"],
     )
     assert calls == []
 
 
-def test_parse_tool_calls_rejects_unsafe_patch_path() -> None:
+def test_parse_execution_tool_calls_rejects_unsafe_patch_path() -> None:
     parser = OutputParser()
     content = (
         "PATCH_FILE: ../../../etc/passwd\n"
@@ -59,22 +80,23 @@ def test_parse_tool_calls_rejects_unsafe_patch_path() -> None:
         "END PATCH_FILE\n"
     )
 
-    calls = parser.parse_tool_calls(
+    calls = _parse_execution_tool_calls(
+        parser,
         content,
         allowed_tool_names=["edit_file", "write_file"],
     )
     assert calls == []
 
 
-def test_parse_tool_calls_filters_by_allowed_tool_names() -> None:
+def test_parse_execution_tool_calls_filters_by_allowed_tool_names() -> None:
     parser = OutputParser()
     content = "PATCH_FILE: src/app.py\n<<<<<<< SEARCH\n<empty>\n=======\nprint('x')\n>>>>>>> REPLACE\nEND PATCH_FILE\n"
 
-    calls = parser.parse_tool_calls(content, allowed_tool_names=["edit_file"])
+    calls = _parse_execution_tool_calls(parser, content, allowed_tool_names=["edit_file"])
     assert calls == []
 
 
-def test_parse_tool_calls_supports_native_openai_tool_calls() -> None:
+def test_parse_execution_tool_calls_supports_native_openai_tool_calls() -> None:
     parser = OutputParser()
     native_calls = [
         {
@@ -86,7 +108,8 @@ def test_parse_tool_calls_supports_native_openai_tool_calls() -> None:
             },
         }
     ]
-    calls = parser.parse_tool_calls(
+    calls = _parse_execution_tool_calls(
+        parser,
         "",
         allowed_tool_names=["glob"],
         native_tool_calls=native_calls,
@@ -96,7 +119,7 @@ def test_parse_tool_calls_supports_native_openai_tool_calls() -> None:
     assert payload == [("glob", {"pattern": "**/*.py", "path": "."})]
 
 
-def test_parse_tool_calls_supports_native_anthropic_tool_calls() -> None:
+def test_parse_execution_tool_calls_supports_native_anthropic_tool_calls() -> None:
     parser = OutputParser()
     native_calls = [
         {
@@ -106,7 +129,8 @@ def test_parse_tool_calls_supports_native_anthropic_tool_calls() -> None:
             "input": {"path": "tui_runtime.md"},
         }
     ]
-    calls = parser.parse_tool_calls(
+    calls = _parse_execution_tool_calls(
+        parser,
         "",
         allowed_tool_names=["file_exists"],
         native_tool_calls=native_calls,
@@ -116,7 +140,7 @@ def test_parse_tool_calls_supports_native_anthropic_tool_calls() -> None:
     assert payload == [("file_exists", {"path": "tui_runtime.md"})]
 
 
-def test_parse_tool_calls_does_not_misparse_read_file_tags_as_file_protocol() -> None:
+def test_parse_execution_tool_calls_does_not_misparse_read_file_tags_as_file_protocol() -> None:
     parser = OutputParser()
     content = (
         "[read_file]\n"
@@ -127,18 +151,20 @@ def test_parse_tool_calls_does_not_misparse_read_file_tags_as_file_protocol() ->
         "[/read_file]\n"
     )
 
-    calls = parser.parse_tool_calls(
+    calls = _parse_execution_tool_calls(
+        parser,
         content,
         allowed_tool_names=["read_file", "write_file", "edit_file"],
     )
     assert calls == []
 
 
-def test_parse_tool_calls_ignores_file_protocol_with_end_file_markers() -> None:
+def test_parse_execution_tool_calls_ignores_file_protocol_with_end_file_markers() -> None:
     parser = OutputParser()
     content = 'FILE: src/expense_tracker/runtime_config.py\nAPP_NAME = "expense-tracker"\nEND FILE\n'
 
-    calls = parser.parse_tool_calls(
+    calls = _parse_execution_tool_calls(
+        parser,
         content,
         allowed_tool_names=["write_file"],
     )

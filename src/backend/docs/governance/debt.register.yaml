@@ -26,10 +26,10 @@ debts:
       - "AssistantTurnArtifacts makes raw/sanitized/native data explicit"
       - "2026-07-02: AssistantRawContent and AssistantCleanContent typed stages added; parse_execution_tool_calls now requires AssistantRawContent while parse_tool_calls remains a compatibility wrapper"
       - "2026-07-02: IOutputParser service protocol now exposes only parse_execution_tool_calls with AssistantRawContent, keeping the str-based parse_tool_calls wrapper out of dependency-injected execution contracts"
+      - "2026-07-02: OutputParser no longer exposes the legacy parse_tool_calls(str) wrapper; parser tests now call parse_execution_tool_calls with AssistantRawContent"
       - "Semantic stage regression tests protect parser and transcript boundaries"
       - "verify.pack.json records current guarantees and residual risks"
     residual_risks:
-      - "The concrete OutputParser legacy compatibility parse_tool_calls API still accepts str and wraps it into AssistantRawContent; tests must keep proving execution contracts use typed parse_execution_tool_calls"
       - "Downstream stream consumers can still regress if they reintroduce wrapper-bearing chunk contracts"
     linked_assets:
       adrs:

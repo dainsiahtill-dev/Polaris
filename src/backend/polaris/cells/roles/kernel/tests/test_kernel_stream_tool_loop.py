@@ -9,6 +9,7 @@ import pytest
 from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
 from polaris.cells.roles.kernel.internal.kernel.prompt_builder_provider import get_prompt_builder
 from polaris.cells.roles.kernel.internal.output_parser import OutputParser
+from polaris.cells.roles.kernel.internal.turn_engine import assistant_raw_content
 from polaris.cells.roles.profile.public.service import RoleExecutionMode, RoleTurnRequest
 
 # Note: Tests that need specific stall behavior should set env vars themselves.
@@ -1229,8 +1230,8 @@ def test_output_parser_ignores_thinking_wrappers_when_not_in_content() -> None:
     """thinking wrappers must never become executable tool calls."""
     parser = OutputParser()
 
-    tool_calls = parser.parse_tool_calls(
-        "这里没有工具调用。",
+    tool_calls = parser.parse_execution_tool_calls(
+        assistant_raw_content("这里没有工具调用。"),
         native_tool_calls=None,
         native_provider="auto",
     )
@@ -1242,8 +1243,8 @@ def test_output_parser_keeps_native_tool_calls_without_content() -> None:
     """native tool calls remain valid, thinking wrappers are ignored."""
     parser = OutputParser()
 
-    tool_calls = parser.parse_tool_calls(
-        "",
+    tool_calls = parser.parse_execution_tool_calls(
+        assistant_raw_content(""),
         native_tool_calls=[
             {
                 "id": "native_1",
@@ -1266,8 +1267,8 @@ def test_output_parser_accepts_openai_shape_with_anthropic_hint() -> None:
     """provider hint must not discard a valid native payload shape."""
     parser = OutputParser()
 
-    tool_calls = parser.parse_tool_calls(
-        "",
+    tool_calls = parser.parse_execution_tool_calls(
+        assistant_raw_content(""),
         native_tool_calls=[_openai_native_tool_call("README.md")],
         native_provider="anthropic",
     )

@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.internal.turn_engine.artifacts import (
     AssistantRawContent,
-    assistant_raw_content,
 )
 
 # Import canonical ToolCall for P0-002 unification
@@ -269,22 +268,6 @@ class OutputParser:
         return ThinkingResult(
             thinking=None,
             clean_content=self.strip_visible_protocol_wrappers(token),
-        )
-
-    def parse_tool_calls(
-        self,
-        content: str,
-        *,
-        allowed_tool_names: Iterable[str] | None = None,
-        native_tool_calls: list[dict[str, Any]] | None = None,
-        native_provider: str = "auto",
-    ) -> list[ToolCallResult]:
-        """统一工具调用解析入口，运行时只接受 native tool_calls。"""
-        return self.parse_execution_tool_calls(
-            assistant_raw_content(content),
-            allowed_tool_names=allowed_tool_names,
-            native_tool_calls=native_tool_calls,
-            native_provider=native_provider,
         )
 
     @staticmethod

@@ -32,6 +32,7 @@ from polaris.cells.roles.kernel.internal.tool_loop_controller import (
     ToolLoopController,
     ToolLoopSafetyPolicy,
 )
+from polaris.cells.roles.kernel.internal.turn_engine import AssistantRawContent
 from polaris.cells.roles.profile.public.service import RoleProfile
 
 # =============================================================================
@@ -56,11 +57,13 @@ class OutputParserProtocol(Protocol):
 
     def parse_thinking(self, content: str) -> Any: ...
 
-    def parse_tool_calls(
+    def parse_execution_tool_calls(
         self,
-        content: str,
-        native_tool_calls: list[dict[str, Any]] | None,
-        native_provider: str,
+        content: AssistantRawContent,
+        *,
+        allowed_tool_names: list[str] | None = None,
+        native_tool_calls: list[dict[str, Any]] | None = None,
+        native_provider: str = "auto",
     ) -> list[ToolCallResult]: ...
 
 
@@ -179,18 +182,22 @@ class MockOutputParser:
             clean_content=clean_content.strip(),
         )
 
-    def parse_tool_calls(
+    def parse_execution_tool_calls(
         self,
-        content: str,
-        native_tool_calls: list[dict[str, Any]] | None,
-        native_provider: str,
+        content: AssistantRawContent,
+        *,
+        allowed_tool_names: list[str] | None = None,
+        native_tool_calls: list[dict[str, Any]] | None = None,
+        native_provider: str = "auto",
     ) -> list[ToolCallResult]:
         """Parse tool calls from content."""
         self.call_history.append(
             {
-                "method": "parse_tool_calls",
+                "method": "parse_execution_tool_calls",
                 "content_length": len(content),
+                "allowed_tool_names": list(allowed_tool_names or []),
                 "native_tool_calls_count": len(native_tool_calls or []),
+                "native_provider": native_provider,
             }
         )
 
@@ -347,7 +354,7 @@ class TestOutputParserIntegration:
         assert "Here is the answer" in result.clean_content
         assert "<thinking>" not in result.clean_content
 
-    def test_parse_tool_calls_from_native(self, mock_output_parser: MockOutputParser) -> None:
+    def test_parse_execution_tool_calls_from_native(self, mock_output_parser: MockOutputParser) -> None:
         """Verify parsing native tool calls."""
         # Arrange
         native_calls = [
@@ -362,7 +369,11 @@ class TestOutputParserIntegration:
         ]
 
         # Act
-        results = mock_output_parser.parse_tool_calls("", native_calls, "openai")
+        results = mock_output_parser.parse_execution_tool_calls(
+            AssistantRawContent(""),
+            native_tool_calls=native_calls,
+            native_provider="openai",
+        )
 
         # Assert
         assert len(results) == 1

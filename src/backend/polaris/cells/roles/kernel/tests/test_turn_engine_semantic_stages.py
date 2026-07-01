@@ -52,8 +52,10 @@ def test_output_parser_strips_output_wrappers_from_visible_content() -> None:
 def test_parser_uses_native_tool_calls_and_ignores_textual_fallback() -> None:
     parser = OutputParser()
 
-    tool_calls = parser.parse_tool_calls(
-        '文本里的工具调用不应执行：[TOOL_CALL]{"tool":"read_file","arguments":{"path":"stale.md"}}[/TOOL_CALL]',
+    tool_calls = parser.parse_execution_tool_calls(
+        assistant_raw_content(
+            '文本里的工具调用不应执行：[TOOL_CALL]{"tool":"read_file","arguments":{"path":"stale.md"}}[/TOOL_CALL]'
+        ),
         native_tool_calls=[_native_read_file_call()],
         native_provider="openai",
     )
@@ -66,8 +68,8 @@ def test_parser_uses_native_tool_calls_and_ignores_textual_fallback() -> None:
 def test_textual_wrapper_without_native_tool_call_is_not_executable() -> None:
     parser = OutputParser()
 
-    tool_calls = parser.parse_tool_calls(
-        '[TOOL_CALL]{"tool":"read_file","arguments":{"path":"README.md"}}[/TOOL_CALL]',
+    tool_calls = parser.parse_execution_tool_calls(
+        assistant_raw_content('[TOOL_CALL]{"tool":"read_file","arguments":{"path":"README.md"}}[/TOOL_CALL]'),
         native_tool_calls=None,
         native_provider="openai",
     )
@@ -85,6 +87,7 @@ def test_execution_parser_uses_typed_raw_content_boundary() -> None:
     assert parser_hints["content"] == "AssistantRawContent"
     assert protocol_hints["content"] == "AssistantRawContent"
     assert not hasattr(IOutputParser, "parse_tool_calls")
+    assert not hasattr(OutputParser, "parse_tool_calls")
     assert artifact_hints["raw_content"] == "AssistantRawContent"
     assert artifact_hints["clean_content"] == "AssistantCleanContent"
 
