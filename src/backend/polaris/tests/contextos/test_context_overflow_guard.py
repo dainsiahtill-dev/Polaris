@@ -63,13 +63,9 @@ class TestContextOverflowGuard:
 
     @pytest.mark.asyncio
     async def test_overflow_error_raised_when_tokens_exceed_limit(self) -> None:
-        """P1-1-1: ContextOverflowError 应在 token 超限且无法压缩时抛出
-
-        注意: 此测试验证 ContextOverflowError 的预期行为。
-        当 Task-007 实现 ContextOverflowError 异常类后，此测试应通过。
-        当前实现尚未抛出该异常，此测试记录了预期的实现需求。
-        """
+        """P1-1-1: ContextOverflowError 应在 token 超限且无法压缩时抛出"""
         from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+        from polaris.kernelone.errors import BudgetExceededError
         from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
 
         # Monkeypatch model catalog to provide context window
@@ -78,7 +74,6 @@ class TestContextOverflowGuard:
         ModelCatalog._resolve_context_window = lambda self, *a, **kw: 128000
         ModelCatalog._resolve_output_limit = lambda self, *a, **kw: 4096
         try:
-
             # Create gateway with very low token limit
             context_policy = RoleContextPolicy(
                 max_context_tokens=100,  # Very low limit
@@ -107,8 +102,8 @@ class TestContextOverflowGuard:
 
             # Patch _emergency_fallback to return messages that still exceed limit
             with patch.object(
-                gateway,
-                "_emergency_fallback",
+                gateway._compression_engine,
+                "emergency_fallback",
                 return_value=(messages, 150),  # Still exceeds 100 limit
             ):
                 request = TurnEngineContextRequest(
@@ -119,18 +114,8 @@ class TestContextOverflowGuard:
                     context_os_snapshot=None,
                 )
 
-                # Build context with current implementation
-                # When Task-007 is implemented, this should raise ContextOverflowError
-                result = await gateway.build_context(request)
-
-                # Current behavior: returns whatever emergency fallback produced
-                # Expected behavior after Task-007: raises ContextOverflowError
-                # This assertion documents current behavior; after implementation it should be:
-                # with pytest.raises(ContextOverflowError):
-                #     gateway.build_context(request)
-                assert result is not None
-                assert hasattr(result, "messages")
-                assert hasattr(result, "token_estimate")
+                with pytest.raises(BudgetExceededError):
+                    await gateway.build_context(request)
 
         finally:
             ModelCatalog._resolve_context_window = _resolve_ctx
@@ -147,7 +132,6 @@ class TestContextOverflowGuard:
         ModelCatalog._resolve_context_window = lambda self, *a, **kw: 128000
         ModelCatalog._resolve_output_limit = lambda self, *a, **kw: 4096
         try:
-
             # Create gateway with moderate token limit
             context_policy = RoleContextPolicy(
                 max_context_tokens=500,
@@ -174,8 +158,15 @@ class TestContextOverflowGuard:
                 context_os_snapshot=None,
             )
 
-            # Mock _estimate_tokens to return values that trigger compression
-            with patch.object(gateway, "_estimate_tokens", side_effect=[2000, 400, 350]):
+            # Mock token estimation and compression at their owning collaborators.
+            with (
+                patch.object(gateway._token_estimator, "estimate", side_effect=[2000, 2000, 2000]),
+                patch.object(
+                    gateway._compression_engine,
+                    "apply_compression",
+                    return_value=([{"role": "user", "content": "compressed"}], 350),
+                ),
+            ):
                 # Should NOT raise, compression should work
                 result = await gateway.build_context(request)
                 assert result.token_estimate <= 500
@@ -195,7 +186,6 @@ class TestContextOverflowGuard:
         ModelCatalog._resolve_context_window = lambda self, *a, **kw: 128000
         ModelCatalog._resolve_output_limit = lambda self, *a, **kw: 4096
         try:
-
             # Create gateway with very low limit
             context_policy = RoleContextPolicy(
                 max_context_tokens=200,
@@ -220,16 +210,6 @@ class TestContextOverflowGuard:
                 {"role": "assistant", "content": "y" * 500},
             ]
 
-            # Track which compression methods are called
-            compression_called = []
-
-            original_apply_compression = gateway._apply_compression
-
-            def mock_apply_compression(msgs, tokens):
-                compression_called.append("_apply_compression")
-                # Call original but with mocked internals
-                return original_apply_compression(msgs, tokens)
-
             request = TurnEngineContextRequest(
                 message="test",
                 history=(),
@@ -238,18 +218,20 @@ class TestContextOverflowGuard:
                 context_os_snapshot=None,
             )
 
-            # Mock _estimate_tokens to simulate overflow scenario
+            # Mock owner collaborators to simulate overflow and recovery.
             with (
-                patch.object(gateway, "_estimate_tokens", return_value=1000),
-                patch.object(gateway, "_apply_compression", wraps=gateway._apply_compression) as mock_wrapped,
+                patch.object(gateway._token_estimator, "estimate", return_value=1000),
+                patch.object(
+                    gateway._compression_engine,
+                    "apply_compression",
+                    return_value=(messages, 800),
+                ),
+                patch.object(
+                    gateway._compression_engine,
+                    "emergency_truncate_with_limit",
+                    return_value=(messages[:1], 100),
+                ),
             ):
-                # First call returns high tokens, triggering compression
-                # After compression, still high, triggers emergency fallback
-                mock_wrapped.side_effect = [
-                    (messages, 800),  # After truncation, still > 200
-                    (messages[:2], 300),  # After emergency fallback
-                ]
-
                 # Should not raise because emergency fallback brings it under
                 result = await gateway.build_context(request)
 
@@ -265,21 +247,29 @@ class TestContextOverflowGuard:
 class TestCompressionStrategies:
     """测试不同压缩策略的行为"""
 
-    def test_summarize_strategy(self) -> None:
-        """测试 summarize 压缩策略"""
-        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+    @staticmethod
+    def _engine(max_context_tokens: int, compression_strategy: str) -> Any:
+        from pathlib import Path
 
-        context_policy = RoleContextPolicy(
-            max_context_tokens=300,
-            compression_strategy="summarize",
+        from polaris.cells.roles.kernel.internal.context_gateway.compression_engine import CompressionEngine
+        from polaris.cells.roles.kernel.internal.context_gateway.token_estimator import TokenEstimator
+        from polaris.kernelone.context.history_materialization import SessionContinuityStrategy
+        from polaris.kernelone.llm.reasoning import ReasoningStripper
+
+        return CompressionEngine(
+            max_context_tokens=max_context_tokens,
+            compression_strategy=compression_strategy,
+            max_history_turns=10,
+            token_estimator=TokenEstimator(),
+            continuity_strategy=SessionContinuityStrategy(),
+            profile=MagicMock(),
+            workspace=Path("."),
+            reasoning_stripper=ReasoningStripper(),
         )
 
-        mock_profile = MagicMock(spec=RoleProfile)
-        mock_profile.role_id = "test-role"
-        mock_profile.display_name = "Test Role"
-        mock_profile.context_policy = context_policy
-
-        gateway = RoleContextGateway(profile=mock_profile, workspace=".")
+    def test_summarize_strategy(self) -> None:
+        """测试 summarize 压缩策略"""
+        engine = self._engine(max_context_tokens=300, compression_strategy="summarize")
 
         messages = [
             {"role": "system", "content": "system"},
@@ -289,7 +279,7 @@ class TestCompressionStrategies:
             {"role": "user", "content": "line 4"},
         ]
 
-        compressed, tokens = gateway._apply_compression(messages, 1000)
+        compressed, tokens = engine.apply_compression(messages, 1000)
 
         # Should reduce tokens
         assert tokens < 1000
@@ -297,45 +287,21 @@ class TestCompressionStrategies:
 
     def test_truncate_strategy(self) -> None:
         """测试 truncate 压缩策略"""
-        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
-
-        context_policy = RoleContextPolicy(
-            max_context_tokens=300,
-            compression_strategy="truncate",
-        )
-
-        mock_profile = MagicMock(spec=RoleProfile)
-        mock_profile.role_id = "test-role"
-        mock_profile.display_name = "Test Role"
-        mock_profile.context_policy = context_policy
-
-        gateway = RoleContextGateway(profile=mock_profile, workspace=".")
+        engine = self._engine(max_context_tokens=300, compression_strategy="truncate")
 
         messages = [
             {"role": "system", "content": "system"},
             {"role": "user", "content": "x" * 1000},
         ]
 
-        compressed, tokens = gateway._apply_compression(messages, 2000)
+        _compressed, tokens = engine.apply_compression(messages, 2000)
 
         # Should reduce tokens
         assert tokens < 2000
 
     def test_sliding_window_strategy(self) -> None:
         """测试 sliding_window 压缩策略"""
-        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
-
-        context_policy = RoleContextPolicy(
-            max_context_tokens=300,
-            compression_strategy="sliding_window",
-        )
-
-        mock_profile = MagicMock(spec=RoleProfile)
-        mock_profile.role_id = "test-role"
-        mock_profile.display_name = "Test Role"
-        mock_profile.context_policy = context_policy
-
-        gateway = RoleContextGateway(profile=mock_profile, workspace=".")
+        engine = self._engine(max_context_tokens=300, compression_strategy="sliding_window")
 
         messages = [
             {"role": "system", "content": "system"},
@@ -345,7 +311,7 @@ class TestCompressionStrategies:
             {"role": "assistant", "content": "msg4"},
         ]
 
-        compressed, tokens = gateway._apply_compression(messages, 2000)
+        _compressed, tokens = engine.apply_compression(messages, 2000)
 
         # Should reduce tokens through sliding window
         assert tokens < 2000

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T03:21:51.522712Z",
-  "source_hash": "800d35908fa7b801",
+  "generated_at": "2026-07-01T03:33:39.253473Z",
+  "source_hash": "7afa8622fd2c82f3",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -821,18 +821,6 @@
         {
           "name": "_build_projection_dict",
           "doc": "Backward-compatible delegate to ProjectionDictBuilder.build."
-        },
-        {
-          "name": "_estimate_tokens",
-          "doc": "Backward-compatible delegate to TokenEstimator.estimate."
-        },
-        {
-          "name": "_apply_compression",
-          "doc": "Backward-compatible delegate to CompressionEngine.apply_compression."
-        },
-        {
-          "name": "_emergency_fallback",
-          "doc": "Backward-compatible delegate to CompressionEngine.emergency_fallback."
         },
         {
           "name": "_get_project_structure",
@@ -32003,6 +31991,12 @@
           "doc": "RoleSessionLifecycleEventV1 covers all session state transitions."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_compression_engine",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_transcript_leak_guard.py"
     },
     {
       "type": "function",

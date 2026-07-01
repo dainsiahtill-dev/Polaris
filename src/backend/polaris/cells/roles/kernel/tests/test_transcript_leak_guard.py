@@ -20,6 +20,8 @@ Coverage:
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from polaris.cells.roles.kernel.public.transcript_ir import (
     AssistantMessage,
@@ -31,6 +33,28 @@ from polaris.cells.roles.kernel.public.transcript_ir import (
     TranscriptDelta,
     UserMessage,
 )
+
+
+def _compression_engine(max_context_tokens: int, compression_strategy: str) -> Any:
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    from polaris.cells.roles.kernel.internal.context_gateway.compression_engine import CompressionEngine
+    from polaris.cells.roles.kernel.internal.context_gateway.token_estimator import TokenEstimator
+    from polaris.kernelone.context.history_materialization import SessionContinuityStrategy
+    from polaris.kernelone.llm.reasoning import ReasoningStripper
+
+    return CompressionEngine(
+        max_context_tokens=max_context_tokens,
+        compression_strategy=compression_strategy,
+        max_history_turns=100,
+        token_estimator=TokenEstimator(),
+        continuity_strategy=SessionContinuityStrategy(),
+        reasoning_stripper=ReasoningStripper(),
+        profile=MagicMock(),
+        workspace=Path("."),
+    )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # G-2.1: raw_content never reaches LLM history
@@ -346,21 +370,7 @@ class TestCompactionSemanticSafety:
 
     def test_context_gateway_apply_compression_truncates_not_corrupts(self) -> None:
         """Compression must not mutate message semantics, only remove entries."""
-        # Build a mock profile with context policy
-        from unittest.mock import MagicMock
-
-        from polaris.cells.roles.kernel.internal.context_gateway import (
-            RoleContextGateway,
-        )
-
-        mock_profile = MagicMock()
-        mock_profile.context_policy.include_project_structure = False
-        mock_profile.context_policy.include_task_history = False
-        mock_profile.context_policy.max_context_tokens = 10  # Force compression
-        mock_profile.context_policy.compression_strategy = "sliding_window"
-        mock_profile.context_policy.max_history_turns = 100
-
-        gateway = RoleContextGateway(mock_profile)
+        engine = _compression_engine(max_context_tokens=10, compression_strategy="sliding_window")
 
         messages = [
             {"role": "system", "content": "system prompt"},
@@ -371,7 +381,7 @@ class TestCompactionSemanticSafety:
         ]
 
         # Compression should not corrupt the last user/assistant pair
-        compressed, _tokens = gateway._apply_compression(messages, 1000)
+        compressed, _tokens = engine.apply_compression(messages, 1000)
         # Last user message should be preserved (or at minimum not corrupted)
         content_str = str(compressed)
         assert "second question" in content_str or len(compressed) < len(messages)
@@ -456,20 +466,7 @@ class TestCompactionSemanticSafety:
 
     def test_emergency_fallback_preserves_tool_result_chain(self) -> None:
         """Emergency fallback must preserve recent tool result chain to avoid re-calling."""
-        from unittest.mock import MagicMock
-
-        from polaris.cells.roles.kernel.internal.context_gateway import (
-            RoleContextGateway,
-        )
-
-        mock_profile = MagicMock()
-        mock_profile.context_policy.include_project_structure = False
-        mock_profile.context_policy.include_task_history = False
-        mock_profile.context_policy.max_context_tokens = 1
-        mock_profile.context_policy.compression_strategy = "truncate"
-        mock_profile.context_policy.max_history_turns = 100
-
-        gateway = RoleContextGateway(mock_profile)
+        engine = _compression_engine(max_context_tokens=1, compression_strategy="truncate")
 
         messages = [
             {"role": "system", "content": "sys"},
@@ -478,7 +475,7 @@ class TestCompactionSemanticSafety:
             {"role": "tool", "content": '{"result": "tool output"}'},
         ]
 
-        result, _ = gateway._emergency_fallback(messages)
+        result, _ = engine.emergency_fallback(messages)
         # Tool result chain must be preserved in emergency fallback
         str(result)
         # At minimum, one message should be retained
@@ -486,20 +483,7 @@ class TestCompactionSemanticSafety:
 
     def test_summarize_strategy_emits_continuity_summary_message(self) -> None:
         """Summarize strategy should produce a summary message under token pressure."""
-        from unittest.mock import MagicMock
-
-        from polaris.cells.roles.kernel.internal.context_gateway import (
-            RoleContextGateway,
-        )
-
-        mock_profile = MagicMock()
-        mock_profile.context_policy.include_project_structure = False
-        mock_profile.context_policy.include_task_history = False
-        mock_profile.context_policy.max_context_tokens = 10
-        mock_profile.context_policy.compression_strategy = "summarize"
-        mock_profile.context_policy.max_history_turns = 100
-
-        gateway = RoleContextGateway(mock_profile)
+        engine = _compression_engine(max_context_tokens=10, compression_strategy="summarize")
         messages = [
             {"role": "system", "content": "system prompt"},
             {
@@ -512,7 +496,7 @@ class TestCompactionSemanticSafety:
             {"role": "user", "content": "请给出更主流的新策略"},
         ]
 
-        compressed, _ = gateway._apply_compression(messages, 1000)
+        compressed, _ = engine.apply_compression(messages, 1000)
         content_str = str(compressed)
         assert "State-First Context OS" in content_str
         assert any(str(item.get("name") or "") == "continuity_summary" for item in compressed if isinstance(item, dict))

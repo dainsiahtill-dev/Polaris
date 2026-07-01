@@ -751,22 +751,6 @@ class RoleContextGateway:
         """Backward-compatible delegate to ProjectionDictBuilder.build."""
         return self._projection_dict_builder.build(projection, request)
 
-    def _estimate_tokens(self, messages: list[dict[str, str]]) -> int:
-        """Backward-compatible delegate to TokenEstimator.estimate."""
-        return self._token_estimator.estimate(messages)
-
-    def _apply_compression(
-        self,
-        messages: list[dict[str, str]],
-        current_tokens: int,
-    ) -> tuple[list[dict[str, str]], int]:
-        """Backward-compatible delegate to CompressionEngine.apply_compression."""
-        return self._compression_engine.apply_compression(messages, current_tokens)
-
-    def _emergency_fallback(self, messages: list[dict[str, str]]) -> tuple[list[dict[str, str]], int]:
-        """Backward-compatible delegate to CompressionEngine.emergency_fallback."""
-        return self._compression_engine.emergency_fallback(messages)
-
     async def _process_history(
         self,
         history: list[tuple[Any, ...]] | tuple[Any, ...],
