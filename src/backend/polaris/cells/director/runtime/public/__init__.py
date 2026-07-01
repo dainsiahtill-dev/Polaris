@@ -73,6 +73,16 @@ from .contracts import (
     RunDirectorRepairConvergenceCommandV1,
     RunDirectorTaskBoundaryQualityLoopCommandV1,
 )
+from .repair_kernel_contracts import (
+    FILE_ABSENT_HASH,
+    RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL,
+    RUST_MISSING_MODULE_FILE_SOURCE_TOOL,
+    RUST_MISSING_MODULE_FILE_STUB,
+    build_substantive_node_test_script,
+    is_overstrict_node_test_script_contract,
+    remove_patch_residue_lines,
+    sha256_text,
+)
 from .service import (
     DirectorRepairConvergenceVerifierFn,
     DirectorRepairRevalidatorFn,
@@ -109,6 +119,10 @@ from .service import (
 )
 
 __all__ = [
+    "FILE_ABSENT_HASH",
+    "RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL",
+    "RUST_MISSING_MODULE_FILE_SOURCE_TOOL",
+    "RUST_MISSING_MODULE_FILE_STUB",
     "AttachDirectorRepairRevalidationEvidenceV1",
     "CompareDirectorRepairShadowRunV1",
     "DirectorRepairAdvisoryPolicyResultV1",
@@ -182,8 +196,10 @@ __all__ = [
     "RunDirectorTaskBoundaryQualityLoopCommandV1",
     "attach_director_repair_revalidation_evidence",
     "build_director_repair_kernel_summary",
+    "build_substantive_node_test_script",
     "compare_director_repair_shadow_run",
     "evaluate_director_repair_cutover_readiness",
+    "is_overstrict_node_test_script_contract",
     "normalize_director_repair_diagnostics",
     "plan_director_repair",
     "project_director_repair_kernel_summary",
@@ -201,6 +217,7 @@ __all__ = [
     "query_director_repair_plan_probe",
     "query_director_repair_post_execution_schedule",
     "query_director_repair_strategy_catalog",
+    "remove_patch_residue_lines",
     "run_director_materialization_quality_repair_facade",
     "run_director_materialization_quality_repair_schedule",
     "run_director_materialization_quality_repair_schedule_result",
@@ -209,5 +226,6 @@ __all__ = [
     "run_director_repair",
     "run_director_repair_convergence",
     "run_director_task_boundary_quality_loop",
+    "sha256_text",
     "validate_director_repair_advisory",
 ]

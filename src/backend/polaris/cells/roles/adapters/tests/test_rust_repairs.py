@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
-from polaris.cells.director.runtime.internal.repair_kernel.rust_syntax import (
+from polaris.cells.director.runtime.public.repair_kernel_contracts import (
     RUST_MISSING_MODULE_FILE_SOURCE_TOOL,
     RUST_MISSING_MODULE_FILE_STUB,
 )

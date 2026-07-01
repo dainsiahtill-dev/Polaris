@@ -7,10 +7,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import polaris.cells.director.runtime.public as director_runtime_public
-from polaris.cells.director.runtime.internal.repair_kernel.contracts import FILE_ABSENT_HASH, sha256_text
-from polaris.cells.director.runtime.internal.repair_kernel.rust_syntax import (
-    RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL,
-)
 from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairConvergenceVerifierRequestV1,
     DirectorRepairResultV1,
@@ -19,6 +15,11 @@ from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairVerifierSnapshotInputV1,
     RepairAdvisoryV1,
     RepairReceiptV1,
+)
+from polaris.cells.director.runtime.public.repair_kernel_contracts import (
+    FILE_ABSENT_HASH,
+    RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL,
+    sha256_text,
 )
 from polaris.cells.roles.adapters.internal.director import (
     materialization_quality_callback_ports,

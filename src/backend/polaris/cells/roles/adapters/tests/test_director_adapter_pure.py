@@ -20,12 +20,10 @@ from unittest.mock import MagicMock
 
 import pytest
 from polaris.cells.chief_engineer.blueprint.public import BlueprintPersistence
-from polaris.cells.director.runtime.internal.repair_kernel.generic_hygiene_syntax import (
-    remove_patch_residue_lines as _remove_patch_residue_lines,
-)
-from polaris.cells.director.runtime.internal.repair_kernel.javascript_syntax import (
-    _is_overstrict_node_test_script_contract,
+from polaris.cells.director.runtime.public.repair_kernel_contracts import (
     build_substantive_node_test_script as _build_substantive_node_test_script,
+    is_overstrict_node_test_script_contract as _is_overstrict_node_test_script_contract,
+    remove_patch_residue_lines as _remove_patch_residue_lines,
 )
 from polaris.cells.roles.adapters.internal.director import execute_method as execute_method_module
 from polaris.cells.roles.adapters.internal.director.adapter import (
