@@ -7,8 +7,19 @@ from pathlib import Path
 from typing import Any
 
 
+def _is_windows_absolute_path(path_text: str) -> bool:
+    return len(path_text) >= 3 and path_text[1] == ":" and path_text[2] == "/" and path_text[0].isalpha()
+
+
+def _normalize_project_path(project_dir: Path) -> str:
+    path_text = str(project_dir).replace("\\", "/")
+    normalized = path_text if _is_windows_absolute_path(path_text) else os.path.abspath(path_text)
+    return str(Path(normalized)).replace("\\", "/").lower()
+
+
 def project_hash(project_dir: Path) -> str:
-    normalized = str(Path(os.path.abspath(str(project_dir)))).replace("\\", "/").lower()
+    """Return a stable project hash across separator and case variants."""
+    normalized = _normalize_project_path(project_dir)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
 
 
