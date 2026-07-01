@@ -90,7 +90,7 @@ def test_gateway_reads_blueprint_overview_from_configured_provider() -> None:
         ),
     )
 
-    assert gateway._get_blueprint_overview("T9") == ".:T9:v2 layered architecture"
+    assert gateway._signal_sources.get_blueprint_overview("T9") == ".:T9:v2 layered architecture"
 
 
 def test_gateway_reads_verdict_history_from_configured_provider() -> None:
@@ -104,4 +104,4 @@ def test_gateway_reads_verdict_history_from_configured_provider() -> None:
         ),
     )
 
-    assert gateway._get_verdict_history("T9") == "最新判定: FAIL (score=0.50)\n问题:\n- .:T9:gate"
+    assert gateway._signal_sources.get_verdict_history("T9") == "最新判定: FAIL (score=0.50)\n问题:\n- .:T9:gate"

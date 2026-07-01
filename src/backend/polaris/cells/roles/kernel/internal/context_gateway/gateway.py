@@ -40,7 +40,6 @@ from polaris.kernelone.telemetry.debug_stream import emit_debug_event
 from polaris.kernelone.telemetry.metrics import METRIC_CONTEXT_LATENCY_P95, record_metric
 from polaris.kernelone.telemetry.trace import new_trace_id, set_trace_id
 
-from .blueprint_step_card import build_blueprint_step_card
 from .compression_engine import CompressionEngine
 from .context_override_processor import ContextOverrideProcessor
 from .gateway_helpers import (
@@ -816,51 +815,6 @@ class RoleContextGateway:
             messages.append(msg)
 
         return messages
-
-    def _get_project_structure(self) -> str | None:
-        """Backward-compatible delegate to SignalSourceProvider.get_project_structure."""
-        return self._signal_sources.get_project_structure()
-
-    def _get_repo_identity(self) -> str | None:
-        """Backward-compatible delegate to SignalSourceProvider.get_repo_identity."""
-        return self._signal_sources.get_repo_identity()
-
-    @staticmethod
-    def _get_blueprint_step(request: Any) -> str | None:
-        """Backward-compatible delegate to blueprint_step_card.build_blueprint_step_card."""
-        return build_blueprint_step_card(request)
-
-    def _get_scout_anchors(self) -> str | None:
-        """Backward-compatible delegate to SignalSourceProvider.get_scout_anchors."""
-        return self._signal_sources.get_scout_anchors()
-
-    def _get_file_ownership(self) -> str | None:
-        """Backward-compatible delegate to SignalSourceProvider.get_file_ownership."""
-        return self._signal_sources.get_file_ownership()
-
-    def _get_resident_agi_capabilities(self) -> str | None:
-        """Backward-compatible delegate to SignalSourceProvider.get_resident_agi_capabilities."""
-        return self._signal_sources.get_resident_agi_capabilities()
-
-    def _get_resident_agi_decision_trace(self) -> str | None:
-        """Backward-compatible delegate to SignalSourceProvider.get_resident_agi_decision_trace."""
-        return self._signal_sources.get_resident_agi_decision_trace()
-
-    def _get_task_history(self, task_id: str) -> str | None:
-        """Backward-compatible delegate to SignalSourceProvider.get_task_history."""
-        return self._signal_sources.get_task_history(task_id)
-
-    def _get_blueprint_overview(self, task_id: str) -> str | None:
-        """Backward-compatible delegate to SignalSourceProvider.get_blueprint_overview."""
-        return self._signal_sources.get_blueprint_overview(task_id)
-
-    def _estimate_signal_budget_pressure(self, projection: Any, request: ContextRequest) -> bool:
-        """Backward-compatible delegate to SignalSourceProvider.estimate_signal_budget_pressure."""
-        return self._signal_sources.estimate_signal_budget_pressure(projection, request)
-
-    def _get_verdict_history(self, task_id: str) -> str | None:
-        """Backward-compatible delegate to SignalSourceProvider.get_verdict_history."""
-        return self._signal_sources.get_verdict_history(task_id)
 
     def _is_state_first_mode_active_from_receipt(self, receipt: StrategyReceipt | None) -> bool:
         """Determine if State-First Context OS mode is active based on strategy receipt."""

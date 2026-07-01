@@ -1,10 +1,9 @@
 """Blueprint construction-step card rendering for :class:`RoleContextGateway`.
 
 Extracted (behavior-preserving) from ``gateway.py`` during the G8 god-class
-decomposition (blueprint REMAINING_04_gateway-py.md, step 4). The gateway keeps
-a static delegating shim ``RoleContextGateway._get_blueprint_step`` so the
-existing test reach-ins are unaffected; the embedded construction-protocol prompt
-strings are moved VERBATIM (no edits — flagged Sec.8 governance follow-up only).
+decomposition (blueprint REMAINING_04_gateway-py.md, step 4). The
+``ProjectionDictBuilder`` injects this renderer through ``SignalBuildContext``;
+the embedded construction-protocol prompt strings remain load-bearing.
 
 # -*- coding: utf-8 -*-
 UTF-8 编码验证: 本文所有文本使用 UTF-8
@@ -185,7 +184,9 @@ def build_blueprint_step_card(request: Any) -> str | None:
     return "\n".join(lines) or None
 
 
-def _build_real_file_interface_snapshot(request: Any, context_override: dict[str, Any], step: dict[str, Any]) -> list[str]:
+def _build_real_file_interface_snapshot(
+    request: Any, context_override: dict[str, Any], step: dict[str, Any]
+) -> list[str]:
     workspace = _resolve_workspace(request, context_override)
     if workspace is None:
         return []
@@ -206,9 +207,7 @@ def _build_real_file_interface_snapshot(request: Any, context_override: dict[str
     if not exports_by_file and not import_gaps:
         return []
 
-    lines = [
-        "真实文件接口快照(AST; 导入必须使用这些已存在符号；需要新符号时必须同步修改定义文件，禁止空壳占位):"
-    ]
+    lines = ["真实文件接口快照(AST; 导入必须使用这些已存在符号；需要新符号时必须同步修改定义文件，禁止空壳占位):"]
     emitted = 0
     for rel_text in sorted(exports_by_file):
         exports = exports_by_file[rel_text]
@@ -481,7 +480,9 @@ def _python_import_gaps(
             module_rel = _resolve_python_import_from(workspace, importer_rel, node)
             if module_rel is None:
                 continue
-            exported = set(exports_by_file.get(module_rel.as_posix()) or _python_exports_for_file(workspace / module_rel))
+            exported = set(
+                exports_by_file.get(module_rel.as_posix()) or _python_exports_for_file(workspace / module_rel)
+            )
             if not exported:
                 continue
             missing = [
@@ -491,8 +492,7 @@ def _python_import_gaps(
             ]
             if missing:
                 gaps.append(
-                    f"{importer_rel.as_posix()} imports missing from {module_rel.as_posix()}: "
-                    + ", ".join(missing[:8])
+                    f"{importer_rel.as_posix()} imports missing from {module_rel.as_posix()}: " + ", ".join(missing[:8])
                 )
             if len(gaps) >= _MAX_REAL_IMPORT_GAPS:
                 return gaps

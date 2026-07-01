@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
 from polaris.kernelone.context.receipt_store import ReceiptStore
 
+from .blueprint_step_card import build_blueprint_step_card
 from .gateway_helpers import render_blueprint_overview
 from .projection_formatter import ProjectionFormatter
 from .task_boundary_filter import (
@@ -136,6 +137,7 @@ class ProjectionDictBuilder:
         sorted_events = ProjectionFormatter.sort_events_by_routing_priority(projection.active_window)
 
         supplemental_turns: list[dict[str, Any]] = []
+        signal_sources = gateway._signal_sources
 
         # 2+3. Role-scoped signal plane（泛化自原硬编码的 project_structure / task_history）。
         # 由 RoleSignalRegistry 按角色 + context_policy 解析适用信号，再分配进 supplemental_turns。
@@ -180,29 +182,29 @@ class ProjectionDictBuilder:
                     getattr(gateway.policy, "include_resident_agi_decision_trace", True)
                 ),
             },
-            get_project_structure=gateway._get_project_structure,
-            get_task_history=gateway._get_task_history,
-            get_repo_identity=gateway._get_repo_identity,
-            get_scout_anchors=gateway._get_scout_anchors,
+            get_project_structure=signal_sources.get_project_structure,
+            get_task_history=signal_sources.get_task_history,
+            get_repo_identity=signal_sources.get_repo_identity,
+            get_scout_anchors=signal_sources.get_scout_anchors,
             # blueprint_overview 优先消费请求中已由 Director adapter 注入的 CE
             # handoff contract；没有内联 contract 时再通过配置注入的数据源读取。
             # roles.kernel 不 import chief_engineer.blueprint owner Cell。
             get_blueprint_overview=lambda: (
                 _blueprint_overview_from_request_context(request)
-                or gateway._get_blueprint_overview(str(request.task_id or ""))
+                or signal_sources.get_blueprint_overview(str(request.task_id or ""))
             ),
             # verdict_history 同样只走配置注入的数据源，避免 kernel 反向依赖 QA owner Cell。
-            get_verdict_history=lambda: gateway._get_verdict_history(str(request.task_id or "")),
-            get_blueprint_step=lambda: gateway._get_blueprint_step(request),
+            get_verdict_history=lambda: signal_sources.get_verdict_history(str(request.task_id or "")),
+            get_blueprint_step=lambda: build_blueprint_step_card(request),
             # file_ownership 读取 workspace 内的 file-edits/events.jsonl（D-11）。
-            get_file_ownership=gateway._get_file_ownership,
-            get_resident_agi_capabilities=gateway._get_resident_agi_capabilities,
-            get_resident_agi_decision_trace=gateway._get_resident_agi_decision_trace,
+            get_file_ownership=signal_sources.get_file_ownership,
+            get_resident_agi_capabilities=signal_sources.get_resident_agi_capabilities,
+            get_resident_agi_decision_trace=signal_sources.get_resident_agi_decision_trace,
         )
         # 跨 turn freshness 记忆（按 task_id）：压力下断流"自上次注入未变化"的 nice-to-have，
         # 把窗口让给即时工具结果。无压力时 budget_pressure=False → 不断流 → 与旧实现逐字节一致。
         _cache_key = str(request.task_id or "")
-        _budget_pressure = gateway._estimate_signal_budget_pressure(projection, request)
+        _budget_pressure = signal_sources.estimate_signal_budget_pressure(projection, request)
         # ADR-0090 W2.4: scale signal caps to the enforcement budget so seed
         # signals (【项目结构】/【任务历史】) cannot eat a small model's window.
         # ≈3 chars/token; per-signal ≈5% and total ≈15% of the enforcement

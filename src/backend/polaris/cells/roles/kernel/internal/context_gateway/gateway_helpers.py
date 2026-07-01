@@ -40,7 +40,7 @@ _CONTROL_PLANE_CONTEXT_KEYS = {
     "request_timeout_seconds",
     "timeout_seconds",
     # Signal-rendered planes (2026-06-15): these are injected for the Director's
-    # BlueprintStepsSignal card (_get_blueprint_step renders them concisely) and must
+    # BlueprintStepsSignal card (build_blueprint_step_card renders them concisely) and must
     # NOT be ALSO serialized verbatim into the context_override message — that was a
     # 2143-token duplicate of construction_step (worsened by the P1 anchor contract)
     # that blew the budget and crashed the Director turn (BudgetExceededError, Director

@@ -43,9 +43,9 @@ class TestBlueprintStepCard:
     def _card(context_override: dict, *, workspace: Path | None = None) -> str | None:
         from types import SimpleNamespace
 
-        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+        from polaris.cells.roles.kernel.internal.context_gateway.blueprint_step_card import build_blueprint_step_card
 
-        return RoleContextGateway._get_blueprint_step(
+        return build_blueprint_step_card(
             SimpleNamespace(context_override=context_override, workspace=str(workspace or ""))
         )
 
@@ -750,15 +750,15 @@ class TestIntegration:
 
 
 class TestBlueprintStepCardRendering:
-    """施工步骤卡渲染（_get_blueprint_step 静态方法,有界注入）。"""
+    """施工步骤卡渲染（build_blueprint_step_card 有界注入）。"""
 
     @staticmethod
     def _render(context_override: dict) -> str | None:
         from types import SimpleNamespace
 
-        from polaris.cells.roles.kernel.internal.context_gateway.gateway import RoleContextGateway
+        from polaris.cells.roles.kernel.internal.context_gateway.blueprint_step_card import build_blueprint_step_card
 
-        return RoleContextGateway._get_blueprint_step(SimpleNamespace(context_override=context_override))
+        return build_blueprint_step_card(SimpleNamespace(context_override=context_override))
 
     def test_step_card_includes_bounce_teaching(self) -> None:
         """反弹教学(live I3-r10): QA verify 失败原因必须进重试上下文,
@@ -799,9 +799,9 @@ class TestPunchListCardRendering:
     def _render(context_override: dict) -> str | None:
         from types import SimpleNamespace
 
-        from polaris.cells.roles.kernel.internal.context_gateway.gateway import RoleContextGateway
+        from polaris.cells.roles.kernel.internal.context_gateway.blueprint_step_card import build_blueprint_step_card
 
-        return RoleContextGateway._get_blueprint_step(SimpleNamespace(context_override=context_override))
+        return build_blueprint_step_card(SimpleNamespace(context_override=context_override))
 
     def test_failing_clauses_render_as_numbered_punch_list(self) -> None:
         card = self._render(
