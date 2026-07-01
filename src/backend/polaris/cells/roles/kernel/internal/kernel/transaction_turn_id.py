@@ -4,8 +4,7 @@ Extracted verbatim (behavior-preserving) from ``core.py`` so both the
 coordinator (``core.py``) and the turn-execution collaborator
 (``turn_execution.py``) can share them without a circular import.
 
-``core.py`` re-exports both names to preserve its original module namespace
-(``kernel_core._resolve_transaction_turn_id`` is read via ``getattr`` in tests).
+Callers import these helpers from this module directly.
 """
 
 from __future__ import annotations

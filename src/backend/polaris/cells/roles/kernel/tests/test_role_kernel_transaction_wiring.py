@@ -7,12 +7,16 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from polaris.cells.roles.kernel.internal.kernel import core as kernel_core
 from polaris.cells.roles.kernel.internal.kernel.context_assembly import build_context_handoff_pack
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
+    _ensure_context_delivery_mode_marker,
+    _ensure_platform_tool_contract_metadata,
+)
 from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import request_forces_no_transaction_tools
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import _apply_forced_transaction_tool_definitions
 from polaris.cells.roles.kernel.internal.kernel.transaction_factory import create_transaction_kernel
+from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import _resolve_transaction_turn_id
 from polaris.cells.roles.kernel.internal.kernel.turn_execution import execute_transaction_kernel_turn
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.finalization import FinalizationHandler
@@ -257,14 +261,12 @@ class TestTransactionKernelFeatureFlag:
 
 class TestContextDeliveryModeMarker:
     def test_materialize_context_restores_marker_on_latest_user_message(self) -> None:
-        ensure_marker = getattr(kernel_core, "_ensure_context_delivery_mode_marker", None)
         messages = [
             {"role": "system", "content": "system prompt"},
             {"role": "user", "content": "Create worker_1.txt"},
         ]
 
-        assert ensure_marker is not None
-        result = ensure_marker(messages, {"delivery_mode": "materialize_changes"})
+        result = _ensure_context_delivery_mode_marker(messages, {"delivery_mode": "materialize_changes"})
 
         assert result is not messages
         assert result[-1]["content"].startswith("[mode:materialize]\n")
@@ -272,21 +274,17 @@ class TestContextDeliveryModeMarker:
         assert messages[-1]["content"] == "Create worker_1.txt"
 
     def test_propose_context_leaves_messages_unchanged(self) -> None:
-        ensure_marker = getattr(kernel_core, "_ensure_context_delivery_mode_marker", None)
         messages = [{"role": "user", "content": "Return fenced file sections"}]
 
-        assert ensure_marker is not None
-        assert ensure_marker(messages, {"delivery_mode": "propose_patch"}) == messages
+        assert _ensure_context_delivery_mode_marker(messages, {"delivery_mode": "propose_patch"}) == messages
 
     def test_platform_tool_contract_metadata_projects_to_latest_user_message(self) -> None:
-        ensure_contract = getattr(kernel_core, "_ensure_platform_tool_contract_metadata", None)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": "system prompt"},
             {"role": "user", "content": "Update a.py", "metadata": {"trace_id": "t1"}},
         ]
 
-        assert ensure_contract is not None
-        result = ensure_contract(
+        result = _ensure_platform_tool_contract_metadata(
             messages,
             {"tool_contract": {"single_batch": True, "required_tools": ["write_file"]}},
         )
@@ -302,7 +300,6 @@ class TestContextDeliveryModeMarker:
         }
 
     def test_platform_tool_contract_metadata_merges_existing_contract(self) -> None:
-        ensure_contract = getattr(kernel_core, "_ensure_platform_tool_contract_metadata", None)
         messages = [
             {
                 "role": "user",
@@ -311,8 +308,7 @@ class TestContextDeliveryModeMarker:
             }
         ]
 
-        assert ensure_contract is not None
-        result = ensure_contract(messages, {"platform_tool_contract": {"single_batch": True}})
+        result = _ensure_platform_tool_contract_metadata(messages, {"platform_tool_contract": {"single_batch": True}})
 
         assert result[-1]["metadata"]["tool_contract"] == {
             "min_tool_calls": 2,
@@ -322,11 +318,8 @@ class TestContextDeliveryModeMarker:
 
 class TestTransactionTurnId:
     def test_task_scoped_turn_id_distinguishes_concurrent_tasks(self) -> None:
-        resolve_turn_id = getattr(kernel_core, "_resolve_transaction_turn_id", None)
-
-        assert resolve_turn_id is not None
-        first = resolve_turn_id(_MockRequest(run_id="run-1", task_id="D4-SAT-1"), "run-1")
-        second = resolve_turn_id(_MockRequest(run_id="run-1", task_id="D4-SAT-2"), "run-1")
+        first = _resolve_transaction_turn_id(_MockRequest(run_id="run-1", task_id="D4-SAT-1"), "run-1")
+        second = _resolve_transaction_turn_id(_MockRequest(run_id="run-1", task_id="D4-SAT-2"), "run-1")
 
         assert first != second
         assert first.startswith("run-1")

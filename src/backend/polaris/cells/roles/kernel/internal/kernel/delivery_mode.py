@@ -2,8 +2,7 @@
 
 Stateless helpers that detect and restore the ``[mode:materialize]`` delivery
 marker after ContextOS projection. Extracted verbatim from ``core.py`` to keep
-the Facade focused; ``core.py`` re-exports every symbol for backward
-compatibility (tests reach these via the ``core`` module namespace).
+the Facade focused; callers import these helpers from this module directly.
 """
 
 from __future__ import annotations

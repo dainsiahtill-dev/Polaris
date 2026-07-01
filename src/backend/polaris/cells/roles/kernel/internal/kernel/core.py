@@ -25,17 +25,9 @@ import os
 import time
 import warnings
 from collections.abc import Callable
-from dataclasses import dataclass  # noqa: F401 - backward-compat re-export (moved to commit_protocol)
 from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.kernel.internal.context_gateway import ContextGatewayConfig, ContextRequest
-from polaris.cells.roles.kernel.internal.kernel.commit_protocol import ValidationReport
-from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
-    _MATERIALIZE_DELIVERY_MODE_MARKERS,
-    _MATERIALIZE_DELIVERY_MODE_VALUES,
-    _ensure_context_delivery_mode_marker,  # noqa: F401 - re-exported for backward-compat namespace access
-    _ensure_platform_tool_contract_metadata,  # noqa: F401 - re-exported for backward-compat namespace access
-)
 from polaris.cells.roles.kernel.internal.kernel.error_handler import (
     KernelEventEmitter,
     LLMEventType,
@@ -46,14 +38,8 @@ from polaris.cells.roles.kernel.internal.kernel.helpers import (
 from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import tool_contract_requires_single_batch
 from polaris.cells.roles.kernel.internal.kernel.suggestions import get_suggestions_for_error
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
-    _CONTEXT_EXPENSIVE_TOOL_NAMES,
-    _CONTEXT_SAFE_MUTATING_TOOL_EXCEPTIONS,
     _cognitive_runtime_blocked_tools,
     _normalize_tool_policy_name,
-)
-from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import (
-    _resolve_transaction_turn_id,  # noqa: F401 - re-exported for backward-compat namespace access
-    _turn_id_component,  # noqa: F401 - re-exported for backward-compat namespace access
 )
 from polaris.cells.roles.kernel.internal.kernel.turn_execution import (
     execute_transaction_kernel_stream,
@@ -72,9 +58,6 @@ from polaris.cells.roles.profile.public.service import (
     RoleTurnResult,
 )
 from polaris.infrastructure.log_pipeline.writer import LogEventWriter, get_writer
-from polaris.kernelone.context.context_os.models_v2 import (  # noqa: F401 - backward-compat re-export (moved to commit_protocol)
-    TranscriptEventV2 as TranscriptEvent,
-)
 from polaris.kernelone.events.uep_publisher import UEPEventPublisher
 from polaris.kernelone.storage import resolve_storage_roots
 from polaris.kernelone.trace import get_tracer
@@ -1518,18 +1501,7 @@ class RoleExecutionKernel:
         return result
 
 
-# 向后兼容：导出函数级别别名
-_get_suggestions_for_error = get_suggestions_for_error
-
 __all__ = [
-    # Backward-compat re-exports moved to sibling in-cell modules
-    # (commit_protocol / delivery_mode / tool_policy). They remain importable
-    # from this module's namespace to preserve the original public surface.
-    "_CONTEXT_EXPENSIVE_TOOL_NAMES",
-    "_CONTEXT_SAFE_MUTATING_TOOL_EXCEPTIONS",
-    "_MATERIALIZE_DELIVERY_MODE_MARKERS",
-    "_MATERIALIZE_DELIVERY_MODE_VALUES",
     "RoleExecutionKernel",
-    "ValidationReport",
     "get_suggestions_for_error",
 ]
