@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T08:05:08.709053Z",
-  "source_hash": "46b24c15632042a6",
+  "generated_at": "2026-07-01T18:55:16.317645Z",
+  "source_hash": "3d0305083b95b1bd",
   "cell_id": "roles.adapters",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -3473,12 +3473,6 @@
     },
     {
       "type": "function",
-      "name": "writer",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/post_execution_repair_bridge.py"
-    },
-    {
-      "type": "function",
       "name": "_run_go_post_repairs",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/post_execution_repair_bridge.py"
@@ -3641,6 +3635,12 @@
     },
     {
       "type": "function",
+      "name": "_policy_gated_adapter_missing_tool_result",
+      "description": "Return a fail-closed repair result when no Director tool adapter exists.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/post_execution_repair_bridge.py"
+    },
+    {
+      "type": "function",
       "name": "_collect_cpp_base_files",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/post_execution_repair_bridge.py"
@@ -3714,12 +3714,6 @@
     {
       "type": "function",
       "name": "_is_java_test_source_path",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/post_execution_repair_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_direct_runtime_writer",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/post_execution_repair_bridge.py"
     },
@@ -7520,6 +7514,18 @@
     },
     {
       "type": "function",
+      "name": "resolve_director_semantic_quality_repair_target_files",
+      "description": "Return semantic quality-repair target files through the public boundary.",
+      "defined_in": "polaris/cells/roles/adapters/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_director_materialization_quality_repair_message",
+      "description": "Build Director materialization-quality repair prompt text.",
+      "defined_in": "polaris/cells/roles/adapters/public/service.py"
+    },
+    {
+      "type": "function",
       "name": "register_all_adapters",
       "description": "Register role adapter factory to orchestration service if supported.",
       "defined_in": "polaris/cells/roles/adapters/public/service.py"
@@ -11152,6 +11158,12 @@
     },
     {
       "type": "function",
+      "name": "_assert_retry_text_fallback_is_non_authoritative",
+      "description": "Assert retry text/file-block output did not bypass native tool execution.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+    },
+    {
+      "type": "function",
       "name": "test_target_candidates_include_explicit_scope_directories_with_target_files",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
@@ -13590,13 +13602,7 @@
     },
     {
       "type": "function",
-      "name": "test_direct_runtime_writer_rejects_workspace_escape",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/tests/test_director_repair_writers.py"
-    },
-    {
-      "type": "function",
-      "name": "test_direct_runtime_writer_writes_workspace_file",
+      "name": "test_cpp_post_repair_without_director_adapter_fails_closed",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/tests/test_director_repair_writers.py"
     },

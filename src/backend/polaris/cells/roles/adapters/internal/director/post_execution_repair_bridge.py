@@ -1,7 +1,8 @@
-"""Post-execution deterministic repair bridge for Director adapter.
+"""Post-execution deterministic repair runner bindings for Director adapter.
 
-This module is the migration-time boundary between legacy language-specific
-repair functions and the Director runtime repair kernel receipt model.
+The Director runtime repair kernel owns scheduling, policy, and receipt
+semantics. This module only binds language-specific post-execution source
+collection to the policy-gated Director tool executor used by role adapters.
 """
 
 from __future__ import annotations
@@ -25,7 +26,6 @@ from polaris.cells.director.runtime.public.service import (
     run_director_repair,
     validate_director_repair_advisory,
 )
-from polaris.kernelone.fs.text_ops import write_text_atomic
 
 from .execution_tools import DirectorToolExecutor
 from .repair_profile_projection import project_repair_kernel_summary
@@ -212,7 +212,7 @@ def run_post_execution_language_repairs(
 def run_cpp_post_repairs_as_tool_results(
     workspace: str | Path,
     *,
-    adapter: Any | None = None,
+    adapter: Any,
     task_id: str = "director-cpp-post-repair",
     advisor_notes: RuntimeAdvisorNotes = (),
     convergence_verifier: ConvergenceVerifier | None = None,
@@ -222,6 +222,11 @@ def run_cpp_post_repairs_as_tool_results(
     workspace_path = Path(workspace)
     if not _looks_like_cpp_workspace(workspace_path):
         return []
+    if adapter is None:
+        return _policy_gated_adapter_missing_tool_result(
+            task_id=task_id,
+            source_tool="deterministic_cpp_post_repair",
+        )
 
     tool_results = _run_cpp_include_path_runtime_repair(
         adapter,
@@ -397,34 +402,31 @@ def _run_cpp_runtime_repair(
             convergence_verifier=convergence_verifier,
             max_rounds=_POST_EXECUTION_REPAIR_MAX_ROUNDS,
         )
-
-    write_results: dict[str, dict[str, Any]] = {}
-    if adapter is not None:
-        message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-        executor = DirectorToolExecutor(
-            str(workspace_path),
-            message_bus=message_bus,
-            worker_id="director",
+    if adapter is None:
+        return _policy_gated_adapter_missing_tool_result(
+            task_id=task_id,
+            source_tool=source_tool,
         )
 
-        def writer(path: str, content: str) -> dict[str, Any]:
-            write_result = executor.execute_tool(
-                "write_file",
-                {"file": path, "content": content},
-                task_id=task_id,
-            )
-            write_results[path] = dict(write_result)
-            if bool(write_result.get("ok")):
-                with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-                    adapter._update_task_progress(task_id, "executing", current_file=path)
-            return dict(write_result)
+    write_results: dict[str, dict[str, Any]] = {}
+    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
+    executor = DirectorToolExecutor(
+        str(workspace_path),
+        message_bus=message_bus,
+        worker_id="director",
+    )
 
-    else:
-
-        def writer(path: str, content: str) -> dict[str, Any]:
-            write_result = _direct_runtime_writer(workspace_path, path, content)
-            write_results[path] = dict(write_result)
-            return dict(write_result)
+    def writer(path: str, content: str) -> dict[str, Any]:
+        write_result = executor.execute_tool(
+            "write_file",
+            {"file": path, "content": content},
+            task_id=task_id,
+        )
+        write_results[path] = dict(write_result)
+        if bool(write_result.get("ok")):
+            with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+                adapter._update_task_progress(task_id, "executing", current_file=path)
+        return dict(write_result)
 
     canonical_result = run_director_repair(
         RunDirectorRepairCommandV1(
@@ -1322,6 +1324,36 @@ def _receipt_requires_revalidation(receipt: Any) -> bool:
     return not bool(getattr(receipt, "revalidation_evidence", {}) or {})
 
 
+def _policy_gated_adapter_missing_tool_result(*, task_id: str, source_tool: str) -> list[dict[str, Any]]:
+    """Return a fail-closed repair result when no Director tool adapter exists."""
+
+    error_code = "director_adapter_required_for_policy_gated_repair"
+    return [
+        {
+            "tool": "director_repair_kernel",
+            "tool_name": "director_repair_kernel",
+            "success": False,
+            "result": {
+                "ok": False,
+                "source_tool": source_tool,
+                "error_code": error_code,
+                "error_message": (
+                    "Director post-execution repair requires a policy-gated Director adapter; "
+                    "direct workspace writes are not permitted."
+                ),
+                "repair_kernel": {
+                    "owner_cell": "director.runtime",
+                    "task_id": task_id,
+                    "execution_skipped": True,
+                    "execution_skip_reason": error_code,
+                    "direct_write_allowed": False,
+                    "writer_boundary": "director_tool_executor_required",
+                },
+            },
+        }
+    ]
+
+
 def _collect_cpp_base_files(workspace: Path) -> dict[str, str]:
     base_files: dict[str, str] = {}
     for path in sorted(workspace.rglob("*")):
@@ -1536,32 +1568,6 @@ def _is_java_test_source_path(path: str) -> bool:
     if len(parts) >= 3 and parts[0] == "src" and parts[1] == "test":
         return True
     return "test" in parts or "tests" in parts
-
-
-def _direct_runtime_writer(workspace: Path, path: str, content: str) -> dict[str, Any]:
-    try:
-        target = (workspace / path).resolve()
-        target.relative_to(workspace)
-    except (OSError, ValueError):
-        return {
-            "ok": False,
-            "file": path,
-            "error": "repair target path escaped workspace",
-        }
-    try:
-        write_text_atomic(str(target), content)
-    except OSError as exc:
-        return {
-            "ok": False,
-            "file": path,
-            "error": str(exc),
-        }
-    return {
-        "ok": True,
-        "file": path,
-        "bytes_written": len(content.encode("utf-8")),
-        "operation": "modify",
-    }
 
 
 def _looks_like_cpp_workspace(workspace: Path) -> bool:
