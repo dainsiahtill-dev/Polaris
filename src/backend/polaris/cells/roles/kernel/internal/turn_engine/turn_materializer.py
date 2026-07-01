@@ -178,18 +178,42 @@ class TurnMaterializer:
         Args:
             profile: RoleProfile instance.
             turn: AssistantTurnArtifacts instance.
-            kernel: RoleExecutionKernel with _parse_content_and_thinking_tool_calls.
+            kernel: Optional RoleExecutionKernel used only to resolve the current OutputParser.
 
         Returns:
             List of parsed tool calls.
         """
-        return kernel._parse_content_and_thinking_tool_calls(
-            turn.clean_content,
-            turn.thinking,
-            profile,
+        del profile  # the parser derives allowed tools from provider-native payloads/profile policy upstream.
+        parser_factory = getattr(kernel, "_get_output_parser", None)
+        if callable(parser_factory):
+            parser = parser_factory()
+        else:
+            parser = getattr(kernel, "_output_parser", None)
+            if parser is None:
+                from polaris.cells.roles.kernel.internal.output_parser import OutputParser
+
+                parser = OutputParser()
+
+        parsed_calls = parser.parse_tool_calls(
+            turn.clean_content or "",
             native_tool_calls=list(turn.native_tool_calls) or None,
-            native_tool_provider=turn.native_tool_provider,
+            native_provider=turn.native_tool_provider,
         )
+        deduped: list[Any] = []
+        seen: set[tuple[str, str]] = set()
+        for call in parsed_calls:
+            args = getattr(call, "args", {}) or {}
+            if not isinstance(args, dict):
+                args = {}
+            key = (
+                str(getattr(call, "tool", "")),
+                str(args.get("path", "") or args.get("file", "")),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(call)
+        return deduped
 
 
 __all__ = ["TurnMaterializer"]

@@ -229,7 +229,6 @@ def test_stream_strips_split_bracket_tool_wrappers(monkeypatch) -> None:
         yield {"type": "chunk", "content": "CALL] 后缀"}
 
     monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
-    monkeypatch.setattr(kernel, "_parse_content_and_thinking_tool_calls", lambda *_a, **_k: [])
 
     async def _collect() -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
@@ -259,7 +258,6 @@ def test_stream_strips_output_wrappers_from_visible_content(monkeypatch) -> None
         yield {"type": "chunk", "content": "回答。</output>"}
 
     monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
-    monkeypatch.setattr(kernel, "_parse_content_and_thinking_tool_calls", lambda *_a, **_k: [])
 
     async def _collect() -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
@@ -298,7 +296,6 @@ def test_stream_handles_bracket_tool_wrappers_in_stream(monkeypatch) -> None:
         yield {"type": "chunk", "content": " 后缀"}
 
     monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
-    monkeypatch.setattr(kernel, "_parse_content_and_thinking_tool_calls", lambda *_a, **_k: [])
 
     async def _collect() -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []

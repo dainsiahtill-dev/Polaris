@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from types import SimpleNamespace
+from typing import Any
 
-from polaris.cells.roles.kernel.internal.output_parser import OutputParser
+from polaris.cells.roles.kernel.internal.output_parser import OutputParser, ToolCallResult
 from polaris.cells.roles.kernel.internal.turn_engine import (
     AssistantTurnArtifacts,
 )
@@ -21,10 +23,38 @@ def _build_profile() -> object:
     )
 
 
+class _CapturingParser(OutputParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.tool_call_inputs: list[dict[str, object]] = []
+
+    def parse_tool_calls(
+        self,
+        content: str,
+        *,
+        allowed_tool_names: Iterable[str] | None = None,
+        native_tool_calls: list[dict[str, Any]] | None = None,
+        native_provider: str = "auto",
+    ) -> list[ToolCallResult]:
+        self.tool_call_inputs.append(
+            {
+                "content": content,
+                "allowed_tool_names": tuple(allowed_tool_names or ()),
+                "native_tool_calls": native_tool_calls,
+                "native_tool_provider": native_provider,
+            }
+        )
+        return super().parse_tool_calls(
+            content,
+            allowed_tool_names=allowed_tool_names,
+            native_tool_calls=native_tool_calls,
+            native_provider=native_provider,
+        )
+
+
 class _KernelStub:
     def __init__(self) -> None:
-        self._output_parser = OutputParser()
-        self.parser_calls: list[dict[str, object]] = []
+        self._output_parser = _CapturingParser()
 
     def _get_llm_invoker(self) -> object:
         return SimpleNamespace(call=lambda **kwargs: None)
@@ -37,25 +67,6 @@ class _KernelStub:
             build_system_prompt=lambda _p, _a: "system",
             build_fingerprint=lambda _p, _a: SimpleNamespace(full_hash="fp"),
         )
-
-    def _parse_content_and_thinking_tool_calls(
-        self,
-        content: str,
-        thinking: str | None,
-        profile: object,
-        native_tool_calls: list[dict[str, object]] | None,
-        native_tool_provider: str,
-    ) -> list[dict[str, object]]:
-        self.parser_calls.append(
-            {
-                "content": content,
-                "thinking": thinking,
-                "profile": profile,
-                "native_tool_calls": native_tool_calls,
-                "native_tool_provider": native_tool_provider,
-            }
-        )
-        return []
 
 
 def test_materialize_assistant_turn_keeps_raw_wrapper_but_sanitizes_output() -> None:
@@ -111,12 +122,14 @@ def test_parse_tool_calls_from_turn_uses_clean_content_contract() -> None:
         native_tool_provider="openai",
     )
 
-    TurnMaterializer.parse_tool_calls(profile=profile, turn=turn, kernel=kernel)
+    tool_calls = TurnMaterializer.parse_tool_calls(profile=profile, turn=turn, kernel=kernel)
 
-    assert len(kernel.parser_calls) == 1
-    parser_call = kernel.parser_calls[0]
+    assert len(tool_calls) == 1
+    assert tool_calls[0].tool == "read_file"
+    assert tool_calls[0].args == {"path": "README.md"}
+    assert len(kernel._output_parser.tool_call_inputs) == 1
+    parser_call = kernel._output_parser.tool_call_inputs[0]
     assert parser_call["content"] == turn.clean_content
-    assert parser_call["thinking"] == turn.thinking
     assert parser_call["native_tool_provider"] == "openai"
     assert parser_call["native_tool_calls"] == list(turn.native_tool_calls)
 
@@ -289,9 +302,9 @@ def test_clean_content_is_used_for_parser_in_parse_tool_calls() -> None:
 
     TurnMaterializer.parse_tool_calls(profile=profile, turn=turn, kernel=kernel)
 
-    assert len(kernel.parser_calls) == 1
-    assert kernel.parser_calls[0]["content"] == "读取文件"
-    assert "[TOOL_CALL]" not in str(kernel.parser_calls[0]["content"])
+    assert len(kernel._output_parser.tool_call_inputs) == 1
+    assert kernel._output_parser.tool_call_inputs[0]["content"] == "读取文件"
+    assert "[TOOL_CALL]" not in str(kernel._output_parser.tool_call_inputs[0]["content"])
 
 
 def test_quoted_tool_wrapper_not_stripped_from_clean_content() -> None:
@@ -346,7 +359,7 @@ def test_native_tool_calls_suppress_textual_fallback() -> None:
 
     TurnMaterializer.parse_tool_calls(profile=profile, turn=turn, kernel=kernel)
 
-    assert len(kernel.parser_calls) == 1
+    assert len(kernel._output_parser.tool_call_inputs) == 1
     # native_tool_calls are forwarded to the parser
-    assert kernel.parser_calls[0]["native_tool_calls"] == list(turn.native_tool_calls)
-    assert kernel.parser_calls[0]["native_tool_provider"] == "openai"
+    assert kernel._output_parser.tool_call_inputs[0]["native_tool_calls"] == list(turn.native_tool_calls)
+    assert kernel._output_parser.tool_call_inputs[0]["native_tool_provider"] == "openai"

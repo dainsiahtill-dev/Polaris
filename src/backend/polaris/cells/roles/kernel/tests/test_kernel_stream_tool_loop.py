@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.output_parser import OutputParser
 from polaris.cells.roles.profile.public.service import RoleExecutionMode, RoleTurnRequest
 
 # Note: Tests that need specific stall behavior should set env vars themselves.
@@ -1198,31 +1199,25 @@ def test_run_blank_response_returns_explicit_error(monkeypatch) -> None:
     assert result.is_complete is False
 
 
-def test_parse_content_and_thinking_tool_calls_ignores_thinking_wrappers() -> None:
+def test_output_parser_ignores_thinking_wrappers_when_not_in_content() -> None:
     """thinking wrappers must never become executable tool calls."""
-    kernel = _build_kernel()
-    profile = kernel.registry.get_profile_or_raise("pm")
+    parser = OutputParser()
 
-    tool_calls = kernel._parse_content_and_thinking_tool_calls(
-        content="这里没有工具调用。",
-        thinking='[TOOL_CALL]{"tool":"read_file","arguments":{"path":"README.md"}}[/TOOL_CALL]',
-        profile=profile,
+    tool_calls = parser.parse_tool_calls(
+        "这里没有工具调用。",
         native_tool_calls=None,
-        native_tool_provider="auto",
+        native_provider="auto",
     )
 
     assert tool_calls == []
 
 
-def test_parse_content_and_thinking_tool_calls_keeps_native_only() -> None:
+def test_output_parser_keeps_native_tool_calls_without_content() -> None:
     """native tool calls remain valid, thinking wrappers are ignored."""
-    kernel = _build_kernel()
-    profile = kernel.registry.get_profile_or_raise("pm")
+    parser = OutputParser()
 
-    tool_calls = kernel._parse_content_and_thinking_tool_calls(
-        content="",
-        thinking='[TOOL_CALL]{"tool":"read_file","arguments":{"path":"SHOULD_NOT_RUN.md"}}[/TOOL_CALL]',
-        profile=profile,
+    tool_calls = parser.parse_tool_calls(
+        "",
         native_tool_calls=[
             {
                 "id": "native_1",
@@ -1233,7 +1228,7 @@ def test_parse_content_and_thinking_tool_calls_keeps_native_only() -> None:
                 },
             }
         ],
-        native_tool_provider="openai",
+        native_provider="openai",
     )
 
     assert len(tool_calls) == 1
@@ -1241,17 +1236,14 @@ def test_parse_content_and_thinking_tool_calls_keeps_native_only() -> None:
     assert tool_calls[0].args.get("path") == "README.md"
 
 
-def test_parse_content_and_thinking_tool_calls_accepts_openai_shape_with_anthropic_hint() -> None:
+def test_output_parser_accepts_openai_shape_with_anthropic_hint() -> None:
     """provider hint must not discard a valid native payload shape."""
-    kernel = _build_kernel()
-    profile = kernel.registry.get_profile_or_raise("pm")
+    parser = OutputParser()
 
-    tool_calls = kernel._parse_content_and_thinking_tool_calls(
-        content="",
-        thinking="",
-        profile=profile,
+    tool_calls = parser.parse_tool_calls(
+        "",
         native_tool_calls=[_openai_native_tool_call("README.md")],
-        native_tool_provider="anthropic",
+        native_provider="anthropic",
     )
 
     assert len(tool_calls) == 1

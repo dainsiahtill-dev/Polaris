@@ -47,7 +47,7 @@ from polaris.cells.roles.kernel.internal.kernel.turn_execution import (
 )
 from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
 from polaris.cells.roles.kernel.internal.metrics import get_metrics_collector
-from polaris.cells.roles.kernel.internal.output_parser import OutputParser, ToolCallResult
+from polaris.cells.roles.kernel.internal.output_parser import OutputParser
 from polaris.cells.roles.kernel.internal.prompt_builder import PromptBuilder
 from polaris.cells.roles.kernel.internal.quality_checker import QualityChecker, QualityResult
 from polaris.cells.roles.kernel.public.config import KernelConfig, get_default_config
@@ -1338,48 +1338,6 @@ class RoleExecutionKernel:
         if suppress_tool_policy:
             options["include_tool_policy"] = False
         return options
-
-    def _parse_content_and_thinking_tool_calls(
-        self,
-        content: str,
-        thinking: str | None,
-        profile: Any,
-        native_tool_calls: list[dict[str, Any]] | None,
-        native_tool_provider: str,
-    ) -> list[Any]:
-        """Parse tool calls from content and thinking, filtering out thinking-only calls.
-
-        Args:
-            content: Raw text content from LLM
-            thinking: Thinking content (may contain [TOOL_CALL]...[/TOOL_CALL] markers)
-            profile: Role profile for allowed tool names
-            native_tool_calls: Native tool calls from provider
-            native_tool_provider: Provider hint for parsing
-
-        Returns:
-            List of parsed and filtered ToolCallResult objects
-        """
-
-        # Filter out tool calls that are only in thinking (not in main content)
-        # by parsing only the main content (not thinking)
-        result: list[ToolCallResult] = []
-        seen: set[tuple[str, str]] = set()
-
-        # Parse tool calls from main content and/or native_tool_calls
-        # Note: native_tool_calls must be parsed even if content is empty
-        # because LLM may emit tools via native protocol without content
-        valid_parsed = self._get_output_parser().parse_tool_calls(
-            content or "",  # Ensure content is never None
-            native_tool_calls=native_tool_calls,
-            native_provider=native_tool_provider,
-        )
-        for call in valid_parsed:
-            key = (call.tool, str(call.args.get("path", "") or call.args.get("file", "")))
-            if key not in seen:
-                seen.add(key)
-                result.append(call)
-
-        return result
 
 
 __all__ = [

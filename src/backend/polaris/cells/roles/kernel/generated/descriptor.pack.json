@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T03:53:31.587975Z",
-  "source_hash": "bdc45ac807e99084",
+  "generated_at": "2026-07-01T04:01:16.677717Z",
+  "source_hash": "45143ba030102820",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4094,10 +4094,6 @@
         {
           "name": "_forced_tool_choice_name",
           "doc": ""
-        },
-        {
-          "name": "_parse_content_and_thinking_tool_calls",
-          "doc": "Parse tool calls from content and thinking, filtering out thinking-only calls."
         }
       ]
     },
@@ -23925,19 +23921,19 @@
     },
     {
       "type": "function",
-      "name": "test_parse_content_and_thinking_tool_calls_ignores_thinking_wrappers",
+      "name": "test_output_parser_ignores_thinking_wrappers_when_not_in_content",
       "description": "thinking wrappers must never become executable tool calls.",
       "defined_in": "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
     },
     {
       "type": "function",
-      "name": "test_parse_content_and_thinking_tool_calls_keeps_native_only",
+      "name": "test_output_parser_keeps_native_tool_calls_without_content",
       "description": "native tool calls remain valid, thinking wrappers are ignored.",
       "defined_in": "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
     },
     {
       "type": "function",
-      "name": "test_parse_content_and_thinking_tool_calls_accepts_openai_shape_with_anthropic_hint",
+      "name": "test_output_parser_accepts_openai_shape_with_anthropic_hint",
       "description": "provider hint must not discard a valid native payload shape.",
       "defined_in": "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
     },
@@ -32300,6 +32296,22 @@
     },
     {
       "type": "class",
+      "name": "_CapturingParser",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "parse_tool_calls",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "_KernelStub",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py",
@@ -32318,10 +32330,6 @@
         },
         {
           "name": "_get_prompt_builder",
-          "doc": ""
-        },
-        {
-          "name": "_parse_content_and_thinking_tool_calls",
           "doc": ""
         }
       ]
