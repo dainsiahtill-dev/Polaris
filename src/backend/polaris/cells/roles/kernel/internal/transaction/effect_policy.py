@@ -13,7 +13,7 @@ environment variable:
 
 * ``off``    -- no checking at all
 * ``warn``   -- check and log warnings for violations (default)
-* ``strict`` -- check and raise :class:`EffectPolicyViolation`
+* ``strict`` -- check and raise :class:`EffectPolicyViolationError`
 """
 
 from __future__ import annotations
@@ -94,10 +94,6 @@ class EffectPolicyViolationError(RuntimeError):
     def __init__(self, verdict: PolicyVerdict) -> None:
         self.verdict = verdict
         super().__init__(f"Effect policy violation: {verdict.reason}")
-
-
-# Backward-compatible alias matching the task specification name.
-EffectPolicyViolation = EffectPolicyViolationError
 
 
 # ---------------------------------------------------------------------------
@@ -399,7 +395,6 @@ __all__ = [
     "CompiledEffectPolicy",
     "EffectPolicyCompiler",
     "EffectPolicyRule",
-    "EffectPolicyViolation",
     "EffectPolicyViolationError",
     "PolicyVerdict",
     "get_effect_policy_mode",
