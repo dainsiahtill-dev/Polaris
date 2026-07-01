@@ -70,6 +70,7 @@ debts:
       - "Architecture tests now assert StreamEventType identity across source and re-export"
       - "Architecture tests parse executor.py to require importing StreamEventType from contracts"
       - "2026-07-02: parity tests now assert every shared_contracts.__all__ object is re-exported identically through engine.contracts and toolkit.contracts"
+      - "2026-07-02: KernelOne LLM engine production files are fenced from importing shared_contracts directly"
     residual_risks:
       - "The re-export layer still exists, so parity remains a governance concern"
       - "Future consumers can still bypass contracts by importing shared_contracts directly unless covered by consumer-specific fences"

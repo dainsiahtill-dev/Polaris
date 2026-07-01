@@ -12,8 +12,8 @@ This module provides unified streaming LLM invocation capability:
 
 from __future__ import annotations
 
+from polaris.kernelone.llm.engine.contracts import StreamEventType
 from polaris.kernelone.llm.providers import get_provider_manager
-from polaris.kernelone.llm.shared_contracts import StreamEventType
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
 
 from .backpressure import BackpressureBuffer

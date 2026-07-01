@@ -21,6 +21,7 @@ from polaris.kernelone.llm.engine.executor import AIExecutor
 from polaris.kernelone.llm.toolkit import contracts as toolkit_contracts
 
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
+LLM_ENGINE_ROOT = BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "engine"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -134,6 +135,21 @@ def test_model_catalog_imports_modelspec_from_contracts() -> None:
         "model_catalog.py must import ModelSpec from .contracts to keep "
         "shared_contracts -> contracts -> model_catalog parity explicit."
     )
+
+
+def test_engine_production_code_does_not_import_shared_contracts_directly() -> None:
+    """Engine runtime code must consume shared contracts through engine.contracts."""
+
+    forbidden = "polaris.kernelone.llm.shared_contracts"
+    findings: list[str] = []
+    for path in LLM_ENGINE_ROOT.rglob("*.py"):
+        if "tests" in path.parts or path.name == "contracts.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        if forbidden in text or "from ..shared_contracts import" in text:
+            findings.append(str(path.relative_to(BACKEND_ROOT)))
+
+    assert not findings, f"engine code bypasses engine.contracts re-export boundary: {findings}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

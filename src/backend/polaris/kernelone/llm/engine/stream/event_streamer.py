@@ -9,8 +9,7 @@ from collections.abc import AsyncGenerator
 from enum import Enum
 from typing import Any
 
-from polaris.kernelone.llm.engine.contracts import AIStreamEvent
-from polaris.kernelone.llm.shared_contracts import StreamEventType
+from polaris.kernelone.llm.engine.contracts import AIStreamEvent, StreamEventType
 
 try:
     import msgpack  # type: ignore[import-not-found]
