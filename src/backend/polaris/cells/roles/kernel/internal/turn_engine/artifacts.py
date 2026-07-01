@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NewType
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Bracket tool wrapper 正则表达式
@@ -37,6 +37,29 @@ _BRACKET_TOOL_CLOSE_RE = re.compile(
 # ─────────────────────────────────────────────────────────────────────────────
 # AssistantTurnArtifacts
 # ─────────────────────────────────────────────────────────────────────────────
+
+AssistantRawContent = NewType("AssistantRawContent", str)
+"""Assistant text that may still contain provider/protocol wrappers.
+
+This type is parsing-only. It can feed sanitizers and native tool-call
+diagnostics, but it must not be persisted to transcript history or shown as
+user-visible content.
+"""
+
+AssistantCleanContent = NewType("AssistantCleanContent", str)
+"""Assistant text after transcript-visible sanitization."""
+
+
+def assistant_raw_content(value: object) -> AssistantRawContent:
+    """Normalize unknown assistant output into a typed raw-content stage."""
+
+    return AssistantRawContent(str(value or ""))
+
+
+def assistant_clean_content(value: object) -> AssistantCleanContent:
+    """Normalize sanitized assistant output into a typed clean-content stage."""
+
+    return AssistantCleanContent(str(value or ""))
 
 
 @dataclass(frozen=True)
@@ -58,8 +81,8 @@ class AssistantTurnArtifacts:
         primary parse input for streaming paths; `raw_content` remains fallback.
     """
 
-    raw_content: str
-    clean_content: str
+    raw_content: AssistantRawContent
+    clean_content: AssistantCleanContent
     thinking: str | None = None
     native_tool_calls: tuple[dict[str, Any], ...] = ()
     native_tool_provider: str = "auto"
@@ -141,6 +164,10 @@ class _BracketToolWrapperFilter:
 __all__ = [
     "_BRACKET_TOOL_CLOSE_RE",
     "_BRACKET_TOOL_OPEN_RE",
+    "AssistantCleanContent",
+    "AssistantRawContent",
     "AssistantTurnArtifacts",
     "_BracketToolWrapperFilter",
+    "assistant_clean_content",
+    "assistant_raw_content",
 ]

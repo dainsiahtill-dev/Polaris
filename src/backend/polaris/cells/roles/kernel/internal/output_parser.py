@@ -18,6 +18,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.roles.kernel.internal.turn_engine.artifacts import (
+    AssistantRawContent,
+    assistant_raw_content,
+)
+
 # Import canonical ToolCall for P0-002 unification
 from polaris.kernelone.llm.contracts.tool import ToolCall
 
@@ -168,7 +173,7 @@ class OutputParser:
 
     def parse_execution_tool_calls(
         self,
-        content: str,
+        content: AssistantRawContent,
         *,
         allowed_tool_names: Iterable[str] | None = None,
         native_tool_calls: list[dict[str, Any]] | None = None,
@@ -182,7 +187,10 @@ class OutputParser:
         receipts.
 
         Args:
-            content: Raw text content from LLM output
+            content: Typed raw assistant content from LLM output. Execution
+                parsing accepts this explicit raw-content stage so sanitized
+                transcript text cannot be accidentally reused as executable
+                parser input.
             allowed_tool_names: Optional whitelist of allowed tool names
             native_tool_calls: Native tool calls from provider (OpenAI/Anthropic format)
             native_provider: Provider hint for parsing
@@ -273,7 +281,7 @@ class OutputParser:
     ) -> list[ToolCallResult]:
         """统一工具调用解析入口，运行时只接受 native tool_calls。"""
         return self.parse_execution_tool_calls(
-            content,
+            assistant_raw_content(content),
             allowed_tool_names=allowed_tool_names,
             native_tool_calls=native_tool_calls,
             native_provider=native_provider,

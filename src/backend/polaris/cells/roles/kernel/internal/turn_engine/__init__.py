@@ -27,8 +27,12 @@ Wave 3 完成状态:
 
 from polaris.cells.roles.kernel.internal.conversation_state import ConversationState
 from polaris.cells.roles.kernel.internal.turn_engine.artifacts import (
+    AssistantCleanContent,
+    AssistantRawContent,
     AssistantTurnArtifacts,
     _BracketToolWrapperFilter,
+    assistant_clean_content,
+    assistant_raw_content,
 )
 from polaris.cells.roles.kernel.internal.turn_engine.config import (
     SafetyState,
@@ -53,18 +57,19 @@ _make_error_result = make_error_result
 
 
 __all__ = [
+    "AssistantCleanContent",
+    "AssistantRawContent",
     "AssistantTurnArtifacts",
     "ConversationState",
     "SafetyState",
     "TurnEngineConfig",
-    # Private classes (for testing)
     "_BracketToolWrapperFilter",
     "_build_stream_complete_result",
     "_make_error_result",
+    "assistant_clean_content",
+    "assistant_raw_content",
     "build_stream_complete_result",
-    # Utils functions
     "dedupe_parsed_tool_calls",
-    # Helper functions
     "make_error_result",
     "merge_stream_thinking",
     "normalize_stream_tool_call_payload",

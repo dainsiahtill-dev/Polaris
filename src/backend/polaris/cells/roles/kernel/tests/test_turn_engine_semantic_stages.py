@@ -6,7 +6,10 @@ from types import SimpleNamespace
 from typing import Any
 
 from polaris.cells.roles.kernel.internal.output_parser import OutputParser
-from polaris.cells.roles.kernel.internal.turn_engine import AssistantTurnArtifacts
+from polaris.cells.roles.kernel.internal.turn_engine import (
+    AssistantTurnArtifacts,
+    assistant_raw_content,
+)
 from polaris.cells.roles.kernel.internal.turn_engine.utils import (
     append_transcript_cycle,
     sanitize_assistant_transcript_message,
@@ -69,6 +72,26 @@ def test_textual_wrapper_without_native_tool_call_is_not_executable() -> None:
     )
 
     assert tool_calls == []
+
+
+def test_execution_parser_uses_typed_raw_content_boundary() -> None:
+    parser = OutputParser()
+
+    parser_hints = OutputParser.parse_execution_tool_calls.__annotations__
+    artifact_hints = AssistantTurnArtifacts.__annotations__
+
+    assert parser_hints["content"] == "AssistantRawContent"
+    assert artifact_hints["raw_content"] == "AssistantRawContent"
+    assert artifact_hints["clean_content"] == "AssistantCleanContent"
+
+    tool_calls = parser.parse_execution_tool_calls(
+        assistant_raw_content("raw parser input"),
+        native_tool_calls=[_native_read_file_call()],
+        native_provider="openai",
+    )
+
+    assert len(tool_calls) == 1
+    assert tool_calls[0].tool == "read_file"
 
 
 def test_append_transcript_cycle_persists_sanitized_content_only() -> None:

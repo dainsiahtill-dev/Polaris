@@ -5,7 +5,7 @@ debts:
   - id: "DEBT-20260325-roles-kernel-turn-stage-contract"
     title: "roles.kernel turn semantic stages remain runtime-enforced"
     classification: structural
-    status: active
+    status: monitoring
     severity: high
     scope_refs:
       - "roles.kernel"
@@ -24,10 +24,11 @@ debts:
       - "Changing tool-call parsing fallbacks when native_tool_calls are absent"
     mitigations:
       - "AssistantTurnArtifacts makes raw/sanitized/native data explicit"
+      - "2026-07-02: AssistantRawContent and AssistantCleanContent typed stages added; parse_execution_tool_calls now requires AssistantRawContent while parse_tool_calls remains a compatibility wrapper"
       - "Semantic stage regression tests protect parser and transcript boundaries"
       - "verify.pack.json records current guarantees and residual risks"
     residual_risks:
-      - "The parser still accepts raw_content as plain str instead of a dedicated typed wrapper"
+      - "The legacy compatibility parse_tool_calls API still accepts str and wraps it into AssistantRawContent; core execution paths must keep using typed parse_execution_tool_calls"
       - "Downstream stream consumers can still regress if they reintroduce wrapper-bearing chunk contracts"
     linked_assets:
       adrs:
@@ -42,7 +43,7 @@ debts:
         - "polaris/cells/roles/kernel/tests/test_turn_engine_policy_convergence.py"
         - "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
     next_actions:
-      - "Introduce stronger parser input types for raw vs sanitized assistant content"
+      - "Keep compatibility parse_tool_calls out of execution authorization paths"
       - "Extend transcript/write-path audits to host adapters that persist assistant chunks"
 
   - id: "DEBT-20260325-kernelone-llm-reexport-parity"
