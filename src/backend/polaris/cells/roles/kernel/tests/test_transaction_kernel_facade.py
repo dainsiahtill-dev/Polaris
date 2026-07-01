@@ -953,7 +953,7 @@ async def test_retry_tool_batch_after_contract_violation_appends_retry_contract_
     monkeypatch.setattr(controller.decoder, "decode", _fake_decode)
     monkeypatch.setattr(controller._retry_orchestrator, "execute_tool_batch", _fake_execute_tool_batch)
 
-    result = await controller._retry_tool_batch_after_contract_violation(
+    result = await controller._retry_orchestrator.retry_tool_batch_after_contract_violation(
         turn_id="turn_retry_contract",
         context=context,
         tool_definitions=[{"type": "function", "function": {"name": "edit_file"}}],
@@ -1054,7 +1054,7 @@ async def test_retry_enforcement_after_invalid_batch_does_not_pin_edit_blocks(mo
     monkeypatch.setattr(controller.decoder, "decode", _fake_decode)
     monkeypatch.setattr(controller._retry_orchestrator, "execute_tool_batch", _fake_execute_tool_batch)
 
-    result = await controller._retry_tool_batch_after_contract_violation(
+    result = await controller._retry_orchestrator.retry_tool_batch_after_contract_violation(
         turn_id="turn_retry_no_edit_blocks_pin",
         context=context,
         tool_definitions=[
@@ -1135,7 +1135,7 @@ async def test_retry_tool_batch_after_contract_violation_uses_stream_materializa
     monkeypatch.setattr(controller.decoder, "decode", _fake_decode)
     monkeypatch.setattr(controller._retry_orchestrator, "execute_tool_batch", _fake_execute_tool_batch)
 
-    result = await controller._retry_tool_batch_after_contract_violation(
+    result = await controller._retry_orchestrator.retry_tool_batch_after_contract_violation(
         turn_id="turn_retry_stream",
         context=context,
         tool_definitions=[{"type": "function", "function": {"name": "edit_file"}}],
@@ -1318,7 +1318,7 @@ async def test_retry_tool_batch_stream_escalates_without_single_tool_lock(monkey
     monkeypatch.setattr(controller.decoder, "decode", _fake_decode)
     monkeypatch.setattr(controller._retry_orchestrator, "execute_tool_batch", _fake_execute_tool_batch)
 
-    result = await controller._retry_tool_batch_after_contract_violation(
+    result = await controller._retry_orchestrator.retry_tool_batch_after_contract_violation(
         turn_id="turn_retry_escalation",
         context=context,
         tool_definitions=[
@@ -1429,7 +1429,7 @@ async def test_retry_stale_edit_violation_switches_to_bootstrap_read_path(monkey
         controller._retry_orchestrator, "execute_read_bootstrap_batch", _fake_execute_read_bootstrap_batch
     )
 
-    result = await controller._retry_tool_batch_after_contract_violation(
+    result = await controller._retry_orchestrator.retry_tool_batch_after_contract_violation(
         turn_id="turn_retry_stale_bootstrap",
         context=context,
         tool_definitions=[
@@ -1598,7 +1598,7 @@ async def test_retry_bootstrap_scaffold_followup_forces_write_file(monkeypatch) 
         controller._retry_orchestrator, "execute_read_bootstrap_batch", _fake_execute_read_bootstrap_batch
     )
 
-    result = await controller._retry_tool_batch_after_contract_violation(
+    result = await controller._retry_orchestrator.retry_tool_batch_after_contract_violation(
         turn_id="turn_retry_scaffold_bootstrap",
         context=context,
         tool_definitions=[
@@ -1750,7 +1750,7 @@ async def test_retry_bootstrap_existing_edit_blocks_followup_keeps_write_file_co
         _fake_execute_read_bootstrap_batch,
     )
 
-    result = await controller._retry_tool_batch_after_contract_violation(
+    result = await controller._retry_orchestrator.retry_tool_batch_after_contract_violation(
         turn_id="turn_retry_existing_edit_blocks",
         context=context,
         tool_definitions=[
@@ -1875,7 +1875,7 @@ async def test_retry_known_target_requires_read_switches_to_context_bootstrap(mo
         controller._retry_orchestrator, "execute_read_bootstrap_batch", _fake_execute_read_bootstrap_batch
     )
 
-    result = await controller._retry_tool_batch_after_contract_violation(
+    result = await controller._retry_orchestrator.retry_tool_batch_after_contract_violation(
         turn_id="turn_retry_context_bootstrap",
         context=context,
         tool_definitions=[

@@ -656,50 +656,6 @@ class TurnTransactionController:
         """判定用户请求是否要求验证/测试（需要 test/verify 类工具）。"""
         return delivery_intent_resolver.requires_verification_intent(message)
 
-    # ---------------------------------------------------------------------------
-    # Transaction owner proxies
-    # ---------------------------------------------------------------------------
-
-    async def _retry_tool_batch_after_contract_violation(
-        self,
-        *,
-        turn_id: str,
-        context: list[dict],
-        tool_definitions: list[dict],
-        state_machine: TurnStateMachine,
-        ledger: TurnLedger,
-        stream: bool = False,
-        shadow_engine: Any | None = None,
-        original_decision: Any | None = None,
-    ) -> dict:
-        """Proxy to RetryOrchestrator.retry_tool_batch_after_contract_violation."""
-        return await self._retry_orchestrator.retry_tool_batch_after_contract_violation(
-            turn_id=turn_id,
-            context=context,
-            tool_definitions=tool_definitions,
-            state_machine=state_machine,
-            ledger=ledger,
-            stream=stream,
-            shadow_engine=shadow_engine,
-            original_decision=original_decision,
-        )
-
-    async def _execute_read_bootstrap_batch(
-        self,
-        *,
-        turn_id: str,
-        workspace: str,
-        tool_batch: Any,
-        ledger: TurnLedger,
-    ) -> dict[str, Any] | None:
-        """Proxy to RetryOrchestrator.execute_read_bootstrap_batch."""
-        return await self._retry_orchestrator.execute_read_bootstrap_batch(
-            turn_id=turn_id,
-            workspace=workspace,
-            tool_batch=tool_batch,
-            ledger=ledger,
-        )
-
     def _build_finalization_context(self, original_context: list[dict], receipts: list[dict]) -> list[dict]:
         """Proxy to FinalizationHandler._build_finalization_context."""
         return FinalizationHandler._build_finalization_context(original_context, receipts)
