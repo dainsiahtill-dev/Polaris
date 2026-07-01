@@ -271,7 +271,7 @@ class TurnTransactionController:
             return await self._call_llm_for_decision(*a, **kw)
 
         async def _proxy_call_llm_for_decision_stream(*a: Any, **kw: Any) -> AsyncIterator[Any]:
-            async for item in self._call_llm_for_decision_stream(*a, **kw):
+            async for item in self._stream_orchestrator._call_llm_for_decision_stream_impl(*a, **kw):
                 yield item
 
         async def _proxy_execute_tool_batch(*a: Any, **kw: Any) -> Any:
@@ -983,7 +983,7 @@ class TurnTransactionController:
     ) -> AsyncIterator[TurnEvent]:
         """Proxy to StreamOrchestrator.execute_turn_stream."""
 
-        async def _call_llm_for_decision_stream(
+        async def _call_stream_llm_with_turn_tool_choice(
             call_context: list[dict],
             call_tool_definitions: list[dict],
             call_ledger: TurnLedger,
@@ -993,7 +993,7 @@ class TurnTransactionController:
             effective_tool_choice = kwargs.pop("tool_choice_override", None)
             if tool_choice_override is not None:
                 effective_tool_choice = tool_choice_override
-            async for event in self._call_llm_for_decision_stream(
+            async for event in self._stream_orchestrator._call_llm_for_decision_stream_impl(
                 call_context,
                 call_tool_definitions,
                 call_ledger,
@@ -1009,7 +1009,7 @@ class TurnTransactionController:
             tool_definitions,
             state_machine,
             ledger,
-            call_llm_for_decision_stream=_call_llm_for_decision_stream,
+            call_llm_for_decision_stream=_call_stream_llm_with_turn_tool_choice,
         ):
             yield event
 
@@ -1130,31 +1130,6 @@ class TurnTransactionController:
             model=response.get("model", "unknown"),
             usage=response_usage,
         )
-
-    async def _call_llm_for_decision_stream(
-        self,
-        context: list[dict],
-        tool_definitions: list[dict],
-        ledger: TurnLedger,
-        shadow_engine: StreamShadowEngine | None = None,
-        *,
-        tool_choice_override: Any | None = None,
-        model_override: str | None = None,
-        temperature_override: float | None = None,
-        max_tokens_floor: int | None = None,
-    ) -> AsyncIterator[TurnEvent]:
-        """Proxy to StreamOrchestrator._call_llm_for_decision_stream_impl."""
-        async for event in self._stream_orchestrator._call_llm_for_decision_stream_impl(
-            context,
-            tool_definitions,
-            ledger,
-            shadow_engine=shadow_engine,
-            tool_choice_override=tool_choice_override,
-            model_override=model_override,
-            temperature_override=temperature_override,
-            max_tokens_floor=max_tokens_floor,
-        ):
-            yield event
 
     # ---------------------------------------------------------------------------
     # 决策消息构建

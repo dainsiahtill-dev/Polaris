@@ -1131,7 +1131,11 @@ async def test_retry_tool_batch_after_contract_violation_uses_stream_materializa
         captured["allowed_tool_names"] = allowed_tool_names
         return {"kind": "tool_batch_with_receipt", "batch_receipt": None}
 
-    monkeypatch.setattr(controller, "_call_llm_for_decision_stream", _fake_call_llm_for_decision_stream)
+    monkeypatch.setattr(
+        controller._stream_orchestrator,
+        "_call_llm_for_decision_stream_impl",
+        _fake_call_llm_for_decision_stream,
+    )
     monkeypatch.setattr(controller.decoder, "decode", _fake_decode)
     monkeypatch.setattr(controller._retry_orchestrator, "execute_tool_batch", _fake_execute_tool_batch)
 
@@ -1176,7 +1180,7 @@ async def test_stream_provider_tool_events_materialize_native_tool_calls(monkeyp
     ledger = TurnLedger(turn_id="turn_stream_provider_tool_materialize")
     events: list[object] = []
 
-    async for event in controller._call_llm_for_decision_stream(
+    async for event in controller._stream_orchestrator._call_llm_for_decision_stream_impl(
         [{"role": "user", "content": "请更新 README.md 并写入文件"}],
         [
             {"type": "function", "function": {"name": "read_file"}},
@@ -1313,7 +1317,11 @@ async def test_retry_tool_batch_stream_escalates_without_single_tool_lock(monkey
             )
         return {"kind": "tool_batch_with_receipt", "batch_receipt": None}
 
-    monkeypatch.setattr(controller, "_call_llm_for_decision_stream", _fake_call_llm_for_decision_stream)
+    monkeypatch.setattr(
+        controller._stream_orchestrator,
+        "_call_llm_for_decision_stream_impl",
+        _fake_call_llm_for_decision_stream,
+    )
     monkeypatch.setattr(controller, "_call_llm_for_decision", _fake_call_llm_for_decision)
     monkeypatch.setattr(controller.decoder, "decode", _fake_decode)
     monkeypatch.setattr(controller._retry_orchestrator, "execute_tool_batch", _fake_execute_tool_batch)
@@ -2565,7 +2573,11 @@ async def test_execute_turn_stream_yields_completion_after_mutation_contract_ret
             "metrics": {"duration_ms": 100, "llm_calls": 2, "tool_calls": 1},
         }
 
-    monkeypatch.setattr(controller, "_call_llm_for_decision_stream", _fake_call_llm_for_decision_stream)
+    monkeypatch.setattr(
+        controller._stream_orchestrator,
+        "_call_llm_for_decision_stream_impl",
+        _fake_call_llm_for_decision_stream,
+    )
     monkeypatch.setattr(controller.decoder, "decode", _fake_decode)
     monkeypatch.setattr(
         controller._retry_orchestrator,
@@ -2671,7 +2683,11 @@ async def test_execute_turn_stream_passes_narrowed_tool_names_to_direct_batch_ex
             },
         }
 
-    monkeypatch.setattr(controller, "_call_llm_for_decision_stream", _fake_call_llm_for_decision_stream)
+    monkeypatch.setattr(
+        controller._stream_orchestrator,
+        "_call_llm_for_decision_stream_impl",
+        _fake_call_llm_for_decision_stream,
+    )
     monkeypatch.setattr(controller._stream_orchestrator.decoder, "decode", _fake_decode)
     monkeypatch.setattr(
         controller._stream_orchestrator.tool_batch_executor,
@@ -2753,7 +2769,11 @@ async def test_execute_turn_stream_fails_closed_when_native_tool_call_decodes_wi
             "domain": "code",
         }
 
-    monkeypatch.setattr(controller, "_call_llm_for_decision_stream", _fake_call_llm_for_decision_stream)
+    monkeypatch.setattr(
+        controller._stream_orchestrator,
+        "_call_llm_for_decision_stream_impl",
+        _fake_call_llm_for_decision_stream,
+    )
     monkeypatch.setattr(controller._stream_orchestrator.decoder, "decode", _fake_decode)
 
     with pytest.raises(RuntimeError, match="tool_dispatch_dropped"):
@@ -2832,11 +2852,15 @@ async def test_execute_stream_yields_completion_after_mutation_contract_retry_re
         llm_provider=AsyncMock(return_value={}),
         tool_runtime=AsyncMock(return_value={"success": True, "result": "file written"}),
         config=TransactionConfig(domain="code"),
-        llm_provider_stream=AsyncMock(),  # Non-None so retry path uses _call_llm_for_decision_stream
+        llm_provider_stream=AsyncMock(),  # Non-None so retry path uses stream materialization.
     )
 
-    # Monkeypatch _call_llm_for_decision_stream to inject RawLLMResponse directly
-    monkeypatch.setattr(kernel, "_call_llm_for_decision_stream", _fake_call_llm_for_decision_stream)
+    # Monkeypatch the stream owner to inject RawLLMResponse directly.
+    monkeypatch.setattr(
+        kernel._stream_orchestrator,
+        "_call_llm_for_decision_stream_impl",
+        _fake_call_llm_for_decision_stream,
+    )
 
     context = [{"role": "user", "content": "落地高优先级的任务"}]
     tool_definitions = [
@@ -2930,7 +2954,11 @@ async def test_execute_stream_mutation_retry_from_ask_user_yields_completion_no_
         llm_provider_stream=AsyncMock(),
     )
 
-    monkeypatch.setattr(kernel, "_call_llm_for_decision_stream", _fake_call_llm_for_decision_stream)
+    monkeypatch.setattr(
+        kernel._stream_orchestrator,
+        "_call_llm_for_decision_stream_impl",
+        _fake_call_llm_for_decision_stream,
+    )
 
     context = [{"role": "user", "content": "落地高优先级的任务"}]
     tool_definitions = [
