@@ -1,69 +1,27 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:45.210927Z",
-  "source_hash": "5c89397ed7cddb7d",
+  "generated_at": "2026-07-01T14:41:23.216198Z",
+  "source_hash": "c962327d13ec0f44",
   "cell_id": "director.delivery",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "function",
-      "name": "_audit_event_payload",
-      "description": "Build a structured audit event payload from a stream_turn event.",
-      "defined_in": "polaris/delivery/cli/director/audit_decorator.py"
-    },
-    {
-      "type": "function",
-      "name": "audit_stream_turn",
-      "description": "Decorator factory: wraps ``stream_turn`` with full audit trail.",
-      "defined_in": "polaris/delivery/cli/director/audit_decorator.py"
-    },
-    {
-      "type": "function",
-      "name": "decorator",
-      "description": "",
-      "defined_in": "polaris/delivery/cli/director/audit_decorator.py"
-    },
-    {
-      "type": "function",
-      "name": "_get_global_bus",
-      "description": "Look up the globally registered bus, logging resolution status.",
-      "defined_in": "polaris/delivery/cli/director/audit_decorator.py"
-    },
-    {
-      "type": "function",
-      "name": "register_audit_bus",
-      "description": "Allow callers to inject the bus before the first stream call.",
-      "defined_in": "polaris/delivery/cli/director/audit_decorator.py"
-    },
-    {
-      "type": "function",
-      "name": "_set_archive_id",
-      "description": "Patch archive_id into the first event for traceability.",
-      "defined_in": "polaris/delivery/cli/director/audit_decorator.py"
-    },
-    {
-      "type": "function",
-      "name": "apply_audit_decorator",
-      "description": "Apply ``@audit_stream_turn`` to the ``stream_turn`` method of a host instance.",
-      "defined_in": "polaris/delivery/cli/director/audit_decorator.py"
-    },
-    {
-      "type": "function",
       "name": "_bootstrap_backend_import_path",
       "description": "Lazy import of polaris modules after path bootstrap.",
-      "defined_in": "polaris/delivery/cli/director/cli_compat.py"
+      "defined_in": "polaris/delivery/cli/director/cli_entrypoint.py"
     },
     {
       "type": "function",
       "name": "create_parser",
       "description": "Create thin argument parser.",
-      "defined_in": "polaris/delivery/cli/director/cli_compat.py"
+      "defined_in": "polaris/delivery/cli/director/cli_entrypoint.py"
     },
     {
       "type": "function",
       "name": "main",
       "description": "",
-      "defined_in": "polaris/delivery/cli/director/cli_compat.py"
+      "defined_in": "polaris/delivery/cli/director/cli_entrypoint.py"
     },
     {
       "type": "function",
@@ -771,7 +729,7 @@
     {
       "type": "class",
       "name": "DirectorService",
-      "description": "Director delivery facade backed by the canonical adapter orchestrator.",
+      "description": "Director delivery facade backed by public Cell contracts.",
       "defined_in": "polaris/delivery/cli/director/director_service.py",
       "methods": [
         {
@@ -779,19 +737,31 @@
           "doc": ""
         },
         {
+          "name": "_get_task_board",
+          "doc": ""
+        },
+        {
           "name": "_get_ready_tasks",
-          "doc": "Return ready task rows through the canonical orchestrator."
+          "doc": "Return ready task rows through the runtime TaskBoard public contract."
         },
         {
           "name": "_normalize_task_id",
           "doc": ""
         },
         {
-          "name": "_task_result_to_dict",
+          "name": "_build_execution_metadata",
           "doc": ""
         },
         {
-          "name": "_iteration_to_dict",
+          "name": "_execution_result_to_dict",
+          "doc": ""
+        },
+        {
+          "name": "_update_task_board",
+          "doc": ""
+        },
+        {
+          "name": "_exception_result",
           "doc": ""
         }
       ]
@@ -838,8 +808,8 @@
     },
     {
       "type": "class",
-      "name": "_StubRenderer",
-      "description": "Minimal stub base — replace with real ProjectionRenderer implementations.",
+      "name": "_BaseEventRenderer",
+      "description": "Shared renderer base for simple event-to-widget projections.",
       "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
       "methods": [
         {
@@ -863,7 +833,7 @@
     {
       "type": "class",
       "name": "ContentChunkRenderer",
-      "description": "Stub: renders content_chunk events to the detail pane.",
+      "description": "Render content_chunk events to the detail pane.",
       "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
       "methods": [
         {
@@ -875,7 +845,7 @@
     {
       "type": "class",
       "name": "ThinkingChunkRenderer",
-      "description": "Stub: renders thinking_chunk events (collapsible thinking block).",
+      "description": "Render thinking_chunk events to the detail pane.",
       "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
       "methods": [
         {
@@ -887,7 +857,7 @@
     {
       "type": "class",
       "name": "ToolCallRenderer",
-      "description": "Stub: renders tool_call events.",
+      "description": "Render tool_call events as append-only widget updates.",
       "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
       "methods": [
         {
@@ -899,7 +869,7 @@
     {
       "type": "class",
       "name": "ToolResultRenderer",
-      "description": "Stub: renders tool_result events.",
+      "description": "Render tool_result events as append-only widget updates.",
       "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
       "methods": [
         {
@@ -911,7 +881,7 @@
     {
       "type": "class",
       "name": "MessageCompleteRenderer",
-      "description": "Stub: renders message complete events.",
+      "description": "Render message completion events as flush updates.",
       "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
       "methods": [
         {
@@ -923,7 +893,7 @@
     {
       "type": "class",
       "name": "ErrorRenderer",
-      "description": "Stub: renders error events.",
+      "description": "Render error events as append-only widget updates.",
       "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
       "methods": [
         {

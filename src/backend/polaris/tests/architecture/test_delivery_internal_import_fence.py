@@ -34,7 +34,6 @@ BASELINE_VIOLATIONS: frozenset[str] = frozenset(
         "polaris/delivery/cli/director/console_host.py",
         "polaris/delivery/http/routers/test_role_session_context_memory_router.py",
         "polaris/delivery/http/routers/test_agent_router_canonical.py",
-        "polaris/delivery/cli/director/audit_decorator.py",
         "polaris/delivery/http/routers/runtime.py",
         "polaris/delivery/cli/audit/audit/handlers.py",
         "polaris/delivery/http/middleware/metrics.py",
@@ -54,9 +53,7 @@ def _is_cells_internal_import(module: str) -> bool:
     parts = module.split(".")
     if len(parts) < 5:
         return False
-    if parts[0] == "polaris" and parts[1] == "cells" and "internal" in parts:
-        return True
-    return False
+    return parts[0] == "polaris" and parts[1] == "cells" and "internal" in parts
 
 
 def _collect_imports(source: str) -> list[str]:
@@ -70,9 +67,8 @@ def _collect_imports(source: str) -> list[str]:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 modules.append(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                modules.append(node.module)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            modules.append(node.module)
     return modules
 
 
@@ -120,7 +116,7 @@ class TestDeliveryInternalImportFence:
 
     def test_baseline_is_not_growing(self) -> None:
         """Verify that no one silently added entries to the baseline."""
-        max_allowed = 14  # current count as of 2026-04-25
+        max_allowed = 13  # current count after retiring director audit_decorator
         assert len(BASELINE_VIOLATIONS) <= max_allowed, (
             f"Baseline has {len(BASELINE_VIOLATIONS)} entries but max is "
             f"{max_allowed}. Baseline must shrink, not grow."
