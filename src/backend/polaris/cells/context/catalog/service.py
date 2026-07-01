@@ -89,10 +89,6 @@ _EMBEDDING_MODEL_NAME = "none"
 _EMBEDDING_DEVICE = "cpu"
 
 
-# Backward compatibility alias
-_utc_now_iso = utc_now_str
-
-
 def _sha256_text(value: str) -> str:
     return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -207,7 +203,7 @@ class ContextCatalogService:
 
     def _sync_impl(self) -> dict[str, Any]:
         graph_payload = self._load_graph_catalog()
-        generated_at = _utc_now_iso()
+        generated_at = utc_now_str()
         graph_fingerprint = self._compute_graph_fingerprint()
 
         # Get dynamic fingerprint from port

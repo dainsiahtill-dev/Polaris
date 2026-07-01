@@ -42,10 +42,6 @@ class PolicyContractError(RuntimeError):
     pass
 
 
-# Backward compatibility alias
-_utc_now_iso = utc_now_iso
-
-
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -146,7 +142,7 @@ class PolicyRuntime:
         self.state.phase_index += 1
         self.state.seq += 1
         event = {
-            "ts": _utc_now_iso(),
+            "ts": utc_now_iso(),
             "run_id": self.state.run_id,
             "seq": self.state.seq,
             "phase": normalized,
@@ -235,7 +231,7 @@ class PolicyRuntime:
         self.state.approved = bool(approved)
         status = "approved" if approved else "blocked"
         event = {
-            "ts": _utc_now_iso(),
+            "ts": utc_now_iso(),
             "run_id": self.state.run_id,
             "seq": self.state.seq,
             "phase": "approval",
@@ -333,7 +329,7 @@ class PolicyRuntime:
             raise PolicyContractError("artifact_path is required")
         self.state.seq += 1
         event = {
-            "ts": _utc_now_iso(),
+            "ts": utc_now_iso(),
             "run_id": self.state.run_id,
             "seq": self.state.seq,
             "phase": "evidence",
