@@ -23,7 +23,6 @@ import json
 import logging
 import os
 import time
-import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
@@ -35,6 +34,7 @@ from polaris.cells.roles.kernel.internal.kernel.error_handler import (
 from polaris.cells.roles.kernel.internal.kernel.helpers import (
     quality_result_to_dict,
 )
+from polaris.cells.roles.kernel.internal.kernel.request_appendix import build_prompt_appendix_from_request
 from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import tool_contract_requires_single_batch
 from polaris.cells.roles.kernel.internal.kernel.suggestions import get_suggestions_for_error
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
@@ -399,9 +399,9 @@ class RoleExecutionKernel:
         except (RuntimeError, ValueError) as e:
             return RoleTurnResult(error=f"角色加载失败: {e}", is_complete=True)
 
-        # 2. 处理废弃参数
+        # 2. 处理请求附录与历史兼容输入
         try:
-            prompt_appendix = self._process_deprecated_params(request)
+            prompt_appendix = build_prompt_appendix_from_request(request)
         except (RuntimeError, ValueError) as e:
             return RoleTurnResult(error=f"参数处理失败: {e}", is_complete=True)
 
@@ -754,8 +754,8 @@ class RoleExecutionKernel:
             self._cached_tool_gateway = None
             self._cached_gateway_profile = None
 
-            # 2. 处理废弃参数
-            prompt_appendix = self._process_deprecated_params(request)
+            # 2. 处理请求附录与历史兼容输入
+            prompt_appendix = build_prompt_appendix_from_request(request)
             prompt_appendix = self._append_prompt_profiles_for_request(
                 profile=profile,
                 request=request,
@@ -1127,38 +1127,6 @@ class RoleExecutionKernel:
         except (RuntimeError, ValueError):
             logger.warning("Failed to create stream log writer for run_id=%s", run_id, exc_info=True)
             return None
-
-    def _process_deprecated_params(self, request: RoleTurnRequest) -> str:
-        """处理废弃参数"""
-        appendix_parts: list[str] = []
-        seen: set[str] = set()
-
-        if request.prompt_appendix:
-            token = str(request.prompt_appendix).strip()
-            if token and token not in seen:
-                seen.add(token)
-                appendix_parts.append(token)
-
-        if request.system_prompt:
-            token = str(request.system_prompt).strip()
-            if token:
-                warnings.warn(
-                    "RoleTurnRequest.system_prompt is deprecated; use prompt_appendix instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                if token not in seen:
-                    seen.add(token)
-                    appendix_parts.append(token)
-
-        extra_context = getattr(request, "extra_context", None)
-        if extra_context:
-            token = f"【额外上下文】\n{extra_context}"
-            if token not in seen:
-                seen.add(token)
-                appendix_parts.append(token)
-
-        return "\n\n".join(appendix_parts)
 
     def _build_context(self, profile: RoleProfile, request: RoleTurnRequest) -> ContextRequest:
         """构建上下文请求"""

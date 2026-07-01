@@ -18,6 +18,7 @@ from polaris.cells.control_plane.run_ledger.public import JobToken
 from polaris.cells.roles.adapters.internal import runtime_dialogue
 from polaris.cells.roles.adapters.public.service import WorkflowRoleAdapter
 from polaris.cells.roles.kernel.internal.kernel.helpers import extract_structured_tool_calls
+from polaris.cells.roles.kernel.internal.kernel.request_appendix import build_prompt_appendix_from_request
 from polaris.cells.roles.kernel.internal.kernel.tool_executor import KernelToolExecutor
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 from polaris.cells.roles.runtime.public.service import (
@@ -1438,7 +1439,7 @@ class TestMigrationCompat:
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            appendix = kernel._process_deprecated_params(request)
+            appendix = build_prompt_appendix_from_request(request)
 
             # 应发出废弃警告
             assert len(w) == 1
