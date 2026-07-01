@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from polaris.kernelone.multi_agent.neural_syndicate.base_agent import AgentCapability, BaseAgent
 from polaris.kernelone.multi_agent.neural_syndicate.broker import InMemoryBroker, MessageBroker
-from polaris.kernelone.multi_agent.neural_syndicate.consensus import ConsensusEngine, CriticAgent, VoteResult
+from polaris.kernelone.multi_agent.neural_syndicate.consensus import ConsensusEngine, ConsensusResult, CriticAgent
 from polaris.kernelone.multi_agent.neural_syndicate.nats_broker import NATSBroker
 from polaris.kernelone.multi_agent.neural_syndicate.orchestrator import (
     BlackboardClient,
@@ -62,6 +62,7 @@ __all__ = [
     "ConsensusEngine",
     "ConsensusRequest",
     "ConsensusResponse",
+    "ConsensusResult",
     "CriticAgent",
     "InMemoryBroker",
     "Intent",
@@ -82,7 +83,6 @@ __all__ = [
     "TaskState",
     # Trace Context
     "TraceContext",
-    "VoteResult",
     "create_message_span",
     "create_orchestrator",
     "extract_trace_context",

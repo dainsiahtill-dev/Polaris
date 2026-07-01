@@ -9,7 +9,7 @@ Neural Syndicate multi-agent system. It provides:
 2. **CriticAgent**: A special agent type that evaluates other agents' outputs
    and provides critique, vote decisions, and confidence scores.
 
-3. **VoteResult**: Structured result of a voting round with winner, confidence,
+3. **ConsensusResult**: Structured result of a voting round with winner, confidence,
    and reasoning.
 
 Design decisions:
@@ -842,9 +842,5 @@ __all__ = [
     "ConsensusResult",
     "CriticAgent",
     "VoteCollector",
-    "VoteResult",  # Alias for ConsensusResult
     "VotingStrategy",
 ]
-
-# Alias for backward compatibility with __init__.py exports
-VoteResult = ConsensusResult
