@@ -660,6 +660,7 @@ cells:
       - runtime.state_owner
       - runtime.task_market
       - audit.evidence
+      - control_plane.run_ledger
       # Cross-cell read dependencies added 2026-03-22:
       # llm_status.py reads llm.evaluation (load_llm_test_index) and llm.provider_runtime
       # (is_role_runtime_supported) to build the LLM status section of the projection payload.
@@ -676,6 +677,7 @@ cells:
       - director.execution
       - orchestration.pm_planning
       - orchestration.workflow_runtime
+      - qa.audit_verdict
       - resident.autonomy
       - runtime.artifact_store
       - workspace.integrity

@@ -31,12 +31,14 @@ public_contracts:
   - RuntimeProjectionErrorV1
 depends_on:
 - audit.evidence
+- control_plane.run_ledger
 - director.execution
 - docs.court_workflow
 - llm.evaluation
 - llm.provider_runtime
 - orchestration.pm_planning
 - orchestration.workflow_runtime
+- qa.audit_verdict
 - resident.autonomy
 - runtime.artifact_store
 - runtime.state_owner
