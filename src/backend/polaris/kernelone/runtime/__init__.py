@@ -4,21 +4,15 @@ Provides shared runtime utilities for agent lifecycle, execution,
 and cross-cutting concerns following ACGA 2.0 architecture.
 
 Migration notice (2026-03-22):
-    ``Result`` and ``ErrorCodes`` have been migrated.
+    ``Result`` has been migrated.
 
     - ``Result`` is now re-exported from
       ``polaris.kernelone.contracts.technical.master_types.Result``.
       The canonical source is the contracts layer.
-    - ``ErrorCodes`` is now deprecated. Use ``TaggedError`` or ``KernelError``
-      from ``polaris.kernelone.contracts.technical.master_types`` instead.
 
     Example migration::
 
-        # Old (deprecated)
-        from polaris.kernelone.runtime import Result, ErrorCodes
-        Result.err("message", code=ErrorCodes.REVIEW_NOT_FOUND)
-
-        # New (canonical)
+        # Canonical
         from polaris.kernelone.contracts.technical import Result, TaggedError
         Result.err(TaggedError("REVIEW_NOT_FOUND", "message"))
 """
@@ -54,8 +48,6 @@ from polaris.kernelone.runtime.execution_facade import (
     reset_shared_execution_facade,
     run_sync,
 )
-
-# ErrorCodes is preserved for backward compatibility only — do not add new codes here
 from polaris.kernelone.runtime.execution_runtime import (
     ExecutionHandle,
     ExecutionLane,
@@ -78,7 +70,6 @@ from polaris.kernelone.runtime.metrics import (
     get_metrics,
     reset_metrics,
 )
-from polaris.kernelone.runtime.result import ErrorCodes
 
 DEFAULT_ASYNC_CONCURRENCY = EXECUTION_DEFAULT_ASYNC_CONCURRENCY
 DEFAULT_BLOCKING_CONCURRENCY = EXECUTION_DEFAULT_BLOCKING_CONCURRENCY
@@ -99,8 +90,6 @@ __all__ = [
     # Bounded cache for preventing memory leaks
     "BoundedCache",
     "ErrorCategory",
-    # Deprecated — use TaggedError or KernelError instead
-    "ErrorCodes",
     "ExecutionFacade",
     "ExecutionHandle",
     "ExecutionLane",

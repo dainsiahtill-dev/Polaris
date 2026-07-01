@@ -21,6 +21,7 @@ from polaris.kernelone.contracts.technical import (
     Result,
     TaggedError,
 )
+from polaris.kernelone.errors import KernelOneError as CanonicalKernelOneError
 
 # ---------------------------------------------------------------------------
 # Result[T, E] construction
@@ -87,17 +88,17 @@ class TestCanonicalResultAccessors:
     def test_unwrap_on_none_ok(self) -> None:
         r: Result[None, TaggedError] = Result.ok(None)
         # Canonical unwrap() raises on None value (safe: avoids silent None bugs)
-        with pytest.raises(KernelOneError, match=r"Result\.unwrap"):
+        with pytest.raises(CanonicalKernelOneError, match=r"Result\.unwrap"):
             r.unwrap()
 
     def test_unwrap_raises_on_err(self) -> None:
         r: Result[int, TaggedError] = Result.err(TaggedError("NOT_FOUND", "not found"))
-        with pytest.raises(KernelOneError, match=r"Result\.unwrap"):
+        with pytest.raises(CanonicalKernelOneError, match=r"Result\.unwrap"):
             r.unwrap()
 
     def test_unwrap_raises_on_err_with_message(self) -> None:
         r: Result[int, TaggedError] = Result.err(TaggedError("NOT_FOUND", "record gone"))
-        with pytest.raises(KernelOneError, match="record gone"):
+        with pytest.raises(CanonicalKernelOneError, match="record gone"):
             r.unwrap()
 
     def test_unwrap_or_returns_value_on_ok(self) -> None:
@@ -325,37 +326,17 @@ class TestKernelOneError:
         assert exc_info.value.code == "CUSTOM_CODE"
 
 
-# ---------------------------------------------------------------------------
-# Backward-compat shim: result.py Result still works (kept for test compat)
-# ---------------------------------------------------------------------------
+class TestRuntimeResultExports:
+    """Runtime package root exposes only the canonical Result contract."""
 
-
-class TestLegacyResultStillImportable:
-    """Verify the legacy Result in result.py is still accessible.
-
-    This test exists because tests/test_unified_result_and_error_handling.py
-    directly imports from result.py. Once that test is migrated, this class
-    can be removed and the legacy result.py file can be deleted.
-    """
-
-    def test_legacy_result_still_importable_via_runtime(self) -> None:
-        # The runtime/__init__.py re-exports canonical Result; verify no circular dep
+    def test_runtime_result_is_canonical_contract_type(self) -> None:
         from polaris.kernelone.runtime import Result as RuntimeResult
 
-        # Should be the canonical Result[T, E], not the legacy Result[T]
         r: RuntimeResult[str, TaggedError] = RuntimeResult.ok("ok")
         assert r.is_ok
 
-    def test_legacy_result_direct_import_still_works(self) -> None:
-        # Direct import from result.py should still work (for test compat)
-        from polaris.kernelone.runtime.result import Result as LegacyResult
+    def test_runtime_does_not_export_retired_errorcodes(self) -> None:
+        import polaris.kernelone.runtime as runtime
 
-        r: LegacyResult[int] = LegacyResult.ok(1)
-        assert r.is_ok
-        assert r.value == 1
-
-    def test_errorcodes_still_importable(self) -> None:
-        from polaris.kernelone.runtime import ErrorCodes
-
-        assert ErrorCodes.NOT_FOUND == "NOT_FOUND"
-        assert ErrorCodes.REVIEW_NOT_FOUND == "REVIEW_NOT_FOUND"
+        assert "ErrorCodes" not in runtime.__all__
+        assert not hasattr(runtime, "ErrorCodes")
