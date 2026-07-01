@@ -22,6 +22,13 @@ ADR_0042_PATH = BACKEND_ROOT / "docs" / "governance" / "decisions" / "adr-0042-t
 ADR_0043_PATH = BACKEND_ROOT / "docs" / "governance" / "decisions" / "adr-0043-structural-bug-governance-loop.md"
 FITNESS_RULES_PATH = BACKEND_ROOT / "docs" / "governance" / "ci" / "fitness-rules.yaml"
 PIPELINE_TEMPLATE_PATH = BACKEND_ROOT / "docs" / "governance" / "ci" / "pipeline.template.yaml"
+ROLE_KERNEL_EXECUTION_AUTHORIZATION_FILES = (
+    POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "turn_decision_decoder.py",
+    POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "turn_transaction_controller.py",
+    POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "transaction" / "decision_pipeline.py",
+    POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "transaction" / "finalization.py",
+    POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "transaction" / "stream_orchestrator.py",
+)
 
 EXPECTED_DEBT_IDS = {
     "DEBT-20260325-roles-kernel-turn-stage-contract",
@@ -145,6 +152,30 @@ def test_debt_register_has_no_unapproved_active_debt() -> None:
     }
 
     assert active_debt_ids == EXPECTED_ACTIVE_DEBT_IDS
+
+
+def test_roles_kernel_execution_paths_do_not_use_compat_tool_parser() -> None:
+    """Execution authorization paths must stay native-tool-call driven.
+
+    ``OutputParser.parse_tool_calls`` remains as a compatibility wrapper around
+    the typed raw-content parser. It must not be reintroduced into transaction
+    execution paths, where tool execution must flow through RawLLMResponse
+    native_tool_calls and TurnDecisionDecoder.
+    """
+
+    forbidden_patterns = (
+        ".parse_tool_calls(",
+        "parse_tool_calls(",
+        "from polaris.kernelone.llm.toolkit import parse_tool_calls",
+    )
+    findings: list[str] = []
+    for path in ROLE_KERNEL_EXECUTION_AUTHORIZATION_FILES:
+        text = path.read_text(encoding="utf-8")
+        for pattern in forbidden_patterns:
+            if pattern in text:
+                findings.append(f"{path.relative_to(POLARIS_ROOT)} contains {pattern!r}")
+
+    assert findings == []
 
 
 def test_roles_kernel_verify_pack_shape_and_links() -> None:
