@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T03:33:39.253473Z",
-  "source_hash": "7afa8622fd2c82f3",
+  "generated_at": "2026-07-01T03:40:19.552864Z",
+  "source_hash": "e9896199a804c9a3",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -817,10 +817,6 @@
         {
           "name": "build_system_context",
           "doc": "构建系统上下文（提示词部分）"
-        },
-        {
-          "name": "_build_projection_dict",
-          "doc": "Backward-compatible delegate to ProjectionDictBuilder.build."
         },
         {
           "name": "_get_project_structure",

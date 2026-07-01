@@ -704,7 +704,7 @@ class TestIntegration:
             return SimpleNamespace(active_window=(), snapshot=None)
 
         gateway._context_os.project = project_stub
-        gateway._build_projection_dict = MagicMock(return_value=({}, MagicMock(), []))
+        gateway._projection_dict_builder.build = MagicMock(return_value=({}, MagicMock(), []))
         gateway._projection_engine = MagicMock()
         gateway._projection_engine.project.return_value = []
         gateway._projection_engine.get_adaptive_weights.return_value = {}
@@ -724,7 +724,7 @@ class TestIntegration:
             return SimpleNamespace(active_window=(), snapshot=None)
 
         gateway._context_os.project = project_stub
-        gateway._build_projection_dict = MagicMock(return_value=({}, MagicMock(), []))
+        gateway._projection_dict_builder.build = MagicMock(return_value=({}, MagicMock(), []))
         gateway._projection_engine = MagicMock()
         gateway._projection_engine.project.return_value = [
             {"role": "user", "content": "x" * 5000},

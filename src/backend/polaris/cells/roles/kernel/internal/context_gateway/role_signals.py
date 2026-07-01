@@ -1,6 +1,6 @@
 """RoleSignalPlane —— 按角色注入"领域资产概览"信号的统一机制。
 
-这不是新建平行平面，而是把 gateway `_build_projection_dict` 里原本**硬编码**的
+这不是新建平行平面，而是把 `ProjectionDictBuilder` 里原本**硬编码**的
 supplemental_turns（`project_structure` /【项目结构】、`task_history` /【任务历史】）
 **泛化**为 registry 驱动、按角色绑定、预算受控的信号管线。三件既有基建全部复用：
 

@@ -1,8 +1,9 @@
 """ProjectionEngine-payload assembly for :class:`RoleContextGateway`.
 
 Extracted (behavior-preserving) from ``gateway.py`` during the G8 god-class
-decomposition (blueprint REMAINING_04_gateway-py.md, step 7). The gateway keeps a
-thin delegating shim ``_build_projection_dict`` (a frozen test reach-in).
+decomposition (blueprint REMAINING_04_gateway-py.md, step 7). The gateway calls
+this builder directly instead of exposing projection assembly as a private
+reach-in method.
 
 The builder reads the gateway's collaborators/state through a back-reference
 because this method folds together six signal readers, the budget-pressure
@@ -271,7 +272,7 @@ class ProjectionDictBuilder:
             user_message=user_message,
         )
         logger.debug(
-            "[DEBUG][ContextGateway] _build_projection_dict: active_window=%d supplemental=%d sources=%s head_len=%d tail_len=%d",
+            "[DEBUG][ContextGateway] ProjectionDictBuilder.build: active_window=%d supplemental=%d sources=%s head_len=%d tail_len=%d",
             len(sorted_events),
             len(supplemental_turns),
             sources,

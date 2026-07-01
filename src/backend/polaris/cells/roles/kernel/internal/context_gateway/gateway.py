@@ -25,7 +25,6 @@ from polaris.kernelone.context.contracts import (
 )
 from polaris.kernelone.context.history_materialization import SessionContinuityStrategy
 from polaris.kernelone.context.projection_engine import ProjectionEngine
-from polaris.kernelone.context.receipt_store import ReceiptStore
 from polaris.kernelone.errors import BudgetExceededError
 from polaris.kernelone.events.context_events import ContextEvent, EventType, get_event_writer
 
@@ -368,7 +367,7 @@ class RoleContextGateway:
                 focus=getattr(request, "focus", "") or "",
             )
 
-        projection_dict, receipt_store, extra_sources = self._build_projection_dict(_projection, request)
+        projection_dict, receipt_store, extra_sources = self._projection_dict_builder.build(_projection, request)
         projection_report = self._context_os.get_last_projection_report() or {}
         projection_id = str(projection_report.get("projection_id") or "").strip()
         context_result_id = str(projection_report.get("context_result_id") or "").strip()
@@ -742,14 +741,6 @@ class RoleContextGateway:
             parts.append("\n\n【追加上下文】\n" + appendix)
 
         return "\n".join(parts)
-
-    def _build_projection_dict(
-        self,
-        projection: Any,
-        request: ContextRequest,
-    ) -> tuple[dict[str, Any], ReceiptStore, list[str]]:
-        """Backward-compatible delegate to ProjectionDictBuilder.build."""
-        return self._projection_dict_builder.build(projection, request)
 
     async def _process_history(
         self,
