@@ -1424,29 +1424,20 @@ class TestChatWorkflowConsistency:
         assert chat_fp.full_hash == workflow_fp.full_hash
 
 
-class TestMigrationCompat:
-    """测试迁移兼容性"""
+class TestPromptAppendix:
+    """测试 canonical prompt appendix 组装"""
 
-    def test_deprecated_params_handling(self, kernel):
-        """测试废弃参数处理"""
-        import warnings
-
+    def test_prompt_appendix_is_preserved(self, kernel):
+        """测试 canonical prompt_appendix 被追加到角色提示词"""
         request = RoleTurnRequest(
             mode=RoleExecutionMode.CHAT,
             message="test",
-            system_prompt="自定义系统提示词",  # 废弃参数
+            prompt_appendix="自定义追加提示词",
         )
 
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            appendix = build_prompt_appendix_from_request(request)
+        appendix = build_prompt_appendix_from_request(request)
 
-            # 应发出废弃警告
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-
-        # system_prompt 应被转为 appendix
-        assert "自定义系统提示词" in (appendix or "")
+        assert "自定义追加提示词" in appendix
 
 
 if __name__ == "__main__":

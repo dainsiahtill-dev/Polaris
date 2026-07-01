@@ -426,10 +426,6 @@ class RoleTurnRequest:
     # 追加提示词（仅追加到核心提示词，不覆盖）
     prompt_appendix: str | None = None
 
-    # ⚠️ 已废弃：system_prompt 不再允许覆盖核心提示词
-    # 如果传入，会被转换为 prompt_appendix 并输出 deprecation 警告
-    system_prompt: str | None = None
-
     # 上下文覆盖（可选）
     context_override: dict[str, Any] | None = None
 
@@ -462,7 +458,6 @@ class RoleTurnRequest:
         domain: str = "code",
         history: list[tuple] | None = None,
         prompt_appendix: str | None = None,
-        system_prompt: str | None = None,
         context_override: dict[str, Any] | None = None,
         tool_results: list[dict[str, Any]] | None = None,
         task_id: str | None = None,
@@ -480,7 +475,6 @@ class RoleTurnRequest:
         self.domain = domain
         self.history = history if history is not None else []
         self.prompt_appendix = prompt_appendix
-        self.system_prompt = system_prompt
         self.tool_results = tool_results
         self.task_id = task_id
         self.run_id = run_id
