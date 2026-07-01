@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T08:49:30.274435Z",
-  "source_hash": "327e1dd7b6c2857c",
+  "generated_at": "2026-07-01T08:54:57.723246Z",
+  "source_hash": "ccff4fe755f051a4",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4802,6 +4802,66 @@
       "name": "test_role_turn_result_from_transaction_result_projects_common_fields",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_role_result_projection.py"
+    },
+    {
+      "type": "class",
+      "name": "_Publisher",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_stream_turn_flow.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_profile",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_stream_turn_flow.py"
+    },
+    {
+      "type": "function",
+      "name": "_kernel",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_stream_turn_flow.py"
+    },
+    {
+      "type": "function",
+      "name": "test_execute_stream_role_turn_yields_fingerprint_then_transaction_events",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_stream_turn_flow.py"
+    },
+    {
+      "type": "function",
+      "name": "setup",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_stream_turn_flow.py"
+    },
+    {
+      "type": "function",
+      "name": "test_execute_stream_role_turn_converts_transaction_error_to_stream_event",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_stream_turn_flow.py"
+    },
+    {
+      "type": "function",
+      "name": "setup",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_stream_turn_flow.py"
+    },
+    {
+      "type": "function",
+      "name": "test_execute_stream_role_turn_propagates_setup_errors",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_stream_turn_flow.py"
+    },
+    {
+      "type": "function",
+      "name": "fail_setup",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_stream_turn_flow.py"
     },
     {
       "type": "function",

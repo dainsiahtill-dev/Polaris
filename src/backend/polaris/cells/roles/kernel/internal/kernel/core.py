@@ -19,7 +19,6 @@ RoleExecutionKernel is the public coordination entrypoint for role turns.
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -28,10 +27,8 @@ from polaris.cells.roles.kernel.internal.kernel.context_gateway_config_builder i
 )
 from polaris.cells.roles.kernel.internal.kernel.error_handler import KernelEventEmitter
 from polaris.cells.roles.kernel.internal.kernel.non_stream_turn_flow import execute_non_stream_role_turn
-from polaris.cells.roles.kernel.internal.kernel.stream_run_id import resolve_stream_run_id
+from polaris.cells.roles.kernel.internal.kernel.stream_turn_flow import execute_stream_role_turn
 from polaris.cells.roles.kernel.internal.kernel.suggestions import get_suggestions_for_error
-from polaris.cells.roles.kernel.internal.kernel.turn_execution import execute_transaction_kernel_stream
-from polaris.cells.roles.kernel.internal.kernel.turn_prompt_setup import build_role_turn_prompt_setup
 from polaris.cells.roles.kernel.internal.output_parser import OutputParser
 from polaris.cells.roles.kernel.internal.prompt_builder import PromptBuilder
 from polaris.cells.roles.kernel.internal.quality_checker import QualityChecker
@@ -41,7 +38,6 @@ from polaris.cells.roles.profile.public.service import (
     RoleTurnRequest,
     RoleTurnResult,
 )
-from polaris.kernelone.events.uep_publisher import UEPEventPublisher
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -57,8 +53,6 @@ if TYPE_CHECKING:
     )
     from polaris.cells.roles.session.public.service import RoleDataStore
     from polaris.kernelone.context.compaction import RoleContextCompressor
-
-logger = logging.getLogger(__name__)
 
 
 class RoleExecutionKernel:
@@ -262,72 +256,12 @@ class RoleExecutionKernel:
         Yields:
             流式事件字典
         """
-        stream_run_id = resolve_stream_run_id(request.run_id, self.workspace)
-        # 将 resolved run_id 写回 request，确保下游（TransactionKernel/RoleToolGateway）能获取到
-        # 只有当 request.run_id 为 None 且 stream_run_id 非空时才设置
-        original_run_id = request.run_id
-        if original_run_id is None and stream_run_id:
-            request.run_id = stream_run_id
-        logger.warning(
-            "[run_stream] run_id resolved: original=%s stream_run_id=%s final=%s role=%s",
-            original_run_id,
-            stream_run_id,
-            request.run_id,
-            role,
-        )
-        inner_error: Exception | None = None
-        uep_publisher = UEPEventPublisher()
-
-        try:
-            turn_setup = build_role_turn_prompt_setup(
-                kernel=self,
-                role=role,
-                request=request,
-            )
-            profile = turn_setup.profile
-            fingerprint = turn_setup.fingerprint
-            system_prompt = turn_setup.system_prompt
-
-            # Reset cached gateway for new turn (FailureBudget should not persist across turns)
-            self._cached_tool_gateway = None
-            self._cached_gateway_profile = None
-
-            await uep_publisher.publish_stream_event(
-                workspace=self.workspace or os.getcwd(),
-                run_id=stream_run_id,
-                role=role,
-                event_type="fingerprint",
-                payload={"fingerprint": str(fingerprint.full_hash or "")},
-            )
-            yield {"type": "fingerprint", "fingerprint": fingerprint}
-
-            try:
-                async for event in execute_transaction_kernel_stream(
-                    self,
-                    role=role,
-                    profile=profile,
-                    request=request,
-                    system_prompt=system_prompt,
-                    fingerprint=fingerprint,
-                    stream_run_id=stream_run_id,
-                    uep_publisher=uep_publisher,
-                ):
-                    yield event
-            except (RuntimeError, ValueError) as e:
-                inner_error = e
-                logger.exception("流式执行失败 (TransactionKernel)")
-                await uep_publisher.publish_stream_event(
-                    workspace=self.workspace or os.getcwd(),
-                    run_id=stream_run_id,
-                    role=role,
-                    event_type="error",
-                    payload={"error": str(e)},
-                )
-                yield {"type": "error", "error": str(e)}
-
-        except (RuntimeError, ValueError):
-            if inner_error is None:
-                raise
+        async for event in execute_stream_role_turn(
+            kernel=self,
+            role=role,
+            request=request,
+        ):
+            yield event
 
 
 __all__ = [
