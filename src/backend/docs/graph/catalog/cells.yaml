@@ -2735,6 +2735,8 @@ cells:
       results: []
       errors: []
     depends_on:
+      - chief_engineer.blueprint
+      - control_plane.run_ledger
       - runtime.task_market
       - roles.adapters
     subgraphs: []

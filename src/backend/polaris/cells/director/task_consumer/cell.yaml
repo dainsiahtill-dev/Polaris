@@ -26,6 +26,8 @@ public_contracts:
   results: []
   errors: []
 depends_on:
+  - chief_engineer.blueprint
+  - control_plane.run_ledger
   - roles.adapters
   - runtime.task_market
 subgraphs: []
