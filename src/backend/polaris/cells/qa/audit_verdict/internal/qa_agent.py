@@ -32,6 +32,14 @@ from polaris.kernelone.contracts.technical import Result, TaggedError
 logger = logging.getLogger(__name__)
 
 
+def _require_non_empty_text(payload: dict[str, Any], field_name: str) -> str:
+    """Return a required text field or raise a source-identifying error."""
+    value = str(payload.get(field_name) or "").strip()
+    if not value:
+        raise ValueError(f"review record field {field_name!r} is required")
+    return value
+
+
 class ReviewStatus(str, Enum):
     PENDING = "pending"
     APPROVED = "approved"
@@ -79,10 +87,16 @@ class ReviewRecord:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> ReviewRecord:
+        """Deserialize a persisted review record.
+
+        Raises:
+            ValueError: If required identity fields are missing or if
+                ``status`` is not a supported :class:`ReviewStatus` value.
+        """
         return cls(
-            review_id=str(payload.get("review_id") or ""),
-            task_id=str(payload.get("task_id") or ""),
-            title=str(payload.get("title") or ""),
+            review_id=_require_non_empty_text(payload, "review_id"),
+            task_id=_require_non_empty_text(payload, "task_id"),
+            title=_require_non_empty_text(payload, "title"),
             priority=str(payload.get("priority") or "medium"),
             content=str(payload.get("content") or ""),
             status=ReviewStatus(str(payload.get("status") or ReviewStatus.PENDING.value)),
@@ -475,8 +489,8 @@ class QAAgent(RoleAgent):
                 try:
                     record = ReviewRecord.from_dict(item)
                     self._reviews[record.review_id] = record
-                except (RuntimeError, ValueError) as e:
-                    logger.error("Failed to load review record: %s", e)
+                except (RuntimeError, ValueError) as exc:
+                    logger.error("Failed to load review record: %s", exc)
 
     def get_status(self) -> dict[str, Any]:
         """Get agent status."""

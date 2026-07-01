@@ -276,10 +276,23 @@ class TestReviewRecordSerialization:
         assert restored.status == original.status
         assert restored.priority == original.priority
 
-    def test_from_dict_missing_fields_defaults(self) -> None:
-        record = ReviewRecord.from_dict({})
-        assert record.review_id == ""
-        assert record.task_id == ""
+    def test_from_dict_rejects_missing_required_fields(self) -> None:
+        with pytest.raises(ValueError, match="review_id"):
+            ReviewRecord.from_dict({})
+        with pytest.raises(ValueError, match="task_id"):
+            ReviewRecord.from_dict({"review_id": "r-002", "title": "Missing task"})
+        with pytest.raises(ValueError, match="title"):
+            ReviewRecord.from_dict({"review_id": "r-003", "task_id": "t-300"})
+
+    def test_from_dict_keeps_optional_defaults(self) -> None:
+        record = ReviewRecord.from_dict(
+            {
+                "review_id": "r-004",
+                "task_id": "t-300",
+                "title": "Defaults",
+            }
+        )
+
         assert record.status == ReviewStatus.PENDING
         assert record.priority == "medium"
 
