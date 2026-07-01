@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
 from polaris.kernelone.llm.contracts import CellToolExecutorPort
@@ -14,6 +14,7 @@ from polaris.kernelone.llm.engine.contracts import AIResponse, Usage
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
+    from polaris.cells.roles.kernel.internal.turn_engine import AssistantRawContent
     from polaris.kernelone.llm.engine.contracts import AIRequest
 
 T = TypeVar("T")
@@ -111,15 +112,24 @@ class IPromptBuilder(Protocol):
 
 @runtime_checkable
 class IOutputParser(Protocol):
-    """输出解析器协议"""
+    """Output parser contract for role-kernel execution.
 
-    def parse_tool_calls(
+    Execution-facing callers must use the typed raw-content boundary. The
+    concrete OutputParser may keep compatibility helpers for tests or legacy
+    callers, but this service protocol exposes only the executable parser stage
+    so dependency-injected implementations cannot accidentally consume sanitized
+    transcript text as tool-call input.
+    """
+
+    def parse_execution_tool_calls(
         self,
-        content: str,
-        native_tool_calls: list[dict[str, Any]] | None,
-        native_provider: str,
+        content: AssistantRawContent,
+        *,
+        allowed_tool_names: Iterable[str] | None = None,
+        native_tool_calls: list[dict[str, Any]] | None = None,
+        native_provider: str = "auto",
     ) -> list[Any]:
-        """解析工具调用"""
+        """Parse executable native tool calls from typed raw assistant content."""
         ...
 
     def extract_json(self, content: str) -> dict[str, Any] | None:

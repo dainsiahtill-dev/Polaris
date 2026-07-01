@@ -14,6 +14,7 @@ from polaris.cells.roles.kernel.internal.turn_engine.utils import (
     append_transcript_cycle,
     sanitize_assistant_transcript_message,
 )
+from polaris.cells.roles.kernel.services.contracts import IOutputParser
 
 
 def _native_read_file_call(path: str = "README.md") -> dict[str, Any]:
@@ -78,9 +79,12 @@ def test_execution_parser_uses_typed_raw_content_boundary() -> None:
     parser = OutputParser()
 
     parser_hints = OutputParser.parse_execution_tool_calls.__annotations__
+    protocol_hints = IOutputParser.parse_execution_tool_calls.__annotations__
     artifact_hints = AssistantTurnArtifacts.__annotations__
 
     assert parser_hints["content"] == "AssistantRawContent"
+    assert protocol_hints["content"] == "AssistantRawContent"
+    assert not hasattr(IOutputParser, "parse_tool_calls")
     assert artifact_hints["raw_content"] == "AssistantRawContent"
     assert artifact_hints["clean_content"] == "AssistantCleanContent"
 
