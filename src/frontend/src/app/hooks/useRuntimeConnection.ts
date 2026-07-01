@@ -34,7 +34,6 @@ const BASE_RUNTIME_STREAM_CHANNELS = [
   "process",
   "llm",
   "dialogue",
-  "runtime_events",
   "status.workflow",
   "status.process",
   "status.control_plane",

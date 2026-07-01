@@ -40,15 +40,19 @@ vi.mock("@/app/hooks/useRuntimeStore", () => ({
 }));
 
 vi.mock("@/runtime/transport", () => ({
-  useRuntimeTransport: vi.fn(() => ({
+  useConnectionState: vi.fn(() => ({
     connected: mockTransportState.connected,
     reconnecting: mockTransportState.reconnecting,
     error: mockTransportState.error,
     attemptCount: mockTransportState.attemptCount,
+  })),
+  useTransportActions: vi.fn(() => ({
     subscribeChannels: mockSubscribeChannels,
     sendCommand: mockSendCommand,
     reconnect: mockReconnect,
     getLastCursor: mockGetLastCursor,
+  })),
+  useMessageHandler: vi.fn(() => ({
     registerMessageHandler: mockRegisterMessageHandler,
   })),
 }));
@@ -241,7 +245,6 @@ describe("useRuntimeConnection", () => {
         "process",
         "llm",
         "dialogue",
-        "runtime_events",
         "status.workflow",
         "status.process",
         "status.control_plane",
@@ -253,7 +256,7 @@ describe("useRuntimeConnection", () => {
       expect(channels).not.toContain("roles:pm,director,qa");
       expect(
         subscriptions.map((item: { tailLines?: number }) => item.tailLines),
-      ).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+      ).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     });
 
     it("can request bounded runtime history without changing the default", async () => {
@@ -272,7 +275,7 @@ describe("useRuntimeConnection", () => {
       const subscriptions = mockSubscribeChannels.mock.calls[0]?.[0] ?? [];
       expect(
         subscriptions.map((item: { tailLines?: number }) => item.tailLines),
-      ).toEqual(Array(12).fill(240));
+      ).toEqual(Array(11).fill(240));
     });
 
     it("subscribes bench events only when internal bench mode is explicitly enabled", async () => {
@@ -297,7 +300,6 @@ describe("useRuntimeConnection", () => {
         "process",
         "llm",
         "dialogue",
-        "runtime_events",
         "status.workflow",
         "status.process",
         "status.control_plane",
@@ -402,7 +404,6 @@ describe("useRuntimeConnection", () => {
           "process",
           "llm",
           "dialogue",
-          "runtime_events",
           "status.workflow",
           "status.process",
           "status.control_plane",
@@ -438,7 +439,6 @@ describe("useRuntimeConnection", () => {
           "process",
           "llm",
           "dialogue",
-          "runtime_events",
           "status.workflow",
           "status.process",
           "status.control_plane",
@@ -507,7 +507,6 @@ describe("useRuntimeConnection", () => {
           "process",
           "llm",
           "dialogue",
-          "runtime_events",
           "status.workflow",
           "status.process",
           "status.control_plane",
@@ -553,7 +552,6 @@ describe("useRuntimeConnection", () => {
             "process",
             "llm",
             "dialogue",
-            "runtime_events",
             "status.workflow",
             "status.process",
             "status.control_plane",

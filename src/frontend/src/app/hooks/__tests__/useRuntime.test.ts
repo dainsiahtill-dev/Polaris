@@ -113,7 +113,7 @@ describe('useRuntime llm filtering and dedup', () => {
     });
   });
 
-  it('accepts llm line when payload domain is llm even if nested channel is runtime_events', () => {
+  it('accepts llm line when payload domain is llm', () => {
     const { result } = renderHook(() =>
       useRuntime({ autoConnect: false, workspace: '/test/workspace' })
     );
@@ -122,7 +122,7 @@ describe('useRuntime llm filtering and dedup', () => {
       type: 'line',
       channel: 'llm',
       text: JSON.stringify({
-        channel: 'runtime_events',
+        channel: 'system',
         domain: 'llm',
         event: 'invoke_done',
         data: {
@@ -143,7 +143,7 @@ describe('useRuntime llm filtering and dedup', () => {
 
     emitRuntimeMessage({
       type: 'snapshot',
-      channel: 'runtime_events',
+      channel: 'system',
       lines: [
         JSON.stringify({
           schema_version: 1,
@@ -318,7 +318,7 @@ describe('useRuntime llm filtering and dedup', () => {
 
     emitRuntimeMessage({
       type: 'line',
-      channel: 'runtime_events',
+      channel: 'system',
       text: JSON.stringify({
         event_id: 'runtime-object-summary',
         name: 'llm_completed',
@@ -335,7 +335,7 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(result.current.executionLogs[0]?.message).not.toContain('[object Object]');
   });
 
-  it('flattens runtime.v2 role LLM usage envelopes into execution log meta', () => {
+  it('routes runtime.v2 role LLM usage envelopes into the canonical llm stream', () => {
     const { result } = renderHook(() =>
       useRuntime({ autoConnect: false, workspace: '/test/workspace' })
     );
@@ -344,7 +344,7 @@ describe('useRuntime llm filtering and dedup', () => {
       type: 'event',
       event: {
         schema_version: 'runtime.v2',
-        channel: 'runtime_events',
+        channel: 'system',
         kind: 'llm.state',
         ts: '2026-06-21T22:16:12Z',
         payload: {
@@ -368,14 +368,14 @@ describe('useRuntime llm filtering and dedup', () => {
       },
     });
 
-    expect(result.current.executionLogs).toHaveLength(1);
-    const entry = result.current.executionLogs[0];
-    expect(entry?.message).toBe('llm_call_end');
-    expect(entry?.meta?.prompt_tokens).toBe(2732);
-    expect(entry?.meta?.completion_tokens).toBe(1954);
-    expect(entry?.meta?.context_tokens_after).toBe(2732);
-    expect(entry?.meta?.elapsed_ms).toBe(19177.76);
-    expect(entry?.meta?.context_snapshot_ref).toBe('e3db3551d74e5741fd664b7b');
+    expect(result.current.llmStreamEvents).toHaveLength(1);
+    const entry = result.current.llmStreamEvents[0];
+    expect(entry?.message).toBe('llm.state');
+    expect(entry?.meta?.promptTokens).toBe(2732);
+    expect(entry?.meta?.completionTokens).toBe(1954);
+    expect(entry?.meta?.contextTokens).toBe(2732);
+    expect(entry?.meta?.durationMs).toBe(19178);
+    expect(entry?.meta?.contextSnapshotRef).toBe('e3db3551d74e5741fd664b7b');
   });
 
   it('routes runtime.v2 event.factory envelopes into process stream events', () => {
@@ -1405,8 +1405,9 @@ describe('useRuntime llm filtering and dedup', () => {
     );
 
     emitRuntimeMessage({
-      type: 'runtime_event',
-      event: {
+      type: 'line',
+      channel: 'system',
+      text: JSON.stringify({
         name: 'director_task_started',
         actor: 'Director',
         ts: '2026-06-19T12:00:00.000Z',
@@ -1415,7 +1416,7 @@ describe('useRuntime llm filtering and dedup', () => {
           task_title: 'Implement checkout route',
           worker_id: 'worker-1',
         },
-      },
+      }),
     });
 
     expect(result.current.tasks[0]).toMatchObject({

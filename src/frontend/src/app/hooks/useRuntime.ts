@@ -260,9 +260,6 @@ function normalizeRuntimeV2Envelope(eventPayload: Record<string, unknown>): WebS
   if (targetChannel === 'dialogue' || kind === 'dialogue' || source === 'dialogue') {
     return { type: 'line', channel: 'dialogue', text: JSON.stringify(rawPayload || mergedPayload) };
   }
-  if (targetChannel === 'runtime_events' || kind === 'runtime_event') {
-    return { type: 'line', channel: 'runtime_events', text: JSON.stringify(mergedPayload) };
-  }
   if (targetChannel === 'event.file_edit' || targetChannel === 'file_edit' || kind === 'file_edit') {
     return {
       type: 'file_edit',
@@ -282,7 +279,7 @@ function normalizeRuntimeV2Envelope(eventPayload: Record<string, unknown>): WebS
     return { type: 'line', channel: targetChannel, text: JSON.stringify(mergedPayload) };
   }
   if (targetChannel === 'llm' || v2Domain === 'llm' || kind.startsWith('llm.')) {
-    return { type: 'line', channel: 'llm', text: JSON.stringify(mergedPayload) };
+    return { type: 'line', channel: 'llm', text: JSON.stringify(rawPayload ? { ...mergedPayload, raw: rawPayload } : mergedPayload) };
   }
   if (
     targetChannel === 'process' ||
@@ -302,7 +299,7 @@ function normalizeRuntimeV2Envelope(eventPayload: Record<string, unknown>): WebS
       timestamp: String(eventPayload.timestamp || eventPayload.ts || envelopePayload?.timestamp || ''),
     };
   }
-  return { type: 'line', channel: 'runtime_events', text: JSON.stringify(mergedPayload) };
+  return { type: 'line', channel: 'system', text: JSON.stringify(mergedPayload) };
 }
 
 function isRuntimeV2Envelope(payload: WebSocketMessage): boolean {
@@ -494,7 +491,7 @@ function mergeRuntimeTaskLifecycle(tasks: PmTask[], update: RuntimeTaskLifecycle
       assigned_worker: update.workerId || task.assigned_worker,
       metadata: {
         ...(task.metadata || {}),
-        runtime_lifecycle_source: 'runtime_events',
+        runtime_lifecycle_source: 'runtime_v2',
         runtime_lifecycle_status: update.status,
       },
     };
@@ -517,7 +514,7 @@ function mergeRuntimeTaskLifecycle(tasks: PmTask[], update: RuntimeTaskLifecycle
       worker_id: update.workerId,
       assigned_worker: update.workerId,
       metadata: {
-        runtime_lifecycle_source: 'runtime_events',
+        runtime_lifecycle_source: 'runtime_v2',
         runtime_lifecycle_status: update.status,
       },
     },
@@ -1237,25 +1234,9 @@ function parseProcessStreamLine(channel: string, line: string): LogEntry | null 
       ? 'System'
       : channel === 'process'
         ? 'Process'
-        : channel === 'pm_subprocess'
-        ? 'PM'
-        : channel === 'director_console'
-          ? 'Director'
-          : channel === 'pm_report'
-          ? 'PM-Report'
-          : channel === 'pm_log'
-            ? 'PM-Events'
-            : channel === 'ollama'
-              ? 'Ollama'
-              : channel === 'qa'
-                ? 'QA'
-                : channel === 'runlog'
-                  ? 'RunLog'
-                    : channel === 'engine_status'
-                    ? 'Engine'
-                    : isRuntimeFactoryOrBenchEventChannel(channel)
-                      ? 'Factory'
-                      : 'Planner'
+        : isRuntimeFactoryOrBenchEventChannel(channel)
+          ? 'Factory'
+          : 'Process'
   );
 
   let timestamp = new Date().toISOString();
@@ -1624,6 +1605,35 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
           }
         };
 
+        const applyRuntimeEventRecord = (raw: Record<string, unknown>): LogEntry | null => {
+          mergeTaskLifecycleFromRaw(raw);
+          const log = parseRuntimeEvent(raw);
+          const fileEdit = Parsing.extractRuntimeFileEditEvent(raw);
+          if (fileEdit) appendFileEditEvent(fileEdit);
+
+          if (raw.name === 'pm_quality_gate_retry' || raw.name === 'pm_quality_gate') {
+            const qg = parseQualityGateEvent(raw);
+            if (qg) setQualityGate(qg);
+          }
+
+          if (raw.event === 'iteration' || raw.event === 'phase_change') {
+            const data = firstRecord(raw.data);
+            const phase = Parsing.normalizePhaseToken(Parsing.toStringValue(data?.phase || data?.stage));
+            if (phase) {
+              const currentPhase = useRuntimeStore.getState().currentPhase;
+              let nextPhase = phase;
+              if (directorRunningRef.current && phase === 'planning') {
+                nextPhase = currentPhase || 'executing';
+              } else if (currentPhase === 'executing' && phase === 'planning') {
+                nextPhase = currentPhase;
+              }
+              setCurrentPhase(nextPhase);
+            }
+          }
+
+          return log;
+        };
+
         // Handle settings changed event
         if (finalMsgType === 'settings_changed') {
           const eventPayload = Parsing.isRecord(payload.payload) ? payload.payload : Parsing.isRecord(payload.event) ? payload.event : null;
@@ -1704,9 +1714,6 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
         if (msgType === 'dialogue_event') {
           payload = { type: 'line', channel: 'dialogue', text: Parsing.isRecord(payload.event) ? JSON.stringify(payload.event) : '' };
           channel = 'dialogue';
-        } else if (msgType === 'runtime_event') {
-          payload = { type: 'line', channel: 'runtime_events', text: Parsing.isRecord(payload.event) ? JSON.stringify(payload.event) : (typeof payload.line === 'string' ? payload.line : '') };
-          channel = 'runtime_events';
         } else if (msgType === 'llm_stream' || msgType === 'process_stream') {
           const eventText = Parsing.isRecord(payload.event) ? JSON.stringify(payload.event) : '';
           const lineText = typeof payload.line === 'string' ? payload.line : '';
@@ -1790,23 +1797,6 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
 
             seenDialogueIdsRef.current = newIds;
             setDialogueEvents(nextEvents.slice(-500));
-          } else if (channel === 'runtime_events') {
-            const logs: LogEntry[] = [];
-            payload.lines.forEach((line: string) => {
-              if (!line.trim()) return;
-              try {
-                const raw = JSON.parse(line);
-                if (!runtimeRecordMatchesWorkspace(raw, workspace)) return;
-                if (Parsing.isRecord(raw)) mergeTaskLifecycleFromRaw(raw);
-                const log = parseRuntimeEvent(raw);
-                if (log) logs.push(log);
-                const fileEdit = Parsing.extractRuntimeFileEditEvent(raw);
-                if (fileEdit) appendFileEditEvent(fileEdit);
-              } catch (err) {
-                devLogger.warn('[useRuntime] Runtime event parse error:', err);
-              }
-            });
-            setExecutionLogs(logs.slice(-100));
           } else if (isLlmStreamChannel(channel)) {
             const llmLogs = payload.lines
               .filter((line) => runtimeLineMatchesWorkspace(line, workspace))
@@ -1837,18 +1827,29 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
             }
           } else if (isProcessStreamChannel(channel) || isRuntimeFactoryOrBenchEventChannel(channel)) {
             const processLogs: LogEntry[] = [];
+            const runtimeLogs: LogEntry[] = [];
             payload.lines.forEach((line: string) => {
               if (!line.trim()) return;
               if (!runtimeLineMatchesWorkspace(line, workspace)) return;
               try {
                 const raw = JSON.parse(line);
-                if (Parsing.isRecord(raw)) mergeTaskLifecycleFromRaw(raw);
+                if (Parsing.isRecord(raw)) {
+                  if (channel === 'system') {
+                    const runtimeLog = applyRuntimeEventRecord(raw);
+                    if (runtimeLog) runtimeLogs.push(runtimeLog);
+                  } else {
+                    mergeTaskLifecycleFromRaw(raw);
+                  }
+                }
               } catch {
                 // Process-stream parsing below still handles non-JSON text lines.
               }
               const entry = parseProcessStreamLine(channel, line);
               if (entry) processLogs.push(entry);
             });
+            if (runtimeLogs.length > 0) {
+              setExecutionLogs(runtimeLogs.slice(-100));
+            }
             if (processLogs.length > 0) {
               const current = useRuntimeStore.getState().processStreamEvents;
               setProcessStreamEvents(Parsing.appendLogEntries(current, processLogs, 240));
@@ -1878,39 +1879,6 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
             } catch (err) {
               devLogger.warn('[useRuntime] Dialogue line parse error:', err);
             }
-          } else if (channel === 'runtime_events') {
-            try {
-              const raw = JSON.parse(payload.text);
-              if (!runtimeRecordMatchesWorkspace(raw, workspace)) return;
-              if (Parsing.isRecord(raw)) mergeTaskLifecycleFromRaw(raw);
-              const log = parseRuntimeEvent(raw);
-              if (log) {
-                appendExecutionLog(log);
-                const fileEdit = Parsing.extractRuntimeFileEditEvent(raw);
-                if (fileEdit) appendFileEditEvent(fileEdit);
-
-                if (raw.name === 'pm_quality_gate_retry' || raw.name === 'pm_quality_gate') {
-                  const qg = parseQualityGateEvent(raw);
-                  if (qg) setQualityGate(qg);
-                }
-
-                if (raw.event === 'iteration' || raw.event === 'phase_change') {
-                  const phase = Parsing.normalizePhaseToken(Parsing.toStringValue(raw.data?.phase || raw.data?.stage));
-                  if (phase) {
-                    const currentPhase = useRuntimeStore.getState().currentPhase;
-                    let nextPhase = phase;
-                    if (directorRunningRef.current && phase === 'planning') {
-                      nextPhase = currentPhase || 'executing';
-                    } else if (currentPhase === 'executing' && phase === 'planning') {
-                      nextPhase = currentPhase;
-                    }
-                    setCurrentPhase(nextPhase);
-                  }
-                }
-              }
-            } catch (err) {
-              devLogger.warn('[useRuntime] Runtime events line parse error:', err);
-            }
           } else if (isLlmStreamChannel(channel)) {
             if (!runtimeLineMatchesWorkspace(payload.text, workspace)) return;
             const llmLog = parseLlmStreamLine(channel, payload.text);
@@ -1938,7 +1906,14 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
             if (!runtimeLineMatchesWorkspace(payload.text, workspace)) return;
             try {
               const raw = JSON.parse(payload.text);
-              if (Parsing.isRecord(raw)) mergeTaskLifecycleFromRaw(raw);
+              if (Parsing.isRecord(raw)) {
+                if (channel === 'system') {
+                  const runtimeLog = applyRuntimeEventRecord(raw);
+                  if (runtimeLog) appendExecutionLog(runtimeLog);
+                } else {
+                  mergeTaskLifecycleFromRaw(raw);
+                }
+              }
             } catch {
               // Process-stream parsing below still handles non-JSON text lines.
             }

@@ -26,20 +26,22 @@ function createLogEntry(
 }
 
 describe('appRuntime execution stream filtering', () => {
-  it('classifies execution and artifact channels separately', () => {
-    expect(getRuntimeProcessStreamKind('pm_subprocess')).toBe('execution');
-    expect(getRuntimeProcessStreamKind('PM_REPORT')).toBe('artifact');
+  it('classifies only canonical runtime.v2 process channels', () => {
+    expect(getRuntimeProcessStreamKind('system')).toBe('execution');
+    expect(getRuntimeProcessStreamKind('PROCESS')).toBe('execution');
+    expect(getRuntimeProcessStreamKind('pm_subprocess')).toBeNull();
+    expect(getRuntimeProcessStreamKind('PM_REPORT')).toBeNull();
     expect(getRuntimeProcessStreamKind('unknown')).toBeNull();
-    expect(isProcessStreamChannel('director_console')).toBe(true);
-    expect(isExecutionProcessChannel('pm_log')).toBe(true);
-    expect(isArtifactProcessChannel('planner')).toBe(true);
+    expect(isProcessStreamChannel('director_console')).toBe(false);
+    expect(isExecutionProcessChannel('pm_log')).toBe(false);
+    expect(isArtifactProcessChannel('planner')).toBe(false);
   });
 
   it('filters artifact logs out of realtime execution activity', () => {
     const logs = [
-      createLogEntry({ id: 'exec', source: 'PM', message: 'tool call started' }, { channel: 'pm_subprocess' }),
+      createLogEntry({ id: 'exec', source: 'PM', message: 'tool call started' }, { channel: 'process' }),
       createLogEntry({ id: 'artifact', source: 'PM-Report', message: '## 2026-03-07 23:52:58 (iteration 1) - agents' }, { channel: 'pm_report' }),
-      createLogEntry({ id: 'engine', source: 'Engine', message: 'phase executing' }, { channel: 'engine_status' }),
+      createLogEntry({ id: 'engine', source: 'Engine', message: 'phase executing' }, { channel: 'system' }),
     ];
 
     expect(filterExecutionActivityLogs(logs).map((log) => log.id)).toEqual(['exec', 'engine']);

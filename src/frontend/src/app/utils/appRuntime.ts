@@ -4,19 +4,9 @@ import type { LogEntry } from '@/types/log';
 export const PROCESS_EXECUTION_CHANNELS = [
   'system',
   'process',
-  'pm_subprocess',
-  'director_console',
-  'pm_log',
-  'engine_status',
 ] as const;
 
-export const PROCESS_ARTIFACT_CHANNELS = [
-  'pm_report',
-  'planner',
-  'ollama',
-  'qa',
-  'runlog',
-] as const;
+export const PROCESS_ARTIFACT_CHANNELS = [] as const;
 
 export const PROCESS_STREAM_CHANNELS = [
   ...PROCESS_EXECUTION_CHANNELS,
@@ -25,27 +15,14 @@ export const PROCESS_STREAM_CHANNELS = [
 
 export type RuntimeProcessStreamKind = 'execution' | 'artifact';
 
-const ARTIFACT_LOG_SOURCES = new Set(['pm-report', 'planner', 'ollama', 'qa', 'runlog']);
+const HISTORICAL_ARTIFACT_LOG_SOURCES = new Set(['pm-report', 'planner', 'ollama', 'qa', 'runlog']);
 
 export const LIVE_CHANNELS = [
   'status',
   'dialogue',
   ...PROCESS_STREAM_CHANNELS,
-  'runtime_events',
   'llm',
 ] as const;
-
-export const CHANNEL_TO_PATH: Record<string, string> = {
-  dialogue: 'runtime/events/dialogue.transcript.jsonl',
-  pm_report: 'runtime/results/pm.report.md',
-  pm_log: 'runtime/events/pm.events.jsonl',
-  pm_subprocess: 'runtime/logs/pm.process.log',
-  director_console: 'runtime/logs/director.process.log',
-  planner: 'runtime/results/planner.output.md',
-  ollama: 'runtime/results/director_llm.output.md',
-  qa: 'runtime/results/qa.review.md',
-  runlog: 'runtime/logs/director.runlog.md',
-};
 
 function normalizeChannelToken(channel: string) {
   return channel.trim().toLowerCase();
@@ -84,7 +61,7 @@ export function isExecutionActivityLog(entry: LogEntry): boolean {
   if (channel) {
     return isExecutionProcessChannel(channel);
   }
-  return !ARTIFACT_LOG_SOURCES.has(entry.source.trim().toLowerCase());
+  return !HISTORICAL_ARTIFACT_LOG_SOURCES.has(entry.source.trim().toLowerCase());
 }
 
 export function filterExecutionActivityLogs(entries: LogEntry[]): LogEntry[] {
@@ -210,4 +187,3 @@ export function extractPmStopSummary(reportText: string) {
   }
   return last;
 }
-
