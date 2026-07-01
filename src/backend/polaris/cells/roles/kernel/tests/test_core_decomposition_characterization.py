@@ -265,8 +265,8 @@ class TestStreamEventTranslationMatrix:
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def _make_run_kernel(profile: _MockProfile) -> RoleExecutionKernel:
-    kernel = RoleExecutionKernel.create_default(workspace=".")
+def _make_run_kernel(profile: _MockProfile, quality_checker: Any | None = None) -> RoleExecutionKernel:
+    kernel = RoleExecutionKernel(workspace=".", quality_checker=quality_checker)  # type: ignore[arg-type]
     kernel.registry = MagicMock(get_profile_or_raise=MagicMock(return_value=profile))
     prompt_builder = SimpleNamespace(
         build_system_prompt=lambda _profile, _appendix, **_kwargs: "system-prompt",
@@ -334,7 +334,6 @@ class TestRunRetryQualityLoop:
     @pytest.mark.asyncio
     async def test_run_validation_failure_retries_then_exhausts(self) -> None:
         profile = _MockProfile()
-        kernel = _make_run_kernel(profile)
         te_result = RoleTurnResult(
             content="bad output",
             is_complete=True,
@@ -349,6 +348,7 @@ class TestRunRetryQualityLoop:
             quality_passed=False,
         )
         quality_checker = SimpleNamespace(validate_output=lambda *_a, **_k: failing_quality)
+        kernel = _make_run_kernel(profile, quality_checker)
         turn_mock = AsyncMock(return_value=te_result)
         with (
             patch(
@@ -356,7 +356,6 @@ class TestRunRetryQualityLoop:
                 return_value=MagicMock(),
             ),
             patch("polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn", new=turn_mock),
-            patch.object(kernel, "_get_quality_checker", lambda: quality_checker),
             patch.object(kernel, "_get_event_emitter", _event_emitter),
         ):
             result = await kernel.run("pm", _MockRequest(max_retries=2, validate_output=True))
@@ -370,7 +369,6 @@ class TestRunRetryQualityLoop:
     @pytest.mark.asyncio
     async def test_run_validation_success_returns_structured_output(self) -> None:
         profile = _MockProfile()
-        kernel = _make_run_kernel(profile)
         te_result = RoleTurnResult(
             content="good output",
             is_complete=True,
@@ -385,6 +383,7 @@ class TestRunRetryQualityLoop:
             quality_passed=True,
         )
         quality_checker = SimpleNamespace(validate_output=lambda *_a, **_k: passing_quality)
+        kernel = _make_run_kernel(profile, quality_checker)
         with (
             patch(
                 "polaris.cells.roles.kernel.internal.kernel.core.build_context_request",
@@ -394,7 +393,6 @@ class TestRunRetryQualityLoop:
                 "polaris.cells.roles.kernel.internal.kernel.core.execute_transaction_kernel_turn",
                 new=AsyncMock(return_value=te_result),
             ),
-            patch.object(kernel, "_get_quality_checker", lambda: quality_checker),
             patch.object(kernel, "_get_event_emitter", _event_emitter),
         ):
             result = await kernel.run("pm", _MockRequest(validate_output=True))

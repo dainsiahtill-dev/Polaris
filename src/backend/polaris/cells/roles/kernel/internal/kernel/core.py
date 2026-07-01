@@ -41,6 +41,7 @@ from polaris.cells.roles.kernel.internal.kernel.prompt_assembly import (
     build_system_prompt_for_request,
 )
 from polaris.cells.roles.kernel.internal.kernel.prompt_builder_provider import get_prompt_builder
+from polaris.cells.roles.kernel.internal.kernel.quality_checker_provider import get_quality_checker
 from polaris.cells.roles.kernel.internal.kernel.request_appendix import build_prompt_appendix_from_request
 from polaris.cells.roles.kernel.internal.kernel.stream_run_id import resolve_stream_run_id
 from polaris.cells.roles.kernel.internal.kernel.suggestions import get_suggestions_for_error
@@ -256,14 +257,6 @@ class RoleExecutionKernel:
     # ═══════════════════════════════════════════════════════════════════════════
     # 服务层访问器（懒加载 + 依赖注入支持）
     # ═══════════════════════════════════════════════════════════════════════════
-
-    def _get_quality_checker(self) -> QualityChecker:
-        """获取质量检查器（支持依赖注入）"""
-        if self._injected_quality_checker is not None:
-            return self._injected_quality_checker  # type: ignore[return-value]
-        if self._quality_checker is None:
-            self._quality_checker = QualityChecker(self.workspace)
-        return self._quality_checker
 
     def _get_event_emitter(self) -> KernelEventEmitter:
         """获取事件发射器（支持依赖注入）"""
@@ -518,7 +511,7 @@ class RoleExecutionKernel:
                             pre_validated_data = None
                             instructor_validated = False
                     try:
-                        quality_result = self._get_quality_checker().validate_output(
+                        quality_result = get_quality_checker(self).validate_output(
                             effective_content,
                             profile,
                             pre_validated_data=pre_validated_data,

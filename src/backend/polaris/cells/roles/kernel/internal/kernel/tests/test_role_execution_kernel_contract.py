@@ -15,6 +15,7 @@ import pytest
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
 from polaris.cells.roles.kernel.internal.kernel.output_parser_provider import get_output_parser
 from polaris.cells.roles.kernel.internal.kernel.prompt_builder_provider import get_prompt_builder
+from polaris.cells.roles.kernel.internal.kernel.quality_checker_provider import get_quality_checker
 from polaris.cells.roles.kernel.internal.kernel.tool_gateway_turn_key import resolve_tool_gateway_turn_key
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
     _apply_runtime_tool_policy,
@@ -527,9 +528,9 @@ class TestLazyLoading:
         kernel = RoleExecutionKernel(workspace=".")
         assert kernel._quality_checker is None
 
-        checker = kernel._get_quality_checker()
+        checker = get_quality_checker(kernel)
         assert checker is not None
-        assert kernel._get_quality_checker() is checker
+        assert get_quality_checker(kernel) is checker
 
     def test_event_emitter_lazy_loaded(self) -> None:
         """测试 Event Emitter 懒加载"""
