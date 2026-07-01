@@ -11,9 +11,6 @@ from polaris.kernelone.utils.time_utils import (
     PROCESS_COMMAND_TIMEOUT_SECONDS,
     UTC_TZ_SUFFIX,
     _now,
-    _utc_now,
-    _utc_now_iso,
-    _utc_now_str,
     utc_now,
     utc_now_iso,
     utc_now_iso_compact,
@@ -152,20 +149,16 @@ class TestConstants:
         assert PROCESS_COMMAND_TIMEOUT_SECONDS == 30
 
 
-class TestBackwardCompatibility:
-    """Tests for backward compatibility aliases."""
+class TestCanonicalExports:
+    """Tests for canonical time utility exports."""
 
-    def test_utc_now_alias(self) -> None:
-        """_utc_now is alias for utc_now."""
-        assert _utc_now is utc_now
+    def test_private_time_aliases_are_not_exported(self) -> None:
+        """Private compatibility aliases should not be part of time_utils."""
+        import polaris.kernelone.utils.time_utils as time_utils
 
-    def test_utc_now_iso_alias(self) -> None:
-        """_utc_now_iso is alias for utc_now_iso."""
-        assert _utc_now_iso is utc_now_iso
-
-    def test_utc_now_str_alias(self) -> None:
-        """_utc_now_str is alias for utc_now_str."""
-        assert _utc_now_str is utc_now_str
+        assert not hasattr(time_utils, "_utc_now")
+        assert not hasattr(time_utils, "_utc_now_iso")
+        assert not hasattr(time_utils, "_utc_now_str")
 
 
 class TestEdgeCases:

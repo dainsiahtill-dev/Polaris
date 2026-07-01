@@ -22,7 +22,7 @@ Replace local definitions with imports:
         return datetime.now(timezone.utc)
 
     # After (import from utils)
-    from polaris.kernelone.utils.time_utils import utc_now as _utc_now
+    from polaris.kernelone.utils.time_utils import utc_now
 """
 
 from polaris.kernelone.utils.constants import (
@@ -48,12 +48,6 @@ from polaris.kernelone.utils.time_utils import (
     utc_now_str,
 )
 
-# Time helper compatibility aliases.
-_utc_now = utc_now
-_utc_now_iso = utc_now_iso
-_utc_now_str = utc_now_str
-
-
 __all__ = [
     "DEFAULT_AUDIT_RETENTION_DAYS",
     "DEFAULT_LOCK_TIMEOUT_SECONDS",
@@ -65,10 +59,6 @@ __all__ = [
     "PROCESS_COMMAND_TIMEOUT_SECONDS",
     "UTC_TZ_SUFFIX",
     "_now",
-    # Time compatibility aliases
-    "_utc_now",
-    "_utc_now_iso",
-    "_utc_now_str",
     "format_json",
     "parse_json_payload",
     # JSON utilities

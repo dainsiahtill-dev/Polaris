@@ -14,7 +14,7 @@ from polaris.kernelone.storage.io_paths import (
     build_cache_root,
     resolve_run_dir,
 )
-from polaris.kernelone.utils.time_utils import _utc_now
+from polaris.kernelone.utils.time_utils import utc_now
 
 from .cache import ContextCache
 from .models import ContextBudget, ContextItem, ContextPack, ContextRequest
@@ -99,7 +99,7 @@ class ContextEngine:
             rendered_messages=rendered_messages,
             total_tokens=total_tokens,
             total_chars=total_chars,
-            build_timestamp=_utc_now(),
+            build_timestamp=utc_now(),
         )
 
         snapshot_path, snapshot_hash = self._maybe_snapshot(pack, request)

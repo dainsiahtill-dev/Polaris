@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from polaris.kernelone.utils.time_utils import _utc_now
+from polaris.kernelone.utils.time_utils import utc_now
 from pydantic import BaseModel, Field
 
 
@@ -64,6 +64,6 @@ class ContextPack(BaseModel):
     rendered_messages: list[dict[str, Any]] = Field(default_factory=list)
     total_tokens: int = 0
     total_chars: int = 0
-    build_timestamp: datetime = Field(default_factory=_utc_now)
+    build_timestamp: datetime = Field(default_factory=utc_now)
     snapshot_path: str = ""
     snapshot_hash: str = ""

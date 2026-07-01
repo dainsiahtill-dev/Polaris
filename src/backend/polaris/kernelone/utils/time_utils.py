@@ -25,7 +25,7 @@ def utc_now() -> datetime:
     Return current UTC datetime.
 
     This is the canonical implementation - all modules should use this instead
-    of defining local _utc_now() functions.
+    of defining local time helper functions.
 
     Returns:
         datetime: Current UTC datetime with timezone info.
@@ -89,21 +89,11 @@ def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-# Backward compatibility aliases - map old names to new canonical names
-_utc_now = utc_now
-_utc_now_iso = utc_now_iso
-_utc_now_str = utc_now_str
-
-
 __all__ = [
     "ISO_FORMAT_SUFFIX_Z",
     "PROCESS_COMMAND_TIMEOUT_SECONDS",
     "UTC_TZ_SUFFIX",
     "_now",
-    # Backward compatibility
-    "_utc_now",
-    "_utc_now_iso",
-    "_utc_now_str",
     "utc_now",
     "utc_now_iso",
     "utc_now_iso_compact",
