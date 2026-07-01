@@ -61,7 +61,6 @@ from polaris.cells.roles.profile.public.service import (
     RoleTurnRequest,
     RoleTurnResult,
 )
-from polaris.infrastructure.log_pipeline.writer import LogEventWriter, get_writer
 from polaris.kernelone.events.uep_publisher import UEPEventPublisher
 from polaris.kernelone.storage import resolve_storage_roots
 from polaris.kernelone.trace import get_tracer
@@ -1059,26 +1058,6 @@ class RoleExecutionKernel:
             **kwargs,
         )
 
-    def _emit_stream_log_event(
-        self,
-        *,
-        writer: LogEventWriter | None,
-        role: str,
-        run_id: str,
-        task_id: str,
-        event_type: str,
-        payload: dict[str, Any],
-    ) -> None:
-        """发射流日志事件（委托到 KernelEventEmitter）"""
-        self._get_event_emitter().emit_stream_log_event(
-            writer=writer,
-            role=role,
-            run_id=run_id,
-            task_id=task_id,
-            event_type=event_type,
-            payload=payload,
-        )
-
     def _resolve_stream_run_id(self, request_run_id: str | None) -> str:
         """Resolve stream run_id from request or workspace runtime metadata."""
         requested = str(request_run_id or "").strip()
@@ -1100,17 +1079,6 @@ class RoleExecutionKernel:
         import uuid
 
         return f"auto_{uuid.uuid4().hex[:12]}"
-
-    def _build_stream_log_writer(self, run_id: str) -> LogEventWriter | None:
-        """Create a log writer for streaming events."""
-        if not run_id:
-            return None
-        workspace = str(self.workspace or "").strip() or os.getcwd()
-        try:
-            return get_writer(workspace=workspace, run_id=run_id)
-        except (RuntimeError, ValueError):
-            logger.warning("Failed to create stream log writer for run_id=%s", run_id, exc_info=True)
-            return None
 
 
 __all__ = [

@@ -5,8 +5,7 @@ Tests verify that stream_chat_turn correctly:
 2. Skips bus publish when bus is unavailable
 3. Journal files are written by kernel.run_stream() (not by service.py)
 
-Note: LLM output journal writing is handled by kernel.run_stream() via
-_emit_stream_log_event() -> LogEventWriter, which writes to:
+Note: LLM output journal writing is handled by kernel.run_stream(), which writes to:
 {runtime_root}/runs/{run_id}/logs/journal.*.jsonl
 
 This follows KernelOne storage layout and is the correct unified path.
@@ -269,7 +268,7 @@ class TestJournalDiscoveryFunctions:
 
 
 class TestKernelJournalWriting:
-    """Test that kernel.run_stream() writes to journal via LogEventWriter.
+    """Test that kernel.run_stream() remains the journal-writing boundary.
 
     This is the correct unified audit path following KernelOne storage layout.
     Journal files are written to: {runtime_root}/runs/{run_id}/logs/journal.*.jsonl
@@ -281,9 +280,9 @@ class TestKernelJournalWriting:
         mock_workspace: Path,
         sample_events: list[dict[str, Any]],
     ) -> None:
-        """Verify kernel creates LogEventWriter for journal writing."""
+        """Verify stream chat delegates journal-capable streaming to the kernel."""
         # This test verifies the architecture: kernel.run_stream() uses
-        # _emit_stream_log_event() which writes to LogEventWriter.
+        # the role-kernel streaming boundary for journal-capable events.
         # The actual journal writing is tested in kernel tests, not here.
         # This test just verifies the service correctly delegates to kernel.
 

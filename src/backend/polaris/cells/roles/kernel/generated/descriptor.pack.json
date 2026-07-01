@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T04:40:51.042954Z",
-  "source_hash": "250d5dcd55c989fe",
+  "generated_at": "2026-07-01T04:44:47.387211Z",
+  "source_hash": "74b846d1ca738990",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4064,16 +4064,8 @@
           "doc": "发射 LLM 事件（委托到 KernelEventEmitter）"
         },
         {
-          "name": "_emit_stream_log_event",
-          "doc": "发射流日志事件（委托到 KernelEventEmitter）"
-        },
-        {
           "name": "_resolve_stream_run_id",
           "doc": "Resolve stream run_id from request or workspace runtime metadata."
-        },
-        {
-          "name": "_build_stream_log_writer",
-          "doc": "Create a log writer for streaming events."
         }
       ]
     },
