@@ -103,7 +103,7 @@ from polaris.cells.roles.kernel.internal.transaction.final_answer_gates import (
 )
 from polaris.cells.roles.kernel.internal.transaction.finalization import FinalizationHandler
 from polaris.cells.roles.kernel.internal.transaction.handoff_handlers import HandoffHandler
-from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
+from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig as _TransactionConfig, TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.modification_contract import ModificationContract
 from polaris.cells.roles.kernel.internal.transaction.mutation_contract_guard import (
     apply_mutation_contract_guard,
@@ -132,7 +132,7 @@ from polaris.cells.roles.kernel.public.turn_events import (
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["TransactionConfig", "TurnTransactionController"]
+__all__ = ["TurnTransactionController"]
 
 _MONITORING_METRIC_KEYS: tuple[str, ...] = (
     "transaction_kernel.violation_count",
@@ -201,14 +201,14 @@ class TurnTransactionController:
         self,
         llm_provider: Callable,  # LLM调用接口
         tool_runtime: Callable,  # 工具运行时
-        config: TransactionConfig | None = None,
+        config: _TransactionConfig | None = None,
         workflow_runtime: ExplorationWorkflowRuntime | None = None,
         llm_provider_stream: Callable | None = None,  # 流式LLM调用接口
         development_runtime: Any | None = None,
     ) -> None:
         self._llm_provider = llm_provider
         self.tool_runtime = tool_runtime
-        self.config = config or TransactionConfig()
+        self.config = config or _TransactionConfig()
         self.workflow_runtime = workflow_runtime
         self.llm_provider_stream = llm_provider_stream
         self.development_runtime = development_runtime or self.config.development_runtime

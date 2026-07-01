@@ -24,12 +24,9 @@ from polaris.cells.roles.kernel.internal.transaction.delivery_contract import De
 from polaris.cells.roles.kernel.internal.transaction.delivery_intent_resolver import (
     enforce_explicit_materialize_delivery_marker,
 )
-from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
+from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
-from polaris.cells.roles.kernel.internal.turn_transaction_controller import (
-    TransactionConfig,
-    TurnTransactionController,
-)
+from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
 from polaris.cells.roles.kernel.public.turn_contracts import FinalizeMode, TurnDecisionKind
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
 from polaris.cells.storage.layout.public.service import resolve_polaris_roots

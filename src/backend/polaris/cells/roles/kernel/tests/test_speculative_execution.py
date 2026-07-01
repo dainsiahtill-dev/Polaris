@@ -14,10 +14,8 @@ from polaris.cells.roles.kernel.internal.speculative_flags import (
 from polaris.cells.roles.kernel.internal.stream_shadow_engine import (
     StreamShadowEngine,
 )
-from polaris.cells.roles.kernel.internal.turn_transaction_controller import (
-    TransactionConfig,
-    TurnTransactionController,
-)
+from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
+from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
 from polaris.cells.roles.kernel.public.turn_contracts import (
     ToolCallId,
     ToolEffectType,

@@ -28,9 +28,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
+from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
 from polaris.cells.roles.kernel.internal.transaction.recon_policy import resolve_recon_required
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
-from polaris.cells.roles.kernel.internal.turn_transaction_controller import TransactionConfig
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

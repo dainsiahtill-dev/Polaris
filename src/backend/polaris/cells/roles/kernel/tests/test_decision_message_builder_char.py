@@ -21,11 +21,8 @@ from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     DeliveryContract,
     DeliveryMode,
 )
-from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
-from polaris.cells.roles.kernel.internal.turn_transaction_controller import (
-    TransactionConfig,
-    TurnTransactionController,
-)
+from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
+from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
 from polaris.kernelone.context.prompt_safety import format_tool_failure_summary, parse_tool_failure_summary
 
 
@@ -192,7 +189,9 @@ def test_build_decision_messages_compacts_repeated_tool_failure_summaries() -> N
     assert digest["schema_version"] == "tool_failure_summary_digest.v1"
     assert digest["failure_count"] == 10
     assert digest["failures"][0]["count"] == 10
-    assert any(message.get("role") == "user" and "targeted repair" in message.get("content", "") for message in messages)
+    assert any(
+        message.get("role") == "user" and "targeted repair" in message.get("content", "") for message in messages
+    )
 
 
 def test_build_decision_messages_excludes_control_plane_from_data_plane() -> None:

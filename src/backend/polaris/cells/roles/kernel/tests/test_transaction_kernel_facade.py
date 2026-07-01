@@ -20,6 +20,7 @@ from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     DeliveryMode,
 )
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import requires_mutation_intent
+from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.retry_context_builders import (
     build_retry_write_after_bootstrap_context,
 )
@@ -39,12 +40,8 @@ from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import 
     rewrite_existing_file_paths_in_invocations,
 )
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
-from polaris.cells.roles.kernel.internal.turn_transaction_controller import (
-    TransactionConfig,
-    TurnLedger,
-    TurnStateMachine,
-    TurnTransactionController,
-)
+from polaris.cells.roles.kernel.internal.turn_state_machine import TurnStateMachine
+from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
 from polaris.cells.roles.kernel.public.turn_contracts import (
     RawLLMResponse,
     ToolCallId,

@@ -11,11 +11,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
-from polaris.cells.roles.kernel.internal.turn_transaction_controller import (
-    TransactionConfig,
-    TurnTransactionController,
-)
+from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
+from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, TurnPhaseEvent
 from polaris.kernelone.context.truth_log_service import TruthLogService
 

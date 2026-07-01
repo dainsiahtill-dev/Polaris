@@ -18,10 +18,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime
-from polaris.cells.roles.kernel.internal.turn_transaction_controller import (
-    TransactionConfig,
-    TurnTransactionController,
-)
+from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
+from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
     FinalizeMode,
