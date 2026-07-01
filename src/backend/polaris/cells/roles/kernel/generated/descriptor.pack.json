@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T09:13:30.392603Z",
-  "source_hash": "7d0524871f8522d9",
+  "generated_at": "2026-07-01T09:20:14.846435Z",
+  "source_hash": "e992852bc618fed3",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4993,6 +4993,26 @@
     },
     {
       "type": "class",
+      "name": "_Request",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_transaction_turn_completion.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_Profile",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_transaction_turn_completion.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "test_completion_owner_commits_projection_and_boundary",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_transaction_turn_completion.py"
+    },
+    {
+      "type": "class",
       "name": "_Registry",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tests/test_turn_prompt_setup.py",
@@ -5389,6 +5409,42 @@
       "name": "_log_prong_trace",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_invocation_setup.py"
+    },
+    {
+      "type": "function",
+      "name": "build_transaction_turn_completion_result",
+      "description": "Convert a successful TransactionKernel result into a RoleTurnResult.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_structured_output",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_completion_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_completion_status",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_projection_outcome",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_task_boundary_verdict",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_completion.py"
     },
     {
       "type": "function",
