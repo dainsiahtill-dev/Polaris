@@ -15,6 +15,25 @@ from polaris.kernelone.audit.contracts import (
 from polaris.kernelone.utils.constants import GENESIS_HASH
 
 
+def _audit_event_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "event_id": "e1",
+        "timestamp": "2024-01-01T00:00:00+00:00",
+        "event_type": "task_start",
+        "version": "2.0",
+        "source": {"role": "test"},
+        "task": {"task_id": "t1"},
+        "resource": {},
+        "action": {},
+        "data": {},
+        "context": {},
+        "prev_hash": "abc",
+        "signature": "sig",
+    }
+    payload.update(overrides)
+    return payload
+
+
 class TestKernelAuditEventType:
     def test_values(self) -> None:
         assert KernelAuditEventType.TASK_START == "task_start"
@@ -70,20 +89,9 @@ class TestKernelAuditEvent:
 
     def test_from_dict(self) -> None:
         now = datetime.now(timezone.utc)
-        payload = {
-            "event_id": "e1",
-            "timestamp": now.isoformat(),
-            "event_type": "task_start",
-            "version": "2.0",
-            "source": {"role": "test"},
-            "task": {"task_id": "t1"},
-            "resource": {},
-            "action": {},
-            "data": {},
-            "context": {},
-            "prev_hash": "abc",
-            "signature": "sig",
-        }
+        payload = _audit_event_payload(
+            timestamp=now.isoformat(),
+        )
         event = KernelAuditEvent.from_dict(payload)
         assert event.event_id == "e1"
         assert event.event_type == KernelAuditEventType.TASK_START
@@ -95,12 +103,40 @@ class TestKernelAuditEvent:
         with pytest.raises(ValueError, match="invalid audit payload"):
             KernelAuditEvent.from_dict({})
 
+    @pytest.mark.parametrize(
+        "field_name",
+        [
+            "event_id",
+            "event_type",
+            "version",
+            "source",
+            "task",
+            "resource",
+            "action",
+            "data",
+            "context",
+            "prev_hash",
+            "signature",
+        ],
+    )
+    def test_from_dict_rejects_missing_required_persisted_fields(self, field_name: str) -> None:
+        payload = _audit_event_payload()
+        payload.pop(field_name)
+
+        with pytest.raises(ValueError, match=field_name):
+            KernelAuditEvent.from_dict(payload)
+
+    @pytest.mark.parametrize("field_name", ["source", "task", "resource", "action", "data", "context"])
+    def test_from_dict_rejects_non_object_mapping_fields(self, field_name: str) -> None:
+        payload = _audit_event_payload(**{field_name: []})
+
+        with pytest.raises(ValueError, match=field_name):
+            KernelAuditEvent.from_dict(payload)
+
     def test_from_dict_with_z_timestamp(self) -> None:
-        payload = {
-            "event_id": "e1",
-            "timestamp": "2024-01-01T00:00:00Z",
-            "event_type": "task_start",
-        }
+        payload = _audit_event_payload(
+            timestamp="2024-01-01T00:00:00Z",
+        )
         event = KernelAuditEvent.from_dict(payload)
         assert event.timestamp.isoformat().endswith("+00:00")
 

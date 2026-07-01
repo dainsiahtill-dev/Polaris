@@ -210,9 +210,12 @@ class AuditStore:
         log_file = self._get_current_log_file()
         if log_file.exists():
             events = self._read_events_from_file(log_file)
-            if events:
-                last_event = events[-1]
-                content = json.dumps(last_event, sort_keys=True, ensure_ascii=False)
+            for event_data in reversed(events):
+                try:
+                    event = KernelAuditEvent.from_dict(event_data)
+                except (KeyError, ValueError):
+                    continue
+                content = json.dumps(event.to_dict(), sort_keys=True, ensure_ascii=False)
                 return hashlib.sha256(content.encode("utf-8")).hexdigest()
         return GENESIS_HASH
 

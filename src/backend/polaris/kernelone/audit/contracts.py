@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -28,6 +29,20 @@ class KernelAuditEventType(str, Enum):
     FILE_CHANGE = "file_change"
     SECURITY_VIOLATION = "security_violation"
     INTERNAL_AUDIT_FAILURE = "internal_audit_failure"
+
+
+def _require_audit_string(payload: Mapping[str, Any], field_name: str) -> str:
+    value = payload.get(field_name)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"invalid audit payload: {field_name} is required")
+    return value.strip()
+
+
+def _require_audit_mapping(payload: Mapping[str, Any], field_name: str) -> dict[str, Any]:
+    value = payload.get(field_name)
+    if not isinstance(value, Mapping):
+        raise ValueError(f"invalid audit payload: {field_name} must be an object")
+    return dict(value)
 
 
 class KernelAuditRole(str, Enum):
@@ -82,23 +97,25 @@ class KernelAuditEvent:
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> KernelAuditEvent:
         """Build event from mapping."""
+        if not isinstance(payload, Mapping):
+            raise ValueError("invalid audit payload: payload must be an object")
         timestamp_raw = payload.get("timestamp")
         if not (isinstance(timestamp_raw, str) and timestamp_raw.strip()):
             raise ValueError("invalid audit payload: timestamp is required")
         timestamp = datetime.fromisoformat(timestamp_raw.replace("Z", "+00:00"))
         return cls(
-            event_id=str(payload.get("event_id") or ""),
+            event_id=_require_audit_string(payload, "event_id"),
             timestamp=timestamp,
-            event_type=KernelAuditEventType(str(payload.get("event_type") or "")),
-            version=str(payload.get("version") or "2.0"),
-            source=dict(payload.get("source") or {}),
-            task=dict(payload.get("task") or {}),
-            resource=dict(payload.get("resource") or {}),
-            action=dict(payload.get("action") or {}),
-            data=dict(payload.get("data") or {}),
-            context=dict(payload.get("context") or {}),
-            prev_hash=str(payload.get("prev_hash") or GENESIS_HASH),
-            signature=str(payload.get("signature") or ""),
+            event_type=KernelAuditEventType(_require_audit_string(payload, "event_type")),
+            version=_require_audit_string(payload, "version"),
+            source=_require_audit_mapping(payload, "source"),
+            task=_require_audit_mapping(payload, "task"),
+            resource=_require_audit_mapping(payload, "resource"),
+            action=_require_audit_mapping(payload, "action"),
+            data=_require_audit_mapping(payload, "data"),
+            context=_require_audit_mapping(payload, "context"),
+            prev_hash=_require_audit_string(payload, "prev_hash"),
+            signature=_require_audit_string(payload, "signature"),
         )
 
 
