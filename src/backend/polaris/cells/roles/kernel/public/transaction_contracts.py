@@ -14,6 +14,8 @@ Public exports:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from polaris.cells.roles.kernel.internal.transaction.cognitive_gateway import (
     CognitiveGateway,
 )
@@ -46,6 +48,31 @@ from polaris.cells.roles.kernel.internal.transaction.task_contract_builder impor
     extract_continuation_prompt_metadata,
 )
 
+if TYPE_CHECKING:
+    from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
+    from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
+    from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest
+
+
+def create_role_transaction_kernel(
+    kernel: RoleExecutionKernel,
+    role: str,
+    profile: RoleProfile,
+    request: RoleTurnRequest,
+) -> TransactionKernel:
+    """Create a kernel-backed TransactionKernel through the public Cell boundary.
+
+    roles.runtime must not import roles.kernel internal modules directly. This
+    wrapper keeps the construction logic owned by roles.kernel while giving
+    orchestration layers a stable public contract.
+    """
+    from polaris.cells.roles.kernel.internal.kernel.transaction_factory import (
+        create_transaction_kernel,
+    )
+
+    return create_transaction_kernel(kernel, role, profile, request)
+
+
 __all__ = [
     "VERIFICATION_TOOLS",
     "CognitiveGateway",
@@ -58,6 +85,7 @@ __all__ = [
     "SLMCoprocessor",
     "ToolResult",
     "TransactionConfig",
+    "create_role_transaction_kernel",
     "evaluate_modification_readiness",
     "extract_continuation_prompt_metadata",
     "extract_tool_results_from_batch_receipt",
