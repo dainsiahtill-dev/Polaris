@@ -176,17 +176,24 @@ class TestDirectorLifecycleConcurrency:
         manager = DirectorLifecycleManager(workspace=workspace)
         errors: list[Exception] = []
         barrier = threading.Barrier(5)
+        thread_error_types = (
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+            threading.BrokenBarrierError,
+        )
 
         def worker(worker_id: int) -> None:
             try:
                 barrier.wait()  # 同步启动
-                for i in range(10):
+                for _ in range(10):
                     manager.update(
                         phase=DirectorPhase.PLANNING,
                         status="running",
                         run_id=f"worker-{worker_id}",
                     )
-            except Exception as e:
+            except thread_error_types as e:
                 errors.append(e)
 
         threads = [threading.Thread(target=worker, args=(i,)) for i in range(5)]
@@ -214,6 +221,12 @@ class TestDirectorLifecycleConcurrency:
         errors: list[Exception] = []
         read_count = 0
         read_lock = threading.Lock()
+        thread_error_types = (
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        )
 
         def reader() -> None:
             nonlocal read_count
@@ -222,7 +235,7 @@ class TestDirectorLifecycleConcurrency:
                     manager.get_state()
                     with read_lock:
                         read_count += 1
-                except Exception as e:
+                except thread_error_types as e:
                     errors.append(e)
 
         def writer(writer_id: int) -> None:
@@ -232,8 +245,8 @@ class TestDirectorLifecycleConcurrency:
                         phase=DirectorPhase.EXECUTING,
                         status=f"writer-{writer_id}-{i}",
                     )
-                except Exception as e:
-                    # Intentionally catch all exceptions to detect thread safety issues.
+                except thread_error_types as e:
+                    # Capture expected runtime failures to detect thread safety issues.
                     errors.append(e)
 
         threads = [
@@ -478,10 +491,10 @@ class TestDirectorConstants:
 
     def test_channel_files_mapping(self) -> None:
         """验证通道文件映射。"""
-        from polaris.domain.director.constants import CHANNEL_FILES
+        from polaris.domain.director.constants import HISTORICAL_CHANNEL_FILES
 
-        assert CHANNEL_FILES["pm_report"] == DEFAULT_PM_REPORT
-        assert CHANNEL_FILES["director_console"] == DEFAULT_DIRECTOR_SUBPROCESS_LOG
+        assert HISTORICAL_CHANNEL_FILES["pm_report"] == DEFAULT_PM_REPORT
+        assert HISTORICAL_CHANNEL_FILES["director_console"] == DEFAULT_DIRECTOR_SUBPROCESS_LOG
 
 
 class TestDirectorLifecycleDataClasses:

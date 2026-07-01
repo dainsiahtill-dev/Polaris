@@ -1,9 +1,9 @@
 """Canonical runtime.v2 channel contracts.
 
 This module is the single source of truth for channel-to-artifact-path mappings.
-Historical channel names remain listed here only as compatibility aliases; new
-runtime consumers should prefer the canonical ``system`` / ``process`` / ``llm``
-journal channels.
+``CHANNEL_FILES`` contains only product runtime.v2 channels. Historical
+workspace file channels remain readable through ``HISTORICAL_CHANNEL_FILES`` so
+archive/migration readers must opt in explicitly.
 """
 
 from __future__ import annotations
@@ -39,10 +39,7 @@ CANONICAL_RUNTIME_V2_CHANNEL_FILES: Final[dict[str, str]] = {
     "llm": RUNTIME_V2_JOURNAL_PATH,
 }
 
-CHANNEL_FILES: Final[dict[str, str]] = {
-    **HISTORICAL_CHANNEL_FILES,
-    **CANONICAL_RUNTIME_V2_CHANNEL_FILES,
-}
+CHANNEL_FILES: Final[dict[str, str]] = CANONICAL_RUNTIME_V2_CHANNEL_FILES
 
 NEW_CHANNEL_METADATA: Final[dict[str, dict[str, str | list[str]]]] = {
     "system": {

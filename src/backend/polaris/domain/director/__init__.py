@@ -43,6 +43,7 @@ from polaris.domain.director.constants import (
     DIRECTOR_RESULTS_DIR,
     DIRECTOR_RUNTIME_DIR,
     DIRECTOR_STATUS_DIR,
+    HISTORICAL_CHANNEL_FILES,
     NEW_CHANNEL_METADATA,
     WORKSPACE_STATUS_REL,
     DirectorPhase,
@@ -86,6 +87,7 @@ __all__ = [
     "DIRECTOR_RESULTS_DIR",
     "DIRECTOR_RUNTIME_DIR",
     "DIRECTOR_STATUS_DIR",
+    "HISTORICAL_CHANNEL_FILES",
     "NEW_CHANNEL_METADATA",
     "WORKSPACE_STATUS_REL",
     # Lifecycle

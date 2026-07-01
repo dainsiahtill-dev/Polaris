@@ -97,10 +97,11 @@ class TestChannelFiles:
     def test_channel_files_is_dict(self) -> None:
         assert isinstance(constants.CHANNEL_FILES, dict)
 
-    def test_has_legacy_channels(self) -> None:
-        assert "pm_report" in constants.CHANNEL_FILES
-        assert "pm_log" in constants.CHANNEL_FILES
-        assert "dialogue" in constants.CHANNEL_FILES
+    def test_historical_channels_are_archive_paths(self) -> None:
+        assert "pm_report" not in constants.CHANNEL_FILES
+        assert constants.HISTORICAL_CHANNEL_FILES["pm_report"] == "runtime/results/pm.report.md"
+        assert constants.HISTORICAL_CHANNEL_FILES["pm_log"] == "runtime/events/pm.events.jsonl"
+        assert constants.HISTORICAL_CHANNEL_FILES["dialogue"] == "runtime/events/dialogue.transcript.jsonl"
 
     def test_has_new_channels(self) -> None:
         assert "system" in constants.CHANNEL_FILES

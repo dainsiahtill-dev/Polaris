@@ -17,6 +17,7 @@ from polaris.cells.runtime.projection.internal.constants import (
     DEFAULT_QA,
     DEFAULT_RUNLOG,
     DEFAULT_WORKSPACE,
+    HISTORICAL_CHANNEL_FILES,
 )
 from polaris.cells.runtime.projection.internal.director_runtime_status import build_director_runtime_status
 from polaris.cells.runtime.projection.internal.file_io import (
@@ -115,6 +116,7 @@ __all__ = [
     "DEFAULT_QA",
     "DEFAULT_RUNLOG",
     "DEFAULT_WORKSPACE",
+    "HISTORICAL_CHANNEL_FILES",
     "WORKFLOW_PM_TASKS_FILE",
     "CodeChangeState",
     "CodeChangeStatus",

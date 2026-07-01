@@ -27,6 +27,7 @@ from polaris.domain.director.constants import (
     DEFAULT_QA,
     DEFAULT_RUNLOG,
     DEFAULT_RUNTIME_EVENTS,
+    HISTORICAL_CHANNEL_FILES,
 )
 
 # Projection Cell 特有：动态工作目录（需要 os.getcwd()，无法在模块级定义）
@@ -51,4 +52,5 @@ __all__ = [
     "DEFAULT_RUNLOG",
     "DEFAULT_RUNTIME_EVENTS",
     "DEFAULT_WORKSPACE",
+    "HISTORICAL_CHANNEL_FILES",
 ]

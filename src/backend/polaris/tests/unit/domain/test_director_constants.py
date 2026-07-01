@@ -33,6 +33,7 @@ from polaris.domain.director.constants import (
     DIRECTOR_RESULTS_DIR,
     DIRECTOR_RUNTIME_DIR,
     DIRECTOR_STATUS_DIR,
+    HISTORICAL_CHANNEL_FILES,
     NEW_CHANNEL_METADATA,
     DirectorPhase,
 )
@@ -92,11 +93,15 @@ class TestDirectorConstants:
         assert "failed" in DirectorPhase.ALL
 
     def test_channel_files_keys(self) -> None:
-        assert "pm_report" in CHANNEL_FILES
-        assert "pm_log" in CHANNEL_FILES
+        assert "pm_report" not in CHANNEL_FILES
+        assert "pm_log" not in CHANNEL_FILES
         assert "system" in CHANNEL_FILES
         assert "process" in CHANNEL_FILES
         assert "llm" in CHANNEL_FILES
+
+    def test_historical_channel_files_are_explicit_archive_paths(self) -> None:
+        assert HISTORICAL_CHANNEL_FILES["pm_report"] == "runtime/results/pm.report.md"
+        assert HISTORICAL_CHANNEL_FILES["pm_log"] == "runtime/events/pm.events.jsonl"
 
     def test_new_channel_metadata(self) -> None:
         assert "system" in NEW_CHANNEL_METADATA
@@ -105,17 +110,17 @@ class TestDirectorConstants:
 
     def test_channel_contracts_are_runtime_reexports(self) -> None:
         assert CHANNEL_FILES is channel_contracts.CHANNEL_FILES
+        assert HISTORICAL_CHANNEL_FILES is channel_contracts.HISTORICAL_CHANNEL_FILES
         assert NEW_CHANNEL_METADATA is channel_contracts.NEW_CHANNEL_METADATA
         assert director_constants.CHANNEL_FILES is channel_contracts.CHANNEL_FILES
+        assert director_constants.HISTORICAL_CHANNEL_FILES is channel_contracts.HISTORICAL_CHANNEL_FILES
         assert runtime_defaults.CHANNEL_FILES is channel_contracts.CHANNEL_FILES
+        assert runtime_defaults.HISTORICAL_CHANNEL_FILES is channel_contracts.HISTORICAL_CHANNEL_FILES
         assert runtime_defaults.NEW_CHANNEL_METADATA is channel_contracts.NEW_CHANNEL_METADATA
 
     def test_canonical_channels_share_runtime_v2_journal_path(self) -> None:
         for channel in ("system", "process", "llm"):
-            assert (
-                channel_contracts.CHANNEL_FILES[channel]
-                == channel_contracts.RUNTIME_V2_JOURNAL_PATH
-            )
+            assert channel_contracts.CHANNEL_FILES[channel] == channel_contracts.RUNTIME_V2_JOURNAL_PATH
 
     def test_old_modules_do_not_redefine_channel_contracts(self) -> None:
         forbidden = {"CHANNEL_FILES", "NEW_CHANNEL_METADATA"}

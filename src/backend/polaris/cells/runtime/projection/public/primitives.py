@@ -21,6 +21,7 @@ from polaris.cells.runtime.projection.internal.constants import (
     DEFAULT_QA,
     DEFAULT_RUNLOG,
     DEFAULT_WORKSPACE,
+    HISTORICAL_CHANNEL_FILES,
 )
 from polaris.cells.runtime.projection.internal.file_io import (
     format_mtime,
@@ -55,6 +56,7 @@ __all__ = [
     "DEFAULT_QA",
     "DEFAULT_RUNLOG",
     "DEFAULT_WORKSPACE",
+    "HISTORICAL_CHANNEL_FILES",
     "WORKFLOW_PM_TASKS_FILE",
     "build_cache_root",
     "format_mtime",

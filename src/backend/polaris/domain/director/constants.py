@@ -13,7 +13,11 @@ from __future__ import annotations
 
 from typing import Final
 
-from polaris.kernelone.runtime.channel_contracts import CHANNEL_FILES, NEW_CHANNEL_METADATA
+from polaris.kernelone.runtime.channel_contracts import (
+    CHANNEL_FILES,
+    HISTORICAL_CHANNEL_FILES,
+    NEW_CHANNEL_METADATA,
+)
 
 # ═══════════════════════════════════════════════════════════════════
 # Director 工作流路径常量
@@ -186,6 +190,7 @@ __all__ = [
     # 目录常量
     "DIRECTOR_RUNTIME_DIR",
     "DIRECTOR_STATUS_DIR",
+    "HISTORICAL_CHANNEL_FILES",
     "NEW_CHANNEL_METADATA",
     "WORKSPACE_STATUS_REL",
     # 阶段枚举

@@ -6,7 +6,11 @@ import os
 from typing import Final
 
 from polaris.kernelone._runtime_config import get_workspace
-from polaris.kernelone.runtime.channel_contracts import CHANNEL_FILES, NEW_CHANNEL_METADATA
+from polaris.kernelone.runtime.channel_contracts import (
+    CHANNEL_FILES,
+    HISTORICAL_CHANNEL_FILES,
+    NEW_CHANNEL_METADATA,
+)
 from polaris.kernelone.storage.io_paths import find_workspace_root
 
 # ═══════════════════════════════════════════════════════════════════
@@ -77,6 +81,7 @@ __all__ = list(
             "AGENTS_DRAFT_REL",
             "AGENTS_FEEDBACK_REL",
             "CHANNEL_FILES",
+            "HISTORICAL_CHANNEL_FILES",
             "DEFAULT_DIALOGUE",
             "DEFAULT_DIRECTOR_LLM_EVENTS",
             "DEFAULT_DIRECTOR_STATUS",
