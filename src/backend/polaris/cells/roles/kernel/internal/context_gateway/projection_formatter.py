@@ -12,9 +12,13 @@ from typing import Any
 from polaris.kernelone.context.context_os.helpers import get_metadata_value
 from polaris.kernelone.context.context_os.models_v2 import ContextOSProjectionV2 as ContextOSProjection
 from polaris.kernelone.context.projection_engine import render_run_card
+from polaris.kernelone.context.prompt_safety import (
+    format_tool_failure_summary,
+    parse_tool_failure_summary,
+    prompt_safe_message_content,
+)
 
 from .constants import HIGH_PRIORITY_DIALOG_ACTS, ROUTE_PRIORITY
-from .prompt_safety import format_tool_failure_summary, parse_tool_failure_summary, prompt_safe_message_content
 
 
 class ProjectionFormatter:

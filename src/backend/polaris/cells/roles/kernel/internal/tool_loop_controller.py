@@ -63,12 +63,12 @@ from polaris.cells.roles.kernel.internal.context_event import (
     ToolLoopSafetyPolicy,
 )
 from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
-from polaris.cells.roles.kernel.internal.context_gateway.prompt_safety import (
+from polaris.cells.roles.kernel.internal.metrics import get_dead_loop_metrics
+from polaris.kernelone.context.prompt_safety import (
     format_tool_failure_summary,
     parse_tool_failure_summary,
     prompt_safe_message_content,
 )
-from polaris.cells.roles.kernel.internal.metrics import get_dead_loop_metrics
 from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
 from polaris.kernelone.llm.runtime_config import get_role_model
 from polaris.kernelone.llm.toolkit.parsers import format_tool_result
