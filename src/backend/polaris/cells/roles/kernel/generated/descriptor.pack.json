@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T04:44:47.387211Z",
-  "source_hash": "74b846d1ca738990",
+  "generated_at": "2026-07-01T04:49:04.213396Z",
+  "source_hash": "a767374959393df9",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4062,10 +4062,6 @@
         {
           "name": "_emit_event",
           "doc": "发射 LLM 事件（委托到 KernelEventEmitter）"
-        },
-        {
-          "name": "_resolve_stream_run_id",
-          "doc": "Resolve stream run_id from request or workspace runtime metadata."
         }
       ]
     },
@@ -4294,6 +4290,12 @@
       "name": "tool_results_from_batch_receipt",
       "description": "Project RoleTurnResult.tool_results from a TransactionKernel batch receipt.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/role_result_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_stream_run_id",
+      "description": "Resolve a stream run id from the request, workspace metadata, or a new id.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/stream_run_id.py"
     },
     {
       "type": "class",
@@ -29987,6 +29989,24 @@
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_stream_nonstream_parity_transaction_kernel.py",
       "methods": []
+    },
+    {
+      "type": "function",
+      "name": "test_resolve_stream_run_id_prefers_request_value",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_stream_run_id.py"
+    },
+    {
+      "type": "function",
+      "name": "test_resolve_stream_run_id_reads_latest_run_file",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_stream_run_id.py"
+    },
+    {
+      "type": "function",
+      "name": "test_resolve_stream_run_id_generates_fallback",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_stream_run_id.py"
     },
     {
       "type": "class",

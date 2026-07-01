@@ -19,7 +19,6 @@ RoleExecutionKernel is the public coordination entrypoint for role turns.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import time
@@ -41,6 +40,7 @@ from polaris.cells.roles.kernel.internal.kernel.prompt_assembly import (
     build_system_prompt_for_request,
 )
 from polaris.cells.roles.kernel.internal.kernel.request_appendix import build_prompt_appendix_from_request
+from polaris.cells.roles.kernel.internal.kernel.stream_run_id import resolve_stream_run_id
 from polaris.cells.roles.kernel.internal.kernel.suggestions import get_suggestions_for_error
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
     _cognitive_runtime_blocked_tools,
@@ -62,7 +62,6 @@ from polaris.cells.roles.profile.public.service import (
     RoleTurnResult,
 )
 from polaris.kernelone.events.uep_publisher import UEPEventPublisher
-from polaris.kernelone.storage import resolve_storage_roots
 from polaris.kernelone.trace import get_tracer
 
 if TYPE_CHECKING:
@@ -706,7 +705,7 @@ class RoleExecutionKernel:
         Yields:
             流式事件字典
         """
-        stream_run_id = self._resolve_stream_run_id(request.run_id)
+        stream_run_id = resolve_stream_run_id(request.run_id, self.workspace)
         # 将 resolved run_id 写回 request，确保下游（TransactionKernel/RoleToolGateway）能获取到
         # 只有当 request.run_id 为 None 且 stream_run_id 非空时才设置
         original_run_id = request.run_id
@@ -1057,28 +1056,6 @@ class RoleExecutionKernel:
             workspace=self.workspace,
             **kwargs,
         )
-
-    def _resolve_stream_run_id(self, request_run_id: str | None) -> str:
-        """Resolve stream run_id from request or workspace runtime metadata."""
-        requested = str(request_run_id or "").strip()
-        if requested:
-            return requested
-
-        workspace = str(self.workspace or "").strip() or os.getcwd()
-        try:
-            roots = resolve_storage_roots(workspace)
-            latest_run_file = os.path.join(roots.runtime_root, "latest_run.json")
-            if os.path.isfile(latest_run_file):
-                with open(latest_run_file, encoding="utf-8") as handle:
-                    payload = json.load(handle)
-                if isinstance(payload, dict) and payload.get("run_id"):
-                    return str(payload.get("run_id", "").strip())
-        except (RuntimeError, ValueError):
-            logger.warning("Failed to resolve stream run_id from latest_run.json", exc_info=True)
-        # Fallback: generate a new run_id so tool events can be journaled
-        import uuid
-
-        return f"auto_{uuid.uuid4().hex[:12]}"
 
 
 __all__ = [
