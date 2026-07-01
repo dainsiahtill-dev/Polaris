@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T04:21:47.582865Z",
-  "source_hash": "b55cc1df190f6856",
+  "generated_at": "2026-07-01T04:25:30.460586Z",
+  "source_hash": "672bf5b3eebdea8a",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -3974,6 +3974,12 @@
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/context_assembly.py"
     },
     {
+      "type": "function",
+      "name": "build_context_request",
+      "description": "Project a role turn request into the ContextOS gateway request.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/context_request_builder.py"
+    },
+    {
       "type": "class",
       "name": "RoleExecutionKernel",
       "description": "角色执行内核 - public coordination entrypoint",
@@ -4070,10 +4076,6 @@
         {
           "name": "_build_stream_log_writer",
           "doc": "Create a log writer for streaming events."
-        },
-        {
-          "name": "_build_context",
-          "doc": "构建上下文请求"
         }
       ]
     },
@@ -23703,7 +23705,7 @@
     },
     {
       "type": "function",
-      "name": "test_build_system_prompt_for_request_passes_message_to_prompt_builder",
+      "name": "test_system_prompt_builder_receives_request_message",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_kernel_prompt_builder_integration.py"
     },
@@ -32437,12 +32439,12 @@
       "defined_in": "polaris/cells/roles/kernel/tests/test_turn_history_persist_parity.py",
       "methods": [
         {
-          "name": "test_kernel_build_context_returns_context_request",
-          "doc": "kernel._build_context returns correct type with list input."
+          "name": "test_context_request_builder_returns_context_request",
+          "doc": "build_context_request returns correct type with list input."
         },
         {
-          "name": "test_kernel_build_context_empty_history",
-          "doc": "kernel._build_context handles empty history."
+          "name": "test_context_request_builder_empty_history",
+          "doc": "build_context_request handles empty history."
         }
       ]
     },
@@ -32457,8 +32459,8 @@
           "doc": "TurnEngineContextRequest must have context_os_snapshot field."
         },
         {
-          "name": "test_kernel_build_context_extracts_context_os_snapshot",
-          "doc": "kernel._build_context preserves context_override and extracts context_os_snapshot."
+          "name": "test_context_request_builder_extracts_context_os_snapshot",
+          "doc": "build_context_request preserves context_override and extracts context_os_snapshot."
         },
         {
           "name": "test_context_gateway_formats_context_os_snapshot",

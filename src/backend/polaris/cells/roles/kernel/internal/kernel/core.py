@@ -26,7 +26,8 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from polaris.cells.roles.kernel.internal.context_gateway import ContextGatewayConfig, ContextRequest
+from polaris.cells.roles.kernel.internal.context_gateway import ContextGatewayConfig
+from polaris.cells.roles.kernel.internal.kernel.context_request_builder import build_context_request
 from polaris.cells.roles.kernel.internal.kernel.error_handler import (
     KernelEventEmitter,
     LLMEventType,
@@ -435,7 +436,7 @@ class RoleExecutionKernel:
 
         # 5. 构建上下文（验证可用性，结果由 TransactionKernel 使用）
         try:
-            _ = self._build_context(profile, request)
+            _ = build_context_request(request)
         except (RuntimeError, ValueError) as e:
             return RoleTurnResult(error=f"上下文构建失败: {e}", is_complete=True)
 
@@ -1142,20 +1143,6 @@ class RoleExecutionKernel:
         except (RuntimeError, ValueError):
             logger.warning("Failed to create stream log writer for run_id=%s", run_id, exc_info=True)
             return None
-
-    def _build_context(self, profile: RoleProfile, request: RoleTurnRequest) -> ContextRequest:
-        """构建上下文请求"""
-        context_os_snapshot = None
-        context_override = dict(request.context_override) if isinstance(request.context_override, dict) else {}
-        if isinstance(request.context_override, dict):
-            context_os_snapshot = request.context_override.get("context_os_snapshot")
-        return ContextRequest(
-            message=request.message,
-            history=tuple(request.history) if request.history else (),
-            task_id=request.task_id,
-            context_os_snapshot=context_os_snapshot,
-            context_override=context_override or None,
-        )
 
 
 __all__ = [

@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
 from polaris.cells.roles.kernel.internal.context_gateway.projection_formatter import ProjectionFormatter
+from polaris.cells.roles.kernel.internal.kernel.context_request_builder import build_context_request
 from polaris.cells.roles.kernel.internal.tool_loop_controller import ToolLoopController
 from polaris.kernelone.context.contracts import (
     TurnEngineContextRequest,
@@ -254,16 +255,10 @@ class TestContextGatewayBuildContext:
 class TestNoRegressions:
     """Regression tests ensuring existing behavior is preserved."""
 
-    def test_kernel_build_context_returns_context_request(self) -> None:
-        """kernel._build_context returns correct type with list input."""
-        from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
+    def test_context_request_builder_returns_context_request(self) -> None:
+        """build_context_request returns correct type with list input."""
         from polaris.cells.roles.profile.public import RoleTurnRequest
-        from polaris.cells.roles.profile.public.service import RoleProfile
         from polaris.kernelone.context.contracts import TurnEngineContextRequest
-
-        kernel = RoleExecutionKernel(workspace=".")
-        profile = MagicMock(spec=RoleProfile)
-        profile.role_id = "director"
 
         request = RoleTurnRequest(
             message="test",
@@ -271,7 +266,7 @@ class TestNoRegressions:
             task_id="task-1",
         )
 
-        result = kernel._build_context(profile, request)
+        result = build_context_request(request)
 
         # Result must be TurnEngineContextRequest (the unified type)
         assert isinstance(result, TurnEngineContextRequest)
@@ -279,19 +274,13 @@ class TestNoRegressions:
         assert isinstance(result.history, tuple)
         assert result.history == (("user", "hello"),)
 
-    def test_kernel_build_context_empty_history(self) -> None:
-        """kernel._build_context handles empty history."""
-        from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
+    def test_context_request_builder_empty_history(self) -> None:
+        """build_context_request handles empty history."""
         from polaris.cells.roles.profile.public import RoleTurnRequest
-        from polaris.cells.roles.profile.public.service import RoleProfile
         from polaris.kernelone.context.contracts import TurnEngineContextRequest
 
-        kernel = RoleExecutionKernel(workspace=".")
-        profile = MagicMock(spec=RoleProfile)
-        profile.role_id = "pm"
-
         request = RoleTurnRequest(message="hello", history=[], task_id="t1")
-        result = kernel._build_context(profile, request)
+        result = build_context_request(request)
 
         assert isinstance(result, TurnEngineContextRequest)
         assert result.history == ()
@@ -312,16 +301,10 @@ class TestPhase3ContextOSDirectIntegration:
         assert req.context_os_snapshot is not None
         assert "transcript_log" in req.context_os_snapshot
 
-    def test_kernel_build_context_extracts_context_os_snapshot(self) -> None:
-        """kernel._build_context preserves context_override and extracts context_os_snapshot."""
-        from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
+    def test_context_request_builder_extracts_context_os_snapshot(self) -> None:
+        """build_context_request preserves context_override and extracts context_os_snapshot."""
         from polaris.cells.roles.profile.public import RoleTurnRequest
-        from polaris.cells.roles.profile.public.service import RoleProfile
         from polaris.kernelone.context.contracts import TurnEngineContextRequest
-
-        kernel = RoleExecutionKernel(workspace=".")
-        profile = MagicMock(spec=RoleProfile)
-        profile.role_id = "director"
 
         snapshot = {"transcript_log": [], "working_state": {"current_task": "test"}}
         request = RoleTurnRequest(
@@ -334,7 +317,7 @@ class TestPhase3ContextOSDirectIntegration:
             },
         )
 
-        result = kernel._build_context(profile, request)
+        result = build_context_request(request)
 
         assert isinstance(result, TurnEngineContextRequest)
         assert result.context_os_snapshot == snapshot
