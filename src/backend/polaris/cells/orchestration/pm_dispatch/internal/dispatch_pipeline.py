@@ -76,7 +76,10 @@ _integration_qa = _load_dispatch_submodule("integration_qa")
 # ---------------------------------------------------------------------------
 _get_chief_engineer_service = _lazy_imports._get_chief_engineer_service
 _get_workflow_runtime = _lazy_imports._get_workflow_runtime
+_get_task_market_services = _lazy_imports._get_task_market_services
 _get_task_market_requeue_services = _lazy_imports._get_task_market_requeue_services
+_get_task_market_revision_services = _lazy_imports._get_task_market_revision_services
+_get_task_market_consumers = _lazy_imports._get_task_market_consumers
 _get_shared_quality = _lazy_imports._get_shared_quality
 _get_cognitive_runtime_services = _lazy_imports._get_cognitive_runtime_services
 _get_io_utils = _lazy_imports._get_io_utils
@@ -149,38 +152,6 @@ class DispatchCallbacks:
     """
 
     update_role_status: Callable[..., None] = field(default_factory=lambda: _nop_update_role_status)
-
-
-def _get_task_market_services() -> tuple[type, Callable]:
-    """Lazy import for runtime.task_market to avoid module-level cross-Cell coupling."""
-    from polaris.cells.runtime.task_market.public.contracts import (
-        PublishTaskWorkItemCommandV1,
-    )
-    from polaris.cells.runtime.task_market.public.service import (
-        get_task_market_service,
-    )
-
-    return PublishTaskWorkItemCommandV1, get_task_market_service
-
-
-def _get_task_market_revision_services() -> tuple[type, type, type]:
-    """Lazy import for task_market revision/change-order contracts."""
-    from polaris.cells.runtime.task_market.public.contracts import (
-        QueryPlanRevisionsV1,
-        RegisterPlanRevisionCommandV1,
-        SubmitChangeOrderCommandV1,
-    )
-
-    return RegisterPlanRevisionCommandV1, SubmitChangeOrderCommandV1, QueryPlanRevisionsV1
-
-
-def _get_task_market_consumers() -> tuple[type, type, type]:
-    """Lazy import for CE/Director/QA task-market consumers."""
-    from polaris.cells.chief_engineer.blueprint.public.service import CEConsumer
-    from polaris.cells.director.task_consumer import DirectorExecutionConsumer
-    from polaris.cells.qa.audit_verdict.public.service import QAConsumer
-
-    return CEConsumer, DirectorExecutionConsumer, QAConsumer
 
 
 def _endpoint_reachable(base_url: str, *, timeout: float = 4.0) -> bool:
