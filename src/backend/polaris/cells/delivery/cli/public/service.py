@@ -131,7 +131,7 @@ class CliExecutionService:
         """
         workspace = Path(command.workspace)
         _validate_workspace_exists(workspace, command.command)
-        started_at = _utc_now()
+        started_at = utc_now_iso_compact()
         event_id = str(uuid.uuid4())
         session_id = command.session_id or event_id
 
@@ -217,7 +217,7 @@ class CliExecutionService:
             "workspace": str(workspace),
             "active_sessions": (list(self._active_sessions.keys()) if query.include_active_sessions else []),
             "registered_commands": (list(_MANAGEMENT_HANDLERS.keys()) if query.include_commands else []),
-            "checked_at": _utc_now(),
+            "checked_at": utc_now_iso_compact(),
         }
 
     # ── Internal execution paths ───────────────────────────────────────────────
@@ -365,10 +365,6 @@ class CliExecutionService:
 def _validate_workspace_exists(workspace: Path, command: str) -> None:
     if not workspace.exists():
         raise WorkspaceNotFoundError(str(workspace))
-
-
-# Backward compatibility alias
-_utc_now = utc_now_iso_compact
 
 
 def _extract_role_output(result_payload: Any) -> str:

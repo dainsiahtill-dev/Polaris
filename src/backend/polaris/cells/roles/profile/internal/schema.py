@@ -40,10 +40,6 @@ class SequentialTraceLevel(str, Enum):
     DETAILED = "detailed"
 
 
-# Backward compatibility alias
-_utc_now = utc_now
-
-
 # SSOT: RoleTurnRequest 单一空 ContextOS Snapshot Bootstrap
 # 这是 ContextOS Single Source of Truth 的唯一真相源头。
 _ROLE_TURN_REQUEST_EMPTY_CONTEXT_OS_SNAPSHOT: dict[str, Any] = {
@@ -347,10 +343,10 @@ class RoleProfile:
     version: str = "1.0.0"
 
     # 创建时间
-    created_at: datetime = field(default_factory=_utc_now)
+    created_at: datetime = field(default_factory=utc_now)
 
     # 更新时间
-    updated_at: datetime = field(default_factory=_utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
 
     @property
     def profile_fingerprint(self) -> str:
@@ -389,7 +385,7 @@ class PromptFingerprint:
     profile_fingerprint: str = ""
 
     # 生成时间
-    generated_at: datetime = field(default_factory=_utc_now)
+    generated_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         if not self.full_hash:
