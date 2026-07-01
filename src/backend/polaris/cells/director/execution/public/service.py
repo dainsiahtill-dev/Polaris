@@ -30,9 +30,12 @@ from polaris.cells.director.tasking.public import (
     TaskService,
     WorkerPoolConfig,
     WorkerService,
+    apply_task_execution_strategy_overrides,
     parse_all_operations,
     parse_full_file_blocks,
     parse_search_replace_blocks,
+    resolve_task_execution_profile,
+    resolve_task_execution_strategy,
     validate_before_apply,
 )
 from polaris.domain.entities import Task, TaskResult
@@ -232,15 +235,9 @@ def _ensure_execution_envelope_metadata(command: ExecuteDirectorTaskCommandV1, m
     if _has_execution_envelope(metadata):
         return
 
-    from polaris.cells.director.tasking.internal.execution_profile import resolve_director_execution_profile
-    from polaris.cells.director.tasking.internal.execution_strategy import (
-        apply_execution_strategy_overrides,
-        resolve_director_execution_strategy,
-    )
-
     target_files = _string_list(metadata.get("target_files"))
     scope_paths = _string_list(metadata.get("scope_paths"))
-    profile = resolve_director_execution_profile(
+    profile = resolve_task_execution_profile(
         subject=str(metadata.get("title") or metadata.get("subject") or command.instruction or ""),
         description=str(metadata.get("description") or metadata.get("objective") or command.instruction or ""),
         metadata=metadata,
@@ -248,13 +245,13 @@ def _ensure_execution_envelope_metadata(command: ExecuteDirectorTaskCommandV1, m
         scope_paths=scope_paths,
         workspace=command.workspace,
     )
-    strategy = resolve_director_execution_strategy(profile, metadata=metadata)
+    strategy = resolve_task_execution_strategy(profile, metadata=metadata)
     context: dict[str, Any] = {
         "workspace": command.workspace,
         "task_id": command.task_id,
         "run_id": command.run_id or metadata.get("run_id") or "unknown-run",
     }
-    apply_execution_strategy_overrides(
+    apply_task_execution_strategy_overrides(
         context=context,
         metadata=metadata,
         profile=profile,
