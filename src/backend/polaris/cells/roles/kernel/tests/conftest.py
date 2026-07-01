@@ -121,24 +121,21 @@ def _build_kernel(
             include_task_history=False,
         )
 
-    profile = SimpleNamespace(**profile_attrs)
-    kernel = RoleExecutionKernel(
-        workspace=".",
-        registry=_StubRegistry(profile),  # type: ignore[arg-type]
-        prompt_builder=prompt_builder,
-        llm_invoker=llm_invoker,
-    )
-
-    # Inject mock prompt builder if not provided (to avoid lazy init issues)
-    if prompt_builder is None:
-        mock_pb = SimpleNamespace(
+    effective_prompt_builder = prompt_builder
+    if effective_prompt_builder is None:
+        effective_prompt_builder = SimpleNamespace(
             build_system_prompt=lambda _p, _a, **kw: "system-prompt",
             build_fingerprint=lambda _p, _a: SimpleNamespace(full_hash="fp-test", core_hash="fp-test"),
             build_retry_prompt=lambda _p, _a, **kw: "retry-prompt",
         )
-        kernel.inject_prompt_builder(mock_pb)  # type: ignore[arg-type]
 
-    return kernel
+    profile = SimpleNamespace(**profile_attrs)
+    return RoleExecutionKernel(
+        workspace=".",
+        registry=_StubRegistry(profile),  # type: ignore[arg-type]
+        prompt_builder=effective_prompt_builder,
+        llm_invoker=llm_invoker,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

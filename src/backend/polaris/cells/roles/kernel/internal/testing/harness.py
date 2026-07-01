@@ -386,12 +386,8 @@ class KernelTestHarness:
             workspace=self.config.workspace,
             use_structured_output=self.config.use_structured_output,
             tool_gateway=tool_gateway,  # type: ignore[arg-type]
+            llm_invoker=self._fake_llm,
         )
-
-        # Inject fake LLM caller if configured
-        if self._fake_llm is not None:
-            # The kernel uses inject_llm_invoker to replace the LLM
-            kernel.inject_llm_invoker(self._fake_llm)  # type: ignore[arg-type]
 
         # Inject fake context assembler if configured
         if self._fake_context is not None:
