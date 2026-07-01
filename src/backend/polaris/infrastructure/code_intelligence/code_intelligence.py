@@ -9,7 +9,7 @@ from typing import Any
 from polaris.infrastructure.accel.config import resolve_effective_config
 from polaris.infrastructure.accel.indexers import build_or_update_indexes
 from polaris.infrastructure.accel.query.context_compiler import compile_context_pack
-from polaris.infrastructure.accel.verify.orchestrator import run_verify
+from polaris.infrastructure.accel.verify.verify.core import run_verify
 
 
 class CodeIntelligenceService:

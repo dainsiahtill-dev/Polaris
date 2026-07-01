@@ -22,7 +22,7 @@ from .query.context_compiler import (
 from .semantic_ranker import probe_semantic_runtime
 from .storage.cache import ensure_project_dirs, project_paths
 from .utils import normalize_path_abs as _normalize_path, utc_now_iso as _utc_now
-from .verify.orchestrator import run_verify
+from .verify.verify.core import run_verify
 
 logger = logging.getLogger(__name__)
 

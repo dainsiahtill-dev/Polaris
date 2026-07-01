@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from ..config import resolve_effective_config
-from ..verify.orchestrator import run_verify
+from ..verify.verify.core import run_verify
 
 logger = logging.getLogger(__name__)
 
