@@ -40,6 +40,7 @@ from polaris.cells.roles.kernel.internal.kernel.prompt_assembly import (
     append_prompt_profiles_for_request,
     build_system_prompt_for_request,
 )
+from polaris.cells.roles.kernel.internal.kernel.prompt_builder_provider import get_prompt_builder
 from polaris.cells.roles.kernel.internal.kernel.request_appendix import build_prompt_appendix_from_request
 from polaris.cells.roles.kernel.internal.kernel.stream_run_id import resolve_stream_run_id
 from polaris.cells.roles.kernel.internal.kernel.suggestions import get_suggestions_for_error
@@ -256,15 +257,6 @@ class RoleExecutionKernel:
     # 服务层访问器（懒加载 + 依赖注入支持）
     # ═══════════════════════════════════════════════════════════════════════════
 
-    def _get_prompt_builder(self) -> PromptBuilder:
-        """获取提示词构建器（支持依赖注入）"""
-        if self._injected_prompt_builder is not None:
-            # 类型检查：确保注入的服务实现了必要的方法
-            return self._injected_prompt_builder  # type: ignore[return-value]
-        if self._prompt_builder is None:
-            self._prompt_builder = PromptBuilder(self.workspace)
-        return self._prompt_builder
-
     def _get_quality_checker(self) -> QualityChecker:
         """获取质量检查器（支持依赖注入）"""
         if self._injected_quality_checker is not None:
@@ -376,14 +368,15 @@ class RoleExecutionKernel:
 
         # 3. 构建提示词指纹
         try:
-            fingerprint = self._get_prompt_builder().build_fingerprint(profile, prompt_appendix)
+            prompt_builder = get_prompt_builder(self)
+            fingerprint = prompt_builder.build_fingerprint(profile, prompt_appendix)
         except (RuntimeError, ValueError) as e:
             return RoleTurnResult(error=f"提示词构建失败: {e}", is_complete=True)
 
         # 4. 构建基础系统提示词
         try:
             base_system_prompt = build_system_prompt_for_request(
-                prompt_builder=self._get_prompt_builder(),
+                prompt_builder=prompt_builder,
                 profile=profile,
                 request=request,
                 prompt_appendix=prompt_appendix,
@@ -426,7 +419,7 @@ class RoleExecutionKernel:
 
         for attempt in range(max_retries + 1):
             # 构建当前尝试的系统提示词
-            system_prompt = self._get_prompt_builder().build_retry_prompt(
+            system_prompt = prompt_builder.build_retry_prompt(
                 base_system_prompt, quality_result_to_dict(last_validation), attempt
             )
 
@@ -736,7 +729,8 @@ class RoleExecutionKernel:
             )
 
             # 3. 构建提示词指纹
-            fingerprint = self._get_prompt_builder().build_fingerprint(profile, prompt_appendix)
+            prompt_builder = get_prompt_builder(self)
+            fingerprint = prompt_builder.build_fingerprint(profile, prompt_appendix)
             await uep_publisher.publish_stream_event(
                 workspace=self.workspace or os.getcwd(),
                 run_id=stream_run_id,
@@ -748,7 +742,7 @@ class RoleExecutionKernel:
 
             # 4. 构建系统提示词
             system_prompt = build_system_prompt_for_request(
-                prompt_builder=self._get_prompt_builder(),
+                prompt_builder=prompt_builder,
                 profile=profile,
                 request=request,
                 prompt_appendix=prompt_appendix,

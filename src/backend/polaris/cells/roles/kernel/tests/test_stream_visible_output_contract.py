@@ -56,13 +56,13 @@ def _build_kernel() -> RoleExecutionKernel:
 
 
 def _patch_prompt_builder(kernel: RoleExecutionKernel) -> None:
-    # 使用 _get_prompt_builder() 注入 mock，兼容 DI 架构
+    # Use public injection so the stream path resolves the mock through the provider owner.
     mock_prompt_builder = SimpleNamespace(
         build_fingerprint=lambda _profile, _appendix: SimpleNamespace(full_hash="fp-visible-stream"),
         build_system_prompt=lambda _profile, _appendix: "system-prompt",
         build_retry_prompt=lambda _profile, _appendix, _error, _history, _attempt: "retry-prompt",
     )
-    kernel._injected_prompt_builder = mock_prompt_builder  # type: ignore[assignment]
+    kernel.inject_prompt_builder(mock_prompt_builder)  # type: ignore[arg-type]
 
 
 def _make_request(message: str = "阅读并总结项目") -> RoleTurnRequest:

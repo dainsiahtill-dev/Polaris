@@ -136,8 +136,7 @@ def _build_kernel(
             build_fingerprint=lambda _p, _a: SimpleNamespace(full_hash="fp-test", core_hash="fp-test"),
             build_retry_prompt=lambda _p, _a, **kw: "retry-prompt",
         )
-        kernel._prompt_builder = mock_pb  # type: ignore[assignment]
-        kernel._get_prompt_builder = lambda: mock_pb  # type: ignore
+        kernel.inject_prompt_builder(mock_pb)  # type: ignore[arg-type]
 
     return kernel
 

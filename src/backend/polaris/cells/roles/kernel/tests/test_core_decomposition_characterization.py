@@ -273,7 +273,7 @@ def _make_run_kernel(profile: _MockProfile) -> RoleExecutionKernel:
         build_fingerprint=lambda _profile, _appendix: _MockFingerprint(),
         build_retry_prompt=lambda _system_prompt, _quality_result, _attempt: "retry-prompt",
     )
-    kernel._get_prompt_builder = lambda: prompt_builder  # type: ignore[method-assign]
+    kernel.inject_prompt_builder(prompt_builder)  # type: ignore[arg-type]
     return kernel
 
 

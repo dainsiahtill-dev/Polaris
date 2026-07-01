@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T05:32:26.348775Z",
-  "source_hash": "f61238e8ca1de2eb",
+  "generated_at": "2026-07-01T05:40:30.368234Z",
+  "source_hash": "186cac74ea06f1dc",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -4008,10 +4008,6 @@
           "doc": "Return the runtime-injected ContextGatewayConfig factory, if any."
         },
         {
-          "name": "_get_prompt_builder",
-          "doc": "获取提示词构建器（支持依赖注入）"
-        },
-        {
           "name": "_get_quality_checker",
           "doc": "获取质量检查器（支持依赖注入）"
         },
@@ -4226,6 +4222,12 @@
       "name": "_forced_tool_choice_name",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/prompt_assembly.py"
+    },
+    {
+      "type": "function",
+      "name": "get_prompt_builder",
+      "description": "Return the injected or lazily-created prompt builder for a kernel turn.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/prompt_builder_provider.py"
     },
     {
       "type": "function",

@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
 from polaris.cells.roles.kernel.internal.kernel.output_parser_provider import get_output_parser
+from polaris.cells.roles.kernel.internal.kernel.prompt_builder_provider import get_prompt_builder
 from polaris.cells.roles.kernel.internal.kernel.tool_gateway_turn_key import resolve_tool_gateway_turn_key
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
     _apply_runtime_tool_policy,
@@ -505,12 +506,12 @@ class TestLazyLoading:
         assert kernel._prompt_builder is None
 
         # 访问时创建
-        builder = kernel._get_prompt_builder()
+        builder = get_prompt_builder(kernel)
         assert builder is not None
         assert kernel._prompt_builder is builder
 
         # 再次访问返回同一实例
-        assert kernel._get_prompt_builder() is builder
+        assert get_prompt_builder(kernel) is builder
 
     def test_output_parser_lazy_loaded(self) -> None:
         """测试 Output Parser 懒加载"""
@@ -548,7 +549,7 @@ class TestLazyLoading:
         )
 
         # 返回注入的 mock，而不是创建新的
-        assert kernel._get_prompt_builder() is mock_builder
+        assert get_prompt_builder(kernel) is mock_builder
         assert kernel._prompt_builder is None  # 从未创建
 
 

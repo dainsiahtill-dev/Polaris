@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
 from polaris.cells.roles.kernel.internal.kernel.prompt_assembly import build_system_prompt_for_request
+from polaris.cells.roles.kernel.internal.kernel.prompt_builder_provider import get_prompt_builder
 from polaris.cells.roles.profile.public.service import RoleExecutionMode, RoleTurnRequest
 
 
@@ -39,8 +40,7 @@ def test_system_prompt_builder_receives_request_message(monkeypatch) -> None:
         captured["message"] = str(message or "")
         return "system-prompt"
 
-    # FIX: 新的架构使用 _get_prompt_builder() 获取 prompt_builder
-    prompt_builder = kernel._get_prompt_builder()
+    prompt_builder = get_prompt_builder(kernel)
     monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
 
     result = build_system_prompt_for_request(
@@ -84,7 +84,7 @@ def test_build_system_prompt_for_director_codegen_suppresses_conflicting_layers(
         captured.update(kwargs)
         return "system-prompt"
 
-    prompt_builder = kernel._get_prompt_builder()
+    prompt_builder = get_prompt_builder(kernel)
     monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
 
     result = build_system_prompt_for_request(
@@ -128,7 +128,7 @@ def test_build_system_prompt_for_quality_repair_suppresses_working_memory_only(m
         captured.update(kwargs)
         return "system-prompt"
 
-    prompt_builder = kernel._get_prompt_builder()
+    prompt_builder = get_prompt_builder(kernel)
     monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
 
     result = build_system_prompt_for_request(
@@ -176,7 +176,7 @@ def test_build_system_prompt_for_factory_contract_suppresses_working_memory_only
         captured.update(kwargs)
         return "system-prompt"
 
-    prompt_builder = kernel._get_prompt_builder()
+    prompt_builder = get_prompt_builder(kernel)
     monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
 
     result = build_system_prompt_for_request(
@@ -235,7 +235,7 @@ def test_build_system_prompt_recomputes_stale_empty_prompt_profile_audit(monkeyp
         captured.update(kwargs)
         return "system-prompt"
 
-    prompt_builder = kernel._get_prompt_builder()
+    prompt_builder = get_prompt_builder(kernel)
     monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
 
     result = build_system_prompt_for_request(
@@ -318,7 +318,7 @@ def test_build_system_prompt_recomputes_stale_cached_prompt_profile_appendix(mon
         captured.update(kwargs)
         return "system-prompt"
 
-    prompt_builder = kernel._get_prompt_builder()
+    prompt_builder = get_prompt_builder(kernel)
     monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
 
     result = build_system_prompt_for_request(
@@ -370,7 +370,7 @@ def test_build_system_prompt_for_forced_write_suppresses_working_memory_only(mon
         captured.update(kwargs)
         return "system-prompt"
 
-    prompt_builder = kernel._get_prompt_builder()
+    prompt_builder = get_prompt_builder(kernel)
     monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
 
     result = build_system_prompt_for_request(
