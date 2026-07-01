@@ -657,32 +657,8 @@ class TurnTransactionController:
         return delivery_intent_resolver.requires_verification_intent(message)
 
     # ---------------------------------------------------------------------------
-    # Backward-compat proxies (tests monkeypatch these on the controller instance)
+    # Transaction owner proxies
     # ---------------------------------------------------------------------------
-
-    async def _execute_tool_batch(
-        self,
-        decision: TurnDecision,
-        state_machine: TurnStateMachine,
-        ledger: TurnLedger,
-        context: list[dict],
-        *,
-        stream: bool = False,
-        shadow_engine: Any | None = None,
-        allowed_tool_names: set[str] | None = None,
-        count_towards_batch_limit: bool = True,
-    ) -> dict:
-        """Proxy to ToolBatchExecutor.execute_tool_batch."""
-        return await self._tool_batch_executor.execute_tool_batch(
-            decision,
-            state_machine,
-            ledger,
-            context,
-            stream=stream,
-            shadow_engine=shadow_engine,
-            allowed_tool_names=allowed_tool_names,
-            count_towards_batch_limit=count_towards_batch_limit,
-        )
 
     async def _retry_tool_batch_after_contract_violation(
         self,

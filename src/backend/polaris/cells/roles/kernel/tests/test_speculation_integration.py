@@ -133,7 +133,7 @@ async def test_batch_adopts_completed_shadow_task(
     state_machine = _setup_state_machine("t_adopt")
     ledger = TurnLedger(turn_id="t_adopt")
 
-    result = await controller._execute_tool_batch(
+    result = await controller._tool_batch_executor.execute_tool_batch(
         decision, state_machine, ledger, context=[], stream=False, shadow_engine=shadow_engine
     )
 
@@ -176,7 +176,7 @@ async def test_stream_write_tool_without_prepare_shadow_replays(
     ledger = TurnLedger(turn_id="t_write_prepare_required")
 
     # Must NOT raise: the write falls back to authoritative batch execution.
-    await controller._execute_tool_batch(
+    await controller._tool_batch_executor.execute_tool_batch(
         decision,
         state_machine,
         ledger,
@@ -245,7 +245,7 @@ async def test_batch_joins_running_shadow_task(
     import asyncio
 
     async def run_batch() -> Any:
-        return await controller._execute_tool_batch(
+        return await controller._tool_batch_executor.execute_tool_batch(
             decision, state_machine, ledger, context=[], stream=False, shadow_engine=shadow_engine
         )
 
@@ -287,7 +287,7 @@ async def test_batch_replays_when_no_shadow_task(
     state_machine = _setup_state_machine("t_replay")
     ledger = TurnLedger(turn_id="t_replay")
 
-    result = await controller._execute_tool_batch(
+    result = await controller._tool_batch_executor.execute_tool_batch(
         decision, state_machine, ledger, context=[], stream=False, shadow_engine=shadow_engine
     )
 
@@ -346,7 +346,7 @@ async def test_batch_mixed_adopt_and_replay(
     state_machine = _setup_state_machine("t_mixed")
     ledger = TurnLedger(turn_id="t_mixed")
 
-    result = await controller._execute_tool_batch(
+    result = await controller._tool_batch_executor.execute_tool_batch(
         decision, state_machine, ledger, context=[], stream=False, shadow_engine=shadow_engine
     )
 
@@ -447,7 +447,7 @@ async def test_param_drift_replay(controller: TurnTransactionController, shadow_
     state_machine = _setup_state_machine("t_drift")
     ledger = TurnLedger(turn_id="t_drift")
 
-    result = await controller._execute_tool_batch(
+    result = await controller._tool_batch_executor.execute_tool_batch(
         decision, state_machine, ledger, context=[], stream=False, shadow_engine=shadow_engine
     )
 
@@ -614,7 +614,7 @@ async def test_retrieval_chain_adopts_prefetch(
     ledger = TurnLedger(turn_id="t_chain_adopt")
 
     before_count = controller.tool_runtime.await_count
-    result = await controller._execute_tool_batch(
+    result = await controller._tool_batch_executor.execute_tool_batch(
         decision, state_machine, ledger, context=[], stream=False, shadow_engine=shadow_engine
     )
 
@@ -729,7 +729,7 @@ async def test_write_tool_commit_never_speculative(
     ledger = TurnLedger(turn_id="t_write_commit")
 
     before_count = controller.tool_runtime.await_count
-    result = await controller._execute_tool_batch(
+    result = await controller._tool_batch_executor.execute_tool_batch(
         decision, state_machine, ledger, context=[], stream=False, shadow_engine=shadow_engine
     )
 

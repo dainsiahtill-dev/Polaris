@@ -505,7 +505,9 @@ async def test_execute_tool_batch_rejects_readonly_batch_for_mutation_request() 
     context = [{"role": "user", "content": "请更新 README.md 并写入新说明"}]
 
     with pytest.raises(RuntimeError, match="single_batch_contract_violation"):
-        await controller._execute_tool_batch(cast(TurnDecision, decision), state_machine, ledger, context)
+        await controller._tool_batch_executor.execute_tool_batch(
+            cast(TurnDecision, decision), state_machine, ledger, context
+        )
 
 
 @pytest.mark.asyncio
@@ -536,7 +538,9 @@ async def test_execute_tool_batch_rejects_write_target_drift_for_explicit_mutati
     context = [{"role": "user", "content": "请更新 README.md 和 highscore.json，然后继续落地"}]
 
     with pytest.raises(RuntimeError, match="mutation write target drift"):
-        await controller._execute_tool_batch(cast(TurnDecision, decision), state_machine, ledger, context)
+        await controller._tool_batch_executor.execute_tool_batch(
+            cast(TurnDecision, decision), state_machine, ledger, context
+        )
 
 
 def test_resolve_mutation_target_guard_violation_allows_matching_write_target() -> None:
