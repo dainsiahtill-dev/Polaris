@@ -597,17 +597,16 @@ async def execute_transaction_kernel_stream(
                 thinking=final_thinking,
                 tool_results=completion_tool_results,
             )
-            from polaris.cells.roles.profile.public.service import RoleTurnResult
-
-            event_dict["result"] = RoleTurnResult(
+            event_dict["result"] = role_turn_completion_result(
                 content=final_content,
                 thinking=final_thinking,
+                structured_output=None,
                 tool_calls=completion_tool_calls,
                 tool_results=completion_tool_results,
                 batch_receipt=completion_batch_receipt,
-                profile_version=profile.version,
-                prompt_fingerprint=fingerprint,
-                tool_policy_id=profile.tool_policy.policy_id,
+                profile=profile,
+                fingerprint=fingerprint,
+                error=None,
                 is_complete=True,
                 execution_stats={
                     "duration_ms": event.duration_ms,
