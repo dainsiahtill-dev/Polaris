@@ -13,7 +13,7 @@ policy/
 ├── tool_policy.py      - ToolPolicy（工具权限评估）
 ├── approval_policy.py  - ApprovalPolicy（人工审批闸门）
 ├── budget_policy.py    - BudgetPolicy（资源预算硬限制）
-├── sandbox_policy.py   - SandboxPolicy（进程/FS/网络范围）
+├── layer/sandbox.py    - SandboxPolicy（进程/FS/网络范围）
 └── layer/redaction.py - RedactionPolicy（日志/prompt 脱敏）
 
 核心约束
@@ -57,12 +57,9 @@ from polaris.cells.roles.kernel.internal.policy.layer import (
     PolicyResult,
     PolicyViolation,
     RedactionPolicy,
+    SandboxPolicy,
     ToolPolicy,
     ToolPolicyConfig,
-)
-from polaris.cells.roles.kernel.internal.policy.sandbox_policy import (
-    SandboxDecision,
-    SandboxPolicy,
 )
 
 __all__ = [
@@ -82,7 +79,6 @@ __all__ = [
     "PolicyViolation",
     # Redaction
     "RedactionPolicy",
-    "SandboxDecision",
     # Sandbox
     "SandboxPolicy",
     # Tool

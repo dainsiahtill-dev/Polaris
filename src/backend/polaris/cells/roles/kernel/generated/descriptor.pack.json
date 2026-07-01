@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T07:38:36.479969Z",
-  "source_hash": "6797e8ce551e45c6",
+  "generated_at": "2026-07-01T07:41:39.942397Z",
+  "source_hash": "ce32f38a266b7ecd",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -8207,49 +8207,6 @@
         {
           "name": "_is_path_traversal",
           "doc": "检查路径是否包含穿越序列。"
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "SandboxDecision",
-      "description": "Sandbox evaluation result.",
-      "defined_in": "polaris/cells/roles/kernel/internal/policy/sandbox_policy.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "SandboxPolicy",
-      "description": "Compatibility sandbox policy used by legacy callers.",
-      "defined_in": "polaris/cells/roles/kernel/internal/policy/sandbox_policy.py",
-      "methods": [
-        {
-          "name": "from_env",
-          "doc": ""
-        },
-        {
-          "name": "evaluate_fs_scope",
-          "doc": ""
-        },
-        {
-          "name": "evaluate_network_scope",
-          "doc": ""
-        },
-        {
-          "name": "evaluate_process_scope",
-          "doc": ""
-        },
-        {
-          "name": "evaluate_env_scope",
-          "doc": ""
-        },
-        {
-          "name": "evaluate",
-          "doc": "Evaluate a call batch and return (approved, blocked, violations)."
-        },
-        {
-          "name": "_evaluate_single",
-          "doc": ""
         }
       ]
     },
