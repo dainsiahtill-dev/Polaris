@@ -9,8 +9,6 @@ polaris.cells.audit.verdict.internal.artifact_service. See tests/test_artifact_p
 
 from __future__ import annotations
 
-import warnings
-
 import pytest
 from polaris.kernelone.storage.policy import (
     STORAGE_POLICY_REGISTRY,
@@ -128,53 +126,38 @@ class TestCategoryAndLifecycle:
         assert get_lifecycle_for_path("workspace/history/x") == Lifecycle.HISTORY
 
 
-class TestDeprecatedArtifactPolicy:
-    """Test that artifact policy stubs emit deprecation warnings."""
+class TestRetiredArtifactPolicySurface:
+    """KernelOne storage must not expose Polaris artifact lifecycle policy."""
 
-    def test_get_artifact_policy_metadata_emits_deprecation(self) -> None:
-        """get_artifact_policy_metadata should emit DeprecationWarning."""
-        from polaris.kernelone.storage.policy import get_artifact_policy_metadata
+    def test_policy_module_does_not_export_artifact_policy_helpers(self) -> None:
+        """Artifact lifecycle policy belongs to audit.verdict artifact_service."""
+        import polaris.kernelone.storage.policy as policy
 
-        with warnings.catch_warnings(record=True) as ctx:
-            warnings.simplefilter("always")
-            result = get_artifact_policy_metadata("contract.plan")
+        retired_names = {
+            "ARTIFACT_POLICY_METADATA",
+            "get_artifact_policy_metadata",
+            "should_archive_artifact",
+            "should_compress_artifact",
+        }
 
-        assert result is None
-        assert len(ctx) == 1
-        assert issubclass(ctx[0].category, DeprecationWarning)
-        assert "deprecated" in str(ctx[0].message).lower()
-        assert "artifact_service" in str(ctx[0].message)
+        assert retired_names.isdisjoint(set(policy.__all__))
+        for name in retired_names:
+            assert not hasattr(policy, name)
 
-    def test_should_compress_artifact_emits_deprecation(self) -> None:
-        """should_compress_artifact should emit DeprecationWarning."""
-        from polaris.kernelone.storage.policy import should_compress_artifact
+    def test_storage_package_root_does_not_reexport_artifact_policy_helpers(self) -> None:
+        """Package-root exports stay generic to KernelOne storage policy."""
+        import polaris.kernelone.storage as storage
 
-        with warnings.catch_warnings(record=True) as ctx:
-            warnings.simplefilter("always")
-            result = should_compress_artifact("audit.events.runtime")
+        retired_names = {
+            "ARTIFACT_POLICY_METADATA",
+            "get_artifact_policy_metadata",
+            "should_archive_artifact",
+            "should_compress_artifact",
+        }
 
-        assert result is False
-        assert len(ctx) == 1
-        assert issubclass(ctx[0].category, DeprecationWarning)
-
-    def test_should_archive_artifact_emits_deprecation(self) -> None:
-        """should_archive_artifact should emit DeprecationWarning."""
-        from polaris.kernelone.storage.policy import should_archive_artifact
-
-        with warnings.catch_warnings(record=True) as ctx:
-            warnings.simplefilter("always")
-            result = should_archive_artifact("contract.pm_tasks")
-
-        assert result is False
-        assert len(ctx) == 1
-        assert issubclass(ctx[0].category, DeprecationWarning)
-
-    def test_artifact_policy_metadata_stub_is_empty(self) -> None:
-        """ARTIFACT_POLICY_METADATA should be an empty stub."""
-        from polaris.kernelone.storage.policy import ARTIFACT_POLICY_METADATA
-
-        # The stub is empty - Polaris metadata has moved to artifact_service
-        assert ARTIFACT_POLICY_METADATA == {}
+        assert retired_names.isdisjoint(set(storage.__all__))
+        for name in retired_names:
+            assert not hasattr(storage, name)
 
 
 class TestStoragePolicyRegistry:

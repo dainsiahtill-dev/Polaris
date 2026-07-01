@@ -34,22 +34,17 @@ from .paths import (
     resolve_taskboard_path,
 )
 from .policy import (
-    ARTIFACT_POLICY_METADATA,
     STORAGE_POLICY_REGISTRY,
     Lifecycle,
     StoragePolicy,
     StoragePolicyService,
-    get_artifact_policy_metadata,
     get_category_for_path,
     get_lifecycle_for_path,
     get_policy_for_path,
     is_archive_eligible,
-    should_archive_artifact,
-    should_compress_artifact,
 )
 
 __all__ = [
-    "ARTIFACT_POLICY_METADATA",
     "STORAGE_POLICY_REGISTRY",
     "UNSUPPORTED_PATH_PREFIX",
     "WORKSPACE_ARTIFACTS",
@@ -66,7 +61,6 @@ __all__ = [
     "clear_storage_roots_cache",
     "default_kernelone_cache_base",
     "default_ramdisk_root",
-    "get_artifact_policy_metadata",
     "get_category_for_path",
     "get_lifecycle_for_path",
     "get_policy_for_path",
@@ -85,8 +79,6 @@ __all__ = [
     "resolve_storage_roots",
     "resolve_taskboard_path",
     "resolve_workspace_persistent_path",
-    "should_archive_artifact",
-    "should_compress_artifact",
     "state_to_ramdisk_enabled",
     "workspace_key",
 ]

@@ -13,10 +13,8 @@ and resolved to physical paths via ``polaris.kernelone.storage`` layout APIs.
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
 
 # StorageCategory is defined once in contracts.py (str, Enum version).
 # Import it here so existing callers of policy.StorageCategory continue to work.
@@ -340,80 +338,6 @@ def get_lifecycle_for_path(logical_path: str) -> Lifecycle:
     return get_policy_for_path(logical_path).lifecycle
 
 
-# ============================================================================
-# Polaris Artifact Lifecycle Policy Metadata
-# ============================================================================
-# DEPRECATED: Polaris-specific business artifact lifecycle metadata has been
-# migrated to the Cell layer. This section now contains a minimal stub that
-# emits DeprecationWarning for any remaining callers.
-#
-# Migration path:
-#   from polaris.cells.audit.verdict.internal.artifact_service import (
-#       KERNELONE_ARTIFACT_POLICY_METADATA,
-#       get_artifact_policy_metadata,
-#       should_compress_artifact,
-#       should_archive_artifact,
-#   )
-#
-# This stub returns None / False to avoid crashing stray callers during the
-# migration window. It does NOT serve as an authoritative registry.
-
-# Empty stub dict - backward compatibility only. Emit deprecation on access.
-ARTIFACT_POLICY_METADATA: dict[str, dict[str, Any]] = {}  # type: ignore[misc]
-
-
-def get_artifact_policy_metadata(artifact_key: str) -> dict[str, Any] | None:
-    """Get policy metadata for an artifact key.
-
-    .. deprecated::
-        Polaris artifact lifecycle metadata has moved to
-        ``polaris.cells.audit.verdict.internal.artifact_service``.
-        Import ``get_artifact_policy_metadata`` from there instead.
-    """
-    warnings.warn(
-        "polaris.kernelone.storage.policy.ARTIFACT_POLICY_METADATA and "
-        "get_artifact_policy_metadata() are deprecated. "
-        "Import from polaris.cells.audit.verdict.internal.artifact_service instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return None
-
-
-def should_compress_artifact(artifact_key: str) -> bool:
-    """Check if an artifact should be compressed when archiving.
-
-    .. deprecated::
-        Polaris artifact lifecycle metadata has moved to
-        ``polaris.cells.audit.verdict.internal.artifact_service``.
-        Import ``should_compress_artifact`` from there instead.
-    """
-    warnings.warn(
-        "polaris.kernelone.storage.policy.should_compress_artifact() is deprecated. "
-        "Import from polaris.cells.audit.verdict.internal.artifact_service instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return False
-
-
-def should_archive_artifact(artifact_key: str) -> bool:
-    """Check if an artifact should be archived on terminal state.
-
-    .. deprecated::
-        Polaris artifact lifecycle metadata has moved to
-        ``polaris.cells.audit.verdict.internal.artifact_service``.
-        Import ``should_archive_artifact`` from there instead.
-    """
-    warnings.warn(
-        "polaris.kernelone.storage.policy.should_archive_artifact() is deprecated. "
-        "Import from polaris.cells.audit.verdict.internal.artifact_service instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return False
-
-
 class StoragePolicyService:
     """Service for querying storage policies and resolving paths.
 
@@ -487,17 +411,13 @@ class StoragePolicyService:
 
 
 __all__ = [
-    "ARTIFACT_POLICY_METADATA",
     "STORAGE_POLICY_REGISTRY",
     "Lifecycle",
     "StorageCategory",
     "StoragePolicy",
     "StoragePolicyService",
-    "get_artifact_policy_metadata",
     "get_category_for_path",
     "get_lifecycle_for_path",
     "get_policy_for_path",
     "is_archive_eligible",
-    "should_archive_artifact",
-    "should_compress_artifact",
 ]
