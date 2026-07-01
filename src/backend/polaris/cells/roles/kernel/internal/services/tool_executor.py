@@ -20,9 +20,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import warnings
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Protocol
 
 from polaris.kernelone.constants import DIRECTOR_TIMEOUT_SECONDS
 from polaris.kernelone.errors import ErrorCategory as _CanonicalErrorCategory
@@ -44,28 +43,6 @@ TIMEOUT_DEFAULT_SECONDS = 60  # 其他角色默认超时
 
 # 批量执行并发限制
 MAX_CONCURRENT_TOOL_EXECUTIONS = 5
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 枚举类型
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-def __getattr__(name: str) -> Any:
-    """Provide deprecation warnings for direct module imports."""
-    if name == "ErrorCategory":
-        warnings.warn(
-            "ErrorCategory has been moved to polaris.kernelone.errors. "
-            "Please update imports to use: from polaris.kernelone.errors import ErrorCategory",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return _CanonicalErrorCategory
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-# For type checking and runtime compatibility
-ErrorCategory: TypeAlias = _CanonicalErrorCategory
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -118,7 +95,7 @@ class ToolResult:
     tool: str
     result: Any = None
     error: str | None = None
-    error_category: ErrorCategory = ErrorCategory.UNKNOWN
+    error_category: _CanonicalErrorCategory = _CanonicalErrorCategory.UNKNOWN
     retryable: bool = False
     execution_time_ms: float = 0.0
     call_id: str = ""
@@ -160,7 +137,7 @@ class ToolError(Exception):
         message: str,
         *,
         error_code: str = "tool_error",
-        error_category: ErrorCategory = ErrorCategory.UNKNOWN,
+        error_category: _CanonicalErrorCategory = _CanonicalErrorCategory.UNKNOWN,
         retryable: bool = False,
         context: dict[str, Any] | None = None,
     ) -> None:
@@ -196,7 +173,7 @@ class ToolTimeoutError(ToolError):
         super().__init__(
             message,
             error_code="tool_timeout",
-            error_category=ErrorCategory.TIMEOUT,
+            error_category=_CanonicalErrorCategory.TIMEOUT,
             retryable=True,
             context=merged_context,
         )
@@ -218,7 +195,7 @@ class ToolAuthorizationError(ToolError):
         super().__init__(
             message,
             error_code="tool_unauthorized",
-            error_category=ErrorCategory.AUTHORIZATION,
+            error_category=_CanonicalErrorCategory.AUTHORIZATION,
             retryable=False,
             context=merged_context,
         )
@@ -341,7 +318,7 @@ class ToolExecutor:
         self,
         error: Exception,
         tool_name: str,
-    ) -> tuple[ErrorCategory, bool]:
+    ) -> tuple[_CanonicalErrorCategory, bool]:
         """分类错误并决定是否可以重试
 
         Args:
@@ -355,52 +332,52 @@ class ToolExecutor:
 
         # 超时错误
         if isinstance(error, asyncio.TimeoutError) or "timeout" in error_msg:
-            return ErrorCategory.TIMEOUT, True
+            return _CanonicalErrorCategory.TIMEOUT, True
 
         # 速率限制
         if any(kw in error_msg for kw in ("rate limit", "rate_limit", "too many requests", "429")):
-            return ErrorCategory.RATE_LIMIT, True
+            return _CanonicalErrorCategory.RATE_LIMIT, True
 
         # 网络错误
         if any(kw in error_msg for kw in ("network", "connection", "timeout", "unreachable", "refused")):
-            return ErrorCategory.NETWORK_ERROR, True
+            return _CanonicalErrorCategory.NETWORK_ERROR, True
 
         # 服务不可用
         if any(kw in error_msg for kw in ("unavailable", "503", "502", "504", "maintenance")):
-            return ErrorCategory.SERVICE_UNAVAILABLE, True
+            return _CanonicalErrorCategory.SERVICE_UNAVAILABLE, True
 
         # 授权错误
         if isinstance(error, ToolAuthorizationError) or any(
             kw in error_msg for kw in ("unauthorized", "forbidden", "permission", "access denied", "403")
         ):
-            return ErrorCategory.AUTHORIZATION, False
+            return _CanonicalErrorCategory.AUTHORIZATION, False
 
         # 权限不足
         if any(kw in error_msg for kw in ("permission denied", "not permitted", "insufficient privileges")):
-            return ErrorCategory.PERMISSION_DENIED, False
+            return _CanonicalErrorCategory.PERMISSION_DENIED, False
 
         # 资源不存在
         if any(kw in error_msg for kw in ("not found", "does not exist", "no such file", "404")):
-            return ErrorCategory.NOT_FOUND, False
+            return _CanonicalErrorCategory.NOT_FOUND, False
 
         # 参数验证失败
         if any(kw in error_msg for kw in ("validation", "invalid", "required", "missing", "bad request", "400")):
-            return ErrorCategory.VALIDATION, False
+            return _CanonicalErrorCategory.VALIDATION, False
 
         # 无效参数
         if any(kw in error_msg for kw in ("invalid argument", "illegal argument", "type error")):
-            return ErrorCategory.INVALID_ARGUMENT, False
+            return _CanonicalErrorCategory.INVALID_ARGUMENT, False
 
         # 不支持的操作
         if any(kw in error_msg for kw in ("not supported", "unsupported", "not implemented")):
-            return ErrorCategory.UNSUPPORTED_OPERATION, False
+            return _CanonicalErrorCategory.UNSUPPORTED_OPERATION, False
 
         # 临时故障（可重试）
         if any(kw in error_msg for kw in ("temporary", "transient", "retry")):
-            return ErrorCategory.TEMPORARY_FAILURE, True
+            return _CanonicalErrorCategory.TEMPORARY_FAILURE, True
 
         # 默认：未知错误，不可重试
-        return ErrorCategory.UNKNOWN, False
+        return _CanonicalErrorCategory.UNKNOWN, False
 
     def _normalize_result(
         self,
@@ -441,7 +418,7 @@ class ToolExecutor:
                 tool=tool_name,
                 result=result_data if success else None,
                 error=error_msg if not success else None,
-                error_category=ErrorCategory.UNKNOWN if success else self._classify_error_from_message(error_msg),
+                error_category=_CanonicalErrorCategory.UNKNOWN if success else self._classify_error_from_message(error_msg),
                 retryable=False if success else retryable,
                 execution_time_ms=execution_time_ms,
                 call_id=call_id,
@@ -453,33 +430,33 @@ class ToolExecutor:
             tool=tool_name,
             result=raw_result,
             error=None,
-            error_category=ErrorCategory.UNKNOWN,
+            error_category=_CanonicalErrorCategory.UNKNOWN,
             retryable=False,
             execution_time_ms=execution_time_ms,
             call_id=call_id,
         )
 
-    def _classify_error_from_message(self, error_msg: str | None) -> ErrorCategory:
+    def _classify_error_from_message(self, error_msg: str | None) -> _CanonicalErrorCategory:
         """从错误消息分类错误类型"""
         if not error_msg:
-            return ErrorCategory.UNKNOWN
+            return _CanonicalErrorCategory.UNKNOWN
 
         error_lower = str(error_msg).lower()
 
         if "timeout" in error_lower:
-            return ErrorCategory.TIMEOUT
+            return _CanonicalErrorCategory.TIMEOUT
         if "rate limit" in error_lower or "429" in error_lower:
-            return ErrorCategory.RATE_LIMIT
+            return _CanonicalErrorCategory.RATE_LIMIT
         if "unauthorized" in error_lower or "forbidden" in error_lower or "403" in error_lower:
-            return ErrorCategory.AUTHORIZATION
+            return _CanonicalErrorCategory.AUTHORIZATION
         if "not found" in error_lower or "404" in error_lower:
-            return ErrorCategory.NOT_FOUND
+            return _CanonicalErrorCategory.NOT_FOUND
         if "permission" in error_lower:
-            return ErrorCategory.PERMISSION_DENIED
+            return _CanonicalErrorCategory.PERMISSION_DENIED
         if "validation" in error_lower or "invalid" in error_lower:
-            return ErrorCategory.VALIDATION
+            return _CanonicalErrorCategory.VALIDATION
 
-        return ErrorCategory.UNKNOWN
+        return _CanonicalErrorCategory.UNKNOWN
 
     def _is_retryable_from_message(self, error_msg: str | None) -> bool:
         """从错误消息判断是否可重试"""
@@ -648,7 +625,7 @@ class ToolExecutor:
                 success=False,
                 tool="unknown",
                 error="Tool name is empty",
-                error_category=ErrorCategory.VALIDATION,
+                error_category=_CanonicalErrorCategory.VALIDATION,
                 retryable=False,
                 call_id=call_id,
             )
@@ -683,7 +660,7 @@ class ToolExecutor:
                 success=False,
                 tool=tool_name,
                 error=str(e),
-                error_category=ErrorCategory.TIMEOUT,
+                error_category=_CanonicalErrorCategory.TIMEOUT,
                 retryable=True,
                 execution_time_ms=execution_time_ms,
                 call_id=call_id,
@@ -696,7 +673,7 @@ class ToolExecutor:
                 success=False,
                 tool=tool_name,
                 error=str(e),
-                error_category=ErrorCategory.AUTHORIZATION,
+                error_category=_CanonicalErrorCategory.AUTHORIZATION,
                 retryable=False,
                 execution_time_ms=execution_time_ms,
                 call_id=call_id,
@@ -770,7 +747,7 @@ class ToolExecutor:
                         success=False,
                         tool=call.tool,
                         error=f"Unexpected error: {result}",
-                        error_category=ErrorCategory.UNKNOWN,
+                        error_category=_CanonicalErrorCategory.UNKNOWN,
                         retryable=False,
                         call_id=call.call_id,
                     )
@@ -834,7 +811,7 @@ class ToolExecutor:
                 success=False,
                 tool=call.tool,
                 error="Max retries exceeded",
-                error_category=ErrorCategory.UNKNOWN,
+                error_category=_CanonicalErrorCategory.UNKNOWN,
                 retryable=False,
                 call_id=call.call_id,
             )
@@ -867,7 +844,7 @@ def create_tool_executor(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 向后兼容
+# 公共导出
 # ═══════════════════════════════════════════════════════════════════════════
 
 __all__ = [
@@ -875,8 +852,6 @@ __all__ = [
     # 常量
     "TIMEOUT_DEFAULT_SECONDS",
     "TIMEOUT_DIRECTOR_SECONDS",
-    # 枚举
-    "ErrorCategory",
     "ToolAuthorizationError",
     "ToolCall",
     # 异常

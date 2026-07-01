@@ -19,7 +19,6 @@ from polaris.cells.roles.kernel.internal.services.tool_executor import (
     MAX_CONCURRENT_TOOL_EXECUTIONS,
     TIMEOUT_DEFAULT_SECONDS,
     TIMEOUT_DIRECTOR_SECONDS,
-    ErrorCategory,
     ToolAuthorizationError,
     ToolCall,
     ToolError,
@@ -28,6 +27,7 @@ from polaris.cells.roles.kernel.internal.services.tool_executor import (
     ToolTimeoutError,
     create_tool_executor,
 )
+from polaris.kernelone.errors import ErrorCategory
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Fixtures
