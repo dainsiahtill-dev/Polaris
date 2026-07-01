@@ -39,6 +39,7 @@ from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
     _latest_user_content_preview,
     _text_requests_materialize_delivery,
 )
+from polaris.cells.roles.kernel.internal.kernel.transaction_factory import create_transaction_kernel
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import _resolve_transaction_turn_id
 from polaris.cells.roles.kernel.internal.tool_loop_controller import ToolLoopController
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest, RoleTurnResult
@@ -416,7 +417,7 @@ async def execute_transaction_kernel_turn(
     from polaris.cells.roles.kernel.internal.transaction.tool_surface import plan_transaction_tool_surface
     from polaris.cells.roles.kernel.public.service import RoleContextGateway
 
-    tk = kernel._create_transaction_kernel(role, profile, request)
+    tk = create_transaction_kernel(kernel, role, profile, request)
     turn_id = _resolve_transaction_turn_id(request, observer_run_id)
 
     controller = ToolLoopController.from_request(request=request, profile=profile)
@@ -774,7 +775,7 @@ async def execute_transaction_kernel_stream(
         TurnPhaseEvent,
     )
 
-    tk = kernel._create_transaction_kernel(role, profile, request)
+    tk = create_transaction_kernel(kernel, role, profile, request)
     turn_id = str(request.run_id or stream_run_id or uuid.uuid4().hex[:12])
 
     controller = ToolLoopController.from_request(request=request, profile=profile)

@@ -1,11 +1,8 @@
 """TransactionKernel assembly for RoleExecutionKernel.
 
-This module holds the body of ``RoleExecutionKernel._create_transaction_kernel``
-extracted verbatim (behavior-preserving) into a free function. The class method
-on the kernel becomes a thin delegating shim:
-
-    def _create_transaction_kernel(self, role, profile, request):
-        return create_transaction_kernel(self, role, profile, request)
+This module is the canonical factory for kernel-backed TransactionKernel
+instances. `RoleExecutionKernel` and execution helpers call this free function
+directly so transaction assembly has one implementation surface.
 
 Design notes (FROZEN behavior — do NOT change):
 - The nested ``_LLMProvider`` / ``_ToolRuntime`` / ``_LLMProviderStream``

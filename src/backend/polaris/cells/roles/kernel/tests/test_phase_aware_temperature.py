@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.transaction_factory import create_transaction_kernel
 from polaris.cells.roles.kernel.internal.llm_caller.helpers import resolve_max_tokens, resolve_temperature
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
@@ -363,7 +364,7 @@ class TestTransactionKernelTemperatureChannel:
             return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
 
         kernel.inject_llm_invoker(SimpleNamespace(call=_fake_call))
-        tk = kernel._create_transaction_kernel("director", profile, request)
+        tk = create_transaction_kernel(kernel, "director", profile, request)
 
         await tk.llm_provider(
             {
@@ -398,7 +399,7 @@ class TestTransactionKernelTemperatureChannel:
             return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
 
         kernel.inject_llm_invoker(SimpleNamespace(call=_fake_call))
-        tk = kernel._create_transaction_kernel("director", profile, request)
+        tk = create_transaction_kernel(kernel, "director", profile, request)
 
         await tk.llm_provider(
             {
@@ -438,7 +439,7 @@ class TestTransactionKernelTemperatureChannel:
             return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
 
         kernel.inject_llm_invoker(SimpleNamespace(call=_fake_call))
-        tk = kernel._create_transaction_kernel("director", profile, request)
+        tk = create_transaction_kernel(kernel, "director", profile, request)
 
         await tk.llm_provider(
             {
@@ -479,7 +480,7 @@ class TestTransactionKernelTemperatureChannel:
             return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
 
         kernel.inject_llm_invoker(SimpleNamespace(call=_fake_call))
-        tk = kernel._create_transaction_kernel("director", profile, request)
+        tk = create_transaction_kernel(kernel, "director", profile, request)
 
         await tk.llm_provider(
             {
@@ -543,7 +544,7 @@ class TestTransactionKernelTaskRuntimeGuard:
         )
         monkeypatch.setattr(kernel, "_execute_single_tool", _execute_single_tool)
 
-        tk = kernel._create_transaction_kernel("director", profile, request)
+        tk = create_transaction_kernel(kernel, "director", profile, request)
         result = await tk.tool_runtime("write_file", {"file": "src/index.ts", "content": "ok"})
 
         assert result == {"success": True, "result": {"ok": True}}
@@ -587,7 +588,7 @@ class TestTransactionKernelTaskRuntimeGuard:
         )
         monkeypatch.setattr(kernel, "_execute_single_tool", _execute_single_tool)
 
-        tk = kernel._create_transaction_kernel("director", profile, request)
+        tk = create_transaction_kernel(kernel, "director", profile, request)
         with pytest.raises(RuntimeError, match="director_tool_execution_cancelled"):
             await tk.tool_runtime("write_file", {"file": "src/index.ts", "content": "ok"})
 

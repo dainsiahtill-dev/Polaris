@@ -51,7 +51,6 @@ from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
     _cognitive_runtime_blocked_tools,
     _normalize_tool_policy_name,
 )
-from polaris.cells.roles.kernel.internal.kernel.transaction_factory import create_transaction_kernel
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import (
     _resolve_transaction_turn_id,  # noqa: F401 - re-exported for backward-compat namespace access
     _turn_id_component,  # noqa: F401 - re-exported for backward-compat namespace access
@@ -65,7 +64,6 @@ from polaris.cells.roles.kernel.internal.metrics import get_metrics_collector
 from polaris.cells.roles.kernel.internal.output_parser import OutputParser, ToolCallResult
 from polaris.cells.roles.kernel.internal.prompt_builder import PromptBuilder
 from polaris.cells.roles.kernel.internal.quality_checker import QualityChecker, QualityResult
-from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
 from polaris.cells.roles.kernel.public.config import KernelConfig, get_default_config
 from polaris.cells.roles.profile.public.service import (
     RoleProfile,
@@ -302,21 +300,6 @@ class RoleExecutionKernel:
         if not self._use_structured_output:
             return None
         return None
-
-    def _create_transaction_kernel(
-        self,
-        role: str,
-        profile: RoleProfile,
-        request: RoleTurnRequest,
-    ) -> TransactionKernel:
-        """Create a TransactionKernel with kernel-backed LLM and tool adapters.
-
-        Uses explicit parameter passing instead of closures to avoid circular
-        reference issues between nested classes and the kernel instance.
-        Delegates to
-        :mod:`polaris.cells.roles.kernel.internal.kernel.transaction_factory`.
-        """
-        return create_transaction_kernel(self, role, profile, request)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # 服务层访问器（懒加载 + 依赖注入支持）

@@ -665,7 +665,9 @@ class RoleRuntimeService(
         profile = _registry.get_profile(command.role)
         if profile is None:
             raise ValueError(f"Role profile not found: {command.role}")
-        return kernel._create_transaction_kernel(command.role, profile, request)
+        from polaris.cells.roles.kernel.internal.kernel.transaction_factory import create_transaction_kernel
+
+        return create_transaction_kernel(kernel, command.role, profile, request)
 
     async def execute_role_task(
         self,

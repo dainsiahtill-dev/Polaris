@@ -33,7 +33,7 @@ class _DroppedToolDispatchKernel:
     def __init__(self, workspace: str) -> None:
         self.workspace = workspace
 
-    def _create_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:
+    def build_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:
         class _TransactionKernel:
             async def execute(self, *_args: Any, **_kwargs: Any) -> Any:
                 ledger = SimpleNamespace(
@@ -63,7 +63,7 @@ class _DroppedToolDispatchKernel:
 
 
 class _SuccessfulNoMaterializationKernel(_DroppedToolDispatchKernel):
-    def _create_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:
+    def build_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:
         class _TransactionKernel:
             async def execute(self, *_args: Any, **_kwargs: Any) -> Any:
                 ledger = TurnLedger(turn_id="turn-success")
@@ -91,8 +91,9 @@ class _SuccessfulNoMaterializationKernel(_DroppedToolDispatchKernel):
             extract_json=lambda _value: None,
         )
 
+
 class _DroppedToolDispatchStreamKernel(_DroppedToolDispatchKernel):
-    def _create_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:
+    def build_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:
         controller = TurnTransactionController(
             llm_provider=lambda *_args, **_kwargs: None,
             tool_runtime=lambda *_args, **_kwargs: {},
@@ -132,7 +133,7 @@ class _DroppedToolDispatchStreamKernel(_DroppedToolDispatchKernel):
 
 
 class _SuccessfulStreamNoMaterializationKernel(_SuccessfulNoMaterializationKernel):
-    def _create_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:
+    def build_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:
         class _TransactionKernel:
             async def execute_stream(self, turn_id: str, *_args: Any, **_kwargs: Any) -> Any:
                 yield CompletionEvent(
@@ -151,6 +152,17 @@ class _SuccessfulStreamNoMaterializationKernel(_SuccessfulNoMaterializationKerne
 class _NoopPublisher:
     async def publish_stream_event(self, *_args: Any, **_kwargs: Any) -> bool:
         return True
+
+
+@pytest.fixture(autouse=True)
+def _route_transaction_factory_to_test_kernel(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _factory(kernel: Any, role: str, profile: Any, request: Any) -> Any:
+        return kernel.build_transaction_kernel(role, profile, request)
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.kernel.turn_execution.create_transaction_kernel",
+        _factory,
+    )
 
 
 @pytest.mark.asyncio

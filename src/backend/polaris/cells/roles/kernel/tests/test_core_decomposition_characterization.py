@@ -12,7 +12,7 @@ behavior-preserving guards:
   failure retry-then-exhaust, error pass-through (no retry), and success.
 
 They intentionally drive the real coordinator methods while stubbing only the
-TransactionKernel boundary (``_create_transaction_kernel`` / the
+TransactionKernel boundary (``create_transaction_kernel`` / the
 RoleContextGateway), so the mapping stays byte-stable.
 """
 
@@ -35,6 +35,13 @@ from polaris.cells.roles.kernel.public.turn_events import (
     TurnPhaseEvent,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnResult
+
+
+def _patch_transaction_kernel_factory(return_value: Any) -> Any:
+    return patch(
+        "polaris.cells.roles.kernel.internal.kernel.turn_execution.create_transaction_kernel",
+        return_value=return_value,
+    )
 
 
 @dataclass
@@ -94,14 +101,15 @@ async def _drive_stream(kernel: RoleExecutionKernel, events: list[Any]) -> list[
     gateway = _context_gateway()
     uep = SimpleNamespace(publish_stream_event=AsyncMock())
     with (
-        patch.object(kernel, "_create_transaction_kernel", return_value=tk),
+        _patch_transaction_kernel_factory(return_value=tk),
         patch(
             "polaris.cells.roles.kernel.public.service.RoleContextGateway",
             return_value=gateway,
         ),
     ):
         collected: list[dict[str, Any]] = []
-        async for event_dict in execute_transaction_kernel_stream(kernel,
+        async for event_dict in execute_transaction_kernel_stream(
+            kernel,
             role="pm",
             profile=_MockProfile(),
             request=_MockRequest(),

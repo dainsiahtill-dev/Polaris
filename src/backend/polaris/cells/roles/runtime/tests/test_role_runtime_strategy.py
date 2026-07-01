@@ -584,13 +584,19 @@ class TestRoleRuntimeServiceStrategy:
                 }
 
         class FakeKernel:
-            def _create_transaction_kernel(self, role, profile, request):
-                captured["role"] = role
-                captured["profile"] = profile
-                captured["request"] = request
-                return {"controller": True}
+            pass
+
+        def fake_transaction_kernel_factory(_kernel, role, profile, request):
+            captured["role"] = role
+            captured["profile"] = profile
+            captured["request"] = request
+            return {"controller": True}
 
         monkeypatch.setattr(cognitive_middleware, "CognitiveMiddleware", FakeCognitiveMiddleware)
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.internal.kernel.transaction_factory.create_transaction_kernel",
+            fake_transaction_kernel_factory,
+        )
         service = RoleRuntimeService()
         monkeypatch.setattr(service, "_get_kernel", lambda _workspace: FakeKernel())
 

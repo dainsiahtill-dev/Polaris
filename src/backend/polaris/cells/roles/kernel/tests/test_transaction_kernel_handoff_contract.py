@@ -28,6 +28,13 @@ from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
 from polaris.domain.cognitive_runtime.models import ContextHandoffPack, TurnEnvelope
 
 
+def _patch_transaction_kernel_factory(return_value: Any) -> Any:
+    return patch(
+        "polaris.cells.roles.kernel.internal.kernel.turn_execution.create_transaction_kernel",
+        return_value=return_value,
+    )
+
+
 @dataclass
 class _MockProfile:
     role_id: str = "director"
@@ -224,9 +231,7 @@ class TestTransactionKernelHandoffIntegration:
         }
 
         with (
-            patch.object(
-                kernel,
-                "_create_transaction_kernel",
+            _patch_transaction_kernel_factory(
                 return_value=MagicMock(execute=AsyncMock(return_value=mock_tk_result)),
             ),
             patch(
@@ -234,7 +239,8 @@ class TestTransactionKernelHandoffIntegration:
                 return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
             ),
         ):
-            result = await execute_transaction_kernel_turn(kernel,
+            result = await execute_transaction_kernel_turn(
+                kernel,
                 role="director",
                 profile=cast(Any, profile),
                 request=cast(Any, request),
@@ -283,9 +289,7 @@ class TestTransactionKernelHandoffIntegration:
             )
 
         with (
-            patch.object(
-                kernel,
-                "_create_transaction_kernel",
+            _patch_transaction_kernel_factory(
                 return_value=MagicMock(execute_stream=_mock_execute_stream),
             ),
             patch(
@@ -294,7 +298,8 @@ class TestTransactionKernelHandoffIntegration:
             ),
         ):
             events = []
-            async for event in execute_transaction_kernel_stream(kernel,
+            async for event in execute_transaction_kernel_stream(
+                kernel,
                 role="director",
                 profile=cast(Any, profile),
                 request=cast(Any, request),
