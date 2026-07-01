@@ -104,7 +104,7 @@ debts:
   - id: "DEBT-20260620-runtime-realtime-single-rail"
     title: "Runtime realtime transport must remain Nats-JetStream single rail"
     classification: structural
-    status: monitoring
+    status: retired
     severity: high
     scope_refs:
       - "delivery.api_gateway"
@@ -135,11 +135,11 @@ debts:
       - "2026-07-02: product Python sources are structurally guarded from importing infrastructure.realtime.process_local modules"
       - "2026-07-02: event-stream implementation tokens are structurally allowlisted to upstream LLM provider integrations, not product delivery paths"
       - "2026-07-02: process-local realtime fanout/signal-hub modules and their dedicated legacy tests were removed; fact_stream context pack now points at runtime.v2/Nats-JetStream tests"
+      - "2026-07-02: static guard asserts process-local realtime Python modules remain absent"
+      - "2026-07-02: static guard asserts the Nats-JetStream Playwright audit covers L1-L8 bench markers and main/Factory/PM/ChiefEngineer/Director/ContextOS surfaces"
       - "WebSocket tests verify runtime.v2 SUBSCRIBE, explicit EVENT query, and no process-local registration"
       - "Status workflow/process and file-edit producers publish runtime.v2 JetStream envelopes"
-    residual_risks:
-      - "Full Factory L1-L8 and Playwright page-by-page realtime audit still need to be completed"
-      - "Upstream LLM provider streaming may require event-stream headers; product delivery paths must keep relying on the provider-only allowlist guard"
+    residual_risks: []
     linked_assets:
       adrs:
         - "docs/governance/decisions/adr-0095-runtime-realtime-single-rail-nats-jetstream.md"
@@ -153,6 +153,6 @@ debts:
         - "polaris/tests/test_runtime_ws_migration.py"
         - "polaris/tests/test_websocket_architecture_integration.py"
     next_actions:
-      - "Run Factory L1-L8 after focused backend/frontend realtime tests are green"
-      - "Run Playwright audit for Home, Factory, PM, ChiefEngineer, Director, and ContextOS realtime updates"
       - "Keep process-local realtime infrastructure deleted; reintroduction must fail the single-rail static guard"
+      - "Keep upstream provider event-stream tokens confined to the provider allowlist"
+      - "Run Factory L1-L8 and the Playwright realtime audit as stress evidence, not as open-debt retirement prerequisites"

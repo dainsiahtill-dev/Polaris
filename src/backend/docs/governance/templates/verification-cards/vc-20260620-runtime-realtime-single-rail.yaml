@@ -68,7 +68,7 @@ verification_plan:
     - file: "polaris/tests/test_realtime_single_rail_static_guard.py"
       description: "Forbid legacy realtime sources in product runtime delivery files"
       expected: "No process-local fanout, signal hub watch, SSE, or polling fallback in product realtime paths"
-      status: new
+      status: existing_fix
     - file: "polaris/delivery/tests/test_ws_stream_delivery.py"
       description: "Runtime loop forwards only JetStream runtime.v2 events and emits RESYNC_REQUIRED for dropped events"
       expected: "No startup snapshot or signal-triggered incremental path is available"
@@ -87,10 +87,10 @@ verification_plan:
       status: existing_fix
     - description: "Factory bench L1-L8 real project verification"
       command: "python scripts/run_factory_e2e_smoke.py --workspace . --levels L1-L8"
-      status: new
+      status: stress_observation
     - description: "Playwright realtime audit for Home, Factory, PM, ChiefEngineer, Director, ContextOS"
       command: "npm run test:e2e -- --grep realtime"
-      status: new
+      status: existing_fix
   manual_check:
     - "Scan product runtime files for EventSource, SSE, HTTP long polling, timer HTTP polling, file polling, process-local fanout, and signal hub watchers."
     - "Verify runtime WebSocket connects to /v2/ws/runtime and forwards EVENT protocol=runtime.v2 messages after SUBSCRIBE."

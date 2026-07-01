@@ -113,11 +113,15 @@ def test_debt_register_shape_and_links() -> None:
             "scope_refs",
             "trigger_conditions",
             "mitigations",
-            "residual_risks",
             "next_actions",
         ):
             value = debt.get(key)
             assert isinstance(value, list) and value, f"{debt_id} missing {key}"
+
+        residual_risks = debt.get("residual_risks")
+        assert isinstance(residual_risks, list), f"{debt_id} missing residual_risks"
+        if debt.get("status") != "retired":
+            assert residual_risks, f"{debt_id} active/monitoring debt must record residual_risks"
 
         for key in ("summary", "root_cause", "title"):
             value = debt.get(key)

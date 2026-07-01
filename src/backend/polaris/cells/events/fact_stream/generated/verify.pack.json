@@ -14,11 +14,20 @@
     },
     {
       "id": "no-product-process-local-realtime",
-      "statement": "Product WebSocket delivery does not register process-local fanout or signal-hub watchers.",
+      "statement": "Product WebSocket delivery does not register process-local fanout or signal-hub watchers, and legacy process-local realtime Python modules remain absent.",
       "evidence": [
         "src/backend/polaris/delivery/ws/endpoints/websocket_core.py",
         "src/backend/polaris/delivery/ws/endpoints/websocket_loop.py",
+        "src/backend/polaris/tests/test_realtime_single_rail_static_guard.py",
         "src/backend/polaris/tests/test_websocket_architecture_integration.py"
+      ]
+    },
+    {
+      "id": "workspace-page-realtime-audit-coverage",
+      "statement": "The Electron realtime audit covers L1-L8 bench markers across main, Factory, PM, ChiefEngineer, Director, and ContextOS surfaces.",
+      "evidence": [
+        "src/backend/polaris/tests/electron/realtime-nats-jetstream-workspaces.spec.ts",
+        "src/backend/polaris/tests/test_realtime_single_rail_static_guard.py"
       ]
     },
     {
@@ -35,10 +44,8 @@
     "src/backend/polaris/tests/test_realtime_single_rail_static_guard.py",
     "src/backend/polaris/delivery/tests/test_ws_stream_delivery.py",
     "src/backend/polaris/tests/test_runtime_ws_migration.py",
-    "src/backend/polaris/tests/test_websocket_architecture_integration.py"
+    "src/backend/polaris/tests/test_websocket_architecture_integration.py",
+    "src/backend/polaris/tests/electron/realtime-nats-jetstream-workspaces.spec.ts"
   ],
-  "residual_risks": [
-    "Legacy process-local realtime modules remain for isolated internal tests until a follow-up deletion plan retires them.",
-    "Full Factory L1-L8 and Playwright page audit must still verify all user-facing realtime views."
-  ]
+  "residual_risks": []
 }

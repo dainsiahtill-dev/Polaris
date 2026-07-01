@@ -452,6 +452,19 @@ def test_backend_product_code_does_not_import_process_local_realtime() -> None:
     assert findings == []
 
 
+def test_backend_process_local_realtime_python_modules_are_absent() -> None:
+    """Legacy process-local realtime modules must not return as Python sources."""
+
+    if not BACKEND_PROCESS_LOCAL_REALTIME_DIR.exists():
+        return
+
+    findings = [
+        str(path.relative_to(REPO_ROOT)) for path in BACKEND_PROCESS_LOCAL_REALTIME_DIR.rglob("*.py") if path.is_file()
+    ]
+
+    assert findings == []
+
+
 def test_frontend_workspaces_do_not_refresh_status_snapshots_for_realtime() -> None:
     """Role workspace surfaces/hooks must use runtime.v2 push, not status snapshot refreshes."""
 
@@ -798,6 +811,36 @@ def test_workspace_realtime_playwright_audit_forbids_sse_file_and_status_polling
         'path === "/v2/llm/status"',
         "repeatedPolling",
         "runtime.v2 WebSocket should be used",
+    ):
+        if token not in text:
+            findings.append(f"{FRONTEND_REALTIME_AUDIT_SPEC.relative_to(REPO_ROOT)} missing {token!r}")
+
+    assert findings == []
+
+
+def test_workspace_realtime_playwright_audit_covers_l1_l8_and_core_surfaces() -> None:
+    """The E2E audit must cover L1-L8 bench events across all core workspaces."""
+
+    text = FRONTEND_REALTIME_AUDIT_SPEC.read_text(encoding="utf-8")
+    findings: list[str] = []
+
+    for token in (
+        '"L1-01"',
+        '"L2-01"',
+        '"L3-01"',
+        '"L4-01"',
+        '"L5-01"',
+        '"L6-01"',
+        '"L7-01"',
+        '"L8-01"',
+        '"main"',
+        '"factory"',
+        '"pm"',
+        '"chief-engineer"',
+        '"director"',
+        '"contextos"',
+        "assertSurfaceReceivesBenchPush",
+        "Nats-JetStream runtime.v2 WebSocket",
     ):
         if token not in text:
             findings.append(f"{FRONTEND_REALTIME_AUDIT_SPEC.relative_to(REPO_ROOT)} missing {token!r}")
