@@ -86,19 +86,6 @@ from .executor import (
     execute_tool_calls,
 )
 
-# 原生 Function Calling
-from .native_function_calling import (
-    ConversationalToolExecutor,
-    NativeFunctionCallingHandler,
-    ToolCall,
-    ToolEnabledAIRequest,
-    ToolEnabledAIResponse,
-    ToolEnabledProviderMixin,
-    ToolResult,
-    create_tool_request,
-    execute_with_native_function_calling,
-)
-
 # 解析器 - 统一工具调用解析入口
 # P0-002: CanonicalToolCall deprecated, use ToolCall from contracts.tool
 from .parsers import (
@@ -181,7 +168,6 @@ __all__ = [
     # 统一解析器 (新增 2026-03-28)
     "CanonicalToolCallParser",  # 统一解析器入口 (returns list[ToolCall])
     "CompressionResult",
-    "ConversationalToolExecutor",
     "EditType",
     "ErrorCategory",
     # ═══════════════════════════════════════════════════════════════
@@ -193,7 +179,6 @@ __all__ = [
     "FileOperation",
     "KernelToolCallingRuntime",  # 工具调用运行时
     "ModelSpec",
-    "NativeFunctionCallingHandler",
     # 专用解析器
     "NativeFunctionCallingParser",  # OpenAI/Anthropic/Gemini/Ollama/DeepSeek 原生格式
     "OperationAuditTrail",
@@ -216,14 +201,9 @@ __all__ = [
     # ═══════════════════════════════════════════════════════════════
     # 原生 Function Calling
     # ═══════════════════════════════════════════════════════════════
-    "ToolCall",
     "ToolDefinition",
-    "ToolEnabledAIRequest",
-    "ToolEnabledAIResponse",
-    "ToolEnabledProviderMixin",
     "ToolParameter",
     "ToolRegistry",
-    "ToolResult",
     "Usage",
     "ValidationResult",
     "XMLToolParser",  # XML 格式 (MiniMax/Claude/Llama)
@@ -234,12 +214,10 @@ __all__ = [
     "build_tool_feedback",  # 构建工具反馈
     "create_default_registry",
     "create_tool_chain_prompt",
-    "create_tool_request",
     "deduplicate_tool_calls",  # P0-002: 新增导出
     "execute_tool_call",
     "execute_tool_calls",
     "execute_tool_chain",
-    "execute_with_native_function_calling",
     "extract_arguments",  # 参数提取
     "extract_tool_calls_and_remainder",
     "format_tool_result",

@@ -68,6 +68,17 @@ class KernelToolCallingRuntime:
         policy_allow = allowed_tool_set(policy)
         executable_calls: list[ToolCall] = []
         for call in normalized_calls:
+            if call.parse_error:
+                tool_results.append(
+                    ToolExecutionResult(
+                        tool_call_id=call.id,
+                        name=call.name,
+                        success=False,
+                        error=call.parse_error,
+                        blocked=True,
+                    )
+                )
+                continue
             if policy_allow and call.name not in policy_allow:
                 tool_results.append(
                     ToolExecutionResult(

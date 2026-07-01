@@ -115,7 +115,7 @@ class NativeFunctionCallingParser:
                     continue
 
                 args_str = _function_arguments_payload(function)
-                arguments, _parse_error = cls._parse_json_arguments(args_str)
+                arguments, parse_error = cls._parse_json_arguments(args_str)
 
                 results.append(
                     ParsedToolCall(
@@ -123,6 +123,7 @@ class NativeFunctionCallingParser:
                         name=name,
                         arguments=arguments,
                         raw=json.dumps(call, ensure_ascii=False),
+                        parse_error=parse_error,
                     )
                 )
 
@@ -155,7 +156,7 @@ class NativeFunctionCallingParser:
                 if allowed and name not in allowed:
                     continue
 
-                arguments, _ = cls._parse_json_arguments(block.get("input", {}))
+                arguments, parse_error = cls._parse_json_arguments(block.get("input", {}))
 
                 results.append(
                     ParsedToolCall(
@@ -163,6 +164,7 @@ class NativeFunctionCallingParser:
                         name=name,
                         arguments=arguments,
                         raw=json.dumps(block, ensure_ascii=False),
+                        parse_error=parse_error,
                     )
                 )
 
@@ -208,7 +210,7 @@ class NativeFunctionCallingParser:
                 # ADR-0090 W1.7: this parse body was mis-indented under the
                 # whitelist `continue` and therefore unreachable — parse_gemini
                 # silently returned [] for every response.
-                arguments, _ = cls._parse_json_arguments(_function_arguments_payload(fc))
+                arguments, parse_error = cls._parse_json_arguments(_function_arguments_payload(fc))
 
                 results.append(
                     ParsedToolCall(
@@ -216,6 +218,7 @@ class NativeFunctionCallingParser:
                         name=name,
                         arguments=arguments,
                         raw=json.dumps(fc, ensure_ascii=False),
+                        parse_error=parse_error,
                     )
                 )
 
@@ -252,7 +255,7 @@ class NativeFunctionCallingParser:
             function_payload = _function_arguments_payload(call.get("function", {}))
             if _argument_payload_is_empty(function_payload):
                 function_payload = _function_arguments_payload(call)
-            arguments, _ = cls._parse_json_arguments(function_payload)
+            arguments, parse_error = cls._parse_json_arguments(function_payload)
 
             results.append(
                 ParsedToolCall(
@@ -260,6 +263,7 @@ class NativeFunctionCallingParser:
                     name=name,
                     arguments=arguments,
                     raw=json.dumps(call, ensure_ascii=False),
+                    parse_error=parse_error,
                 )
             )
 
@@ -299,7 +303,7 @@ class NativeFunctionCallingParser:
                     continue
 
                 args_str = _function_arguments_payload(function)
-                arguments, _ = cls._parse_json_arguments(args_str)
+                arguments, parse_error = cls._parse_json_arguments(args_str)
 
                 results.append(
                     ParsedToolCall(
@@ -307,6 +311,7 @@ class NativeFunctionCallingParser:
                         name=name,
                         arguments=arguments,
                         raw=json.dumps(call, ensure_ascii=False),
+                        parse_error=parse_error,
                     )
                 )
 
@@ -354,7 +359,7 @@ class NativeFunctionCallingParser:
                 if allowed and name not in allowed:
                     continue
 
-                arguments, _ = cls._parse_json_arguments(_function_arguments_payload(function))
+                arguments, parse_error = cls._parse_json_arguments(_function_arguments_payload(function))
 
                 results.append(
                     ParsedToolCall(
@@ -362,6 +367,7 @@ class NativeFunctionCallingParser:
                         name=name,
                         arguments=arguments,
                         raw=json.dumps(call, ensure_ascii=False),
+                        parse_error=parse_error,
                     )
                 )
 
@@ -401,7 +407,7 @@ class NativeFunctionCallingParser:
                 if allowed and name not in allowed:
                     continue
 
-                arguments, _ = cls._parse_json_arguments(_function_arguments_payload(function))
+                arguments, parse_error = cls._parse_json_arguments(_function_arguments_payload(function))
 
                 results.append(
                     ParsedToolCall(
@@ -409,6 +415,7 @@ class NativeFunctionCallingParser:
                         name=name,
                         arguments=arguments,
                         raw=json.dumps(call, ensure_ascii=False),
+                        parse_error=parse_error,
                     )
                 )
 
@@ -448,7 +455,7 @@ class NativeFunctionCallingParser:
                 if allowed and name not in allowed:
                     continue
 
-                arguments, _ = cls._parse_json_arguments(_function_arguments_payload(function))
+                arguments, parse_error = cls._parse_json_arguments(_function_arguments_payload(function))
 
                 results.append(
                     ParsedToolCall(
@@ -456,6 +463,7 @@ class NativeFunctionCallingParser:
                         name=name,
                         arguments=arguments,
                         raw=json.dumps(call, ensure_ascii=False),
+                        parse_error=parse_error,
                     )
                 )
 
@@ -494,7 +502,7 @@ class NativeFunctionCallingParser:
             if allowed and name not in allowed:
                 continue
 
-            arguments, _ = cls._parse_json_arguments(_function_arguments_payload(call))
+            arguments, parse_error = cls._parse_json_arguments(_function_arguments_payload(call))
 
             results.append(
                 ParsedToolCall(
@@ -502,6 +510,7 @@ class NativeFunctionCallingParser:
                     name=name,
                     arguments=arguments,
                     raw=json.dumps(call, ensure_ascii=False),
+                    parse_error=parse_error,
                 )
             )
 
@@ -552,7 +561,7 @@ class NativeFunctionCallingParser:
                 # ADR-0090 W1.7: this parse body was mis-indented under the
                 # whitelist `continue` (unreachable), and the dict branch tried
                 # to tuple-unpack a plain dict — parse_vertex_ai returned [].
-                arguments, _ = cls._parse_json_arguments(_function_arguments_payload(fc))
+                arguments, parse_error = cls._parse_json_arguments(_function_arguments_payload(fc))
 
                 results.append(
                     ParsedToolCall(
@@ -560,6 +569,7 @@ class NativeFunctionCallingParser:
                         name=name,
                         arguments=arguments,
                         raw=json.dumps(fc, ensure_ascii=False),
+                        parse_error=parse_error,
                     )
                 )
 
@@ -616,7 +626,7 @@ class NativeFunctionCallingParser:
             if allowed and name not in allowed:
                 continue
 
-            arguments, _ = cls._parse_json_arguments(_function_arguments_payload(tool_use))
+            arguments, parse_error = cls._parse_json_arguments(_function_arguments_payload(tool_use))
 
             # toolUseId may be None or empty string
             tool_id = tool_use.get("toolUseId") or tool_use.get("tool_use_id")
@@ -626,6 +636,7 @@ class NativeFunctionCallingParser:
                     name=name,
                     arguments=arguments,
                     raw=json.dumps(block, ensure_ascii=False),
+                    parse_error=parse_error,
                 )
             )
 

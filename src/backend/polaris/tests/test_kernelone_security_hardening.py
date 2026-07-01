@@ -5,9 +5,13 @@ from typing import Any
 
 import pytest
 from polaris.cells.director.execution.public.tools import is_command_blocked
-from polaris.kernelone.llm.toolkit.native_function_calling import (
-    NativeFunctionCallingHandler,
+from polaris.infrastructure.llm.tools.parser_adapter import LLMToolkitParserAdapter
+from polaris.kernelone.llm.contracts import (
+    ToolExecutionResult,
+    ToolPolicy,
+    ToolRoundRequest,
 )
+from polaris.kernelone.llm.toolkit.executor.runtime import KernelToolCallingRuntime
 from polaris.kernelone.process.command_executor import (
     CommandExecutionService,
     CommandRequest,
@@ -108,41 +112,42 @@ def test_command_executor_allows_workspace_package_module(tmp_path: Path) -> Non
     assert spec["argv"][1:3] == ["-m", "demo_app.delivery.cli"]
 
 
-def test_native_function_calling_rejects_malformed_tool_arguments(
+def test_native_tool_runtime_rejects_malformed_tool_arguments(
     tmp_path: Path,
 ) -> None:
-    handler = NativeFunctionCallingHandler(str(tmp_path))
-
     class _ExplodingExecutor:
-        def execute(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-            raise AssertionError(f"tool should not execute: {name} {arguments}")
+        calls = 0
 
-    handler.executor = _ExplodingExecutor()
-    tool_calls = handler.parse_response(
-        {
-            "choices": [
+        def execute_call(self, *, workspace: str, tool_call) -> ToolExecutionResult:
+            self.calls += 1
+            raise AssertionError(f"tool should not execute: {workspace} {tool_call}")
+
+    executor = _ExplodingExecutor()
+    runtime = KernelToolCallingRuntime(parser=LLMToolkitParserAdapter(), executor=executor)
+
+    outcome = runtime.execute_round(
+        ToolRoundRequest(
+            workspace=str(tmp_path),
+            native_tool_calls=[
                 {
-                    "message": {
-                        "tool_calls": [
-                            {
-                                "id": "call_1",
-                                "function": {
-                                    "name": "write_file",
-                                    "arguments": '{"path":',
-                                },
-                            }
-                        ]
-                    }
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "write_file",
+                        "arguments": '{"path":',
+                    },
                 }
-            ]
-        }
+            ],
+            provider_hint="openai",
+            policy=ToolPolicy(allowed_tool_names=("write_file",), max_tool_calls=4),
+        )
     )
 
-    results = handler.execute_tool_calls(tool_calls)
-
-    assert len(results) == 1
-    assert results[0].is_error is True
-    assert "invalid JSON arguments" in str(results[0].output.get("error") or "")
+    assert executor.calls == 0
+    assert len(outcome.tool_results) == 1
+    assert outcome.tool_results[0].success is False
+    assert outcome.tool_results[0].blocked is True
+    assert "invalid JSON arguments" in outcome.tool_results[0].error
 
 
 @pytest.mark.skipif(not FASTAPI_AVAILABLE, reason="FastAPI is not installed")

@@ -44,10 +44,13 @@ class LLMToolkitParserAdapter(ToolCallParserPort):
         arguments = getattr(parsed, "arguments", {})
         if not isinstance(arguments, dict):
             arguments = {}
+        parse_error_raw = getattr(parsed, "parse_error", None)
+        parse_error = str(parse_error_raw) if parse_error_raw else None
         return ToolCall(
             id=str(getattr(parsed, "id", "") or ""),
             name=str(getattr(parsed, "name", "") or ""),
             arguments=dict(arguments),
             source=source,
             raw=str(getattr(parsed, "raw", "") or ""),
+            parse_error=parse_error,
         )

@@ -66,38 +66,48 @@ class TestPhase3NativeFunctionCallingIntegration:
 
     def test_native_tool_parsing(self) -> None:
         """Test parsing native tool calls."""
-        from polaris.kernelone.llm.toolkit.native_function_calling import (
-            NativeFunctionCallingHandler,
-        )
-
-        handler = NativeFunctionCallingHandler("/tmp/workspace")
+        from polaris.kernelone.llm.toolkit.parsers import NativeFunctionCallingParser
 
         # 模拟 OpenAI 响应
-        raw_response = {
-            "choices": [
-                {
-                    "message": {
-                        "content": None,
-                        "tool_calls": [
-                            {
-                                "id": "call_123",
-                                "type": "function",
-                                "function": {
-                                    "name": "search_code",
-                                    "arguments": '{"files": ["src/test.py"], "task_description": "Test"}',
-                                },
-                            }
-                        ],
-                    },
-                }
-            ],
-        }
+        raw_tool_calls = [
+            {
+                "id": "call_123",
+                "type": "function",
+                "function": {
+                    "name": "search_code",
+                    "arguments": '{"files": ["src/test.py"], "task_description": "Test"}',
+                },
+            }
+        ]
 
-        tool_calls = handler.parse_response(raw_response)
+        tool_calls = NativeFunctionCallingParser.parse_openai(raw_tool_calls)
 
         assert len(tool_calls) == 1
-        assert tool_calls[0].name == "search_code"
+        assert tool_calls[0].name == "repo_rg"
         assert tool_calls[0].arguments["files"] == ["src/test.py"]
+
+    def test_native_tool_parsing_preserves_argument_parse_error(self) -> None:
+        """Native parser must preserve malformed argument evidence for runtime blocking."""
+        from polaris.kernelone.llm.toolkit.parsers import NativeFunctionCallingParser
+
+        tool_calls = NativeFunctionCallingParser.parse_openai(
+            [
+                {
+                    "id": "call_bad",
+                    "type": "function",
+                    "function": {
+                        "name": "write_file",
+                        "arguments": '{"path":',
+                    },
+                }
+            ]
+        )
+
+        assert len(tool_calls) == 1
+        assert tool_calls[0].name == "write_file"
+        assert tool_calls[0].arguments == {}
+        assert tool_calls[0].parse_error is not None
+        assert "invalid JSON arguments" in tool_calls[0].parse_error
 
 
 class TestAllThreeSchemes:

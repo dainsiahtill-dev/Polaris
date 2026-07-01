@@ -65,6 +65,7 @@ def normalize_tool_calls(calls: Sequence[ToolCall]) -> list[ToolCall]:
                 arguments=safe_args,  # Already a new dict from normalize_tool_arguments
                 source=str(call.source or "").strip() or "unknown",
                 raw=str(call.raw or ""),
+                parse_error=call.parse_error,
             )
         )
     return normalized

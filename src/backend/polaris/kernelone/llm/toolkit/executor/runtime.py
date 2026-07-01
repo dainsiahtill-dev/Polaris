@@ -12,6 +12,7 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.llm.contracts.tool import (
+    ToolExecutionResult,
     ToolRoundOutcome,
 )
 
@@ -21,7 +22,6 @@ if TYPE_CHECKING:
     from polaris.kernelone.llm.contracts.tool import (
         ToolCall,
         ToolCallParserPort,
-        ToolExecutionResult,
         ToolExecutorPort,
         ToolPolicy,
         ToolRoundRequest,
@@ -213,14 +213,22 @@ class KernelToolCallingRuntime:
         policy_allow = _allowed_tool_set(policy)
         executable_calls: list[ToolCall] = []
 
-        # Check policy - block disallowed tools
+        # Check parse and policy gates before any executor side effect.
         for call in normalized_calls:
+            if call.parse_error:
+                tool_results.append(
+                    ToolExecutionResult(
+                        tool_call_id=call.id,
+                        name=call.name,
+                        success=False,
+                        error=call.parse_error,
+                        blocked=True,
+                    )
+                )
+                continue
             if policy_allow and call.name not in policy_allow:
                 tool_results.append(
-                    self._executor.execute_call(
-                        workspace=workspace,
-                        tool_call=call,
-                    ).__class__(
+                    ToolExecutionResult(
                         tool_call_id=call.id,
                         name=call.name,
                         success=False,
@@ -235,10 +243,7 @@ class KernelToolCallingRuntime:
         limited_calls, overflow_calls = _apply_call_limit(executable_calls, policy)
         for call in overflow_calls:
             tool_results.append(
-                self._executor.execute_call(
-                    workspace=workspace,
-                    tool_call=call,
-                ).__class__(
+                ToolExecutionResult(
                     tool_call_id=call.id,
                     name=call.name,
                     success=False,
