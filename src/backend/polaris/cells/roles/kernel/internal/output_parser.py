@@ -164,7 +164,11 @@ class OutputParser:
         sanitized = _VISIBLE_PROTOCOL_OPEN_RE.sub("", sanitized)
         sanitized = _VISIBLE_PROTOCOL_CLOSE_RE.sub("", sanitized)
         sanitized = re.sub(r"\n{3,}", "\n\n", sanitized)
-        return sanitized.strip()
+        from polaris.cells.roles.kernel.internal.turn_engine.utils import (
+            sanitize_assistant_transcript_message,
+        )
+
+        return sanitize_assistant_transcript_message(sanitized)
 
     def parse_execution_tool_calls(
         self,

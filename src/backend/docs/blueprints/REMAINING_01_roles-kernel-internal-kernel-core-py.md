@@ -33,8 +33,8 @@ Plus `_execute_single_tool` (2057→2185, ~128 lines) and a long tail of prompt/
 - `RoleExecutionKernel` re-exported by `internal/kernel/__init__.py`, `public/service.py`, lazy `cells/roles/kernel/__init__.py`. Module `__all__` constants byte-identical.
 - `__init__` keyword names + all `self._*` attributes frozen (read by siblings/tests).
 - Cross-module 'private' contract: `runtime/public/service.py` calls `kernel._create_transaction_kernel(role, profile, request) -> TransactionKernel` and `kernel.run/run_stream`.
-- Back-ref protocols: `turn_materializer` → `kernel._parse_content_and_thinking_tool_calls(...)`; `_ToolRuntime` weakref → `kernel._execute_single_tool(...)`, `kernel.reset_tool_gateway_turn_boundary(...)`.
-- Monkeypatch targets (must remain bound-method attrs): `_execute_single_tool`, `_execute_tools`, `_split_tool_calls_by_write_budget`.
+- Active callback protocols: `OutputParser` owns visible tool-call sanitation; `_ToolRuntime` weakref → `kernel._execute_single_tool(...)`, `kernel.reset_tool_gateway_turn_boundary(...)`.
+- Monkeypatch targets (must remain bound-method attrs): `_execute_single_tool`.
 
 ## 4. Plan (atomic-green; see plan_steps for the ordered list)
 STEP 0 characterization → 1 closures→funcs → 2 nested classes→factory builders → 3 turn/stream exec + dedupe preamble → 4 run/run_stream loop → 5 tool dispatch → 6 leaf helpers → 7 slim & verify gates.

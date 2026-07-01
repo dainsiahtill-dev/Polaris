@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T04:01:16.677717Z",
-  "source_hash": "45143ba030102820",
+  "generated_at": "2026-07-01T04:14:10.502960Z",
+  "source_hash": "2c53a4bac5e393fb",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -19107,38 +19107,6 @@
       ]
     },
     {
-      "type": "class",
-      "name": "TurnMaterializer",
-      "description": "Builds typed assistant-turn bundles from raw LLM output.",
-      "defined_in": "polaris/cells/roles/kernel/internal/turn_engine/turn_materializer.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": "Initialize with optional output parser for DI."
-        },
-        {
-          "name": "_get_parser",
-          "doc": "Resolve output parser from injected instance, kernel, or lazy default."
-        },
-        {
-          "name": "_sanitize_assistant_transcript_message",
-          "doc": "Strip executable textual tool wrappers before transcript injection."
-        },
-        {
-          "name": "materialize",
-          "doc": "Build one typed assistant-turn bundle."
-        },
-        {
-          "name": "materialize_stream_visible",
-          "doc": "Project one provider stream round into user-visible assistant text."
-        },
-        {
-          "name": "parse_tool_calls",
-          "doc": "Parse tool calls from the sanitized assistant turn plus native payloads."
-        }
-      ]
-    },
-    {
       "type": "function",
       "name": "_canonical_tool_signature_parts",
       "description": "",
@@ -19160,6 +19128,12 @@
       "type": "function",
       "name": "resolve_empty_visible_output_error",
       "description": "Return a deterministic error when a turn has no visible outcome.",
+      "defined_in": "polaris/cells/roles/kernel/internal/turn_engine/utils.py"
+    },
+    {
+      "type": "function",
+      "name": "sanitize_assistant_transcript_message",
+      "description": "Strip executable textual tool wrappers before transcript injection.",
       "defined_in": "polaris/cells/roles/kernel/internal/turn_engine/utils.py"
     },
     {
@@ -32295,66 +32269,32 @@
       "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_policy_convergence.py"
     },
     {
-      "type": "class",
-      "name": "_CapturingParser",
-      "description": "",
-      "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "parse_tool_calls",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "_KernelStub",
-      "description": "",
-      "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "_get_llm_invoker",
-          "doc": ""
-        },
-        {
-          "name": "_get_output_parser",
-          "doc": ""
-        },
-        {
-          "name": "_get_prompt_builder",
-          "doc": ""
-        }
-      ]
-    },
-    {
       "type": "function",
-      "name": "_build_profile",
+      "name": "_native_read_file_call",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py"
     },
     {
       "type": "function",
-      "name": "test_materialize_assistant_turn_keeps_raw_wrapper_but_sanitizes_output",
+      "name": "test_output_parser_strips_tool_wrapper_from_visible_content",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py"
     },
     {
       "type": "function",
-      "name": "test_materialize_assistant_turn_strips_output_wrappers_from_raw_and_clean_content",
+      "name": "test_output_parser_strips_output_wrappers_from_visible_content",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py"
     },
     {
       "type": "function",
-      "name": "test_parse_tool_calls_from_turn_uses_clean_content_contract",
+      "name": "test_parser_uses_native_tool_calls_and_ignores_textual_fallback",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py"
+    },
+    {
+      "type": "function",
+      "name": "test_textual_wrapper_without_native_tool_call_is_not_executable",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py"
     },
@@ -32373,31 +32313,31 @@
     {
       "type": "function",
       "name": "test_clean_content_strips_multiple_interleaved_tool_wrappers",
-      "description": "Regression: multiple [TOOL_CALL] blocks interspersed with text are all stripped.",
+      "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py"
     },
     {
       "type": "function",
       "name": "test_clean_content_empty_when_raw_is_only_tool_wrapper",
-      "description": "Regression: output that is only [TOOL_CALL] yields empty clean_content.",
+      "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py"
     },
     {
       "type": "function",
       "name": "test_thinking_with_tool_wrapper_does_not_leak_into_clean_content",
-      "description": "Regression: [TOOL_CALL] inside <thinking> stays in thinking, not clean_content.",
+      "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py"
     },
     {
       "type": "function",
       "name": "test_sanitize_strips_variations_of_canonical_wrappers",
-      "description": "Regression: all canonical wrapper forms are stripped from clean_content.",
+      "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py"
     },
     {
       "type": "function",
       "name": "test_raw_content_never_used_in_append_transcript",
-      "description": "Regression guarantee: _append_transcript_cycle receives clean_content, never raw_content.",
+      "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py"
     },
     {
@@ -32408,20 +32348,8 @@
     },
     {
       "type": "function",
-      "name": "test_clean_content_is_used_for_parser_in_parse_tool_calls",
-      "description": "Regression guarantee: parse_tool_calls feeds clean_content to parser.",
-      "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py"
-    },
-    {
-      "type": "function",
       "name": "test_quoted_tool_wrapper_not_stripped_from_clean_content",
-      "description": "Regression: [TOOL_CALL] inside a markdown blockquote is NOT stripped from clean_content.",
-      "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py"
-    },
-    {
-      "type": "function",
-      "name": "test_native_tool_calls_suppress_textual_fallback",
-      "description": "Regression: when native_tool_calls are present, they are the primary parse input.",
+      "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py"
     },
     {

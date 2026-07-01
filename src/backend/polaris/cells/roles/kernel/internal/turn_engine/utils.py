@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -183,6 +184,38 @@ def resolve_empty_visible_output_error(
     if str(turn.thinking or "").strip():
         return "assistant_visible_output_empty: model returned thinking-only response"
     return "assistant_visible_output_empty: model returned no visible output or tool calls"
+
+
+def sanitize_assistant_transcript_message(
+    text: str,
+    *,
+    allowed_tool_names: Iterable[str] | None = None,
+) -> str:
+    """Strip executable textual tool wrappers before transcript injection.
+
+    Args:
+        text: Assistant-visible text after thinking/output wrapper parsing.
+        allowed_tool_names: Optional executable tool allowlist. When omitted,
+            every syntactically valid canonical tool wrapper is stripped.
+
+    Returns:
+        Text safe for transcript persistence and prompt re-injection.
+    """
+    token = str(text or "")
+    if not token.strip():
+        return ""
+    try:
+        from polaris.cells.roles.kernel.internal.tool_call_protocol import (
+            CanonicalToolCallParser,
+        )
+
+        _, remainder = CanonicalToolCallParser.extract_text_calls_and_remainder(
+            token,
+            allowed_tool_names=allowed_tool_names,
+        )
+        return str(remainder or "").strip()
+    except (ValueError, TypeError, AttributeError):
+        return token.strip()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -387,6 +420,7 @@ __all__ = [
     "merge_stream_thinking",
     "normalize_stream_tool_call_payload",
     "resolve_empty_visible_output_error",
+    "sanitize_assistant_transcript_message",
     "tool_call_signature",
     "tool_call_signature_from_parsed",
     "visible_delta",
