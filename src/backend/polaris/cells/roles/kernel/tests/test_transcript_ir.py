@@ -5,7 +5,7 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 
 覆盖 Blueprint §5 Canonical Transcript IR 所有类型：
 - SystemInstruction, UserMessage, AssistantMessage（新增）
-- ToolCall, ToolResult, ControlEvent, ReasoningSummary（已存在）
+- TranscriptToolCall, TranscriptToolResult, ControlEvent, ReasoningSummary（已存在）
 - TranscriptItem 联合类型
 - TranscriptDelta 序列化 roundtrip
 """
@@ -19,11 +19,11 @@ from polaris.cells.roles.kernel.public.transcript_ir import (
     ControlEventType,
     ReasoningSummary,
     SystemInstruction,
-    ToolCall,
-    ToolResult,
     ToolResultStatus,
     TranscriptDelta,
     TranscriptItem,
+    TranscriptToolCall,
+    TranscriptToolResult,
     UserMessage,
     from_control_event,
     from_tool_result,
@@ -101,13 +101,13 @@ class TestAssistantMessage:
 
 class TestToolCall:
     def test_construction(self) -> None:
-        tc = ToolCall(tool_name="bash", args={"cmd": "ls"})
+        tc = TranscriptToolCall(tool_name="bash", args={"cmd": "ls"})
         assert tc.tool_name == "bash"
         assert tc.args == {"cmd": "ls"}
         assert len(tc.call_id) == 32  # uuid4 hex
 
     def test_to_dict(self) -> None:
-        tc = ToolCall(tool_name="test", args={"x": 1})
+        tc = TranscriptToolCall(tool_name="test", args={"x": 1})
         d = tc.to_dict()
         assert d["tool_name"] == "test"
         assert d["args"] == {"x": 1}
@@ -115,8 +115,8 @@ class TestToolCall:
         assert "created_at" in d
 
     def test_roundtrip(self) -> None:
-        original = ToolCall(tool_name="search", args={"q": "test"})
-        restored = ToolCall.from_dict(original.to_dict())
+        original = TranscriptToolCall(tool_name="search", args={"q": "test"})
+        restored = TranscriptToolCall.from_dict(original.to_dict())
         assert restored.tool_name == original.tool_name
         assert restored.args == original.args
         assert restored.call_id == original.call_id
@@ -124,31 +124,31 @@ class TestToolCall:
 
 class TestToolResult:
     def test_construction_success(self) -> None:
-        tr = ToolResult(call_id="abc", tool_name="bash", status="success", content="ok")
+        tr = TranscriptToolResult(call_id="abc", tool_name="bash", status="success", content="ok")
         assert tr.call_id == "abc"
         assert tr.status == "success"
         assert tr.content == "ok"
 
     @pytest.mark.parametrize("status", ["success", "error", "blocked", "timeout"])
     def test_all_statuses(self, status) -> None:
-        tr = ToolResult(call_id="x", tool_name="t", status=status)
+        tr = TranscriptToolResult(call_id="x", tool_name="t", status=status)
         assert tr.status == status
 
     def test_to_dict(self) -> None:
-        tr = ToolResult(call_id="x", tool_name="t", status="success", content="result")
+        tr = TranscriptToolResult(call_id="x", tool_name="t", status="success", content="result")
         d = tr.to_dict()
         assert d["status"] == "success"
         assert d["content"] == "result"
 
     def test_roundtrip(self) -> None:
-        original = ToolResult(
+        original = TranscriptToolResult(
             call_id="call1",
             tool_name="web_search",
             status="success",
             content="found it",
             artifact_refs=["artifact://ref1"],
         )
-        restored = ToolResult.from_dict(original.to_dict())
+        restored = TranscriptToolResult.from_dict(original.to_dict())
         assert restored.call_id == original.call_id
         assert restored.status == original.status
         assert restored.content == original.content
@@ -219,8 +219,8 @@ class TestTranscriptDelta:
                 SystemInstruction(content="sys"),
                 UserMessage(content="user"),
                 AssistantMessage(content="ai", thinking="think"),
-                ToolCall(tool_name="t", args={}),
-                ToolResult(call_id="c", tool_name="t", status="success"),
+                TranscriptToolCall(tool_name="t", args={}),
+                TranscriptToolResult(call_id="c", tool_name="t", status="success"),
                 ControlEvent(event_type="stop"),
                 ReasoningSummary(content="r"),
             ],
@@ -244,8 +244,8 @@ class TestTranscriptDelta:
                 SystemInstruction(content="sys"),
                 UserMessage(content="user"),
                 AssistantMessage(content="ai", thinking="think"),
-                ToolCall(tool_name="t", args={}),
-                ToolResult(call_id="c", tool_name="t", status="success"),
+                TranscriptToolCall(tool_name="t", args={}),
+                TranscriptToolResult(call_id="c", tool_name="t", status="success"),
                 ControlEvent(event_type="stop"),
                 ReasoningSummary(content="r"),
             ],
@@ -282,8 +282,8 @@ class TestTranscriptItemUnion:
             SystemInstruction(content="s"),
             UserMessage(content="u"),
             AssistantMessage(content="a"),
-            ToolCall(tool_name="t", args={}),
-            ToolResult(call_id="c", tool_name="t", status="success"),
+            TranscriptToolCall(tool_name="t", args={}),
+            TranscriptToolResult(call_id="c", tool_name="t", status="success"),
             ControlEvent(event_type="stop"),
             ReasoningSummary(content="r"),
         ]
@@ -292,7 +292,7 @@ class TestTranscriptItemUnion:
 
 class TestFactoryFunctions:
     def test_from_tool_result(self) -> None:
-        tc = ToolCall(tool_name="search", args={"q": "test"})
+        tc = TranscriptToolCall(tool_name="search", args={"q": "test"})
         result_dict = {"result": "found", "success": True}
         tr = from_tool_result(tc, result_dict)
         assert tr.tool_name == "search"

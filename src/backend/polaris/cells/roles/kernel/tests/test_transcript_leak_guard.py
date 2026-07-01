@@ -13,7 +13,7 @@ Coverage:
   - raw_content must not appear in LLM history
   - clean_content must not contain tool wrappers ([TOOL_CALL]...[/TOOL_CALL])
   - ControlEvent internal metadata must not appear in transcript tuples
-  - ToolResult stored as plain text (loses typed fields) - documented limitation
+  - TranscriptToolResult stored as plain text (loses typed fields) - documented limitation
   - ConversationMessage.meta must be sanitized before ORM persist
   - Context compaction must surface user-visible notification
 """
@@ -28,9 +28,9 @@ from polaris.cells.roles.kernel.public.transcript_ir import (
     ControlEvent,
     ReasoningSummary,
     SystemInstruction,
-    ToolCall,
-    ToolResult,
     TranscriptDelta,
+    TranscriptToolCall,
+    TranscriptToolResult,
     UserMessage,
 )
 
@@ -156,8 +156,8 @@ class TestCleanContentBoundaries:
             transcript_items=[
                 UserMessage(content="What files changed?"),
                 AssistantMessage(content="Found 3 files.", thinking="searching..."),
-                ToolCall(tool_name="bash", args={"cmd": "git diff --stat"}),
-                ToolResult(call_id="x", tool_name="bash", status="success", content="ok"),
+                TranscriptToolCall(tool_name="bash", args={"cmd": "git diff --stat"}),
+                TranscriptToolResult(call_id="x", tool_name="bash", status="success", content="ok"),
             ],
             tool_calls=[],
         )
@@ -178,14 +178,14 @@ class TestTranscriptMetadataFiltering:
     """Internal metadata (provider, call_id, raw_reference) must not enter LLM history."""
 
     def test_tool_call_internal_fields_not_in_llm_history(self) -> None:
-        """provider_meta / raw_reference are in ToolCall.to_dict() (kernel IR serialization)
+        """provider_meta / raw_reference are in TranscriptToolCall.to_dict() (kernel IR serialization)
         but must NEVER enter LLM history tuples.
 
         LLM history uses _format_tool_history_result which produces a compact plain-text
         representation that does not include provider_meta or raw_reference fields.
         The formatted output is a plain-text string containing only tool name and result.
         """
-        tc = ToolCall(
+        tc = TranscriptToolCall(
             tool_name="bash",
             args={"cmd": "ls"},
             provider="openai",
@@ -211,14 +211,14 @@ class TestTranscriptMetadataFiltering:
         assert "openai" not in formatted.lower()
 
     def test_tool_result_stripped_fields_stay_typed(self) -> None:
-        """ToolResult dataclass carries typed fields; tool_loop_controller stores plain text.
+        """TranscriptToolResult dataclass carries typed fields; tool_loop_controller stores plain text.
 
-        Limitation: When stored in ToolLoopController._history, ToolResult becomes
+        Limitation: When stored in ToolLoopController._history, TranscriptToolResult becomes
         a formatted plain-text string via _format_tool_history_result. This loses
         typed fields (call_id, artifact_refs, metrics). The typed dataclass is used
         for streaming events; the plain-text representation is the current storage format.
         """
-        tr = ToolResult(
+        tr = TranscriptToolResult(
             call_id="abc123",
             tool_name="web_search",
             status="success",
@@ -232,8 +232,8 @@ class TestTranscriptMetadataFiltering:
         # Typed dataclass is intact
         assert tr.call_id == "abc123"
         assert tr.artifact_refs == ["artifact://x/y/z"]
-        # ToolCall.raw_reference is internal and must not be persisted
-        tc = ToolCall(
+        # TranscriptToolCall.raw_reference is internal and must not be persisted
+        tc = TranscriptToolCall(
             tool_name="read",
             args={"path": "a.txt"},
             raw_reference={"internal": True},
@@ -263,8 +263,8 @@ class TestTranscriptMetadataFiltering:
             SystemInstruction(content="You are a helpful assistant."),
             UserMessage(content="Hello!"),
             AssistantMessage(content="Hi there.", thinking="greeting"),
-            ToolCall(tool_name="search", args={"q": "test"}),
-            ToolResult(call_id="c1", tool_name="search", status="success", content="result"),
+            TranscriptToolCall(tool_name="search", args={"q": "test"}),
+            TranscriptToolResult(call_id="c1", tool_name="search", status="success", content="result"),
             ControlEvent(event_type="stop", reason="done"),
             ReasoningSummary(content="reasoning trace"),
         ]

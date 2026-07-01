@@ -39,10 +39,10 @@ from polaris.kernelone.utils.time_utils import utc_now as _utc_now
 
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.public.transcript_ir import (
-        ToolCall,
-        ToolResult,
         TranscriptDelta,
         TranscriptItem,
+        TranscriptToolCall,
+        TranscriptToolResult,
     )
 
 
@@ -340,25 +340,25 @@ class ConversationState:
         """
         return self.transcript[-n:] if n > 0 else []
 
-    def tool_calls(self) -> list[ToolCall]:
-        """返回所有 ToolCall 条目。
+    def tool_calls(self) -> list[TranscriptToolCall]:
+        """返回所有 TranscriptToolCall 条目。
 
         Returns:
             所有 tool_calls 条目。
         """
-        from polaris.cells.roles.kernel.public.transcript_ir import ToolCall
+        from polaris.cells.roles.kernel.public.transcript_ir import TranscriptToolCall
 
-        return [item for item in self.transcript if isinstance(item, ToolCall)]
+        return [item for item in self.transcript if isinstance(item, TranscriptToolCall)]
 
-    def tool_results(self) -> list[ToolResult]:
-        """返回所有 ToolResult 条目。
+    def tool_results(self) -> list[TranscriptToolResult]:
+        """返回所有 TranscriptToolResult 条目。
 
         Returns:
             所有 tool_results 条目。
         """
-        from polaris.cells.roles.kernel.public.transcript_ir import ToolResult
+        from polaris.cells.roles.kernel.public.transcript_ir import TranscriptToolResult
 
-        return [item for item in self.transcript if isinstance(item, ToolResult)]
+        return [item for item in self.transcript if isinstance(item, TranscriptToolResult)]
 
     # ── 预算操作 ─────────────────────────────────────────────────────────────
 
@@ -501,8 +501,8 @@ class ConversationState:
         from polaris.cells.roles.kernel.public.transcript_ir import (
             ControlEvent,
             ReasoningSummary,
-            ToolCall,
-            ToolResult,
+            TranscriptToolCall,
+            TranscriptToolResult,
         )
 
         # 反序列化 transcript
@@ -510,9 +510,9 @@ class ConversationState:
         for item_data in data.get("transcript", []):
             if "tool_name" in item_data and "call_id" in item_data:
                 if "status" in item_data or "content" in item_data:
-                    transcript.append(ToolResult.from_dict(item_data))
+                    transcript.append(TranscriptToolResult.from_dict(item_data))
                 else:
-                    transcript.append(ToolCall.from_dict(item_data))
+                    transcript.append(TranscriptToolCall.from_dict(item_data))
             elif "event_type" in item_data:
                 transcript.append(ControlEvent.from_dict(item_data))
             elif "content" in item_data:

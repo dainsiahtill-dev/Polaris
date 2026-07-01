@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T07:21:58.624379Z",
-  "source_hash": "9541fdd8d9698155",
+  "generated_at": "2026-07-01T07:29:58.116550Z",
+  "source_hash": "12c7f7e717f37ca5",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -2242,11 +2242,11 @@
         },
         {
           "name": "tool_calls",
-          "doc": "返回所有 ToolCall 条目。"
+          "doc": "返回所有 TranscriptToolCall 条目。"
         },
         {
           "name": "tool_results",
-          "doc": "返回所有 ToolResult 条目。"
+          "doc": "返回所有 TranscriptToolResult 条目。"
         },
         {
           "name": "record_tool_call",
@@ -31823,11 +31823,11 @@
       "methods": [
         {
           "name": "test_tool_call_internal_fields_not_in_llm_history",
-          "doc": "provider_meta / raw_reference are in ToolCall.to_dict() (kernel IR serialization)"
+          "doc": "provider_meta / raw_reference are in TranscriptToolCall.to_dict() (kernel IR serialization)"
         },
         {
           "name": "test_tool_result_stripped_fields_stay_typed",
-          "doc": "ToolResult dataclass carries typed fields; tool_loop_controller stores plain text."
+          "doc": "TranscriptToolResult dataclass carries typed fields; tool_loop_controller stores plain text."
         },
         {
           "name": "test_control_event_metadata_stays_internal",

@@ -6,8 +6,8 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 本模块是 `roles.kernel` Cell 的公开 Transcript IR 边界。
 
 类型层次:
-    ToolCall       - 工具调用条目（P1-TYPE-004: 从 canonical 导入）
-    ToolResult     - 工具执行结果条目（P1-TYPE-003: 重命名为 TranscriptToolResult）
+    TranscriptToolCall - transcript 工具调用条目
+    TranscriptToolResult - transcript 工具执行结果条目
     ControlEvent   - 控制流事件条目（stop/continue/handoff/approval_required/...）
     ReasoningSummary - 推理摘要条目
     SystemInstruction - 系统级指令条目
@@ -19,13 +19,9 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
     TranscriptItem - 上述类型的联合类型别名
     TranscriptDelta - 一次 delta 输出的完整 transcript 增量
 
-P1-TYPE-003/004: 类型统一
-    - ToolCall: 从 polaris.kernelone.llm.contracts.tool 导入（canonical）
-    - ToolResult: 重命名为 TranscriptToolResult 以避免与 canonical ToolExecutionResult 冲突
-
 迁移说明（Chief Architect 裁决 #3）:
     本模块从 `roles.kernel.internal` 迁移至 `roles.kernel.public`。
-    原因：ToolCall / ToolResult 被外部 Cell（如 llm.tool_runtime orchestrator）使用。
+    原因：TranscriptToolCall / TranscriptToolResult 被外部 Cell 使用。
     旧路径 `roles.kernel.internal.transcript_ir` 已退休；新代码必须导入本 public 边界。
 """
 
@@ -44,8 +40,8 @@ if TYPE_CHECKING:
 # NewType: SanitizedOutput（Chief Architect 裁决 #2）
 # ---------------------------------------------------------------------------
 
-# P1-TYPE-004: NOTE - canonical ToolCall is in polaris.kernelone.llm.contracts.tool
-# The TranscriptToolCall in this module is intentionally different (transcript layer vs execution layer)
+# Canonical execution ToolCall is in polaris.kernelone.llm.contracts.tool.
+# TranscriptToolCall here is intentionally a transcript-persistence type.
 
 SanitizedOutput = NewType("SanitizedOutput", str)
 """经过消毒的用户可见文本。
@@ -86,8 +82,8 @@ class ParsedToolPlan:
 
     表示从 assistant 输出中解析出的完整工具调用计划。
 
-    与 `ToolCall` IR 类型的区别：
-        - ToolCall：是 transcript 条目，记录历史
+    与 execution ToolCall 类型的区别：
+        - TranscriptToolCall：是 transcript 条目，记录历史
         - ParsedToolPlan：是解析阶段的输出，携带解析元数据
     """
 
@@ -207,7 +203,7 @@ class TranscriptAppendRequest:
 # ---------------------------------------------------------------------------
 # 核心条目类型（从 internal 迁移）
 # P1-TYPE-004: Renamed to TranscriptToolCall to avoid conflict with
-# canonical ToolCall from polaris.kernelone.llm.contracts.tool
+# Transcript tool call entry.
 # ---------------------------------------------------------------------------
 
 
@@ -275,10 +271,6 @@ class TranscriptToolCall:
             provider_meta=provider_meta,
             raw_reference=raw_reference,
         )
-
-
-# Backward compatibility alias
-ToolCall = TranscriptToolCall
 
 
 @dataclass
@@ -372,10 +364,6 @@ class TranscriptToolResult:
             error_code=str(result_dict.get("error_code", "")) or None,
             error_message=str(result_dict.get("error", result_dict.get("error_message", ""))) or None,
         )
-
-
-# Backward compatibility alias
-ToolResult = TranscriptToolResult
 
 
 @dataclass
@@ -599,7 +587,13 @@ class AssistantMessage:
 # ---------------------------------------------------------------------------
 
 TranscriptItem = (
-    SystemInstruction | UserMessage | AssistantMessage | ToolCall | ToolResult | ControlEvent | ReasoningSummary
+    SystemInstruction
+    | UserMessage
+    | AssistantMessage
+    | TranscriptToolCall
+    | TranscriptToolResult
+    | ControlEvent
+    | ReasoningSummary
 )
 """所有 transcript 条目类型的联合别名。"""
 
@@ -616,7 +610,7 @@ class TranscriptDelta:
     """
 
     transcript_items: list[TranscriptItem] = field(default_factory=list)
-    tool_calls: list[ToolCall] = field(default_factory=list)
+    tool_calls: list[TranscriptToolCall] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """序列化为字典（用于 transcript 持久化或事件传递）。"""
@@ -644,18 +638,18 @@ class TranscriptDelta:
             elif item_type == "AssistantMessage":
                 transcript_items.append(AssistantMessage.from_dict(item_data))
             elif item_type == "ToolCall":
-                transcript_items.append(ToolCall.from_dict(item_data))
+                transcript_items.append(TranscriptToolCall.from_dict(item_data))
             elif item_type == "ToolResult":
-                transcript_items.append(ToolResult.from_dict(item_data))
+                transcript_items.append(TranscriptToolResult.from_dict(item_data))
             elif item_type == "ControlEvent":
                 transcript_items.append(ControlEvent.from_dict(item_data))
             elif item_type == "ReasoningSummary":
                 transcript_items.append(ReasoningSummary.from_dict(item_data))
             elif "tool_name" in item_data and "call_id" in item_data:
                 if "status" in item_data or "content" in item_data:
-                    transcript_items.append(ToolResult.from_dict(item_data))
+                    transcript_items.append(TranscriptToolResult.from_dict(item_data))
                 else:
-                    transcript_items.append(ToolCall.from_dict(item_data))
+                    transcript_items.append(TranscriptToolCall.from_dict(item_data))
             elif "event_type" in item_data:
                 transcript_items.append(ControlEvent.from_dict(item_data))
             elif "thinking" in item_data:
@@ -665,7 +659,7 @@ class TranscriptDelta:
             elif item_type in {"user", "user_message"}:
                 transcript_items.append(UserMessage.from_dict(item_data))
 
-        tool_calls = [ToolCall.from_dict(tc) for tc in data.get("tool_calls", []) if isinstance(tc, dict)]
+        tool_calls = [TranscriptToolCall.from_dict(tc) for tc in data.get("tool_calls", []) if isinstance(tc, dict)]
 
         return cls(
             transcript_items=transcript_items,
@@ -695,7 +689,7 @@ def from_assistant_message(
 ) -> TranscriptDelta:
     """从 LLM assistant 消息构造 TranscriptDelta。"""
     items: list[TranscriptItem] = []
-    tool_calls: list[ToolCall] = []
+    tool_calls: list[TranscriptToolCall] = []
 
     summary = ReasoningSummary.from_assistant_thinking(thinking)
     if summary:
@@ -703,7 +697,7 @@ def from_assistant_message(
 
     if native_tool_calls:
         for result in native_tool_calls:
-            tc = ToolCall.from_output_parser_result(
+            tc = TranscriptToolCall.from_output_parser_result(
                 result,
                 provider=provider,
                 provider_meta=provider_meta,
@@ -760,8 +754,6 @@ __all__ = [
     # 条目类型
     "SystemInstruction",
     # P1-TYPE-003/004: Renamed to Transcript* to avoid conflicts
-    "ToolCall",  # Backward compat alias for TranscriptToolCall
-    "ToolResult",  # Backward compat alias for TranscriptToolResult
     # Literal 约束
     "ToolResultStatus",
     "TranscriptAppendRequest",

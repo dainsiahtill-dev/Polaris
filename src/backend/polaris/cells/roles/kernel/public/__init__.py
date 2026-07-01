@@ -94,8 +94,6 @@ _EXPORT_TO_MODULE: dict[str, str] = {
     "ReasoningSummary": "polaris.cells.roles.kernel.public.transcript_ir",
     "SanitizedOutput": "polaris.cells.roles.kernel.public.transcript_ir",
     "SystemInstruction": "polaris.cells.roles.kernel.public.transcript_ir",
-    "ToolCall": "polaris.cells.roles.kernel.public.transcript_ir",
-    "ToolResult": "polaris.cells.roles.kernel.public.transcript_ir",
     "ToolResultStatus": "polaris.cells.roles.kernel.public.transcript_ir",
     "TranscriptAppendRequest": "polaris.cells.roles.kernel.public.transcript_ir",
     "TranscriptDelta": "polaris.cells.roles.kernel.public.transcript_ir",
