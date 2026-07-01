@@ -40,6 +40,7 @@ public_contracts:
 depends_on:
 - director.execution
 - director.runtime
+- director.tasking
 - factory.cognitive_runtime
 - factory.pipeline
 - orchestration.pm_planning

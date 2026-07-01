@@ -13,12 +13,13 @@ import re
 from dataclasses import replace
 from typing import Any
 
-from polaris.cells.director.tasking.internal.execution_profile import resolve_director_execution_profile
-from polaris.cells.director.tasking.internal.execution_strategy import (
-    apply_execution_strategy_overrides,
-    resolve_director_execution_strategy,
+from polaris.cells.director.tasking.public.execution_guidance import (
+    apply_task_execution_strategy_overrides,
+    build_task_language_section,
+    coerce_task_execution_profile,
+    resolve_task_execution_profile,
+    resolve_task_execution_strategy,
 )
-from polaris.cells.director.tasking.public.contracts import TaskExecutionProfileV1
 
 from ..base import BaseRoleAdapter
 from ..director_execution_backend import (
@@ -1287,12 +1288,9 @@ class DirectorAdapter(BaseRoleAdapter):
         if not isinstance(existing, dict):
             existing = metadata.get("director_execution_profile")
         if isinstance(existing, dict) and existing:
-            profile_fields = {
-                key: existing[key] for key in TaskExecutionProfileV1.__dataclass_fields__ if key in existing
-            }
-            profile = TaskExecutionProfileV1(**profile_fields)
+            profile = coerce_task_execution_profile(existing)
         else:
-            profile = resolve_director_execution_profile(
+            profile = resolve_task_execution_profile(
                 subject=str(metadata.get("title") or metadata.get("subject") or message or ""),
                 description=str(
                     metadata.get("description")
@@ -1306,17 +1304,20 @@ class DirectorAdapter(BaseRoleAdapter):
                 scope_paths=DirectorAdapter._metadata_path_list(metadata, context, "scope_paths"),
                 workspace=str(workspace or ""),
             )
-        strategy = resolve_director_execution_strategy(
+        strategy = resolve_task_execution_strategy(
             profile,
             metadata=metadata,
         )
-        apply_execution_strategy_overrides(
+        apply_task_execution_strategy_overrides(
             context=context,
             metadata=metadata,
             profile=profile,
             strategy=strategy,
         )
-        metadata.setdefault("task_execution_profile_source", "director.tasking.resolve_director_execution_profile")
+        metadata.setdefault(
+            "task_execution_profile_source",
+            "director.tasking.public.execution_guidance.resolve_task_execution_profile",
+        )
         return profile.to_dict()
 
     @staticmethod
@@ -1911,13 +1912,11 @@ class DirectorAdapter(BaseRoleAdapter):
         language_identity = ""
         language_section = ""
         try:
-            from polaris.cells.director.tasking.internal.language_guidance import build_language_section
-
             guidance_metadata = {**metadata, **runtime_metadata}
             if construction_step:
                 guidance_metadata["construction_step"] = construction_step
             language_targets = target_file_items or ([construction_target] if construction_target else [])
-            language_identity, language_section = build_language_section(
+            language_identity, language_section = build_task_language_section(
                 language_targets,
                 str(self.workspace),
                 metadata=guidance_metadata,

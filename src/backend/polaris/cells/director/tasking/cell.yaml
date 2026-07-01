@@ -11,12 +11,14 @@ purpose: 'Task lifecycle management, worker pool orchestration, and worker execu
   '
 current_modules:
 - polaris.cells.director.tasking.public.contracts
+- polaris.cells.director.tasking.public.execution_guidance
 tags: []
 owned_paths:
 - polaris/cells/director/tasking/**
 public_contracts:
   modules:
   - polaris.cells.director.tasking.public.contracts
+  - polaris.cells.director.tasking.public.execution_guidance
   commands:
   - CreateTaskCommandV1
   - CancelTaskCommandV1

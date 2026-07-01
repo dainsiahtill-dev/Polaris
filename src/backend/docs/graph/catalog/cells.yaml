@@ -1641,6 +1641,7 @@ cells:
       - policy.workspace_guard
       - director.execution
       - director.runtime
+      - director.tasking
       - llm.dialogue
       - orchestration.pm_planning
       - orchestration.workflow_runtime
@@ -2760,6 +2761,7 @@ cells:
     public_contracts:
       modules:
         - polaris.cells.director.tasking.public.contracts
+        - polaris.cells.director.tasking.public.execution_guidance
       commands: []
       queries: []
       events: []

@@ -75,6 +75,13 @@ from polaris.cells.director.tasking.public.contracts import (
     TaskStatusQueryV1,
     TaskStatusResultV1,
 )
+from polaris.cells.director.tasking.public.execution_guidance import (
+    apply_task_execution_strategy_overrides,
+    build_task_language_section,
+    coerce_task_execution_profile,
+    resolve_task_execution_profile,
+    resolve_task_execution_strategy,
+)
 from polaris.cells.director.tasking.public.service import (
     cancel_task,
     create_task,
@@ -128,8 +135,11 @@ __all__ = [
     "apply_all_operations",
     "apply_operation",
     "apply_operations_strict",
+    "apply_task_execution_strategy_overrides",
+    "build_task_language_section",
     "cancel_task",
     "check_mode",
+    "coerce_task_execution_profile",
     "create_task",
     "generate_bootstrap_with_llm",
     "generate_fallback_code_content",
@@ -149,5 +159,7 @@ __all__ = [
     "query_task_result",
     "query_task_status",
     "reset_task_services",
+    "resolve_task_execution_profile",
+    "resolve_task_execution_strategy",
     "validate_before_apply",
 ]
