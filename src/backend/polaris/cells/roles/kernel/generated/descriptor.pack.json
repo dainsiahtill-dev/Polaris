@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T07:51:28.902424Z",
-  "source_hash": "7c8c3bfbbb105df3",
+  "generated_at": "2026-07-01T07:55:27.577435Z",
+  "source_hash": "d3e0dd6235c0554b",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -18815,7 +18815,7 @@
     },
     {
       "type": "class",
-      "name": "TestDedupeParsedToolCalls",
+      "name": "TestDedupeToolCalls",
       "description": "Test suite for dedupe_parsed_tool_calls function.",
       "defined_in": "polaris/cells/roles/kernel/internal/turn_engine/tests/test_turn_engine.py",
       "methods": [

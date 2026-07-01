@@ -269,7 +269,7 @@ class TestToolCallSignatureFromParsed:
         assert "search" in sig.lower()
 
 
-class TestDedupeParsedToolCalls:
+class TestDedupeToolCalls:
     """Test suite for dedupe_parsed_tool_calls function."""
 
     def test_no_duplicates(self) -> None:

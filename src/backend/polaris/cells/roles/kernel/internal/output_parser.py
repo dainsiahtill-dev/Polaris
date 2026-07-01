@@ -144,10 +144,6 @@ class ToolCallResult:
         return result
 
 
-# Backward compatibility: ParsedToolCall also maps to ToolCall
-ParsedToolCall = ToolCall
-
-
 class OutputParser:
     """输出解析器
 
