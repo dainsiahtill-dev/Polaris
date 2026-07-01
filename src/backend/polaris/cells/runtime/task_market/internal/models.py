@@ -22,6 +22,13 @@ IN_PROGRESS_BY_STAGE: dict[str, str] = {
     "waiting_human": "waiting_human",
 }
 PRIORITY_WEIGHT: dict[str, int] = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+VALID_WORK_ITEM_STATUSES = frozenset(
+    {
+        *QUEUE_STAGES,
+        *IN_PROGRESS_BY_STAGE.values(),
+        *TERMINAL_STATUSES,
+    }
+)
 
 
 def now_epoch() -> float:
@@ -65,6 +72,27 @@ def _coerce_bool(value: object, *, default: bool = True) -> bool:
         if token in {"0", "false", "no", "n", "off"}:
             return False
     return default
+
+
+def _require_non_empty_field(data: dict[str, Any], field_name: str) -> str:
+    token = str(data.get(field_name) or "").strip()
+    if not token:
+        raise ValueError(f"TaskWorkItemRecord field {field_name!r} is required")
+    return token
+
+
+def _normalize_stage_field(data: dict[str, Any]) -> str:
+    stage = _require_non_empty_field(data, "stage").lower()
+    if stage not in QUEUE_STAGES:
+        raise ValueError(f"TaskWorkItemRecord field 'stage' must be one of: {sorted(QUEUE_STAGES)}")
+    return stage
+
+
+def _normalize_status_field(data: dict[str, Any]) -> str:
+    status = _require_non_empty_field(data, "status").lower()
+    if status not in VALID_WORK_ITEM_STATUSES:
+        raise ValueError(f"TaskWorkItemRecord field 'status' must be one of: {sorted(VALID_WORK_ITEM_STATUSES)}")
+    return status
 
 
 @dataclass(slots=True)
@@ -170,6 +198,7 @@ class TaskWorkItemRecord:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TaskWorkItemRecord:
+        task_id = _require_non_empty_field(data, "task_id")
         payload_raw = data.get("payload")
         payload: dict[str, Any] = payload_raw if isinstance(payload_raw, dict) else {}
         metadata_raw = data.get("metadata")
@@ -177,16 +206,16 @@ class TaskWorkItemRecord:
         last_error_raw = data.get("last_error")
         last_error: dict[str, Any] = last_error_raw if isinstance(last_error_raw, dict) else {}
         return cls(
-            task_id=str(data.get("task_id") or "").strip(),
-            trace_id=str(data.get("trace_id") or "").strip(),
-            run_id=str(data.get("run_id") or "").strip(),
-            workspace=str(data.get("workspace") or "").strip(),
-            stage=str(data.get("stage") or "").strip().lower(),
-            status=str(data.get("status") or "").strip().lower(),
+            task_id=task_id,
+            trace_id=_require_non_empty_field(data, "trace_id"),
+            run_id=_require_non_empty_field(data, "run_id"),
+            workspace=_require_non_empty_field(data, "workspace"),
+            stage=_normalize_stage_field(data),
+            status=_normalize_status_field(data),
             priority=str(data.get("priority") or "medium").strip().lower(),
             plan_id=str(data.get("plan_id") or "").strip(),
             plan_revision_id=str(data.get("plan_revision_id") or "").strip(),
-            root_task_id=str(data.get("root_task_id") or data.get("task_id") or "").strip(),
+            root_task_id=str(data.get("root_task_id") or task_id).strip(),
             parent_task_id=str(data.get("parent_task_id") or "").strip(),
             is_leaf=_coerce_bool(data.get("is_leaf"), default=True),
             depends_on=_normalize_string_list(data.get("depends_on")),

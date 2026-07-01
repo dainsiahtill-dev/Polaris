@@ -8,6 +8,7 @@ Provides a unified interface over either the JSON file backend
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from .store_sqlite import TaskMarketSQLiteStore
 
 BackendType = Literal["json", "sqlite"]
+logger = logging.getLogger(__name__)
 
 
 class TaskMarketStoreProtocol(Protocol):
@@ -161,8 +163,10 @@ class TaskMarketJSONStore:
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            item = TaskWorkItemRecord.from_dict(row)
-            if not item.task_id:
+            try:
+                item = TaskWorkItemRecord.from_dict(row)
+            except (RuntimeError, TypeError, ValueError) as exc:
+                logger.warning("task_market: skipping corrupt work item record: %s", exc)
                 continue
             items[item.task_id] = item
         return items

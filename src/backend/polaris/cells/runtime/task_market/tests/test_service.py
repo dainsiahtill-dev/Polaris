@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
 from pathlib import Path
@@ -2659,6 +2660,52 @@ def test_json_store_dead_letter_append_is_idempotent_by_task_id(tmp_path: Path) 
     assert len(entries) == 2
     assert by_id["T-1"]["reason"] == "second"
     assert by_id["T-2"]["reason"] == "other"
+
+
+def test_json_store_skips_corrupt_work_item_records(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    from polaris.cells.runtime.task_market.internal.store import TaskMarketJSONStore
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    store = TaskMarketJSONStore(str(workspace))
+    store.items_path.parent.mkdir(parents=True, exist_ok=True)
+    store.items_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "items": [
+                    {
+                        "task_id": "task-valid",
+                        "trace_id": "trace-1",
+                        "run_id": "run-1",
+                        "workspace": str(workspace),
+                        "stage": "pending_exec",
+                        "status": "pending_exec",
+                        "priority": "medium",
+                        "payload": {"goal": "run"},
+                    },
+                    {
+                        "task_id": "task-missing-status",
+                        "trace_id": "trace-2",
+                        "run_id": "run-1",
+                        "workspace": str(workspace),
+                        "stage": "pending_exec",
+                        "priority": "medium",
+                        "payload": {"goal": "bad"},
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("WARNING"):
+        items = store.load_items()
+
+    assert list(items) == ["task-valid"]
+    assert "skipping corrupt work item record" in caplog.text
+    assert "status" in caplog.text
 
 
 def test_stage_advance_resets_attempt_budget(tmp_path: Path) -> None:
