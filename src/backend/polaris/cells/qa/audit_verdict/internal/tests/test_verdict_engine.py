@@ -235,8 +235,8 @@ def test_verdict_diff_reports_shadow_mismatch(tmp_path: Path) -> None:
     )
 
     diff = diff_verdicts(
-        legacy_verdict="PASS",
-        legacy_terminal_status="resolved",
+        fallback_verdict="PASS",
+        fallback_terminal_status="resolved",
         engine_envelope=envelope,
     )
 

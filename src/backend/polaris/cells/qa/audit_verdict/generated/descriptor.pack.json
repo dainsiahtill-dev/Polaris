@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:11.109510Z",
-  "source_hash": "c7a28b4c4454dd3f",
+  "generated_at": "2026-07-02T04:05:03.489327Z",
+  "source_hash": "756ddfe9cdee1c83",
   "cell_id": "qa.audit_verdict",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -663,7 +663,7 @@
     {
       "type": "function",
       "name": "diff_verdicts",
-      "description": "Compare legacy QA routing against the new engine in shadow mode.",
+      "description": "Compare consumer fallback routing against the verdict engine.",
       "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
     },
     {

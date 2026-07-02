@@ -569,30 +569,30 @@ class QAVerdictEngine:
 
 def diff_verdicts(
     *,
-    legacy_verdict: str,
-    legacy_next_stage: str = "",
-    legacy_terminal_status: str = "",
+    fallback_verdict: str,
+    fallback_next_stage: str = "",
+    fallback_terminal_status: str = "",
     engine_envelope: QaVerdictEnvelopeV1,
 ) -> dict[str, Any]:
-    """Compare legacy QA routing against the new engine in shadow mode."""
+    """Compare consumer fallback routing against the verdict engine."""
 
     engine = engine_envelope.to_dict()
     mismatches: list[str] = []
-    if str(legacy_verdict or "").strip().upper() != str(engine.get("verdict") or "").strip().upper():
+    if str(fallback_verdict or "").strip().upper() != str(engine.get("verdict") or "").strip().upper():
         mismatches.append("verdict")
-    if str(legacy_next_stage or "").strip() != str(engine.get("next_stage") or "").strip():
+    if str(fallback_next_stage or "").strip() != str(engine.get("next_stage") or "").strip():
         mismatches.append("next_stage")
-    if str(legacy_terminal_status or "").strip() != str(engine.get("terminal_status") or "").strip():
+    if str(fallback_terminal_status or "").strip() != str(engine.get("terminal_status") or "").strip():
         mismatches.append("terminal_status")
     return {
         "schema_version": "qa.verdict_diff.v1",
         "authoritative": False,
         "mismatch": bool(mismatches),
         "mismatches": mismatches,
-        "legacy": {
-            "verdict": legacy_verdict,
-            "next_stage": legacy_next_stage,
-            "terminal_status": legacy_terminal_status,
+        "fallback": {
+            "verdict": fallback_verdict,
+            "next_stage": fallback_next_stage,
+            "terminal_status": fallback_terminal_status,
         },
         "engine": {
             "verdict": engine.get("verdict"),

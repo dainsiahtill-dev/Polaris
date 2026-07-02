@@ -258,20 +258,20 @@ def _qa_verdict_engine_shadow_payload(envelope: dict[str, Any], diff: dict[str, 
 
 def _apply_authoritative_verdict_engine_route(
     *,
-    legacy_verdict: str,
-    legacy_next_stage: str,
-    legacy_terminal_status: str,
+    fallback_verdict: str,
+    fallback_next_stage: str,
+    fallback_terminal_status: str,
     engine_payload: dict[str, Any],
 ) -> tuple[str, str, str]:
     """Use the verdict engine route only when explicitly promoted.
 
-    Shadow remains the default migration mode. In authoritative mode the engine
+    Shadow remains an available audit mode. In authoritative mode the engine
     must either provide a route or fail closed back to QA infrastructure instead
-    of silently falling through to legacy routing.
+    of silently falling through to consumer-local routing.
     """
 
     if _qa_verdict_engine_mode() != "engine":
-        return legacy_verdict, legacy_next_stage, legacy_terminal_status
+        return fallback_verdict, fallback_next_stage, fallback_terminal_status
     if not engine_payload or engine_payload.get("error"):
         return "BLOCKED", "pending_qa", ""
     verdict = str(engine_payload.get("verdict") or "BLOCKED").strip().upper() or "BLOCKED"
@@ -827,9 +827,9 @@ class QAConsumer:
         gate_name: str = "",
         gate_summary: str = "",
         audit_result: dict[str, Any] | None = None,
-        legacy_verdict: str,
-        legacy_next_stage: str = "",
-        legacy_terminal_status: str = "",
+        fallback_verdict: str,
+        fallback_next_stage: str = "",
+        fallback_terminal_status: str = "",
     ) -> dict[str, Any]:
         """Build a non-authoritative Verdict Engine comparison payload."""
 
@@ -849,9 +849,9 @@ class QAConsumer:
                 audit_result=audit_result,
             )
             diff = diff_verdicts(
-                legacy_verdict=legacy_verdict,
-                legacy_next_stage=legacy_next_stage,
-                legacy_terminal_status=legacy_terminal_status,
+                fallback_verdict=fallback_verdict,
+                fallback_next_stage=fallback_next_stage,
+                fallback_terminal_status=fallback_terminal_status,
                 engine_envelope=envelope,
             )
             if diff.get("mismatch"):
@@ -1107,8 +1107,8 @@ class QAConsumer:
                     gate_name="qa_step_verify",
                     gate_summary=verify_failure,
                     audit_result={"verdict": "FAIL", "findings": [verify_failure]},
-                    legacy_verdict="FAIL",
-                    legacy_next_stage="pending_exec",
+                    fallback_verdict="FAIL",
+                    fallback_next_stage="pending_exec",
                 )
                 self._append_qa_gate_to_run_ledger(
                     task_id=task_id,
@@ -1159,8 +1159,8 @@ class QAConsumer:
                     gate_name="qa_syntax",
                     gate_summary=syntax_failure,
                     audit_result={"verdict": "FAIL", "findings": [syntax_failure]},
-                    legacy_verdict="FAIL",
-                    legacy_next_stage="pending_exec",
+                    fallback_verdict="FAIL",
+                    fallback_next_stage="pending_exec",
                 )
                 self._append_qa_gate_to_run_ledger(
                     task_id=task_id,
@@ -1210,8 +1210,8 @@ class QAConsumer:
                     gate_name="qa_contract",
                     gate_summary=contract_failure,
                     audit_result={"verdict": "FAIL", "findings": [contract_failure]},
-                    legacy_verdict="FAIL",
-                    legacy_next_stage="pending_exec",
+                    fallback_verdict="FAIL",
+                    fallback_next_stage="pending_exec",
                 )
                 self._append_qa_gate_to_run_ledger(
                     task_id=task_id,
@@ -1269,10 +1269,7 @@ class QAConsumer:
                 and _qa_findings_requeue_enabled()
                 and _qa_findings_are_actionable(audit_findings)
             )
-            if (
-                findings_bounce_eligible
-                and qa_findings_bounce_count < _qa_findings_max_bounces()
-            ):
+            if findings_bounce_eligible and qa_findings_bounce_count < _qa_findings_max_bounces():
                 next_bounce_count = qa_findings_bounce_count + 1
                 self._qa_findings_bounce_counts[task_id] = next_bounce_count
                 feedback_counters[_QA_FINDINGS_COUNTER_KEY] = next_bounce_count
@@ -1280,9 +1277,9 @@ class QAConsumer:
                     task_id=task_id,
                     payload=payload,
                     audit_result=audit_result,
-                    legacy_verdict=verdict,
-                    legacy_next_stage="pending_exec",
-                    legacy_terminal_status="",
+                    fallback_verdict=verdict,
+                    fallback_next_stage="pending_exec",
+                    fallback_terminal_status="",
                 )
                 if shadow:
                     audit_result["qa_verdict_engine_shadow"] = shadow
@@ -1329,16 +1326,16 @@ class QAConsumer:
                 task_id=task_id,
                 payload=payload,
                 audit_result=audit_result,
-                legacy_verdict=verdict,
-                legacy_next_stage=next_stage,
-                legacy_terminal_status=terminal_status,
+                fallback_verdict=verdict,
+                fallback_next_stage=next_stage,
+                fallback_terminal_status=terminal_status,
             )
             if shadow:
                 audit_result["qa_verdict_engine_shadow"] = shadow
                 verdict, next_stage, terminal_status = _apply_authoritative_verdict_engine_route(
-                    legacy_verdict=verdict,
-                    legacy_next_stage=next_stage,
-                    legacy_terminal_status=terminal_status,
+                    fallback_verdict=verdict,
+                    fallback_next_stage=next_stage,
+                    fallback_terminal_status=terminal_status,
                     engine_payload=shadow,
                 )
                 if shadow.get("authoritative"):
