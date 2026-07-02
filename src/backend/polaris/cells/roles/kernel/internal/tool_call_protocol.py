@@ -1,9 +1,9 @@
-"""Legacy textual tool-call sanitizer/detector for `roles.kernel`.
+"""Textual tool-call sanitizer/detector for `roles.kernel`.
 
 Native provider/tool-call payloads are the only executable runtime protocol.
 This module remains for transcript sanitization, wrapper detection, and
-migration-period auditing. It must not be treated as an executable tool source
-in runtime paths.
+audit-only extraction. It must not be treated as an executable tool source in
+runtime paths.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Test suite for `roles.kernel` QualityChecker Director output validation.
 
 Covers:
-- QualityChecker._validate_director_output() — unified parser + legacy + markdown extraction
+- QualityChecker._validate_director_output() — unified parser + search/replace + markdown extraction
 - QualityChecker._extract_director_patches() — multi-dialect patch extraction
 - QualityChecker._is_safe_relative_path() — path safety enforcement
 - QualityChecker._extract_tool_calls() — tool call tag parsing
@@ -50,7 +50,7 @@ class TestValidateDirectorOutput:
 
 
 class TestExtractDirectorPatches:
-    """_extract_director_patches combines unified parser + legacy + markdown."""
+    """_extract_director_patches combines unified parser + search/replace + markdown."""
 
     def test_extracts_unified_search_replace(self) -> None:
         checker = QualityChecker()
