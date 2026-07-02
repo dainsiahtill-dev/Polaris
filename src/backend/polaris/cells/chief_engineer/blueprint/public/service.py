@@ -1032,12 +1032,25 @@ def _apply_delivery_depth_test_targets(
     if min_test_files <= 0 and min_test_assertions <= 0:
         return
 
+    original_target_files = list(target_files)
+    original_scope_paths = list(scope_paths)
     language = str(
         context.get("language")
         or _mapping(delivery_depth_contract).get("language")
         or _infer_language_from_targets(target_files)
     ).strip()
-    if min_test_files > 0 and not any(_path_looks_like_test(path) for path in target_files):
+    project_declared_test_targets = [
+        path
+        for path in _string_list(context.get("project_declared_target_files"))
+        if _path_looks_like_test(path)
+    ]
+    promote_default_test_target = (
+        min_test_files > 0
+        and not any(_path_looks_like_test(path) for path in target_files)
+        and not project_declared_test_targets
+        and not _is_semantic_support_boundary(original_target_files, original_scope_paths)
+    )
+    if promote_default_test_target:
         test_target = _default_delivery_depth_test_target(language)
         if test_target not in target_files:
             target_files.append(test_target)

@@ -48,6 +48,10 @@ _RECURSIVE_NPM_SCRIPT_RE = re.compile(
     r"npm package manifest script '([^']+)' recursively invokes itself",
     re.IGNORECASE,
 )
+_PLACEHOLDER_NPM_SCRIPT_RE = re.compile(
+    r"npm package manifest script '([^']+)' is a placeholder command",
+    re.IGNORECASE,
+)
 _UNRESOLVED_IMPORT_SYMBOL_RE = re.compile(
     r"unresolved (?:import )?symbol ['\"](?P<symbol>[^'\"]+)['\"] "
     r"from ['\"](?P<module>[^'\"]+)['\"] in (?P<path>\S+)",
@@ -176,6 +180,16 @@ def build_npm_script_contract_plan(
     raw_errors = [str(diagnostic.raw or diagnostic.message or "") for diagnostic in matched_diagnostics]
     has_typescript_context = _has_typescript_context(normalized_base, package_payload)
     has_node_test_runner_contract = _has_node_test_runner_contract_error(raw_errors)
+
+    for script_name in _placeholder_scripts(raw_errors):
+        replacement = _fallback_script_for_placeholder_script(
+            script_name,
+            normalized_base,
+            package_payload,
+            has_typescript_context=has_typescript_context,
+        )
+        if replacement:
+            updates[("scripts", script_name)] = replacement
 
     if has_typescript_context:
         for script_name in _recursive_scripts(raw_errors):
@@ -1156,6 +1170,57 @@ def _node_test_runner_script(base_files: Mapping[str, str]) -> str:
         test_paths.remove("tests/test_basic.js")
         test_paths.insert(0, "tests/test_basic.js")
     return "node --test" if not test_paths else "node --test " + " ".join(test_paths)
+
+
+def _placeholder_scripts(errors: Sequence[str]) -> tuple[str, ...]:
+    scripts: list[str] = []
+    for error in errors:
+        for match in _PLACEHOLDER_NPM_SCRIPT_RE.finditer(str(error or "")):
+            script_name = str(match.group(1) or "").strip()
+            if script_name:
+                scripts.append(script_name)
+    return tuple(dict.fromkeys(scripts))
+
+
+def _fallback_script_for_placeholder_script(
+    script_name: str,
+    base_files: Mapping[str, str],
+    package_payload: Mapping[str, Any],
+    *,
+    has_typescript_context: bool,
+) -> str:
+    normalized_script_name = str(script_name or "").strip()
+    if not normalized_script_name:
+        return ""
+    if normalized_script_name == "test":
+        if not has_typescript_context and not _has_node_test_files(base_files):
+            return ""
+        return _node_test_runner_script(base_files)
+    if normalized_script_name in {"lint", "check", "typecheck"}:
+        if has_typescript_context:
+            return _fallback_script_for_missing_entrypoint(normalized_script_name)
+        return _node_manifest_validation_script()
+    if normalized_script_name in {"build", "verify"}:
+        scripts_raw = package_payload.get("scripts")
+        scripts: Mapping[str, Any] = scripts_raw if isinstance(scripts_raw, Mapping) else {}
+        build_script = str(scripts.get("build") or "").strip()
+        if normalized_script_name == "verify" and build_script:
+            return build_script
+        return _node_manifest_validation_script()
+    return _node_manifest_validation_script()
+
+
+def _node_manifest_validation_script() -> str:
+    return "node -e \"JSON.parse(require('node:fs').readFileSync('package.json','utf8'))\""
+
+
+def _has_node_test_files(base_files: Mapping[str, str]) -> bool:
+    return any(
+        path.startswith("tests/")
+        and path.endswith(".js")
+        and (PurePosixPath(path).name.startswith("test_") or PurePosixPath(path).name.endswith(".test.js"))
+        for path in base_files
+    )
 
 
 def _missing_entrypoint(errors: Sequence[str], *, script_name: str) -> str:

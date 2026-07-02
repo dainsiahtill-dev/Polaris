@@ -656,6 +656,50 @@ def test_npm_script_contract_uses_structured_json_plan_and_fail_closed_run(tmp_p
     assert write_calls == []
 
 
+def test_npm_script_contract_repairs_plain_javascript_placeholder_lint() -> None:
+    package_text = json.dumps(
+        {
+            "name": "sample",
+            "version": "1.0.0",
+            "type": "module",
+            "scripts": {
+                "start": "node src/index.js",
+                "lint": 'echo "lint placeholder - wire eslint later" && exit 0',
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            (
+                "Artifact quality scan failed: npm package manifest script 'lint' "
+                'is a placeholder command: echo "lint placeholder - wire eslint later" && exit 0 in package.json'
+            )
+        ]
+    )
+
+    plan = build_npm_script_contract_plan(
+        base_files={"package.json": package_text},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.source_tool == "deterministic_npm_script_contract_repair"
+    assert [(operation.kind, operation.path, operation.json_path) for operation in plan.operations] == [
+        ("json_set", "package.json", ("scripts", "lint"))
+    ]
+    assert plan.operations[0].value == (
+        "node -e \"JSON.parse(require('node:fs').readFileSync('package.json','utf8'))\""
+    )
+
+    composition = PatchComposer().compose({"package.json": package_text}, plan.operations)
+    assert composition.ok
+    repaired = json.loads(composition.patches[0].content_after)
+    assert repaired["scripts"]["lint"] == plan.operations[0].value
+
+
 def test_npm_script_contract_repairs_recursive_build_script_with_structured_json() -> None:
     package_text = json.dumps(
         {
