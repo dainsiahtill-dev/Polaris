@@ -31,8 +31,8 @@ from .rust_export_facade import (
     build_rust_missing_lib_target_plan,
 )
 from .rust_syntax import (
-    RUST_CRATE_IMPORT_SOURCE_TOOL,
     RUST_CRATE_IMPORT_REWRITE_SOURCE_TOOL,
+    RUST_CRATE_IMPORT_SOURCE_TOOL,
     RUST_DEPENDENCY_SOURCE_TOOL,
     RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL,
     RUST_FIELD_RENAME_SUGGESTION_SOURCE_TOOL,
@@ -79,7 +79,7 @@ class RustCrateImportRewritePlanning:
 
 @dataclass(frozen=True)
 class RustCrateImportPlanning:
-    """Planning result for the legacy Rust crate import repair source tool."""
+    """Planning result for the Rust crate import repair source tool."""
 
     source_tool: str
     diagnostics: tuple[RepairDiagnostic, ...]
@@ -103,7 +103,7 @@ class RustCrateImportRewriteRun:
 
 @dataclass(frozen=True)
 class RustCrateImportRun:
-    """Execution result for the legacy Rust crate import repair source tool."""
+    """Execution result for the Rust crate import repair source tool."""
 
     planning: RustCrateImportPlanning
     ok: bool
@@ -760,7 +760,7 @@ def plan_rust_crate_import_repair(
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
 ) -> RustCrateImportPlanning:
-    """Plan the legacy Rust crate import repair through typed diagnostics."""
+    """Plan the Rust crate import repair through typed diagnostics."""
 
     normalized_base = _normalize_base_files(base_files)
     diagnostics = tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
@@ -1696,7 +1696,7 @@ def run_rust_crate_import_repair(
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
 ) -> RustCrateImportRun:
-    """Run the legacy Rust crate import repair through Plan->Compose->Policy->Execute."""
+    """Run the Rust crate import repair through Plan->Compose->Policy->Execute."""
 
     normalized_base = _normalize_base_files(base_files)
     planning = plan_rust_crate_import_repair(

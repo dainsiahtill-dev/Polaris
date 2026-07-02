@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:12.598098Z",
-  "source_hash": "5736ef9f57b719f8",
+  "generated_at": "2026-07-02T04:12:14.716970Z",
+  "source_hash": "2de68bfb06b62842",
   "cell_id": "director.runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -5597,7 +5597,7 @@
     {
       "type": "class",
       "name": "RustCrateImportPlanning",
-      "description": "Planning result for the legacy Rust crate import repair source tool.",
+      "description": "Planning result for the Rust crate import repair source tool.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/rust_runtime.py",
       "methods": []
     },
@@ -5611,7 +5611,7 @@
     {
       "type": "class",
       "name": "RustCrateImportRun",
-      "description": "Execution result for the legacy Rust crate import repair source tool.",
+      "description": "Execution result for the Rust crate import repair source tool.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/rust_runtime.py",
       "methods": []
     },
@@ -5918,7 +5918,7 @@
     {
       "type": "function",
       "name": "plan_rust_crate_import_repair",
-      "description": "Plan the legacy Rust crate import repair through typed diagnostics.",
+      "description": "Plan the Rust crate import repair through typed diagnostics.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/rust_runtime.py"
     },
     {
@@ -6038,7 +6038,7 @@
     {
       "type": "function",
       "name": "run_rust_crate_import_repair",
-      "description": "Run the legacy Rust crate import repair through Plan->Compose->Policy->Execute.",
+      "description": "Run the Rust crate import repair through Plan->Compose->Policy->Execute.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/rust_runtime.py"
     },
     {
