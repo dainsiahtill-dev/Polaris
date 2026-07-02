@@ -507,13 +507,13 @@ class QualityChecker:
         return data, errors
 
     def _extract_director_patches(self, content: str) -> list[dict[str, str]]:
-        """提取 Director 可执行补丁，兼容多种 PATCH 方言。"""
+        """提取 Director 可执行补丁，支持多种 PATCH 方言。"""
         patches: list[dict[str, str]] = []
         patches.extend(self._extract_patch_operations_from_unified_parser(content))
         if not patches:
-            legacy = self._extract_search_replace(content)
-            if legacy:
-                patches.extend(legacy)
+            search_replace_patches = self._extract_search_replace(content)
+            if search_replace_patches:
+                patches.extend(search_replace_patches)
         patches.extend(self._extract_markdown_file_blocks(content))
         return patches
 
@@ -623,10 +623,13 @@ class QualityChecker:
             from polaris.cells.roles.kernel.internal.tool_call_protocol import (
                 CanonicalToolCallParser,
             )
-        except (RuntimeError, ValueError):
+        except (ImportError, RuntimeError, ValueError):
             return []
 
-        calls = CanonicalToolCallParser.parse_text_calls(str(content or ""))
+        calls = CanonicalToolCallParser.parse_text_calls(
+            str(content or ""),
+            allowed_tool_names=QualityChecker._registered_tool_names(),
+        )
         normalized: list[dict[str, Any]] = []
         for item in calls:
             # §6.6: name_raw must be the pre-normalization token (case-preserved
@@ -647,6 +650,17 @@ class QualityChecker:
                 }
             )
         return normalized
+
+    @staticmethod
+    def _registered_tool_names() -> tuple[str, ...]:
+        """Return canonical Polaris tool names allowed in text-call audit."""
+        try:
+            from polaris.kernelone.tool_execution.tool_spec_registry import (
+                ToolSpecRegistry,
+            )
+        except (ImportError, RuntimeError, ValueError):
+            return ()
+        return tuple(ToolSpecRegistry.get_all_canonical_names())
 
     def _validate_architect_output(self, content: str) -> tuple[dict | None, list[str]]:
         """验证Architect输出"""

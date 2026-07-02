@@ -16,14 +16,9 @@ def test_director_quality_checker_accepts_tool_calls_without_patch() -> None:
     checker = QualityChecker()
     profile = _load_director_profile()
     content = """
-<thinking>
-先查看当前目录结构。
-</thinking>
-<output>
-[TOOL_NAME]
-execute_command command: "dir /b"
-[/TOOL_NAME]
-</output>
+[tool_calls]
+[{"tool": "execute_command", "args": {"command": "dir /b"}}]
+[/tool_calls]
 """.strip()
 
     result = checker.validate_output(content, profile)
@@ -33,8 +28,9 @@ execute_command command: "dir /b"
     assert isinstance(result.data, dict)
     tool_calls = result.data.get("tool_calls")
     assert isinstance(tool_calls, list)
-    assert len(tool_calls) == 1
-    assert tool_calls[0].get("name") == "execute_command"
+    real_calls = [call for call in tool_calls if call.get("name") == "execute_command"]
+    assert len(real_calls) == 1
+    assert real_calls[0].get("arguments") == {"command": "dir /b"}
 
 
 def test_director_quality_checker_rejects_execution_status_without_patch_or_tools() -> None:

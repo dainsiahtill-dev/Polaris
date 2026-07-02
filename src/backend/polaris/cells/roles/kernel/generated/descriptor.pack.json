@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T05:25:44.488189Z",
-  "source_hash": "00cdaca17d6d0f2d",
+  "generated_at": "2026-07-02T05:33:42.641785Z",
+  "source_hash": "86e7a4de37d09dda",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -6660,7 +6660,7 @@
         },
         {
           "name": "_extract_director_patches",
-          "doc": "提取 Director 可执行补丁，兼容多种 PATCH 方言。"
+          "doc": "提取 Director 可执行补丁，支持多种 PATCH 方言。"
         },
         {
           "name": "_extract_patch_operations_from_unified_parser",
@@ -6681,6 +6681,10 @@
         {
           "name": "_extract_tool_calls",
           "doc": "提取文本包装器中的工具调用，用于质量审计而非执行。"
+        },
+        {
+          "name": "_registered_tool_names",
+          "doc": "Return canonical Polaris tool names allowed in text-call audit."
         },
         {
           "name": "_validate_architect_output",

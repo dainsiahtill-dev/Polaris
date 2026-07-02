@@ -144,6 +144,21 @@ class TestExtractToolCalls:
         calls = checker._extract_tool_calls("")
         assert calls == []
 
+    def test_ignores_non_tool_protocol_wrappers(self) -> None:
+        checker = QualityChecker()
+        content = """
+<thinking>
+Plan the next step.
+</thinking>
+<output>
+No provider tool call was emitted.
+</output>
+""".strip()
+
+        calls = checker._extract_tool_calls(content)
+
+        assert calls == []
+
     def test_preserves_raw_tool_name(self) -> None:
         """§6.6: name_raw must be the model's emitted token, verbatim case.
 
