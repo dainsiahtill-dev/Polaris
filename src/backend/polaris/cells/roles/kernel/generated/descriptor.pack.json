@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:17.213295Z",
-  "source_hash": "668c097ef5b81a05",
+  "generated_at": "2026-07-02T05:11:22.449708Z",
+  "source_hash": "9c347abb149ff2ac",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -480,11 +480,11 @@
       "methods": [
         {
           "name": "to_tuple",
-          "doc": "Backward-compatible tuple representation for legacy interfaces."
+          "doc": "Lossy tuple projection for comparison-only interfaces."
         },
         {
           "name": "from_tuple",
-          "doc": "Create ContextEvent from legacy (role, content) tuple."
+          "doc": "Create ContextEvent from historical (role, content) tuple."
         },
         {
           "name": "dialog_act",
@@ -2391,7 +2391,7 @@
     {
       "type": "function",
       "name": "emit_llm_event",
-      "description": "便捷的事件发射函数",
+      "description": "Emit one roles-kernel LLM audit event.",
       "defined_in": "polaris/cells/roles/kernel/internal/events.py"
     },
     {
@@ -3680,7 +3680,7 @@
     {
       "type": "function",
       "name": "_raise_removed_module",
-      "description": "Raise a clear error for retired module-level compatibility imports.",
+      "description": "Raise a clear error for removed module-level imports.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/__init__.py"
     },
     {
@@ -4304,7 +4304,7 @@
     {
       "type": "class",
       "name": "LLMEventEmitter",
-      "description": "Emits UEP v2.0 lifecycle events and backward-compatible LLM events.",
+      "description": "Emits UEP v2.0 lifecycle events and roles-kernel LLM events.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/event_emitter.py",
       "methods": [
         {
@@ -4569,19 +4569,19 @@
         },
         {
           "name": "_emit_call_error_event",
-          "doc": "Backward-compatible delegate to LLMEventEmitter.emit_call_error_event."
+          "doc": "Delegate to LLMEventEmitter.emit_call_error_event."
         },
         {
           "name": "_emit_call_start_event",
-          "doc": "Backward-compatible delegate to LLMEventEmitter.emit_call_start_event."
+          "doc": "Delegate to LLMEventEmitter.emit_call_start_event."
         },
         {
           "name": "_emit_call_end_event",
-          "doc": "Backward-compatible delegate to LLMEventEmitter.emit_call_end_event."
+          "doc": "Delegate to LLMEventEmitter.emit_call_end_event."
         },
         {
           "name": "_emit_call_retry_event",
-          "doc": "Backward-compatible delegate to LLMEventEmitter.emit_call_retry_event."
+          "doc": "Delegate to LLMEventEmitter.emit_call_retry_event."
         },
         {
           "name": "_fill_provider_from_metadata",
@@ -4731,7 +4731,7 @@
     {
       "type": "class",
       "name": "LLMRequestPreparer",
-      "description": "Build canonical LLM requests without the deprecated LLMCaller facade.",
+      "description": "Build canonical LLM requests without the removed LLMCaller facade.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py",
       "methods": [
         {
@@ -4740,7 +4740,7 @@
         },
         {
           "name": "_build_native_tool_schemas",
-          "doc": "Build native tool schemas from profile (for test compatibility)."
+          "doc": "Build native tool schemas from profile for tests and request assembly."
         },
         {
           "name": "_resolve_provider_capabilities",

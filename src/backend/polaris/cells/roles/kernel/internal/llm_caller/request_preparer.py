@@ -2,7 +2,7 @@
 
 Owns provider request construction and fallback request shaping for
 ``LLMInvoker``.  This module deliberately has no public call/call_stream facade;
-``LLMCaller`` is only a deprecated compatibility shell.
+``LLMCaller`` is a removed facade; request construction belongs here.
 """
 
 from __future__ import annotations
@@ -396,7 +396,7 @@ def _with_projection_capability_profile(context: Any, capability_profile: dict[s
 
 
 class LLMRequestPreparer:
-    """Build canonical LLM requests without the deprecated LLMCaller facade."""
+    """Build canonical LLM requests without the removed LLMCaller facade."""
 
     def __init__(
         self,
@@ -411,7 +411,7 @@ class LLMRequestPreparer:
 
     @staticmethod
     def _build_native_tool_schemas(profile: RoleProfile) -> list[dict[str, Any]]:
-        """Build native tool schemas from profile (for test compatibility)."""
+        """Build native tool schemas from profile for tests and request assembly."""
         return build_native_tool_schemas(profile)
 
     def _resolve_provider_capabilities(self, profile: RoleProfile) -> ProviderCapabilities:

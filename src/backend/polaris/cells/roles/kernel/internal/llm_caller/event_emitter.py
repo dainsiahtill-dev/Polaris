@@ -1,4 +1,4 @@
-"""LLM Invoker Event Emitter - UEP lifecycle and legacy event emission.
+"""LLM Invoker Event Emitter - UEP lifecycle and roles-kernel event emission.
 
 # -*- coding: utf-8 -*-
 UTF-8 编码验证: 本文所有文本使用 UTF-8
@@ -39,7 +39,7 @@ def _build_content_preview_payload(payload: dict[str, Any], response_content: st
 
 
 class LLMEventEmitter:
-    """Emits UEP v2.0 lifecycle events and backward-compatible LLM events."""
+    """Emits UEP v2.0 lifecycle events and roles-kernel LLM events."""
 
     def __init__(self, workspace: str = "") -> None:
         """Initialize event emitter.

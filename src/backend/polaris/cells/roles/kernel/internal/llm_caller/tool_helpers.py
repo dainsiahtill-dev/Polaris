@@ -981,7 +981,7 @@ def _build_contract_native_tool_schema(
             if not alias_token or not canonical_token or alias_token in properties or canonical_token not in arg_index:
                 continue
             alias_schema = dict(_build_param_schema(arg_index[canonical_token]))
-            alias_schema["description"] = f"Alias of `{canonical_token}` for compatibility."
+            alias_schema["description"] = f"Alias of `{canonical_token}` accepted by the tool normalizer."
             properties[alias_token] = alias_schema
 
     if not properties:
@@ -1020,7 +1020,7 @@ def extract_native_tool_calls(
         raw_payload: Raw response payload from provider
         provider_id: Provider identifier
         model: Model name
-        response_text: Kept for call-site compatibility; never parsed as tools.
+        response_text: Retained for call-site API stability; never parsed as tools.
 
     Returns:
         Tuple of (tool_calls list, provider hint string)

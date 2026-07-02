@@ -390,9 +390,7 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
     lowered = _trusted_coverage_text(text).lower()
     module_interface_contract = _module_interface_contract_payload(ai_request) if ai_request is not None else {}
     actual_sibling_exports = (
-        _actual_sibling_exports_payload(ai_request, module_interface_contract)
-        if ai_request is not None
-        else {}
+        _actual_sibling_exports_payload(ai_request, module_interface_contract) if ai_request is not None else {}
     )
     architecture_or_file_plan = _architecture_or_file_plan_payload(ai_request) if ai_request is not None else {}
     blueprint_absent = any(
@@ -966,7 +964,7 @@ def _find_module_interface_contract(value: Any, *, depth: int = 0) -> dict[str, 
     if isinstance(value, dict):
         for key in _MODULE_INTERFACE_CONTRACT_KEYS:
             candidate = value.get(key)
-            if _looks_like_module_interface_contract(candidate):
+            if isinstance(candidate, dict) and _looks_like_module_interface_contract(candidate):
                 return dict(candidate)
         if _looks_like_module_interface_contract(value):
             return dict(value)
@@ -1037,9 +1035,10 @@ def _looks_like_actual_sibling_exports(value: Any) -> bool:
     schema_version = str(value.get("schema_version") or "").strip()
     if schema_version == "polaris.actual_sibling_exports.evidence.v1":
         return True
-    return isinstance(value.get("modules"), (list, tuple)) or _int_value(
-        value.get("actual_interface_snapshot_file_count")
-    ) > 0
+    return (
+        isinstance(value.get("modules"), (list, tuple))
+        or _int_value(value.get("actual_interface_snapshot_file_count")) > 0
+    )
 
 
 def _direct_actual_sibling_exports_payload(ai_request: Any | None) -> dict[str, Any]:
@@ -1055,7 +1054,7 @@ def _direct_actual_sibling_exports_payload(ai_request: Any | None) -> dict[str, 
         _mapping(context_payload.get("blueprint")),
     ):
         candidate = container.get("actual_sibling_exports")
-        if _looks_like_actual_sibling_exports(candidate):
+        if isinstance(candidate, dict) and _looks_like_actual_sibling_exports(candidate):
             return dict(candidate)
     return {}
 
@@ -1098,7 +1097,9 @@ def _actual_sibling_exports_payload(
         raw_rows = container.get("existing_target_files")
         if isinstance(raw_rows, (list, tuple)):
             existing_target_files.extend(dict(item) for item in raw_rows if isinstance(item, dict))
-    snapshot_file_count = _int_value(contract.get("actual_interface_snapshot_file_count")) if isinstance(contract, dict) else 0
+    snapshot_file_count = (
+        _int_value(contract.get("actual_interface_snapshot_file_count")) if isinstance(contract, dict) else 0
+    )
     if not rows and not existing_target_files and snapshot_file_count <= 0:
         return {}
     return {
@@ -1565,7 +1566,9 @@ def _canonical_tool_name(name: Any) -> str:
 
 
 def _canonical_tool_names(values: Any) -> list[str]:
-    return _unique_strings([canonical for value in _tool_names_from_payload(values) if (canonical := _canonical_tool_name(value))])
+    return _unique_strings(
+        [canonical for value in _tool_names_from_payload(values) if (canonical := _canonical_tool_name(value))]
+    )
 
 
 def _required_tool_names_from_payload(value: Any) -> list[str]:
@@ -1584,10 +1587,10 @@ def _required_tool_names_from_payload(value: Any) -> list[str]:
             names.extend(_required_tool_names_from_payload(value.get(key)))
         return _unique_strings(names)
     if isinstance(value, (list, tuple, set, frozenset)):
-        names: list[str] = []
+        nested_names: list[str] = []
         for item in value:
-            names.extend(_required_tool_names_from_payload(item))
-        return _unique_strings(names)
+            nested_names.extend(_required_tool_names_from_payload(item))
+        return _unique_strings(nested_names)
     return []
 
 
@@ -1608,10 +1611,10 @@ def _allowed_tool_names_from_payload(value: Any) -> list[str]:
             names.extend(_allowed_tool_names_from_payload(value.get(key)))
         return _unique_strings([canonical for name in names if (canonical := _canonical_tool_name(name))])
     if isinstance(value, (list, tuple, set, frozenset)):
-        names: list[str] = []
+        nested_names: list[str] = []
         for item in value:
-            names.extend(_allowed_tool_names_from_payload(item))
-        return _unique_strings(names)
+            nested_names.extend(_allowed_tool_names_from_payload(item))
+        return _unique_strings(nested_names)
     return []
 
 
@@ -1851,9 +1854,7 @@ def _coverage_source(
         "handoff_decision": workflow_chain.get("handoff_decision_hash", ""),
         "module_interface_contract": str(request_metadata_summary.get("module_interface_contract_hash") or ""),
         "actual_sibling_exports": str(request_metadata_summary.get("actual_sibling_exports_hash") or ""),
-        "interface_discrepancy_context": str(
-            request_metadata_summary.get("interface_discrepancy_context_hash") or ""
-        ),
+        "interface_discrepancy_context": str(request_metadata_summary.get("interface_discrepancy_context_hash") or ""),
         "architecture_or_file_plan": str(request_metadata_summary.get("architecture_or_file_plan_hash") or ""),
         "execution_profile": workflow_chain.get("execution_profile_hash", ""),
         "execution_envelope": workflow_chain.get("execution_envelope_hash", ""),
@@ -2052,9 +2053,7 @@ def _final_request_evidence_coverage(
             "execution_envelope": bool(request_metadata_summary.get("has_execution_envelope")),
             "module_interface_contract": bool(request_metadata_summary.get("has_module_interface_contract")),
             "actual_sibling_exports": bool(request_metadata_summary.get("has_actual_sibling_exports")),
-            "interface_discrepancy_context": bool(
-                request_metadata_summary.get("has_interface_discrepancy_context")
-            ),
+            "interface_discrepancy_context": bool(request_metadata_summary.get("has_interface_discrepancy_context")),
             "architecture_or_file_plan": bool(request_metadata_summary.get("has_architecture_or_file_plan")),
         },
         "workflow_chain": workflow_chain,
@@ -2298,9 +2297,7 @@ def build_final_request_context_audit_for_request(
         "has_output_contract": bool(request_metadata_summary.get("has_output_contract")),
         "has_module_interface_contract": bool(request_metadata_summary.get("has_module_interface_contract")),
         "has_actual_sibling_exports": bool(request_metadata_summary.get("has_actual_sibling_exports")),
-        "has_interface_discrepancy_context": bool(
-            request_metadata_summary.get("has_interface_discrepancy_context")
-        ),
+        "has_interface_discrepancy_context": bool(request_metadata_summary.get("has_interface_discrepancy_context")),
         "has_architecture_or_file_plan": bool(request_metadata_summary.get("has_architecture_or_file_plan")),
         "prompt_profile_selection": prompt_profile_selection,
         "selected_prompt_profile_ids": prompt_profile_selection.get("selected_prompt_profile_ids", []),

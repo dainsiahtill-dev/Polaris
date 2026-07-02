@@ -153,7 +153,7 @@ class StreamEngine:
         Args:
             workspace: Workspace path.
             get_executor: Callable that returns an executor with invoke_stream.
-            allow_native_tool_text_fallback_fn: Deprecated compatibility hook; ignored.
+            allow_native_tool_text_fallback_fn: Ignored text-fallback hook.
             emit_call_start_event: Event emitter callable.
             emit_call_error_event: Event emitter callable.
             emit_call_end_event: Event emitter callable.

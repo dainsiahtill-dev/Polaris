@@ -84,7 +84,7 @@ class PreparedLLMRequest:
 
     Attributes:
         messages: List of formatted messages
-        input_text: Formatted input string for legacy providers
+        input_text: Formatted input string for text-only providers
         context_result: Context gateway result
         context_summary: Hash summary of context
         request_options: Provider-specific request options

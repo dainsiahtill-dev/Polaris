@@ -14,7 +14,7 @@ Migration Notice (2026-03-31):
     have been removed. Their functionality has been consolidated into the
     LLMInvoker service class in invoker.py.
 
-    LLMCaller has been retired. New code must use LLMInvoker directly, while
+    LLMCaller has been removed. New code must use LLMInvoker directly, while
     request construction belongs to LLMRequestPreparer.
 """
 
@@ -89,7 +89,7 @@ __all__ = [
 
 
 def _raise_removed_module(name: str) -> None:
-    """Raise a clear error for retired module-level compatibility imports."""
+    """Raise a clear error for removed module-level imports."""
 
     removed_modules = {
         "call_sync": "Functionality merged into LLMInvoker.call()",

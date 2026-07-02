@@ -1,7 +1,7 @@
 """LLM Invoker Service.
 
 Unified service for LLM invocation that consolidates call, call_structured, and call_stream
-functionality from the deprecated standalone modules.
+functionality from the previous standalone modules.
 
 This is the service layer implementation that replaces:
 - call_sync.py (call method)
@@ -1218,7 +1218,7 @@ class LLMInvoker:
         """Handle ``native_tool_mode == 'native_tools_unavailable'`` (call phase).
 
         Emits a call_error event and returns the ``native_tool_unavailable``
-        error response. Text-mode tool fallback is retired; provider-native
+        error response. Text-mode tool fallback is disabled; provider-native
         tool schemas are required.
         """
         _ = context
@@ -2667,25 +2667,25 @@ class LLMInvoker:
         return bool(getattr(context, "stream_cancelled", False))
 
     # ========================================================================
-    # Backward-compatible event emission delegates
+    # Event emission delegates
     # ========================================================================
 
     def _emit_call_error_event(self, **kwargs: Any) -> None:
-        """Backward-compatible delegate to LLMEventEmitter.emit_call_error_event."""
+        """Delegate to LLMEventEmitter.emit_call_error_event."""
         self._fill_provider_from_metadata(kwargs)
         self._event_emitter.emit_call_error_event(**kwargs)
 
     def _emit_call_start_event(self, **kwargs: Any) -> None:
-        """Backward-compatible delegate to LLMEventEmitter.emit_call_start_event."""
+        """Delegate to LLMEventEmitter.emit_call_start_event."""
         self._fill_provider_from_metadata(kwargs)
         self._event_emitter.emit_call_start_event(**kwargs)
 
     def _emit_call_end_event(self, **kwargs: Any) -> None:
-        """Backward-compatible delegate to LLMEventEmitter.emit_call_end_event."""
+        """Delegate to LLMEventEmitter.emit_call_end_event."""
         self._event_emitter.emit_call_end_event(**kwargs)
 
     def _emit_call_retry_event(self, **kwargs: Any) -> None:
-        """Backward-compatible delegate to LLMEventEmitter.emit_call_retry_event."""
+        """Delegate to LLMEventEmitter.emit_call_retry_event."""
         self._fill_provider_from_metadata(kwargs)
         self._event_emitter.emit_call_retry_event(**kwargs)
 
