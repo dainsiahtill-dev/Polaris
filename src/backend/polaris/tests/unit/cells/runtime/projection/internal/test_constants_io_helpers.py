@@ -8,8 +8,6 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from polaris.cells.runtime.projection.internal.constants import DEFAULT_WORKSPACE
 from polaris.cells.runtime.projection.internal.io_helpers import (
     get_git_status,
