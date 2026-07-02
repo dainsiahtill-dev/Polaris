@@ -34,6 +34,9 @@ try:
     from docs.governance.ci.scripts.dangerous_pattern_source_policy import (
         evaluate_dangerous_pattern_source,
     )
+    from docs.governance.ci.scripts.event_usage_policy import (
+        evaluate_event_usage,
+    )
     from docs.governance.ci.scripts.legacy_coverage_policy import (
         evaluate_legacy_coverage,
     )
@@ -56,6 +59,9 @@ except ModuleNotFoundError:
     )
     from dangerous_pattern_source_policy import (
         evaluate_dangerous_pattern_source,
+    )
+    from event_usage_policy import (
+        evaluate_event_usage,
     )
     from legacy_coverage_policy import (
         evaluate_legacy_coverage,
@@ -442,61 +448,15 @@ class FitnessRuleChecker:
         )
 
     def check_event_usage(self) -> FitnessCheckResult:
-        """Check that events use kernelone.events."""
-        result = FitnessCheckResult(rule_id="CELL_KERNELONE_05", passed=True)
-        canonical_events = [
-            self.workspace / "polaris" / "kernelone" / "events" / "fact_events.py",
-            self.workspace / "polaris" / "kernelone" / "events" / "session_events.py",
-            self.workspace / "polaris" / "kernelone" / "events" / "__init__.py",
-        ]
-        canonical_found = False
-        for path in canonical_events:
-            if path.exists():
-                try:
-                    with open(path, encoding="utf-8") as f:
-                        content = f.read()
-                    if "emit_fact_event" in content or "emit_session_event" in content:
-                        canonical_found = True
-                        break
-                except OSError:
-                    continue
-        if not canonical_found:
-            result.passed = False
-            result.violations.append("Canonical events not found in kernelone/events/")
-            return result
-        result.evidence.append("Canonical events verified in kernelone/events/")
-        cells_dir = self.workspace / "polaris" / "cells"
-        event_patterns = [
-            re.compile(r"def _emit_event\s*\("),
-            re.compile(r"def emit_event\s*\("),
-            re.compile(r"async def _emit_event\s*\("),
-            re.compile(r"async def emit_event\s*\("),
-        ]
-        violations: list[str] = []
-        if cells_dir.exists():
-            for py_file in cells_dir.rglob("*.py"):
-                if py_file in canonical_events:
-                    continue
-                if "test" in py_file.parts or "_fixture" in py_file.name:
-                    continue
-                try:
-                    with open(py_file, encoding="utf-8") as f:
-                        file_content = f.read()
-                    for pat in event_patterns:
-                        for match in pat.finditer(file_content):
-                            line_num = file_content[: match.start()].count("\n") + 1
-                            violations.append(
-                                f"Local event emitter at {py_file.relative_to(self.workspace)}:{line_num}"
-                            )
-                except OSError:
-                    continue
-        if violations:
-            result.passed = False
-            for v in violations:
-                result.violations.append(v)
-        else:
-            result.evidence.append("No local event emitter definitions found in cells/")
-        return result
+        """Check event usage through the canonical policy module."""
+        policy_result = evaluate_event_usage(self.workspace)
+        return FitnessCheckResult(
+            rule_id=policy_result.rule_id,
+            passed=policy_result.passed,
+            evidence=list(policy_result.evidence),
+            violations=list(policy_result.violations),
+            warnings=list(policy_result.warnings),
+        )
 
     def check_tool_compression(self) -> FitnessCheckResult:
         """Check that tool compression uses kernelone.tool."""
