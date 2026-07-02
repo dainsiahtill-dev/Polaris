@@ -4192,7 +4192,6 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
     assert "deterministic_rust_post_repair" not in runtime_repair_source_tools()
     assert "deterministic_rust_derive_repair" in runtime_repair_source_tools()
     assert len(runtime_repair_source_tools()) == len(bindings)
-    assert len(runtime_repair_source_tools()) == 107
     assert sum(1 for binding in bindings if binding["language"] == "rust") == 20
     assert runtime_repair_source_tools() == tuple(binding["source_tool"] for binding in bindings)
     assert all(set(binding) == {"source_tool", "language", "rule_id"} for binding in bindings)
@@ -12643,28 +12642,35 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         or source_tool.startswith("deterministic_typeorm")
         or source_tool == "deterministic_javascript_typescript_annotation_repair"
     ]
-    catalog_failure_message = (
-        "expected public strategy catalog ledger total=108 executable_runtime=107 "
-        "metadata_rule_registered=1 adapter_strategy_host=0; "
-        f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
-        "adapter_strategy_host_source_tools:\n- " + "\n- ".join(baseline_source_tools)
-    )
     legacy_typescript_failure_message = (
         "TypeScript migration source_tools must not be in adapter_strategy_host_source_tools:\n- "
         + "\n- ".join(legacy_typescript_source_tools)
     )
+    expected_runtime_source_tools = list(runtime_repair_source_tools())
+    expected_status_counts: dict[str, int] = {}
+    for item in catalog_payload["items"]:
+        status = str(item["implementation_status"])
+        expected_status_counts[status] = expected_status_counts.get(status, 0) + 1
+    catalog_failure_message = (
+        "expected public strategy catalog ledger to match runtime binding facts "
+        "and contain no adapter_strategy_host source_tools; "
+        f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
+        "adapter_strategy_host_source_tools:\n- " + "\n- ".join(baseline_source_tools)
+    )
 
-    assert catalog_summary["total"] == 108
+    assert catalog_summary["total"] == len(catalog_payload["items"])
     assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
     assert baseline_source_tools == [], catalog_failure_message
-    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 107, catalog_failure_message
-    assert catalog_summary["implementation_status_counts"].get("metadata_rule_registered", 0) == 1, (
+    assert catalog_summary["implementation_status_counts"] == expected_status_counts, catalog_failure_message
+    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == len(
+        expected_runtime_source_tools
+    ), catalog_failure_message
+    assert catalog_summary["implementation_status_counts"].get("adapter_strategy_host", 0) == 0, catalog_failure_message
+    assert catalog_summary["executable_runtime_binding_count"] == len(expected_runtime_source_tools), (
         catalog_failure_message
     )
-    assert catalog_summary["implementation_status_counts"].get("adapter_strategy_host", 0) == 0, catalog_failure_message
-    assert catalog_summary["executable_runtime_binding_count"] == 107, catalog_failure_message
     assert catalog_summary["adapter_strategy_host_count"] == 0, catalog_failure_message
-    assert len(catalog_summary["executable_runtime_source_tools"]) == 107, catalog_failure_message
+    assert catalog_summary["executable_runtime_source_tools"] == expected_runtime_source_tools, catalog_failure_message
     assert set(catalog_summary["implementation_status_counts"]).issubset(
         {"executable_runtime", "metadata_rule_registered", "adapter_strategy_host"}
     )

@@ -880,7 +880,7 @@ def build_javascript_node_smoke_test_content(test_rel_path: str, base_files: Map
     """Return a deterministic smoke test for a generated Node package."""
 
     package_payload = _parse_package_json(str(base_files.get("package.json") or "")) or {}
-    entrypoint = _compiled_typescript_entrypoint(base_files, package_payload)
+    entrypoint = _javascript_node_smoke_entrypoint(base_files, package_payload)
     source_files = [
         path
         for path in sorted(base_files)
@@ -892,7 +892,7 @@ def build_javascript_node_smoke_test_content(test_rel_path: str, base_files: Map
     source_json = json.dumps(source_files[:12], ensure_ascii=True)
     entrypoint_json = json.dumps(entrypoint, ensure_ascii=True)
     if _javascript_node_smoke_test_uses_esm(test_rel_path, base_files, package_payload):
-        return f"""import assert from 'node:assert';
+        return rf"""import assert from 'node:assert';
 import childProcess from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -909,8 +909,8 @@ const entrypointPath = path.join(projectRoot, entrypoint);
 assert.ok(packageJson.name, 'package name is required');
 assert.ok(packageJson.scripts && packageJson.scripts.build, 'build script is required');
 assert.ok(packageJson.scripts && packageJson.scripts.test, 'test script is required');
-assert.ok(entrypoint.endsWith('.js'), 'compiled Node entrypoint must be JavaScript');
-assert.ok(fs.existsSync(entrypointPath), `compiled entrypoint missing: ${{entrypoint}}`);
+assert.ok(/\.(?:js|mjs|cjs)$/.test(entrypoint), 'Node entrypoint must be JavaScript');
+assert.ok(fs.existsSync(entrypointPath), `entrypoint missing: ${{entrypoint}}`);
 assert.ok(sourceFiles.length > 0, 'at least one source file is required');
 
 for (const file of sourceFiles) {{
@@ -926,12 +926,12 @@ assert.doesNotThrow(() => {{
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }});
-}}, 'compiled entrypoint should execute');
+}}, 'Node entrypoint should execute');
 assert.strictEqual(typeof output, 'string', 'entrypoint output must be string');
 
 console.log(`node smoke checks passed for ${{sourceFiles.length}} source files`);
 """
-    return f"""const assert = require('assert');
+    return rf"""const assert = require('assert');
 const childProcess = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -945,8 +945,8 @@ const entrypointPath = path.join(projectRoot, entrypoint);
 assert.ok(packageJson.name, 'package name is required');
 assert.ok(packageJson.scripts && packageJson.scripts.build, 'build script is required');
 assert.ok(packageJson.scripts && packageJson.scripts.test, 'test script is required');
-assert.ok(entrypoint.endsWith('.js'), 'compiled Node entrypoint must be JavaScript');
-assert.ok(fs.existsSync(entrypointPath), `compiled entrypoint missing: ${{entrypoint}}`);
+assert.ok(/\.(?:js|mjs|cjs)$/.test(entrypoint), 'Node entrypoint must be JavaScript');
+assert.ok(fs.existsSync(entrypointPath), `entrypoint missing: ${{entrypoint}}`);
 assert.ok(sourceFiles.length > 0, 'at least one source file is required');
 
 for (const file of sourceFiles) {{
@@ -962,7 +962,7 @@ assert.doesNotThrow(() => {{
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }});
-}}, 'compiled entrypoint should execute');
+}}, 'Node entrypoint should execute');
 assert.strictEqual(typeof output, 'string', 'entrypoint output must be string');
 
 console.log(`node smoke checks passed for ${{sourceFiles.length}} source files`);
@@ -1199,19 +1199,69 @@ def _fallback_script_for_placeholder_script(
     if normalized_script_name in {"lint", "check", "typecheck"}:
         if has_typescript_context:
             return _fallback_script_for_missing_entrypoint(normalized_script_name)
-        return _node_manifest_validation_script()
+        return _node_source_syntax_check_script(base_files)
     if normalized_script_name in {"build", "verify"}:
         scripts_raw = package_payload.get("scripts")
         scripts: Mapping[str, Any] = scripts_raw if isinstance(scripts_raw, Mapping) else {}
-        build_script = str(scripts.get("build") or "").strip()
-        if normalized_script_name == "verify" and build_script:
-            return build_script
-        return _node_manifest_validation_script()
-    return _node_manifest_validation_script()
+        if has_typescript_context:
+            return _fallback_script_for_recursive_script(normalized_script_name, base_files, package_payload)
+        if normalized_script_name == "verify":
+            for upstream_script_name in ("test", "build", "lint", "check", "typecheck"):
+                upstream_script = _non_placeholder_script(scripts, upstream_script_name)
+                if upstream_script:
+                    return f"npm run {upstream_script_name}"
+        return _node_source_syntax_check_script(base_files)
+    return ""
 
 
-def _node_manifest_validation_script() -> str:
-    return "node -e \"JSON.parse(require('node:fs').readFileSync('package.json','utf8'))\""
+def _node_source_syntax_check_script(base_files: Mapping[str, str]) -> str:
+    source_paths = [
+        path
+        for path in sorted(base_files)
+        if _is_plain_javascript_source_path(path)
+    ]
+    if not source_paths:
+        return ""
+    return " && ".join(f"node --check {shlex.quote(path)}" for path in source_paths)
+
+
+def _is_plain_javascript_source_path(path: str) -> bool:
+    normalized = _normalize_repair_path(path)
+    if not normalized.endswith((".js", ".mjs", ".cjs")):
+        return False
+    excluded_prefixes = ("node_modules/", "dist/", "build/", "out/", "coverage/", "tests/")
+    if normalized.startswith(excluded_prefixes):
+        return False
+    name = PurePosixPath(normalized).name
+    return not (
+        name.startswith(".")
+        or name.endswith(".test.js")
+        or name.endswith(".spec.js")
+        or name.startswith("test_")
+    )
+
+
+def _non_placeholder_script(scripts: Mapping[str, Any], script_name: str) -> str:
+    script = str(scripts.get(script_name) or "").strip()
+    if not script or _looks_like_placeholder_script(script):
+        return ""
+    return script
+
+
+def _looks_like_placeholder_script(script: str) -> bool:
+    lowered = script.lower()
+    placeholder_markers = (
+        "no test specified",
+        "placeholder",
+        "todo",
+        "not implemented",
+        "stub",
+        "wire ",
+        "coming soon",
+    )
+    if any(marker in lowered for marker in placeholder_markers):
+        return True
+    return lowered.startswith("echo ") and "exit 0" in lowered
 
 
 def _has_node_test_files(base_files: Mapping[str, str]) -> bool:
@@ -1293,6 +1343,32 @@ def _fallback_script_for_recursive_script(
         entrypoint = _compiled_typescript_entrypoint(base_files, package_payload)
         return f"npm run build && node {entrypoint}" if entrypoint else "npm run build"
     return ""
+
+
+def _javascript_node_smoke_entrypoint(base_files: Mapping[str, str], package_payload: Mapping[str, Any]) -> str:
+    entrypoint = _normalize_repair_path(str(package_payload.get("main") or ""))
+    if entrypoint.endswith((".js", ".mjs", ".cjs")) and not entrypoint.startswith(("dist/", "build/", "out/")):
+        return entrypoint
+    if entrypoint.startswith(("dist/", "build/", "out/")) and entrypoint.endswith((".js", ".mjs", ".cjs")):
+        return entrypoint
+    for source_entry in (
+        "src/index.js",
+        "src/main.js",
+        "src/app.js",
+        "index.js",
+        "main.js",
+        "src/index.mjs",
+        "src/main.mjs",
+        "index.mjs",
+        "main.mjs",
+        "src/index.cjs",
+        "src/main.cjs",
+        "index.cjs",
+        "main.cjs",
+    ):
+        if source_entry in base_files:
+            return source_entry
+    return _compiled_typescript_entrypoint(base_files, package_payload)
 
 
 def _compiled_typescript_entrypoint(base_files: Mapping[str, str], package_payload: Mapping[str, Any]) -> str:

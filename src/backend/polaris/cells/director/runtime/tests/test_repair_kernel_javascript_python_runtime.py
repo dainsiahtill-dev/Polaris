@@ -14,6 +14,7 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     run_runtime_repair,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.javascript_syntax import (
+    build_javascript_node_smoke_test_content,
     build_npm_script_contract_plan,
     build_substantive_node_test_script,
 )
@@ -82,6 +83,32 @@ def _run_js_missing_method_runtime(
         allowed_paths=allowed_paths,
     )
     return result, writes, edits
+
+
+def test_javascript_node_smoke_test_uses_source_entrypoint_for_plain_javascript_package() -> None:
+    content = build_javascript_node_smoke_test_content(
+        "tests/product.test.js",
+        {
+            "package.json": json.dumps(
+                {
+                    "name": "plain-js-product",
+                    "type": "module",
+                    "main": "src/index.js",
+                    "scripts": {
+                        "build": "node --check src/index.js",
+                        "test": "node --test tests/product.test.js",
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            "src/index.js": "console.log('ok');\n",
+            "src/engine/rules.js": "export const rules = [];\n",
+        },
+    )
+
+    assert 'const entrypoint = "src/index.js";' in content
+    assert "dist/index.js" not in content
+    assert "entrypoint missing: ${entrypoint}" in content
 
 
 def test_javascript_missing_method_runtime_adds_aliases_with_precise_edit(tmp_path: Path) -> None:
@@ -680,7 +707,7 @@ def test_npm_script_contract_repairs_plain_javascript_placeholder_lint() -> None
     )
 
     plan = build_npm_script_contract_plan(
-        base_files={"package.json": package_text},
+        base_files={"package.json": package_text, "src/index.js": "export const ok = true;\n"},
         diagnostics=diagnostics,
         mode="shadow",
     )
@@ -690,14 +717,80 @@ def test_npm_script_contract_repairs_plain_javascript_placeholder_lint() -> None
     assert [(operation.kind, operation.path, operation.json_path) for operation in plan.operations] == [
         ("json_set", "package.json", ("scripts", "lint"))
     ]
-    assert plan.operations[0].value == (
-        "node -e \"JSON.parse(require('node:fs').readFileSync('package.json','utf8'))\""
-    )
+    assert plan.operations[0].value == "node --check src/index.js"
 
-    composition = PatchComposer().compose({"package.json": package_text}, plan.operations)
+    composition = PatchComposer().compose(
+        {"package.json": package_text, "src/index.js": "export const ok = true;\n"},
+        plan.operations,
+    )
     assert composition.ok
     repaired = json.loads(composition.patches[0].content_after)
     assert repaired["scripts"]["lint"] == plan.operations[0].value
+
+
+def test_npm_script_contract_declines_plain_javascript_placeholder_without_source() -> None:
+    package_text = json.dumps(
+        {
+            "name": "sample",
+            "version": "1.0.0",
+            "scripts": {
+                "lint": 'echo "lint placeholder - wire eslint later" && exit 0',
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            (
+                "Artifact quality scan failed: npm package manifest script 'lint' "
+                'is a placeholder command: echo "lint placeholder - wire eslint later" && exit 0 in package.json'
+            )
+        ]
+    )
+
+    plan = build_npm_script_contract_plan(
+        base_files={"package.json": package_text},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_npm_script_contract_does_not_wrap_placeholder_upstream_script() -> None:
+    package_text = json.dumps(
+        {
+            "name": "sample",
+            "version": "1.0.0",
+            "scripts": {
+                "build": 'echo "build placeholder - wire bundler later" && exit 0',
+                "verify": 'echo "verify placeholder - wire tests later" && exit 0',
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            (
+                "Artifact quality scan failed: npm package manifest script 'verify' "
+                'is a placeholder command: echo "verify placeholder - wire tests later" && exit 0 in package.json'
+            )
+        ]
+    )
+
+    plan = build_npm_script_contract_plan(
+        base_files={"package.json": package_text, "src/index.js": "console.log('ok');\n"},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert [(operation.kind, operation.path, operation.json_path) for operation in plan.operations] == [
+        ("json_set", "package.json", ("scripts", "verify"))
+    ]
+    assert plan.operations[0].value == "node --check src/index.js"
 
 
 def test_npm_script_contract_repairs_recursive_build_script_with_structured_json() -> None:
