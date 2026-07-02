@@ -483,7 +483,7 @@ def build_cpp_failing_smoke_translation_unit_plan(
         metadata={
             "archetype": "runtime_smoke",
             "repair_kind": "cpp_failing_smoke_translation_unit",
-            "legacy_post_helper_used": False,
+            "adapter_post_helper_used": False,
         },
     )
 
@@ -555,7 +555,7 @@ def build_cpp_post_plan(
             "repair_kind": "cpp_post_execution_conservative",
             "aggregate_runtime_child_rules": tuple(child_rule_ids),
             "aggregate_runtime_child_source_tools": tuple(child_source_tools),
-            "legacy_post_helper_used": False,
+            "adapter_post_helper_used": False,
         },
     )
 

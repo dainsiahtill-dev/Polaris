@@ -956,4 +956,4 @@ def test_node_test_script_contract_run_replaces_overstrict_script(tmp_path: Path
     receipt = result.execution_result.receipt
     assert receipt.source_tool == "deterministic_node_test_script_contract_repair"
     assert receipt.files_changed == ("scripts/test.mjs",)
-    assert receipt.metadata["legacy_transform_migrated"] is True
+    assert receipt.metadata["adapter_transform_migrated"] is True

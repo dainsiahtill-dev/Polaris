@@ -274,7 +274,7 @@ def build_quality_repair_plan(
         mode=mode,
         risk_level="low",
         priority=1,
-        metadata={"aggregate": "generic_quality_cleanup", "legacy_language_fanout": False},
+        metadata={"aggregate": "generic_quality_cleanup", "adapter_language_fanout": False},
     )
 
 

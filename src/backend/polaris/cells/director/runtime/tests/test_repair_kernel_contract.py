@@ -4060,10 +4060,10 @@ def test_java_test_dependency_rule_builds_whole_file_fallback_runtime_plan() -> 
     assert plan.rule_id == "java.junit_test_dependency"
     assert plan.source_tool == "deterministic_java_test_dependency_repair"
     assert plan.metadata["edit_strategy"] == "whole_file_fallback"
-    assert plan.metadata["legacy_transform_migrated"] is True
+    assert plan.metadata["adapter_transform_migrated"] is True
     assert plan.operations[0].kind == "write_file"
     assert plan.operations[0].metadata["edit_strategy"] == "whole_file_fallback"
-    assert plan.operations[0].metadata["legacy_transform_migrated"] is True
+    assert plan.operations[0].metadata["adapter_transform_migrated"] is True
     assert "org.junit" not in plan.operations[0].content
     assert "public static void main" in plan.operations[0].content
     assert coverage["items"][0]["executable_runtime_plan_matched"] is True
@@ -7404,7 +7404,7 @@ def test_cpp_post_rule_builds_compile_smoke_plan_without_legacy_helper() -> None
     assert smoke_plan.operations[0].metadata["repair_kind"] == "cpp_failing_smoke_translation_unit"
     assert post_plan is not None
     assert post_plan.source_tool == "deterministic_cpp_post_repair"
-    assert post_plan.metadata["legacy_post_helper_used"] is False
+    assert post_plan.metadata["adapter_post_helper_used"] is False
     assert "cpp.failing_smoke_translation_unit" in post_plan.metadata["aggregate_runtime_child_rules"]
     assert {operation.path for operation in post_plan.operations} == {
         "src/engine/generator.cpp",

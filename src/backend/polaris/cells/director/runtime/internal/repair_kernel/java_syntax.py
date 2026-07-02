@@ -197,7 +197,7 @@ def build_java_test_dependency_plan(
                 metadata={
                     "repair_kind": "java_junit_test_dependency",
                     "edit_strategy": "whole_file_fallback",
-                    "legacy_transform_migrated": True,
+                    "adapter_transform_migrated": True,
                     "write_file_reason": "java_junit_dependency_transform_requires_multi_span_rewrite",
                 },
             )
@@ -214,7 +214,7 @@ def build_java_test_dependency_plan(
         priority=1,
         metadata={
             "edit_strategy": "whole_file_fallback",
-            "legacy_transform_migrated": True,
+            "adapter_transform_migrated": True,
         },
     )
 
@@ -471,7 +471,7 @@ def build_java_post_plan(
             "repair_kind": "java_post_execution_conservative",
             "aggregate_runtime_child_rules": tuple(child_rule_ids),
             "aggregate_runtime_child_source_tools": tuple(child_source_tools),
-            "legacy_post_helper_used": False,
+            "adapter_post_helper_used": False,
         },
     )
 

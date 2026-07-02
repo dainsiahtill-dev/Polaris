@@ -1290,7 +1290,7 @@ def project_director_repair_materialization_bridge_metadata(
         "schema_version": "director.materialization_quality_runtime_ports.v1",
         "mode": "runtime_schedule_step_runner_adapter",
         "runtime_ports_module": "roles.adapters.internal.director.materialization_quality_runtime_ports",
-        "retired_strategy_host_removed": True,
+        "adapter_strategy_host_removed": True,
         "runtime_schedule_owner": "director.runtime",
         "runner_binding_owner": "roles.adapters",
         "ordered_step_ids": [step.step_id for step in command.ordered_steps],
@@ -1359,11 +1359,7 @@ def _coverage_items_for_source_tool(
     coverage: DirectorRepairCoverageReportV1,
     source_tool: str,
 ) -> tuple[DirectorRepairDiagnosticCoverageV1, ...]:
-    return tuple(
-        item
-        for item in coverage.items
-        if source_tool in item.matched_source_tools
-    )
+    return tuple(item for item in coverage.items if source_tool in item.matched_source_tools)
 
 
 def _artifact_quality_error_from_coverage_item(item: DirectorRepairDiagnosticCoverageV1) -> str:
@@ -1411,9 +1407,7 @@ def _coverage_item_is_covered_unplannable(
     if not item.known_rule_matched:
         return False
     candidate_set = set(candidate_source_tools)
-    selected_matched = {
-        source_tool for source_tool in item.matched_source_tools if source_tool in candidate_set
-    }
+    selected_matched = {source_tool for source_tool in item.matched_source_tools if source_tool in candidate_set}
     return bool(selected_matched) and selected_matched.isdisjoint(plannable_source_tools)
 
 

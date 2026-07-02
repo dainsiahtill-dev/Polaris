@@ -1198,7 +1198,7 @@ def _project_materialization_quality_migration_debt(
         "schema_version": "director.materialization_quality_repair_migration_debt.v1",
         "owner_cell": "roles.adapters",
         "runtime_schedule_owner": "director.runtime",
-        "retired_strategy_host_removed": True,
+        "adapter_strategy_host_removed": True,
         "bridge_mode": "runtime_schedule_step_runner_adapter",
         "adapter_projection_bridge": True,
         "adapter_callback_bridge": False,

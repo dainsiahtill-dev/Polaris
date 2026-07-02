@@ -301,7 +301,7 @@ def build_node_test_script_contract_plan(
                 before_hash=sha256_text(script_text),
                 metadata={
                     "repair_kind": "node_test_script_contract",
-                    "legacy_transform_migrated": True,
+                    "adapter_transform_migrated": True,
                     "write_file_reason": "node_test_contract_whole_script_replacement",
                     "diagnostic_ids": [diagnostic.diagnostic_id for diagnostic in matched_diagnostics],
                 },
@@ -313,7 +313,7 @@ def build_node_test_script_contract_plan(
         priority=1,
         metadata={
             "edit_strategy": "whole_file_test_contract_replacement",
-            "legacy_transform_migrated": True,
+            "adapter_transform_migrated": True,
         },
     )
 
