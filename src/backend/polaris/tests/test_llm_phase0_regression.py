@@ -3031,7 +3031,7 @@ class TestSettingsPersistence:
     def test_save_settings_into_global_config(self, tmp_path, monkeypatch):
         from polaris.bootstrap.config import Settings
         from polaris.cells.storage.layout.internal.settings_utils import (
-            get_legacy_settings_path,
+            get_migration_settings_path,
             get_settings_path,
             save_persisted_settings,
         )
@@ -3059,15 +3059,11 @@ class TestSettingsPersistence:
         assert global_payload.get("workspace") == os.path.abspath(str(workspace))
         assert global_payload.get("pm_backend") == "ollama"
 
-        legacy_path = get_legacy_settings_path()
-        assert os.path.isfile(legacy_path)
-        with open(legacy_path, encoding="utf-8") as handle:
-            legacy_payload = json.load(handle)
-        assert legacy_payload == {"workspace": os.path.abspath(str(workspace))}
+        assert not os.path.isfile(get_migration_settings_path())
 
     def test_load_settings_migrates_legacy_to_global(self, tmp_path, monkeypatch):
         from polaris.cells.storage.layout.internal.settings_utils import (
-            get_legacy_settings_path,
+            get_migration_settings_path,
             get_settings_path,
             load_persisted_settings,
         )
@@ -3079,13 +3075,13 @@ class TestSettingsPersistence:
         workspace = tmp_path / "workspace"
         workspace.mkdir(parents=True, exist_ok=True)
 
-        legacy_payload = {
+        migration_payload = {
             "workspace": os.path.abspath(str(workspace)),
             "pm_backend": "ollama",
             "pm_model": "legacy-model",
             "auto_refresh": False,
         }
-        self._write_json(get_legacy_settings_path(), legacy_payload)
+        self._write_json(get_migration_settings_path(), migration_payload)
 
         loaded = load_persisted_settings()
         assert loaded.get("workspace") == os.path.abspath(str(workspace))

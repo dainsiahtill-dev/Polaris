@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 _E2E_PROTECT_GLOBAL_SETTINGS_ENV = "KERNELONE_E2E_PROTECT_GLOBAL_SETTINGS"
 
 
-def get_legacy_settings_path() -> str:
+def get_migration_settings_path() -> str:
     from polaris.cells.storage.layout import polaris_home
 
     return os.path.join(polaris_home(), "settings.json")
@@ -104,13 +104,13 @@ def _load_json_dict(path: str) -> dict[str, Any]:
         return {}
 
 
-def _resolve_workspace_hint(workspace: str, legacy_settings: dict[str, Any]) -> str:
+def _resolve_workspace_hint(workspace: str, migration_settings: dict[str, Any]) -> str:
     workspace_hint = str(workspace or "").strip()
     if workspace_hint:
         return os.path.abspath(workspace_hint)
-    legacy_workspace = str(legacy_settings.get("workspace") or "").strip()
-    if legacy_workspace:
-        return os.path.abspath(legacy_workspace)
+    migration_workspace = str(migration_settings.get("workspace") or "").strip()
+    if migration_workspace:
+        return os.path.abspath(migration_workspace)
     return ""
 
 
@@ -293,7 +293,7 @@ def load_persisted_settings(workspace: str = "") -> dict[str, Any]:
     workspace_settings = get_workspace_settings_path(workspace)
     if workspace_settings:
         candidates.append(workspace_settings)
-    candidates.append(get_legacy_settings_path())
+    candidates.append(get_migration_settings_path())
 
     for path in candidates:
         raw_payload = _load_json_dict(path)
@@ -333,8 +333,3 @@ def save_persisted_settings(settings: "Settings") -> None:
         logger.info(f"Saved persisted settings: workspace={workspace_root}, path={settings_path}")
     except (RuntimeError, ValueError) as e:
         logger.warning(f"Failed to save settings: {e}")
-    legacy_payload = {"workspace": workspace_root} if workspace_root else {}
-    try:
-        _write_json_dict(get_legacy_settings_path(), legacy_payload)
-    except (RuntimeError, ValueError) as e:
-        logger.debug(f"Failed to save legacy settings: {e}")
