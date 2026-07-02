@@ -1974,11 +1974,11 @@ export const llmTestService = {
 // ============================================================================
 
 export const permissionsV2Service = {
-  /** POST /v2/permissions/v2/check — Check permission */
+  /** POST /v2/permissions/check — Check permission */
   async check(
     request: import("./api.types").PermissionCheckRequest,
   ): Promise<ApiResult<import("./api.types").PermissionCheckResponse>> {
-    const res = await apiFetch("/v2/permissions/v2/check", {
+    const res = await apiFetch("/v2/permissions/check", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
@@ -1986,27 +1986,27 @@ export const permissionsV2Service = {
     return handleResponse(res, "Permission check failed");
   },
 
-  /** GET /v2/permissions/v2/effective — Effective permissions */
+  /** GET /v2/permissions/effective — Effective permissions */
   async getEffective(): Promise<
     ApiResult<import("./api.types").EffectivePermissionsResponse>
   > {
-    const res = await apiFetch("/v2/permissions/v2/effective");
+    const res = await apiFetch("/v2/permissions/effective");
     return handleResponse(res, "Failed to load effective permissions");
   },
 
-  /** GET /v2/permissions/v2/roles — Permission roles */
+  /** GET /v2/permissions/roles — Permission roles */
   async listRoles(): Promise<
     ApiResult<import("./api.types").PermissionRolesResponse>
   > {
-    const res = await apiFetch("/v2/permissions/v2/roles");
+    const res = await apiFetch("/v2/permissions/roles");
     return handleResponse(res, "Failed to list permission roles");
   },
 
-  /** POST /v2/permissions/v2/assign — Assign permission */
+  /** POST /v2/permissions/assign — Assign permission */
   async assign(
     request: import("./api.types").PermissionAssignRequest,
   ): Promise<ApiResult<import("./api.types").PermissionAssignResponse>> {
-    const res = await apiFetch("/v2/permissions/v2/assign", {
+    const res = await apiFetch("/v2/permissions/assign", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
@@ -2014,11 +2014,11 @@ export const permissionsV2Service = {
     return handleResponse(res, "Permission assign failed");
   },
 
-  /** GET /v2/permissions/v2/policies — Permission policies */
+  /** GET /v2/permissions/policies — Permission policies */
   async listPolicies(): Promise<
     ApiResult<import("./api.types").PermissionPoliciesResponse>
   > {
-    const res = await apiFetch("/v2/permissions/v2/policies");
+    const res = await apiFetch("/v2/permissions/policies");
     return handleResponse(res, "Failed to list permission policies");
   },
 };

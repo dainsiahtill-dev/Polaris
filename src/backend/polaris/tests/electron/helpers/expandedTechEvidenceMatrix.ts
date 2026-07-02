@@ -3317,7 +3317,7 @@ async function collectLlmConfigControlPlaneRuntimeProbe(page: Page): Promise<Evi
 async function collectPermissionPdpRuntimeProbe(page: Page): Promise<EvidenceProbe> {
   try {
     const allowed = asRecord(
-      await requestJson<JsonRecord>(page, "/v2/permissions/v2/check", {
+      await requestJson<JsonRecord>(page, "/v2/permissions/check", {
         method: "POST",
         timeoutMs: 5_000,
         body: {
@@ -3329,7 +3329,7 @@ async function collectPermissionPdpRuntimeProbe(page: Page): Promise<EvidencePro
       }),
     );
     const denied = asRecord(
-      await requestJson<JsonRecord>(page, "/v2/permissions/v2/check", {
+      await requestJson<JsonRecord>(page, "/v2/permissions/check", {
         method: "POST",
         timeoutMs: 5_000,
         body: {
@@ -3341,7 +3341,7 @@ async function collectPermissionPdpRuntimeProbe(page: Page): Promise<EvidencePro
       }),
     );
     const effective = asRecord(
-      await requestJson<JsonRecord>(page, "/v2/permissions/v2/effective?subject_type=role&subject_id=pm", {
+      await requestJson<JsonRecord>(page, "/v2/permissions/effective?subject_type=role&subject_id=pm", {
         timeoutMs: 5_000,
       }),
     );
@@ -3362,17 +3362,17 @@ async function collectPermissionPdpRuntimeProbe(page: Page): Promise<EvidencePro
       evidence: [
         {
           type: "api",
-          ref: "POST /v2/permissions/v2/check allow",
+          ref: "POST /v2/permissions/check allow",
           value: allowed,
         },
         {
           type: "api",
-          ref: "POST /v2/permissions/v2/check deny",
+          ref: "POST /v2/permissions/check deny",
           value: denied,
         },
         {
           type: "api",
-          ref: "GET /v2/permissions/v2/effective",
+          ref: "GET /v2/permissions/effective",
           value: {
             permission_count: Array.isArray(effective.permissions) ? effective.permissions.length : 0,
             permissions: effective.permissions,
@@ -3389,8 +3389,8 @@ async function collectPermissionPdpRuntimeProbe(page: Page): Promise<EvidencePro
       status: "WARN",
       required: false,
       evidence: [
-        { type: "api", ref: "POST /v2/permissions/v2/check" },
-        { type: "api", ref: "GET /v2/permissions/v2/effective" },
+        { type: "api", ref: "POST /v2/permissions/check" },
+        { type: "api", ref: "GET /v2/permissions/effective" },
       ],
       findings: [String(error)],
     });

@@ -708,7 +708,7 @@ test("candidate runtime coverage maps runtime isolation and history archive prob
       category: "security",
       status: "PASS",
       required: false,
-      evidence: [{ type: "api", ref: "POST /v2/permissions/v2/check" }],
+      evidence: [{ type: "api", ref: "POST /v2/permissions/check" }],
       findings: [],
     },
     {

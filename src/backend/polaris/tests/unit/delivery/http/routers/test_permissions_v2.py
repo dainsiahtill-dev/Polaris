@@ -1,8 +1,8 @@
 """Tests for Polaris permissions v2 endpoints.
 
-Covers POST /v2/permissions/v2/check, GET /v2/permissions/v2/effective,
-GET /v2/permissions/v2/roles, POST /v2/permissions/v2/assign,
-and GET /v2/permissions/v2/policies.
+Covers POST /v2/permissions/check, GET /v2/permissions/effective,
+GET /v2/permissions/roles, POST /v2/permissions/assign,
+and GET /v2/permissions/policies.
 External services are mocked to avoid policy and role registry dependencies.
 """
 
@@ -212,7 +212,7 @@ async def client_with_real_permission_dependency(
 
 
 # ---------------------------------------------------------------------------
-# POST /v2/permissions/v2/check
+# POST /v2/permissions/check
 # ---------------------------------------------------------------------------
 
 
@@ -223,7 +223,7 @@ async def test_v2_permissions_check_uses_real_dependency(
     """Production dependency should resolve the policy.permission public service."""
     client, mock_get_permission_service = client_with_real_permission_dependency
     response = await client.post(
-        "/v2/permissions/v2/check",
+        "/v2/permissions/check",
         json={
             "subject": {"type": "role", "id": "pm"},
             "resource": {"type": "file", "pattern": "**/*.py"},
@@ -241,7 +241,7 @@ async def test_v2_permissions_check_uses_real_dependency(
 async def test_v2_permissions_check_allowed(client: AsyncClient, mock_permission_service: MagicMock) -> None:
     """Check permission should return allowed=True for valid request."""
     response = await client.post(
-        "/v2/permissions/v2/check",
+        "/v2/permissions/check",
         json={
             "subject": {"type": "role", "id": "pm"},
             "resource": {"type": "file", "pattern": "**/*.py"},
@@ -264,7 +264,7 @@ async def test_v2_permissions_check_invalid_subject_type(
     """Check permission with invalid subject type should return 400."""
     mock_permission_service.check_permission = AsyncMock(side_effect=ValueError("invalid subject type"))
     response = await client.post(
-        "/v2/permissions/v2/check",
+        "/v2/permissions/check",
         json={
             "subject": {"type": "invalid", "id": "x"},
             "resource": {"type": "file", "pattern": "*"},
@@ -281,7 +281,7 @@ async def test_v2_permissions_check_runtime_error(client: AsyncClient, mock_perm
     """Check permission runtime error should return 500."""
     mock_permission_service.check_permission = AsyncMock(side_effect=RuntimeError("db down"))
     response = await client.post(
-        "/v2/permissions/v2/check",
+        "/v2/permissions/check",
         json={
             "subject": {"type": "role", "id": "pm"},
             "resource": {"type": "file", "pattern": "*"},
@@ -294,14 +294,14 @@ async def test_v2_permissions_check_runtime_error(client: AsyncClient, mock_perm
 
 
 # ---------------------------------------------------------------------------
-# GET /v2/permissions/v2/effective
+# GET /v2/permissions/effective
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_v2_permissions_effective(client: AsyncClient, mock_permission_service: MagicMock) -> None:
     """Effective permissions should return list of permissions."""
-    response = await client.get("/v2/permissions/v2/effective?subject_type=role&subject_id=pm")
+    response = await client.get("/v2/permissions/effective?subject_type=role&subject_id=pm")
     assert response.status_code == 200
     data = response.json()
     assert data["subject"] == {"type": "role", "id": "pm"}
@@ -316,21 +316,21 @@ async def test_v2_permissions_effective_invalid_subject(
 ) -> None:
     """Effective permissions with invalid subject should return 400."""
     mock_permission_service.get_effective_permissions = AsyncMock(side_effect=ValueError("bad subject"))
-    response = await client.get("/v2/permissions/v2/effective?subject_type=bad&subject_id=x")
+    response = await client.get("/v2/permissions/effective?subject_type=bad&subject_id=x")
     assert response.status_code == 400
     data = response.json()
     assert data["error"]["code"] == "INVALID_REQUEST"
 
 
 # ---------------------------------------------------------------------------
-# GET /v2/permissions/v2/roles
+# GET /v2/permissions/roles
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_v2_permissions_roles(client: AsyncClient, mock_permission_service: MagicMock) -> None:
     """Roles endpoint should return list of roles."""
-    response = await client.get("/v2/permissions/v2/roles")
+    response = await client.get("/v2/permissions/roles")
     assert response.status_code == 200
     data = response.json()
     assert "roles" in data
@@ -345,14 +345,14 @@ async def test_v2_permissions_roles(client: AsyncClient, mock_permission_service
 async def test_v2_permissions_roles_error(client: AsyncClient, mock_permission_service: MagicMock) -> None:
     """Roles endpoint error should return 500."""
     mock_permission_service.list_roles = AsyncMock(side_effect=RuntimeError("db error"))
-    response = await client.get("/v2/permissions/v2/roles")
+    response = await client.get("/v2/permissions/roles")
     assert response.status_code == 500
     data = response.json()
     assert data["error"]["code"] == "INTERNAL_ERROR"
 
 
 # ---------------------------------------------------------------------------
-# POST /v2/permissions/v2/assign
+# POST /v2/permissions/assign
 # ---------------------------------------------------------------------------
 
 
@@ -360,7 +360,7 @@ async def test_v2_permissions_roles_error(client: AsyncClient, mock_permission_s
 async def test_v2_permissions_assign(client: AsyncClient, mock_permission_service: MagicMock) -> None:
     """Assign role should return assigned=True."""
     response = await client.post(
-        "/v2/permissions/v2/assign",
+        "/v2/permissions/assign",
         json={
             "subject_type": "user",
             "subject_id": "user-123",
@@ -380,7 +380,7 @@ async def test_v2_permissions_assign_invalid_role(client: AsyncClient, mock_perm
     """Assign role with invalid role should return 400."""
     mock_permission_service.assign_role = AsyncMock(side_effect=ValueError("role not found"))
     response = await client.post(
-        "/v2/permissions/v2/assign",
+        "/v2/permissions/assign",
         json={
             "subject_type": "user",
             "subject_id": "user-123",
@@ -397,7 +397,7 @@ async def test_v2_permissions_assign_runtime_error(client: AsyncClient, mock_per
     """Assign role runtime error should return 500."""
     mock_permission_service.assign_role = AsyncMock(side_effect=RuntimeError("db down"))
     response = await client.post(
-        "/v2/permissions/v2/assign",
+        "/v2/permissions/assign",
         json={
             "subject_type": "user",
             "subject_id": "user-123",
@@ -410,14 +410,14 @@ async def test_v2_permissions_assign_runtime_error(client: AsyncClient, mock_per
 
 
 # ---------------------------------------------------------------------------
-# GET /v2/permissions/v2/policies
+# GET /v2/permissions/policies
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_v2_permissions_policies(client: AsyncClient, mock_permission_service: MagicMock) -> None:
     """Policies endpoint should return list of policies."""
-    response = await client.get("/v2/permissions/v2/policies")
+    response = await client.get("/v2/permissions/policies")
     assert response.status_code == 200
     data = response.json()
     assert "policies" in data
@@ -432,7 +432,35 @@ async def test_v2_permissions_policies(client: AsyncClient, mock_permission_serv
 async def test_v2_permissions_policies_error(client: AsyncClient, mock_permission_service: MagicMock) -> None:
     """Policies endpoint error should return 500."""
     mock_permission_service.list_policies = MagicMock(side_effect=RuntimeError("db error"))
-    response = await client.get("/v2/permissions/v2/policies")
+    response = await client.get("/v2/permissions/policies")
     assert response.status_code == 500
     data = response.json()
     assert data["error"]["code"] == "INTERNAL_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_nested_v2_permission_routes_are_not_registered(client: AsyncClient) -> None:
+    """Retired /v2/permissions/v2/* aliases must fail closed."""
+    payload = {
+        "subject": {"type": "role", "id": "pm"},
+        "resource": {"type": "file", "pattern": "**/*.py"},
+        "action": "read",
+        "context": {},
+    }
+
+    responses = [
+        await client.post("/v2/permissions/v2/check", json=payload),
+        await client.get("/v2/permissions/v2/effective?subject_type=role&subject_id=pm"),
+        await client.get("/v2/permissions/v2/roles"),
+        await client.post(
+            "/v2/permissions/v2/assign",
+            json={
+                "subject_type": "user",
+                "subject_id": "user-123",
+                "role_id": "pm",
+            },
+        ),
+        await client.get("/v2/permissions/v2/policies"),
+    ]
+
+    assert [response.status_code for response in responses] == [404, 404, 404, 404, 404]

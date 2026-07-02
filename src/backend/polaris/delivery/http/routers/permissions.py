@@ -3,7 +3,7 @@
 提供权限检查、角色管理和策略管理的 REST API 端点。
 
 API 设计:
-- GET  /v2/permissions/check   - 检查权限
+- POST /v2/permissions/check   - 检查权限
 - GET  /v2/permissions/effective - 获取有效权限
 - GET  /v2/permissions/roles   - 列出角色
 - POST /v2/permissions/assign - 分配角色
@@ -145,7 +145,7 @@ async def _get_permission_service(request: Request) -> PermissionService:
     return await get_permission_service(str(workspace or ""))
 
 
-@router.post("/check", response_model=PermissionCheckResponse, dependencies=[Depends(require_auth)])  # DEPRECATED
+@router.post("/check", response_model=PermissionCheckResponse, dependencies=[Depends(require_auth)])
 async def check_permission(
     req: PermissionCheckRequest,
     permission_service: PermissionService = Depends(_get_permission_service),
@@ -208,7 +208,7 @@ async def check_permission(
 
 @router.get(
     "/effective", response_model=EffectivePermissionsResponse, dependencies=[Depends(require_auth)]
-)  # DEPRECATED
+)
 async def get_effective_permissions(
     subject_type: str = "role",
     subject_id: str = "pm",
@@ -239,7 +239,7 @@ async def get_effective_permissions(
         raise StructuredHTTPException(status_code=500, code="INTERNAL_ERROR", message="internal error") from e
 
 
-@router.get("/roles", response_model=RoleListResponse, dependencies=[Depends(require_auth)])  # DEPRECATED
+@router.get("/roles", response_model=RoleListResponse, dependencies=[Depends(require_auth)])
 async def list_roles(
     permission_service: PermissionService = Depends(_get_permission_service),
 ) -> RoleListResponse:
@@ -266,7 +266,7 @@ async def list_roles(
         raise StructuredHTTPException(status_code=500, code="INTERNAL_ERROR", message="internal error") from e
 
 
-@router.post("/assign", response_model=RoleAssignResponse, dependencies=[Depends(require_auth)])  # DEPRECATED
+@router.post("/assign", response_model=RoleAssignResponse, dependencies=[Depends(require_auth)])
 async def assign_role(
     req: RoleAssignRequest,
     permission_service: PermissionService = Depends(_get_permission_service),
@@ -303,7 +303,7 @@ async def assign_role(
         raise StructuredHTTPException(status_code=500, code="INTERNAL_ERROR", message="internal error") from e
 
 
-@router.get("/policies", response_model=PolicyListResponse, dependencies=[Depends(require_auth)])  # DEPRECATED
+@router.get("/policies", response_model=PolicyListResponse, dependencies=[Depends(require_auth)])
 async def list_policies(
     permission_service: PermissionService = Depends(_get_permission_service),
 ) -> PolicyListResponse:
@@ -330,52 +330,3 @@ async def list_policies(
     except (RuntimeError, ValueError) as e:
         logger.error("List policies failed: %s", e)
         raise StructuredHTTPException(status_code=500, code="INTERNAL_ERROR", message="internal error") from e
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# v2 API Endpoints (canonical)
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-@router.post("/v2/check", response_model=PermissionCheckResponse, dependencies=[Depends(require_auth)])
-async def v2_check_permission(
-    req: PermissionCheckRequest,
-    permission_service: PermissionService = Depends(_get_permission_service),
-) -> PermissionCheckResponse:
-    """Check whether a subject is allowed to perform an action on a resource."""
-    return await check_permission(req, permission_service)
-
-
-@router.get("/v2/effective", response_model=EffectivePermissionsResponse, dependencies=[Depends(require_auth)])
-async def v2_get_effective_permissions(
-    subject_type: str = "role",
-    subject_id: str = "pm",
-    permission_service: PermissionService = Depends(_get_permission_service),
-) -> EffectivePermissionsResponse:
-    """Get effective permissions for a subject, including inherited roles."""
-    return await get_effective_permissions(subject_type, subject_id, permission_service)
-
-
-@router.get("/v2/roles", response_model=RoleListResponse, dependencies=[Depends(require_auth)])
-async def v2_list_roles(
-    permission_service: PermissionService = Depends(_get_permission_service),
-) -> RoleListResponse:
-    """List all roles with permission statistics."""
-    return await list_roles(permission_service)
-
-
-@router.post("/v2/assign", response_model=RoleAssignResponse, dependencies=[Depends(require_auth)])
-async def v2_assign_role(
-    req: RoleAssignRequest,
-    permission_service: PermissionService = Depends(_get_permission_service),
-) -> RoleAssignResponse:
-    """Assign a role to a subject."""
-    return await assign_role(req, permission_service)
-
-
-@router.get("/v2/policies", response_model=PolicyListResponse, dependencies=[Depends(require_auth)])
-async def v2_list_policies(
-    permission_service: PermissionService = Depends(_get_permission_service),
-) -> PolicyListResponse:
-    """List all permission policies."""
-    return await list_policies(permission_service)
