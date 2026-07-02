@@ -5,7 +5,7 @@ Covers:
 - OutputParser.extract_json() — JSON extraction from code blocks and <output> tags
 - OutputParser.parse_thinking() — <thinking> tag extraction
 - OutputParser.check_security() — dangerous pattern detection
-- Path safety in _parse_patch_file_format()
+- Path safety through extract_search_replace() public behavior
 """
 
 from __future__ import annotations
@@ -209,34 +209,37 @@ class TestCheckSecurity:
         assert issues == []
 
 
-class TestIsSafeRelativePath:
-    """_is_safe_relative_path enforces workspace-only paths."""
+class TestSearchReplacePathSafety:
+    """extract_search_replace() must not return patches for unsafe paths."""
 
-    def test_relative_path_is_safe(self) -> None:
-        parser = OutputParser()
-        assert parser._is_safe_relative_path("src/main.py") is True
-        assert parser._is_safe_relative_path("polaris/kernelone/llm/engine.py") is True
+    @staticmethod
+    def _patch_for_path(path: str) -> str:
+        return f"{path}\n<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE"
 
-    def test_absolute_unix_path_unsafe(self) -> None:
+    def test_relative_path_is_extracted(self) -> None:
         parser = OutputParser()
-        assert parser._is_safe_relative_path("/etc/passwd") is False
-        assert parser._is_safe_relative_path("/workspace/src") is False
+        result = parser.extract_search_replace(self._patch_for_path("src/main.py"))
 
-    def test_absolute_windows_path_unsafe(self) -> None:
-        parser = OutputParser()
-        assert parser._is_safe_relative_path("C:\\Windows\\System32") is False
-        assert parser._is_safe_relative_path("D:\\secrets\\key") is False
+        assert result is not None
+        assert result[0]["file"] == "src/main.py"
 
-    def test_parent_traversal_unsafe(self) -> None:
+    def test_absolute_unix_path_rejected(self) -> None:
         parser = OutputParser()
-        assert parser._is_safe_relative_path("../secrets") is False
-        assert parser._is_safe_relative_path("src/../etc/passwd") is False
 
-    def test_null_byte_unsafe(self) -> None:
-        parser = OutputParser()
-        assert parser._is_safe_relative_path("safe\x00file") is False
+        assert parser.extract_search_replace(self._patch_for_path("/etc/passwd")) is None
 
-    def test_empty_path_unsafe(self) -> None:
+    def test_absolute_windows_path_rejected(self) -> None:
         parser = OutputParser()
-        assert parser._is_safe_relative_path("") is False
-        assert parser._is_safe_relative_path("   ") is False
+
+        assert parser.extract_search_replace(self._patch_for_path("C:\\Windows\\System32")) is None
+
+    def test_parent_traversal_rejected(self) -> None:
+        parser = OutputParser()
+
+        assert parser.extract_search_replace(self._patch_for_path("../secrets")) is None
+        assert parser.extract_search_replace(self._patch_for_path("src/../etc/passwd")) is None
+
+    def test_null_byte_rejected(self) -> None:
+        parser = OutputParser()
+
+        assert parser.extract_search_replace(self._patch_for_path("safe\x00file")) is None

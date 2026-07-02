@@ -67,7 +67,7 @@ def _tool_name_match_keys(tool_name: str) -> set[str]:
 
 
 def _normalize_allowed_tool_names(allowed_tool_names: Iterable[str] | None) -> set[str]:
-    """Normalize allowed tool names while retaining legacy raw aliases."""
+    """Normalize allowed tool names while retaining provider-emitted raw aliases."""
     allowed: set[str] = set()
     for name in allowed_tool_names or []:
         allowed.update(_tool_name_match_keys(str(name or "")))
@@ -83,7 +83,7 @@ class ThinkingResult:
 
 
 # P0-002: ToolCallResult统一到canonical ToolCall
-# 保留旧字段名(tool, args)用于向后兼容，但内部使用ToolCall
+# 保留 provider-facing 字段名(tool, args)用于兼容外部调用者，但内部使用ToolCall
 @dataclass
 class ToolCallResult:
     """工具调用解析结果 (P0-002 统一到 canonical ToolCall)
@@ -93,7 +93,7 @@ class ToolCallResult:
         - polaris.kernelone.llm.contracts.tool.ToolExecutionResult
             (Execution phase: has tool_call_id, success, result, blocked)
 
-    内部使用 canonical ToolCall，保留旧字段名(tool, args)用于向后兼容。
+    内部使用 canonical ToolCall，保留 provider-facing 字段名(tool, args)用于兼容外部调用者。
     所有新代码应直接使用 ToolCall。
     """
 
@@ -412,6 +412,7 @@ class OutputParser:
         """
         try:
             from polaris.cells.director.execution.public.service import parse_search_replace_blocks
+            from polaris.kernelone.editing.editblock_engine import _is_safe_relative_path
 
             operations = parse_search_replace_blocks(str(content or ""))
             patches: list[dict[str, str]] = []
@@ -424,6 +425,8 @@ class OutputParser:
                 }
                 file_path = str(getattr(operation, "path", "") or "").strip()
                 if file_path:
+                    if not _is_safe_relative_path(file_path):
+                        continue
                     patch["file"] = file_path
                 patches.append(patch)
 

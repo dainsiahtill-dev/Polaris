@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T05:44:02.680562Z",
-  "source_hash": "f64429673ebfc9a6",
+  "generated_at": "2026-07-02T05:48:36.611993Z",
+  "source_hash": "08c383afd0abc132",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -5638,7 +5638,7 @@
     {
       "type": "function",
       "name": "_normalize_allowed_tool_names",
-      "description": "Normalize allowed tool names while retaining legacy raw aliases.",
+      "description": "Normalize allowed tool names while retaining provider-emitted raw aliases.",
       "defined_in": "polaris/cells/roles/kernel/internal/output_parser.py"
     },
     {
