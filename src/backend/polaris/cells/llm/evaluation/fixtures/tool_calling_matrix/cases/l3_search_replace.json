@@ -12,12 +12,12 @@
   "judge": {
     "score_threshold": 0.85,
     "stream": {
-      "required_tools": ["ripgrep", "search_replace"],
+      "required_tools": ["repo_rg", "search_replace"],
       "min_tool_calls": 2,
       "max_tool_calls": 4
     },
     "non_stream": {
-      "required_tools": ["ripgrep", "search_replace"],
+      "required_tools": ["repo_rg", "search_replace"],
       "min_tool_calls": 2
     },
     "parity": {
