@@ -19,51 +19,10 @@ import os
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.runtime.artifact_store.public.service import resolve_artifact_path
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 
 logger = logging.getLogger(__name__)
-
-# Import canonical helpers with narrow fallbacks so an optional import failure
-# cannot silently downgrade runtime artifact path resolution.
-try:
-    from polaris.cells.runtime.artifact_store.public.service import resolve_artifact_path
-except ImportError:
-
-    def resolve_artifact_path(workspace_full: str, cache_root_full: str, rel_path: str) -> str:
-        """Fallback path resolver that preserves logical storage prefixes."""
-        raw = str(rel_path or "").strip()
-        if not raw:
-            return ""
-        normalized = raw.replace("\\", "/").lstrip("/")
-        if normalized == "runtime":
-            base = cache_root_full or workspace_full
-            return os.path.abspath(base)
-        if normalized.startswith("runtime/"):
-            suffix = normalized[len("runtime/") :]
-            # Fallback: use workspace-based runtime under .polaris metadata dir
-            from polaris.cells.storage.layout import polaris_home
-
-            base = cache_root_full or os.path.join(polaris_home(), ".polaris-cache", "runtime")
-            return os.path.abspath(os.path.join(base, suffix))
-        if normalized == "workspace":
-            from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
-
-            return os.path.abspath(os.path.join(workspace_full, get_workspace_metadata_dir_name()))
-        if normalized.startswith("workspace/"):
-            suffix = normalized[len("workspace/") :]
-            from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
-
-            return os.path.abspath(os.path.join(workspace_full, get_workspace_metadata_dir_name(), suffix))
-        if normalized == "config":
-            from polaris.cells.storage.layout import polaris_home
-
-            return os.path.abspath(os.path.join(polaris_home(), "config"))
-        if normalized.startswith("config/"):
-            suffix = normalized[len("config/") :]
-            from polaris.cells.storage.layout import polaris_home
-
-            return os.path.abspath(os.path.join(polaris_home(), "config", suffix))
-        return os.path.abspath(os.path.join(workspace_full, normalized))
 
 
 def _get_fs(workspace: str = ".") -> KernelFileSystem:
@@ -541,9 +500,7 @@ def _resolve_key_for_write(key: str) -> str:
     """Resolve a key for new writes, rejecting historical aliases."""
     if key in LEGACY_KEY_MAPPING:
         canonical_key = LEGACY_KEY_MAPPING[key]
-        raise KeyError(
-            f"Legacy artifact key is read-only: {key}. Use canonical key {canonical_key!r} for writes."
-        )
+        raise KeyError(f"Legacy artifact key is read-only: {key}. Use canonical key {canonical_key!r} for writes.")
     return key
 
 

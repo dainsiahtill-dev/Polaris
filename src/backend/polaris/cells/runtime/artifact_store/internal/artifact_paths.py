@@ -9,21 +9,15 @@ from __future__ import annotations
 import os
 
 from polaris.domain.exceptions import ValidationError
-from polaris.kernelone.storage import (
-    UNSUPPORTED_PATH_PREFIX,
-    normalize_logical_rel_path,
-    resolve_logical_path,
-    resolve_storage_roots,
+from polaris.kernelone.storage import resolve_storage_roots
+from polaris.kernelone.storage.io_paths import (
+    normalize_artifact_rel_path as _kernelone_normalize_artifact_rel_path,
+    resolve_artifact_path as _kernelone_resolve_artifact_path,
 )
 
 
 def normalize_artifact_rel_path(rel_path: str) -> str:
-    raw = str(rel_path or "").strip()
-    if not raw:
-        return ""
-    if os.path.isabs(raw):
-        return os.path.abspath(raw)
-    return normalize_logical_rel_path(raw)
+    return _kernelone_normalize_artifact_rel_path(rel_path)
 
 
 def _strip_artifact_root_prefix(rel_path: str) -> str:
@@ -66,41 +60,14 @@ def is_hot_artifact_path(rel_path: str) -> bool:
 
 
 def _resolve_absolute_if_allowed(workspace_full: str, rel_path: str) -> str:
-    absolute = os.path.abspath(rel_path)
-    allow_unsafe = str(os.environ.get("KERNELONE_ALLOW_UNSAFE_ABSOLUTE_ARTIFACT_PATHS") or "").strip().lower()
-    if allow_unsafe in {"1", "true", "yes", "on"}:
-        return absolute
-    roots = resolve_storage_roots(workspace_full)
-    allowed_roots = [
-        os.path.abspath(workspace_full),
-        os.path.abspath(roots.runtime_root),
-        os.path.abspath(roots.workspace_persistent_root),
-        os.path.abspath(roots.config_root),
-    ]
-    for root in allowed_roots:
-        try:
-            if os.path.commonpath([root, absolute]) == root:
-                return absolute
-        except ValueError:
-            continue
-    raise ValueError(f"{UNSUPPORTED_PATH_PREFIX}: {rel_path}")
+    return _kernelone_resolve_artifact_path(workspace_full, "", rel_path)
 
 
 def resolve_artifact_path(workspace_full: str, cache_root_full: str, rel_path: str) -> str:
-    raw = str(rel_path or "").strip()
-    if not raw:
+    try:
+        return os.path.abspath(_kernelone_resolve_artifact_path(workspace_full, cache_root_full, rel_path))
+    except ValueError:
         return ""
-    if os.path.isabs(raw):
-        try:
-            return _resolve_absolute_if_allowed(workspace_full, raw)
-        except ValueError:
-            return ""
-    normalized = normalize_logical_rel_path(raw)
-    if (normalized == "runtime" or normalized.startswith("runtime/")) and cache_root_full:
-        if normalized == "runtime":
-            return os.path.abspath(cache_root_full)
-        return os.path.abspath(os.path.join(cache_root_full, normalized[len("runtime/") :]))
-    return os.path.abspath(resolve_logical_path(workspace_full, normalized))
 
 
 def resolve_safe_path(workspace_full: str, cache_root_full: str, rel_path: str) -> str:
