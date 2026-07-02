@@ -50,6 +50,9 @@ try:
     from docs.governance.ci.scripts.role_call_hierarchy_policy import (
         evaluate_role_call_hierarchy,
     )
+    from docs.governance.ci.scripts.semantic_retrieval_boundary_policy import (
+        evaluate_semantic_retrieval_boundary,
+    )
     from docs.governance.ci.scripts.shim_markers_policy import (
         evaluate_shim_markers,
     )
@@ -90,6 +93,9 @@ except ModuleNotFoundError:
     )
     from role_call_hierarchy_policy import (
         evaluate_role_call_hierarchy,
+    )
+    from semantic_retrieval_boundary_policy import (
+        evaluate_semantic_retrieval_boundary,
     )
     from shim_markers_policy import (
         evaluate_shim_markers,
@@ -190,76 +196,15 @@ class FitnessRuleChecker:
         )
 
     def check_semantic_retrieval_boundary(self) -> FitnessCheckResult:
-        """Check that semantic retrieval respects graph boundaries."""
-        result = FitnessCheckResult(rule_id="graph_constrained_semantic_retrieval", passed=True)
-        graph_constrained_entrypoints = {
-            "polaris/cells/context/engine/internal/search_gateway.py",
-            "polaris/cells/context/catalog/service.py",
-        }
-        known_unconstrained = {
-            "polaris/kernelone/akashic/semantic_memory.py",
-            "polaris/kernelone/akashic/hybrid_memory.py",
-            "polaris/kernelone/akashic/memory_manager.py",
-            "polaris/kernelone/memory/memory_store.py",
-            "polaris/infrastructure/db/repositories/lancedb_code_search.py",
-        }
-        patterns = [
-            "polaris/cells/**/search*.py",
-            "polaris/cells/**/*semantic*.py",
-            "polaris/cells/**/*descriptor*.py",
-            "polaris/kernelone/**/search*.py",
-            "polaris/kernelone/**/semantic*.py",
-            "polaris/kernelone/**/*memory*.py",
-            "polaris/infrastructure/**/search*.py",
-        ]
-        constrained_patterns = [
-            "ContextCatalogService",
-            "SearchService",
-            "cells.yaml",
-            "_load_from_catalog",
-            "_filter_by_cell",
-            "graph_constrained",
-        ]
-        unconstrained_patterns = [
-            "AkashicSemanticMemory",
-            "LanceDB",
-            "vector_search",
-            "embedding_search",
-            "workspace_search",
-        ]
-        non_compliant: list[str] = []
-        compliant: list[str] = []
-        for pattern in patterns:
-            for file_path in self.workspace.glob(pattern):
-                if "test" in file_path.parts or file_path.name.startswith("test_"):
-                    continue
-                if file_path.suffix != ".py":
-                    continue
-                rel = str(file_path.relative_to(self.workspace)).replace("\\", "/")
-                if rel in graph_constrained_entrypoints:
-                    compliant.append(rel)
-                    continue
-                if rel in known_unconstrained:
-                    compliant.append(f"{rel} (workspace-level acceptable)")
-                    continue
-                try:
-                    content = file_path.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError):
-                    continue
-                has_constraint = any(p in content for p in constrained_patterns)
-                has_unconstraint = any(p in content for p in unconstrained_patterns)
-                if has_constraint:
-                    compliant.append(rel)
-                elif has_unconstraint:
-                    non_compliant.append(rel)
-                else:
-                    compliant.append(f"{rel} (undetermined)")
-        result.evidence.append(f"Compliant sites: {len(compliant)}")
-        if non_compliant:
-            result.passed = False
-            for site in non_compliant:
-                result.violations.append(f"Semantic search bypasses graph boundaries: {site}")
-        return result
+        """Check semantic retrieval boundaries through the canonical policy."""
+        policy_result = evaluate_semantic_retrieval_boundary(self.workspace)
+        return FitnessCheckResult(
+            rule_id=policy_result.rule_id,
+            passed=policy_result.passed,
+            evidence=list(policy_result.evidence),
+            violations=list(policy_result.violations),
+            warnings=list(policy_result.warnings),
+        )
 
     def check_contract_change_review(self) -> FitnessCheckResult:
         """Check that public contract changes trigger review."""

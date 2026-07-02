@@ -3,7 +3,7 @@
 This module verifies that semantic/descriptor retrieval code respects graph boundaries
 as defined in docs/governance/ci/fitness-rules.yaml.
 
-Rule: semantic_retrieval_respects_graph_boundary
+Rule: graph_constrained_semantic_retrieval
 Severity: blocker
 Description:
     Semantic retrieval must first filter through Graph constraints before
@@ -107,10 +107,10 @@ cells:
 class TestSemanticBoundaryRuleId:
     """Test that the rule_id is correctly named."""
 
-    def test_rule_id_is_semantic_retrieval_respects_graph_boundary(self, checker: SemanticBoundaryChecker) -> None:
-        """The rule_id must be 'semantic_retrieval_respects_graph_boundary'."""
+    def test_rule_id_is_graph_constrained_semantic_retrieval(self, checker: SemanticBoundaryChecker) -> None:
+        """The rule_id must be 'graph_constrained_semantic_retrieval'."""
         result = checker.check_semantic_retrieval_boundary()
-        assert result.rule_id == "semantic_retrieval_respects_graph_boundary"
+        assert result.rule_id == "graph_constrained_semantic_retrieval"
 
     def test_fitness_rule_checker_has_correct_rule_id(self) -> None:
         """FitnessRuleChecker-derived result must have the expected rule_id."""
@@ -120,7 +120,7 @@ class TestSemanticBoundaryRuleId:
         # We can't easily test stdout without capturing, but we verify the checker works
         checker = SemanticBoundaryChecker()
         result = checker.check()
-        assert result.rule_id == "semantic_retrieval_respects_graph_boundary"
+        assert result.rule_id == "graph_constrained_semantic_retrieval"
 
 
 # ---------------------------------------------------------------------------
@@ -377,7 +377,7 @@ class TestEndToEndCheck:
         """check_semantic_retrieval_boundary must return a FitnessCheckResult."""
         result = checker.check_semantic_retrieval_boundary()
         assert isinstance(result, FitnessCheckResult)
-        assert result.rule_id == "semantic_retrieval_respects_graph_boundary"
+        assert result.rule_id == "graph_constrained_semantic_retrieval"
 
     def test_check_has_details(self, checker: SemanticBoundaryChecker) -> None:
         """check result must have details with site counts."""
@@ -524,9 +524,7 @@ class TestFitnessRulesIntegration:
 
         if rules and "rules" in rules:
             rule_ids = [r.get("id") for r in rules["rules"] if isinstance(r, dict)]
-            # The rule may be named graph_constrained_semantic_retrieval or semantic_retrieval_respects_graph_boundary
-            has_semantic_rule = any("semantic" in str(rid).lower() and "graph" in str(rid).lower() for rid in rule_ids)
-            assert has_semantic_rule, f"No semantic boundary rule found in fitness-rules.yaml. Available: {rule_ids}"
+            assert "graph_constrained_semantic_retrieval" in rule_ids
 
 
 # ---------------------------------------------------------------------------
