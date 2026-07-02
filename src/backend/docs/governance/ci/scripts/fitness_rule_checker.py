@@ -13,8 +13,6 @@ Each rule implements a check_* method returning FitnessCheckResult.
 from __future__ import annotations
 
 import argparse
-import re
-import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -31,6 +29,9 @@ try:
     )
     from docs.governance.ci.scripts.context_pack_freshness_policy import (
         evaluate_context_pack_freshness,
+    )
+    from docs.governance.ci.scripts.contract_change_review_policy import (
+        evaluate_contract_change_review,
     )
     from docs.governance.ci.scripts.dangerous_pattern_source_policy import (
         evaluate_dangerous_pattern_source,
@@ -75,6 +76,9 @@ except ModuleNotFoundError:
     )
     from context_pack_freshness_policy import (
         evaluate_context_pack_freshness,
+    )
+    from contract_change_review_policy import (
+        evaluate_contract_change_review,
     )
     from dangerous_pattern_source_policy import (
         evaluate_dangerous_pattern_source,
@@ -207,86 +211,15 @@ class FitnessRuleChecker:
         )
 
     def check_contract_change_review(self) -> FitnessCheckResult:
-        """Check that public contract changes trigger review."""
-        result = FitnessCheckResult(rule_id="contract_change_requires_review", passed=True)
-        contract_patterns = ["public/contracts.py", "public/contract.py", "contracts.py", "contract.py"]
-        adr_pattern = re.compile(r"\badr-\d+[-\w]*\b", re.IGNORECASE)
-        vc_pattern = re.compile(r"\bvc-\d{8}[-\w]*\b", re.IGNORECASE)
-        review_patterns = [
-            re.compile(r"\breview(?:\s|[:\-])", re.IGNORECASE),
-            re.compile(r"\bapproved?\b", re.IGNORECASE),
-            re.compile(r"\bchecked?\b", re.IGNORECASE),
-            re.compile(r"\bverified?\b", re.IGNORECASE),
-            re.compile(r"\b LGTM \b", re.IGNORECASE),
-            re.compile(r"\blooks?\s+good\b", re.IGNORECASE),
-            re.compile(r"\bgovernance\b", re.IGNORECASE),
-        ]
-        cells_dir = self.workspace / "polaris" / "cells"
-        contract_files: list[Path] = []
-        if cells_dir.exists():
-            for cell_dir in cells_dir.iterdir():
-                if not cell_dir.is_dir():
-                    continue
-                for pattern in contract_patterns:
-                    for contract_path in cell_dir.rglob(pattern):
-                        if "/internal/" in str(contract_path) or "/test" in str(contract_path):
-                            continue
-                        contract_files.append(contract_path)
-        result.evidence.append(f"Found {len(contract_files)} public contract file(s)")
-        if not contract_files:
-            result.warnings.append("No public contract files found")
-            return result
-        files_with_changes = 0
-        files_without_review: list[str] = []
-        for cf in contract_files:
-            command = [
-                "git",
-                "log",
-                "--format=%H|%ad|%s",
-                "--date=iso",
-                "--since=30.days",
-                "--",
-                str(cf),
-            ]
-            try:
-                proc = subprocess.run(
-                    command,
-                    cwd=str(self.workspace),
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    check=False,
-                )
-            except (OSError, subprocess.SubprocessError):
-                continue
-            stdout = proc.stdout.strip()
-            if not stdout:
-                continue
-            files_with_changes += 1
-            lines = stdout.split("\n")
-            if lines and lines[0]:
-                parts = lines[0].split("|", 2)
-                if len(parts) >= 3:
-                    commit_message = parts[2]
-                    has_review = bool(adr_pattern.search(commit_message) or vc_pattern.search(commit_message))
-                    if not has_review:
-                        for pat in review_patterns:
-                            if pat.search(commit_message.lower()):
-                                has_review = True
-                                break
-                    if not has_review:
-                        files_without_review.append(f"{cf.relative_to(self.workspace)}: {commit_message[:60]}...")
-        result.evidence.append(f"Checked {files_with_changes} file(s) with recent changes (last 30 days)")
-        if files_with_changes == 0:
-            result.evidence.append("No contract changes in the last 30 days - rule not applicable")
-        elif not files_without_review:
-            result.evidence.append("All contract changes have review evidence")
-        else:
-            result.passed = False
-            result.violations.append(f"{len(files_without_review)} contract change(s) lack review evidence")
-            for v in files_without_review:
-                result.violations.append(v)
-        return result
+        """Check public contract changes through the canonical policy."""
+        policy_result = evaluate_contract_change_review(self.workspace)
+        return FitnessCheckResult(
+            rule_id=policy_result.rule_id,
+            passed=policy_result.passed,
+            evidence=list(policy_result.evidence),
+            violations=list(policy_result.violations),
+            warnings=list(policy_result.warnings),
+        )
 
     def check_no_conflicting_coverage(self) -> FitnessCheckResult:
         """Check migration coverage conflicts through the canonical policy module."""
