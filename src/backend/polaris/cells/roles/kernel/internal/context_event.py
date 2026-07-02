@@ -39,14 +39,14 @@ from polaris.kernelone.tool_state.safety import (
 class ContextEvent:
     """Standard context event type preserving full metadata.
 
-    Replaces the legacy (role, content) tuple to ensure Context OS SSOT.
+    Replaces the historical (role, content) tuple to ensure Context OS SSOT.
     All event metadata (event_id, sequence, kind, route, dialog_act, source_turns,
     artifact_id, created_at) is preserved throughout the pipeline.
 
     Design decisions:
     - frozen=True: Ensures immutability for Event Sourcing compliance
     - slots=True: Memory optimization for high-frequency event creation
-    - to_tuple(): Backward-compatible interface for legacy consumers
+    - to_tuple(): Lossy tuple projection for comparison-only consumers
 
     Note on kind field:
     - The Blueprint defines 'kind' as the semantic event type discriminator
@@ -63,22 +63,22 @@ class ContextEvent:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_tuple(self) -> tuple[str, str]:
-        """Backward-compatible tuple representation for legacy interfaces.
+        """Lossy tuple projection for comparison-only interfaces.
 
-        Warning: This loses metadata. Use only when legacy APIs require
-        the tuple format. Prefer passing ContextEvent directly where possible.
+        Warning: This loses metadata. Prefer passing ContextEvent directly
+        wherever the caller can preserve event metadata.
         """
         return (self.role, self.content)
 
     @classmethod
     def from_tuple(cls, tuple_event: tuple[str, str], sequence: int) -> ContextEvent:
-        """Create ContextEvent from legacy (role, content) tuple.
+        """Create ContextEvent from historical (role, content) tuple.
 
         Note: metadata will be empty since tuples don't carry it.
         """
         role, content = tuple_event
         return cls(
-            event_id=f"legacy_{id(tuple_event)}_{sequence}",
+            event_id=f"tuple_{id(tuple_event)}_{sequence}",
             role=role,
             content=content,
             sequence=sequence,

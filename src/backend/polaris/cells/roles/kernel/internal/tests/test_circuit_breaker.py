@@ -2,7 +2,7 @@
 
 Tests the progressive circuit breaker system which provides:
 1. Semantic-aware same-tool repetition detection (via ProgressiveCircuitBreaker)
-2. Cross-tool loop pattern detection (ABAB, ABCABC) via legacy _recent_tool_names
+2. Cross-tool loop pattern detection (ABAB, ABCABC) via _recent_tool_names
 3. State stagnation (read-only streak without write)
 4. Progressive 3-level escalation (WARNING -> HARD -> BREAK)
 
@@ -124,7 +124,7 @@ class TestSameToolCircuitBreaker:
         # then result2 again has same fingerprint but only 1 no-gain
 
     def test_resets_on_write_tool(self):
-        """Write tool resets read-only streak and clears legacy tracking."""
+        """Write tool resets read-only streak and clears exact-repeat tracking."""
         controller = _make_controller("quick_fix")
 
         read_result = {"success": True, "args": {"path": "/test/file.txt"}}

@@ -474,7 +474,7 @@ class TestPhase5ScratchpadPattern:
     def test_post_init_raises_when_no_snapshot(self) -> None:
         """Without context_os_snapshot, __post_init__ raises ValueError (SSOT enforcement).
 
-        Per user's requirement: no backward compatibility, all calls must use the new path.
+        Per user's requirement: no request.history fallback; all calls must use the new path.
         When context_os_snapshot is missing entirely (not just empty), raise error.
         """
 

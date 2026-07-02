@@ -123,7 +123,7 @@ class ToolLoopController:
     """Owns transcript state for one assistant turn with tool execution.
 
     P0 SSOT Enforcement: This controller now requires context_os_snapshot as the
-    sole source of history. The legacy request.history fallback has been eliminated.
+    sole source of history. The previous request.history fallback has been eliminated.
     This ensures ContextOS is the Single Source of Truth for the entire system.
 
     Architecture:
@@ -160,15 +160,15 @@ class ToolLoopController:
     # Sentinel object to distinguish "no snapshot" from "snapshot was empty"
     _NO_SNAPSHOT = object()
 
-    # Threshold for triggering success loop warning (legacy, kept for compatibility)
+    # Threshold for triggering success loop warning; kept as a named policy constant.
     SUCCESS_LOOP_WARNING_THRESHOLD = 2
-    # Hard threshold for circuit breaker - raises exception to force stop (legacy)
+    # Hard threshold for circuit breaker - raises exception to force stop.
     SUCCESS_LOOP_HARD_THRESHOLD = 3
     # Maximum size of _recent_successful_calls to prevent unbounded growth
     MAX_RECENT_CALLS = 10
-    # State stagnation: max read-only operations before forcing conclusion (legacy)
+    # State stagnation: max read-only operations before forcing conclusion.
     MAX_READ_ONLY_STAGNATION = 5
-    # Cross-tool loop detection window size (legacy)
+    # Cross-tool loop detection window size.
     CROSS_TOOL_LOOP_WINDOW = 6
 
     # Progressive circuit breaker for semantic-aware loop detection
@@ -240,7 +240,8 @@ class ToolLoopController:
 
         Note:
             Previously returned List[tuple[str, str]] which lost all metadata.
-            The legacy tuple interface is preserved via ContextEvent.to_tuple().
+            Tuple projection remains available via ContextEvent.to_tuple() for
+            comparison-only call sites.
         """
         context_override = getattr(self.request, "context_override", None)
         if not isinstance(context_override, dict):
@@ -695,7 +696,7 @@ class ToolLoopController:
         3. Progressive 3-level warnings (L1→L2→L3)
         4. Scene-adaptive thresholds (quick_fix/normal/deep_analysis)
 
-        Also maintains legacy fields for backward compatibility with existing tests.
+        Also maintains exact-argument mirror fields used by invariant tests.
 
         Raises:
             ToolLoopCircuitBreakerError: When loop is detected and must be stopped.
@@ -705,11 +706,11 @@ class ToolLoopController:
         if not success:
             return
 
-        # Lazy initialization for backward compatibility with tests using __new__
+        # Lazy initialization for tests that construct instances with __new__.
         if not hasattr(self, "_circuit_breaker"):
             self._circuit_breaker = ProgressiveCircuitBreaker(scene="normal")
 
-        # Initialize legacy fields if not present (for tests using __new__)
+        # Initialize mirror fields if not present (for tests using __new__).
         if not hasattr(self, "_recent_tool_names"):
             self._recent_tool_names = []
         if not hasattr(self, "_recent_successful_calls"):
@@ -724,7 +725,7 @@ class ToolLoopController:
         # Use tool_args if provided, otherwise fall back to tool_result
         args = tool_args if tool_args is not None else tool_result.get("args", {})
 
-        # Track tool names for cross-tool loop detection (legacy field)
+        # Track tool names for cross-tool loop detection.
         self._recent_tool_names.append(tool_name)
         if len(self._recent_tool_names) > self.CROSS_TOOL_LOOP_WINDOW:
             self._recent_tool_names = self._recent_tool_names[-self.CROSS_TOOL_LOOP_WINDOW :]
@@ -780,7 +781,7 @@ class ToolLoopController:
             # Don't raise for WARNING level - just inject the reminder
         # OK level - no action needed
 
-        # Legacy field updates for backward compatibility with tests
+        # Mirror field updates for exact repeat and read-only streak detection.
         read_only_tools = {
             "read_file",
             "repo_read_head",
@@ -805,7 +806,7 @@ class ToolLoopController:
             self._recent_successful_counts.clear()
             return
 
-        # Create legacy signature for same-tool detection (uses full args hash, not semantic)
+        # Create an exact-argument signature for same-tool detection.
         if isinstance(args, dict):
             args_hash = json.dumps(args, sort_keys=True, ensure_ascii=False)
         else:
@@ -1298,7 +1299,7 @@ class ToolLoopController:
 
 
 __all__ = [
-    "ContextEvent",  # Re-exported from context_event for backward compatibility
+    "ContextEvent",  # Re-exported from context_event as controller public surface
     "ToolLoopController",
     "ToolLoopSafetyPolicy",
 ]
