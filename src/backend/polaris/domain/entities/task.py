@@ -6,20 +6,20 @@ This module provides the single canonical Task model consumed by:
 - V2 API routers and CLI entrypoints
 - runtime.task_runtime cell
 
-It merges the lifecycle coverage of all three prior definitions:
+It merges the lifecycle coverage of all earlier task definitions:
   - kernelone/task_graph/task_board.py: PENDING/BLOCKED/IN_PROGRESS/COMPLETED/FAILED/CANCELLED
   - domain/models/task.py: QUEUED/BLOCKED/TIMEOUT
-  - domain/entities/task.py (old): READY/CLAIMED + execution config
+  - domain/entities/task.py: READY/CLAIMED + execution config
 
-Migration notes (2026-03-22):
+Current ownership notes (2026-03-22):
   - kernelone/task_graph/task_board.py TaskStatus/TaskPriority/Task are re-exported
-    from here for backward compatibility. KernelOne should NOT contain Polaris
+    from here for compatibility with historical import paths. KernelOne should NOT contain Polaris
     business semantics; this module is the canonical source.
-  - domain/models/task.py is deprecated (its Task was never consumed by any
-    active caller; it duplicated domain/entities/task.py).
+  - domain/entities/task_pydantic.py provides validated DTO-style parsing, while
+    this module remains the mutable runtime task aggregate consumed by TaskBoard.
   - The Polaris TaskBoard implementation (file-backed CRUD + DAG) lives in
     polaris/cells/runtime/task_runtime/internal/task_board.py. kernelone/task_board
-    is a thin backward-compat shim.
+    is a compatibility facade only; this module owns task lifecycle semantics.
 """
 
 from __future__ import annotations
@@ -417,7 +417,7 @@ class Task:
         if result_data and isinstance(result_data, dict):
             result = TaskResult.from_dict(result_data)
 
-        # Handle legacy blockedBy vs blocked_by
+        # Accept the historical blockedBy key while storing the canonical blocked_by field.
         blocked_by = data.get("blocked_by", [])
         if not blocked_by and "blockedBy" in data:
             blocked_by = data["blockedBy"]
@@ -468,7 +468,7 @@ def _now_seconds() -> float:
 
 
 # ---------------------------------------------------------------------------
-# Re-exports for kernelone backward-compatibility shim
+# Re-exports consumed by the kernelone task_graph compatibility facade.
 # ---------------------------------------------------------------------------
 
 # These are re-exported from kernelone/task_graph/task_board.py so that
