@@ -2,7 +2,7 @@
 
 This package provides the structured, auditable substrate for Director
 deterministic repairs. The current production repair functions remain in
-``deterministic_repairs`` only as compatibility adapters; this kernel owns
+``deterministic_repairs`` only as adapter-hosted strategy bindings; this kernel owns
 contracts, composition, policy, receipts, scheduling, and executable runtime
 bindings.
 """

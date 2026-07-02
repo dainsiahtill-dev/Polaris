@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T05:18:14.871068Z",
-  "source_hash": "1ca60702f983ee01",
+  "generated_at": "2026-07-02T05:20:53.556679Z",
+  "source_hash": "0547fa0ac1f102e4",
   "cell_id": "director.runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -6146,7 +6146,7 @@
     {
       "type": "function",
       "name": "build_rust_crate_import_plan",
-      "description": "Build span-based edits for the legacy Rust crate import source tool.",
+      "description": "Build span-based edits for the adapter-hosted Rust crate import source tool.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/rust_syntax.py"
     },
     {

@@ -172,7 +172,7 @@ def build_rust_crate_import_plan(
     diagnostics: Sequence[RepairDiagnostic],
     mode: str = "commit",
 ) -> RepairPlan | None:
-    """Build span-based edits for the legacy Rust crate import source tool."""
+    """Build span-based edits for the adapter-hosted Rust crate import source tool."""
 
     return _build_rust_crate_import_plan(
         base_files=base_files,

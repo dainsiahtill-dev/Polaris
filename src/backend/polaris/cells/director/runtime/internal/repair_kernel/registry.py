@@ -2461,7 +2461,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 raw_terms=("rust post execution convergence",),
                 risk_level="medium",
                 description=(
-                    "Owns the legacy Rust post-execution aggregate label in the runtime dispatcher. "
+                    "Owns the adapter-hosted Rust post-execution aggregate label in the runtime dispatcher. "
                     "The planner is intentionally fail-closed unless a split executable Rust rule "
                     "produces a safe plan."
                 ),
