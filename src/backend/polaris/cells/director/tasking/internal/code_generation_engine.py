@@ -1,7 +1,7 @@
 """Director tasking runtime code generation bridge.
 
-Legacy deterministic code generation, template fallback, and emergency bootstrap
-helpers remain forbidden. Real code writing is only allowed through the Director
+Deterministic code generation, template fallback, and emergency bootstrap helper
+paths remain forbidden. Real code writing is only allowed through the Director
 role runtime when explicitly enabled by environment, so writes go through the
 same LLM/tool policy and workspace guards as the interactive Director role.
 
@@ -127,7 +127,7 @@ class CodeGenerationEngine:
         return max(0, int(deadline_ts - time.time()))
 
     def resolve_patch_retry_attempts(self) -> int:
-        """Resolve retry attempts for legacy call sites."""
+        """Resolve retry attempts for compatibility call sites."""
         raw = os.environ.get("KERNELONE_WORKER_PATCH_RETRIES", "2")
         try:
             attempts = int(raw)
@@ -161,7 +161,7 @@ class CodeGenerationEngine:
         return False
 
     def resolve_spin_guard_repeat_limit(self) -> int:
-        """Resolve spin-guard limit for legacy call sites."""
+        """Resolve spin-guard limit for compatibility call sites."""
         raw = os.environ.get("KERNELONE_WORKER_SPIN_MAX_REPEAT", "3")
         try:
             repeats = int(raw)
@@ -1132,7 +1132,7 @@ class CodeGenerationEngine:
         normalized_errors = [str(item) for item in errors if str(item or "").strip()]
         return normalized_files, normalized_errors
 
-    # === Blocked legacy entry points ===
+    # === Blocked compatibility entry points ===
 
     def invoke_runtime_provider(
         self,

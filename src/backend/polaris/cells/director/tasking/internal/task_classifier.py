@@ -43,13 +43,13 @@ def _profile_for_task(task: Task) -> TaskExecutionProfileV1:
 
 
 def classify_task(task: Task) -> str:
-    """Return legacy dispatch type from the canonical execution profile."""
+    """Return the dispatch type from the canonical execution profile."""
 
     return _profile_for_task(task).dispatch_type
 
 
 def extract_tech_stack(task: Task) -> dict[str, str]:
-    """Return legacy tech-stack shape from the canonical execution profile."""
+    """Return the task tech-stack shape from the canonical execution profile."""
 
     profile = _profile_for_task(task)
     tech_stack = {

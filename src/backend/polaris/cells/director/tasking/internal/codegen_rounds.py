@@ -76,7 +76,7 @@ class CodegenRoundPlanner:
                         normalized_rounds.append(normalized_items)
                 return normalized_rounds or [[]]
 
-        # Check for file_plans (legacy format)
+        # Check for file_plans carried by older construction-plan payloads.
         if isinstance(plan, dict):
             file_plans = plan.get("file_plans", [])
             if file_plans:

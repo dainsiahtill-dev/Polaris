@@ -2,7 +2,7 @@
 """Director (engineer) Standalone CLI - Code Generation Agent.
 
 Migration note (Task #48 Phase 2):
-    This CLI now routes through RoleRuntimeService instead of the deprecated
+    This CLI now routes through RoleRuntimeService instead of the retired
     DirectorStandaloneAgent. All execution goes through RoleExecutionKernel.
 
 Usage:

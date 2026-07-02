@@ -1,7 +1,7 @@
 """Canonical task execution-profile resolution.
 
 This module is the single task-execution classifier for Director-owned runtime
-work. Prompt guidance, legacy dispatch compatibility, runtime sampling, output
+work. Prompt guidance, dispatch compatibility, runtime sampling, output
 protocol, and audit metadata must consume this profile instead of maintaining
 parallel heuristics.
 

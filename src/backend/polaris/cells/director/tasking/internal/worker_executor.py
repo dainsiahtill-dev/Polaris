@@ -192,7 +192,7 @@ class WorkerExecutor:
             self._code_engine = None  # type: ignore[assignment, no-redef]
 
     def _raise_code_writing_forbidden(self, action: str) -> typing.NoReturn:
-        """Fail closed when legacy code-writing helpers are invoked."""
+        """Fail closed when forbidden code-writing helpers are invoked."""
         message = f"{CODE_WRITING_FORBIDDEN_WARNING} blocked_action={action}"
         logger.error(message)
         raise CodeGenerationPolicyViolationError(message)
@@ -896,12 +896,12 @@ class WorkerExecutor:
         return _extract_files_from_response_impl(response)
 
     def _fallback_code_files(self, task: Task, round_files: list[str] | None = None) -> list[dict]:
-        """Legacy entry point retained only to fail closed."""
+        """Blocked compatibility entry point retained only to fail closed."""
         _ = (task, round_files)
         self._raise_code_writing_forbidden("_fallback_code_files")
 
     def _deterministic_repair_files(self, task: Task, round_files: list[str] | None = None) -> list[dict]:
-        """Legacy entry point retained only to fail closed."""
+        """Blocked compatibility entry point retained only to fail closed."""
         _ = (task, round_files)
         self._raise_code_writing_forbidden("_deterministic_repair_files")
 
@@ -914,15 +914,15 @@ class WorkerExecutor:
         deadline_ts: float,
         round_label: str,
     ) -> typing.NoReturn:
-        """Legacy direct-generation entry point retained only to fail closed."""
+        """Blocked direct-generation entry point retained only to fail closed."""
         _ = (prompt, model, timeout, deadline_ts, round_label)
         self._raise_code_writing_forbidden("_invoke_generation_response")
 
-    # === Legacy Method Names ===
+    # === Blocked Compatibility Method Names ===
     # These names are retained only to fail closed and expose policy violations.
 
     def _fallback_code_content(self, path: str, language: str, task: Any) -> str:
-        """Legacy entry point retained only to fail closed."""
+        """Blocked compatibility entry point retained only to fail closed."""
         _ = (path, language, task)
         self._raise_code_writing_forbidden("_fallback_code_content")
 
@@ -957,7 +957,7 @@ class WorkerExecutor:
         model: str,
         timeout: int,
     ) -> typing.NoReturn:
-        """Legacy Ollama entry point retained only to fail closed."""
+        """Blocked Ollama entry point retained only to fail closed."""
         _ = (prompt, model, timeout)
         self._raise_code_writing_forbidden("_invoke_ollama")
 

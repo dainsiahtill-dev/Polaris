@@ -427,7 +427,7 @@ def _get_generic_bootstrap_files(
 
 
 def get_python_bootstrap_files() -> list[dict[str, str]]:
-    """Legacy function for Python bootstrap - returns basic template."""
+    """Return the compatibility Python bootstrap template set."""
     return [
         {
             "path": "fastapi_entrypoint.py",
@@ -445,7 +445,7 @@ def get_python_bootstrap_files() -> list[dict[str, str]]:
 
 
 def get_typescript_bootstrap_files() -> list[dict[str, str]]:
-    """Legacy function for TypeScript bootstrap - returns basic template."""
+    """Return the compatibility TypeScript bootstrap template set."""
     return [
         {
             "path": "package.json",
@@ -467,7 +467,7 @@ def get_typescript_bootstrap_files() -> list[dict[str, str]]:
 
 
 def get_generic_bootstrap_files() -> list[dict[str, str]]:
-    """Legacy function for generic bootstrap - returns basic template."""
+    """Return the compatibility generic bootstrap template set."""
     return [
         {
             "path": "tui_runtime.md",
