@@ -3,15 +3,15 @@
 This module lives in the roles Cell and contains all Polaris-specific
 role identification logic that must not leak into KernelOne.
 
-Role alias mapping resolves legacy / alternative role identifiers to their
-canonical forms.  For example, ``"docs"`` maps to ``"architect"`` because
-the Architect role was previously called the "docs" role.
+Role alias mapping resolves historic or alternative role identifiers to their
+canonical forms. For example, ``"docs"`` maps to ``"architect"`` because some
+older persisted records used the "docs" role label.
 """
 
 from __future__ import annotations
 
 #: Canonical role alias table for Polaris.
-#: Maps legacy or alternative role identifiers to their canonical role_id.
+#: Maps historic or alternative role identifiers to their canonical role_id.
 #: Keys are lowercase; values are canonical role_ids registered in RoleProfileRegistry.
 ROLE_ALIASES: dict[str, str] = {
     "docs": "architect",
