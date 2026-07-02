@@ -1,8 +1,8 @@
-"""Non-mocked route tests for /state/snapshot and /v2/state/snapshot.
+"""Non-mocked route tests for /v2/state/snapshot.
 
-These tests verify that both endpoints return 200 with a stable payload
-when using real temp workspace/runtime root directories, without mocking
-``build_snapshot``.
+These tests verify that the canonical v2 endpoint returns 200 with a stable
+payload when using real temp workspace/runtime root directories, without
+mocking ``build_snapshot``. The retired non-v2 alias must remain unregistered.
 """
 
 from __future__ import annotations
@@ -50,32 +50,19 @@ def _build_app(workspace: str, runtime_root: str) -> tuple[FastAPI, MagicMock]:
 
 
 @pytest.mark.asyncio
-async def test_state_snapshot_returns_200_with_real_dirs(tmp_path: Path) -> None:
-    """GET /state/snapshot returns 200 with stable payload using real temp dirs."""
+async def test_retired_state_snapshot_alias_route_is_not_registered(tmp_path: Path) -> None:
+    """GET /state/snapshot is retired; callers must use /v2/state/snapshot."""
     workspace = str(tmp_path / "workspace")
     runtime_root = str(tmp_path / "runtime")
     Path(workspace).mkdir(parents=True, exist_ok=True)
     Path(runtime_root).mkdir(parents=True, exist_ok=True)
 
     app, _ = _build_app(workspace, runtime_root)
-    fake_ctx = _FakeWorkspaceCtx(workspace=workspace, runtime_root=runtime_root)
 
-    with (
-        patch(
-            "polaris.delivery.http.routers.system.resolve_workspace_runtime_context",
-            return_value=fake_ctx,
-        ),
-    ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/state/snapshot")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/state/snapshot")
 
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
-    data: dict[str, Any] = response.json()
-    assert "tasks" in data, f"Missing 'tasks' in payload keys: {list(data.keys())}"
-    assert isinstance(data["tasks"], list), "'tasks' should be a list"
-    assert "pm_state" in data, f"Missing 'pm_state' in payload keys: {list(data.keys())}"
-    assert "docs_present" in data, f"Missing 'docs_present' in payload keys: {list(data.keys())}"
-    assert "workspace_status" in data, f"Missing 'workspace_status' in payload keys: {list(data.keys())}"
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -108,32 +95,6 @@ async def test_v2_state_snapshot_returns_200_with_real_dirs(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_state_snapshot_empty_workspace_no_docs(tmp_path: Path) -> None:
-    """GET /state/snapshot with empty workspace (no docs/) returns NEEDS_DOCS_INIT."""
-    workspace = str(tmp_path / "empty_ws")
-    runtime_root = str(tmp_path / "runtime")
-    Path(workspace).mkdir(parents=True, exist_ok=True)
-    Path(runtime_root).mkdir(parents=True, exist_ok=True)
-
-    app, _ = _build_app(workspace, runtime_root)
-    fake_ctx = _FakeWorkspaceCtx(workspace=workspace, runtime_root=runtime_root)
-
-    with (
-        patch(
-            "polaris.delivery.http.routers.system.resolve_workspace_runtime_context",
-            return_value=fake_ctx,
-        ),
-    ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/state/snapshot")
-
-    assert response.status_code == 200
-    data: dict[str, Any] = response.json()
-    assert data["docs_present"] is False
-    assert data["workspace_status"]["status"] == "NEEDS_DOCS_INIT"
-
-
-@pytest.mark.asyncio
 async def test_v2_state_snapshot_empty_workspace_no_docs(tmp_path: Path) -> None:
     """GET /v2/state/snapshot with empty workspace (no docs/) returns NEEDS_DOCS_INIT."""
     workspace = str(tmp_path / "empty_ws")
@@ -160,8 +121,8 @@ async def test_v2_state_snapshot_empty_workspace_no_docs(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_state_snapshot_with_docs_dir(tmp_path: Path) -> None:
-    """GET /state/snapshot with docs/ present returns docs_present=True."""
+async def test_v2_state_snapshot_with_docs_dir(tmp_path: Path) -> None:
+    """GET /v2/state/snapshot with docs/ present returns docs_present=True."""
     workspace = str(tmp_path / "ws_with_docs")
     runtime_root = str(tmp_path / "runtime")
     docs_dir = Path(workspace) / "docs"
@@ -178,7 +139,7 @@ async def test_state_snapshot_with_docs_dir(tmp_path: Path) -> None:
         ),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/state/snapshot")
+            response = await client.get("/v2/state/snapshot")
 
     assert response.status_code == 200
     data: dict[str, Any] = response.json()

@@ -65,17 +65,17 @@ class TestSystemRouter:
         assert payload["director"]["status"] == "idle"
 
     async def test_settings_get_returns_200(self) -> None:
-        """GET /settings returns 200 with settings."""
+        """GET /v2/settings returns 200 with settings."""
         app = _build_app()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/settings")
+            response = await client.get("/v2/settings")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
         assert "workspace" in payload
 
     async def test_state_snapshot_returns_200(self) -> None:
-        """GET /state/snapshot returns 200 with snapshot."""
+        """GET /v2/state/snapshot returns 200 with snapshot."""
         app = _build_app()
         with (
             patch(
@@ -91,14 +91,14 @@ class TestSystemRouter:
             mock_ctx.return_value.runtime_root = "/tmp"
 
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await client.get("/state/snapshot")
+                response = await client.get("/v2/state/snapshot")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
         assert payload["workspace"] == "."
 
     async def test_app_shutdown_returns_200(self) -> None:
-        """POST /app/shutdown returns 200."""
+        """POST /v2/app/shutdown returns 200."""
         app = _build_app()
         with (
             patch(
@@ -126,13 +126,27 @@ class TestSystemRouter:
             mock_get_container.return_value = mock_container
 
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await client.post("/app/shutdown")
+                response = await client.post("/v2/app/shutdown")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
         assert payload["ok"] is True
         assert "pm_terminated" in payload
         assert "director_terminated" in payload
+
+    async def test_retired_system_alias_routes_are_not_registered(self) -> None:
+        """Retired non-v2 system aliases must return 404."""
+        app = _build_app()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            settings_get = await client.get("/settings")
+            settings_post = await client.post("/settings", json={"workspace": "."})
+            snapshot_get = await client.get("/state/snapshot")
+            shutdown_post = await client.post("/app/shutdown")
+
+        assert settings_get.status_code == 404
+        assert settings_post.status_code == 404
+        assert snapshot_get.status_code == 404
+        assert shutdown_post.status_code == 404
 
     async def test_nonexistent_endpoint_returns_404(self) -> None:
         """GET /nonexistent returns 404."""

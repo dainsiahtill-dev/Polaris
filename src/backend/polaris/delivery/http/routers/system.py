@@ -247,17 +247,6 @@ async def _build_health_response() -> dict[str, Any]:
     }
 
 
-# DEPRECATED
-@router.get("/settings", dependencies=[Depends(require_auth)], response_model=SettingsResponse)
-def get_settings(request: Request) -> dict[str, Any]:
-    state = get_state(request)
-    payload = state.settings.to_payload()
-    raw_json_log_path = str(payload.get("json_log_path") or "").strip()
-    payload["json_log_path"] = normalize_artifact_rel_path(raw_json_log_path) if raw_json_log_path else DEFAULT_PM_LOG
-    return payload
-
-
-# DEPRECATED
 async def _update_settings_internal(request: Request, payload: SettingsUpdate) -> dict[str, Any]:
     state = get_state(request)
     raw_payload: dict[str, Any] = {}
@@ -418,7 +407,7 @@ async def _update_settings_internal(request: Request, payload: SettingsUpdate) -
                 except (RuntimeError, ValueError) as typed_err:
                     logger.debug(f"Failed to emit typed settings event: {typed_err}")
 
-            # Emit legacy message for backward compatibility
+            # Emit compatibility message for older in-process consumers.
             if message_bus:
                 await message_bus.broadcast(
                     MessageType.SETTINGS_CHANGED,
@@ -436,92 +425,6 @@ async def _update_settings_internal(request: Request, payload: SettingsUpdate) -
     raw_json_log_path = str(result.get("json_log_path") or "").strip()
     result["json_log_path"] = normalize_artifact_rel_path(raw_json_log_path) if raw_json_log_path else DEFAULT_PM_LOG
     return result
-
-
-# DEPRECATED
-@router.post("/settings", dependencies=[Depends(require_auth)], response_model=SettingsResponse)
-async def update_settings(request: Request, payload: SettingsUpdate) -> dict[str, Any]:
-    async with _get_settings_update_lock():
-        return await _update_settings_internal(request, payload)
-
-
-# DEPRECATED
-@router.get("/state/snapshot", dependencies=[Depends(require_auth)], response_model=StateSnapshotResponse)
-def state_snapshot(request: Request) -> dict[str, Any]:
-    state = get_state(request)
-    configured_workspace = str(getattr(state.settings, "workspace", "") or "").strip()
-    ramdisk_root = str(getattr(state.settings, "ramdisk_root", "") or "").strip()
-    workspace_ctx = resolve_workspace_runtime_context(
-        configured_workspace=configured_workspace,
-        default_workspace=DEFAULT_WORKSPACE,
-        ramdisk_root=ramdisk_root,
-    )
-    return _state_snapshot_payload(
-        state,
-        workspace=workspace_ctx.workspace,
-        cache_root=workspace_ctx.runtime_root,
-    )
-
-
-# DEPRECATED
-@router.post("/app/shutdown", dependencies=[Depends(require_auth)], response_model=ShutdownResponse)
-async def app_shutdown(request: Request) -> dict[str, Any]:
-    state = get_state(request)
-    workspace = str(state.settings.workspace or DEFAULT_WORKSPACE)
-
-    pm_running = False
-    pm_external_terminated_pids: list[int] = []
-    director_running = False
-
-    # Use PMService to stop PM (authoritative source)
-    try:
-        from polaris.cells.orchestration.pm_planning.public.service import PMService
-        from polaris.infrastructure.di.container import get_container
-
-        container = await get_container()
-        pm_service = await container.resolve_async(PMService)
-        pm_status = pm_service.get_status()
-        if pm_status.get("running"):
-            pm_running = True
-            await pm_service.stop()
-    except (RuntimeError, ValueError) as e:
-        logger.debug(f"PM stop check failed: {e}")
-
-    # Clean up external PM processes emitted by legacy loop wrappers.
-    pm_external_terminated_pids = terminate_external_loop_pm_processes(workspace)
-    clear_stop_flag(workspace)
-
-    # Use DirectorService to stop Director (authoritative source)
-    director_running = False
-    try:
-        from polaris.cells.director.execution.public.service import DirectorService
-        from polaris.infrastructure.di.container import get_container
-
-        container = await get_container()
-        director_service = await container.resolve_async(DirectorService)
-        director_status = await director_service.get_status()
-        if str(director_status.get("state", "")).strip().upper() == "RUNNING":
-            director_running = True
-            await director_service.stop()
-    except (RuntimeError, ValueError) as e:
-        logger.debug(f"Director stop check failed: {e}")
-
-    clear_director_stop_flag(workspace)
-
-    state.last_pm_payload = None
-
-    pm_terminated = bool(pm_running or pm_external_terminated_pids)
-    director_terminated = bool(director_running)
-
-    return {
-        "ok": True,
-        "pm_running": pm_running,
-        "pm_external_terminated_pids": pm_external_terminated_pids,
-        "director_running": director_running,
-        # Backward-compatible fields used by existing clients/tests.
-        "pm_terminated": pm_terminated,
-        "director_terminated": director_terminated,
-    }
 
 
 @router.get("/v2/health", dependencies=[Depends(require_auth)], response_model=HealthResponse)
@@ -596,7 +499,6 @@ def v2_state_snapshot(request: Request) -> dict[str, Any]:
 @router.post("/v2/app/shutdown", dependencies=[Depends(require_auth)], response_model=ShutdownResponse)
 async def v2_app_shutdown(request: Request) -> dict[str, Any]:
     """Gracefully shutdown PM and Director runtimes."""
-    state = get_state(request)
     state = get_state(request)
     workspace = str(state.settings.workspace or DEFAULT_WORKSPACE)
 

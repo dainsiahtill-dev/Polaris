@@ -38,7 +38,7 @@ def test_settings_route_updates_workspace_env_and_persists_workspace(tmp_path: P
 
     app = create_app(Settings(workspace=str(workspace_a), ramdisk_root=""))
     with TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client:
-        response = client.post("/settings", json={"workspace": str(workspace_b)})
+        response = client.post("/v2/settings", json={"workspace": str(workspace_b)})
 
     assert response.status_code == 200
     payload = response.json()
@@ -109,7 +109,7 @@ def test_settings_route_rejects_meta_project_workspace_without_self_upgrade(tmp_
     app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))
     with TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client:
         response = client.post(
-            "/settings",
+            "/v2/settings",
             json={"workspace": str(get_meta_project_root())},
         )
 
@@ -133,7 +133,7 @@ def test_settings_route_allows_meta_project_workspace_with_self_upgrade(tmp_path
     app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))
     with TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client:
         response = client.post(
-            "/settings",
+            "/v2/settings",
             json={
                 "self_upgrade_mode": True,
                 "workspace": str(project_root),

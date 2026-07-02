@@ -178,7 +178,7 @@ class TestRateLimitMiddleware:
     async def test_bootstrap_loopback_endpoint_is_not_rate_limited(self) -> None:
         middleware = RateLimitMiddleware(MagicMock(), requests_per_second=0.0, burst_size=1)
 
-        response = await middleware.dispatch(self._make_mock_request("/settings", "127.0.0.1"), self._call_next)
+        response = await middleware.dispatch(self._make_mock_request("/v2/settings", "127.0.0.1"), self._call_next)
 
         assert response.status_code != 429
 

@@ -80,7 +80,7 @@ export function buildDirectorStrategyFromSettings(
       showOutput: Boolean(settings?.director_show_output ?? DIRECTOR_STRATEGY_DEFAULTS.observability.showOutput),
     },
     metadata: {
-      source: '/settings',
+      source: '/v2/settings',
       workspace: settings?.workspace || workspace,
       updatedAt: new Date().toISOString(),
     },

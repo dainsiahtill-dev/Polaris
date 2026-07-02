@@ -5364,7 +5364,7 @@ export async function collectExpandedTechEvidenceMatrix(
   let workspace = options.workspaceOverride || "";
   let runtimeRoot = options.runtimeRootOverride || "";
   try {
-    const settings = asRecord(await requestJson<JsonRecord>(page, "/settings"));
+    const settings = asRecord(await requestJson<JsonRecord>(page, "/v2/settings"));
     const layout = asRecord(await requestJson<JsonRecord>(page, "/v2/runtime/storage/layout"));
     workspace = workspace || asString(settings.workspace) || asString(layout.workspace);
     runtimeRoot = runtimeRoot || asString(layout.runtime_root);
@@ -5376,7 +5376,7 @@ export async function collectExpandedTechEvidenceMatrix(
         status: workspace && runtimeRoot ? "PASS" : "FAIL",
         required: true,
         evidence: [
-          { type: "api", ref: "/settings", value: { workspace: settings.workspace } },
+          { type: "api", ref: "/v2/settings", value: { workspace: settings.workspace } },
           {
             type: "api",
             ref: "/v2/runtime/storage/layout",
@@ -5395,7 +5395,7 @@ export async function collectExpandedTechEvidenceMatrix(
         status: "FAIL",
         required: true,
         evidence: [
-          { type: "api", ref: "/settings" },
+          { type: "api", ref: "/v2/settings" },
           { type: "api", ref: "/v2/runtime/storage/layout" },
         ],
         findings: [String(error)],

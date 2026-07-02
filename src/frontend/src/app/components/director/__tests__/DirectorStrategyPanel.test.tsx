@@ -174,7 +174,7 @@ describe('DirectorStrategyPanel settings bridge', () => {
       expect(editorJson).toHaveTextContent('"iterations": 2');
     });
     expect(screen.getByTestId('director-strategy-message')).toHaveTextContent('已读取 /settings');
-    expect(screen.getByTestId('director-strategy-panel')).toHaveTextContent('/settings');
+    expect(screen.getByTestId('director-strategy-panel')).toHaveTextContent('/v2/settings');
     expect(screen.getByTestId('director-strategy-workspace-label')).toHaveTextContent('workspace=Product');
     expect(screen.getByTestId('director-strategy-workspace-label')).not.toHaveTextContent('C:/Temp');
     expect(screen.getByTestId('director-strategy-workspace-label')).toHaveAttribute('title', 'C:/Temp/Product');

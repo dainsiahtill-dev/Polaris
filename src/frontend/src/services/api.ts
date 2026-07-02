@@ -145,14 +145,14 @@ function normalizeDirectorStatusPayload(payload: unknown): BackendStatus {
 
 export const settingsService = {
   async get(): Promise<ApiResult<BackendSettings>> {
-    const res = await apiFetch("/settings");
+    const res = await apiFetch("/v2/settings");
     return handleResponse(res, "Failed to load settings");
   },
 
   async update(
     updates: Partial<BackendSettings>,
   ): Promise<ApiResult<BackendSettings>> {
-    const res = await apiFetch("/settings", {
+    const res = await apiFetch("/v2/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(updates),
@@ -281,7 +281,7 @@ export const processService = {
 
 export const snapshotService = {
   async get(): Promise<ApiResult<SnapshotPayload>> {
-    const res = await apiFetch("/state/snapshot");
+    const res = await apiFetch("/v2/state/snapshot");
     return handleResponse(res, "Failed to load snapshot");
   },
 };

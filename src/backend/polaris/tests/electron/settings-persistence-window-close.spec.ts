@@ -287,7 +287,7 @@ async function setCloseToTrayThroughSettings(window: Page, enabled: boolean): Pr
     await checkbox.click();
   }
   await saveSettings(window);
-  const settings = await requestJson<SettingsPayload>(window, "/settings");
+  const settings = await requestJson<SettingsPayload>(window, "/v2/settings");
   expect(settings.close_to_tray).toBe(enabled);
   await expectCloseToTrayCheckboxState(window, enabled);
   await closeSettingsIfOpen(window);
@@ -470,7 +470,7 @@ test("LLM provider deletion and close behavior survive Electron restart", async 
     await expect(restartedWindow.locator("#root")).toHaveCount(1, { timeout: 60_000 });
 
     const restartedConfig = await requestJson<LlmConfigPayload>(restartedWindow, "/v2/llm/config");
-    const restartedSettings = await requestJson<SettingsPayload>(restartedWindow, "/settings");
+    const restartedSettings = await requestJson<SettingsPayload>(restartedWindow, "/v2/settings");
     expectProviderAbsentFromConfig(restartedConfig, "restart_delete");
     expect(restartedConfig.providers?.restart_keep).toBeTruthy();
     expect(restartedConfig.roles?.pm?.provider_id).toBeUndefined();

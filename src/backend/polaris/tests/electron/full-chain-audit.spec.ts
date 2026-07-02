@@ -3449,9 +3449,9 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       expect(project.metrics.testFileCount).toBeGreaterThanOrEqual(5);
     }
 
-    const initialSettings = await requestJson<SettingsPayload>(window, "/settings");
+    const initialSettings = await requestJson<SettingsPayload>(window, "/v2/settings");
     const settingsPayload = buildFullChainSettingsPayload(project.workspace);
-    const updatedSettings = await requestJson<SettingsPayload>(window, "/settings", {
+    const updatedSettings = await requestJson<SettingsPayload>(window, "/v2/settings", {
       method: "POST",
       body: settingsPayload,
     });
@@ -3466,7 +3466,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       String(updatedSettings.workspace || "").toLowerCase(),
       `settings POST must activate generated workspace; evidence=${toPosixPath(settingsSwitchPath)}`,
     ).toBe(project.workspace.toLowerCase());
-    await expect.poll(async () => String((await requestJson<SettingsPayload>(window, "/settings")).workspace || "").toLowerCase(), {
+    await expect.poll(async () => String((await requestJson<SettingsPayload>(window, "/v2/settings")).workspace || "").toLowerCase(), {
       timeout: 90_000,
       intervals: [500, 1000, 2000, 3000],
     }).toBe(project.workspace.toLowerCase());
@@ -3613,7 +3613,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       const pmShot = await captureAuditScreenshot(window, testInfo, `round-${String(round).padStart(2, "0")}.pm`);
       audit.evidence_paths.screenshots.push(toPosixPath(pmShot.pngPath), toPosixPath(pmShot.reviewJpgPath));
 
-      const snapshot = await requestJson<SnapshotPayload>(window, "/state/snapshot");
+      const snapshot = await requestJson<SnapshotPayload>(window, "/v2/state/snapshot");
       const snapshotPath = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.snapshot.json`);
       await writeUtf8File(snapshotPath, JSON.stringify(snapshot, null, 2));
       audit.evidence_paths.snapshots.push(toPosixPath(snapshotPath));
@@ -3710,7 +3710,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
 
       await clickWorkspaceBack(window, "pm-workspace-back");
       } else {
-        const snapshot = await requestJson<SnapshotPayload>(window, "/state/snapshot");
+        const snapshot = await requestJson<SnapshotPayload>(window, "/v2/state/snapshot");
         const snapshotPath = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.snapshot.resumed.json`);
         await writeUtf8File(snapshotPath, JSON.stringify(snapshot, null, 2));
         audit.evidence_paths.snapshots.push(toPosixPath(snapshotPath));

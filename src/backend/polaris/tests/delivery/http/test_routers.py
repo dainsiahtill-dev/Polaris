@@ -965,7 +965,7 @@ class TestSystemRouter:
         app = self._build_system_app()
         client = TestClient(app)
 
-        response = client.get("/settings")
+        response = client.get("/v2/settings")
 
         assert response.status_code == 200
         data = response.json()
@@ -1005,7 +1005,7 @@ class TestSystemRouter:
             mock_container.return_value = mock_container_instance
 
             response = client.post(
-                "/settings",
+                "/v2/settings",
                 json={"workspace": "/new/workspace", "qa_enabled": False},
             )
 
@@ -1023,7 +1023,7 @@ class TestSystemRouter:
             side_effect=ValidationError("Invalid workspace path"),
         ):
             response = client.post(
-                "/settings",
+                "/v2/settings",
                 json={"workspace": "/invalid/workspace"},
             )
 
@@ -1045,7 +1045,7 @@ class TestSystemRouter:
             mock_ctx.return_value.workspace = "."
             mock_ctx.return_value.runtime_root = "/tmp"
 
-            response = client.get("/state/snapshot")
+            response = client.get("/v2/state/snapshot")
 
             assert response.status_code == 200
             data = response.json()
@@ -1077,7 +1077,7 @@ class TestSystemRouter:
             )
             mock_container.return_value = mock_container_instance
 
-            response = client.post("/app/shutdown")
+            response = client.post("/v2/app/shutdown")
 
             assert response.status_code == 200
             data = response.json()
@@ -1110,7 +1110,7 @@ class TestSystemRouter:
             )
             mock_container.return_value = mock_container_instance
 
-            response = client.post("/app/shutdown")
+            response = client.post("/v2/app/shutdown")
 
             assert response.status_code == 200
             data = response.json()

@@ -125,12 +125,12 @@ async function activateResumeWorkspaceIfRequested(window: Page): Promise<void> {
     return;
   }
   const workspace = path.resolve(resumeWorkspace);
-  await backendJson(window, "/settings", {
+  await backendJson(window, "/v2/settings", {
     method: "POST",
     body: { workspace },
   });
   await expect.poll(async () => {
-    const settings = await backendJson<{ workspace?: string }>(window, "/settings");
+    const settings = await backendJson<{ workspace?: string }>(window, "/v2/settings");
     return path.resolve(String(settings.workspace || ""));
   }, {
     timeout: 90_000,
@@ -780,7 +780,7 @@ async function expectDirectorStrategyFunctional(window: Page, directorWorkspace:
   await expect(panel.getByTestId("director-strategy-message"), "Director strategy status should reflect backend sync")
     .toContainText(/已同步到 \/settings/, { timeout: 30_000 });
 
-  const savedSettings = await backendJson<DirectorStrategySettings>(window, "/settings");
+  const savedSettings = await backendJson<DirectorStrategySettings>(window, "/v2/settings");
   expect(savedSettings.director_execution_mode, "Director strategy save should persist execution mode")
     .toBe(selected?.expected.director_execution_mode);
   expect(savedSettings.director_iterations, "Director strategy save should persist iterations")

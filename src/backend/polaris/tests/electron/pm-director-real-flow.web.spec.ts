@@ -86,10 +86,10 @@ async function waitForPmFinish(page: Parameters<typeof requestJson>[0]): Promise
 }
 
 test("web entry triggers PM -> Chief Engineer -> Director -> QA and verifies 16x4 runtime evidence placement", async ({ webPage, webTestEnv }, testInfo) => {
-  const settings = await requestJson<SettingsPayload>(webPage, "/settings");
+  const settings = await requestJson<SettingsPayload>(webPage, "/v2/settings");
   expect(path.resolve(String(settings.workspace || ""))).toBe(path.resolve(webTestEnv.isolatedWorkspace));
   if (settings.pm_runs_director !== true) {
-    await requestJson<SettingsPayload>(webPage, "/settings", {
+    await requestJson<SettingsPayload>(webPage, "/v2/settings", {
       method: "POST",
       body: {
         workspace: webTestEnv.isolatedWorkspace,
@@ -104,7 +104,7 @@ test("web entry triggers PM -> Chief Engineer -> Director -> QA and verifies 16x
   expect(pmStatus.ok, JSON.stringify(pmStatus)).not.toBe(false);
   expect(String(pmStatus.error || "")).toBe("");
 
-  const snapshot = await requestJson<SnapshotPayload>(webPage, "/state/snapshot");
+  const snapshot = await requestJson<SnapshotPayload>(webPage, "/v2/state/snapshot");
   expect(Array.isArray(snapshot.tasks) ? snapshot.tasks.length : 0).toBeGreaterThan(0);
   expect(Number(snapshot.pm_state?.completed_task_count || 0)).toBeGreaterThan(0);
 

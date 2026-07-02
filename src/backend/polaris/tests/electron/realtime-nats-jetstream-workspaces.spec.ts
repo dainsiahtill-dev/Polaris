@@ -98,7 +98,7 @@ function monitoredPollingKey(request: RealtimeNetworkRequest): string | null {
   if (request.method !== "GET") return null;
   const url = new URL(request.url);
   const path = url.pathname;
-  if (path === "/state/snapshot") return path;
+  if (path === "/v2/state/snapshot") return path;
   if (path === "/v2/pm/status") return path;
   if (path === "/v2/director/status") return path;
   if (path === "/v2/llm/status") return path;

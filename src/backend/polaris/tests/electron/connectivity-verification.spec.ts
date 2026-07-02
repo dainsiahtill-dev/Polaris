@@ -212,7 +212,7 @@ test("端到端启动与联通核验: backend + nats-jetstream + vite", async ({
     checklist.backend.health = health.ok;
     if (health.ok) console.log(`[check] /health → ${JSON.stringify(health.data)}`);
 
-    const settings = await backendJson<Record<string, unknown>>(window, "/settings");
+    const settings = await backendJson<Record<string, unknown>>(window, "/v2/settings");
     checklist.api_endpoints.settings = settings.ok;
     checklist.backend.settings = settings.ok;
     if (settings.ok) {
@@ -221,7 +221,7 @@ test("端到端启动与联通核验: backend + nats-jetstream + vite", async ({
       checklist.nats_jetstream.required = String((s as any)?.nats?.required ?? "") === "true";
     }
 
-    const snapshot = await backendJson<Record<string, unknown>>(window, "/state/snapshot");
+    const snapshot = await backendJson<Record<string, unknown>>(window, "/v2/state/snapshot");
     checklist.api_endpoints.state_snapshot = snapshot.ok;
 
     const sessions = await backendJson<{ sessions?: unknown[] }>(window, "/v2/factory/bench/sessions");

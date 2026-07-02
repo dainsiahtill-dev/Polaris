@@ -144,7 +144,7 @@ def test_app_shutdown_terminates_managed_and_external_processes(tmp_path: Path) 
             return_value=[1024, 2048],
         ) as external_pm_mock,
     ):
-        response = client.post("/app/shutdown")
+        response = client.post("/v2/app/shutdown")
 
     assert response.status_code == 200
     payload = response.json()

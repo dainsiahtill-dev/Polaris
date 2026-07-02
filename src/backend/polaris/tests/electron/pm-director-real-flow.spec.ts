@@ -298,7 +298,7 @@ async function waitForPmFinish(window: Page): Promise<PmStatusPayload> {
 async function waitForSnapshotTasks(window: Page): Promise<SnapshotPayload> {
   await expect
     .poll(async () => {
-      const snapshot = await fetchJson<SnapshotPayload>(window, "/state/snapshot");
+      const snapshot = await fetchJson<SnapshotPayload>(window, "/v2/state/snapshot");
       return Array.isArray(snapshot.tasks) ? snapshot.tasks.length : 0;
     }, {
       timeout: 60_000,
@@ -306,7 +306,7 @@ async function waitForSnapshotTasks(window: Page): Promise<SnapshotPayload> {
     })
     .toBeGreaterThan(0);
 
-  return fetchJson<SnapshotPayload>(window, "/state/snapshot");
+  return fetchJson<SnapshotPayload>(window, "/v2/state/snapshot");
 }
 
 async function enterPmWorkspace(window: Page): Promise<void> {
@@ -346,7 +346,7 @@ test.setTimeout(REAL_FLOW_TEST_TIMEOUT_MS);
 test("real PM -> Chief Engineer -> Director flow reaches PM and Director workspaces", async ({ window, testEnv }, testInfo) => {
   test.skip(!testEnv.useRealSettings, "Set KERNELONE_E2E_USE_REAL_SETTINGS=1 to use real configured LLM settings.");
 
-  const settings = await fetchJson<SettingsPayload>(window, "/settings");
+  const settings = await fetchJson<SettingsPayload>(window, "/v2/settings");
   expect(String(settings.workspace || "").trim(), "real settings workspace should not be empty").not.toBe("");
   if (String(process.env.KERNELONE_E2E_ALLOW_REAL_WORKSPACE_MUTATION || "").trim() !== "1") {
     expect(

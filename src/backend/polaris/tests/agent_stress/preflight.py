@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -118,7 +119,7 @@ class BackendPreflightProbe:
                 },
             )
 
-        settings_result = await self._request("/settings", include_auth=True)
+        settings_result = await self._request("/v2/settings", include_auth=True)
         if settings_result["status_code"] in {401, 403}:
             return BackendPreflightReport(
                 timestamp=timestamp,
@@ -203,7 +204,7 @@ class BackendPreflightProbe:
     async def _request(self, path: str, *, include_auth: bool) -> dict[str, Any]:
         url = f"{self.backend_url}{path}"
         try:
-            headers = None
+            headers: dict[str, str] | None = None
             if not include_auth:
                 headers = {}
             response = await self.client.get(url, headers=headers, timeout=self.timeout)

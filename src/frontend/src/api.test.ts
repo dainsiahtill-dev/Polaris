@@ -102,12 +102,12 @@ describe('getBackendInfo web fallback', () => {
     vi.stubGlobal('fetch', fetchMock);
     const { apiFetch } = await import('./api');
 
-    const response = await apiFetch('/settings');
+    const response = await apiFetch('/v2/settings');
 
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[0][0]).toBe('http://127.0.0.1:49988/settings');
-    expect(fetchMock.mock.calls[1][0]).toBe('http://127.0.0.1:49977/settings');
+    expect(fetchMock.mock.calls[0][0]).toBe('http://127.0.0.1:49988/v2/settings');
+    expect(fetchMock.mock.calls[1][0]).toBe('http://127.0.0.1:49977/v2/settings');
     expect(localStorage.getItem('polaris.baseUrl')).toBeNull();
     expect(localStorage.getItem('polaris.token')).toBeNull();
   });
@@ -154,10 +154,10 @@ describe('getBackendInfo web fallback', () => {
     vi.stubGlobal('fetch', fetchMock);
     const { apiFetch } = await import('./api');
 
-    await expect(apiFetch('/settings')).rejects.toThrow('connection refused');
+    await expect(apiFetch('/v2/settings')).rejects.toThrow('connection refused');
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe('http://127.0.0.1:50017/settings');
+    expect(fetchMock.mock.calls[0][0]).toBe('http://127.0.0.1:50017/v2/settings');
   });
 
   it('opens WebSocket against the explicit instance backend without probing default backend', async () => {
@@ -250,12 +250,12 @@ describe('apiFetch auth token discovery', () => {
     vi.stubGlobal('fetch', fetchMock);
     const { apiFetch } = await import('./api');
 
-    const response = await apiFetch('/settings');
+    const response = await apiFetch('/v2/settings');
 
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://127.0.0.1:49977/settings');
+    expect(url).toBe('http://127.0.0.1:49977/v2/settings');
     const headers = init.headers as Headers;
     expect(headers.get('Authorization')).toBe('Bearer polaris-local-dev');
   });
@@ -267,7 +267,7 @@ describe('apiFetch auth token discovery', () => {
     vi.stubGlobal('fetch', fetchMock);
     const { apiFetch } = await import('./api');
 
-    await apiFetch('/settings');
+    await apiFetch('/v2/settings');
 
     const calledUrls = fetchMock.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(calledUrls.every((u: string) => !u.includes('/v2/auth/token'))).toBe(true);
@@ -283,7 +283,7 @@ describe('apiFetch auth token discovery', () => {
     vi.stubGlobal('fetch', fetchMock);
     const { apiFetch } = await import('./api');
 
-    const response = await apiFetch('/settings');
+    const response = await apiFetch('/v2/settings');
 
     expect(response.status).toBe(200);
     const calledUrls = fetchMock.mock.calls.map((c: unknown[]) => c[0] as string);
@@ -300,7 +300,7 @@ describe('apiFetch auth token discovery', () => {
     vi.stubGlobal('fetch', fetchMock);
     const { apiFetch } = await import('./api');
 
-    await apiFetch('/settings');
+    await apiFetch('/v2/settings');
 
     const discoveryCall = fetchMock.mock.calls.find((c: unknown[]) =>
       (c[0] as string).includes('/v2/auth/token')
@@ -322,7 +322,7 @@ describe('apiFetch auth token discovery', () => {
     vi.stubGlobal('fetch', fetchMock);
     const { apiFetch } = await import('./api');
 
-    const response = await apiFetch('/settings');
+    const response = await apiFetch('/v2/settings');
 
     expect(response.status).toBe(200);
     const secondAttemptCall = fetchMock.mock.calls[2];
