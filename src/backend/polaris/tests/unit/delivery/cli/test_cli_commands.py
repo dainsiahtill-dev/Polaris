@@ -373,8 +373,8 @@ class TestPolarisCliParser:
 class TestCliRouter:
     """Test CliRouter parsing and routing."""
 
-    def test_router_parser_has_four_subcommands(self, router: CliRouter) -> None:
-        """CliRouter parser must expose chat, status, workflow, test-window."""
+    def test_router_parser_has_three_subcommands(self, router: CliRouter) -> None:
+        """CliRouter parser must expose only retained command shims."""
         parser = router._parser
         subparsers_actions = [
             action
@@ -382,7 +382,7 @@ class TestCliRouter:
             if isinstance(action, argparse._SubParsersAction)  # type: ignore[attr-defined]
         ]
         choices = subparsers_actions[0].choices
-        assert set(choices.keys()) == {"chat", "status", "workflow", "test-window"}
+        assert set(choices.keys()) == {"chat", "status", "workflow"}
 
     def test_router_parsed_returns_parsed_command(self, router: CliRouter) -> None:
         """router.parsed() must return a ParsedCommand."""
@@ -406,10 +406,10 @@ class TestCliRouter:
         exit_code = router.route(["chat"])
         assert exit_code == 42
 
-    def test_router_route_unknown_command_returns_zero(self, router: CliRouter) -> None:
-        """A command with no handler must return 0 (acknowledged)."""
+    def test_router_route_unknown_command_returns_nonzero(self, router: CliRouter) -> None:
+        """A command with no handler must fail closed."""
         exit_code = router.route(["status"])
-        assert exit_code == 0
+        assert exit_code == 1
 
     def test_router_route_bad_args_returns_nonzero(self, router: CliRouter) -> None:
         """Invalid arguments must result in a non-zero exit code."""

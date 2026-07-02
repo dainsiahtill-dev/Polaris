@@ -52,13 +52,13 @@ def router() -> CliRouter:
 class TestCliRouterSubparsers:
     """Test that CliRouter creates a correctly structured ArgumentParser."""
 
-    def test_parser_has_four_subcommands(self, router: CliRouter) -> None:
-        """CliRouter parser must expose all four top-level subcommands."""
+    def test_parser_has_three_subcommands(self, router: CliRouter) -> None:
+        """CliRouter parser must expose only the retained command shims."""
         parser = router._parser
         subparsers_actions = [action for action in parser._actions if isinstance(action, argparse._SubParsersAction)]
         assert len(subparsers_actions) == 1, "Expected exactly one subparsers action"
         choices = subparsers_actions[0].choices
-        assert set(choices.keys()) == {"chat", "status", "workflow", "test-window"}
+        assert set(choices.keys()) == {"chat", "status", "workflow"}
 
     def test_chat_subcommand_has_expected_arguments(self, router: CliRouter) -> None:
         """The 'chat' subcommand must expose role, mode, session-id, session-title."""
@@ -80,11 +80,10 @@ class TestCliRouterSubparsers:
             assert parsed.command == "workflow"
             assert parsed.subcommand == action
 
-    def test_test_window_subcommand_accepted(self, router: CliRouter) -> None:
-        """The 'test-window' subcommand must parse."""
-        parsed = router.parsed(["test-window", "--role", "qa", "--surface", "tui"])
-        assert parsed.command == "test-window"
-        assert parsed.role == "qa"
+    def test_test_window_subcommand_rejected(self, router: CliRouter) -> None:
+        """The retired 'test-window' subcommand must not parse."""
+        with pytest.raises(SystemExit):
+            router.parsed(["test-window", "--role", "qa", "--surface", "tui"])
 
     def test_role_defaults_to_director(self, router: CliRouter) -> None:
         """When --role is omitted, the parsed role must default to 'director'."""
@@ -211,12 +210,10 @@ class TestCliRouterDispatch:
         exit_code = router.route(["chat"])
         assert exit_code == 42
 
-    def test_route_returns_zero_when_command_has_no_handler(self, router: CliRouter) -> None:
-        """A command with no registered handler must return 0 (acknowledged)."""
-        # status is registered by argparse but not registered as a handler
+    def test_route_returns_nonzero_when_command_has_no_handler(self, router: CliRouter) -> None:
+        """A command with no registered handler must fail closed."""
         exit_code = router.route(["status"])
-        # No handler -> acknowledged (exit 0), not treated as error
-        assert exit_code == 0
+        assert exit_code == 1
 
     def test_route_parses_and_normalises_role(self, router: CliRouter) -> None:
         """route() must normalise role to lowercase."""

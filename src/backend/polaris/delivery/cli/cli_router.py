@@ -200,15 +200,6 @@ class CliRouter:
         wf.add_argument("--task-timeout-seconds", type=int, default=MAX_WORKFLOW_TIMEOUT_SECONDS)
 
         # test-window subcommand
-        tw = subparsers.add_parser(
-            "test-window",
-            help=argparse.SUPPRESS,
-            description="Compatibility-only retired role test window",
-        )
-        CliRouter._add_log_level_argument(tw, default=argparse.SUPPRESS)
-        tw.add_argument("--role", type=str, default="director", help="Role id")
-        tw.add_argument("--surface", choices=["tui"], default="tui")
-
         return parser
 
     # ------------------------------------------------------------------
@@ -257,8 +248,8 @@ class CliRouter:
                 return 1
 
         # No handler registered — acknowledge the command exists (subparsers enforce this)
-        logger.debug("No handler registered for command '%s'; acknowledging.", command)
-        return 0
+        logger.error("No handler registered for command '%s'; refusing to acknowledge execution.", command)
+        return 1
 
     def parsed(self, argv: list[str]) -> ParsedCommand:
         """Parse arguments without executing, returning a structured result.
