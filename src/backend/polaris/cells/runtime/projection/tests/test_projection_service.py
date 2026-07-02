@@ -434,7 +434,10 @@ def test_snapshot_task_rows_normalize_run_ledger_task_boundary_failure_class(
 def test_task_boundary_execution_state_uses_shared_qa_failure_taxonomy() -> None:
     assert _task_boundary_execution_state("incomplete_materialization") == "FAILED_ARTIFACT"
     assert _task_boundary_execution_state("missing_entrypoint_target") == "FAILED_ARTIFACT"
+    assert _task_boundary_execution_state("implementation_defect") == "FAILED_ARTIFACT"
     assert _task_boundary_execution_state("tool_dispatch_dropped") == "FAILED_PLATFORM"
+    assert _task_boundary_execution_state("execution_evidence_missing") == "BLOCKED_WITH_REASON"
+    assert _task_boundary_execution_state("dependency_not_unlocked") == "BLOCKED_WITH_REASON"
 
 
 # =============================================================================

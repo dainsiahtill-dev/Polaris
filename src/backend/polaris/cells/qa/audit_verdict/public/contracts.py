@@ -328,7 +328,9 @@ _QA_FAILURE_CLASS_ALIASES = {
     "incomplete_materialization": "INCOMPLETE_MATERIALIZATION",
     "missing_entrypoint_target": "MISSING_ENTRYPOINT_TARGET",
     "tool_dispatch_dropped": "TOOL_DISPATCH_DROPPED",
+    "execution_evidence_missing": "EXECUTION_EVIDENCE_MISSING",
     "implementation_defect": "IMPLEMENTATION_DEFECT",
+    "dependency_not_unlocked": "DEPENDENCY_NOT_UNLOCKED",
     "scope_mismatch": "BLUEPRINT_SCOPE_MISMATCH",
     "blueprint_scope_mismatch": "BLUEPRINT_SCOPE_MISMATCH",
     "contract_ambiguous": "CONTRACT_AMBIGUOUS",
@@ -343,6 +345,7 @@ QA_ARTIFACT_FAILURE_CLASSES = frozenset(
     {
         "INCOMPLETE_MATERIALIZATION",
         "MISSING_ENTRYPOINT_TARGET",
+        "IMPLEMENTATION_DEFECT",
     }
 )
 
