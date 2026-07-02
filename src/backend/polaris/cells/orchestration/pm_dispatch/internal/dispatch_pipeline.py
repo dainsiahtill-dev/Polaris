@@ -1007,7 +1007,7 @@ def _shadow_publish_dispatch_tasks_to_task_market(
                 metadata={
                     "dispatch_mode": mode,
                     "dispatch_rollout_mode": rollout_mode,
-                    "published_via": "legacy_shadow_normalized",
+                    "published_via": "task_market_contract_normalized",
                     "route": task_route,
                     "task_market_route": task_route,
                     "blueprint_required": True,

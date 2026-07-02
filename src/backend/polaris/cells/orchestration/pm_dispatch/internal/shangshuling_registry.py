@@ -86,12 +86,12 @@ def _save_registry(workspace_full: str, registry: dict[str, Any]) -> None:
 
 
 def _task_identity(task: dict[str, Any]) -> str:
-    token = str(task.get("id") or task.get("legacy_id") or "").strip()
+    token = str(task.get("id") or task.get("source_task_id") or "").strip()
     if token:
         return token
     metadata = task.get("metadata")
     if isinstance(metadata, dict):
-        token = str(metadata.get("legacy_id") or "").strip()
+        token = str(metadata.get("source_task_id") or "").strip()
     return token
 
 
@@ -183,10 +183,10 @@ class LocalShangshulingPort(ShangshulingPort):
         normalized_status = "done" if success else "failed"
         task_token = str(task_id or "").strip()
         for item in tasks:
-            if _task_identity(item) != task_token and str(item.get("legacy_id") or "").strip() != task_token:
+            if _task_identity(item) != task_token and str(item.get("source_task_id") or "").strip() != task_token:
                 metadata_raw = item.get("metadata")
                 metadata_payload = metadata_raw if isinstance(metadata_raw, dict) else {}
-                if str(metadata_payload.get("legacy_id") or "").strip() != task_token:
+                if str(metadata_payload.get("source_task_id") or "").strip() != task_token:
                     continue
             item["status"] = normalized_status
             item["updated_at"] = _now_iso()

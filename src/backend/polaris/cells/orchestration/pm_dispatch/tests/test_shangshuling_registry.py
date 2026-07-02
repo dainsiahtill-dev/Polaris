@@ -24,16 +24,16 @@ from polaris.cells.orchestration.pm_dispatch.internal.shangshuling_registry impo
 
 class TestTaskIdentity:
     def test_prefers_id_field(self) -> None:
-        task = {"id": "T01", "legacy_id": "old-1"}
+        task = {"id": "T01", "source_task_id": "old-1"}
         assert _task_identity(task) == "T01"
 
-    def test_falls_back_to_legacy_id(self) -> None:
-        task = {"legacy_id": "legacy-1", "title": "Build login"}
-        assert _task_identity(task) == "legacy-1"
+    def test_falls_back_to_source_task_id(self) -> None:
+        task = {"source_task_id": "source-1", "title": "Build login"}
+        assert _task_identity(task) == "source-1"
 
-    def test_falls_back_to_metadata_legacy_id(self) -> None:
-        task = {"metadata": {"legacy_id": "meta-legacy"}, "title": "x"}
-        assert _task_identity(task) == "meta-legacy"
+    def test_falls_back_to_metadata_source_task_id(self) -> None:
+        task = {"metadata": {"source_task_id": "meta-source"}, "title": "x"}
+        assert _task_identity(task) == "meta-source"
 
     def test_empty_when_no_identity(self) -> None:
         task = {"title": "no identity"}
@@ -302,10 +302,10 @@ class TestLocalShangshulingPortRecordCompletion:
 
     @patch("polaris.cells.orchestration.pm_dispatch.internal.shangshuling_registry._load_registry")
     @patch("polaris.cells.orchestration.pm_dispatch.internal.shangshuling_registry._save_registry")
-    def test_records_by_legacy_id(self, mock_save: MagicMock, mock_load: MagicMock) -> None:
-        mock_load.return_value = _make_mock_registry([{"legacy_id": "legacy-T01", "status": "todo"}])
+    def test_records_by_source_task_id(self, mock_save: MagicMock, mock_load: MagicMock) -> None:
+        mock_load.return_value = _make_mock_registry([{"source_task_id": "source-T01", "status": "todo"}])
         port = LocalShangshulingPort()
-        ok = port.record_shangshuling_task_completion("/ws", "legacy-T01", success=True, metadata={})
+        ok = port.record_shangshuling_task_completion("/ws", "source-T01", success=True, metadata={})
         assert ok is True
 
 

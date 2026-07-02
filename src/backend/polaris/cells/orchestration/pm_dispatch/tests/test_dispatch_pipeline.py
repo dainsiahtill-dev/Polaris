@@ -145,7 +145,7 @@ def test_shadow_publish_emits_publish_commands(monkeypatch) -> None:
     assert first.kwargs["payload"]["contract_hash"]
     assert first.kwargs["payload"]["pm_contract_hash"] == first.kwargs["payload"]["contract_hash"]
     assert first.kwargs["payload"]["control_plane_lineage"]["contract_hash"] == first.kwargs["payload"]["contract_hash"]
-    assert first.kwargs["metadata"]["published_via"] == "legacy_shadow_normalized"
+    assert first.kwargs["metadata"]["published_via"] == "task_market_contract_normalized"
     assert first.kwargs["plan_id"]
     assert first.kwargs["plan_revision_id"].startswith("rev-")
     assert second.kwargs["trace_id"] == "trace-2"

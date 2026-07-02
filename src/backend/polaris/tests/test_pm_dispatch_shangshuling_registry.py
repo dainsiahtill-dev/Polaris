@@ -62,8 +62,8 @@ def test_local_shangshuling_registry_round_trip(
     )
 
     tasks = [
-        {"id": "T-2", "status": "done", "priority": 9, "metadata": {"legacy_id": "L-2"}},
-        {"id": "T-1", "status": "todo", "priority": 1, "metadata": {"legacy_id": "L-1"}},
+        {"id": "T-2", "status": "done", "priority": 9, "metadata": {"source_task_id": "S-2"}},
+        {"id": "T-1", "status": "todo", "priority": 1, "metadata": {"source_task_id": "S-1"}},
         {"id": "T-3", "status": "failed", "priority": "high"},
     ]
 

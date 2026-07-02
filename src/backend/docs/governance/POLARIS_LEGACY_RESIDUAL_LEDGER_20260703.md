@@ -28,6 +28,7 @@ as the live work queue for new findings.
 | LR-06 | Storage layout | `save_persisted_settings` still dual-wrote the old home settings file, creating a second settings fact source. | Stopped dual-writing the migration path; retained one-way read migration into canonical global settings. | `rtk pytest src/backend/polaris/cells/storage/layout/tests/test_storage_layout_cell.py src/backend/polaris/tests/test_workspace_settings_sync.py src/backend/polaris/tests/test_llm_phase0_regression.py -q -k "settings"`; negative source scan. |
 | LR-07 | Log pipeline | Log pipeline compatibility projection used `LEGACY_CHANNEL_MAPPING`, `normalize_legacy_event`, `to_legacy_projection`, and `legacy_*` model fields, making compatibility input look like a second event fact source. | Renamed the layer to `COMPAT_CHANNEL_MAPPING`, `normalize_compat_event`, `to_compat_projection`, and `compat_*` fields while keeping canonical event writing behavior. | `rtk pytest src/backend/polaris/tests/infrastructure/log_pipeline/test_canonical_event.py -q`; `rtk ruff check`; `rtk mypy`; negative source scan. |
 | LR-08 | Workflow embedded bridge | Embedded workflow child payloads and result wrappers still used `mode == "legacy"` as the non-DAG compatibility contract, leaving old terminology in the runtime boundary. | Renamed the compatibility mode to `compat` across the embedded workflow APIs, KernelOne workflow contract parser, PM activity summaries, and focused tests. | `rtk pytest src/backend/polaris/tests/orchestration/test_workflow_engine.py src/backend/polaris/tests/unit/cells/orchestration/workflow_runtime/internal/test_embedded_api.py src/backend/polaris/tests/unit/cells/orchestration/workflow_runtime/internal/test_workflow_client.py src/backend/polaris/kernelone/workflow/tests src/backend/polaris/tests/test_kernelone_safety_regressions.py -q -k "workflow_contract or compat or legacy or from_payload or unwrap_workflow_result or workflow_client"`; `rtk ruff check`; `rtk mypy`; negative source scan. |
+| LR-09 | PM dispatch projection | Active PM dispatch metadata still published `legacy_shadow_normalized`, and the cell-local registry used `legacy_id` as an alternate task identity. | Renamed the publish marker to `task_market_contract_normalized` and the external task identity field to `source_task_id` inside pm_dispatch. | `rtk pytest src/backend/polaris/cells/orchestration/pm_dispatch/tests/test_shangshuling_registry.py src/backend/polaris/tests/test_pm_dispatch_shangshuling_registry.py src/backend/polaris/cells/orchestration/pm_dispatch/tests/test_dispatch_pipeline.py src/backend/polaris/tests/unit/cells/orchestration/pm_dispatch/internal/test_dispatch_pipeline.py src/backend/polaris/tests/unit/cells/orchestration/pm_dispatch/internal/test_pm_task_utils.py -q`; `rtk ruff check`; `rtk mypy`; negative source scan. |
 
 ## Open Residual Buckets
 
@@ -36,7 +37,7 @@ execution correctness directly.
 
 | Bucket | Priority | Current Evidence | Exit Criteria |
 | --- | --- | --- | --- |
-| PM/orchestration migration paths | P1 | PM integration and orchestration modules still sync or materialize legacy tasks into canonical task rows. | Ensure TaskMarket/Execution Ledger is the only active execution fact source; keep only one-way import migration if needed. |
+| Delivery PM CLI import paths | P1 | Delivery-layer PM integration, director node selection, and loop-director still use `legacy_id` / `legacy_task` naming while importing older task payloads into canonical task rows. | Rename the import boundary to source-task terminology or remove the path if it is no longer an active supported entrypoint. |
 | Audit diagnosis script payload flattening | P2 | Audit diagnosis toolkit still emits `legacy` script-friendly payloads. | Replace with explicit `script_projection` naming or remove if no active caller needs the flattened shape. |
 | CLI compatibility surfaces | P2 | CLI/router/console/director_v2 still accept or warn about retired modes, test-window, textual/rich aliases, and `--state`. | Either remove the compatibility options or fence them as explicit fail-closed/deprecation errors with tests. |
 | Workspace/docs migration paths | P3 | Docs/workspace integrity still references old docs layout and metadata paths for migration. | Keep as accepted read-only migration only, or remove after confirming no workspace bootstrap relies on it. |
@@ -45,7 +46,7 @@ execution correctness directly.
 
 ## Next Closure Order
 
-1. P1 PM/orchestration migration paths.
+1. P1 Delivery PM CLI import paths.
 2. P2 audit diagnosis script projection.
 3. P2 CLI compatibility surfaces.
 4. P3 workspace/docs migration paths.
