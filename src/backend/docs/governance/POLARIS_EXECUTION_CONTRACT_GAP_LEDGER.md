@@ -19,6 +19,41 @@ The target chain is:
 - P1: Can degrade task quality, cross-role context fidelity, repair convergence, or post-run diagnosis.
 - P2: Product/AGI experience hardening that should consume the same contracts but does not block the execution contract foundation.
 
+## Current Closure State
+
+This ledger is closed for the current execution-control foundation pass. It
+remains active only as the intake ledger for newly proven contract gaps.
+
+| Class | Count | Meaning |
+| --- | ---: | --- |
+| P0/P1/P2 implementation gaps open | 0 | No known execution-contract foundation gap remains open in this ledger. |
+| Enforcement reconciliation items open | 0 | The strict handoff, envelope, QA authority, and final-request projection reconciliation is closed. |
+| Bench hotspot reconciliation items open | 0 | The repeated Factory Bench control-plane hotspots are closed or explicitly routed to their owning ledgers. |
+| Post-closure alignment items open | 0 | Main audit-spec alignment gaps discovered after implementation closure are closed. |
+
+Closed rows must not be reopened to describe a fresh symptom. A new symptom must
+enter as a new item only after it has concrete evidence that contradicts current
+contracts, tests, runtime receipts, or provider-request audit projections.
+
+## Reopen and Intake Rules
+
+1. Do not start code changes from a broad phrase such as "control plane drift",
+   "tool lifecycle issue", or "QA problem". First create a specific ledger item
+   with evidence, owner layer, target state, and verification command.
+2. Use the canonical evidence chain before opening an item:
+   final provider request snapshot, Run Ledger projection, ToolCallLifecycle
+   receipt, TaskBoundary verdict, QA verdict envelope, runtime projection, and
+   the failing test or bench artifact.
+3. If current tests already prove the alleged gap, record the result as an audit
+   note or improve documentation. Do not implement a second path.
+4. If a bench symptom is caused by product code, test data, model quality, or
+   target-project output quality, it does not belong in this execution-contract
+   ledger unless the platform evidence chain is missing, contradictory, or
+   incorrectly routed.
+5. New execution facts must converge on the existing chain:
+   `Provider Response -> ToolCallLifecycle -> Effect Receipt -> Run Ledger ->
+   TaskBoundary Verdict -> QA Verdict -> Runtime Projection`.
+
 ## Ledger
 
 | ID | Severity | Gap | Current State | Target State | Status | Verification |
