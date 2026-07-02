@@ -1,16 +1,17 @@
 """Pydantic v2 domain models for the Task entity.
 
-This module provides the canonical Pydantic-based Task model that replaces
-the legacy ``@dataclass`` + hand-rolled ``to_dict()``/``from_dict()`` pattern.
+This module provides validated DTO-style Task models for API, JSON, and
+schema-generation boundaries. The mutable runtime aggregate remains
+``polaris.domain.entities.task.Task``.
 
-Key improvements over the dataclass version:
+Key capabilities:
     - Automatic JSON Schema generation for API documentation
     - Built-in validation with ``model_validator`` and ``field_validator``
-    - ``model_validate()`` / ``model_dump()`` replace hand-rolled serialization
+    - ``model_validate()`` / ``model_dump()`` for explicit serialization
     - ``strict=False`` allows coercion from JSON (str→enum, float→int)
     - Frozen value objects prevent accidental mutation
 
-Migration guide:
+Boundary guide:
     1. Replace ``Task(**data)`` with ``TaskModel.model_validate(data)``
     2. Replace ``task.to_dict()`` with ``task.model_dump()``
     3. Replace ``Task.from_dict(data)`` with ``TaskModel.model_validate(data)``
@@ -123,8 +124,8 @@ class TaskResultModel(BaseModel):
 class TaskModel(BaseModel):
     """Polaris Task domain entity (Pydantic v2).
 
-    Replaces the legacy ``@dataclass Task`` with full validation,
-    serialization, and JSON Schema support.
+    Provides full validation, serialization, and JSON Schema support for
+    external data boundaries.
 
     Usage::
 
