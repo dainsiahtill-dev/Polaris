@@ -42,6 +42,23 @@ RESET = "\033[0m"
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 REPO_ROOT = SCRIPT_DIR.parent.parent.parent.parent
+DEFAULT_RULE_IDS: tuple[str, ...] = (
+    "context_pack_freshness",
+    "semantic_retrieval_boundary",
+    "contract_change_review",
+    "no_conflicting_coverage",
+    "catalog_presence",
+    "shim_markers",
+    "legacy_coverage",
+    "closed_governance_ledgers_intake_only",
+    "verified_evidence",
+    "command_pattern_source",
+    "event_usage",
+    "tool_compression",
+    "llm_import",
+    "role_call_hierarchy",
+    "task_broker",
+)
 
 
 @dataclass
@@ -1028,25 +1045,8 @@ def run_rule(rule_id: str) -> FitnessCheckResult:
 
 def run_all() -> list[FitnessCheckResult]:
     """Run all rules and return results."""
-    rules = [
-        "context_pack_freshness",
-        "semantic_retrieval_boundary",
-        "contract_change_review",
-        "no_conflicting_coverage",
-        "catalog_presence",
-        "shim_markers",
-        "legacy_coverage",
-        "closed_governance_ledgers_intake_only",
-        "verified_evidence",
-        "command_pattern_source",
-        "event_usage",
-        "tool_compression",
-        "llm_import",
-        "role_call_hierarchy",
-        "task_broker",
-    ]
     results = []
-    for rule in rules:
+    for rule in DEFAULT_RULE_IDS:
         result = run_rule(rule)
         results.append(result)
     return results

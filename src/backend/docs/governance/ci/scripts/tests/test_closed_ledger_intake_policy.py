@@ -40,6 +40,14 @@ def test_fitness_rule_checker_runs_closed_ledger_rule() -> None:
     assert len(result.evidence) == len(CLOSED_LEDGER_EXPECTATIONS)
 
 
+def test_default_fitness_rule_suite_includes_closed_ledger_rule() -> None:
+    """The default fitness suite must include every declared rule method."""
+    assert "closed_governance_ledgers_intake_only" in fitness_rule_checker.DEFAULT_RULE_IDS
+    checker = fitness_rule_checker.get_checker()
+    for rule_id in fitness_rule_checker.DEFAULT_RULE_IDS:
+        assert hasattr(checker, f"check_{rule_id}"), rule_id
+
+
 @pytest.mark.parametrize("status", ("Status: Active", "Status: Closed"))
 def test_checker_rejects_non_intake_status(tmp_path: Path, status: str) -> None:
     """Closed ledgers must use the explicit intake-only status."""
