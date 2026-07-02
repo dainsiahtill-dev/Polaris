@@ -241,6 +241,45 @@ def test_task_boundary_verdict_is_appended_to_run_ledger(tmp_path: Path) -> None
     assert projection["task_boundary"]["latest"]["failure_class"] == "MISSING_ENTRYPOINT_TARGET"
 
 
+def test_task_boundary_verdict_projects_real_run_gate_evidence(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    source = workspace / "src" / "index.js"
+    source.parent.mkdir(parents=True)
+    source.write_text("console.log('planet weather')\n", encoding="utf-8")
+    record = {
+        "task_id": "TASK-1",
+        "declared_source_targets": ["src/index.js"],
+        "source_files": ["src/index.js"],
+        "code_files": ["src/index.js"],
+        "real_run_gate": {
+            "ok": False,
+            "requirements": {
+                "artifact_landed": {"ok": True},
+                "source_files_present": {"ok": True},
+                "declared_source_targets_present": {"ok": True},
+                "scaffolding_present": {"ok": True},
+                "build_test_lint_ran": {"ok": False, "detail": "npm test failed"},
+            },
+            "commands": [{"ok": False, "script": "test"}],
+            "command_count_total": 1,
+            "entrypoint": {"ok": False, "kind": "", "detail": "not evaluated"},
+        },
+    }
+
+    verdict = bench._append_task_boundary_verdict_to_run_ledger(
+        workspace=workspace,
+        run_id="run-task-boundary",
+        project_id="L1-01",
+        record=record,
+    )
+
+    assert verdict["ok"] is False
+    assert verdict["status"] == "required_evidence_failed"
+    assert verdict["failure_class"] == "IMPLEMENTATION_DEFECT"
+    assert verdict["required_evidence_modalities"] == ["code", "command"]
+    assert verdict["failed_required_evidence_modalities"] == ["command"]
+
+
 def test_chain_failure_overrides_static_artifact_checks() -> None:
     record = _record(
         chain_state="fail",

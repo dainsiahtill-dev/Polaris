@@ -2289,6 +2289,54 @@ def _url_port(value: str) -> int | None:
     return None
 
 
+def _task_boundary_evidence_from_real_run_gate(real_run_gate: Any) -> dict[str, list[str]]:
+    """Project real-run gate evidence into the task-boundary contract."""
+
+    if not isinstance(real_run_gate, Mapping):
+        return {}
+    requirements_raw = real_run_gate.get("requirements")
+    requirements: Mapping[str, Any] = requirements_raw if isinstance(requirements_raw, Mapping) else {}
+    required = ["code", "command"]
+    present: list[str] = []
+    failed: list[str] = []
+
+    code_requirement_names = (
+        "artifact_landed",
+        "source_files_present",
+        "declared_source_targets_present",
+        "scaffolding_present",
+    )
+    code_requirements = [requirements.get(name) for name in code_requirement_names if isinstance(requirements.get(name), Mapping)]
+    if code_requirements:
+        present.append("code")
+        if not all(bool(cast(Mapping[str, Any], item).get("ok")) for item in code_requirements):
+            failed.append("code")
+
+    build_requirement = requirements.get("build_test_lint_ran")
+    command_count = int(real_run_gate.get("command_count_total") or 0)
+    commands = real_run_gate.get("commands")
+    entrypoint_raw = real_run_gate.get("entrypoint")
+    entrypoint: Mapping[str, Any] = entrypoint_raw if isinstance(entrypoint_raw, Mapping) else {}
+    entrypoint_kind = str(entrypoint.get("kind") or "").strip()
+    entrypoint_is_command = bool(entrypoint_kind) and entrypoint_kind not in {"web_static", "web_playwright"}
+    command_present = isinstance(build_requirement, Mapping) or command_count > 0 or isinstance(commands, list) or entrypoint_is_command
+    if command_present:
+        present.append("command")
+        command_ok = bool(cast(Mapping[str, Any], build_requirement).get("ok")) if isinstance(build_requirement, Mapping) else bool(commands)
+        if entrypoint_is_command:
+            command_ok = bool(command_ok) and bool(entrypoint.get("ok")) if isinstance(build_requirement, Mapping) else bool(entrypoint.get("ok"))
+        if not command_ok:
+            failed.append("command")
+
+    missing = [item for item in required if item not in set(present) | set(failed)]
+    return {
+        "required": required,
+        "present": list(dict.fromkeys(present)),
+        "missing": missing,
+        "failed": list(dict.fromkeys(failed)),
+    }
+
+
 def _append_task_boundary_verdict_to_run_ledger(
     *,
     workspace: Path,
@@ -2305,12 +2353,17 @@ def _append_task_boundary_verdict_to_run_ledger(
         values = record.get(key)
         if isinstance(values, list):
             completed_artifacts.extend(str(item) for item in values if str(item).strip())
+    evidence_policy = _task_boundary_evidence_from_real_run_gate(record.get("real_run_gate"))
     verdict = evaluate_task_boundary_verdict(
         workspace=workspace,
         task_id=str(record.get("task_id") or project_id),
         run_id=run_id,
         target_files=target_files,
         completed_artifacts=completed_artifacts,
+        required_evidence_modalities=evidence_policy.get("required"),
+        present_evidence_modalities=evidence_policy.get("present"),
+        missing_required_evidence_modalities=evidence_policy.get("missing"),
+        failed_required_evidence_modalities=evidence_policy.get("failed"),
     ).to_dict()
     try:
         append_run_ledger_event(
