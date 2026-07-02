@@ -109,6 +109,120 @@ def test_plan_transaction_tool_surface_uses_mode_specific_pin_targets(monkeypatc
     assert observed_targets == [("turn.py",), ("stream.py",)]
 
 
+def test_plan_transaction_tool_surface_forces_write_for_multi_missing_materialization_targets(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    """Fresh multi-file materialization must not expose read-first tool surfaces."""
+
+    native_write = {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "parameters": {
+                "type": "object",
+                "properties": {"file": {"type": "string"}, "content": {"type": "string"}},
+            },
+        },
+    }
+    native_tree = {"type": "function", "function": {"name": "repo_tree", "parameters": {}}}
+
+    monkeypatch.setattr(tool_surface, "build_native_tool_schemas", lambda _profile: [native_write, native_tree])
+    monkeypatch.setattr(
+        tool_surface,
+        "_apply_runtime_tool_policy",
+        lambda **kwargs: (kwargs["tool_definitions"], {"runtime_tool_policy_applied": True}),
+    )
+    monkeypatch.setattr(tool_surface, "resolve_repair_edit_target", lambda _context, _workspace: "")
+    monkeypatch.setattr(tool_surface, "should_use_weak_director_slim_tool_schema", lambda **_kwargs: False)
+
+    context_override = {
+        "delivery_mode": "materialize_changes",
+        "target_files": ["src/engine/rules.js", "src/engine/runner.js"],
+    }
+    request = RoleTurnRequest(
+        workspace=str(tmp_path),
+        message="[mode:materialize] create source files",
+        context_override=context_override,
+    )
+
+    plan = tool_surface.plan_transaction_tool_surface(
+        role="director",
+        profile=_profile(),
+        request=request,
+        context_result=_context_result(),
+        messages=[],
+        workspace=str(tmp_path),
+        mode="turn",
+    )
+
+    assert [item["function"]["name"] for item in plan.tool_definitions] == ["write_file"]
+    assert plan.tool_choice_override == {"type": "function", "function": {"name": "write_file"}}
+    scope = context_override["director_first_call_materialization_scope"]
+    assert scope["reason"] == "declared_scope_incomplete_requires_first_turn_write_tool"
+    assert scope["target_files"] == ["src/engine/rules.js", "src/engine/runner.js"]
+    assert set(scope["target_file_variants"]) == {
+        "src/engine/rules.js",
+        "./src/engine/rules.js",
+        "src/engine/runner.js",
+        "./src/engine/runner.js",
+    }
+    assert plan.tool_filter_audit is not None
+    assert plan.tool_filter_audit["filter_reason"] == "declared_scope_missing_write_targets"
+
+
+def test_plan_transaction_tool_surface_keeps_tools_for_non_materialize_missing_targets(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    """Declared target metadata alone must not become a first-turn write authority."""
+
+    native_write = {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "parameters": {
+                "type": "object",
+                "properties": {"file": {"type": "string"}, "content": {"type": "string"}},
+            },
+        },
+    }
+    native_tree = {"type": "function", "function": {"name": "repo_tree", "parameters": {}}}
+
+    monkeypatch.setattr(tool_surface, "build_native_tool_schemas", lambda _profile: [native_write, native_tree])
+    monkeypatch.setattr(
+        tool_surface,
+        "_apply_runtime_tool_policy",
+        lambda **kwargs: (kwargs["tool_definitions"], {"runtime_tool_policy_applied": True}),
+    )
+    monkeypatch.setattr(tool_surface, "resolve_repair_edit_target", lambda _context, _workspace: "")
+    monkeypatch.setattr(tool_surface, "should_use_weak_director_slim_tool_schema", lambda **_kwargs: False)
+
+    context_override = {
+        "target_files": ["src/engine/rules.js", "src/engine/runner.js"],
+    }
+    request = RoleTurnRequest(
+        workspace=str(tmp_path),
+        message="review the current plan",
+        context_override=context_override,
+    )
+
+    plan = tool_surface.plan_transaction_tool_surface(
+        role="director",
+        profile=_profile(),
+        request=request,
+        context_result=_context_result(),
+        messages=[],
+        workspace=str(tmp_path),
+        mode="turn",
+    )
+
+    assert [item["function"]["name"] for item in plan.tool_definitions] == ["write_file", "repo_tree"]
+    assert plan.tool_choice_override is None
+    assert "director_first_call_materialization_scope" not in context_override
+    assert plan.tool_filter_audit is None
+
+
 def test_plan_transaction_tool_surface_projects_function_tool_choice(monkeypatch: Any) -> None:
     """Function tool-choice override belongs to the tool-surface plan."""
     native_schema = {"type": "function", "function": {"name": "write_file", "parameters": {}}}

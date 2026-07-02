@@ -493,16 +493,79 @@ def build_tool_filter_audit(
 
 
 def _multi_target_first_turn_write_enabled() -> bool:
-    """Default OFF -> byte-identical single-target behaviour. Opt in so a multi-new-
-    file task (no single construction_step target, e.g. a validation+README task)
-    still injects a first-turn write_file for the first missing declared target,
-    avoiding ``no_write_tool_available`` (factory_bench L1-03 TASK-3, 2026-06-29)."""
-    return str(os.environ.get("KERNELONE_DIRECTOR_MULTI_TARGET_FIRST_WRITE", "")).strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
+    """Return whether multi-target fresh materialization should force writes.
+
+    Default ON: declared missing target files are a task-boundary obligation, not
+    an exploratory read turn. ``KERNELONE_FIRST_TURN_WRITE`` remains the global
+    kill switch for this whole behavior family.
+    """
+
+    if os.environ.get(_FIRST_TURN_WRITE_ENV, "").strip().lower() in _FIRST_TURN_WRITE_DISABLED:
+        return False
+    return str(os.environ.get("KERNELONE_DIRECTOR_MULTI_TARGET_FIRST_WRITE", "on")).strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+        "disabled",
+        "none",
     }
+
+
+def _first_turn_declared_target_candidates(context_override: dict[str, Any]) -> list[str]:
+    declared: list[str] = []
+    for key in ("target_files", "scope_paths"):
+        value = context_override.get(key)
+        if isinstance(value, (list, tuple)):
+            declared.extend(str(item) for item in value)
+    for key in ("director_execution_profile", "task_execution_profile", "execution_profile"):
+        profile = context_override.get(key)
+        if not isinstance(profile, dict):
+            continue
+        for nested_key in ("target_files", "scope_paths"):
+            value = profile.get(nested_key)
+            if isinstance(value, (list, tuple)):
+                declared.extend(str(item) for item in value)
+    for key in ("director_execution_envelope", "task_execution_envelope", "execution_envelope"):
+        envelope = context_override.get(key)
+        if not isinstance(envelope, dict):
+            continue
+        for nested_key in ("target_files", "scope_paths", "allowed_write_paths"):
+            value = envelope.get(nested_key)
+            if isinstance(value, (list, tuple)):
+                declared.extend(str(item) for item in value)
+    for key in ("task", "current_task", "pm_task_contract"):
+        task_obj = context_override.get(key)
+        if isinstance(task_obj, dict):
+            value = task_obj.get("target_files")
+            if isinstance(value, (list, tuple)):
+                declared.extend(str(item) for item in value)
+    return list(dict.fromkeys(declared))
+
+
+def resolve_missing_materialization_write_targets(context_override: Any, workspace: str) -> list[str]:
+    """Return all declared target files missing from a fresh materialization turn."""
+
+    if not _multi_target_first_turn_write_enabled():
+        return []
+    if not isinstance(context_override, dict):
+        return []
+    ws = str(workspace or ".").strip() or "."
+    targets: list[str] = []
+    for raw in _first_turn_declared_target_candidates(context_override):
+        candidate = str(raw or "").strip().replace("\\", "/")
+        while candidate.startswith("./"):
+            candidate = candidate[2:]
+        if not candidate or candidate.endswith("/"):
+            continue
+        if not _single_relative_target_variants(candidate):
+            continue
+        try:
+            if not os.path.exists(os.path.join(ws, candidate)):
+                targets.append(candidate)
+        except OSError:
+            continue
+    return list(dict.fromkeys(targets))
 
 
 def resolve_from_scratch_write_target(context_override: Any, workspace: str) -> str | None:
@@ -536,35 +599,6 @@ def resolve_from_scratch_write_target(context_override: Any, workspace: str) -> 
                     return target  # single from-scratch leaf step
             except OSError:
                 return None
-    # FALLBACK (flag-gated, default OFF): a multi-new-file task (e.g. a validation +
-    # README task declaring several NEW files) has no single from-scratch
-    # construction_step target, so the single-step path above yields None and the
-    # turn is left with no write tool (no_write_tool_available, L1-03 TASK-3). When
-    # ANY declared target file is still missing, return the first missing one so a
-    # scoped first-turn write_file is injected. No-op when no declared targets exist.
-    if not _multi_target_first_turn_write_enabled():
-        return None
-    declared: list[str] = []
-    for _key in ("target_files", "scope_paths"):
-        _value = context_override.get(_key)
-        if isinstance(_value, (list, tuple)):
-            declared.extend(str(_item) for _item in _value)
-    _task_obj = context_override.get("task")
-    if isinstance(_task_obj, dict):
-        _value = _task_obj.get("target_files")
-        if isinstance(_value, (list, tuple)):
-            declared.extend(str(_item) for _item in _value)
-    for _raw in declared:
-        _candidate = _raw.strip().replace("\\", "/")
-        while _candidate.startswith("./"):
-            _candidate = _candidate[2:]
-        if not _candidate or _candidate.endswith("/"):
-            continue
-        try:
-            if not os.path.exists(os.path.join(ws, _candidate)):
-                return _candidate
-        except OSError:
-            continue
     return None
 
 
@@ -610,6 +644,7 @@ def ensure_director_first_call_materialization_scope(
     from_scratch_target: str | None,
     materialize_requested: bool,
     transaction_tools_disabled: bool,
+    from_scratch_targets: list[str] | tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
     """Force a scoped ``write_file`` first-call schema for missing materialization targets."""
 
@@ -620,15 +655,24 @@ def ensure_director_first_call_materialization_scope(
         return tool_definitions
     if not isinstance(context_override, dict):
         return tool_definitions
-    target = str(from_scratch_target or "").strip().replace("\\", "/")
-    if not target:
+    targets = [
+        str(item or "").strip().replace("\\", "/")
+        for item in (from_scratch_targets or ([from_scratch_target] if from_scratch_target else []))
+        if str(item or "").strip()
+    ]
+    if not targets:
         return tool_definitions
-    if isinstance(context_override.get("_transaction_kernel_forced_tool_definitions"), list):
+    existing_forced_definitions = context_override.get("_transaction_kernel_forced_tool_definitions")
+    if isinstance(existing_forced_definitions, list) and existing_forced_definitions:
         return tool_definitions
-    if context_override.get("_transaction_kernel_forced_tool_choice") is not None:
+    existing_forced_choice = context_override.get("_transaction_kernel_forced_tool_choice")
+    if existing_forced_choice is not None and str(existing_forced_choice).strip().lower() not in {"", "auto"}:
         return tool_definitions
 
-    target_variants = _single_relative_target_variants(target)
+    target_variants: list[str] = []
+    for target in targets:
+        target_variants.extend(_single_relative_target_variants(target))
+    target_variants = list(dict.fromkeys(target_variants))
     if not target_variants:
         return tool_definitions
     write_schema = _native_tool_schema("write_file")
@@ -640,13 +684,14 @@ def ensure_director_first_call_materialization_scope(
                 "source": "roles.kernel.llm_caller.tool_helpers",
                 "injected": False,
                 "reason": "write_file_schema_unavailable",
-                "target_file": target,
+                "target_file": targets[0],
+                "target_files": targets,
                 "tool": "write_file",
             },
         )
         return tool_definitions
 
-    forced_definitions = pin_write_tool_file_param_to_targets([write_schema], target_variants)
+    forced_definitions = pin_write_tool_file_param_to_targets([write_schema], tuple(target_variants))
     context_override["_transaction_kernel_forced_tool_definitions"] = forced_definitions
     context_override["_transaction_kernel_forced_tool_choice"] = {
         "type": "function",
@@ -658,7 +703,8 @@ def ensure_director_first_call_materialization_scope(
         "source": "roles.kernel.llm_caller.tool_helpers",
         "injected": True,
         "reason": "declared_scope_incomplete_requires_first_turn_write_tool",
-        "target_file": target,
+        "target_file": targets[0],
+        "target_files": targets,
         "target_file_variants": list(target_variants),
         "tool": "write_file",
         "materialize_requested": True,

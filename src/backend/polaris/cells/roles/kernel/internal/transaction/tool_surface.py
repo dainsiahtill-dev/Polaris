@@ -13,15 +13,6 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
-    _context_requests_materialize_delivery,
-    _text_requests_materialize_delivery,
-)
-from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import (
-    request_forces_no_transaction_tools,
-    tool_contract_requires_no_tools,
-)
-from polaris.cells.roles.kernel.internal.kernel.tool_policy import _apply_runtime_tool_policy
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     build_native_tool_schemas,
     build_tool_filter_audit,
@@ -30,6 +21,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     extract_write_tool_pin_target_files,
     pin_write_tool_file_param_to_targets,
     resolve_from_scratch_write_target,
+    resolve_missing_materialization_write_targets,
     resolve_repair_edit_target,
     restrict_tool_definitions_to_edit,
     restrict_tool_definitions_to_write,
@@ -40,6 +32,14 @@ from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequ
 logger = logging.getLogger(__name__)
 
 ToolSurfaceMode = Literal["turn", "stream"]
+
+
+def _apply_runtime_tool_policy(**kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
+        _apply_runtime_tool_policy as apply_runtime_tool_policy,
+    )
+
+    return apply_runtime_tool_policy(**kwargs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +102,11 @@ def plan_transaction_tool_surface(
     """
 
     context_override = getattr(request, "context_override", None)
+    from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import (
+        request_forces_no_transaction_tools,
+        tool_contract_requires_no_tools,
+    )
+
     transaction_tools_disabled = tool_contract_requires_no_tools(request) or request_forces_no_transaction_tools(
         request
     )
@@ -122,26 +127,40 @@ def plan_transaction_tool_surface(
 
     original_definitions: list[dict[str, Any]] | None = None
     filter_reason = ""
+    from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
+        _context_requests_materialize_delivery,
+        _text_requests_materialize_delivery,
+    )
+
+    materialize_requested = _context_requests_materialize_delivery(
+        context_override
+    ) or _text_requests_materialize_delivery(getattr(request, "message", None))
+    missing_materialization_targets = (
+        resolve_missing_materialization_write_targets(context_override, workspace) if materialize_requested else []
+    )
     from_scratch_target = resolve_from_scratch_write_target(context_override, workspace)
-    if from_scratch_target:
+    first_turn_write_targets = missing_materialization_targets or ([from_scratch_target] if from_scratch_target else [])
+    if first_turn_write_targets:
         original_definitions = list(tool_definitions)
-        filter_reason = "from_scratch_write_target"
+        filter_reason = (
+            "declared_scope_missing_write_targets"
+            if len(first_turn_write_targets) > 1 or missing_materialization_targets
+            else "from_scratch_write_target"
+        )
         tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
         tool_definitions = ensure_director_first_call_materialization_scope(
             role=role,
             context_override=context_override,
             workspace=workspace,
             tool_definitions=tool_definitions,
-            from_scratch_target=from_scratch_target,
-            materialize_requested=(
-                _context_requests_materialize_delivery(context_override)
-                or _text_requests_materialize_delivery(getattr(request, "message", None))
-            ),
+            from_scratch_target=first_turn_write_targets[0],
+            from_scratch_targets=first_turn_write_targets,
+            materialize_requested=materialize_requested,
             transaction_tools_disabled=transaction_tools_disabled,
         )
         logger.info(
-            "first-turn minimal execution schema for from-scratch leaf step: target=%s",
-            from_scratch_target,
+            "first-turn minimal execution schema for missing materialization targets: targets=%s",
+            first_turn_write_targets,
         )
     else:
         repair_target = resolve_repair_edit_target(context_override, workspace)
