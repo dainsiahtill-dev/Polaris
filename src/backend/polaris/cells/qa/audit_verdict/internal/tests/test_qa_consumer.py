@@ -287,6 +287,11 @@ class TestQAFindingsRequeue:
         assert ack_call.terminal_status == "rejected"
         assert results[0]["verdict"] == "FAIL"
 
+    def test_legacy_verdict_engine_mode_token_falls_back_to_shadow(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("KERNELONE_QA_VERDICT_ENGINE_MODE", "legacy")
+
+        assert qa_consumer_module._qa_verdict_engine_mode() == "shadow"
+
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
     def test_repeated_content_fail_terminates_at_bounce_cap(self, mock_get_svc: MagicMock) -> None:
         # A Director success-ack resets the market attempt budget between QA passes,

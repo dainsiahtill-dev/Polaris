@@ -299,7 +299,7 @@ class QAService:
         )
         await self._emit_typed_event(typed_event)
 
-        # Broadcast legacy audit result
+        # Broadcast the compact audit completion projection for existing subscribers.
         await self._bus.broadcast(
             MessageType.AUDIT_COMPLETED,
             "qa",

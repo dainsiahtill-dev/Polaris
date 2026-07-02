@@ -223,7 +223,7 @@ def _read_bool_env(name: str, *, default: bool = False) -> bool:
 
 def _qa_verdict_engine_mode() -> str:
     raw = os.environ.get(_QA_VERDICT_ENGINE_MODE_ENV, "engine").strip().lower()
-    if raw in {"off", "disabled", "false", "0", "legacy"}:
+    if raw in {"off", "disabled", "false", "0"}:
         return "off"
     if raw in {"engine", "authoritative"}:
         return "engine"
