@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T05:48:36.611993Z",
-  "source_hash": "08c383afd0abc132",
+  "generated_at": "2026-07-02T05:52:06.884260Z",
+  "source_hash": "8591ff6ca232011d",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -11689,7 +11689,7 @@
         },
         {
           "name": "state",
-          "doc": "Alias for current_state (legacy compatibility)."
+          "doc": "Alias for current_state for concise internal call sites."
         },
         {
           "name": "state",

@@ -199,7 +199,7 @@ class TurnStateMachine:
 
     @property
     def state(self) -> TurnState:
-        """Alias for current_state (legacy compatibility)."""
+        """Alias for current_state for concise internal call sites."""
         return self._state
 
     @state.setter
