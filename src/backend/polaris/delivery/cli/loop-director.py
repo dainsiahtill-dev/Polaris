@@ -119,7 +119,7 @@ def extract_pm_tasks(pm_contract: dict) -> list[dict]:
     if not raw_tasks:
         raise ValueError("No tasks found in PM contract")
 
-    # Handle both dict format (registry.json) and list format (legacy)
+    # Handle both dict format (registry.json) and list format.
     if isinstance(raw_tasks, dict):
         tasks = list(raw_tasks.values())
     elif isinstance(raw_tasks, list):
@@ -130,7 +130,7 @@ def extract_pm_tasks(pm_contract: dict) -> list[dict]:
     extracted: list[dict[str, Any]] = []
     for task in tasks:
         # Build task description from PM payload with priority on PM-provided description.
-        # Handle new registry format where details are in metadata.legacy_task
+        # Handle registry format where original details are in metadata.source_task.
         metadata = dict(task.get("metadata")) if isinstance(task.get("metadata"), dict) else {}
         task_context = task.get("context") if isinstance(task.get("context"), dict) else {}
         if task_context:
@@ -144,27 +144,27 @@ def extract_pm_tasks(pm_contract: dict) -> list[dict]:
                 phase_verification = phase_context.get("verification_result")
                 if isinstance(phase_verification, dict) and phase_verification:
                     metadata["previous_verification_result"] = phase_verification
-        legacy_task = metadata.get("legacy_task", {}) if isinstance(metadata, dict) else {}
+        source_task = metadata.get("source_task", {}) if isinstance(metadata, dict) else {}
 
-        # Try to get fields from legacy_task first (new format), then from task directly (old format)
-        spec = legacy_task.get("spec", task.get("spec", ""))
-        goal = legacy_task.get("goal", task.get("goal", ""))
-        title = legacy_task.get("title", task.get("title", "Untitled"))
-        raw_description = str(legacy_task.get("description") or task.get("description") or "").strip()
-        acceptance = legacy_task.get("acceptance_criteria") or task.get("acceptance_criteria")
+        # Try source_task first, then the canonical task row.
+        spec = source_task.get("spec", task.get("spec", ""))
+        goal = source_task.get("goal", task.get("goal", ""))
+        title = source_task.get("title", task.get("title", "Untitled"))
+        raw_description = str(source_task.get("description") or task.get("description") or "").strip()
+        acceptance = source_task.get("acceptance_criteria") or task.get("acceptance_criteria")
         if acceptance is None:
-            acceptance = legacy_task.get("acceptance") or task.get("acceptance")
-        constraints = legacy_task.get("constraints") or task.get("constraints")
+            acceptance = source_task.get("acceptance") or task.get("acceptance")
+        constraints = source_task.get("constraints") or task.get("constraints")
         chief_engineer = (
-            legacy_task.get("chief_engineer")
-            if isinstance(legacy_task.get("chief_engineer"), dict)
+            source_task.get("chief_engineer")
+            if isinstance(source_task.get("chief_engineer"), dict)
             else task.get("chief_engineer")
             if isinstance(task.get("chief_engineer"), dict)
             else {}
         )
         construction_plan = (
-            legacy_task.get("construction_plan")
-            if isinstance(legacy_task.get("construction_plan"), dict)
+            source_task.get("construction_plan")
+            if isinstance(source_task.get("construction_plan"), dict)
             else task.get("construction_plan")
             if isinstance(task.get("construction_plan"), dict)
             else chief_engineer.get("construction_plan")
@@ -191,24 +191,24 @@ def extract_pm_tasks(pm_contract: dict) -> list[dict]:
             description_parts.append(plan_text)
         description = "\n\n".join(part for part in description_parts if str(part).strip()).strip()
         # metadata already extracted above
-        phase_hint = str(legacy_task.get("phase") or task.get("phase") or "").strip().lower()
+        phase_hint = str(source_task.get("phase") or task.get("phase") or "").strip().lower()
         if phase_hint:
             metadata.setdefault("phase", phase_hint)
         if isinstance(construction_plan, dict) and construction_plan:
             metadata["construction_plan"] = construction_plan
         if isinstance(chief_engineer, dict) and chief_engineer:
             metadata["chief_engineer"] = chief_engineer
-        # Extract target_files and scope_paths from legacy_task or task
+        # Extract target_files and scope_paths from source_task or task.
         target_files = (
-            legacy_task.get("target_files")
-            if isinstance(legacy_task.get("target_files"), list)
+            source_task.get("target_files")
+            if isinstance(source_task.get("target_files"), list)
             else task.get("target_files")
             if isinstance(task.get("target_files"), list)
             else []
         )
         scope_paths = (
-            legacy_task.get("scope_paths")
-            if isinstance(legacy_task.get("scope_paths"), list)
+            source_task.get("scope_paths")
+            if isinstance(source_task.get("scope_paths"), list)
             else task.get("scope_paths")
             if isinstance(task.get("scope_paths"), list)
             else []
@@ -220,7 +220,7 @@ def extract_pm_tasks(pm_contract: dict) -> list[dict]:
         if isinstance(constraints, list) and constraints:
             metadata.setdefault("constraints", constraints)
         # Add tech_stack detection for WorkerExecutor
-        tech_stack = legacy_task.get("tech_stack") if isinstance(legacy_task.get("tech_stack"), dict) else {}
+        tech_stack = source_task.get("tech_stack") if isinstance(source_task.get("tech_stack"), dict) else {}
         if not tech_stack:
             # Try to detect from constraints and context
             all_text = " ".join(constraints) if isinstance(constraints, list) else ""
@@ -232,7 +232,7 @@ def extract_pm_tasks(pm_contract: dict) -> list[dict]:
         if tech_stack:
             metadata.setdefault("tech_stack", tech_stack)
 
-        blocked_by_raw = legacy_task.get("depends_on")
+        blocked_by_raw = source_task.get("depends_on")
         if not isinstance(blocked_by_raw, list):
             blocked_by_raw = task.get("depends_on") if isinstance(task.get("depends_on"), list) else []
         blocked_by = _normalize_dependency_ids(blocked_by_raw)

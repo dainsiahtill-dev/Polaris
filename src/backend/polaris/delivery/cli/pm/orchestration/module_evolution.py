@@ -54,7 +54,7 @@ def sync_tasks_to_shangshuling(
         if not pm.is_initialized():
             ensure_shangshuling_pm_initialized(workspace_full)
 
-        return pm.sync_from_legacy_tasks(tasks)
+        return pm.sync_from_source_tasks(tasks)
     except (RuntimeError, ValueError) as e:
         logger.info(f"[shangshuling] Task sync note: {e}")
         return 0

@@ -156,7 +156,7 @@ class DirectorNode(BaseRoleNode):
         if has_failures or has_blocked:
             next_role = ""
 
-        # 回写PM任务完成状态（支持 legacy_id）
+        # 回写 PM 任务完成状态（支持 source_task_id）
         shang_recorded = 0
         for task_id, raw_status in status_updates.items():
             normalized_status = normalize_task_status(raw_status)
@@ -267,15 +267,15 @@ class DirectorNode(BaseRoleNode):
         if not ready_tasks:
             return []
 
-        ready_legacy_ids = set()
+        ready_source_task_ids = set()
         for item in ready_tasks:
             if not isinstance(item, dict):
                 continue
-            legacy_id = str(item.get("id") or "").strip()
-            if legacy_id:
-                ready_legacy_ids.add(legacy_id)
+            source_task_id = str(item.get("id") or "").strip()
+            if source_task_id:
+                ready_source_task_ids.add(source_task_id)
 
-        if not ready_legacy_ids:
+        if not ready_source_task_ids:
             return []
 
         selected: list[dict[str, Any]] = []
@@ -283,7 +283,7 @@ class DirectorNode(BaseRoleNode):
             if not isinstance(task, dict):
                 continue
             task_id = str(task.get("id") or "").strip()
-            if task_id and task_id in ready_legacy_ids:
+            if task_id and task_id in ready_source_task_ids:
                 selected.append(task)
 
         return selected

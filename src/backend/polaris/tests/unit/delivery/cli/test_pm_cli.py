@@ -682,20 +682,20 @@ class TestPmIntegration:
         assert "project" in status
         assert "stats" in status
 
-    def test_pm_sync_from_legacy_tasks_empty(self, tmp_path: Path) -> None:
-        """PM.sync_from_legacy_tasks with empty list must return 0."""
+    def test_pm_sync_from_source_tasks_empty(self, tmp_path: Path) -> None:
+        """PM.sync_from_source_tasks with empty list must return 0."""
         from polaris.delivery.cli.pm.pm_integration import PM
 
         pm = PM(str(tmp_path))
-        result = pm.sync_from_legacy_tasks([])
+        result = pm.sync_from_source_tasks([])
         assert result == 0
 
-    def test_pm_sync_from_legacy_tasks_invalid_input(self, tmp_path: Path) -> None:
-        """PM.sync_from_legacy_tasks with non-list must return 0."""
+    def test_pm_sync_from_source_tasks_invalid_input(self, tmp_path: Path) -> None:
+        """PM.sync_from_source_tasks with non-list must return 0."""
         from polaris.delivery.cli.pm.pm_integration import PM
 
         pm = PM(str(tmp_path))
-        result = pm.sync_from_legacy_tasks("not-a-list")  # type: ignore[arg-type]
+        result = pm.sync_from_source_tasks("not-a-list")  # type: ignore[arg-type]
         assert result == 0
 
     def test_pm_resolve_task_id_empty(self, tmp_path: Path) -> None:

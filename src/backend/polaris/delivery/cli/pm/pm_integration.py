@@ -124,37 +124,37 @@ class PM:
             "storage": self.state.get_storage_summary() if pm_state else None,
         }
 
-    def sync_from_legacy_tasks(self, legacy_tasks: list[dict[str, Any]]) -> int:
-        """Sync tasks from legacy format to PM registry.
+    def sync_from_source_tasks(self, source_tasks: list[dict[str, Any]]) -> int:
+        """Import source task payloads into the PM registry.
 
         Args:
-            legacy_tasks: Legacy task list
+            source_tasks: Source task list
 
         Returns:
             Number of tasks synced
         """
-        if not isinstance(legacy_tasks, list):
+        if not isinstance(source_tasks, list):
             return 0
 
         synced = 0
-        legacy_index = self._build_legacy_task_index()
+        source_index = self._build_source_task_index()
 
-        for task_data in legacy_tasks:
+        for task_data in source_tasks:
             if not isinstance(task_data, dict):
                 continue
 
-            legacy_id = str(task_data.get("id") or "").strip()
-            existing_task_id = legacy_index.get(legacy_id) if legacy_id else None
-            normalized_status = self._map_legacy_status(task_data.get("status"))
-            normalized_priority = self._map_legacy_priority(task_data.get("priority"))
+            source_task_id = str(task_data.get("id") or "").strip()
+            existing_task_id = source_index.get(source_task_id) if source_task_id else None
+            normalized_status = self._map_source_status(task_data.get("status"))
+            normalized_priority = self._map_source_priority(task_data.get("priority"))
             normalized_assignee_type = self._map_assignee_type(task_data.get("assignee_type"))
             assignee = str(task_data.get("assignee") or "").strip()
 
             raw_metadata = task_data.get("metadata")
             metadata: dict[str, Any] = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
-            if legacy_id:
-                metadata["legacy_id"] = legacy_id
-            metadata["legacy_task"] = dict(task_data)
+            if source_task_id:
+                metadata["source_task_id"] = source_task_id
+            metadata["source_task"] = dict(task_data)
             metadata["last_synced_at"] = self._now_iso_compact()
 
             if existing_task_id:
@@ -165,7 +165,7 @@ class PM:
                 target_status = self._preserve_terminal_status(existing_task.status, normalized_status)
                 self.tasks.update_task(
                     existing_task_id,
-                    changed_by="legacy_sync",
+                    changed_by="source_task_sync",
                     title=str(task_data.get("title") or existing_task.title or "Untitled").strip() or "Untitled",
                     description=str(task_data.get("description") or existing_task.description or "").strip(),
                     priority=normalized_priority,
@@ -192,12 +192,12 @@ class PM:
                 estimated_effort=int(task_data.get("estimated_effort") or 0),
                 metadata=metadata,
             )
-            if legacy_id:
-                legacy_index[legacy_id] = created_task.id
+            if source_task_id:
+                source_index[source_task_id] = created_task.id
 
             self.tasks.update_task(
                 created_task.id,
-                changed_by="legacy_sync",
+                changed_by="source_task_sync",
                 status=normalized_status,
             )
             self._sync_assignment(
@@ -229,14 +229,15 @@ class PM:
         task_order = {tid: idx for idx, tid in enumerate(sorted_ids)}
         ready_tasks.sort(key=lambda t: (-self._priority_value(t.priority), task_order.get(t.id, 9999)))
 
-        # Convert to legacy format for compatibility
+        # Convert canonical PM tasks back to the source-task shape expected by
+        # older CLI orchestration nodes.
         result = []
         for task in ready_tasks[:limit]:
             metadata = task.metadata if isinstance(task.metadata, dict) else {}
-            legacy_payload = metadata.get("legacy_task")
-            if isinstance(legacy_payload, dict):
-                payload = dict(legacy_payload)
-                payload["id"] = str(metadata.get("legacy_id") or payload.get("id") or task.id)
+            source_payload = metadata.get("source_task")
+            if isinstance(source_payload, dict):
+                payload = dict(source_payload)
+                payload["id"] = str(metadata.get("source_task_id") or payload.get("id") or task.id)
                 payload["_shangshuling_task_id"] = task.id
                 payload["_shangshuling_status"] = (
                     task.status.value if hasattr(task.status, "value") else str(task.status)
@@ -246,7 +247,7 @@ class PM:
 
             result.append(
                 {
-                    "id": str(metadata.get("legacy_id") or task.id),
+                    "id": str(metadata.get("source_task_id") or task.id),
                     "title": task.title,
                     "description": task.description,
                     "status": task.status.value if hasattr(task.status, "value") else task.status,
@@ -348,7 +349,7 @@ class PM:
             return updated is not None
 
     def resolve_task_id(self, task_id: str) -> str | None:
-        """Resolve either canonical task id or legacy id to canonical id."""
+        """Resolve either canonical task id or source task id to canonical id."""
         token = str(task_id or "").strip()
         if not token:
             return None
@@ -356,8 +357,8 @@ class PM:
         if self.tasks.get_task(token) is not None:
             return token
 
-        legacy_index = self._build_legacy_task_index()
-        return legacy_index.get(token)
+        source_index = self._build_source_task_index()
+        return source_index.get(token)
 
     def analyze_project_health(self) -> dict[str, Any]:
         """Analyze overall project health.
@@ -434,8 +435,8 @@ class PM:
 
         return recommendations
 
-    def _build_legacy_task_index(self) -> dict[str, str]:
-        """Build mapping legacy_id -> canonical task id."""
+    def _build_source_task_index(self) -> dict[str, str]:
+        """Build mapping source_task_id -> canonical task id."""
         index: dict[str, str] = {}
         registry_loader = getattr(self.tasks, "_load_registry", None)
         if not callable(registry_loader):
@@ -447,12 +448,12 @@ class PM:
                 continue
             metadata = task_data.get("metadata")
             metadata_map = metadata if isinstance(metadata, dict) else {}
-            legacy_id = str(metadata_map.get("legacy_id") or "").strip()
-            if legacy_id:
-                index[legacy_id] = str(task_id)
+            source_task_id = str(metadata_map.get("source_task_id") or "").strip()
+            if source_task_id:
+                index[source_task_id] = str(task_id)
         return index
 
-    def _map_legacy_status(self, status: Any) -> TaskStatus:
+    def _map_source_status(self, status: Any) -> TaskStatus:
         token = str(status or "").strip().lower()
         status_map = {
             "todo": TaskStatus.PENDING,
@@ -468,7 +469,7 @@ class PM:
         }
         return status_map.get(token, TaskStatus.PENDING)
 
-    def _map_legacy_priority(self, priority: Any) -> TaskPriority:
+    def _map_source_priority(self, priority: Any) -> TaskPriority:
         token = str(priority or "").strip().lower()
         for candidate in TaskPriority:
             if candidate.value == token:
@@ -487,7 +488,7 @@ class PM:
         current_status: Any,
         target_status: TaskStatus,
     ) -> TaskStatus:
-        current = current_status if isinstance(current_status, TaskStatus) else self._map_legacy_status(current_status)
+        current = current_status if isinstance(current_status, TaskStatus) else self._map_source_status(current_status)
         if current in {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED} and target_status in {
             TaskStatus.PENDING,
             TaskStatus.ASSIGNED,
@@ -514,7 +515,7 @@ class PM:
             return
         if current.assignee == assignee and current.assignee_type == assignee_type:
             return
-        self.tasks.assign_task(task_id, assignee, assignee_type, assigned_by="legacy_sync")
+        self.tasks.assign_task(task_id, assignee, assignee_type, assigned_by="source_task_sync")
 
     def _now_iso_compact(self) -> str:
         from datetime import datetime, timezone
