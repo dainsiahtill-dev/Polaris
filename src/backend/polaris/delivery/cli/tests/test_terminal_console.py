@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
+import pytest
 from polaris.delivery.cli import terminal as terminal_cli
 from polaris.delivery.cli.super_mode import SuperClaimedTask, SuperTaskItem
 from polaris.delivery.cli.terminal import (
@@ -172,6 +173,16 @@ def test_run_role_console_switches_role_with_role_bound_session_and_profile(
     assert second["context_config"]["host_kind"] == "cli"
     assert second["capability_profile"]["role"] == "pm"
     assert second["capability_profile"]["metadata"]["governance_scope"] == "role:pm"
+
+
+def test_run_role_console_rejects_retired_backend_aliases() -> None:
+    for backend in ("textual", "rich"):
+        with pytest.raises(ValueError, match="Unsupported console backend"):
+            terminal_cli.run_role_console(
+                workspace=".",
+                role="director",
+                backend=backend,
+            )
 
 
 def test_run_role_console_uses_explicit_session_id_for_resume(monkeypatch) -> None:

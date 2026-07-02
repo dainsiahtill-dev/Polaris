@@ -120,6 +120,12 @@ class TestMainParserConstruction:
         assert args.backend == "plain"
         assert args.super is True
 
+    def test_console_subcommand_rejects_retired_backend_aliases(self, parser: argparse.ArgumentParser) -> None:
+        """The console parser must reject retired textual/rich backend aliases."""
+        for backend in ("textual", "rich"):
+            with pytest.raises(SystemExit):
+                parser.parse_args(["console", "--backend", backend])
+
     def test_task_create_requires_subject(self, parser: argparse.ArgumentParser) -> None:
         """task create without --subject must fail."""
         with pytest.raises(SystemExit):

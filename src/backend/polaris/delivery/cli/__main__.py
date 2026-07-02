@@ -76,7 +76,7 @@ def _enforce_utf8() -> None:
 # ---------------------------------------------------------------------------
 
 _ALLOWED_ROLES = ("director", "pm", "architect", "chief_engineer", "qa")
-_BACKEND_CHOICES = ("auto", "textual", "rich", "plain")
+_BACKEND_CHOICES = ("auto", "plain")
 _PROMPT_STYLE_CHOICES = ("plain", "omp")
 _JSON_RENDER_CHOICES = ("raw", "pretty", "pretty-color")
 _OUTPUT_FORMAT_CHOICES = ("text", "json", "json-pretty", "json-stream")
@@ -148,8 +148,7 @@ def create_parser() -> argparse.ArgumentParser:
         help="Launch the canonical terminal console host",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
-            "Open the Polaris terminal console host. "
-            "Backend defaults to 'auto'; deprecated textual/rich aliases are accepted for compatibility."
+            "Open the Polaris terminal console host. Backend defaults to 'auto'."
         ),
     )
     _add_workspace_argument(console_parser)
@@ -403,7 +402,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--backend",
         choices=_BACKEND_CHOICES,
         default="auto",
-        help="Console backend (console mode; textual/rich are deprecated compatibility aliases)",
+        help="Console backend (console mode; default: auto)",
     )
     chat_parser.add_argument(
         "--prompt-style",

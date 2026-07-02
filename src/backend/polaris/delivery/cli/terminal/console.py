@@ -1181,10 +1181,8 @@ def run_role_console(
     role_token = _normalize_role(role)
     backend_token = _safe_text(backend).lower() or "auto"
     if backend_token not in _ALLOWED_BACKENDS:
-        print(
-            f"[console] backend={backend_token!r} is deprecated; using plain terminal output.",
-            file=sys.stderr,
-        )
+        allowed = ", ".join(sorted(_ALLOWED_BACKENDS))
+        raise ValueError(f"Unsupported console backend {backend_token!r}; expected one of: {allowed}")
     render_state = _build_render_state(
         prompt_style=prompt_style,
         omp_config=omp_config,

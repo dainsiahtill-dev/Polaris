@@ -67,6 +67,12 @@ class TestCliRouterSubparsers:
         assert parsed.role == "pm"
         assert parsed.mode == "interactive"
 
+    def test_chat_subcommand_rejects_retired_backend_aliases(self, router: CliRouter) -> None:
+        """The old router must reject retired textual/rich backend aliases."""
+        for backend in ("textual", "rich"):
+            with pytest.raises(SystemExit):
+                router.parsed(["chat", "--backend", backend])
+
     def test_status_subcommand_accepted(self, router: CliRouter) -> None:
         """The 'status' subcommand must parse without error."""
         parsed = router.parsed(["status", "--role", "architect"])

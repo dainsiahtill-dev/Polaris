@@ -156,9 +156,9 @@ class CliRouter:
         chat.add_argument("--port", type=int, default=50000, help="Server bind port")
         chat.add_argument(
             "--backend",
-            choices=["auto", "textual", "rich", "plain"],
+            choices=["auto", "plain"],
             default="auto",
-            help="Console backend (textual/rich are deprecated compatibility aliases)",
+            help="Console backend (default: auto)",
         )
         chat.add_argument("--session-id", type=str, default="", help="Session to reuse")
         chat.add_argument("--session-title", type=str, default="", help="New session title")
