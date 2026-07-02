@@ -8,7 +8,7 @@ vi.mock("@/hooks/useNDJSONStream", () => ({
   } = {}) => ({
     isStreaming: false,
     startStream: vi.fn((path: string) => {
-      if (path.includes('/docs/init/preview/jetstream')) {
+      if (path.includes('/v2/docs/init/preview/jetstream')) {
         options.onComplete?.({
           mode: 'minimal',
           target_root: 'docs/very-long-target-directory-name-without-natural-breaks-for-layout-validation',

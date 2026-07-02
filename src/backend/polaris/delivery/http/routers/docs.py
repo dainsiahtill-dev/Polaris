@@ -532,12 +532,6 @@ async def docs_init_dialogue_v2(request: Request, payload: DocsInitDialoguePaylo
     return await _docs_init_dialogue_core(request, payload)
 
 
-@router.post("/docs/init/dialogue", dependencies=[Depends(require_auth)], response_model=DocsInitDialogueResponse)
-async def docs_init_dialogue(request: Request, payload: DocsInitDialoguePayload) -> DocsInitDialogueResponse:
-    # DEPRECATED
-    return await _docs_init_dialogue_core(request, payload)
-
-
 async def _run_docs_init_dialogue_jetstream(
     *,
     settings: Any,
@@ -628,12 +622,6 @@ async def docs_init_suggest_v2(request: Request, payload: DocsInitSuggestPayload
     return await _docs_init_suggest_core(request, payload)
 
 
-@router.post("/docs/init/suggest", dependencies=[Depends(require_auth)], response_model=DocsInitSuggestResponse)
-async def docs_init_suggest(request: Request, payload: DocsInitSuggestPayload) -> DocsInitSuggestResponse:
-    # DEPRECATED
-    return await _docs_init_suggest_core(request, payload)
-
-
 async def _docs_init_preview_core(request: Request, payload: DocsInitPreviewPayload) -> DocsInitPreviewResponse:
     state = get_state(request)
     workspace = state.settings.workspace
@@ -694,12 +682,6 @@ async def _docs_init_preview_core(request: Request, payload: DocsInitPreviewPayl
 @router.post("/v2/docs/init/preview", dependencies=[Depends(require_auth)], response_model=DocsInitPreviewResponse)
 async def docs_init_preview_v2(request: Request, payload: DocsInitPreviewPayload) -> DocsInitPreviewResponse:
     """Preview generated docs artifacts before applying."""
-    return await _docs_init_preview_core(request, payload)
-
-
-@router.post("/docs/init/preview", dependencies=[Depends(require_auth)], response_model=DocsInitPreviewResponse)
-async def docs_init_preview(request: Request, payload: DocsInitPreviewPayload) -> DocsInitPreviewResponse:
-    # DEPRECATED
     return await _docs_init_preview_core(request, payload)
 
 
@@ -917,10 +899,4 @@ def _docs_init_apply_core(request: Request, payload: DocsInitApplyPayload) -> Do
 @router.post("/v2/docs/init/apply", dependencies=[Depends(require_auth)], response_model=DocsInitApplyResponse)
 def docs_init_apply_v2(request: Request, payload: DocsInitApplyPayload) -> DocsInitApplyResponse:
     """Apply generated docs artifacts to the workspace."""
-    return _docs_init_apply_core(request, payload)
-
-
-@router.post("/docs/init/apply", dependencies=[Depends(require_auth)], response_model=DocsInitApplyResponse)
-def docs_init_apply(request: Request, payload: DocsInitApplyPayload) -> DocsInitApplyResponse:
-    # DEPRECATED
     return _docs_init_apply_core(request, payload)

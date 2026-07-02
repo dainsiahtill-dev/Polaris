@@ -21,6 +21,14 @@ vi.mock('@/api', () => ({
 
 vi.mock('@/runtime/transport', () => ({
   useRuntimeTransport: () => runtimeTransportMock,
+  useConnectionState: () => ({ connected: runtimeTransportMock.connected }),
+  useTransportActions: () => ({
+    reconnect: runtimeTransportMock.reconnect,
+    subscribeChannels: runtimeTransportMock.subscribeChannels,
+  }),
+  useMessageHandler: () => ({
+    registerMessageHandler: runtimeTransportMock.registerMessageHandler,
+  }),
 }));
 
 function jsonResponse(payload: unknown, ok = true): Response {
@@ -78,14 +86,14 @@ describe('useNDJSONStream', () => {
     const { result } = renderHook(() => useNDJSONStream({ onEvent, onComplete, onError }));
 
     await act(async () => {
-      await result.current.startStream('/docs/init/dialogue/jetstream', {
+      await result.current.startStream('/v2/docs/init/dialogue/jetstream', {
         session_id: 'docs-dialogue-1',
         message: '请规划',
       });
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:49977/docs/init/dialogue/jetstream',
+      'http://127.0.0.1:49977/v2/docs/init/dialogue/jetstream',
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({

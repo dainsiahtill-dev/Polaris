@@ -342,7 +342,7 @@ export function DocsInitDialog({
       return next;
     });
 
-    startStream('/docs/init/dialogue/jetstream', {
+    startStream('/v2/docs/init/dialogue/jetstream', {
       message,
       goal,
       in_scope: inScope,
@@ -359,7 +359,7 @@ export function DocsInitDialog({
     setError(null);
     setPreviewProgress({ open: true, stage: 'init', message: '初始化文档生成环境...', progress: 5 });
 
-    startPreviewStream('/docs/init/preview/jetstream', {
+    startPreviewStream('/v2/docs/init/preview/jetstream', {
       mode: WIZARD_MODE,
       goal,
       in_scope: inScope,
@@ -378,7 +378,7 @@ export function DocsInitDialog({
     setApplying(true);
     setError(null);
     try {
-      const res = await apiFetch('/docs/init/apply', {
+      const res = await apiFetch('/v2/docs/init/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
