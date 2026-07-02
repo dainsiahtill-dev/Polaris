@@ -32,7 +32,7 @@ class TokenBudget:
 
     _gate: "ContextBudgetGate | None" = field(default=None, repr=False)
 
-    # 各部分预算配额 (legacy fields, used for backward compatibility)
+    # 各部分预算配额 (public quota fields retained for runtime configuration)
     system_context: int = 4000  # 系统上下文配额
     task_context: int = 2000  # 任务上下文配额
     conversation: int = 4000  # 对话历史配额
@@ -100,7 +100,7 @@ class TokenBudget:
             if self._gate:
                 gate_results[section_key] = self._gate.allocate_section(section_key, allocated, actual_tokens)
             else:
-                # Fallback when gate is not available (backward compatibility)
+                # Fallback when gate is not available.
                 from polaris.kernelone.context.budget_gate import SectionAllocation
 
                 gate_results[section_key] = SectionAllocation(
