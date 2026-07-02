@@ -4443,7 +4443,7 @@ async function collectLlmInterviewSaveRuntimeProbe(page: Page, workspace: string
     );
     const reportPath = asString(saved.report_path);
     const report = reportPath ? await readJsonIfExists<JsonRecord>(reportPath) : null;
-    const layout = asRecord(await requestJson<JsonRecord>(page, "/runtime/storage-layout"));
+    const layout = asRecord(await requestJson<JsonRecord>(page, "/v2/runtime/storage/layout"));
     const layoutPaths = asRecord(layout.paths);
     const workspaceIndexPath = path.join(workspacePath, ".polaris", "llm_test_index.json");
     const globalIndexPath = asString(layoutPaths.global_llm_test_index || layoutPaths.llm_test_index);
@@ -5365,7 +5365,7 @@ export async function collectExpandedTechEvidenceMatrix(
   let runtimeRoot = options.runtimeRootOverride || "";
   try {
     const settings = asRecord(await requestJson<JsonRecord>(page, "/settings"));
-    const layout = asRecord(await requestJson<JsonRecord>(page, "/runtime/storage-layout"));
+    const layout = asRecord(await requestJson<JsonRecord>(page, "/v2/runtime/storage/layout"));
     workspace = workspace || asString(settings.workspace) || asString(layout.workspace);
     runtimeRoot = runtimeRoot || asString(layout.runtime_root);
     probes.push(
@@ -5377,7 +5377,11 @@ export async function collectExpandedTechEvidenceMatrix(
         required: true,
         evidence: [
           { type: "api", ref: "/settings", value: { workspace: settings.workspace } },
-          { type: "api", ref: "/runtime/storage-layout", value: { runtime_root: layout.runtime_root, workspace: layout.workspace } },
+          {
+            type: "api",
+            ref: "/v2/runtime/storage/layout",
+            value: { runtime_root: layout.runtime_root, workspace: layout.workspace },
+          },
         ],
         findings: workspace && runtimeRoot ? [] : ["workspace or runtime_root missing from API responses"],
       }),
@@ -5392,7 +5396,7 @@ export async function collectExpandedTechEvidenceMatrix(
         required: true,
         evidence: [
           { type: "api", ref: "/settings" },
-          { type: "api", ref: "/runtime/storage-layout" },
+          { type: "api", ref: "/v2/runtime/storage/layout" },
         ],
         findings: [String(error)],
       }),

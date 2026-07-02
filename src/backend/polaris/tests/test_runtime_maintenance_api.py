@@ -43,7 +43,7 @@ def test_runtime_storage_layout_exposes_explicit_ramdisk_root(tmp_path: Path) ->
     ramdisk_root.mkdir(parents=True, exist_ok=True)
     client, _state = _make_client(tmp_path, ramdisk_root=str(ramdisk_root))
 
-    response = client.get("/runtime/storage-layout")
+    response = client.get("/v2/runtime/storage/layout")
 
     assert response.status_code == 200
     payload = response.json()

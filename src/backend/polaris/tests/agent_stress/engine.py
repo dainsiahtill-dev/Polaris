@@ -1627,7 +1627,7 @@ class StressEngine:
                 "workspace": expected_workspace,
                 "ramdisk_root": expected_ramdisk,
             }
-            layout_url = f"{self.backend_url}/runtime/storage-layout"
+            layout_url = f"{self.backend_url}/v2/runtime/storage/layout"
 
             last_issue = ""
             for attempt in range(1, 4):
@@ -1676,7 +1676,7 @@ class StressEngine:
                     last_issue = f"runtime_storage_layout_http_{layout_response.status_code}"
                     if attempt < 3:
                         continue
-                    print(f"[settings] 获取 runtime/storage-layout 失败: HTTP {layout_response.status_code}")
+                    print(f"[settings] 获取 v2/runtime/storage/layout 失败: HTTP {layout_response.status_code}")
                     return False
 
                 layout = layout_response.json()
@@ -1685,7 +1685,7 @@ class StressEngine:
                     last_issue = "; ".join(violations)
                     if attempt < 3:
                         continue
-                    print("[settings] Runtime/storage layout does not satisfy stress path policy: " + last_issue)
+                    print("[settings] v2 runtime storage layout does not satisfy stress path policy: " + last_issue)
                     return False
 
                 self.workspace = workspace

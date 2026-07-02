@@ -179,7 +179,7 @@ def _resolve_runtime_root_from_backend(base_url: str) -> Path | None:
         headers["Authorization"] = f"Bearer {token}"
     try:
         resp = requests.get(
-            f"{base_url}/runtime/storage-layout",
+            f"{base_url}/v2/runtime/storage/layout",
             headers=headers,
             timeout=3,
         )
@@ -191,7 +191,7 @@ def _resolve_runtime_root_from_backend(base_url: str) -> Path | None:
             return None
         return Path(runtime_root).resolve()
     except (RuntimeError, ValueError) as exc:
-        logger.debug("Failed to resolve runtime_root from backend /status: %s", exc)
+        logger.debug("Failed to resolve runtime_root from backend storage layout endpoint: %s", exc)
         return None
 
 

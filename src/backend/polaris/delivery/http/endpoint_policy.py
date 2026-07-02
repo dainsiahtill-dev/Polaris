@@ -38,9 +38,6 @@ _AUTH_BOOTSTRAP_EXACT = frozenset(
     {
         "/settings",
         "/v2/settings",
-        "/runtime/storage-layout",
-        "/runtime/storage/layout",
-        "/v2/runtime/storage-layout",
         "/v2/runtime/storage/layout",
         "/v2/runtime/diagnostics",
         "/state/snapshot",

@@ -108,7 +108,7 @@ test("web entry triggers PM -> Chief Engineer -> Director -> QA and verifies 16x
   expect(Array.isArray(snapshot.tasks) ? snapshot.tasks.length : 0).toBeGreaterThan(0);
   expect(Number(snapshot.pm_state?.completed_task_count || 0)).toBeGreaterThan(0);
 
-  const layout = await requestJson<RuntimeLayoutPayload>(webPage, "/runtime/storage-layout");
+  const layout = await requestJson<RuntimeLayoutPayload>(webPage, "/v2/runtime/storage/layout");
   const runtimeRoot = String(layout.runtime_root || "").trim();
   expect(runtimeRoot).not.toBe("");
 

@@ -100,7 +100,7 @@ class StorageEnvironment:
 class StorageLayoutSnapshot:
     """Complete storage layout resolved for a workspace.
 
-    This dataclass carries everything the ``/runtime/storage-layout``
+    This dataclass carries everything the ``/v2/runtime/storage/layout``
     HTTP endpoint (or an equivalent CLI command) needs, so delivery
     never has to call multiple low-level functions.
     """
@@ -379,7 +379,7 @@ class StorageAdminService:
     def resolve_well_known_paths(workspace: str) -> dict[str, str]:
         """Resolve the set of well-known workspace paths.
 
-        This is the same set of paths that the ``/runtime/storage-layout``
+        This is the same set of paths that the ``/v2/runtime/storage/layout``
         endpoint returns under the ``"paths"`` key.
 
         Args:

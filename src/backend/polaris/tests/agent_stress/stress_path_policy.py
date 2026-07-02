@@ -109,7 +109,7 @@ def ensure_stress_runtime_root(path: str | Path) -> Path:
 
 
 def runtime_layout_policy_violations(layout: Mapping[str, Any]) -> list[str]:
-    """Return policy violations for a runtime/storage-layout payload."""
+    """Return policy violations for a v2 runtime storage layout payload."""
     if not isinstance(layout, Mapping):
         return ["layout_payload_not_mapping"]
 

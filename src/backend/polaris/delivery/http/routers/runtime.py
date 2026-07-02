@@ -204,15 +204,6 @@ def _runtime_storage_layout_core(request: Request) -> dict[str, Any]:
 
 
 @router.get(
-    "/runtime/storage-layout",
-    dependencies=[Depends(require_auth)],
-    response_model=RuntimeStorageLayoutResponse,
-)
-async def runtime_storage_layout(request: Request) -> dict[str, Any]:  # DEPRECATED
-    return _runtime_storage_layout_core(request)
-
-
-@router.get(
     "/v2/runtime/storage/layout",
     dependencies=[Depends(require_auth)],
     response_model=RuntimeStorageLayoutResponse,
@@ -440,15 +431,6 @@ def _runtime_migration_status_core(request: Request) -> dict[str, Any]:
         "archived_counts": archived_counts,
         "strict_mode": strict_mode,
     }
-
-
-@router.get(
-    "/runtime/migration-status",
-    dependencies=[Depends(require_auth)],
-    response_model=RuntimeMigrationStatusResponse,
-)
-async def runtime_migration_status(request: Request) -> dict[str, Any]:  # DEPRECATED
-    return _runtime_migration_status_core(request)
 
 
 @router.get(

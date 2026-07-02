@@ -134,7 +134,7 @@ test("stale in-flight engine status is recovered without a user-facing failure c
   await expect(window.locator("#root")).toHaveCount(1);
   await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
 
-  const layout = await requestJson<RuntimeLayoutPayload>(window, "/runtime/storage-layout");
+  const layout = await requestJson<RuntimeLayoutPayload>(window, "/v2/runtime/storage/layout");
   const runtimeRoot = String(layout.runtime_root || "").trim();
   expect(runtimeRoot).not.toBe("");
 

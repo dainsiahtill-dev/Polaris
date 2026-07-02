@@ -28,7 +28,7 @@ class TestRuntimeRouter:
     """Contract tests for the runtime router."""
 
     async def test_storage_layout_returns_200(self) -> None:
-        """GET /runtime/storage-layout returns 200 with storage information."""
+        """GET /v2/runtime/storage/layout returns 200 with storage information."""
         app = _build_app()
         with (
             patch(
@@ -66,7 +66,7 @@ class TestRuntimeRouter:
             )
 
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await client.get("/runtime/storage-layout")
+                response = await client.get("/v2/runtime/storage/layout")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
@@ -76,6 +76,14 @@ class TestRuntimeRouter:
         assert "policies" in payload
         assert "migration_version" in payload
         assert payload["migration_version"] == 2
+
+    async def test_retired_runtime_storage_layout_alias_route_is_not_registered(self) -> None:
+        """GET /runtime/storage-layout is retired; callers must use /v2/runtime/storage/layout."""
+        app = _build_app()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/runtime/storage-layout")
+
+        assert response.status_code == 404
 
     async def test_retired_runtime_clear_alias_route_is_not_registered(self) -> None:
         """POST /runtime/clear is retired; callers must use /v2/runtime/clear."""
@@ -89,7 +97,7 @@ class TestRuntimeRouter:
         assert response.status_code == 404
 
     async def test_migration_status_v1(self) -> None:
-        """GET /runtime/migration-status returns v1 status when no version file."""
+        """GET /v2/runtime/migration/status returns v1 status when no version file."""
         app = _build_app()
         with (
             patch(
@@ -106,12 +114,20 @@ class TestRuntimeRouter:
             )
 
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await client.get("/runtime/migration-status")
+                response = await client.get("/v2/runtime/migration/status")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
         assert payload["version"] == 1
         assert payload["strict_mode"] is False
+
+    async def test_retired_runtime_migration_status_alias_route_is_not_registered(self) -> None:
+        """GET /runtime/migration-status is retired; callers must use /v2/runtime/migration/status."""
+        app = _build_app()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/runtime/migration-status")
+
+        assert response.status_code == 404
 
     async def test_retired_runtime_reset_tasks_alias_route_is_not_registered(self) -> None:
         """POST /runtime/reset-tasks is retired; callers must use /v2/runtime/reset/tasks."""

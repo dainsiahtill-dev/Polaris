@@ -385,7 +385,7 @@ test("real PM -> Chief Engineer -> Director flow reaches PM and Director workspa
   await clickAndWaitForPmStart(window);
   await window.getByTestId("pm-workspace-back").click();
   await expect(window.getByTestId("project-progress-panel")).toBeVisible();
-  const runtimeLayout = await fetchJson<RuntimeLayoutPayload>(window, "/runtime/storage-layout");
+  const runtimeLayout = await fetchJson<RuntimeLayoutPayload>(window, "/v2/runtime/storage/layout");
   const runtimeRoot = String(runtimeLayout.runtime_root || "").trim();
   expect(runtimeRoot, "runtime storage layout should expose a runtime root").not.toBe("");
   const pmTerminalStatus = await waitForPmFinish(window);

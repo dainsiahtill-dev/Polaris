@@ -1529,7 +1529,7 @@ async function waitForRuntimeArtifact(
   let lastDiagnostics = "";
 
   while (Date.now() < deadline) {
-    const layout = await requestJson<RuntimeLayoutPayload>(window, "/runtime/storage-layout");
+    const layout = await requestJson<RuntimeLayoutPayload>(window, "/v2/runtime/storage/layout");
     lastRuntimeRoot = String(layout.runtime_root || "").trim();
     if (lastRuntimeRoot) {
       lastArtifactPath = path.join(lastRuntimeRoot, ...normalizedRel);
@@ -1578,7 +1578,7 @@ async function tryRuntimeArtifact(
   options?: { minMtimeMs?: number },
 ): Promise<RuntimeArtifactRef | null> {
   const normalizedRel = relPath.split(/[\\/]+/).filter(Boolean);
-  const layout = await requestJson<RuntimeLayoutPayload>(window, "/runtime/storage-layout");
+  const layout = await requestJson<RuntimeLayoutPayload>(window, "/v2/runtime/storage/layout");
   const runtimeRoot = String(layout.runtime_root || "").trim();
   if (!runtimeRoot) return null;
   const artifactPath = path.join(runtimeRoot, ...normalizedRel);
@@ -3473,7 +3473,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     await reloadRendererAfterWorkspaceSwitch(window);
     await dismissEngineFailureDialog(window);
 
-    const layout = await requestJson<RuntimeLayoutPayload>(window, "/runtime/storage-layout");
+    const layout = await requestJson<RuntimeLayoutPayload>(window, "/v2/runtime/storage/layout");
     runtimeRoot = String(layout.runtime_root || "").trim();
     expect(runtimeRoot).not.toBe("");
     if (resumePlanningSeed) {
