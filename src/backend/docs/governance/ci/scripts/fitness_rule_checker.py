@@ -32,6 +32,9 @@ try:
         RULE_ID as CLOSED_LEDGER_INTAKE_RULE_ID,
         evaluate_closed_ledger_intake,
     )
+    from docs.governance.ci.scripts.legacy_coverage_policy import (
+        evaluate_legacy_coverage,
+    )
     from docs.governance.ci.scripts.verified_evidence_policy import (
         evaluate_verified_evidence,
     )
@@ -42,6 +45,9 @@ except ModuleNotFoundError:
     from closed_ledger_intake_policy import (
         RULE_ID as CLOSED_LEDGER_INTAKE_RULE_ID,
         evaluate_closed_ledger_intake,
+    )
+    from legacy_coverage_policy import (
+        evaluate_legacy_coverage,
     )
     from verified_evidence_policy import (
         evaluate_verified_evidence,
@@ -478,89 +484,15 @@ class FitnessRuleChecker:
         )
 
     def check_legacy_coverage(self) -> FitnessCheckResult:
-        """Check that legacy path coverage is audited at file granularity."""
-        result = FitnessCheckResult(rule_id="legacy_file_coverage_audit", passed=True)
-        ledger_path = self.workspace / "docs" / "migration" / "ledger.yaml"
-        if not ledger_path.exists():
-            result.passed = False
-            result.violations.append("docs/migration/ledger.yaml not found")
-            return result
-        try:
-            import yaml
-
-            with open(ledger_path, encoding="utf-8") as f:
-                ledger = yaml.safe_load(f)
-        except (OSError, ImportError) as e:
-            result.passed = False
-            result.violations.append(f"Failed to parse ledger.yaml: {e}")
-            return result
-        units = ledger.get("units", [])
-        if not units:
-            result.evidence.append("No migration units found in ledger")
-            return result
-        vague_patterns = [
-            re.compile(r"entire\s+(legacy\s+)?(directory|directory\s+replaced)", re.IGNORECASE),
-            re.compile(r"whole\s+directory", re.IGNORECASE),
-            re.compile(r"all\s+files?\s+in\s+directory", re.IGNORECASE),
-            re.compile(r"directory\s+fully\s+(covered|migrated|replaced)", re.IGNORECASE),
-            re.compile(r"the\s+entire\s+", re.IGNORECASE),
-            re.compile(r"all\s+\*\.py\s+files?", re.IGNORECASE),
-            re.compile(r"\*\.py\s+files?", re.IGNORECASE),
-            re.compile(r"\.\.\.", re.IGNORECASE),
-        ]
-        explicit_patterns = [
-            re.compile(r"\d+\s+files?:\s*\w+", re.IGNORECASE),
-            re.compile(r"(file|module)s?:\s*\w+", re.IGNORECASE),
-            re.compile(r"\[[\w\s,]+\]", re.IGNORECASE),
-            re.compile(r"(\w+\.py\s*,\s*){2,}", re.IGNORECASE),
-            re.compile(r"(service|storage|models|runtime|engine|config)\.py", re.IGNORECASE),
-        ]
-        file_exts = {".py", ".yaml", ".yml", ".json", ".txt", ".md", ".rst"}
-        violations: list[str] = []
-        dir_kinds = {"directory", "file_family"}
-        for unit in units:
-            unit_id = unit.get("id", "unknown")
-            for sr in unit.get("source_refs", []):
-                kind = str(sr.get("kind", ""))
-                note = str(sr.get("note", ""))
-                path = str(sr.get("path", ""))
-                if kind not in dir_kinds:
-                    continue
-                has_explicit = False
-                for pat in explicit_patterns:
-                    if pat.search(note):
-                        has_explicit = True
-                        break
-                if not has_explicit:
-                    for ext in file_exts:
-                        if re.search(rf"\w+{re.escape(ext)}\b", note, re.IGNORECASE):
-                            has_explicit = True
-                            break
-                if not has_explicit:
-                    module_patterns = [r"\b(service|storage|models|runtime|engine|config|loader|manager|handler)\b"]
-                    explicit_module_count = sum(1 for p in module_patterns if re.search(p, note, re.IGNORECASE))
-                    if explicit_module_count >= 2:
-                        has_explicit = True
-                if not has_explicit:
-                    is_vague = False
-                    if not note:
-                        is_vague = True
-                    else:
-                        for pat in vague_patterns:
-                            if pat.search(note):
-                                is_vague = True
-                                break
-                    if is_vague:
-                        note_snippet = note[:80] + "..." if len(note) > 80 else note
-                        violations.append(
-                            f"Unit '{unit_id}': Directory '{path}' lacks explicit file list. Note: \"{note_snippet}\""
-                        )
-        if violations:
-            result.passed = False
-            for v in violations:
-                result.violations.append(v)
-        result.evidence.append(f"Checked {len(units)} migration units")
-        return result
+        """Check legacy coverage granularity through the canonical policy module."""
+        policy_result = evaluate_legacy_coverage(self.workspace)
+        return FitnessCheckResult(
+            rule_id=policy_result.rule_id,
+            passed=policy_result.passed,
+            evidence=list(policy_result.evidence),
+            violations=list(policy_result.violations),
+            warnings=list(policy_result.warnings),
+        )
 
     def check_verified_evidence(self) -> FitnessCheckResult:
         """Check verified/retired units through the canonical policy module."""
