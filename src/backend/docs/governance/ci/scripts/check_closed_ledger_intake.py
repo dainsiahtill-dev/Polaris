@@ -18,49 +18,15 @@ import argparse
 import json
 import sys
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 BACKEND_ROOT = SCRIPT_DIR.parent.parent.parent.parent
 RULE_ID = "closed_governance_ledgers_intake_only"
 
-GREEN = "\033[92m"
-RED = "\033[91m"
-RESET = "\033[0m"
-
-
-@dataclass
-class FitnessCheckResult:
-    """Result of a governance fitness check."""
-
-    rule_id: str
-    passed: bool
-    evidence: list[str] = field(default_factory=list)
-    violations: list[str] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
-    timestamp: str = ""
-    duration_ms: float = 0.0
-
-    def __post_init__(self) -> None:
-        if not self.timestamp:
-            self.timestamp = datetime.now(timezone.utc).isoformat()
-
-    def format(self) -> str:
-        """Format the result for console output."""
-        status = f"{GREEN}PASS{RESET}" if self.passed else f"{RED}FAIL{RESET}"
-        lines = [f"[{self.rule_id}] {status}", f"  Duration: {self.duration_ms:.2f}ms"]
-        if self.evidence:
-            lines.append("  Evidence:")
-            lines.extend(f"    - {item}" for item in self.evidence)
-        if self.violations:
-            lines.append("  Violations:")
-            lines.extend(f"    - {item}" for item in self.violations)
-        if self.warnings:
-            lines.append("  Warnings:")
-            lines.extend(f"    - {item}" for item in self.warnings)
-        return "\n".join(lines)
+sys.path.insert(0, str(SCRIPT_DIR))
+from fitness_rule_checker import FitnessCheckResult  # noqa: E402
 
 
 @dataclass(frozen=True)
