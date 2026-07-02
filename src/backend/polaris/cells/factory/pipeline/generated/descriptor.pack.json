@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:55.051828Z",
-  "source_hash": "d3304edf657e35eb",
+  "generated_at": "2026-07-02T03:36:33.304826Z",
+  "source_hash": "97025ce3109524fe",
   "cell_id": "factory.pipeline",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -127,6 +127,18 @@
     },
     {
       "type": "function",
+      "name": "_entrypoint_has_failure_marker",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_mark_entrypoint_failure",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
       "name": "_load_package_json",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
@@ -139,7 +151,133 @@
     },
     {
       "type": "function",
+      "name": "_package_declares_dependency",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_package_has_local_tsc",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_script_uses_tsc",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_package_requires_project_typescript",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_script_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_shell_chaining",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_inline_eval_code",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_fake_npm_lifecycle_script",
+      "description": "Return True for npm lifecycle scripts that only print success text.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_npm_test_script_manifest_only",
+      "description": "Return True when a test script only validates manifests or build folders.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_npm_test_script_placeholder",
+      "description": "Return True for npm test scripts that only announce missing/fake tests.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_html_local_resource_refs",
+      "description": "Return local resources explicitly referenced by an HTML entrypoint.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "srcset_urls",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_missing_html_local_resources",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_local_web_resource_failure",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_ignorable_web_console_error",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_canvas_smoke_ok",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_paeth_predictor",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_png_has_nonblank_pixels",
+      "description": "Return True when an 8-bit PNG contains visible non-transparent pixels.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
       "name": "_smoke_static_web",
+      "description": "Smoke-test a static HTML entrypoint using Playwright for real browser verification.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_smoke_static_web_playwright",
+      "description": "Use Playwright to verify the HTML entrypoint renders correctly.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "record_response",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "record_request_failure",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
     },
@@ -157,6 +295,180 @@
     },
     {
       "type": "function",
+      "name": "_files_with_suffix",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_which_any",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_cli_smoke_result",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_go_local_imports",
+      "description": "Return ``[(file_rel, import_path), ...]`` for all non-stdlib Go imports.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_discover_go_package_dirs",
+      "description": "Return the set of relative directory paths that contain ``.go`` files.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_go_import_subpath",
+      "description": "Repair a Go import path's sub-path to match an actual package directory.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_go_imports",
+      "description": "Detect inconsistent Go import paths without mutating the workspace.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_infer_go_module_name",
+      "description": "Infer the Go module name from import paths in source files.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_go_mod_module",
+      "description": "Read the module name from ``go.mod``, or return ``\"\"`` if absent.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_go_duplicate_declarations",
+      "description": "Detect Go redeclarations without mutating the workspace.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_go_command",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_rust_compile_command",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_language_build_gate",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_platform_verifiers",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_required_user_verifier_requirement",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_smoke_go_cli",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_smoke_rust_cli",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_smoke_cpp_cli",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_java_main_class_name",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_smoke_java_cli",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_looks_like_python_test",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_primary_source_language",
+      "description": "Determine the primary source language of a generated project.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_discover_python_test_files",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "add_path",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_python_test_command_has_zero_tests",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_python_pytest_command_has_zero_tests",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_python_unittest_suite",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_python_pytest_suite",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_python_test_suite",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
       "name": "_smoke_python_cli",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
@@ -165,6 +477,54 @@
       "type": "function",
       "name": "_first_ok_command",
       "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_build_output_path",
+      "description": "Check if a path starts with a build output directory as its first segment.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_token_references_build_output",
+      "description": "Check if a single command token references a build output directory.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_build_output_path_reference",
+      "description": "Check if command contains a build output dir used as a path root.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_command_serves_build_output",
+      "description": "Check if the command is known to serve build output (e.g. vite preview, serve -s dist).",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_script_depends_on_build_output",
+      "description": "Check if an npm script's command references build artifact directories.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_any_script_references_build_output",
+      "description": "Check if any of the given npm scripts reference build artifact directories.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_declared_source_targets_requirement",
+      "description": "Build the declared_source_targets_present requirement.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_scaffolding_requirement",
+      "description": "Check that TypeScript/Web projects have required scaffolding files.",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
     },
     {
@@ -199,6 +559,18 @@
     },
     {
       "type": "function",
+      "name": "_resolve_polaris_roots_runtime_dir",
+      "description": "Resolve the canonical runtime_root via resolve_polaris_roots if available.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_dispatch_route_events",
+      "description": "Append normalized LLM route events embedded in a Director dispatch log.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
       "name": "collect_llm_events",
       "description": "Collect normalized LLM invocation evidence from runtime artifacts.",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
@@ -223,13 +595,25 @@
     },
     {
       "type": "function",
-      "name": "_model_key",
+      "name": "_matches_family",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
     },
     {
       "type": "function",
-      "name": "_matches_family",
+      "name": "_is_real_llm_route_event",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_llm_route_skip_event",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_provider_from_expected",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
     },
@@ -271,14 +655,128 @@
     },
     {
       "type": "function",
+      "name": "_check_failure_is_runtime_environment",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_has_generated_artifact_failure",
+      "description": "Return true when the failure points at malformed generated artifacts.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_nested_chain_results",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_failure_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_failure_reason",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_has_director_execution_failure",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_has_explicit_director_execution_failure",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_has_runtime_environment_failure",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_environment_failure_reason",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_environment_failure_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_has_qa_artifact_quality_failure",
+      "description": "Return true when QA ran and failed on malformed generated artifacts.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_chief_engineer_failure_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_chief_engineer_failure_reason",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_partial_chief_engineer_blueprint_generation",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_has_chief_engineer_blueprint_failure",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_ledger_projection_integrity_available",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
       "name": "classify_factory_bench_failure",
       "description": "Assign one stable root-cause category to a per-project bench record.",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
     },
     {
       "type": "function",
+      "name": "apply_factory_bench_failure_taxonomy",
+      "description": "Classify a bench record and expose stable top-level attribution fields.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
       "name": "aggregate_goal_audit",
       "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_go_version_of",
+      "description": "Parse the Go version tuple from ``go version`` output (e.g. ``(1, 23, 8)``).",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_go_binary",
+      "description": "Locate the ``go`` binary, preferring versions >= 1.23 when available.",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
     },
     {
@@ -358,24 +856,160 @@
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_service.py"
     },
     {
+      "type": "function",
+      "name": "_empty_control_plane_projection",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_project_evidence_policy",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_project_evidence_modalities",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_modality_summary_is_present_failed",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_legacy_evidence_policy",
+      "description": "Normalize old audit snapshots without mutating the stored audit file.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_control_plane_projection_from_audit",
+      "description": "Build a read-only control-plane projection from factory_audits.json.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_service.py"
+    },
+    {
+      "type": "class",
+      "name": "ArtifactStore",
+      "description": "Filesystem-backed artifact store for factory stage outputs.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_artifact_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "artifact_path",
+          "doc": ""
+        },
+        {
+          "name": "write_json_artifact",
+          "doc": ""
+        },
+        {
+          "name": "write_text_artifact",
+          "doc": ""
+        },
+        {
+          "name": "write_stage_signal_artifact",
+          "doc": ""
+        },
+        {
+          "name": "copy_text_artifact",
+          "doc": ""
+        },
+        {
+          "name": "copy_text_artifact_if_present",
+          "doc": ""
+        },
+        {
+          "name": "read_text_artifact",
+          "doc": ""
+        },
+        {
+          "name": "emit_audit_event",
+          "doc": "Emit an audit event for tracking purposes."
+        },
+        {
+          "name": "_mirror_llm_call_audit_event",
+          "doc": "Mirror legacy role LLM audit artifacts into the canonical LLM event stream."
+        },
+        {
+          "name": "artifact_exists",
+          "doc": ""
+        },
+        {
+          "name": "missing_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "mirror_docs_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "mirror_pm_plan_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "mirror_chief_engineer_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "mirror_director_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "mirror_quality_gate_artifacts",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RunCompletionWaiter",
+      "description": "Builds orchestration services and waits for orchestration runs to settle.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_completion.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "build_orchestration_service",
+          "doc": ""
+        },
+        {
+          "name": "resolve_cancel_event",
+          "doc": ""
+        },
+        {
+          "name": "resolve_abort_checker",
+          "doc": ""
+        }
+      ]
+    },
+    {
       "type": "class",
       "name": "FactoryRunStatus",
       "description": "Factory run lifecycle status.",
-      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_models.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "FactoryConfig",
       "description": "Factory run configuration.",
-      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_models.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "StageResult",
       "description": "Result of a stage execution.",
-      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_models.py",
       "methods": [
         {
           "name": "to_dict",
@@ -387,7 +1021,7 @@
       "type": "class",
       "name": "FactoryRun",
       "description": "A factory run with full audit trail.",
-      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_models.py",
       "methods": [
         {
           "name": "to_dict",
@@ -403,216 +1037,44 @@
       "type": "class",
       "name": "FactoryStageExecutor",
       "description": "Execution adapter for concrete factory stages.",
-      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_models.py",
       "methods": []
     },
     {
-      "type": "class",
-      "name": "OrchestrationStageExecutor",
-      "description": "Production executor backed by OrchestrationCommandService.",
-      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "_artifact_path",
-          "doc": ""
-        },
-        {
-          "name": "_write_json_artifact",
-          "doc": ""
-        },
-        {
-          "name": "_write_text_artifact",
-          "doc": ""
-        },
-        {
-          "name": "_write_stage_signal_artifact",
-          "doc": ""
-        },
-        {
-          "name": "_copy_text_artifact",
-          "doc": ""
-        },
-        {
-          "name": "_copy_text_artifact_if_present",
-          "doc": ""
-        },
-        {
-          "name": "_read_text_artifact",
-          "doc": ""
-        },
-        {
-          "name": "_extend_artifacts",
-          "doc": ""
-        },
-        {
-          "name": "_mirror_docs_artifacts",
-          "doc": ""
-        },
-        {
-          "name": "_mirror_pm_plan_artifacts",
-          "doc": ""
-        },
-        {
-          "name": "_mirror_chief_engineer_artifacts",
-          "doc": ""
-        },
-        {
-          "name": "_mirror_director_artifacts",
-          "doc": ""
-        },
-        {
-          "name": "_mirror_quality_gate_artifacts",
-          "doc": ""
-        },
-        {
-          "name": "_workspace_package_has_external_dependencies",
-          "doc": ""
-        },
-        {
-          "name": "_workspace_quality_prepare_commands",
-          "doc": ""
-        },
-        {
-          "name": "_artifact_file_ready",
-          "doc": "Return whether an expected stage artifact is present after upstream completion."
-        },
-        {
-          "name": "_artifact_exists",
-          "doc": ""
-        },
-        {
-          "name": "_missing_artifacts",
-          "doc": ""
-        },
-        {
-          "name": "_is_substantive_doc_text",
-          "doc": ""
-        },
-        {
-          "name": "_ensure_docs_artifacts",
-          "doc": ""
-        },
-        {
-          "name": "_validate_pm_plan_contract",
-          "doc": ""
-        },
-        {
-          "name": "_is_pm_meta_diagnostic_task",
-          "doc": ""
-        },
-        {
-          "name": "_load_pm_plan_tasks",
-          "doc": ""
-        },
-        {
-          "name": "_compact_text_for_prompt",
-          "doc": ""
-        },
-        {
-          "name": "_strip_prompt_meta_lines",
-          "doc": ""
-        },
-        {
-          "name": "_build_pm_planning_directive",
-          "doc": ""
-        },
-        {
-          "name": "_build_director_task_filter",
-          "doc": ""
-        },
-        {
-          "name": "_task_string",
-          "doc": ""
-        },
-        {
-          "name": "_task_string_list",
-          "doc": ""
-        },
-        {
-          "name": "_task_id",
-          "doc": ""
-        },
-        {
-          "name": "_task_objective",
-          "doc": ""
-        },
-        {
-          "name": "_task_blueprint_context",
-          "doc": ""
-        },
-        {
-          "name": "_task_blueprint_constraints",
-          "doc": ""
-        },
-        {
-          "name": "_read_taskboard_stats",
-          "doc": ""
-        },
-        {
-          "name": "_is_taskboard_converged",
-          "doc": ""
-        },
-        {
-          "name": "_has_director_progress",
-          "doc": ""
-        },
-        {
-          "name": "_has_director_execution_evidence",
-          "doc": ""
-        },
-        {
-          "name": "_metadata_indicates_execution",
-          "doc": ""
-        },
-        {
-          "name": "_is_director_no_materialized_changes",
-          "doc": ""
-        },
-        {
-          "name": "_bool_from_context_or_env",
-          "doc": ""
-        },
-        {
-          "name": "_load_package_scripts",
-          "doc": ""
-        },
-        {
-          "name": "_workspace_quality_commands",
-          "doc": ""
-        },
-        {
-          "name": "_trim_command_output",
-          "doc": ""
-        },
-        {
-          "name": "_run_workspace_quality_command",
-          "doc": ""
-        },
-        {
-          "name": "_resolve_workspace_quality_command",
-          "doc": ""
-        },
-        {
-          "name": "_qa_report_has_warning",
-          "doc": ""
-        },
-        {
-          "name": "_build_orchestration_service",
-          "doc": ""
-        },
-        {
-          "name": "_resolve_cancel_event",
-          "doc": ""
-        },
-        {
-          "name": "_resolve_abort_checker",
-          "doc": ""
-        }
-      ]
+      "type": "function",
+      "name": "_require_factory_run_status",
+      "description": "Return the persisted factory run status or reject a malformed snapshot.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_models.py"
+    },
+    {
+      "type": "function",
+      "name": "_factory_cancel_key",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_models.py"
+    },
+    {
+      "type": "function",
+      "name": "_register_factory_cancel_event",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_models.py"
+    },
+    {
+      "type": "function",
+      "name": "_unregister_factory_cancel_event",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_models.py"
+    },
+    {
+      "type": "function",
+      "name": "_signal_factory_cancel_event",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_models.py"
+    },
+    {
+      "type": "function",
+      "name": "_factory_jetstream_fanout_timeout_seconds",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_models.py"
     },
     {
       "type": "class",
@@ -652,33 +1114,871 @@
     },
     {
       "type": "function",
-      "name": "_factory_cancel_key",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_register_factory_cancel_event",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_unregister_factory_cancel_event",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_signal_factory_cancel_event",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py"
-    },
-    {
-      "type": "function",
       "name": "_factory_jetstream_fanout_timeout_seconds",
-      "description": "",
+      "description": "Resolve the JetStream fanout timeout for ``_append_event``.",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py"
+    },
+    {
+      "type": "class",
+      "name": "_QualityRepairAdapter",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_update_task_progress",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "OrchestrationStageExecutor",
+      "description": "Production executor backed by OrchestrationCommandService.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_artifact_path",
+          "doc": ""
+        },
+        {
+          "name": "_write_json_artifact",
+          "doc": ""
+        },
+        {
+          "name": "_write_text_artifact",
+          "doc": ""
+        },
+        {
+          "name": "_write_stage_signal_artifact",
+          "doc": ""
+        },
+        {
+          "name": "_copy_text_artifact",
+          "doc": ""
+        },
+        {
+          "name": "_copy_text_artifact_if_present",
+          "doc": ""
+        },
+        {
+          "name": "_read_text_artifact",
+          "doc": ""
+        },
+        {
+          "name": "_emit_audit_event",
+          "doc": "Emit an audit event for tracking purposes."
+        },
+        {
+          "name": "_extend_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_declared_delivery_target",
+          "doc": ""
+        },
+        {
+          "name": "_collect_declared_delivery_targets",
+          "doc": ""
+        },
+        {
+          "name": "_missing_declared_delivery_targets",
+          "doc": ""
+        },
+        {
+          "name": "_mirror_docs_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_mirror_pm_plan_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_mirror_chief_engineer_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_mirror_director_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_mirror_quality_gate_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_package_has_external_dependencies",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_prepare_commands",
+          "doc": ""
+        },
+        {
+          "name": "_artifact_file_ready",
+          "doc": "Return whether an expected stage artifact is present after upstream completion."
+        },
+        {
+          "name": "_pre_director_snapshot_candidate",
+          "doc": ""
+        },
+        {
+          "name": "_pre_director_snapshot_dir",
+          "doc": ""
+        },
+        {
+          "name": "_iter_pre_director_snapshot_files",
+          "doc": ""
+        },
+        {
+          "name": "_create_pre_director_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "_restore_pre_director_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "_capture_workspace_delivery_state",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_delivery_delta",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_delta_indicates_materialization_progress",
+          "doc": ""
+        },
+        {
+          "name": "_artifact_exists",
+          "doc": ""
+        },
+        {
+          "name": "_missing_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_is_substantive_doc_text",
+          "doc": ""
+        },
+        {
+          "name": "_ensure_docs_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_validate_pm_plan_contract",
+          "doc": ""
+        },
+        {
+          "name": "_is_pm_meta_diagnostic_task",
+          "doc": ""
+        },
+        {
+          "name": "_validate_pm_plan_language_consistency",
+          "doc": "Check that PM plan target_files match the catalog primary_language."
+        },
+        {
+          "name": "_read_catalog_contract",
+          "doc": ""
+        },
+        {
+          "name": "_catalog_delivery_depth_contract",
+          "doc": ""
+        },
+        {
+          "name": "_merge_string_list",
+          "doc": ""
+        },
+        {
+          "name": "_merge_catalog_delivery_depth_contract",
+          "doc": ""
+        },
+        {
+          "name": "_inject_catalog_delivery_depth_contract",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_contract_path",
+          "doc": ""
+        },
+        {
+          "name": "_source_target_suffixes",
+          "doc": ""
+        },
+        {
+          "name": "_collect_pm_project_declared_target_files",
+          "doc": "Collect write targets from PM task contracts."
+        },
+        {
+          "name": "_filter_source_target_files",
+          "doc": ""
+        },
+        {
+          "name": "_filter_entrypoint_like_targets",
+          "doc": ""
+        },
+        {
+          "name": "_inject_project_declared_target_contract",
+          "doc": ""
+        },
+        {
+          "name": "_enrich_pm_plan_contract_artifact",
+          "doc": ""
+        },
+        {
+          "name": "_load_pm_plan_tasks",
+          "doc": ""
+        },
+        {
+          "name": "_pm_plan_tasks_from_payload",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_pm_plan_validation_contracts",
+          "doc": "Keep per-task test acceptance aligned with the task that owns test targets."
+        },
+        {
+          "name": "_is_pm_validation_target_path",
+          "doc": ""
+        },
+        {
+          "name": "_acceptance_without_test_commands",
+          "doc": ""
+        },
+        {
+          "name": "_iter_pm_plan_contract_candidates",
+          "doc": ""
+        },
+        {
+          "name": "_mtime",
+          "doc": ""
+        },
+        {
+          "name": "_ensure_pm_plan_contract_available",
+          "doc": "Copy PM's workspace mirror into the runtime artifact path consumed downstream."
+        },
+        {
+          "name": "_materialize_pm_plan_taskboard",
+          "doc": ""
+        },
+        {
+          "name": "_compact_text_for_prompt",
+          "doc": ""
+        },
+        {
+          "name": "_compact_workspace_quality_evidence_for_qa",
+          "doc": "Build a short, parseable workspace-quality JSON payload for QA."
+        },
+        {
+          "name": "_compact_blueprint_evidence_for_repair",
+          "doc": ""
+        },
+        {
+          "name": "_strip_prompt_meta_lines",
+          "doc": ""
+        },
+        {
+          "name": "_build_pm_planning_directive",
+          "doc": ""
+        },
+        {
+          "name": "_build_director_task_filter",
+          "doc": ""
+        },
+        {
+          "name": "_director_task_ids_from_pm_tasks",
+          "doc": ""
+        },
+        {
+          "name": "_director_requested_task_ids",
+          "doc": ""
+        },
+        {
+          "name": "_read_json_artifact_payload",
+          "doc": ""
+        },
+        {
+          "name": "_load_chief_engineer_review_payload",
+          "doc": ""
+        },
+        {
+          "name": "_chief_engineer_handoff_signals_for_director",
+          "doc": "Validate PM task contracts have handoff-ready CE blueprints."
+        },
+        {
+          "name": "_task_string",
+          "doc": ""
+        },
+        {
+          "name": "_task_string_list",
+          "doc": ""
+        },
+        {
+          "name": "_task_id",
+          "doc": ""
+        },
+        {
+          "name": "_task_objective",
+          "doc": ""
+        },
+        {
+          "name": "_task_blueprint_context",
+          "doc": ""
+        },
+        {
+          "name": "_read_existing_target_file_summaries",
+          "doc": "Summarize the export API of files this task depends on but does NOT own."
+        },
+        {
+          "name": "_add",
+          "doc": ""
+        },
+        {
+          "name": "_extract_js_export_summary",
+          "doc": "Extract JS/TS export signatures so dependent files reference real symbols."
+        },
+        {
+          "name": "_extract_py_export_summary",
+          "doc": "Extract Python export signatures so a dependent file's Director sees the"
+        },
+        {
+          "name": "_base_names",
+          "doc": ""
+        },
+        {
+          "name": "_func_signature",
+          "doc": ""
+        },
+        {
+          "name": "_extract_py_export_summary_fallback",
+          "doc": "Line-scan fallback when the dependency source does not parse as Python."
+        },
+        {
+          "name": "_task_blueprint_constraints",
+          "doc": ""
+        },
+        {
+          "name": "_read_taskboard_stats",
+          "doc": ""
+        },
+        {
+          "name": "_read_claimable_director_task_ids",
+          "doc": "Return TaskBoard PM/external ids that can be claimed in this round."
+        },
+        {
+          "name": "_terminal_status_from_task_counts",
+          "doc": ""
+        },
+        {
+          "name": "_count",
+          "doc": ""
+        },
+        {
+          "name": "_is_taskboard_converged",
+          "doc": ""
+        },
+        {
+          "name": "_has_director_progress",
+          "doc": ""
+        },
+        {
+          "name": "_has_director_execution_evidence",
+          "doc": ""
+        },
+        {
+          "name": "_metadata_indicates_execution",
+          "doc": ""
+        },
+        {
+          "name": "_pm_deterministic_contract_metadata_for_context",
+          "doc": "Build PM run metadata for explicit/internal deterministic contract mode."
+        },
+        {
+          "name": "_director_dispatch_timeout_seconds",
+          "doc": ""
+        },
+        {
+          "name": "_parse_timeout",
+          "doc": ""
+        },
+        {
+          "name": "_director_first_materialization_min_budget_seconds",
+          "doc": ""
+        },
+        {
+          "name": "_quality_gate_reserved_budget_seconds",
+          "doc": ""
+        },
+        {
+          "name": "_director_dispatch_timeout_settle_grace_seconds",
+          "doc": ""
+        },
+        {
+          "name": "_chief_engineer_llm_timeout_seconds",
+          "doc": ""
+        },
+        {
+          "name": "_parse_timeout",
+          "doc": ""
+        },
+        {
+          "name": "_chief_engineer_deadline_projection_decision",
+          "doc": ""
+        },
+        {
+          "name": "_chief_engineer_projection_semantic_terms",
+          "doc": ""
+        },
+        {
+          "name": "_mapping",
+          "doc": ""
+        },
+        {
+          "name": "_extend_terms",
+          "doc": ""
+        },
+        {
+          "name": "_enrich_chief_engineer_projection_context",
+          "doc": ""
+        },
+        {
+          "name": "_string_list",
+          "doc": ""
+        },
+        {
+          "name": "_append_unique",
+          "doc": ""
+        },
+        {
+          "name": "_director_binding_timeout_quarantine_count",
+          "doc": ""
+        },
+        {
+          "name": "_director_binding_identity",
+          "doc": ""
+        },
+        {
+          "name": "_record_director_binding_skip",
+          "doc": ""
+        },
+        {
+          "name": "_director_readiness_skip_reasons",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_director_binding_fanout",
+          "doc": ""
+        },
+        {
+          "name": "_append_binding",
+          "doc": ""
+        },
+        {
+          "name": "_binding_key",
+          "doc": ""
+        },
+        {
+          "name": "_backend_failure_reason",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_taskboard_terminal_result",
+          "doc": "Fail-closed when the shared taskboard is already terminal."
+        },
+        {
+          "name": "_build_per_binding_route_events",
+          "doc": ""
+        },
+        {
+          "name": "_build_fail_closed_director_route_events",
+          "doc": ""
+        },
+        {
+          "name": "_reclassify_binding_coverage_signals",
+          "doc": ""
+        },
+        {
+          "name": "_validate_director_binding_coverage",
+          "doc": ""
+        },
+        {
+          "name": "_ce_extract_llm_evidence",
+          "doc": ""
+        },
+        {
+          "name": "_walk_values",
+          "doc": ""
+        },
+        {
+          "name": "_ce_review_schema_failure_is_recoverable",
+          "doc": ""
+        },
+        {
+          "name": "_ce_llm_failure_allows_blueprint_projection",
+          "doc": ""
+        },
+        {
+          "name": "_attach_ce_llm_evidence",
+          "doc": ""
+        },
+        {
+          "name": "_ce_missing_final_request_evidence",
+          "doc": ""
+        },
+        {
+          "name": "_architecture_decision_payloads",
+          "doc": ""
+        },
+        {
+          "name": "_ensure_chief_engineer_blueprint_artifact_present",
+          "doc": ""
+        },
+        {
+          "name": "_is_director_no_materialized_changes",
+          "doc": ""
+        },
+        {
+          "name": "_fanout_all_active_bindings_failed",
+          "doc": ""
+        },
+        {
+          "name": "_fanout_failure_mentions_materialization_quality",
+          "doc": ""
+        },
+        {
+          "name": "_failure_metadata_mentions_materialization_quality",
+          "doc": ""
+        },
+        {
+          "name": "_failed_task_records_indicate_materialization_quality_handoff",
+          "doc": ""
+        },
+        {
+          "name": "_failed_task_records_indicate_quality_handoff",
+          "doc": "Return true when failed task records show artifacts that should enter QA."
+        },
+        {
+          "name": "_taskboard_idle_with_unresolved_work",
+          "doc": "Return true when no work is active and only blocked residue remains."
+        },
+        {
+          "name": "_workspace_has_materialized_delivery_evidence",
+          "doc": ""
+        },
+        {
+          "name": "_fanout_quality_failure_can_enter_quality_gate",
+          "doc": ""
+        },
+        {
+          "name": "_downgrade_quality_handoff_blocking_signals",
+          "doc": ""
+        },
+        {
+          "name": "_bool_from_context_or_env",
+          "doc": ""
+        },
+        {
+          "name": "_load_package_scripts",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_commands",
+          "doc": ""
+        },
+        {
+          "name": "_trim_command_output",
+          "doc": ""
+        },
+        {
+          "name": "_run_workspace_quality_command",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_workspace_quality_command",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_repair_errors",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_repair_coverage_report",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_repair_plan_probe_report",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_repair_plan_probe_base_files",
+          "doc": ""
+        },
+        {
+          "name": "_apply_workspace_quality_repairs",
+          "doc": ""
+        },
+        {
+          "name": "_apply_workspace_quality_cpp_post_repairs",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_repair_target_files",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_repair_diagnostic_target_files",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_relative_import_targets",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_resolve_relative_module",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_repair_changed_files",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_repair_blueprint_evidence",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_repair_original_message",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_llm_repair_timeout_seconds",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_repair_result_has_mutation",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_repair_evidence",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_summary_requires_task_boundary_triage",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_interface_discrepancy_evidence",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_interface_discrepancy_allows_director_retry",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_repair_summary_projection",
+          "doc": ""
+        },
+        {
+          "name": "write_workspace_validation_failure",
+          "doc": ""
+        },
+        {
+          "name": "workspace_repair_deadline_blocker",
+          "doc": ""
+        },
+        {
+          "name": "current_workspace_repair_summary",
+          "doc": ""
+        },
+        {
+          "name": "_write_workspace_validation_artifact",
+          "doc": ""
+        },
+        {
+          "name": "_persist_workspace_validation_ledger",
+          "doc": ""
+        },
+        {
+          "name": "_qa_report_has_warning",
+          "doc": ""
+        },
+        {
+          "name": "_factory_deadline_remaining_seconds",
+          "doc": ""
+        },
+        {
+          "name": "_build_quality_gate_failure_stage",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_failure_detail",
+          "doc": ""
+        },
+        {
+          "name": "_quality_gate_qa_wait_timeout_seconds",
+          "doc": ""
+        },
+        {
+          "name": "_build_qa_input_with_workspace_quality_evidence",
+          "doc": ""
+        },
+        {
+          "name": "_build_orchestration_service",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_cancel_event",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_abort_checker",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_dedupe_workspace_repair_paths",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_workspace_quality_repair_path",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "extend_artifacts",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_declared_delivery_target",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "collect_declared_delivery_targets",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "add",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "artifact_file_ready",
+      "description": "Return whether an expected stage artifact is present after upstream completion.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "is_substantive_doc_text",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "is_pm_meta_diagnostic_task",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "compact_text_for_prompt",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "strip_prompt_meta_lines",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "build_director_task_filter",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "task_string",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "task_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "is_taskboard_converged",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "has_director_progress",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "has_director_execution_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "metadata_indicates_execution",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "is_director_no_materialized_changes",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "bool_from_context_or_env",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "trim_command_output",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_workspace_quality_command",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "qa_report_has_warning",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
     },
     {
       "type": "class",
@@ -749,6 +2049,141 @@
       "name": "_release_acquired_lock_from_task",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_store.py"
+    },
+    {
+      "type": "class",
+      "name": "WorkspaceQualityFilePatch",
+      "description": "Controlled local patch emitted by workspace-quality repair helpers.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_workspace_quality.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkspaceQualityRunner",
+      "description": "Builds and runs workspace quality (npm test/build) commands.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_workspace_quality.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "consume_repair_receipts",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_relative_path",
+          "doc": ""
+        },
+        {
+          "name": "_apply_workspace_quality_patch",
+          "doc": ""
+        },
+        {
+          "name": "workspace_package_has_external_dependencies",
+          "doc": ""
+        },
+        {
+          "name": "workspace_quality_prepare_commands",
+          "doc": ""
+        },
+        {
+          "name": "load_package_scripts",
+          "doc": ""
+        },
+        {
+          "name": "delivery_depth_contract_result",
+          "doc": ""
+        },
+        {
+          "name": "_load_delivery_depth_level_contract",
+          "doc": ""
+        },
+        {
+          "name": "workspace_quality_commands",
+          "doc": ""
+        },
+        {
+          "name": "_go_workspace_quality_commands",
+          "doc": ""
+        },
+        {
+          "name": "_rust_workspace_quality_commands",
+          "doc": ""
+        },
+        {
+          "name": "_cpp_workspace_quality_commands",
+          "doc": ""
+        },
+        {
+          "name": "_python_workspace_quality_commands",
+          "doc": "Infer real validation commands for Python-only generated projects."
+        },
+        {
+          "name": "_python_workspace_files",
+          "doc": ""
+        },
+        {
+          "name": "_python_compile_targets",
+          "doc": ""
+        },
+        {
+          "name": "_python_entrypoint_smoke_commands",
+          "doc": ""
+        },
+        {
+          "name": "repair_hallucinated_npm_dependencies",
+          "doc": "Remove hallucinated dependencies from package.json."
+        },
+        {
+          "name": "repair_cjs_export_import_mismatch",
+          "doc": "Fix CJS destructuring imports that target direct-export modules."
+        },
+        {
+          "name": "repair_test_trim_mismatch",
+          "doc": "Fix test assertions that fail due to whitespace/trim differences."
+        },
+        {
+          "name": "run_command",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_npm_start_runs_long_lived_web_server",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_workspace_quality.py"
+    },
+    {
+      "type": "function",
+      "name": "_masked_workspace_failure_reason",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_workspace_quality.py"
+    },
+    {
+      "type": "function",
+      "name": "_nested_javac_diagnostics_from_output",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_workspace_quality.py"
+    },
+    {
+      "type": "function",
+      "name": "_called_process_error_javac_command",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_workspace_quality.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_javac_diagnostic_command",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_workspace_quality.py"
+    },
+    {
+      "type": "function",
+      "name": "_javac_arg_is_path_like",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_workspace_quality.py"
     },
     {
       "type": "class",
@@ -1213,632 +2648,232 @@
     },
     {
       "type": "class",
-      "name": "_FakeNode",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_back_mapping_tree_sitter.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "_FakeTree",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_back_mapping_tree_sitter.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "_FakeParser",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_back_mapping_tree_sitter.py",
-      "methods": [
-        {
-          "name": "parse",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "test_back_mapping_prefers_tree_sitter_when_parser_is_available",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_back_mapping_tree_sitter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_real_run_gate_executes_python_build_and_cli_entrypoint",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
-    },
-    {
-      "type": "function",
-      "name": "test_real_run_gate_accepts_required_arg_cli_usage_screen",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
-    },
-    {
-      "type": "function",
-      "name": "test_real_run_gate_starts_static_web_entrypoint",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
-    },
-    {
-      "type": "function",
-      "name": "test_collect_llm_events_reads_runtime_role_jsonl",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
-    },
-    {
-      "type": "function",
-      "name": "test_collect_llm_events_reads_multiple_runtime_candidates",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
-    },
-    {
-      "type": "function",
-      "name": "test_llm_route_audit_requires_actual_bound_families_and_all_director_routes",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
-    },
-    {
-      "type": "function",
-      "name": "test_llm_route_audit_fails_when_a_director_route_is_unobserved",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
-    },
-    {
-      "type": "function",
-      "name": "test_llm_route_audit_matches_providerless_events_by_model",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
-    },
-    {
-      "type": "function",
-      "name": "test_failure_taxonomy_prefers_llm_route_before_generic_chain_failure",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
-    },
-    {
-      "type": "function",
-      "name": "test_aggregate_goal_audit_counts_real_route_and_root_causes",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
-    },
-    {
-      "type": "class",
-      "name": "TestFactoryBenchService",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_service.py",
-      "methods": [
-        {
-          "name": "setUp",
-          "doc": ""
-        },
-        {
-          "name": "_read_jsonl",
-          "doc": ""
-        },
-        {
-          "name": "test_register_session_writes_status_and_events",
-          "doc": ""
-        },
-        {
-          "name": "test_register_session_rejects_duplicate",
-          "doc": ""
-        },
-        {
-          "name": "test_register_session_rejects_path_traversal_id",
-          "doc": ""
-        },
-        {
-          "name": "test_append_event_writes_to_events_jsonl",
-          "doc": ""
-        },
-        {
-          "name": "test_append_event_returns_false_for_unknown_session",
-          "doc": ""
-        },
-        {
-          "name": "test_complete_session_marks_terminal_status",
-          "doc": ""
-        },
-        {
-          "name": "test_complete_session_failure_marks_failed",
-          "doc": ""
-        },
-        {
-          "name": "test_get_session_returns_status_and_recent_events",
-          "doc": ""
-        },
-        {
-          "name": "test_list_sessions_returns_recent_first",
-          "doc": ""
-        },
-        {
-          "name": "test_read_events_from_returns_all_events_from_offset",
-          "doc": ""
-        },
-        {
-          "name": "test_update_progress_sets_completed_and_failed",
-          "doc": ""
-        },
-        {
-          "name": "test_update_progress_partial",
-          "doc": ""
-        },
-        {
-          "name": "test_update_progress_rejects_unknown_session",
-          "doc": ""
-        },
-        {
-          "name": "test_complete_session_honours_summary_counters",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestStartFactoryRunCommandV1",
-      "description": "Tests for StartFactoryRunCommandV1 contract.",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_command_construction",
-          "doc": "Test basic command construction."
-        },
-        {
-          "name": "test_command_with_options",
-          "doc": "Test command with options."
-        },
-        {
-          "name": "test_command_empty_workspace_raises",
-          "doc": "Test that empty workspace raises ValueError."
-        },
-        {
-          "name": "test_command_empty_run_name_raises",
-          "doc": "Test that empty run_name raises ValueError."
-        },
-        {
-          "name": "test_command_empty_stages_raises",
-          "doc": "Test that empty stages raises ValueError."
-        },
-        {
-          "name": "test_command_stages_whitespace_filtered",
-          "doc": "Test that whitespace-only stages are filtered out."
-        },
-        {
-          "name": "test_command_whitespace_normalized",
-          "doc": "Test that workspace and run_name whitespace is normalized."
-        },
-        {
-          "name": "test_command_stages_whitespace_preserved",
-          "doc": "Test that stages whitespace is preserved (only empty filtered)."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCancelFactoryRunCommandV1",
-      "description": "Tests for CancelFactoryRunCommandV1 contract.",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_command_construction",
-          "doc": "Test basic command construction."
-        },
-        {
-          "name": "test_command_empty_workspace_raises",
-          "doc": "Test that empty workspace raises ValueError."
-        },
-        {
-          "name": "test_command_empty_run_id_raises",
-          "doc": "Test that empty run_id raises ValueError."
-        },
-        {
-          "name": "test_command_empty_reason_raises",
-          "doc": "Test that empty reason raises ValueError."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestGetFactoryRunStatusQueryV1",
-      "description": "Tests for GetFactoryRunStatusQueryV1 contract.",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_query_construction",
-          "doc": "Test basic query construction."
-        },
-        {
-          "name": "test_query_empty_workspace_raises",
-          "doc": "Test that empty workspace raises ValueError."
-        },
-        {
-          "name": "test_query_empty_run_id_raises",
-          "doc": "Test that empty run_id raises ValueError."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestListFactoryRunsQueryV1",
-      "description": "Tests for ListFactoryRunsQueryV1 contract.",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_query_defaults",
-          "doc": "Test query default values."
-        },
-        {
-          "name": "test_query_custom_pagination",
-          "doc": "Test query with custom pagination."
-        },
-        {
-          "name": "test_query_limit_less_than_one_raises",
-          "doc": "Test that limit < 1 raises ValueError."
-        },
-        {
-          "name": "test_query_negative_offset_raises",
-          "doc": "Test that negative offset raises ValueError."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestRunProjectionExperimentCommandV1",
-      "description": "Tests for RunProjectionExperimentCommandV1 contract.",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_command_defaults",
-          "doc": "Test command default values."
-        },
-        {
-          "name": "test_command_custom_options",
-          "doc": "Test command with custom options."
-        },
-        {
-          "name": "test_command_empty_workspace_raises",
-          "doc": "Test that empty workspace raises ValueError."
-        },
-        {
-          "name": "test_command_empty_scenario_id_raises",
-          "doc": "Test that empty scenario_id raises ValueError."
-        },
-        {
-          "name": "test_command_empty_requirement_raises",
-          "doc": "Test that empty requirement raises ValueError."
-        },
-        {
-          "name": "test_boolean_fields_normalized",
-          "doc": "Test that boolean fields are normalized."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestRefreshProjectionBackMappingCommandV1",
-      "description": "Tests for RefreshProjectionBackMappingCommandV1 contract.",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_command_construction",
-          "doc": "Test basic command construction."
-        },
-        {
-          "name": "test_command_empty_workspace_raises",
-          "doc": "Test that empty workspace raises ValueError."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestReprojectProjectionExperimentCommandV1",
-      "description": "Tests for ReprojectProjectionExperimentCommandV1 contract.",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_command_defaults",
-          "doc": "Test command default values."
-        },
-        {
-          "name": "test_command_custom_options",
-          "doc": "Test command with custom options."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestFactoryRunStartedEventV1",
-      "description": "Tests for FactoryRunStartedEventV1 contract.",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_event_construction",
-          "doc": "Test basic event construction."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestFactoryRunCompletedEventV1",
-      "description": "Tests for FactoryRunCompletedEventV1 contract.",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_event_success",
-          "doc": "Test success event construction."
-        },
-        {
-          "name": "test_event_with_error",
-          "doc": "Test event with error message."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestFactoryRunResultV1",
-      "description": "Tests for FactoryRunResultV1 contract.",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_result_success",
-          "doc": "Test success result construction."
-        },
-        {
-          "name": "test_result_with_artifacts",
-          "doc": "Test result with completed stages and artifacts."
-        },
-        {
-          "name": "test_result_failed",
-          "doc": "Test failed result construction."
-        },
-        {
-          "name": "test_result_whitespace_filtered",
-          "doc": "Test that whitespace artifacts are filtered."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestProjectionExperimentResultV1",
-      "description": "Tests for ProjectionExperimentResultV1 contract.",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_result_construction",
-          "doc": "Test basic result construction."
-        },
-        {
-          "name": "test_result_with_files_and_cells",
-          "doc": "Test result with generated files and impacted cells."
-        },
-        {
-          "name": "test_result_to_dict",
-          "doc": "Test result serialization to dict."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestProjectionBackMappingRefreshResultV1",
-      "description": "Tests for ProjectionBackMappingRefreshResultV1 contract.",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_result_construction",
-          "doc": "Test basic result construction."
-        },
-        {
-          "name": "test_result_with_symbols",
-          "doc": "Test result with symbol changes."
-        },
-        {
-          "name": "test_result_to_dict",
-          "doc": "Test result serialization to dict."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestProjectionReprojectionResultV1",
-      "description": "Tests for ProjectionReprojectionResultV1 contract.",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_result_construction",
-          "doc": "Test basic result construction."
-        },
-        {
-          "name": "test_result_with_rewrites",
-          "doc": "Test result with rewritten files."
-        },
-        {
-          "name": "test_result_to_dict",
-          "doc": "Test result serialization to dict."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestFactoryPipelineError",
-      "description": "Tests for FactoryPipelineError exception.",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_error_default_code",
-          "doc": "Test error with default code."
-        },
-        {
-          "name": "test_error_custom_code",
-          "doc": "Test error with custom code."
-        },
-        {
-          "name": "test_error_with_details",
-          "doc": "Test error with details."
-        },
-        {
-          "name": "test_error_empty_message_raises",
-          "doc": "Test that empty message raises ValueError."
-        },
-        {
-          "name": "test_error_empty_code_raises",
-          "doc": "Test that empty code raises ValueError."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestIFactoryPipelineProtocol",
-      "description": "Tests for IFactoryPipeline protocol.",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_protocol_exists",
-          "doc": "Test protocol can be imported."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestIFactoryProjectionLabProtocol",
-      "description": "Tests for IFactoryProjectionLab protocol.",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_protocol_exists",
-          "doc": "Test protocol can be imported."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestFactoryPipelineLifecycle",
-      "description": "Tests for complete factory pipeline lifecycle scenarios.",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_pipeline_lifecycle",
-          "doc": "Test complete pipeline run lifecycle."
-        },
-        {
-          "name": "test_projection_experiment_lifecycle",
-          "doc": "Test complete projection experiment lifecycle."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_write_plan",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_factory_run_service_pm_contract.py"
-    },
-    {
-      "type": "function",
-      "name": "test_pm_plan_contract_rejects_meta_diagnostic_tasks",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_factory_run_service_pm_contract.py"
-    },
-    {
-      "type": "function",
-      "name": "test_pm_plan_contract_accepts_product_implementation_tasks",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_factory_run_service_pm_contract.py"
-    },
-    {
-      "type": "function",
-      "name": "_configure_default_adapter",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_change_analysis.py"
-    },
-    {
-      "type": "function",
-      "name": "test_refresh_back_mapping_detects_added_method_and_impacted_cell",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_change_analysis.py"
-    },
-    {
-      "type": "function",
-      "name": "_configure_default_adapter",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_http_resources.py"
-    },
-    {
-      "type": "function",
-      "name": "test_resource_http_service_projection_generates_large_verified_project",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_http_resources.py"
-    },
-    {
-      "type": "function",
-      "name": "test_resource_http_service_projection_consumes_host_and_port_from_normalization",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_http_resources.py"
-    },
-    {
-      "type": "function",
-      "name": "_fake_normalize_requirement",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_http_resources.py"
-    },
-    {
-      "type": "class",
-      "name": "FakeRoleRuntimeService",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_lab.py",
+      "name": "RunLedger",
+      "description": "Compatibility wrapper for factory callers using the platform ledger.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py",
       "methods": []
     },
     {
       "type": "function",
-      "name": "_configure_default_adapter",
+      "name": "_clean_string",
       "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_lab.py"
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
     },
     {
       "type": "function",
-      "name": "test_projection_lab_generates_record_cli_project_and_artifacts",
+      "name": "_string_list",
       "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_lab.py"
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
     },
     {
       "type": "function",
-      "name": "test_projection_lab_rejects_unsupported_scenario",
+      "name": "_string_items",
       "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_lab.py"
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
     },
     {
       "type": "function",
-      "name": "test_projection_lab_pm_normalization_uses_role_runtime",
+      "name": "_modality_list",
       "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_lab.py"
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
     },
     {
       "type": "function",
-      "name": "_configure_default_adapter",
+      "name": "_lineage_entries",
       "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_reproject.py"
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
     },
     {
       "type": "function",
-      "name": "test_reproject_resource_http_service_rewrites_only_impacted_cells",
+      "name": "_receipt_payload",
       "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_reproject.py"
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
     },
     {
       "type": "function",
-      "name": "_fake_normalize_requirement",
+      "name": "_attach_tool_receipt_evidence",
       "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_reproject.py"
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_attach_repair_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_event_content_payload",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_token",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_path_is_allowed",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_targets_from_lineage",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_job_token_from_ledger_meta",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_evidence_modality",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_declared_modalities",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_verifier_entries",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_dict_value",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_policy_dict",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_policy_dicts",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_bool",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_required_evidence_modalities_from_record",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "extend",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_enabled_evidence_modalities_from_record",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "extend",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_with_control_plane_verifier_policy",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_required_modalities_from_job_token",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_enabled_modalities_from_job_token",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_missing_required_modalities",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_evidence_modalities_from_physical_evidence",
+      "description": "Derive canonical evidence modalities from one physical evidence payload.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_capability_audit",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_run_ledger_meta",
+      "description": "Return a fail-closed summary for persisted run ledger metadata.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "build_job_token_from_record",
+      "description": "Build a canonical job token from the current bench/factory record.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "build_gate_ledger_event",
+      "description": "Convert a gate result into a standard append-only ledger event.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "persist_real_run_gate_ledger",
+      "description": "Persist a real-run gate event and return lightweight ledger metadata.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "build_run_ledger_projection",
+      "description": "Build the canonical read model for ledger-backed UI/QA projections.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_run_ledger_projection",
+      "description": "Return the control-plane integrity status for a ledger projection.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "load_run_ledger_projection",
+      "description": "Read a run ledger file and return the canonical projection.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
     },
     {
       "type": "function",
@@ -1919,6 +2954,24 @@
     },
     {
       "type": "function",
+      "name": "_resolve_director_dispatch_timeout_seconds",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_metadata_float",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_factory_deadline_context",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
       "name": "_resolve_workspace",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
@@ -1991,6 +3044,18 @@
     },
     {
       "type": "function",
+      "name": "_quality_gate_result_from_metadata",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_quality_gate_score_from_output",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
       "name": "_build_gates",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
@@ -2017,6 +3082,84 @@
       "type": "function",
       "name": "_check_docs_ready",
       "description": "Check whether required docs are already present.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_json_object",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_plan_task_count",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_resume_task_files",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_taskboard_record_count",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_resume_workspace_slug",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_resume_legacy_task_dirs",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_resume_taskboard_score",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_resume_reset_task_payload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_rehydrate_director_resume_taskboard",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_reset_current_director_resume_taskboard",
+      "description": "Reset existing Director task rows to a clean pre-Director claimable state.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_chief_engineer_blueprint_count",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_pre_director_snapshot_ready",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_ensure_director_resume_evidence_ready",
+      "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     },
     {
@@ -2063,6 +3206,12 @@
     },
     {
       "type": "function",
+      "name": "_write_json_text_atomic",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
       "name": "_resolve_runtime_path",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
@@ -2070,6 +3219,42 @@
     {
       "type": "function",
       "name": "_read_json_artifact",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_validation_requests_task_boundary_rework",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_task_boundary_workspace_validation",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_record_needs_task_boundary_rework",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_rework_int",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_boundary_rework_evidence",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_quality_gate_task_boundary_rework_requests",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     },
@@ -2094,6 +3279,18 @@
     {
       "type": "function",
       "name": "_resolve_loop_stall_threshold",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_quality_rework_max_cycles",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_quality_gate_rework_summary",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     },
@@ -2195,7 +3392,43 @@
     },
     {
       "type": "function",
+      "name": "_extract_taskboard_snapshots",
+      "description": "Extract initial and final taskboard snapshots from stage events.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_per_binding_task_status",
+      "description": "Extract per-task claim/terminal status from director events.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_missing_delivery_targets",
+      "description": "Return declared stages that were never reached or completed.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_director_convergence",
+      "description": "Build director convergence diagnostics when QA did not run.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
       "name": "_build_factory_audit_bundle",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_factory_run_identity",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_attach_control_plane_projection",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     },
@@ -2208,6 +3441,12 @@
     {
       "type": "function",
       "name": "_factory_failure_suggestion",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_quality_rework_stage_names",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     },

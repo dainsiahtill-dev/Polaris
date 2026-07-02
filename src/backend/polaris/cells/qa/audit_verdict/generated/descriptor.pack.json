@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:44.808122Z",
-  "source_hash": "7f8a1bc58aa77624",
+  "generated_at": "2026-07-02T03:36:25.383010Z",
+  "source_hash": "c7a28b4c4454dd3f",
   "cell_id": "qa.audit_verdict",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -31,7 +31,7 @@
         },
         {
           "name": "from_dict",
-          "doc": ""
+          "doc": "Deserialize a persisted review record."
         }
       ]
     },
@@ -152,6 +152,12 @@
       ]
     },
     {
+      "type": "function",
+      "name": "_require_non_empty_text",
+      "description": "Return a required text field or raise a source-identifying error.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_agent.py"
+    },
+    {
       "type": "class",
       "name": "QAConsumer",
       "description": "QA consumer for PENDING_QA tasks.",
@@ -160,6 +166,10 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "_build_verdict_engine_shadow",
+          "doc": "Build a non-authoritative Verdict Engine comparison payload."
         },
         {
           "name": "poll_once",
@@ -182,8 +192,20 @@
           "doc": "Return a precise, weak-model-fixable message when a declared/changed"
         },
         {
+          "name": "_run_contract_gate",
+          "doc": "Fail shallow verification artifacts before the generic QA audit."
+        },
+        {
+          "name": "_append_qa_gate_to_run_ledger",
+          "doc": "Append QA verdict evidence to the platform Run Ledger when token-scoped."
+        },
+        {
           "name": "_claim_and_process_one",
           "doc": "Attempt to claim one PENDING_QA task and process it."
+        },
+        {
+          "name": "_build_qa_llm_review_message",
+          "doc": ""
         },
         {
           "name": "_run_qa_audit",
@@ -193,8 +215,134 @@
     },
     {
       "type": "function",
+      "name": "_sanitize_qa_context_for_prompt",
+      "description": "Keep QA evidence readable while removing factory control-plane field names.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_qa_prompt_context",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "add_candidate",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping_copy",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_control_plane_job_token",
+      "description": "Return the immutable capability token carried by the claimed work item.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_control_plane_metadata",
+      "description": "Preserve the control-plane lineage when QA ack/requeue mutates a task.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_findings_count",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_bool_env",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_verdict_engine_mode",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_verdict_engine_shadow_payload",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_authoritative_verdict_engine_route",
+      "description": "Use the verdict engine route only when explicitly promoted.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_llm_audit_timeout_seconds",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
       "name": "_resolve_qa_route",
       "description": "Resolve QA route from audit result.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_iter_payload_strings",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_payload_text",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_payload_paths_for_contract_gate",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_path_set_contains",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_contract_mentions_package_scripts",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_verify_script_requirements",
+      "description": "Extract explicit deterministic-check requirements a verify script must encode.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_verify_script_covers_requirement",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_verify_script_gate_failure",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_package_scripts_gate_failure",
+      "description": "",
       "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
     },
     {
@@ -259,6 +407,18 @@
     },
     {
       "type": "function",
+      "name": "_iter_director_evidence_mappings",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_verified_existing_scope_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
       "name": "_collect_payload_paths",
       "description": "",
       "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
@@ -290,6 +450,12 @@
     {
       "type": "function",
       "name": "_extract_fallback_audit_files",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_verified_existing_scope_files",
       "description": "",
       "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
     },
@@ -400,179 +566,105 @@
     },
     {
       "type": "class",
-      "name": "TestResolveQARoute",
+      "name": "QAVerdictEngine",
+      "description": "Build canonical QA verdict envelopes from already-collected evidence.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "read_ledger_with_barrier",
+          "doc": ""
+        },
+        {
+          "name": "scan_artifact_quality",
+          "doc": ""
+        },
+        {
+          "name": "build_envelope",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_stable_json",
       "description": "",
-      "defined_in": "polaris/cells/qa/audit_verdict/internal/tests/test_qa_consumer.py",
-      "methods": [
-        {
-          "name": "test_pass_maps_to_resolved_terminal",
-          "doc": ""
-        },
-        {
-          "name": "test_requeue_exec_maps_to_pending_exec",
-          "doc": ""
-        },
-        {
-          "name": "test_explicit_next_stage_overrides_verdict",
-          "doc": ""
-        }
-      ]
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
     },
     {
-      "type": "class",
-      "name": "TestQAFindingsRequeue",
-      "description": "RANK 1 (Reflexion/Actor-Critic): a content FAIL must hand its precise",
-      "defined_in": "polaris/cells/qa/audit_verdict/internal/tests/test_qa_consumer.py",
-      "methods": [
-        {
-          "name": "test_actionable_predicate",
-          "doc": ""
-        },
-        {
-          "name": "test_feedback_quotes_findings_and_caps",
-          "doc": ""
-        },
-        {
-          "name": "test_content_fail_with_findings_requeues_to_pending_exec",
-          "doc": ""
-        },
-        {
-          "name": "test_content_fail_without_findings_stays_terminal_reject",
-          "doc": ""
-        },
-        {
-          "name": "test_env_off_keeps_terminal_reject",
-          "doc": ""
-        },
-        {
-          "name": "test_repeated_content_fail_terminates_at_bounce_cap",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestQAConsumerPollOnce",
+      "type": "function",
+      "name": "_stable_hash",
       "description": "",
-      "defined_in": "polaris/cells/qa/audit_verdict/internal/tests/test_qa_consumer.py",
-      "methods": [
-        {
-          "name": "test_pass_verdict_acks_resolved",
-          "doc": ""
-        },
-        {
-          "name": "test_requeue_exec_verdict_routes_to_pending_exec",
-          "doc": ""
-        },
-        {
-          "name": "test_requeue_design_verdict_preserves_findings_as_last_failure",
-          "doc": ""
-        },
-        {
-          "name": "test_findings_bounce_cap_survives_new_consumer_instances",
-          "doc": ""
-        },
-        {
-          "name": "_qa_pass",
-          "doc": ""
-        },
-        {
-          "name": "_director_moves_back_to_qa",
-          "doc": ""
-        },
-        {
-          "name": "test_audit_exception_requeues_pending_qa",
-          "doc": ""
-        },
-        {
-          "name": "test_audit_uses_director_changed_files_instead_of_target_files",
-          "doc": ""
-        },
-        {
-          "name": "test_code_task_without_director_changed_files_routes_to_exec",
-          "doc": ""
-        }
-      ]
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
     },
     {
-      "type": "class",
-      "name": "TestSyntaxGate",
-      "description": "I3-r18 fail-closed syntax gate: a non-parsing target is rejected, not shipped.",
-      "defined_in": "polaris/cells/qa/audit_verdict/internal/tests/test_qa_consumer.py",
-      "methods": [
-        {
-          "name": "test_rejects_broken_python_target",
-          "doc": ""
-        },
-        {
-          "name": "test_clean_python_target_passes",
-          "doc": ""
-        },
-        {
-          "name": "test_missing_file_not_blocked",
-          "doc": ""
-        },
-        {
-          "name": "test_broken_js_target_rejected_with_line",
-          "doc": ""
-        }
-      ]
+      "type": "function",
+      "name": "_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
     },
     {
-      "type": "class",
-      "name": "TestQualityService",
-      "description": "QualityService tests.",
-      "defined_in": "polaris/cells/qa/audit_verdict/internal/tests/test_quality_service.py",
-      "methods": [
-        {
-          "name": "test_init_detects_ruff_availability",
-          "doc": ""
-        },
-        {
-          "name": "test_get_status",
-          "doc": ""
-        },
-        {
-          "name": "test_lint_code_returns_error_when_ruff_unavailable",
-          "doc": ""
-        },
-        {
-          "name": "test_lint_code_returns_error_for_non_python",
-          "doc": ""
-        },
-        {
-          "name": "test_lint_code_returns_success_when_available",
-          "doc": ""
-        },
-        {
-          "name": "test_lint_code_with_valid_code",
-          "doc": ""
-        },
-        {
-          "name": "test_lint_code_with_issues",
-          "doc": ""
-        },
-        {
-          "name": "test_lint_code_with_fix_mode",
-          "doc": ""
-        }
-      ]
+      "type": "function",
+      "name": "_int_value",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
     },
     {
-      "type": "class",
-      "name": "TestGetQualityService",
-      "description": "Singleton and factory function tests.",
-      "defined_in": "polaris/cells/qa/audit_verdict/internal/tests/test_quality_service.py",
-      "methods": [
-        {
-          "name": "test_get_quality_service_returns_singleton",
-          "doc": ""
-        },
-        {
-          "name": "test_service_is_quality_service_instance",
-          "doc": ""
-        }
-      ]
+      "type": "function",
+      "name": "_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_payload_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_job_token",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_id",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_target_files",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_artifact_quality_dict",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_failure_text",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_route_classification",
+      "description": "Return verdict, ok, next_stage, terminal_status, classification.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "diff_verdicts",
+      "description": "Compare legacy QA routing against the new engine in shadow mode.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
     },
     {
       "type": "class",
@@ -677,6 +769,42 @@
     },
     {
       "type": "class",
+      "name": "QaFailureClassificationV1",
+      "description": "Typed QA failure routing decision.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "QaVerdictLineageV1",
+      "description": "Compact verdict history used to prevent QA/CE/Director macro loops.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "QaVerdictEnvelopeV1",
+      "description": "Canonical QA verdict envelope for evidence-based routing.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "QaAuditErrorV1",
       "description": "Raised when `qa.audit_verdict` contract processing fails.",
       "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
@@ -727,6 +855,24 @@
     },
     {
       "type": "function",
+      "name": "_normalize_qa_failure_class",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_qa_failure_class",
+      "description": "Normalize QA failure-class tokens to the canonical contract form.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "build_qa_failure_classification_v1",
+      "description": "Build the canonical QA failure classification contract.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py"
+    },
+    {
+      "type": "function",
       "name": "_run_async",
       "description": "",
       "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
@@ -740,6 +886,30 @@
     {
       "type": "function",
       "name": "_finding_from_issue",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_result_to_audit_dict",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_qa_verdict_envelope",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_qa_verdict_envelope",
+      "description": "Build a canonical QA verdict envelope through the public boundary.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_result_with_envelope",
       "description": "",
       "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
     },
@@ -765,6 +935,24 @@
       "type": "function",
       "name": "get_qa_verdict",
       "description": "读取某 task 最新的已持久化 QA 判定（只读，无副作用）。",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping_metadata_from_payload",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_dict_value",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_qa_verdict_envelope",
+      "description": "Read the latest canonical QA verdict envelope for a task.",
       "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
     },
     {

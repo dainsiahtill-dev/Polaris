@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:46.763632Z",
-  "source_hash": "d75c982785422811",
+  "generated_at": "2026-07-02T03:36:27.807353Z",
+  "source_hash": "cae0465fbf37d2e8",
   "cell_id": "chief_engineer.blueprint",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -180,6 +180,138 @@
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/adr_store.py"
     },
     {
+      "type": "function",
+      "name": "normalize_architecture_decisions",
+      "description": "Normalize persisted/user-provided decision payloads.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "merge_architecture_decisions",
+      "description": "Merge decisions by concern, preserving explicit CE/model choices first.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "selected_libraries_from_decisions",
+      "description": "Flatten selected libraries/technologies while preserving order.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "infer_architecture_decisions",
+      "description": "Infer CE architecture/dependency decision guidance from task signals.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_signal_text",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_flatten_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_flatten_value",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_match_any",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_contains",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_concern",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_ui_signal",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_modern_frontend_signal",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_mobile_mvvm_signal",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_server_mvc_signal",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_application_architecture_decision",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_realtime_decision",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_database_decision",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_queue_decision",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_cache_decision",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_auth_decision",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_observability_decision",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
+      "type": "function",
+      "name": "_storage_decision",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/architecture_decisions.py"
+    },
+    {
       "type": "class",
       "name": "BlueprintPersistence",
       "description": "Atomic file-based persistence for blueprint JSON documents.",
@@ -192,6 +324,10 @@
         {
           "name": "save",
           "doc": "Atomically persist a blueprint dictionary to disk."
+        },
+        {
+          "name": "_candidate_paths",
+          "doc": "Return candidate file paths: runtime dir first, then workspace fallback."
         },
         {
           "name": "load",
@@ -255,7 +391,7 @@
         },
         {
           "name": "run",
-          "doc": "Continuously poll and process PENDING_DESIGN tasks until stop() is called."
+          "doc": "Continuously process PENDING_DESIGN tasks until stop() is called."
         },
         {
           "name": "stop",
@@ -283,6 +419,36 @@
     },
     {
       "type": "function",
+      "name": "_hashable_payload",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_payload_hash",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_default_gate_policy",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_compiled_gate_policy",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_control_plane_job_token",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    },
+    {
+      "type": "function",
       "name": "_string_list",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
@@ -295,13 +461,37 @@
     },
     {
       "type": "function",
+      "name": "_ce_requeue_context_payload",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    },
+    {
+      "type": "function",
       "name": "_first_string_list",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
     },
     {
       "type": "function",
+      "name": "_merge_string_lists",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    },
+    {
+      "type": "function",
       "name": "_payload_task",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_scope_paths_from_payload",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_target_files_from_payload",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
     },
@@ -463,6 +653,13 @@
     },
     {
       "type": "class",
+      "name": "ResidentDecisionSupervisor",
+      "description": "Resident/AGI control-plane supervisor for non-invariant CE decisions.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "_NullEventEmitter",
       "description": "No-op emitter used when kernelone.tool_execution.io_utils is unavailable.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py",
@@ -561,6 +758,30 @@
       "type": "function",
       "name": "inject_chief_engineer_constraints",
       "description": "Inject constraints into Chief Engineer payload.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "build_chief_engineer_decision_evidence",
+      "description": "Build structured evidence for CE proceed/review decisions.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_resident_supervisor_decision",
+      "description": "Validate Resident/AGI supervisor output before it affects CE flow.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "build_chief_engineer_resident_decision_payload",
+      "description": "Build the Resident decision-trace payload for a CE control decision.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "_with_resident_decision_payload",
+      "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
     },
     {
@@ -945,6 +1166,12 @@
     },
     {
       "type": "function",
+      "name": "_semantic_blockers_from_blueprint",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/quality_gate.py"
+    },
+    {
+      "type": "function",
       "name": "evaluate_quality_gate",
       "description": "Compute a structured quality-gate result for the blueprint.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/quality_gate.py"
@@ -1109,6 +1336,18 @@
     },
     {
       "type": "function",
+      "name": "_read_file_text",
+      "description": "Read a file as UTF-8 text (blocking; run via asyncio.to_thread).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/rollback_guard.py"
+    },
+    {
+      "type": "function",
+      "name": "_restore_file",
+      "description": "Restore one file to ``content`` (blocking; run via asyncio.to_thread).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/rollback_guard.py"
+    },
+    {
+      "type": "function",
       "name": "create_rollback_guard",
       "description": "Factory function to create the appropriate rollback guard.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/rollback_guard.py"
@@ -1139,14 +1378,86 @@
     },
     {
       "type": "function",
+      "name": "_boundary_hardening_enabled",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_norm_target",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_artifact_role",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_unique",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_cycle",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "harden_task_boundary_steps",
+      "description": "Add deterministic artifact-role ordering to construction steps.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_boundary.py"
+    },
+    {
+      "type": "function",
       "name": "normalize_construction_step",
       "description": "Coerce one model-proposed step into the canonical contract shape.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_contract.py"
     },
     {
       "type": "function",
+      "name": "_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_contract_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_symbol_map",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_contract.py"
+    },
+    {
+      "type": "function",
       "name": "_target_file_shape_error",
       "description": "Reject targets that are not a single clean relative path.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_eval_arithmetic_expr",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "eval_node",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "_verify_arithmetic_oracle_error",
+      "description": "Reject only obvious self-contradictory arithmetic smoke checks.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_contract.py"
     },
     {
@@ -1441,558 +1752,6 @@
     },
     {
       "type": "class",
-      "name": "TestCEConsumerInit",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/__init__.py",
-      "methods": [
-        {
-          "name": "test_valid_construction",
-          "doc": ""
-        },
-        {
-          "name": "test_custom_params",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_workspace_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_whitespace_workspace_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_worker_id_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_stop_event_initial_state",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCEConsumerPollOnce",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/__init__.py",
-      "methods": [
-        {
-          "name": "test_no_claimable_tasks_returns_empty_list",
-          "doc": ""
-        },
-        {
-          "name": "test_successful_claim_and_ack",
-          "doc": "Verify claim/ack flow by patching _run_ce_preflight at class level."
-        },
-        {
-          "name": "test_claim_then_preflight_failure_requeues",
-          "doc": "Verify failure path requeues to pending_design."
-        },
-        {
-          "name": "raise_runner",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCEConsumerStop",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/__init__.py",
-      "methods": [
-        {
-          "name": "test_stop_sets_event",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCEConsumerInit",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_ce_consumer.py",
-      "methods": [
-        {
-          "name": "test_valid_construction",
-          "doc": ""
-        },
-        {
-          "name": "test_custom_params",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_workspace_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_whitespace_workspace_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_worker_id_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_stop_event_initial_state",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCEConsumerPollOnce",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_ce_consumer.py",
-      "methods": [
-        {
-          "name": "test_no_claimable_tasks_returns_empty_list",
-          "doc": ""
-        },
-        {
-          "name": "test_successful_claim_and_ack",
-          "doc": "Verify claim/ack flow by patching _run_ce_preflight to avoid actual CE analysis."
-        },
-        {
-          "name": "test_claim_then_preflight_failure_requeues",
-          "doc": "Verify failure path requeues to pending_design."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestStepSplitterIntegration",
-      "description": "I3-r29: an over-budget step is split and the skeleton+fills flow through the",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_ce_consumer.py",
-      "methods": [
-        {
-          "name": "test_split_output_publishes_skeleton_and_fills",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCEConsumerStop",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_ce_consumer.py",
-      "methods": [
-        {
-          "name": "test_stop_sets_event",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCEFissionMaxOutputTokens",
-      "description": "The CE step-fission output budget (I3-r17): reasoning-sized floor, env-tunable.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_ce_consumer.py",
-      "methods": [
-        {
-          "name": "test_default_is_reasoning_sized",
-          "doc": ""
-        },
-        {
-          "name": "test_env_override",
-          "doc": ""
-        },
-        {
-          "name": "test_invalid_env_falls_back",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCrossParentFileOwnershipInjection",
-      "description": "I3-r18 FIX-1: a step writing a file owned by an EARLIER parent is published",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_ce_consumer.py",
-      "methods": [
-        {
-          "name": "_steps",
-          "doc": ""
-        },
-        {
-          "name": "test_owned_file_gets_depends_on_and_edit_flag",
-          "doc": ""
-        },
-        {
-          "name": "test_unowned_file_keeps_minimization",
-          "doc": ""
-        },
-        {
-          "name": "test_same_parent_owner_not_self_serialized",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestNormalize",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_contract.py",
-      "methods": [
-        {
-          "name": "test_defaults_and_coercion",
-          "doc": ""
-        },
-        {
-          "name": "test_normalizes_verify_before_market_publish",
-          "doc": ""
-        },
-        {
-          "name": "test_non_dict_input_yields_empty_shape",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestGate",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_contract.py",
-      "methods": [
-        {
-          "name": "test_valid_steps_pass",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_fission_blocked",
-          "doc": ""
-        },
-        {
-          "name": "test_oversized_step_blocked",
-          "doc": ""
-        },
-        {
-          "name": "test_missing_verify_blocked",
-          "doc": ""
-        },
-        {
-          "name": "test_missing_signatures_blocked",
-          "doc": ""
-        },
-        {
-          "name": "test_all_hollow_verify_for_code_target_blocked",
-          "doc": ""
-        },
-        {
-          "name": "test_syntax_check_verify_passes",
-          "doc": ""
-        },
-        {
-          "name": "test_signature_grep_verify_passes",
-          "doc": ""
-        },
-        {
-          "name": "test_doc_target_existence_only_verify_exempt",
-          "doc": ""
-        },
-        {
-          "name": "test_style_target_existence_only_verify_exempt",
-          "doc": ""
-        },
-        {
-          "name": "test_unknown_dependency_blocked",
-          "doc": ""
-        },
-        {
-          "name": "test_self_dependency_blocked",
-          "doc": ""
-        },
-        {
-          "name": "test_duplicate_step_id_blocked",
-          "doc": ""
-        },
-        {
-          "name": "test_dependency_cycle_blocked",
-          "doc": "A 2-cycle passes the unknown-ref and self-dep checks but would"
-        },
-        {
-          "name": "test_three_node_dependency_cycle_blocked",
-          "doc": ""
-        },
-        {
-          "name": "test_list_verify_joined_into_one_command",
-          "doc": "Cloud models drift between string and array verify shapes — a"
-        },
-        {
-          "name": "test_empty_list_verify_blocked_by_gate",
-          "doc": ""
-        },
-        {
-          "name": "test_diamond_dependency_dag_passes",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestRefinements",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_contract.py",
-      "methods": [
-        {
-          "name": "test_bare_step_id_namespaced_under_parent",
-          "doc": ""
-        },
-        {
-          "name": "test_prefixed_step_id_untouched",
-          "doc": ""
-        },
-        {
-          "name": "test_bare_depends_on_namespaced_under_parent",
-          "doc": ""
-        },
-        {
-          "name": "test_prefixed_depends_on_untouched",
-          "doc": ""
-        },
-        {
-          "name": "test_bare_id_fission_with_dependency_chain_passes_gate",
-          "doc": "Regression (live I3-r8): a fully-bare model fission (step_id S1..S4,"
-        },
-        {
-          "name": "test_doc_step_passes_without_signatures",
-          "doc": ""
-        },
-        {
-          "name": "test_css_step_passes_without_signatures",
-          "doc": ""
-        },
-        {
-          "name": "test_code_step_still_requires_signatures",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTargetFileShape",
-      "description": "对抗复核 D-fix: 非单文件相对路径的 target_file 会被执行侧 enum 钉靶拒绝,",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_contract.py",
-      "methods": [
-        {
-          "name": "test_glob_target_is_refused",
-          "doc": ""
-        },
-        {
-          "name": "test_comma_list_target_is_refused",
-          "doc": ""
-        },
-        {
-          "name": "test_absolute_and_escaping_targets_are_refused",
-          "doc": ""
-        },
-        {
-          "name": "test_clean_subdir_target_passes",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_step",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_contract.py"
-    },
-    {
-      "type": "function",
-      "name": "test_contract_assembly",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_contract.py"
-    },
-    {
-      "type": "class",
-      "name": "TestSplitCorrectness",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py",
-      "methods": [
-        {
-          "name": "test_oversize_js_step_splits_into_skeleton_plus_fills",
-          "doc": ""
-        },
-        {
-          "name": "test_skeleton_from_scratch_fills_edit_on_prior",
-          "doc": ""
-        },
-        {
-          "name": "test_fills_chain_linearly_no_cycle",
-          "doc": ""
-        },
-        {
-          "name": "test_skeleton_and_fills_under_ceiling",
-          "doc": ""
-        },
-        {
-          "name": "test_split_output_passes_gate",
-          "doc": ""
-        },
-        {
-          "name": "test_skeleton_marked_stub_only",
-          "doc": ""
-        },
-        {
-          "name": "test_fills_marked_scope_only",
-          "doc": ""
-        },
-        {
-          "name": "test_skeleton_inherits_step_depends_on",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTriggerBoundaries",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py",
-      "methods": [
-        {
-          "name": "test_small_code_step_not_split",
-          "doc": ""
-        },
-        {
-          "name": "test_sole_writer_sig_only_leaf_is_kept_whole",
-          "doc": ""
-        },
-        {
-          "name": "test_sig_only_split_still_fires_when_suppression_disabled",
-          "doc": ""
-        },
-        {
-          "name": "test_sole_writer_est_lines_trigger_leaf_is_kept_whole",
-          "doc": ""
-        },
-        {
-          "name": "test_est_lines_trigger_can_still_split_when_suppression_disabled",
-          "doc": ""
-        },
-        {
-          "name": "test_multi_writer_same_file_sig_only_still_splits",
-          "doc": ""
-        },
-        {
-          "name": "test_doc_target_never_split",
-          "doc": ""
-        },
-        {
-          "name": "test_unknown_suffix_fails_open",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestFileAssemblyContractP1",
-      "description": "P1 (deterministic file-assembly protocol, codex 2026-06-15): the skeleton is the",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py",
-      "methods": [
-        {
-          "name": "test_skeleton_requires_full_shell_and_declares_every_anchor",
-          "doc": ""
-        },
-        {
-          "name": "test_fill_carries_constrained_patch_contract",
-          "doc": ""
-        },
-        {
-          "name": "test_fill_anchors_union_equals_skeleton_anchors",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestVerifyGeneration",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py",
-      "methods": [
-        {
-          "name": "test_skeleton_verify_is_structural_syntax_check",
-          "doc": ""
-        },
-        {
-          "name": "test_fill_verify_greps_own_symbols",
-          "doc": ""
-        },
-        {
-          "name": "test_signature_symbol_extraction_generic",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestFailOpenGuards",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py",
-      "methods": [
-        {
-          "name": "test_disabled_env_returns_input_unchanged",
-          "doc": ""
-        },
-        {
-          "name": "test_already_split_substep_not_resplit",
-          "doc": ""
-        },
-        {
-          "name": "test_owned_elsewhere_target_not_split",
-          "doc": ""
-        },
-        {
-          "name": "test_too_many_substeps_fails_open",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestFillBodyFloor",
-      "description": "Each fill carries a cumulative line floor so it cannot resolve on the",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py",
-      "methods": [
-        {
-          "name": "test_fill_verify_has_increasing_line_floor",
-          "doc": ""
-        },
-        {
-          "name": "test_skeleton_has_no_line_floor",
-          "doc": ""
-        },
-        {
-          "name": "test_fill_floor_env_override",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestDependentRepointing",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py",
-      "methods": [
-        {
-          "name": "test_dependents_repointed_to_terminal_fill",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_step",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py"
-    },
-    {
-      "type": "function",
-      "name": "_ids",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py"
-    },
-    {
-      "type": "class",
       "name": "RiskSeverity",
       "description": "Severity ladder for a Risk Register entry.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
@@ -2081,6 +1840,22 @@
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
       "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ArchitectureDecisionV1",
+      "description": "Structured Chief Engineer architecture or dependency decision.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "from_mapping",
+          "doc": "Build a decision contract from a persisted JSON payload."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Return a JSON-safe architecture decision payload."
+        }
+      ]
     },
     {
       "type": "class",
@@ -2374,6 +2149,30 @@
       ]
     },
     {
+      "type": "class",
+      "name": "CeHandoffDecisionBindingsV1",
+      "description": "Immutable hash bindings for `ce_handoff_decision.v1`.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CeHandoffDecisionV1",
+      "description": "Schema-compatible Chief Engineer handoff authority object.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
       "type": "function",
       "name": "_require_non_empty",
       "description": "",
@@ -2382,6 +2181,18 @@
     {
       "type": "function",
       "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_json_safe_mapping",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
     },
@@ -2405,7 +2216,31 @@
     },
     {
       "type": "function",
+      "name": "_hashable_blueprint_payload",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_hash",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
       "name": "_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_semantic_tokens_from_text",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_semantic_tokens_from_values",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
     },
@@ -2417,7 +2252,157 @@
     },
     {
       "type": "function",
+      "name": "_compact_llm_blueprint_value",
+      "description": "Return a bounded JSON-safe value for advisory CE LLM blueprint data.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_plan_field_strings",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_llm_blueprint_overlay",
+      "description": "Normalize CE LLM output into an advisory-only persisted overlay.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_semantic_terms_from_delivery_contracts",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_pascal_case",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_snake_case",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_module_role_from_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_module_stem",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_module_owner_terms",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_planned_public_symbols",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_public_symbols_from_export_summary",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "add",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_existing_export_symbols_by_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_summary_line_for_interface_symbol",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_existing_target_file_summaries",
+      "description": "Return bounded actual export summaries from the workspace symbol index.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_existing_target_file_summaries",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_needs_workspace_interface_snapshot",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_owner_terms_overlap",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_module_interface_contract",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_semantic_support_boundary_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_semantic_support_boundary",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_semantic_alignment_audit",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
       "name": "_first_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_string_lists",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_blueprint_file_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_declared_file_paths",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
     },
@@ -2429,13 +2414,67 @@
     },
     {
       "type": "function",
+      "name": "_normalize_delivery_depth_payload",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
       "name": "_target_files_from_context",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
     },
     {
       "type": "function",
+      "name": "_path_looks_like_test",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_delivery_depth_minimums",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_infer_language_from_targets",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_default_delivery_depth_test_target",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_delivery_depth_test_targets",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
       "name": "_qa_acceptance_from_task",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_delivery_depth_contract_from_context",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_delivery_plan_document_from_context",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
     },
@@ -2455,6 +2494,18 @@
       "type": "function",
       "name": "_tuple_from_payload",
       "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_existing_target_files_from_payload",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_task_token",
+      "description": "Normalize task identifiers for comparison.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
     },
     {
@@ -2627,6 +2678,60 @@
     },
     {
       "type": "function",
+      "name": "_binding_hash_or_missing",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_execution_profile_hash_from_blueprint",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_ce_handoff_decision",
+      "description": "Build the strict `ce_handoff_decision.v1` object.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "evaluate_ce_handoff_decision_for_blueprint",
+      "description": "Load a persisted blueprint and build strict `ce_handoff_decision.v1`.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_merged_payload_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_id_from_payload",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_id_from_payload",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_handoff_validation_result",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_director_handoff_from_payload",
+      "description": "Validate whether a payload may enter Director dispatch.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
       "name": "assert_handoff_ready",
       "description": "Raise when a blueprint must not be handed to the Director.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
@@ -2642,1731 +2747,6 @@
       "name": "attach_governance_to_blueprint",
       "description": "Compute and *persist* governance for a blueprint.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "class",
-      "name": "TestGovernanceEnumFailClosed",
-      "description": "Tier-1 governance contracts must fail-closed on invalid enum input.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_invalid_severity_string_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_severity_string_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_invalid_tech_debt_severity_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_valid_severity_enum_passes",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestHandoffDecisionContract",
-      "description": "Director-handoff decision contract invariants.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_negative_count_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_blueprint_id_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_to_dict_round_trips",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestGenerateTaskBlueprintCommandV1HappyPath",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_minimal",
-          "doc": ""
-        },
-        {
-          "name": "test_full",
-          "doc": ""
-        },
-        {
-          "name": "test_constraints_are_copied",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestGenerateTaskBlueprintCommandV1EdgeCases",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_empty_task_id_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_whitespace_task_id_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_workspace_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_objective_raises",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestGetBlueprintStatusQueryV1HappyPath",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_minimal",
-          "doc": ""
-        },
-        {
-          "name": "test_with_run_id",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestGetBlueprintStatusQueryV1EdgeCases",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_empty_task_id_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_workspace_raises",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTaskBlueprintGeneratedEventV1HappyPath",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_construction",
-          "doc": ""
-        },
-        {
-          "name": "test_with_risk_level",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTaskBlueprintGeneratedEventV1EdgeCases",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_empty_event_id_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_blueprint_path_raises",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTaskBlueprintResultV1HappyPath",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_success",
-          "doc": ""
-        },
-        {
-          "name": "test_with_blueprint_id",
-          "doc": ""
-        },
-        {
-          "name": "test_failure",
-          "doc": ""
-        },
-        {
-          "name": "test_recommendations_normalized_to_tuple",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTaskBlueprintResultV1EdgeCases",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_empty_task_id_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_status_raises",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestChiefEngineerBlueprintErrorV1",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_default_values",
-          "doc": ""
-        },
-        {
-          "name": "test_custom_code_and_details",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_message_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_code_raises",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestChiefEngineerBlueprintPublicService",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_generate_and_query_task_blueprint",
-          "doc": ""
-        },
-        {
-          "name": "test_query_missing_task_blueprint",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestADRDecisionLog",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_log.py",
-      "methods": [
-        {
-          "name": "setUp",
-          "doc": ""
-        },
-        {
-          "name": "tearDown",
-          "doc": ""
-        },
-        {
-          "name": "test_register_persists_canonical_adr",
-          "doc": ""
-        },
-        {
-          "name": "test_supersede_marks_predecessor_and_preserves_fields",
-          "doc": ""
-        },
-        {
-          "name": "test_supersede_traversal_id_is_safe_noop",
-          "doc": ""
-        },
-        {
-          "name": "test_supersede_nonexistent_id_is_safe_noop",
-          "doc": ""
-        },
-        {
-          "name": "test_double_supersede_does_not_remark",
-          "doc": ""
-        },
-        {
-          "name": "test_update_status_appends_history",
-          "doc": ""
-        },
-        {
-          "name": "test_path_traversal_rejected",
-          "doc": ""
-        },
-        {
-          "name": "test_list_filters_by_status_and_task",
-          "doc": ""
-        },
-        {
-          "name": "test_load_tolerates_invalid_status_on_disk",
-          "doc": ""
-        },
-        {
-          "name": "test_build_adr_event",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestADRServiceSurface",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_log.py",
-      "methods": [
-        {
-          "name": "setUp",
-          "doc": ""
-        },
-        {
-          "name": "tearDown",
-          "doc": ""
-        },
-        {
-          "name": "test_service_round_trip",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCreateBlueprint",
-      "description": "Tests for blueprint creation.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_store.py",
-      "methods": [
-        {
-          "name": "test_create_basic",
-          "doc": ""
-        },
-        {
-          "name": "test_create_persists_to_disk",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestProposeADR",
-      "description": "Tests for ADR proposal.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_store.py",
-      "methods": [
-        {
-          "name": "test_propose_basic",
-          "doc": ""
-        },
-        {
-          "name": "test_propose_sequence_increments",
-          "doc": ""
-        },
-        {
-          "name": "test_propose_missing_blueprint_raises",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCompile",
-      "description": "Tests for ADR compilation.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_store.py",
-      "methods": [
-        {
-          "name": "test_compile_no_adrs",
-          "doc": ""
-        },
-        {
-          "name": "test_compile_applies_add_step",
-          "doc": ""
-        },
-        {
-          "name": "test_compile_marks_adrs_compiled",
-          "doc": ""
-        },
-        {
-          "name": "test_compile_increments_version",
-          "doc": ""
-        },
-        {
-          "name": "test_compile_skips_reverted",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestRevertADR",
-      "description": "Tests for ADR reversion.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_store.py",
-      "methods": [
-        {
-          "name": "test_revert_existing",
-          "doc": ""
-        },
-        {
-          "name": "test_revert_missing",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestHistory",
-      "description": "Tests for blueprint history queries.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_store.py",
-      "methods": [
-        {
-          "name": "test_history_empty",
-          "doc": ""
-        },
-        {
-          "name": "test_history_returns_summaries",
-          "doc": ""
-        },
-        {
-          "name": "test_history_missing_blueprint",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestPersistenceRoundtrip",
-      "description": "Tests that ADRStore survives process restart via disk.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_store.py",
-      "methods": [
-        {
-          "name": "test_reload_from_disk",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestApplyDelta",
-      "description": "Unit tests for the delta application logic.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_store.py",
-      "methods": [
-        {
-          "name": "test_add_step",
-          "doc": ""
-        },
-        {
-          "name": "test_add_step_default_append",
-          "doc": ""
-        },
-        {
-          "name": "test_modify_step",
-          "doc": ""
-        },
-        {
-          "name": "test_remove_step",
-          "doc": ""
-        },
-        {
-          "name": "test_add_file",
-          "doc": ""
-        },
-        {
-          "name": "test_remove_file",
-          "doc": ""
-        },
-        {
-          "name": "test_change_scope",
-          "doc": ""
-        },
-        {
-          "name": "test_change_risk",
-          "doc": ""
-        },
-        {
-          "name": "test_unknown_delta_type_is_noop",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "store",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_store.py"
-    },
-    {
-      "type": "class",
-      "name": "TestSaveAndLoad",
-      "description": "Tests for basic save/load roundtrip.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_blueprint_persistence.py",
-      "methods": [
-        {
-          "name": "test_save_and_load",
-          "doc": ""
-        },
-        {
-          "name": "test_uses_kernelone_runtime_blueprint_directory",
-          "doc": ""
-        },
-        {
-          "name": "test_save_and_load_includes_status",
-          "doc": ""
-        },
-        {
-          "name": "test_load_missing_returns_none",
-          "doc": ""
-        },
-        {
-          "name": "test_save_overwrites_existing",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestAtomicWrite",
-      "description": "Tests for atomic write semantics.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_blueprint_persistence.py",
-      "methods": [
-        {
-          "name": "test_no_temp_file_left_behind",
-          "doc": ""
-        },
-        {
-          "name": "test_directory_created_lazily",
-          "doc": ""
-        },
-        {
-          "name": "test_can_skip_directory_creation_for_read_only_diagnostics",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestDelete",
-      "description": "Tests for deletion.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_blueprint_persistence.py",
-      "methods": [
-        {
-          "name": "test_delete_existing",
-          "doc": ""
-        },
-        {
-          "name": "test_delete_missing",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestListAll",
-      "description": "Tests for listing persisted blueprints.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_blueprint_persistence.py",
-      "methods": [
-        {
-          "name": "test_empty_list",
-          "doc": ""
-        },
-        {
-          "name": "test_sorted_ids",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestLoadAll",
-      "description": "Tests for bulk loading.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_blueprint_persistence.py",
-      "methods": [
-        {
-          "name": "test_load_all_skips_invalid_json",
-          "doc": ""
-        },
-        {
-          "name": "test_load_all_order",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "persistence",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_blueprint_persistence.py"
-    },
-    {
-      "type": "class",
-      "name": "TestCEConsumerTaskMarketHandoffIntegration",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py",
-      "methods": [
-        {
-          "name": "test_ce_consumer_acks_with_task_market_deferred_assignment",
-          "doc": ""
-        },
-        {
-          "name": "test_ce_consumer_ack_does_not_submit_director_workflow",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCEConsumerHandoffGate",
-      "description": "Tier-2: the Director-handoff quality gate is advisory by default and",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py",
-      "methods": [
-        {
-          "name": "_wire_blocked_claim",
-          "doc": ""
-        },
-        {
-          "name": "test_flag_off_is_advisory_still_acks",
-          "doc": ""
-        },
-        {
-          "name": "test_flag_on_requeues_blocked_handoff",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCEConsumerStepFission",
-      "description": "Three-tier E1: CE fissions a PM task into leaf step tasks on the market.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py",
-      "methods": [
-        {
-          "name": "test_fission_publishes_leaf_steps_and_marks_parent",
-          "doc": ""
-        },
-        {
-          "name": "test_gate_failure_circuit_breaks_to_requeue",
-          "doc": ""
-        },
-        {
-          "name": "test_flag_off_keeps_legacy_advance",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FakeResult",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "FakeRoleRuntimeService",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "FakeResult",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "FakeRoleRuntimeService",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TestFissionExtraction",
-      "description": "I3-r6: cloud output shape drifts (think wrappers, fences, prose).",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py",
-      "methods": [
-        {
-          "name": "_patch_role_runtime",
-          "doc": ""
-        },
-        {
-          "name": "test_fission_marks_headless_cognitive_blockers_auto_accepted",
-          "doc": ""
-        },
-        {
-          "name": "test_think_wrapped_fenced_json",
-          "doc": ""
-        },
-        {
-          "name": "test_prose_with_inline_object",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestBackwardCompatibility",
-      "description": "Tests that ConstructionStore works without persistence.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_construction_store.py",
-      "methods": [
-        {
-          "name": "test_save_and_get_in_memory_only",
-          "doc": ""
-        },
-        {
-          "name": "test_list_all_in_memory",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestPersistenceIntegration",
-      "description": "Tests for dual-write and recovery behavior.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_construction_store.py",
-      "methods": [
-        {
-          "name": "test_save_persists_to_disk",
-          "doc": ""
-        },
-        {
-          "name": "test_get_hydrates_from_disk",
-          "doc": ""
-        },
-        {
-          "name": "test_list_all_hydrates_missing_entries",
-          "doc": ""
-        },
-        {
-          "name": "test_list_by_task_hydrates_from_disk",
-          "doc": ""
-        },
-        {
-          "name": "test_memory_cache_preferred_over_disk",
-          "doc": ""
-        },
-        {
-          "name": "test_round_trip_complex_fields",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "persistent_store",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_construction_store.py"
-    },
-    {
-      "type": "class",
-      "name": "TestGenerateTaskBlueprintCommandV1",
-      "description": "Tests for GenerateTaskBlueprintCommandV1 contract.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_command_required_fields",
-          "doc": "Test command with required fields only."
-        },
-        {
-          "name": "test_command_with_run_id",
-          "doc": "Test command with run_id."
-        },
-        {
-          "name": "test_command_with_constraints",
-          "doc": "Test command with constraints."
-        },
-        {
-          "name": "test_command_with_context",
-          "doc": "Test command with context."
-        },
-        {
-          "name": "test_command_empty_task_id_raises",
-          "doc": "Test that empty task_id raises ValueError."
-        },
-        {
-          "name": "test_command_empty_workspace_raises",
-          "doc": "Test that empty workspace raises ValueError."
-        },
-        {
-          "name": "test_command_empty_objective_raises",
-          "doc": "Test that empty objective raises ValueError."
-        },
-        {
-          "name": "test_command_whitespace_normalized",
-          "doc": "Test that whitespace is normalized."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestGetBlueprintStatusQueryV1",
-      "description": "Tests for GetBlueprintStatusQueryV1 contract.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_query_required_fields",
-          "doc": "Test query with required fields only."
-        },
-        {
-          "name": "test_query_with_run_id",
-          "doc": "Test query with run_id."
-        },
-        {
-          "name": "test_query_empty_task_id_raises",
-          "doc": "Test that empty task_id raises ValueError."
-        },
-        {
-          "name": "test_query_empty_workspace_raises",
-          "doc": "Test that empty workspace raises ValueError."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTaskBlueprintGeneratedEventV1",
-      "description": "Tests for TaskBlueprintGeneratedEventV1 contract.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_event_required_fields",
-          "doc": "Test event with required fields only."
-        },
-        {
-          "name": "test_event_with_risk_level",
-          "doc": "Test event with risk level."
-        },
-        {
-          "name": "test_event_empty_event_id_raises",
-          "doc": "Test that empty event_id raises ValueError."
-        },
-        {
-          "name": "test_event_empty_task_id_raises",
-          "doc": "Test that empty task_id raises ValueError."
-        },
-        {
-          "name": "test_event_empty_blueprint_path_raises",
-          "doc": "Test that empty blueprint_path raises ValueError."
-        },
-        {
-          "name": "test_event_empty_generated_at_raises",
-          "doc": "Test that empty generated_at raises ValueError."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTaskBlueprintResultV1",
-      "description": "Tests for TaskBlueprintResultV1 contract.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_success_result",
-          "doc": "Test successful result construction."
-        },
-        {
-          "name": "test_result_with_blueprint_path",
-          "doc": "Test result with blueprint path."
-        },
-        {
-          "name": "test_result_with_summary",
-          "doc": "Test result with summary."
-        },
-        {
-          "name": "test_result_with_recommendations",
-          "doc": "Test result with recommendations."
-        },
-        {
-          "name": "test_result_with_risks",
-          "doc": "Test result with risks."
-        },
-        {
-          "name": "test_result_failed",
-          "doc": "Test failed result construction."
-        },
-        {
-          "name": "test_result_empty_task_id_raises",
-          "doc": "Test that empty task_id raises ValueError."
-        },
-        {
-          "name": "test_result_empty_workspace_raises",
-          "doc": "Test that empty workspace raises ValueError."
-        },
-        {
-          "name": "test_result_empty_status_raises",
-          "doc": "Test that empty status raises ValueError."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestChiefEngineerBlueprintErrorV1",
-      "description": "Tests for ChiefEngineerBlueprintErrorV1 contract.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_error_default_code",
-          "doc": "Test error with default code."
-        },
-        {
-          "name": "test_error_custom_code",
-          "doc": "Test error with custom code."
-        },
-        {
-          "name": "test_error_with_details",
-          "doc": "Test error with details."
-        },
-        {
-          "name": "test_error_empty_message_raises",
-          "doc": "Test that empty message raises ValueError."
-        },
-        {
-          "name": "test_error_empty_code_raises",
-          "doc": "Test that empty code raises ValueError."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestChiefEngineerBlueprintErrorAlias",
-      "description": "Tests for backward-compatible alias.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_alias_is_same_class",
-          "doc": "Test that alias is the same class."
-        },
-        {
-          "name": "test_alias_instantiation",
-          "doc": "Test alias instantiation."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestBlueprintLifecycle",
-      "description": "Tests for complete blueprint generation lifecycle scenarios.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_successful_blueprint_lifecycle",
-          "doc": "Test complete successful blueprint generation lifecycle."
-        },
-        {
-          "name": "test_failed_blueprint_lifecycle",
-          "doc": "Test complete failed blueprint generation lifecycle."
-        },
-        {
-          "name": "test_error_propagation",
-          "doc": "Test error is properly constructed and raised."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FakeTask",
-      "description": "Minimal task stub for DirectorPool tests.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FakeBlueprint",
-      "description": "Minimal blueprint stub.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TestEventBus",
-      "description": "Tests for the lightweight EventBus.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
-      "methods": [
-        {
-          "name": "test_publish_delivers_to_subscribers",
-          "doc": ""
-        },
-        {
-          "name": "test_subscriber_failure_isolated",
-          "doc": ""
-        },
-        {
-          "name": "test_unsubscribe",
-          "doc": ""
-        },
-        {
-          "name": "handler",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestScopeConflictDetector",
-      "description": "Tests for the global file conflict detector.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
-      "methods": [
-        {
-          "name": "test_detect_no_conflict",
-          "doc": ""
-        },
-        {
-          "name": "test_detect_conflict",
-          "doc": ""
-        },
-        {
-          "name": "test_release_clears_ownership",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestDirectorPoolInitialization",
-      "description": "Tests for pool initialization and degradation.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
-      "methods": [
-        {
-          "name": "test_initializes_requested_directors",
-          "doc": ""
-        },
-        {
-          "name": "test_degrades_to_fallback",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestDirectorPoolAssignment",
-      "description": "Tests for task assignment logic.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TestDirectorPoolStatus",
-      "description": "Tests for status queries.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
-      "methods": [
-        {
-          "name": "test_get_director_for_unknown_task",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestDirectorPoolCompletion",
-      "description": "Tests for task completion and release.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TestDirectorPoolRecovery",
-      "description": "Tests for failure recovery decisions.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
-      "methods": [
-        {
-          "name": "test_handle_failure_unknown_task_aborts",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestDirectorPoolProgress",
-      "description": "Tests for progress updates.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
-      "methods": [
-        {
-          "name": "test_update_progress_clamps_out_of_range",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestDirectorPoolEvents",
-      "description": "Tests for EventBus integration.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TestDirectorPoolAssignmentFailure",
-      "description": "Tests for assignment failure recovery.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
-      "methods": []
-    },
-    {
-      "type": "function",
-      "name": "pool",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py"
-    },
-    {
-      "type": "class",
-      "name": "FakeTask",
-      "description": "Minimal task stub for DirectorPool tests.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool_chaos.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FakeBlueprint",
-      "description": "Minimal blueprint stub.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool_chaos.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TestDirectorPoolChaos",
-      "description": "Chaos and resilience tests for DirectorPool.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool_chaos.py",
-      "methods": []
-    },
-    {
-      "type": "function",
-      "name": "pool",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool_chaos.py"
-    },
-    {
-      "type": "class",
-      "name": "_CollectingHandler",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "test_concurrent_publish_and_subscribe",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
-    },
-    {
-      "type": "function",
-      "name": "capture_error",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
-    },
-    {
-      "type": "function",
-      "name": "wrapper",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
-    },
-    {
-      "type": "function",
-      "name": "publisher",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
-    },
-    {
-      "type": "function",
-      "name": "subscriber",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
-    },
-    {
-      "type": "function",
-      "name": "unsubscriber",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
-    },
-    {
-      "type": "function",
-      "name": "test_payload_isolation",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
-    },
-    {
-      "type": "function",
-      "name": "mutator",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
-    },
-    {
-      "type": "function",
-      "name": "reader",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
-    },
-    {
-      "type": "function",
-      "name": "test_clear_is_thread_safe",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
-    },
-    {
-      "type": "function",
-      "name": "test_unsubscribe_idempotent",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
-    },
-    {
-      "type": "function",
-      "name": "dummy",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
-    },
-    {
-      "type": "class",
-      "name": "TestPostMortemLog",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_post_mortem.py",
-      "methods": [
-        {
-          "name": "setUp",
-          "doc": ""
-        },
-        {
-          "name": "tearDown",
-          "doc": ""
-        },
-        {
-          "name": "test_register_persists_full_record",
-          "doc": ""
-        },
-        {
-          "name": "test_update_status_appends_history",
-          "doc": ""
-        },
-        {
-          "name": "test_list_filters_by_severity_and_status",
-          "doc": ""
-        },
-        {
-          "name": "test_summarize_counts_open_action_items",
-          "doc": ""
-        },
-        {
-          "name": "test_path_traversal_rejected",
-          "doc": ""
-        },
-        {
-          "name": "test_load_tolerates_invalid_enum_on_disk",
-          "doc": ""
-        },
-        {
-          "name": "test_build_event",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestPostMortemServiceSurface",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_post_mortem.py",
-      "methods": [
-        {
-          "name": "setUp",
-          "doc": ""
-        },
-        {
-          "name": "tearDown",
-          "doc": ""
-        },
-        {
-          "name": "test_service_round_trip",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestQualityGate",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_quality_gate.py",
-      "methods": [
-        {
-          "name": "test_empty_target_files_is_blocker",
-          "doc": ""
-        },
-        {
-          "name": "test_missing_checklist_is_warning",
-          "doc": ""
-        },
-        {
-          "name": "test_short_recommendations_is_info",
-          "doc": ""
-        },
-        {
-          "name": "test_open_blocker_risk_pushes_to_blocker",
-          "doc": ""
-        },
-        {
-          "name": "test_open_high_risk_is_warning",
-          "doc": ""
-        },
-        {
-          "name": "test_resolved_risk_does_not_count",
-          "doc": ""
-        },
-        {
-          "name": "test_pure_pass",
-          "doc": ""
-        },
-        {
-          "name": "test_risk_dicts_coerced_from_blueprint_risk_register",
-          "doc": ""
-        },
-        {
-          "name": "test_malformed_risk_dict_is_skipped_not_crash",
-          "doc": ""
-        },
-        {
-          "name": "test_evaluated_at_override",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestReleaseReadiness",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_release_readiness.py",
-      "methods": [
-        {
-          "name": "setUp",
-          "doc": ""
-        },
-        {
-          "name": "tearDown",
-          "doc": ""
-        },
-        {
-          "name": "test_clean_workspace_is_go",
-          "doc": ""
-        },
-        {
-          "name": "test_open_blocker_risk_is_no_go",
-          "doc": ""
-        },
-        {
-          "name": "test_open_high_risk_only_is_conditional",
-          "doc": ""
-        },
-        {
-          "name": "test_open_sev1_incident_is_no_go",
-          "doc": ""
-        },
-        {
-          "name": "test_stack_policy_violation_is_no_go",
-          "doc": ""
-        },
-        {
-          "name": "test_unpaid_fatal_tech_debt_is_no_go",
-          "doc": ""
-        },
-        {
-          "name": "test_blueprint_quality_gate_blocker_is_no_go",
-          "doc": ""
-        },
-        {
-          "name": "test_risk_not_double_counted_with_blueprint_gate",
-          "doc": ""
-        },
-        {
-          "name": "test_contract_blocker_still_flagged_in_quality_gate",
-          "doc": ""
-        },
-        {
-          "name": "test_missing_blueprint_is_blocker",
-          "doc": ""
-        },
-        {
-          "name": "test_conditional_go_multi_signal_aggregation",
-          "doc": ""
-        },
-        {
-          "name": "test_missing_blueprint_signal_structure",
-          "doc": ""
-        },
-        {
-          "name": "test_signals_always_present",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "_WorkspaceFixture",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_risks.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "cleanup",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestRiskRegister",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_risks.py",
-      "methods": [
-        {
-          "name": "setUp",
-          "doc": ""
-        },
-        {
-          "name": "tearDown",
-          "doc": ""
-        },
-        {
-          "name": "test_register_creates_atomically",
-          "doc": ""
-        },
-        {
-          "name": "test_list_filters_by_task_and_severity",
-          "doc": ""
-        },
-        {
-          "name": "test_update_status_appends_history",
-          "doc": ""
-        },
-        {
-          "name": "test_update_missing_risk_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_summarize_counts_open_critical_or_blocker",
-          "doc": ""
-        },
-        {
-          "name": "test_load_handles_corrupt_file",
-          "doc": ""
-        },
-        {
-          "name": "test_path_traversal_id_is_rejected_on_load",
-          "doc": ""
-        },
-        {
-          "name": "test_path_traversal_id_is_rejected_on_update",
-          "doc": ""
-        },
-        {
-          "name": "test_generated_ids_are_unique_under_tight_loop",
-          "doc": ""
-        },
-        {
-          "name": "test_load_tolerates_invalid_enum_on_disk",
-          "doc": ""
-        },
-        {
-          "name": "test_build_risk_event_stamps_at",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "test_git_stash_guard_requires_git_repo",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_rollback_guard.py"
-    },
-    {
-      "type": "function",
-      "name": "test_create_rollback_guard_factory",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_rollback_guard.py"
-    },
-    {
-      "type": "function",
-      "name": "test_git_stash_guard_full_cycle",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_rollback_guard.py"
-    },
-    {
-      "type": "function",
-      "name": "test_git_stash_guard_discard_missing",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_rollback_guard.py"
-    },
-    {
-      "type": "class",
-      "name": "TestRollbackLink",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_rollback_link.py",
-      "methods": [
-        {
-          "name": "setUp",
-          "doc": ""
-        },
-        {
-          "name": "tearDown",
-          "doc": ""
-        },
-        {
-          "name": "test_git_workspace_picks_git_revert",
-          "doc": ""
-        },
-        {
-          "name": "test_non_git_workspace_picks_file_snapshot",
-          "doc": ""
-        },
-        {
-          "name": "test_open_blocker_omits_satisfied_precondition",
-          "doc": ""
-        },
-        {
-          "name": "test_no_open_blocker_lists_satisfied_precondition",
-          "doc": ""
-        },
-        {
-          "name": "test_no_targets_disables",
-          "doc": ""
-        },
-        {
-          "name": "test_marker_path_under_state_dir",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestServiceGovernance",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_service_governance.py",
-      "methods": [
-        {
-          "name": "setUp",
-          "doc": ""
-        },
-        {
-          "name": "tearDown",
-          "doc": ""
-        },
-        {
-          "name": "test_generate_blueprint_attaches_governance",
-          "doc": ""
-        },
-        {
-          "name": "test_open_blocker_risk_blocks_handoff",
-          "doc": ""
-        },
-        {
-          "name": "test_resolving_risk_unblocks_handoff",
-          "doc": ""
-        },
-        {
-          "name": "test_tech_debt_round_trip",
-          "doc": ""
-        },
-        {
-          "name": "test_build_blueprint_governance_pure_call",
-          "doc": ""
-        },
-        {
-          "name": "test_get_blueprint_governance_reflects_resolved_risk",
-          "doc": ""
-        },
-        {
-          "name": "test_get_blueprint_governance_missing_returns_none",
-          "doc": ""
-        },
-        {
-          "name": "test_handoff_enforcement_flag_parsing",
-          "doc": ""
-        },
-        {
-          "name": "test_handoff_decision_allows_clean_blueprint",
-          "doc": ""
-        },
-        {
-          "name": "test_handoff_decision_blocks_on_missing_contract",
-          "doc": ""
-        },
-        {
-          "name": "test_handoff_decision_blocks_on_open_blocker_risk",
-          "doc": ""
-        },
-        {
-          "name": "test_assert_handoff_ready_raises_when_blocked",
-          "doc": ""
-        },
-        {
-          "name": "test_evaluate_handoff_decision_for_blueprint_reads_persisted",
-          "doc": ""
-        },
-        {
-          "name": "test_attach_governance_writes_back",
-          "doc": ""
-        },
-        {
-          "name": "test_list_risks_filters",
-          "doc": ""
-        },
-        {
-          "name": "test_get_blueprint_status_unchanged",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_blueprint_json_path",
-      "description": "Resolve the real on-disk path of a persisted blueprint.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_service_governance.py"
-    },
-    {
-      "type": "class",
-      "name": "TestTechDebtLedger",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_tech_debt.py",
-      "methods": [
-        {
-          "name": "setUp",
-          "doc": ""
-        },
-        {
-          "name": "tearDown",
-          "doc": ""
-        },
-        {
-          "name": "test_register_persists_with_history",
-          "doc": ""
-        },
-        {
-          "name": "test_list_filters_by_surface_and_status",
-          "doc": ""
-        },
-        {
-          "name": "test_update_status_appends_history",
-          "doc": ""
-        },
-        {
-          "name": "test_list_for_query_respects_all_filters",
-          "doc": ""
-        },
-        {
-          "name": "test_summarize_counts",
-          "doc": ""
-        },
-        {
-          "name": "test_path_traversal_debt_id_rejected",
-          "doc": ""
-        },
-        {
-          "name": "test_build_tech_debt_event_stamps",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTechRadarLedger",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_tech_radar.py",
-      "methods": [
-        {
-          "name": "setUp",
-          "doc": ""
-        },
-        {
-          "name": "tearDown",
-          "doc": ""
-        },
-        {
-          "name": "test_register_persists",
-          "doc": ""
-        },
-        {
-          "name": "test_update_ring_appends_history",
-          "doc": ""
-        },
-        {
-          "name": "test_check_stack_policy_flags_hold_and_deprecated",
-          "doc": ""
-        },
-        {
-          "name": "test_check_stack_policy_latest_ring_wins",
-          "doc": ""
-        },
-        {
-          "name": "test_path_traversal_rejected",
-          "doc": ""
-        },
-        {
-          "name": "test_supersede_deprecates_predecessor",
-          "doc": ""
-        },
-        {
-          "name": "test_load_tolerates_invalid_ring_on_disk",
-          "doc": ""
-        },
-        {
-          "name": "test_check_stack_policy_decided_at_tie_is_deterministic",
-          "doc": ""
-        },
-        {
-          "name": "test_build_event",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTechRadarServiceSurface",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_tech_radar.py",
-      "methods": [
-        {
-          "name": "setUp",
-          "doc": ""
-        },
-        {
-          "name": "tearDown",
-          "doc": ""
-        },
-        {
-          "name": "test_service_round_trip_and_policy",
-          "doc": ""
-        }
-      ]
     },
     {
       "type": "class",

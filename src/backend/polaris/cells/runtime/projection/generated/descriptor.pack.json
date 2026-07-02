@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:56.039197Z",
-  "source_hash": "8aa7a70b095148bb",
+  "generated_at": "2026-07-02T03:36:34.006406Z",
+  "source_hash": "8fc57922f75e5104",
   "cell_id": "runtime.projection",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -70,6 +70,36 @@
       "name": "read_readme_title",
       "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/file_io.py"
+    },
+    {
+      "type": "function",
+      "name": "read_json",
+      "description": "Read a JSON object through the projection file I/O boundary.",
+      "defined_in": "polaris/cells/runtime/projection/internal/io_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "read_file_head",
+      "description": "Read the start of a file through the projection file I/O boundary.",
+      "defined_in": "polaris/cells/runtime/projection/internal/io_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "read_file_tail",
+      "description": "Read the end of a file through the projection file I/O boundary.",
+      "defined_in": "polaris/cells/runtime/projection/internal/io_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "read_incremental",
+      "description": "Read newly appended lines through the projection file I/O boundary.",
+      "defined_in": "polaris/cells/runtime/projection/internal/io_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "format_mtime",
+      "description": "Format a file modification time through the projection file I/O boundary.",
+      "defined_in": "polaris/cells/runtime/projection/internal/io_helpers.py"
     },
     {
       "type": "function",
@@ -169,7 +199,43 @@
     },
     {
       "type": "function",
+      "name": "_director_binding_skip_reason",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
       "name": "_dedupe_index_candidates",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_dispatch_skip_ttl_seconds",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_runtime_dispatch_director_skips",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_dispatch_skip_matches_binding",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_dispatch_skip_is_newer",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_dispatch_readiness_for_binding",
       "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
     },
@@ -206,6 +272,18 @@
     {
       "type": "function",
       "name": "_select_binding_status",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_binding_readiness_payload",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_binding_status_issue",
       "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
     },
@@ -435,6 +513,12 @@
     },
     {
       "type": "function",
+      "name": "_ordered_string_union",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
       "name": "_is_pm_contract_path",
       "description": "Return True for PM task contract paths emitted by runtime storage.",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
@@ -497,6 +581,12 @@
       "type": "function",
       "name": "_state_token",
       "description": "Extract state token from payload.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_int_value",
+      "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
     },
     {
@@ -573,6 +663,48 @@
     },
     {
       "type": "function",
+      "name": "_extract_run_ledger_run_id",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_run_ledger_projection_for_run",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_run_ledger_director_status_overlay",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_boundary_execution_state",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_latest_task_boundary",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_row_task_id",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_run_ledger_task_rows_overlay",
+      "description": "Overlay terminal task-boundary verdicts onto visible task rows.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
       "name": "select_task_rows",
       "description": "Select task rows following \"二选一，不做跨源混拼\" rule.",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
@@ -598,13 +730,13 @@
     {
       "type": "function",
       "name": "_get_cached_projection",
-      "description": "Get cached projection if still valid (既有调用入口包装).",
+      "description": "Get cached projection if still valid.",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
     },
     {
       "type": "function",
       "name": "_set_cached_projection",
-      "description": "Cache projection with timestamp (既有调用入口包装).",
+      "description": "Cache projection with timestamp.",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
     },
     {
@@ -628,7 +760,7 @@
     {
       "type": "function",
       "name": "build_snapshot_payload_from_projection",
-      "description": "从 projection 生成 /state/snapshot 标准载荷",
+      "description": "从 projection 生成 /state/snapshot 标准载荷。",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
     },
     {
@@ -906,6 +1038,12 @@
     },
     {
       "type": "function",
+      "name": "_jetstream_publish_enabled",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
       "name": "describe_workflow_sync",
       "description": "Module-level wrapper kept patchable for tests and adapters.",
       "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
@@ -925,13 +1063,19 @@
     {
       "type": "function",
       "name": "write_workflow_state",
-      "description": "Persist the latest workflow submission metadata and trigger realtime update.",
+      "description": "Persist latest workflow submission metadata and publish status event.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_publish_workflow_status_to_jetstream",
+      "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
     },
     {
       "type": "function",
       "name": "_trigger_realtime_update",
-      "description": "Trigger a realtime signal to notify listeners of state changes.",
+      "description": "Queue runtime.v2 workflow status publication.",
       "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
     },
     {
@@ -968,6 +1112,12 @@
       "type": "function",
       "name": "_result_artifacts_prove_terminal_success",
       "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_ledger_terminal_status",
+      "description": "Return terminal status proven by the platform Run Ledger projection.",
       "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
     },
     {
@@ -1105,6 +1255,12 @@
     {
       "type": "function",
       "name": "_apply_workflow_task_results",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_workflow_completion_authorized",
       "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
     },

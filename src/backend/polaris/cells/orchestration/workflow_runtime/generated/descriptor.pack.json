@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:49.031293Z",
-  "source_hash": "f8d710dbc94c18b1",
+  "generated_at": "2026-07-02T03:36:29.228582Z",
+  "source_hash": "27fdd3a678dbbe86",
   "cell_id": "orchestration.workflow_runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -197,6 +197,12 @@
       "type": "function",
       "name": "_is_blocking_status",
       "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_materialized_any_files",
+      "description": "Whether a runtime row's adapter result landed at least one file on disk.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
     },
     {
@@ -452,6 +458,18 @@
     {
       "type": "function",
       "name": "_unwrap_workflow_result",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_snapshot_status",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_snapshot_result",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
     },
@@ -1068,6 +1086,10 @@
         {
           "name": "_require_runtime",
           "doc": ""
+        },
+        {
+          "name": "_snapshot_payload",
+          "doc": ""
         }
       ]
     },
@@ -1378,6 +1400,12 @@
     },
     {
       "type": "function",
+      "name": "_is_file_like_scope_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/pm_activities.py"
+    },
+    {
+      "type": "function",
       "name": "_validate_tasks",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/pm_activities.py"
@@ -1427,6 +1455,30 @@
     {
       "type": "function",
       "name": "_write_runtime_result",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_clean_text",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_workflow_job_token",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_qa_workflow_run_ledger_event",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
     },
@@ -2161,8 +2213,26 @@
     },
     {
       "type": "function",
+      "name": "_adapter_task_id_for_role",
+      "description": "Resolve the physical adapter task id without leaking workflow ids.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_adapter_input_for_role",
+      "description": "Build adapter input with Director TaskBoard ids made explicit.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
+    },
+    {
+      "type": "function",
       "name": "configure_orchestration_role_adapter_factory",
       "description": "Configure the application-owned role adapter factory for the singleton.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_orchestration_role_adapter_factory",
+      "description": "Return the registered role adapter factory.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
     },
     {
@@ -2291,6 +2361,10 @@
           "doc": ""
         },
         {
+          "name": "_ensure_core_tables",
+          "doc": ""
+        },
+        {
           "name": "_now",
           "doc": ""
         },
@@ -2304,6 +2378,10 @@
         },
         {
           "name": "_init_schema",
+          "doc": ""
+        },
+        {
+          "name": "_ensure_schema_on_conn",
           "doc": ""
         },
         {

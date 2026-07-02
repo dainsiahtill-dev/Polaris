@@ -8,6 +8,7 @@ and helper functions.
 from __future__ import annotations
 
 import ast
+import json
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -19,6 +20,8 @@ from polaris.cells.context.catalog.internal.descriptor_pack_generator import (
     IndexWriteReceipt,
     _compute_verification_hash,
     _load_yaml_simple,
+    _should_analyze_source_file,
+    _should_process_cell_dir,
     _verify_recall_if_applicable,
     analyze_file,
     validate_schema,
@@ -385,6 +388,59 @@ class TestAnalyzeFile:
 
 
 # ---------------------------------------------------------------------------
+# _should_analyze_source_file
+# ---------------------------------------------------------------------------
+
+
+class TestShouldAnalyzeSourceFile:
+    def test_accepts_runtime_python_source(self, tmp_path: Path) -> None:
+        source_path = tmp_path / "polaris" / "cells" / "example" / "internal" / "service.py"
+        assert _should_analyze_source_file(source_path) is True
+
+    @pytest.mark.parametrize(
+        "relative_path",
+        [
+            "polaris/cells/example/generated/service.py",
+            "polaris/cells/example/tests/test_service.py",
+            "polaris/cells/example/internal/testing/fake_tools.py",
+            "polaris/cells/example/internal/__pycache__/service.py",
+            "polaris/cells/example/.venv/lib/module.py",
+            "polaris/cells/example/venv/lib/module.py",
+            "polaris/cells/example/internal/test_service.py",
+            "polaris/cells/example/internal/service_test.py",
+            "polaris/cells/example/internal/service.txt",
+        ],
+    )
+    def test_rejects_non_runtime_sources(self, tmp_path: Path, relative_path: str) -> None:
+        assert _should_analyze_source_file(tmp_path / relative_path) is False
+
+
+# ---------------------------------------------------------------------------
+# _should_process_cell_dir
+# ---------------------------------------------------------------------------
+
+
+class TestShouldProcessCellDir:
+    def test_accepts_real_cell_dir(self, tmp_path: Path) -> None:
+        cell_dir = tmp_path / "polaris" / "cells" / "roles" / "kernel"
+        assert _should_process_cell_dir(cell_dir) is True
+
+    @pytest.mark.parametrize(
+        "relative_path",
+        [
+            "polaris/cells/llm/evaluation/fixtures/sample/polaris/cells/llm/evaluation",
+            "polaris/cells/example/tests/fixture_cell",
+            "polaris/cells/example/testing/fixture_cell",
+            "polaris/cells/example/generated/fixture_cell",
+            "polaris/cells/example/.venv/fixture_cell",
+            "polaris/cells/example/venv/fixture_cell",
+        ],
+    )
+    def test_rejects_fixture_or_non_runtime_cell_dirs(self, tmp_path: Path, relative_path: str) -> None:
+        assert _should_process_cell_dir(tmp_path / relative_path) is False
+
+
+# ---------------------------------------------------------------------------
 # _compute_verification_hash
 # ---------------------------------------------------------------------------
 
@@ -472,7 +528,7 @@ class TestGeneratePack:
         assert result.name == "descriptor.pack.json"
 
     @pytest.mark.asyncio
-    async def test_skips_generated_and_venv(self, tmp_path: Path) -> None:
+    async def test_skips_generated_venv_and_test_sources(self, tmp_path: Path) -> None:
         from polaris.cells.context.catalog.internal.descriptor_pack_generator import (
             generate_pack,
         )
@@ -492,7 +548,13 @@ class TestGeneratePack:
         (gen_dir / "skip.py").write_text("def skip(): pass\n", encoding="utf-8")
         venv_dir = py_dir / "venv"
         venv_dir.mkdir()
-        (venv_dir / "skip.py").write_text("def skip(): pass\n", encoding="utf-8")
+        (venv_dir / "venv_skip.py").write_text("def venv_skip(): pass\n", encoding="utf-8")
+        tests_dir = py_dir / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_module.py").write_text("def test_skip(): pass\n", encoding="utf-8")
+        testing_dir = py_dir / "testing"
+        testing_dir.mkdir()
+        (testing_dir / "fake_tools.py").write_text("def fake_skip(): pass\n", encoding="utf-8")
 
         with patch("polaris.cells.context.catalog.internal.descriptor_pack_generator._build_kernel_fs") as mock_kfs:
             mock_fs = MagicMock()
@@ -500,6 +562,9 @@ class TestGeneratePack:
             result = await generate_pack(cell_dir, tmp_path, skip_schema_validation=True)
 
         assert result is not None
+        payload = json.loads(mock_fs.workspace_write_text.call_args.args[1])
+        capability_names = {item["name"] for item in payload["capabilities"]}
+        assert capability_names == {"hello"}
 
 
 # ---------------------------------------------------------------------------
@@ -540,7 +605,17 @@ class TestRunAll:
             py_dir.mkdir()
             (py_dir / "mod.py").write_text("def f(): pass\n", encoding="utf-8")
 
+        fixture_cell_dir = (
+            cells_root / "llm" / "evaluation" / "fixtures" / "sample" / "polaris" / "cells" / "llm" / "evaluation"
+        )
+        fixture_cell_dir.mkdir(parents=True)
+        (fixture_cell_dir / "cell.yaml").write_text(
+            "id: fixture.cell\nowned_paths:\n  - fixture/**\n",
+            encoding="utf-8",
+        )
+
         with patch("polaris.cells.context.catalog.internal.descriptor_pack_generator._build_kernel_fs") as mock_kfs:
             mock_fs = MagicMock()
             mock_kfs.return_value = mock_fs
             await run_all(repo_root=tmp_path, skip_schema_validation=True)
+        assert mock_fs.workspace_write_text.call_count == 2

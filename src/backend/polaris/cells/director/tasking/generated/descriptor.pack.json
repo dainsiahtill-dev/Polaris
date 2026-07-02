@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:45.442606Z",
-  "source_hash": "4142ffc4e0ca1618",
+  "generated_at": "2026-07-02T03:36:25.826277Z",
+  "source_hash": "7c934a22dd1c0c04",
   "cell_id": "director.tasking",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -308,6 +308,336 @@
     },
     {
       "type": "class",
+      "name": "CodegenRoundPlanner",
+      "description": "Plan per-round file batches for a Director code-generation task.",
+      "defined_in": "polaris/cells/director/tasking/internal/codegen_rounds.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "construction_file_plans",
+          "doc": "Get construction file plans from task metadata."
+        },
+        {
+          "name": "build_code_generation_rounds",
+          "doc": "Build code generation rounds from task metadata."
+        },
+        {
+          "name": "resolve_code_generation_round_chunk_size",
+          "doc": "Resolve file count per code-generation round."
+        },
+        {
+          "name": "code_generation_round_chunk_configured",
+          "doc": "Return whether a caller explicitly configured target-file chunking."
+        },
+        {
+          "name": "effective_code_generation_round_chunk_size",
+          "doc": "Return the chunk size for this concrete file set."
+        },
+        {
+          "name": "is_test_like_target_file",
+          "doc": "Return whether a target path is likely to produce expensive test/spec output."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "_contract_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "_contract_list",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "_delivery_contract",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "_architecture_contract",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "_quality_contract",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "build_task_execution_contract",
+      "description": "Build the shared execution contract from canonical profile + strategy.",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "_utc_now",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_value",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "_hash_ref",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "_stable_hash_or_missing",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "_metadata_hash",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "_metadata_has_value",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "_job_token",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "_allowed_paths",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "_allowed_commands",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "build_execution_envelope",
+      "description": "Build a hashable `polaris.execution_envelope.v1` payload.",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_token",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_label",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_metadata_values_text",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_combined_text",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_paths",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_metadata_path_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_explicit_task_type",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_infer_task_type",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_task_type",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_project_type",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_phase",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_dispatch_type",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_file_roles_by_path",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_sampling_mode",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_temperature_for",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_director_execution_profile",
+      "description": "Resolve the canonical task execution profile for one Director task.",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_strategy.py"
+    },
+    {
+      "type": "function",
+      "name": "_int_value",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_strategy.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_value",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_strategy.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_factory_bench",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_strategy.py"
+    },
+    {
+      "type": "function",
+      "name": "_complexity_bonus",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_strategy.py"
+    },
+    {
+      "type": "function",
+      "name": "_scale_budget",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_strategy.py"
+    },
+    {
+      "type": "function",
+      "name": "_requires_module_interface_contract",
+      "description": "Require CE interface evidence when Director must coordinate multiple source files.",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_strategy.py"
+    },
+    {
+      "type": "function",
+      "name": "_evidence_requirements",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_strategy.py"
+    },
+    {
+      "type": "function",
+      "name": "_context_budget_policy",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_strategy.py"
+    },
+    {
+      "type": "function",
+      "name": "_cognitive_strategy_override",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_strategy.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_director_execution_strategy",
+      "description": "Resolve runtime budget and audit strategy from a Director task profile.",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_strategy.py"
+    },
+    {
+      "type": "function",
+      "name": "apply_execution_strategy_overrides",
+      "description": "Write strategy controls into trusted runtime context and metadata.",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_strategy.py"
+    },
+    {
+      "type": "class",
       "name": "GateResult",
       "description": "Result of an existence gate check.",
       "defined_in": "polaris/cells/director/tasking/internal/existence_gate.py",
@@ -444,6 +774,12 @@
     },
     {
       "type": "function",
+      "name": "_source_file_markdown_advisory_error",
+      "description": "Reject obvious prose reports accidentally routed into source files.",
+      "defined_in": "polaris/cells/director/tasking/internal/file_apply_service.py"
+    },
+    {
+      "type": "function",
       "name": "_collect_fenced_file_blocks",
       "description": "Extract explicit ```file: path fenced sections from an LLM response.",
       "defined_in": "polaris/cells/director/tasking/internal/file_apply_service.py"
@@ -480,70 +816,443 @@
     },
     {
       "type": "class",
+      "name": "LanguageProfile",
+      "description": "Language-level expert identity and best practices.",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py",
+      "methods": [
+        {
+          "name": "best_practices",
+          "doc": "Return language best practices using the canonical taxonomy term."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskFocusProfile",
+      "description": "Task-type best practices selected from subject, description, and metadata.",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py",
+      "methods": [
+        {
+          "name": "best_practices",
+          "doc": "Return task-type best practices using the canonical taxonomy term."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FileRoleProfile",
+      "description": "Best practices for a concrete role a file plays in a codebase.",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py",
+      "methods": [
+        {
+          "name": "best_practices",
+          "doc": "Return file-role best practices using the canonical taxonomy term."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "LanguagePromptContext",
+      "description": "Structured context used to compose prompt-guidance layers.",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GuidanceSelection",
+      "description": "Resolved prompt-guidance axes shared by prompt and execution profiles.",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_normalize_token",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_language",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_framework",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_framework_label",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_metadata_text",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_metadata_language",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_metadata_framework",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_language_from_paths",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_language_from_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_language_from_text",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_contract_language_from_text",
+      "description": "Return a language only from explicit contract fields or hard checks.",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_combined_text",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_detect_framework",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_detect_task_foci",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_detect_file_roles",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedupe_known_codes",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_format_bullets",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_context_summary",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "detect_primary_language",
+      "description": "Detect the primary programming language from metadata, paths, or workspace.",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "get_language_guidance",
+      "description": "Get language-specific coding guidance for compatibility callers.",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "get_role_identity",
+      "description": "Get the Director role identity for a normalized language code.",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedupe_identity_fragments",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_compose_role_identity",
+      "description": "Compose a concrete role identity from language, stack, task, and file roles.",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "select_guidance",
+      "description": "Resolve canonical prompt-guidance axes for a Director task.",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "build_language_section",
+      "description": "Build composable language/task guidance and a role identity.",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "class",
       "name": "ApplyResult",
-      "description": "Result of applying unified operations.",
-      "defined_in": "polaris/cells/director/tasking/internal/patch_apply_engine.py",
+      "description": "Task-facing summary for strict patch protocol application.",
+      "defined_in": "polaris/cells/director/tasking/internal/patch_protocol.py",
       "methods": [
         {
           "name": "from_report",
-          "doc": "从新的 ApplyReport 转换。"
+          "doc": "Project a KernelOne apply report into the Director tasking contract."
         }
       ]
     },
     {
       "type": "class",
       "name": "ApplyIntegrity",
-      "description": "Result of pre-apply integrity validation.",
-      "defined_in": "polaris/cells/director/tasking/internal/patch_apply_engine.py",
+      "description": "Pre-apply validation result for tasking protocol output.",
+      "defined_in": "polaris/cells/director/tasking/internal/patch_protocol.py",
       "methods": []
     },
     {
       "type": "function",
       "name": "parse_delete_operations",
-      "description": "Parse DELETE_FILE/DELETE operations.",
-      "defined_in": "polaris/cells/director/tasking/internal/patch_apply_engine.py"
+      "description": "Parse delete operations from tasking protocol text.",
+      "defined_in": "polaris/cells/director/tasking/internal/patch_protocol.py"
     },
     {
       "type": "function",
       "name": "parse_search_replace_blocks",
-      "description": "Parse PATCH_FILE SEARCH/REPLACE blocks.",
-      "defined_in": "polaris/cells/director/tasking/internal/patch_apply_engine.py"
+      "description": "Parse search/replace operations from tasking protocol text.",
+      "defined_in": "polaris/cells/director/tasking/internal/patch_protocol.py"
     },
     {
       "type": "function",
       "name": "parse_full_file_blocks",
-      "description": "Parse FILE/CREATE full-file blocks.",
-      "defined_in": "polaris/cells/director/tasking/internal/patch_apply_engine.py"
+      "description": "Parse full-file create/replace operations from tasking protocol text.",
+      "defined_in": "polaris/cells/director/tasking/internal/patch_protocol.py"
     },
     {
       "type": "function",
       "name": "parse_all_operations",
-      "description": "Parse all operations from mixed LLM output.",
-      "defined_in": "polaris/cells/director/tasking/internal/patch_apply_engine.py"
+      "description": "Parse all supported tasking protocol operations.",
+      "defined_in": "polaris/cells/director/tasking/internal/patch_protocol.py"
     },
     {
       "type": "function",
       "name": "apply_operation",
-      "description": "Apply one operation.",
-      "defined_in": "polaris/cells/director/tasking/internal/patch_apply_engine.py"
+      "description": "Apply one operation through KernelOne's strict operation applier.",
+      "defined_in": "polaris/cells/director/tasking/internal/patch_protocol.py"
     },
     {
       "type": "function",
       "name": "apply_all_operations",
-      "description": "Parse and apply all operations from response text.",
-      "defined_in": "polaris/cells/director/tasking/internal/patch_apply_engine.py"
+      "description": "Parse and strictly apply all operations from response text.",
+      "defined_in": "polaris/cells/director/tasking/internal/patch_protocol.py"
     },
     {
       "type": "function",
       "name": "validate_before_apply",
-      "description": "Validate output integrity before applying file operations.",
-      "defined_in": "polaris/cells/director/tasking/internal/patch_apply_engine.py"
+      "description": "Validate protocol output before applying file operations.",
+      "defined_in": "polaris/cells/director/tasking/internal/patch_protocol.py"
     },
     {
       "type": "function",
       "name": "apply_operations_strict",
-      "description": "严格模式执行协议输出（推荐新接口）.",
-      "defined_in": "polaris/cells/director/tasking/internal/patch_apply_engine.py"
+      "description": "Strictly apply protocol output and return the full KernelOne report.",
+      "defined_in": "polaris/cells/director/tasking/internal/patch_protocol.py"
+    },
+    {
+      "type": "function",
+      "name": "is_probable_file_path",
+      "description": "Check if string looks like a file path.",
+      "defined_in": "polaris/cells/director/tasking/internal/path_predicates.py"
+    },
+    {
+      "type": "function",
+      "name": "is_concrete_target_file_path",
+      "description": "Return true when a PM target path names a file, not a directory scope.",
+      "defined_in": "polaris/cells/director/tasking/internal/path_predicates.py"
+    },
+    {
+      "type": "function",
+      "name": "is_test_like_target_file",
+      "description": "Return whether a target path is likely to produce expensive test/spec output.",
+      "defined_in": "polaris/cells/director/tasking/internal/path_predicates.py"
+    },
+    {
+      "type": "function",
+      "name": "path_under_scope",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/path_predicates.py"
+    },
+    {
+      "type": "function",
+      "name": "looks_like_test_scope",
+      "description": "Return whether a scope is intended for tests.",
+      "defined_in": "polaris/cells/director/tasking/internal/path_predicates.py"
+    },
+    {
+      "type": "function",
+      "name": "test_filename",
+      "description": "Return a conventional test filename for the given source extension.",
+      "defined_in": "polaris/cells/director/tasking/internal/path_predicates.py"
+    },
+    {
+      "type": "function",
+      "name": "task_ascii_tokens",
+      "description": "Extract stable ASCII tokens from task fields.",
+      "defined_in": "polaris/cells/director/tasking/internal/path_predicates.py"
+    },
+    {
+      "type": "function",
+      "name": "task_slug",
+      "description": "Build an ASCII slug from task text for synthesized file names.",
+      "defined_in": "polaris/cells/director/tasking/internal/path_predicates.py"
+    },
+    {
+      "type": "function",
+      "name": "scope_candidate_sort_key",
+      "description": "Prefer paths whose names match task tokens, then shorter paths.",
+      "defined_in": "polaris/cells/director/tasking/internal/path_predicates.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_description_target_path",
+      "description": "Extract an explicit target path from one description line.",
+      "defined_in": "polaris/cells/director/tasking/internal/path_predicates.py"
+    },
+    {
+      "type": "class",
+      "name": "_CompactFragment",
+      "description": "Callable contract for ``WorkerExecutor._compact_prompt_fragment``.",
+      "defined_in": "polaris/cells/director/tasking/internal/prompt_builder.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PromptBuilder",
+      "description": "Assemble the Director code-generation prompt for one round.",
+      "defined_in": "polaris/cells/director/tasking/internal/prompt_builder.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "extract_architecture_context",
+          "doc": "Extract architecture context from task metadata."
+        },
+        {
+          "name": "get_module_for_task",
+          "doc": "Get current module name for task."
+        },
+        {
+          "name": "_resolve_prompt_max_chars",
+          "doc": "Resolve the codegen prompt cap, escalating factory bench tasks."
+        },
+        {
+          "name": "_is_factory_bench_task",
+          "doc": ""
+        },
+        {
+          "name": "_factory_bench_level",
+          "doc": ""
+        },
+        {
+          "name": "_metadata_items",
+          "doc": ""
+        },
+        {
+          "name": "_metadata_mapping",
+          "doc": ""
+        },
+        {
+          "name": "_contract_mapping",
+          "doc": ""
+        },
+        {
+          "name": "_contract_text_items",
+          "doc": ""
+        },
+        {
+          "name": "_delivery_plan_rows",
+          "doc": ""
+        },
+        {
+          "name": "_delivery_depth_rows",
+          "doc": ""
+        },
+        {
+          "name": "_architecture_decision_items",
+          "doc": ""
+        },
+        {
+          "name": "_metadata_path_items",
+          "doc": ""
+        },
+        {
+          "name": "_file_plan_path_items",
+          "doc": ""
+        },
+        {
+          "name": "_target_file_prompt_text",
+          "doc": ""
+        },
+        {
+          "name": "_context_file_prompt_text",
+          "doc": ""
+        },
+        {
+          "name": "_module_confidence_text",
+          "doc": ""
+        },
+        {
+          "name": "_module_interface_items",
+          "doc": ""
+        },
+        {
+          "name": "_contract_context_section",
+          "doc": ""
+        },
+        {
+          "name": "extract_functional_requirements",
+          "doc": "Extract functional requirements from description."
+        },
+        {
+          "name": "get_framework_guidance",
+          "doc": "Get framework-specific guidance."
+        },
+        {
+          "name": "build_code_generation_prompt",
+          "doc": "Build LLM prompt for code generation."
+        }
+      ]
     },
     {
       "type": "class",
@@ -575,6 +1284,10 @@
           "doc": "Initialize repair service."
         },
         {
+          "name": "classify_qa_failure",
+          "doc": "Classify QA failure routing before starting Director repair."
+        },
+        {
           "name": "should_attempt_repair",
           "doc": "Determine if repair should be attempted."
         },
@@ -599,6 +1312,94 @@
           "doc": "Get repair statistics."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_build_repair_qa_failure_classification",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/repair_service.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_files_from_response",
+      "description": "Extract file paths and contents from LLM response.",
+      "defined_in": "polaris/cells/director/tasking/internal/response_parser.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_file",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/response_parser.py"
+    },
+    {
+      "type": "class",
+      "name": "TargetFileResolver",
+      "description": "Resolve concrete Director target files from a PM task contract.",
+      "defined_in": "polaris/cells/director/tasking/internal/target_file_resolver.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "normalize_target_files",
+          "doc": "Get normalized list of target files from task."
+        },
+        {
+          "name": "infer_target_files_from_scope_paths",
+          "doc": "Infer concrete target files from PM directory scopes."
+        },
+        {
+          "name": "existing_files_for_scope",
+          "doc": "Return existing workspace files under a declared scope."
+        },
+        {
+          "name": "is_scope_inference_candidate",
+          "doc": "Return whether an existing file is useful as an inferred target."
+        },
+        {
+          "name": "synthesize_scope_target_file",
+          "doc": "Create a conservative target filename inside an empty declared scope."
+        },
+        {
+          "name": "preferred_source_extension",
+          "doc": "Infer the most suitable source extension for new scope targets."
+        },
+        {
+          "name": "normalize_scope_paths",
+          "doc": "Return directory/module scopes declared by PM without treating them as files."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "_path_list",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "_profile_for_task",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "classify_task",
+      "description": "Return legacy dispatch type from the canonical execution profile.",
+      "defined_in": "polaris/cells/director/tasking/internal/task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_tech_stack",
+      "description": "Return legacy tech-stack shape from the canonical execution profile.",
+      "defined_in": "polaris/cells/director/tasking/internal/task_classifier.py"
     },
     {
       "type": "function",
@@ -796,6 +1597,48 @@
     },
     {
       "type": "class",
+      "name": "VerificationRepair",
+      "description": "Derive repair targets from a retry task's previous verification result.",
+      "defined_in": "polaris/cells/director/tasking/internal/verification_repair.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "feedback",
+          "doc": "Return previous verification diagnostics carried by the workflow retry."
+        },
+        {
+          "name": "candidate_paths_for_unresolved_import",
+          "doc": ""
+        },
+        {
+          "name": "repair_path_allowed",
+          "doc": ""
+        },
+        {
+          "name": "unresolved_import_repair_records",
+          "doc": ""
+        },
+        {
+          "name": "repair_target_paths",
+          "doc": ""
+        },
+        {
+          "name": "repair_prompt_section",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "parse_unresolved_import_entry",
+      "description": "Parse one ``\"source: import_ref\"`` verification entry.",
+      "defined_in": "polaris/cells/director/tasking/internal/verification_repair.py"
+    },
+    {
+      "type": "class",
       "name": "_CodeGenPlaceholderError",
       "description": "",
       "defined_in": "polaris/cells/director/tasking/internal/worker_executor.py",
@@ -900,31 +1743,31 @@
         },
         {
           "name": "_parse_unresolved_import_entry",
-          "doc": ""
+          "doc": "Delegates to ``verification_repair.parse_unresolved_import_entry``."
         },
         {
           "name": "_candidate_paths_for_unresolved_import",
-          "doc": ""
+          "doc": "Delegates to ``VerificationRepair.candidate_paths_for_unresolved_import``."
         },
         {
           "name": "_path_under_scope",
-          "doc": ""
+          "doc": "Delegates to ``path_predicates.path_under_scope``."
         },
         {
           "name": "_repair_path_allowed",
-          "doc": ""
+          "doc": "Delegates to ``VerificationRepair.repair_path_allowed``."
         },
         {
           "name": "_unresolved_import_repair_records",
-          "doc": ""
+          "doc": "Delegates to ``VerificationRepair.unresolved_import_repair_records``."
         },
         {
           "name": "_verification_repair_target_paths",
-          "doc": ""
+          "doc": "Delegates to ``VerificationRepair.repair_target_paths``."
         },
         {
           "name": "_verification_repair_prompt_section",
-          "doc": ""
+          "doc": "Delegates to ``VerificationRepair.repair_prompt_section``."
         },
         {
           "name": "_bootstrap_target_file_content",
@@ -1035,10 +1878,6 @@
           "doc": "Extract file paths and contents from LLM response."
         },
         {
-          "name": "_append_file",
-          "doc": ""
-        },
-        {
           "name": "_fallback_code_files",
           "doc": "Legacy entry point retained only to fail closed."
         },
@@ -1071,12 +1910,6 @@
           "doc": "Invoke LLM generation with retries."
         }
       ]
-    },
-    {
-      "type": "function",
-      "name": "_workspace_fs",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/internal/worker_executor.py"
     },
     {
       "type": "function",
@@ -1136,6 +1969,112 @@
       "name": "_task_result_from_process",
       "description": "Convert execution broker output into the domain TaskResult contract.",
       "defined_in": "polaris/cells/director/tasking/internal/worker_pool_service.py"
+    },
+    {
+      "type": "class",
+      "name": "WorkspaceProbe",
+      "description": "Read-only workspace filesystem probe bound to a single workspace root.",
+      "defined_in": "polaris/cells/director/tasking/internal/workspace_probe.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "generated_artifact_quality_error",
+          "doc": "Return a fail-closed quality error for generated artifact receipts."
+        },
+        {
+          "name": "generated_artifact_paths",
+          "doc": "Extract stable workspace-relative paths from generated file receipts."
+        },
+        {
+          "name": "resolve_workspace_file_path",
+          "doc": "Resolve a workspace-relative file path without allowing traversal."
+        },
+        {
+          "name": "snapshot_workspace_files",
+          "doc": "Capture initial target-file signatures for over-completion detection."
+        },
+        {
+          "name": "round_files_changed_since",
+          "doc": "Return true when every path in a round was created or changed."
+        },
+        {
+          "name": "collect_existing_file_records",
+          "doc": "Return lightweight records for existing workspace files."
+        },
+        {
+          "name": "code_generation_round_marker_path",
+          "doc": "Return the persisted progress marker path for one task round."
+        },
+        {
+          "name": "workspace_file_signature",
+          "doc": "Return a stable file signature for a workspace-relative file."
+        },
+        {
+          "name": "write_code_generation_round_marker",
+          "doc": "Persist successful round progress so process-level retries can resume."
+        },
+        {
+          "name": "code_generation_round_marker_satisfied",
+          "doc": "Return whether a previous process already completed this round."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_workspace_fs",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/workspace_probe.py"
+    },
+    {
+      "type": "class",
+      "name": "TaskExecutionProfileV1",
+      "description": "Canonical task execution profile.",
+      "defined_in": "polaris/cells/director/tasking/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return a JSON-safe profile payload for runtime context and receipts."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskExecutionStrategyV1",
+      "description": "Execution strategy derived from a canonical task execution profile.",
+      "defined_in": "polaris/cells/director/tasking/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return a JSON-safe strategy payload for runtime context and audit."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskExecutionContractV1",
+      "description": "Shared contract for prompt, runtime controls, gates, and audit evidence.",
+      "defined_in": "polaris/cells/director/tasking/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return a JSON-safe execution contract payload."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ExecutionEnvelopeV1",
+      "description": "Immutable Director execution envelope.",
+      "defined_in": "polaris/cells/director/tasking/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return a JSON-safe execution envelope payload."
+        }
+      ]
     },
     {
       "type": "class",
@@ -1212,6 +2151,60 @@
     },
     {
       "type": "function",
+      "name": "_to_str_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_path_roles",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_float",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "coerce_task_execution_profile",
+      "description": "Return a profile contract from a JSON-safe profile payload.",
+      "defined_in": "polaris/cells/director/tasking/public/execution_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_task_execution_profile",
+      "description": "Resolve the canonical Director task execution profile.",
+      "defined_in": "polaris/cells/director/tasking/public/execution_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_task_execution_strategy",
+      "description": "Resolve runtime budgets and audit requirements for a task profile.",
+      "defined_in": "polaris/cells/director/tasking/public/execution_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "apply_task_execution_strategy_overrides",
+      "description": "Apply strategy controls to trusted runtime context and metadata.",
+      "defined_in": "polaris/cells/director/tasking/public/execution_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "build_task_language_section",
+      "description": "Build the Director language identity and prompt guidance section.",
+      "defined_in": "polaris/cells/director/tasking/public/execution_guidance.py"
+    },
+    {
+      "type": "function",
       "name": "_run_async",
       "description": "Bridge async TaskService calls into sync contract handlers.",
       "defined_in": "polaris/cells/director/tasking/public/service.py"
@@ -1265,1484 +2258,10 @@
       "defined_in": "polaris/cells/director/tasking/public/service.py"
     },
     {
-      "type": "class",
-      "name": "TestGetPythonBootstrap",
-      "description": "Tests for Python bootstrap functions.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_bootstrap_template_catalog.py",
-      "methods": [
-        {
-          "name": "test_get_python_bootstrap_files",
-          "doc": "Test get_python_bootstrap_files returns expected structure."
-        },
-        {
-          "name": "test_get_python_bootstrap_has_content",
-          "doc": "Test Python bootstrap files have content."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestGetTypeScriptBootstrap",
-      "description": "Tests for TypeScript bootstrap functions.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_bootstrap_template_catalog.py",
-      "methods": [
-        {
-          "name": "test_get_typescript_bootstrap_files",
-          "doc": "Test get_typescript_bootstrap_files returns expected structure."
-        },
-        {
-          "name": "test_typescript_bootstrap_has_valid_package_json",
-          "doc": "Test TypeScript bootstrap has valid package.json."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestGetGenericBootstrap",
-      "description": "Tests for generic bootstrap functions.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_bootstrap_template_catalog.py",
-      "methods": [
-        {
-          "name": "test_get_generic_bootstrap_files",
-          "doc": "Test get_generic_bootstrap_files returns expected structure."
-        },
-        {
-          "name": "test_generic_bootstrap_has_tui_runtime",
-          "doc": "Test generic bootstrap includes tui_runtime.md."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestGetIntelligentBootstrapFiles",
-      "description": "Tests for intelligent bootstrap selection.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_bootstrap_template_catalog.py",
-      "methods": [
-        {
-          "name": "test_intelligent_python",
-          "doc": "Test intelligent bootstrap for Python."
-        },
-        {
-          "name": "test_intelligent_fastapi",
-          "doc": "Test intelligent bootstrap for FastAPI."
-        },
-        {
-          "name": "test_intelligent_flask",
-          "doc": "Test intelligent bootstrap for Flask."
-        },
-        {
-          "name": "test_intelligent_typescript",
-          "doc": "Test intelligent bootstrap for TypeScript."
-        },
-        {
-          "name": "test_intelligent_javascript",
-          "doc": "Test intelligent bootstrap for JavaScript."
-        },
-        {
-          "name": "test_intelligent_go",
-          "doc": "Test intelligent bootstrap for Go."
-        },
-        {
-          "name": "test_intelligent_rust",
-          "doc": "Test intelligent bootstrap for Rust."
-        },
-        {
-          "name": "test_intelligent_unknown_language_falls_back_to_generic",
-          "doc": "Test unknown language falls back to generic bootstrap."
-        },
-        {
-          "name": "test_intelligent_empty_subject_uses_default",
-          "doc": "Test empty subject uses default value."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestBootstrapContent",
-      "description": "Tests for bootstrap content quality.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_bootstrap_template_catalog.py",
-      "methods": [
-        {
-          "name": "test_python_fastapi_has_imports",
-          "doc": "Test FastAPI bootstrap has proper imports."
-        },
-        {
-          "name": "test_rust_has_tokio_dependency",
-          "doc": "Test Rust bootstrap has tokio dependency."
-        },
-        {
-          "name": "test_go_has_flag_package",
-          "doc": "Test Go bootstrap uses flag package."
-        },
-        {
-          "name": "test_typescript_has_interface",
-          "doc": "Test TypeScript bootstrap has interface."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCreateTaskCommandV1HappyPath",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_minimal_fields",
-          "doc": ""
-        },
-        {
-          "name": "test_default_priority_is_medium",
-          "doc": ""
-        },
-        {
-          "name": "test_default_description_is_empty_string",
-          "doc": ""
-        },
-        {
-          "name": "test_default_blocked_by_is_empty_list",
-          "doc": ""
-        },
-        {
-          "name": "test_metadata_dict_is_copied",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCreateTaskCommandV1EdgeCases",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_empty_subject_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_whitespace_subject_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_workspace_raises",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCancelTaskCommandV1",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_valid_command",
-          "doc": ""
-        },
-        {
-          "name": "test_default_reason_is_empty",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_task_id_raises",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTaskStatusQueryV1",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_default_limit_is_50",
-          "doc": ""
-        },
-        {
-          "name": "test_all_optional_fields_none_by_default",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTaskResultQueryV1",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_valid_query",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_task_id_raises",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTaskCreatedResultV1",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_success_result_needs_no_error",
-          "doc": ""
-        },
-        {
-          "name": "test_failed_result_without_error_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_failed_result_with_error_code_valid",
-          "doc": ""
-        },
-        {
-          "name": "test_default_status_is_pending",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTaskStatusResultV1",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_result_with_empty_tasks",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTaskResultResultV1",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_success_result",
-          "doc": ""
-        },
-        {
-          "name": "test_failed_result_without_error_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_evidence_default_empty_list",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestDirectorTaskingError",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_default_code",
-          "doc": ""
-        },
-        {
-          "name": "test_custom_code_and_details",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_message_raises",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTaskQueueConfigDefaults",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_default_max_queue_size",
-          "doc": ""
-        },
-        {
-          "name": "test_default_timeout_is_300",
-          "doc": ""
-        },
-        {
-          "name": "test_priority_and_dependency_tracking_enabled",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestWorkerPoolConfigDefaults",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_default_min_workers_is_1",
-          "doc": ""
-        },
-        {
-          "name": "test_default_max_consecutive_failures_is_3",
-          "doc": ""
-        },
-        {
-          "name": "test_default_heartbeat_timeout_is_60",
-          "doc": ""
-        },
-        {
-          "name": "test_default_auto_scaling_is_enabled",
-          "doc": ""
-        },
-        {
-          "name": "test_custom_values_accepted",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestBootstrapCatalogPureFunctions",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_get_generic_bootstrap_returns_list",
-          "doc": ""
-        },
-        {
-          "name": "test_get_generic_bootstrap_items_have_path_and_content",
-          "doc": ""
-        },
-        {
-          "name": "test_get_python_bootstrap_returns_list",
-          "doc": ""
-        },
-        {
-          "name": "test_get_typescript_bootstrap_returns_list",
-          "doc": ""
-        },
-        {
-          "name": "test_get_intelligent_bootstrap_python_returns_list",
-          "doc": ""
-        },
-        {
-          "name": "test_get_intelligent_bootstrap_unknown_language_falls_back_to_generic",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestPublicSurfaceReExports",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_contracts_exported",
-          "doc": ""
-        },
-        {
-          "name": "test_services_exported",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestInternalModuleReExports",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_bootstrap_functions_exported",
-          "doc": ""
-        },
-        {
-          "name": "test_task_lifecycle_exported",
-          "doc": ""
-        },
-        {
-          "name": "test_worker_exported",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestGateResult",
-      "description": "Tests for GateResult dataclass.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_existence_gate.py",
-      "methods": [
-        {
-          "name": "test_gate_result_creation",
-          "doc": "Test basic GateResult creation."
-        },
-        {
-          "name": "test_gate_result_as_dict",
-          "doc": "Test GateResult.as_dict() method."
-        },
-        {
-          "name": "test_gate_result_empty_lists",
-          "doc": "Test GateResult with empty lists."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCheckMode",
-      "description": "Tests for check_mode function.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_existence_gate.py",
-      "methods": [
-        {
-          "name": "test_check_mode_all_existing",
-          "doc": "Test check_mode when all target files exist."
-        },
-        {
-          "name": "test_check_mode_all_missing",
-          "doc": "Test check_mode when all target files are missing."
-        },
-        {
-          "name": "test_check_mode_mixed",
-          "doc": "Test check_mode with mixed existing and missing files."
-        },
-        {
-          "name": "test_check_mode_empty_targets",
-          "doc": "Test check_mode with empty target list."
-        },
-        {
-          "name": "test_check_mode_normalizes_paths",
-          "doc": "Test that check_mode normalizes paths correctly."
-        },
-        {
-          "name": "test_check_mode_with_mode_hint_create",
-          "doc": "Test check_mode with explicit 'create' hint."
-        },
-        {
-          "name": "test_check_mode_with_mode_hint_modify",
-          "doc": "Test check_mode with explicit 'modify' hint."
-        },
-        {
-          "name": "test_check_mode_whitespace_handling",
-          "doc": "Test check_mode handles whitespace in paths."
-        },
-        {
-          "name": "test_check_mode_backslash_normalization",
-          "doc": "Test that Windows backslashes are normalized."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestHelpers",
-      "description": "Tests for helper functions.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_existence_gate.py",
-      "methods": [
-        {
-          "name": "test_is_pure_create_true",
-          "doc": "Test is_pure_create returns True for pure creation."
-        },
-        {
-          "name": "test_is_pure_create_false_when_mode_not_create",
-          "doc": "Test is_pure_create returns False when mode is not create."
-        },
-        {
-          "name": "test_is_pure_create_false_when_some_exist",
-          "doc": "Test is_pure_create returns False when some files exist."
-        },
-        {
-          "name": "test_is_any_missing_true",
-          "doc": "Test is_any_missing returns True when files are missing."
-        },
-        {
-          "name": "test_is_any_missing_false",
-          "doc": "Test is_any_missing returns False when all exist."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestExecutionModeType",
-      "description": "Tests for ExecutionMode type alias.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_existence_gate.py",
-      "methods": [
-        {
-          "name": "test_execution_mode_values",
-          "doc": "Test that ExecutionMode accepts valid values."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCheckModeCaseInsensitive",
-      "description": "L2-12 regression: a declared target whose only on-disk match differs in",
-      "defined_in": "polaris/cells/director/tasking/tests/test_existence_gate.py",
-      "methods": [
-        {
-          "name": "test_declared_lowercase_resolves_to_uppercase_on_disk",
-          "doc": ""
-        },
-        {
-          "name": "test_case_variant_in_subdir_is_matched",
-          "doc": ""
-        },
-        {
-          "name": "test_genuinely_absent_file_still_missing",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestFileApplyService",
-      "description": "Tests for FileApplyService class.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_file_apply_service.py",
-      "methods": [
-        {
-          "name": "test_service_initialization",
-          "doc": "Test FileApplyService initialization."
-        },
-        {
-          "name": "test_service_with_message_bus",
-          "doc": "Test FileApplyService with message bus."
-        },
-        {
-          "name": "test_write_files_empty_list",
-          "doc": "Test write_files with empty list."
-        },
-        {
-          "name": "test_write_files_skips_empty_entries",
-          "doc": "Test write_files skips entries without path or content."
-        },
-        {
-          "name": "test_write_files_blocks_agents_forbidden_path",
-          "doc": "write_files must not bypass AGENTS.md policy."
-        },
-        {
-          "name": "test_apply_response_operations_reports_fenced_policy_denial",
-          "doc": "Fenced direct writes should return policy errors instead of silent no_changes."
-        },
-        {
-          "name": "test_apply_response_operations_blocks_fenced_file_outside_allowed_scope",
-          "doc": "Director proposal apply must not write outside the round scope."
-        },
-        {
-          "name": "test_collect_workspace_files_empty_list",
-          "doc": "Test collect_workspace_files with empty list."
-        },
-        {
-          "name": "test_collect_workspace_files_nonexistent",
-          "doc": "Test collect_workspace_files with non-existent files."
-        },
-        {
-          "name": "test_collect_workspace_files_existing",
-          "doc": "Test collect_workspace_files with existing files."
-        },
-        {
-          "name": "test_collect_workspace_files_deduplication",
-          "doc": "Test collect_workspace_files deduplicates paths."
-        },
-        {
-          "name": "test_collect_workspace_files_unicode_content",
-          "doc": "Test collect_workspace_files handles unicode content."
-        },
-        {
-          "name": "test_calculate_diff_stats",
-          "doc": "Test calculate_diff_stats method."
-        },
-        {
-          "name": "test_calculate_diff_stats_identical",
-          "doc": "Test calculate_diff_stats with identical content."
-        },
-        {
-          "name": "test_calculate_diff_stats_empty_to_content",
-          "doc": "Test calculate_diff_stats from empty to content."
-        },
-        {
-          "name": "test_apply_response_operations_no_response",
-          "doc": "Test apply_response_operations with empty response."
-        },
-        {
-          "name": "test_apply_response_operations_accepts_fenced_file_block",
-          "doc": "Regression: Director proposal bridge emits ```file: path fences."
-        },
-        {
-          "name": "test_apply_response_operations_rejects_invalid_fenced_json",
-          "doc": "Invalid structured files must not be written as successful Director output."
-        },
-        {
-          "name": "test_apply_response_operations_rolls_back_invalid_json_patch",
-          "doc": "A bad JSON patch must be rejected and rolled back before task success."
-        },
-        {
-          "name": "test_apply_response_operations_rolls_back_patch_outside_allowed_scope",
-          "doc": "Protocol writes that exceed Director scope must be rolled back."
-        },
-        {
-          "name": "test_apply_response_operations_accepts_nested_markdown_fences",
-          "doc": "Regression: nested README fences must not become bogus file paths."
-        },
-        {
-          "name": "test_apply_response_operations_strips_codex_usage_footer_between_fenced_files",
-          "doc": "Regression: Codex CLI usage comments after fences are not file content."
-        },
-        {
-          "name": "test_apply_response_operations_recovers_fenced_files_after_failed_patch",
-          "doc": "Regression: one bad leading PATCH_FILE must not discard valid file blocks."
-        },
-        {
-          "name": "test_apply_response_operations_recovers_fenced_files_before_integrity_block",
-          "doc": "Fenced file blocks are valid even when a leading PATCH_FILE is malformed."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestApplyIntegrity",
-      "description": "Tests for ApplyIntegrity dataclass.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_patch_apply_engine.py",
-      "methods": [
-        {
-          "name": "test_apply_integrity_valid",
-          "doc": "Test ApplyIntegrity with valid state."
-        },
-        {
-          "name": "test_apply_integrity_with_errors",
-          "doc": "Test ApplyIntegrity with errors."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestValidateBeforeApply",
-      "description": "Tests for validate_before_apply function.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_patch_apply_engine.py",
-      "methods": [
-        {
-          "name": "test_validate_empty_response",
-          "doc": "Test validation with empty response."
-        },
-        {
-          "name": "test_validate_response_with_operations",
-          "doc": "Test validation with a response carrying a real file operation."
-        },
-        {
-          "name": "test_validate_bare_fence_without_file_target_is_rejected",
-          "doc": "A bare ```python fence names no file — applying it would require"
-        },
-        {
-          "name": "test_validate_unclosed_patch_file",
-          "doc": "Test validation detects unclosed PATCH_FILE block."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestParseOperations",
-      "description": "Tests for parse_*_operations functions.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_patch_apply_engine.py",
-      "methods": [
-        {
-          "name": "test_parse_all_operations_empty",
-          "doc": "Test parse_all_operations with empty input."
-        },
-        {
-          "name": "test_parse_full_file_blocks",
-          "doc": "Test parse_full_file_blocks function."
-        },
-        {
-          "name": "test_parse_search_replace_blocks",
-          "doc": "Test parse_search_replace_blocks function."
-        },
-        {
-          "name": "test_parse_delete_operations",
-          "doc": "Test parse_delete_operations function."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestApplyOperation",
-      "description": "Tests for apply_operation function.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_patch_apply_engine.py",
-      "methods": [
-        {
-          "name": "test_apply_operation_imports",
-          "doc": "Test that apply_operation can be imported."
-        },
-        {
-          "name": "test_apply_all_operations_imports",
-          "doc": "Test that apply_all_operations can be imported."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestApplyResult",
-      "description": "Tests for ApplyResult dataclass.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_patch_apply_engine.py",
-      "methods": [
-        {
-          "name": "test_apply_result_creation",
-          "doc": "Test ApplyResult basic creation."
-        },
-        {
-          "name": "test_apply_result_with_failures",
-          "doc": "Test ApplyResult with failed operations."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestExports",
-      "description": "Tests for module exports.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_patch_apply_engine.py",
-      "methods": [
-        {
-          "name": "test_all_exports_present",
-          "doc": "Test that expected exports are available."
-        },
-        {
-          "name": "test_edit_type_exports",
-          "doc": "Test that EditType is exported."
-        },
-        {
-          "name": "test_error_code_exports",
-          "doc": "Test that ErrorCode is exported."
-        },
-        {
-          "name": "test_file_operation_exports",
-          "doc": "Test that FileOperation is exported."
-        },
-        {
-          "name": "test_operation_result_exports",
-          "doc": "Test that OperationResult is exported."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCreateTask",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_public_service_contracts.py",
-      "methods": [
-        {
-          "name": "test_create_returns_real_task",
-          "doc": ""
-        },
-        {
-          "name": "test_unknown_priority_falls_back_to_medium",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestQueryTaskStatus",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_public_service_contracts.py",
-      "methods": [
-        {
-          "name": "test_status_by_id_roundtrip",
-          "doc": ""
-        },
-        {
-          "name": "test_unknown_task_id_reports_not_found",
-          "doc": ""
-        },
-        {
-          "name": "test_list_with_invalid_status_filter_fails_closed",
-          "doc": ""
-        },
-        {
-          "name": "test_list_respects_limit",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCancelTask",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_public_service_contracts.py",
-      "methods": [
-        {
-          "name": "test_cancel_pending_task",
-          "doc": ""
-        },
-        {
-          "name": "test_cancel_unknown_task_reports_not_found",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestQueryTaskResult",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_public_service_contracts.py",
-      "methods": [
-        {
-          "name": "test_result_for_non_terminal_task",
-          "doc": ""
-        },
-        {
-          "name": "test_result_for_cancelled_task_is_failure",
-          "doc": ""
-        },
-        {
-          "name": "test_unknown_task_reports_not_found",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestServiceCache",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_public_service_contracts.py",
-      "methods": [
-        {
-          "name": "test_same_workspace_shares_service",
-          "doc": ""
-        },
-        {
-          "name": "test_reset_drops_cached_services",
-          "doc": ""
-        }
-      ]
-    },
-    {
       "type": "function",
-      "name": "_isolated_services",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_public_service_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "_workspace",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_public_service_contracts.py"
-    },
-    {
-      "type": "class",
-      "name": "TestRepairResult",
-      "description": "Tests for RepairResult dataclass.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_repair_service.py",
-      "methods": [
-        {
-          "name": "test_repair_result_creation",
-          "doc": "Test basic RepairResult creation."
-        },
-        {
-          "name": "test_repair_result_failure",
-          "doc": "Test RepairResult with failure."
-        },
-        {
-          "name": "test_repair_result_to_dict",
-          "doc": "Test RepairResult.to_dict() method."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestRepairContext",
-      "description": "Tests for RepairContext dataclass.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_repair_service.py",
-      "methods": [
-        {
-          "name": "test_repair_context_defaults",
-          "doc": "Test RepairContext default values."
-        },
-        {
-          "name": "test_repair_context_custom_values",
-          "doc": "Test RepairContext with custom values."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestRepairService",
-      "description": "Tests for RepairService class.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_repair_service.py",
-      "methods": [
-        {
-          "name": "test_repair_service_initialization",
-          "doc": "Test RepairService initialization."
-        },
-        {
-          "name": "test_repair_service_with_executor",
-          "doc": "Test RepairService with custom executor."
-        },
-        {
-          "name": "executor",
-          "doc": ""
-        },
-        {
-          "name": "test_should_attempt_repair_audit_passed",
-          "doc": "Test should_attempt_repair when audit passed."
-        },
-        {
-          "name": "test_should_attempt_repair_budget_exhausted",
-          "doc": "Test should_attempt_repair when build budget exhausted."
-        },
-        {
-          "name": "test_should_attempt_repair_stalled",
-          "doc": "Test should_attempt_repair when progress is stalled."
-        },
-        {
-          "name": "test_should_attempt_repair_missing_targets",
-          "doc": "Test should_attempt_repair when there are missing targets."
-        },
-        {
-          "name": "test_should_attempt_repair_unresolved_imports",
-          "doc": "Test should_attempt_repair when there are unresolved imports."
-        },
-        {
-          "name": "executor",
-          "doc": ""
-        },
-        {
-          "name": "executor",
-          "doc": ""
-        },
-        {
-          "name": "executor",
-          "doc": ""
-        },
-        {
-          "name": "executor",
-          "doc": ""
-        },
-        {
-          "name": "test_extract_missing_files",
-          "doc": "Test _extract_missing_files method."
-        },
-        {
-          "name": "test_extract_missing_files_empty",
-          "doc": "Test _extract_missing_files with empty input."
-        },
-        {
-          "name": "test_compute_repair_scope",
-          "doc": "Test _compute_repair_scope method."
-        },
-        {
-          "name": "test_build_repair_brief",
-          "doc": "Test _build_repair_brief method."
-        },
-        {
-          "name": "test_get_repair_history",
-          "doc": "Test get_repair_history method."
-        },
-        {
-          "name": "test_get_stats_empty",
-          "doc": "Test get_stats with no history."
-        },
-        {
-          "name": "test_get_stats_with_history",
-          "doc": "Test get_stats with repair history."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "test_runner_module_exists",
-      "description": "Test that the module can be imported.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_task_execution_runner.py"
-    },
-    {
-      "type": "class",
-      "name": "TestTaskQueueConfig",
-      "description": "Tests for TaskQueueConfig dataclass.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_task_lifecycle_service.py",
-      "methods": [
-        {
-          "name": "test_default_values",
-          "doc": "Test TaskQueueConfig default values."
-        },
-        {
-          "name": "test_custom_values",
-          "doc": "Test TaskQueueConfig with custom values."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTaskService",
-      "description": "Tests for TaskService class.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_task_lifecycle_service.py",
-      "methods": [
-        {
-          "name": "mock_deps",
-          "doc": "Create mock dependencies for TaskService."
-        },
-        {
-          "name": "task_service",
-          "doc": "Create TaskService instance for testing."
-        },
-        {
-          "name": "on_complete",
-          "doc": ""
-        },
-        {
-          "name": "on_fail",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestDependencyGraph",
-      "description": "Tests for dependency graph functionality.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_task_lifecycle_service.py",
-      "methods": [
-        {
-          "name": "mock_deps",
-          "doc": "Create mock dependencies."
-        },
-        {
-          "name": "task_service",
-          "doc": "Create TaskService instance."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestVerificationMethods",
-      "description": "Tests for verification methods.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_task_lifecycle_service.py",
-      "methods": [
-        {
-          "name": "mock_deps",
-          "doc": "Create mock dependencies."
-        },
-        {
-          "name": "task_service",
-          "doc": "Create TaskService instance."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestEvidenceCollection",
-      "description": "Tests for evidence collection.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_task_lifecycle_service.py",
-      "methods": [
-        {
-          "name": "mock_deps",
-          "doc": "Create mock dependencies."
-        },
-        {
-          "name": "task_service",
-          "doc": "Create TaskService instance."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCodeGenerationResult",
-      "description": "Tests for CodeGenerationResult dataclass.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
-      "methods": [
-        {
-          "name": "test_creation_success",
-          "doc": "Test CodeGenerationResult creation with success."
-        },
-        {
-          "name": "test_creation_failure",
-          "doc": "Test CodeGenerationResult creation with failure."
-        },
-        {
-          "name": "test_creation_with_duration",
-          "doc": "Test CodeGenerationResult with duration."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestWorkerExecutor",
-      "description": "Tests for WorkerExecutor class.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
-      "methods": [
-        {
-          "name": "test_executor_initialization",
-          "doc": "Test WorkerExecutor initialization."
-        },
-        {
-          "name": "test_executor_with_worker_id",
-          "doc": "Test WorkerExecutor with worker ID."
-        },
-        {
-          "name": "test_executor_with_message_bus",
-          "doc": "Test WorkerExecutor with message bus."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTaskClassification",
-      "description": "Tests for task classification.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
-      "methods": [
-        {
-          "name": "test_classify_bootstrap_task",
-          "doc": "Test classification of bootstrap task."
-        },
-        {
-          "name": "test_classify_init_task",
-          "doc": "Test classification of init task."
-        },
-        {
-          "name": "test_classify_file_creation",
-          "doc": "Test classification of file creation task."
-        },
-        {
-          "name": "test_classify_code_generation",
-          "doc": "Test classification of code generation task."
-        },
-        {
-          "name": "test_classify_generic",
-          "doc": "Test classification of generic task."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestTechStackExtraction",
-      "description": "Tests for technology stack extraction.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
-      "methods": [
-        {
-          "name": "test_extract_python_from_metadata",
-          "doc": "Test extracting Python from metadata."
-        },
-        {
-          "name": "test_extract_fastapi_framework",
-          "doc": "Test extracting FastAPI framework from description."
-        },
-        {
-          "name": "test_extract_typescript",
-          "doc": "Test extracting TypeScript from description."
-        },
-        {
-          "name": "test_extract_go",
-          "doc": "Test extracting Go from description."
-        },
-        {
-          "name": "test_extract_rust",
-          "doc": "Test extracting Rust from description."
-        },
-        {
-          "name": "test_extract_project_type_api",
-          "doc": "Test extracting API project type."
-        },
-        {
-          "name": "test_extract_unknown_language",
-          "doc": "Test with unknown language."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestHelperMethods",
-      "description": "Tests for helper methods.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
-      "methods": [
-        {
-          "name": "test_is_probable_file_path_with_extension",
-          "doc": "Test _is_probable_file_path with extension."
-        },
-        {
-          "name": "test_is_probable_file_path_with_slash",
-          "doc": "Test _is_probable_file_path with path separator."
-        },
-        {
-          "name": "test_is_probable_file_path_false",
-          "doc": "Test _is_probable_file_path returns False for non-paths."
-        },
-        {
-          "name": "test_normalize_target_files_from_metadata",
-          "doc": "Test _normalize_target_files from metadata."
-        },
-        {
-          "name": "test_normalize_target_files_filters_directory_scopes",
-          "doc": "Directory-like target hints must not be handed to file apply as files."
-        },
-        {
-          "name": "test_normalize_target_files_deduplication",
-          "doc": "Test _normalize_target_files deduplicates."
-        },
-        {
-          "name": "test_normalize_target_files_from_description",
-          "doc": "Test _normalize_target_files from description."
-        },
-        {
-          "name": "test_normalize_target_files_from_labeled_description_line",
-          "doc": "Target fallback accepts an explicit labeled path line."
-        },
-        {
-          "name": "test_normalize_target_files_ignores_acceptance_prose",
-          "doc": "Acceptance prose must not be mistaken for Director target files."
-        },
-        {
-          "name": "test_normalize_target_files_infers_from_scope_paths",
-          "doc": "Scope-only PM tasks are narrowed to concrete workspace files."
-        },
-        {
-          "name": "test_normalize_target_files_keeps_test_scopes_when_no_source_scope",
-          "doc": "Test-only scope tasks can still infer test targets."
-        },
-        {
-          "name": "test_code_generation_rounds_chunk_target_files_by_default",
-          "doc": "Default codegen splits larger target-file sets into manageable rounds."
-        },
-        {
-          "name": "test_code_generation_rounds_chunk_target_files_when_configured",
-          "doc": "Large target-file sets can still be split through an explicit env var."
-        },
-        {
-          "name": "test_code_generation_rounds_allow_chunk_opt_out",
-          "doc": "A zero chunk env keeps the legacy single-round behavior available."
-        },
-        {
-          "name": "test_code_generation_rounds_chunk_test_targets_by_default",
-          "doc": "Test/spec targets keep the default chunking so full chains can converge."
-        },
-        {
-          "name": "test_code_generation_rounds_keep_explicit_chunk_for_test_targets",
-          "doc": "Explicit chunk configuration still controls test/spec targets."
-        },
-        {
-          "name": "test_code_generation_rounds_infer_concrete_files_for_scope_only_task",
-          "doc": "Scope-only module tasks get concrete targets instead of a model-decided prompt."
-        },
-        {
-          "name": "test_verification_repair_round_includes_unresolved_import_candidates",
-          "doc": "Retry rounds can repair missing modules inferred from unresolved relative imports."
-        },
-        {
-          "name": "test_round_files_changed_since_detects_prior_runtime_output",
-          "doc": "Later rounds can be skipped when an earlier runtime call already wrote them."
-        },
-        {
-          "name": "test_round_files_changed_since_does_not_count_unchanged_existing_files",
-          "doc": "Existing files only satisfy a round if they changed after the task started."
-        },
-        {
-          "name": "test_codegen_round_marker_satisfied",
-          "doc": "Persisted round markers allow process-level retries to resume."
-        },
-        {
-          "name": "test_compact_prompt_fragment_short_text",
-          "doc": "Test _compact_prompt_fragment with short text."
-        },
-        {
-          "name": "test_compact_prompt_fragment_truncates_long_text",
-          "doc": "Test _compact_prompt_fragment truncates long text."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FakeCodeEngine",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
-      "methods": [
-        {
-          "name": "resolve_llm_timeout",
-          "doc": ""
-        },
-        {
-          "name": "resolve_task_timeout_budget",
-          "doc": ""
-        },
-        {
-          "name": "remaining_timeout",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FakeCodeEngine",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
-      "methods": [
-        {
-          "name": "resolve_llm_timeout",
-          "doc": ""
-        },
-        {
-          "name": "resolve_task_timeout_budget",
-          "doc": ""
-        },
-        {
-          "name": "remaining_timeout",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FakeCodeEngine",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
-      "methods": [
-        {
-          "name": "resolve_llm_timeout",
-          "doc": ""
-        },
-        {
-          "name": "resolve_task_timeout_budget",
-          "doc": ""
-        },
-        {
-          "name": "remaining_timeout",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FakeCodeEngine",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
-      "methods": [
-        {
-          "name": "resolve_llm_timeout",
-          "doc": ""
-        },
-        {
-          "name": "resolve_task_timeout_budget",
-          "doc": ""
-        },
-        {
-          "name": "remaining_timeout",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FakeCodeEngine",
-      "description": "",
-      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
-      "methods": [
-        {
-          "name": "resolve_llm_timeout",
-          "doc": ""
-        },
-        {
-          "name": "resolve_task_timeout_budget",
-          "doc": ""
-        },
-        {
-          "name": "remaining_timeout",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestExecutionMethods",
-      "description": "Tests for execution methods.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
-      "methods": [
-        {
-          "name": "test_resolve_llm_call_timeout_hint_from_metadata",
-          "doc": "Contracts may explicitly override per-call LLM timeout."
-        },
-        {
-          "name": "test_resolve_llm_call_timeout_hint_from_director_env",
-          "doc": "Director runtime env may override the platform default."
-        },
-        {
-          "name": "test_resolve_llm_call_timeout_hint_uses_runtime_codegen_default",
-          "doc": "Runtime codegen gets a larger default for slower provider-backed calls."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestPolicyViolation",
-      "description": "Tests for policy violation handling.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
-      "methods": [
-        {
-          "name": "test_raise_code_writing_forbidden",
-          "doc": "Test _raise_code_writing_forbidden raises exception."
-        },
-        {
-          "name": "test_fallback_code_files_raises",
-          "doc": "Test _fallback_code_files raises policy error."
-        },
-        {
-          "name": "test_deterministic_repair_enabled_returns_false",
-          "doc": "Test _deterministic_repair_enabled returns False."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestWorkerServiceExecutionBroker",
-      "description": "Tests for execution_broker integration in WorkerService.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_worker_pool_service.py",
-      "methods": [
-        {
-          "name": "test_execution_broker_imports",
-          "doc": "Test that execution_broker imports are available."
-        },
-        {
-          "name": "test_worker_service_has_execution_broker_imports",
-          "doc": "Test that worker_pool_service imports execution_broker correctly."
-        },
-        {
-          "name": "test_task_result_from_process_preserves_stdout_business_failure",
-          "doc": "A clean subprocess exit can still carry a failed Director task result."
-        },
-        {
-          "name": "test_task_result_from_process_falls_back_to_broker_failure",
-          "doc": "Missing TaskResult JSON still returns a concrete process failure."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestWorkerPoolConfig",
-      "description": "Tests for WorkerPoolConfig.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_worker_pool_service.py",
-      "methods": [
-        {
-          "name": "test_default_config",
-          "doc": "Test default configuration values."
-        },
-        {
-          "name": "test_custom_config",
-          "doc": "Test custom configuration values."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_process_snapshot",
-      "description": "Build a minimal subprocess snapshot for result parsing tests.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_worker_pool_service.py"
-    },
-    {
-      "type": "function",
-      "name": "mock_task_service",
-      "description": "Create a mock task service.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_worker_pool_service.py"
-    },
-    {
-      "type": "function",
-      "name": "worker_service",
-      "description": "Create a WorkerService instance for testing.",
-      "defined_in": "polaris/cells/director/tasking/tests/test_worker_pool_service.py"
+      "name": "build_director_execution_profile_snapshot",
+      "description": "Return the canonical Director execution profile payload and hash.",
+      "defined_in": "polaris/cells/director/tasking/public/service.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

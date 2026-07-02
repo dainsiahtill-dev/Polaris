@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:46.888260Z",
-  "source_hash": "cecd9bf03b57b339",
+  "generated_at": "2026-07-02T03:36:27.887555Z",
+  "source_hash": "e4b000f0d84e0014",
   "cell_id": "context.engine",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -90,10 +90,6 @@
           "doc": "True when the derived descriptor cache exists (``context.catalog`` output)."
         },
         {
-          "name": "add_documents",
-          "doc": "Deprecated: graph-constrained search does not ingest arbitrary documents."
-        },
-        {
           "name": "_generate_query_hash",
           "doc": "Generate a unique hash for the query and limit."
         },
@@ -165,10 +161,36 @@
     },
     {
       "type": "class",
+      "name": "QueryFinalProviderRequestAuditV1",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FinalProviderRequestAuditResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "ContextEngineError",
       "description": "Raised when graph-constrained context assembly fails.",
       "defined_in": "polaris/cells/context/engine/public/contracts.py",
       "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/contracts.py"
     },
     {
       "type": "function",
@@ -186,6 +208,18 @@
       "type": "function",
       "name": "get_search_service",
       "description": "Return the graph-constrained semantic search service via the public boundary.",
+      "defined_in": "polaris/cells/context/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_context_hash_from_ref",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_final_provider_request_audit",
+      "description": "Read final provider request audit evidence from a stored ContextOS snapshot.",
       "defined_in": "polaris/cells/context/engine/public/service.py"
     },
     {
@@ -241,6 +275,48 @@
       "name": "_coerce_int",
       "description": "",
       "defined_in": "polaris/cells/context/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "context_snapshot_candidates",
+      "description": "Return bounded storage candidates for a ContextOS snapshot hash.",
+      "defined_in": "polaris/cells/context/engine/public/snapshot_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "add",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/snapshot_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "default_kernelone_runtime_root",
+      "description": "Return the default KernelOne runtime root for ``workspace``.",
+      "defined_in": "polaris/cells/context/engine/public/snapshot_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "instance_runtime_root_candidates",
+      "description": "Return registered instance runtime roots that exactly match ``workspace``.",
+      "defined_in": "polaris/cells/context/engine/public/snapshot_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "sort_key",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/snapshot_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/snapshot_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_field",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/snapshot_paths.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

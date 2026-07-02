@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:48.747295Z",
-  "source_hash": "700e12524471fd98",
+  "generated_at": "2026-07-02T03:36:28.985962Z",
+  "source_hash": "c748e14fa10eb23c",
   "cell_id": "orchestration.pm_planning",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -56,7 +56,7 @@
         },
         {
           "name": "_save",
-          "doc": "Atomically persist a record to ``{decision_id}.json``."
+          "doc": "Atomically persist a record to ``{decision_id}.json`` via KFS."
         },
         {
           "name": "_load_path",
@@ -307,7 +307,7 @@
         },
         {
           "name": "_save",
-          "doc": "Atomically persist a record to ``{milestone_id}.json``."
+          "doc": "Atomically persist a record to ``{milestone_id}.json`` via KFS."
         },
         {
           "name": "_load_path",
@@ -646,6 +646,12 @@
       "type": "function",
       "name": "_split_target_files_and_directory_scopes",
       "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_complete_target_files_from_file_scopes",
+      "description": "Keep file-level PM scope and Director target hints consistent.",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
     },
     {
@@ -1064,15 +1070,807 @@
     },
     {
       "type": "function",
-      "name": "_write_text_atomic",
-      "description": "Atomically write UTF-8 ``text`` to ``path`` (temp companion + replace).",
+      "name": "build_pm_project_report",
+      "description": "Gather the live PM stores, compose the report, write it, return a summary.",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
     },
     {
       "type": "function",
-      "name": "build_pm_project_report",
-      "description": "Gather the live PM stores, compose the report, write it, return a summary.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+      "name": "build_card3d_pm_required_domain_contract",
+      "description": "Return the canonical Card3D PM task decomposition contract.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_domain_contracts_enabled",
+      "description": "Return whether project-specific game/card3d PM domain contracts are active.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "should_apply_card3d_pm_domain_contract",
+      "description": "Return whether PM prompt text describes the Card3D multiplayer scenario.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_game_domain_path_roots",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_card3d_domain_path_roots",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_card3d_domain_target_files",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_path_matches_game_domain",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_path_matches_card3d_domain",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_path_matches_card3d_detection_domain",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_game_policy_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_sanitize_game_policy_paths_in_place",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_sanitize_game_dependency_policy_value",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_sanitize_game_dependency_policy_in_place",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_sanitize_language_contract_paths_in_place",
+      "description": "Make PM contract file evidence match the declared/inferred project language.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_infer_primary_contract_language",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_primary_language_value",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_projection",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_sanitize_go_contract_task_paths_in_place",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_go_foreign_file_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_collapse_go_file_as_directory_path",
+      "description": "Collapse impossible paths like ``src/models/model.go/index.ts``.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_infer_go_target_files_for_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_go_scope_has_existing_target",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_go_existing_targets_for_scope",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_go_contract_prefers_src_layout",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_go_model_representative_file",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_go_engine_representative_file",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_go_representative_file_for_scope",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_go_contract_task_text",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_go_text_target_files_for_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_go_contract_file_paths_from_text",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_go_task_is_verification_only",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_sanitize_go_contract_text_value",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_sanitize_go_contract_text",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "collapse_match",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_forbidden_game_dependency_policy",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_game_domains_for_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_card3d_domains_for_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_game_task_has_policy_risk",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_game_stack_mutating_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_has_exact_seed_stack_targets",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_game_task_has_non_seed_stack_path",
+      "description": "Return True when a game task targets paths outside the seed TS stack.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_card3d_task_is_unanchored_fallback",
+      "description": "Return True for generic fallback rows that cannot guide card3d delivery.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_remove_card3d_policy_incompatible_tasks_in_place",
+      "description": "Remove stack-mutating tasks from card3d contracts before domain repair.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_remove_game_policy_incompatible_tasks_in_place",
+      "description": "Remove narrow or stack-mutating tasks from game contracts.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_card3d_text_hints",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_domain_text_hints_enabled",
+      "description": "Opt-in gate for KEYWORD-driven domain task injection (CLAUDE.md §8 fix).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_card3d_pm_contract",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_game_pm_contract",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_workspace_planning_hint_text",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_has_game_planning_hints",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_has_card3d_planning_hints",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_attach_workspace_game_context_if_needed",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_covered_card3d_domains",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_missing_card3d_required_test_targets",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_card3d_tests_task_has_placeholder_cleanup_contract",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_covered_game_domains",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_game_domain_repair_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_card3d_domain_repair_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_missing_card3d_domain_tasks",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_card3d_tests_task_contract",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_missing_game_domain_tasks",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_fragile_game_acceptance",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_primary_task_evidence_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_sanitize_fragile_game_acceptance_in_place",
+      "description": "Replace brittle game-randomness acceptance with invariant checks.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_contains_pm_contract_governance_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_declared_scope_paths_from_text",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_paths_cover_declared_scope",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_file_scope_paths_missing_from_targets",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_documentation_only_task_scope",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_director_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_file_targets",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_write_file_targets",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_test_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_task_boundary_bucket",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_js_domain_source_identity",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_duplicate_js_domain_source_path_issues",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_domain_split_repair_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_task_is_too_broad",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_task_split_groups",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_task_boundary_steps",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_file_evidence_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_dependency_values",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_set_task_dependencies",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_remap_dependency_refs",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_unique_split_task_id",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_split_director_task_boundary_contracts_in_place",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "evaluate_pm_task_quality",
+      "description": "Evaluate PM task quality and return quality report.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "autofix_pm_contract_for_quality",
+      "description": "Attempt to autofix PM contract quality issues.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "check_quality_promote_candidate",
+      "description": "Determine if a quality candidate should be promoted.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "get_quality_gate_config",
+      "description": "Get quality gate configuration from environment.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_strip_wrapping_quotes",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_path_list",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_dep_list",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_id_at_position",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_dependency_ref",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_dependency_refs_in_place",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_unknown_dependency_refs",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_text",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_pm_contract_output_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_domain_path_roots",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_concrete_pm_scope_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_file_like_pm_scope_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_prefix",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_path_parts_contain_parent",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_relative_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_workspace_bound_concrete_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_directory_scope_evidenced",
+      "description": "Accept a bare directory token when evidence shows it is a real dir.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_pm_path_to_workspace_relative",
+      "description": "Coerce an LLM-provided PM path into a workspace-relative path.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedupe_paths",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_derive_scope_from_pm_targets",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_replace_external_roots_in_text",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_strip_unfulfillable_vendored_targets_in_place",
+      "description": "Remove third-party minified asset paths from write-target fields.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_steer_single_file_ui_tasks_in_place",
+      "description": "Split single-HTML interactive-app tasks into a modular file contract.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_sanitize_pm_task_paths_in_place",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_drop_unknown_dependency_refs_in_place",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_task_scope_paths",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_task_delivery_paths",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_last_task_id",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_unique_task_id",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_unique_text_item",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_contains_prompt_leakage",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_title_is_too_short",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_measurable_acceptance_anchor",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_executable_or_file_acceptance_anchor",
+      "description": "Return True when acceptance proves an executable check or concrete file evidence.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_placeholder_or_manifest_only_acceptance",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedupe_text_items",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_artifact_quality_relative_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_deterministic_scaffold_residue_paths",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_scope_paths_for_target_files",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_deterministic_scaffold_residue_cleanup_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_representative_workspace_file_for_scope",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_fallback_file_evidence_path_for_scope",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
     },
     {
       "type": "class",
@@ -1158,7 +1956,7 @@
         },
         {
           "name": "_save",
-          "doc": "Atomically persist a record to ``{entry_id}.json``."
+          "doc": "Atomically persist a record to ``{entry_id}.json`` via KFS."
         },
         {
           "name": "_load_path",
@@ -1549,540 +2347,6 @@
       "name": "render_status_markdown",
       "description": "Render a :class:`PmStatusRollup` to a deterministic markdown report.",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/status_rollup.py"
-    },
-    {
-      "type": "function",
-      "name": "build_card3d_pm_required_domain_contract",
-      "description": "Return the canonical Card3D PM task decomposition contract.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_domain_contracts_enabled",
-      "description": "Return whether project-specific game/card3d PM domain contracts are active.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "should_apply_card3d_pm_domain_contract",
-      "description": "Return whether PM prompt text describes the Card3D multiplayer scenario.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_strip_wrapping_quotes",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_path_list",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_dep_list",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_id_at_position",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_resolve_dependency_ref",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_dependency_refs_in_place",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_unknown_dependency_refs",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_text",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_path",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_canonical_pm_contract_output_path",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_domain_path_roots",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_game_domain_path_roots",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_card3d_domain_path_roots",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_card3d_domain_target_files",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_path_matches_game_domain",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_path_matches_card3d_domain",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_path_matches_card3d_detection_domain",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_is_concrete_pm_scope_path",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_is_file_like_pm_scope_path",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_workspace_prefix",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_path_parts_contain_parent",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_workspace_relative_path",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_is_workspace_bound_concrete_path",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_is_directory_scope_evidenced",
-      "description": "Accept a bare directory token when evidence shows it is a real dir.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_coerce_pm_path_to_workspace_relative",
-      "description": "Coerce an LLM-provided PM path into a workspace-relative path.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_dedupe_paths",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_derive_scope_from_pm_targets",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_replace_external_roots_in_text",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_strip_unfulfillable_vendored_targets_in_place",
-      "description": "Remove third-party minified asset paths from write-target fields.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_steer_single_file_ui_tasks_in_place",
-      "description": "Split single-HTML interactive-app tasks into a modular file contract.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_sanitize_pm_task_paths_in_place",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_game_policy_path",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_sanitize_game_policy_paths_in_place",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_sanitize_game_dependency_policy_value",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_sanitize_game_dependency_policy_in_place",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_has_forbidden_game_dependency_policy",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_game_domains_for_task",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_card3d_domains_for_task",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_game_task_has_policy_risk",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_is_game_stack_mutating_path",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_has_exact_seed_stack_targets",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_game_task_has_non_seed_stack_path",
-      "description": "Return True when a game task targets paths outside the seed TS stack.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_card3d_task_is_unanchored_fallback",
-      "description": "Return True for generic fallback rows that cannot guide card3d delivery.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_remove_card3d_policy_incompatible_tasks_in_place",
-      "description": "Remove stack-mutating tasks from card3d contracts before domain repair.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_remove_game_policy_incompatible_tasks_in_place",
-      "description": "Remove narrow or stack-mutating tasks from game contracts.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_drop_unknown_dependency_refs_in_place",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_collect_task_scope_paths",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_collect_task_delivery_paths",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_has_card3d_text_hints",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_domain_text_hints_enabled",
-      "description": "Opt-in gate for KEYWORD-driven domain task injection (CLAUDE.md §8 fix).",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_is_card3d_pm_contract",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_is_game_pm_contract",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_read_workspace_planning_hint_text",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_workspace_has_game_planning_hints",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_workspace_has_card3d_planning_hints",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_attach_workspace_game_context_if_needed",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_covered_card3d_domains",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_missing_card3d_required_test_targets",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_card3d_tests_task_has_placeholder_cleanup_contract",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_covered_game_domains",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_last_task_id",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_unique_task_id",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_game_domain_repair_task",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_card3d_domain_repair_task",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_append_missing_card3d_domain_tasks",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_append_unique_text_item",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_repair_card3d_tests_task_contract",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_append_missing_game_domain_tasks",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_contains_prompt_leakage",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_title_is_too_short",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_has_measurable_acceptance_anchor",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_has_executable_or_file_acceptance_anchor",
-      "description": "Return True when acceptance proves an executable check or concrete file evidence.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_has_fragile_game_acceptance",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_dedupe_text_items",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_artifact_quality_relative_path",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_deterministic_scaffold_residue_paths",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_scope_paths_for_target_files",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_append_deterministic_scaffold_residue_cleanup_task",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_representative_workspace_file_for_scope",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_fallback_file_evidence_path_for_scope",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_primary_task_evidence_path",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_sanitize_fragile_game_acceptance_in_place",
-      "description": "Replace brittle game-randomness acceptance with invariant checks.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "evaluate_pm_task_quality",
-      "description": "Evaluate PM task quality and return quality report.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "autofix_pm_contract_for_quality",
-      "description": "Attempt to autofix PM contract quality issues.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "check_quality_promote_candidate",
-      "description": "Determine if a quality candidate should be promoted.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "get_quality_gate_config",
-      "description": "Get quality gate configuration from environment.",
-      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
     },
     {
       "type": "class",

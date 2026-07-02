@@ -1,10 +1,338 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:55.203254Z",
-  "source_hash": "df70910960c3c6a2",
+  "generated_at": "2026-07-02T03:36:33.470573Z",
+  "source_hash": "308258c68beb7f59",
   "cell_id": "resident.autonomy",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "function",
+      "name": "resident_agi_context_snapshot_refs",
+      "description": "Return ContextOS snapshot refs accepted by Resident AGI evidence gates.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_audit_pack.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_role_registry_payload",
+      "description": "Return the shared role-registry evidence required by Resident AGI.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_audit_pack.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_boundary_summary",
+      "description": "Summarize Resident AGI decision boundaries for hard-rule checks.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_audit_pack.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_audit_refs",
+      "description": "Collect evidence references visible to a Resident AGI decision turn.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_audit_pack.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_director_repair_contract_payload",
+      "description": "Return the AGI-visible boundary for Director hard-coded repairs.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_audit_pack.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_run_ledger_summary",
+      "description": "Read the platform Run Ledger projection and return a compact summary.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_audit_pack.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_evidence_gate",
+      "description": "Recommend whether AGI should continue, block, or request evidence.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_audit_pack.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_hard_rule_gate",
+      "description": "Evaluate non-negotiable platform invariants before AGI judgement.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_audit_pack.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_unique_strings",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_audit_pack.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_evidence_interface_recommendations",
+      "description": "Return audit/context/verifier interfaces the AGI should consider next.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_audit_pack.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_decision_profile",
+      "description": "Return the machine-readable execution profile for a Resident AGI turn.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_audit_pack.py"
+    },
+    {
+      "type": "function",
+      "name": "build_resident_agi_audit_pack",
+      "description": "Build the canonical evidence pack for Resident AGI role turns.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_audit_pack.py"
+    },
+    {
+      "type": "function",
+      "name": "build_resident_agi_capability_surface",
+      "description": "Return platform capabilities the Resident/AGI may use for decisions.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_capability_surface.py"
+    },
+    {
+      "type": "function",
+      "name": "build_resident_agi_decision_boundaries",
+      "description": "Return the governed boundary between platform rules and AGI judgement.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_capability_surface.py"
+    },
+    {
+      "type": "function",
+      "name": "build_resident_agi_decision_capabilities",
+      "description": "Return decision types the Resident AGI may judge under evidence contracts.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_capability_surface.py"
+    },
+    {
+      "type": "function",
+      "name": "build_resident_agi_decision_capability_registry",
+      "description": "Return the machine-readable split between platform and AGI-owned decisions.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_capability_surface.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_capability_domain",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_capability_surface.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_capability_execution_authority",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_capability_surface.py"
+    },
+    {
+      "type": "function",
+      "name": "build_resident_agi_capability_access_registry",
+      "description": "Return access-mode groups AGI and UI can consume without re-deriving policy.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_capability_surface.py"
+    },
+    {
+      "type": "function",
+      "name": "build_resident_agi_evidence_interface_contract",
+      "description": "Validate decision evidence interfaces against the capability surface.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_capability_surface.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedupe_participation_scopes",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_capability_surface.py"
+    },
+    {
+      "type": "function",
+      "name": "_capability_participation_scopes",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_capability_surface.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_participation_policy_payload",
+      "description": "Return discoverable Resident AGI participation switches.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_capability_surface.py"
+    },
+    {
+      "type": "function",
+      "name": "build_resident_agi_authority_matrix",
+      "description": "Return the machine-readable split between platform rules and AGI judgement.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_capability_surface.py"
+    },
+    {
+      "type": "function",
+      "name": "build_resident_agi_decision_boundary_policy",
+      "description": "Return the explicit policy split between hard code, AGI judgement, and governed handoff.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_capability_surface.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_capability_surface_payload",
+      "description": "Return a serializable capability-surface payload.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_capability_surface.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_director_repair_strategy_catalog_payload",
+      "description": "Return Director hard-coded repair strategy evidence for AGI judgement.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_capability_surface.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_director_repair_advisory_policy_payload",
+      "description": "Return Director repair advisory policy evidence for AGI judgement.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_capability_surface.py"
+    },
+    {
+      "type": "class",
+      "name": "ResidentAgiTacticalActionSpec",
+      "description": "Declarative contract for one Resident AGI tactical-console action.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_actions.py",
+      "methods": [
+        {
+          "name": "to_payload",
+          "doc": "Return the serializable action payload consumed by the UI."
+        },
+        {
+          "name": "to_catalog_item",
+          "doc": "Return the read-only catalog representation."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_tactical_action_specs",
+      "description": "Return the canonical Resident AGI tactical-console action specs.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_actions.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_tactical_action_spec",
+      "description": "Return one action spec by id.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_actions.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_tactical_action_payload",
+      "description": "Build a serializable action payload from the canonical registry.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_actions.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_tactical_action_catalog",
+      "description": "Return the read-only action catalog exposed to chat and UI projections.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_actions.py"
+    },
+    {
+      "type": "function",
+      "name": "_intent",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_dict",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_list",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_int",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_gate_status",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_refs",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_scope_key",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_participation",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_evidence_refs",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_blockers",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_goal_status_counts",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_goal_progress_percent",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_mission_brief",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_trace",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_suggested_actions",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_participation_gate",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_decision_route",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_message",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "build_resident_agi_tactical_chat_response",
+      "description": "Compose a readable AGI-console response from existing Resident facts.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/agi_tactical_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_tick_autonomy_boundary",
+      "description": "Return the Resident tick boundary that keeps AGI judgement on RoleRuntime.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/autonomy_boundary.py"
+    },
     {
       "type": "class",
       "name": "CapabilityGraph",
@@ -469,6 +797,10 @@
           "doc": ""
         },
         {
+          "name": "_emit_decision_recorded_event",
+          "doc": "Project a durable decision trace entry into the runtime audit stream."
+        },
+        {
           "name": "_stage_goal_locked",
           "doc": ""
         },
@@ -758,6 +1090,13 @@
     },
     {
       "type": "class",
+      "name": "ResidentAgiParticipationPatch",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "DecisionOptionPayload",
       "description": "",
       "defined_in": "polaris/delivery/http/v2/resident.py",
@@ -799,6 +1138,27 @@
       "methods": []
     },
     {
+      "type": "class",
+      "name": "ResidentAgiDecisionTurnRequest",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResidentAgiTacticalChatRequest",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResidentAgiTacticalActionRequest",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py",
+      "methods": []
+    },
+    {
       "type": "function",
       "name": "_resolve_workspace",
       "description": "",
@@ -814,6 +1174,48 @@
       "type": "function",
       "name": "resident_status",
       "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_capabilities",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_audit_pack",
+      "description": "Return the read-only evidence pack a Resident AGI turn should inspect.",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_evidence_interfaces",
+      "description": "Return safe evidence-interface readiness for Resident AGI decisions.",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_handoffs",
+      "description": "Return Resident AGI handoff inbox items derived from decision trace.",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_repair_advisory_overlay",
+      "description": "Return the latest persisted Resident AGI repair advisory overlay.",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_tactical_chat",
+      "description": "Return a Resident AGI tactical-console response from public evidence.",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_tactical_action_catalog",
+      "description": "Return the read-only Resident AGI tactical-console action catalog.",
       "defined_in": "polaris/delivery/http/v2/resident.py"
     },
     {
@@ -843,6 +1245,18 @@
     {
       "type": "function",
       "name": "resident_patch_identity",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_participation",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_patch_agi_participation",
       "description": "",
       "defined_in": "polaris/delivery/http/v2/resident.py"
     },

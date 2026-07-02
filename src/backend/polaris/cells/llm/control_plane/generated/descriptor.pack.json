@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:53.641953Z",
-  "source_hash": "4bb31bb520138c12",
+  "generated_at": "2026-07-02T03:36:32.309838Z",
+  "source_hash": "19619b31723eeca0",
   "cell_id": "llm.control_plane",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -115,7 +115,7 @@
     {
       "type": "class",
       "name": "HRAgent",
-      "description": "HR role agent for role/provider config operations.",
+      "description": "Model-governance advisor with a legacy HR class name.",
       "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py",
       "methods": [
         {
@@ -353,6 +353,14 @@
           "doc": "获取 Provider 实例 (向后兼容)."
         },
         {
+          "name": "_resolve_role_model_binding",
+          "doc": "Return the globally configured provider/model pair for this role."
+        },
+        {
+          "name": "_stream_event_value",
+          "doc": "Normalize enum and string stream event types to the canonical value."
+        },
+        {
           "name": "_build_prompt",
           "doc": ""
         },
@@ -523,6 +531,18 @@
     },
     {
       "type": "function",
+      "name": "_provider_health_result",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_health_entry",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
       "name": "_read_json_file",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/llm.py"
@@ -603,6 +623,18 @@
       "type": "function",
       "name": "get_role_runtime_status_v2",
       "description": "Get runtime status for a single LLM role.",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
+      "name": "llm_health_v2",
+      "description": "Perform health checks on all configured LLM providers.",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
+      "name": "llm_metrics_v2",
+      "description": "Get aggregated LLM call metrics within a sliding time window.",
       "defined_in": "polaris/delivery/http/routers/llm.py"
     },
     {
@@ -771,6 +803,18 @@
       "type": "function",
       "name": "_safe_event_id",
       "description": "",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_json_file",
+      "description": "Read and parse a UTF-8 JSON file (blocking; run via asyncio.to_thread).",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_text_file",
+      "description": "Read a UTF-8 text file (blocking; run via asyncio.to_thread).",
       "defined_in": "polaris/delivery/http/routers/tests.py"
     },
     {

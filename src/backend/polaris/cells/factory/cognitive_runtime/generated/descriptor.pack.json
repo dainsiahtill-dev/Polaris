@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:54.802712Z",
-  "source_hash": "d12fe2ce2b1fb38d",
+  "generated_at": "2026-07-02T03:36:32.844664Z",
+  "source_hash": "03083460a2cd9e62",
   "cell_id": "factory.cognitive_runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -25,6 +25,10 @@
         },
         {
           "name": "context_memory_service",
+          "doc": ""
+        },
+        {
+          "name": "_context_memory_service_for",
           "doc": ""
         },
         {
@@ -505,173 +509,6 @@
     },
     {
       "type": "function",
-      "name": "test_resolve_context_contract_validates_required_fields",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_lease_edit_scope_requires_non_empty_scope",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_validate_change_set_requires_allowed_scope",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_export_handoff_requires_positive_limit",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_rehydrate_handoff_requires_target_role",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_map_diff_to_cells_requires_changed_files",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_projection_compile_requires_requested_by",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_promote_or_reject_requires_projection_status",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_record_rollback_requires_reason",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
-    },
-    {
-      "type": "class",
-      "name": "_FakeRoleSessionService",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py",
-      "methods": [
-        {
-          "name": "get_context_config_dict",
-          "doc": ""
-        },
-        {
-          "name": "close",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "_FakeContextMemoryService",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py",
-      "methods": [
-        {
-          "name": "get_state_for_session",
-          "doc": ""
-        },
-        {
-          "name": "search_memory_for_session",
-          "doc": ""
-        },
-        {
-          "name": "read_episode_for_session",
-          "doc": ""
-        },
-        {
-          "name": "close",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "_Pack",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py",
-      "methods": []
-    },
-    {
-      "type": "function",
-      "name": "_build_store",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_public_service_resolves_context_scope_and_validation",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_fake_get_context",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_public_service_round_trips_receipts_and_handoffs",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_public_service_rehydrates_handoff_into_state_first_context",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_public_service_isolates_sqlite_state_per_workspace",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_store_factory",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_public_service_phase2_flow",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_public_service_map_diff_treats_missing_target_graph_as_soft_note",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_public_service_rejects_graph_catalog_path_outside_workspace",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_public_service_respects_cognitive_runtime_mode_off",
-      "description": "",
-      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
       "name": "_service_dependency",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
@@ -1096,18 +933,6 @@
       "defined_in": "polaris/domain/cognitive_runtime/models.py"
     },
     {
-      "type": "function",
-      "name": "test_context_handoff_pack_roundtrip_with_new_fields",
-      "description": "",
-      "defined_in": "polaris/domain/cognitive_runtime/tests/test_models.py"
-    },
-    {
-      "type": "function",
-      "name": "test_context_handoff_pack_backward_compat_without_new_fields",
-      "description": "Old payloads without the new fields should deserialize with defaults.",
-      "defined_in": "polaris/domain/cognitive_runtime/tests/test_models.py"
-    },
-    {
       "type": "class",
       "name": "CognitiveRuntimeMetrics",
       "description": "Frozen metrics result from Cognitive Runtime evaluation.",
@@ -1279,112 +1104,6 @@
           "doc": ""
         }
       ]
-    },
-    {
-      "type": "class",
-      "name": "TestCognitiveRuntimeMetrics",
-      "description": "Tests for CognitiveRuntimeMetrics frozen dataclass.",
-      "defined_in": "polaris/infrastructure/cognitive_runtime/tests/test_metrics_collector.py",
-      "methods": [
-        {
-          "name": "test_metrics_to_dict",
-          "doc": "Verify to_dict produces correct structure and rounding."
-        },
-        {
-          "name": "test_metrics_default_values",
-          "doc": "Verify default metrics have expected zero values."
-        },
-        {
-          "name": "test_metrics_are_frozen",
-          "doc": "Verify metrics dataclass is frozen."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCognitiveRuntimeMetricsCollector",
-      "description": "Tests for CognitiveRuntimeMetricsCollector.",
-      "defined_in": "polaris/infrastructure/cognitive_runtime/tests/test_metrics_collector.py",
-      "methods": [
-        {
-          "name": "test_collect_metrics_returns_dict",
-          "doc": "Verify collect_metrics returns a dict."
-        },
-        {
-          "name": "test_collect_metrics_empty_workspace",
-          "doc": "Verify metrics with no data returns zeros."
-        },
-        {
-          "name": "test_collect_metrics_with_receipts",
-          "doc": "Verify receipt_coverage is 1.0 when receipts exist."
-        },
-        {
-          "name": "test_collect_metrics_handoff_roundtrip",
-          "doc": "Verify handoff_roundtrip_success_rate calculation."
-        },
-        {
-          "name": "test_collect_metrics_handoff_no_receipt",
-          "doc": "Verify handoff_roundtrip_success_rate is 0 when no receipt after handoff."
-        },
-        {
-          "name": "test_collect_metrics_failure_rate",
-          "doc": "Verify receipt_write_failure_rate calculation."
-        },
-        {
-          "name": "test_collect_metrics_connection_error",
-          "doc": "Verify graceful handling of connection errors."
-        },
-        {
-          "name": "test_collect_metrics_multiple_sessions",
-          "doc": "Verify total_cases counts distinct sessions."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestMetricsCollectorEdgeCases",
-      "description": "Edge case tests for CognitiveRuntimeMetricsCollector.",
-      "defined_in": "polaris/infrastructure/cognitive_runtime/tests/test_metrics_collector.py",
-      "methods": [
-        {
-          "name": "test_workspace_override",
-          "doc": "Verify workspace parameter is properly used."
-        },
-        {
-          "name": "test_empty_session_id_handling",
-          "doc": "Verify handling of receipts without session_id."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_build_store",
-      "description": "Create a temporary workspace and database path.",
-      "defined_in": "polaris/infrastructure/cognitive_runtime/tests/test_metrics_collector.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_store",
-      "description": "",
-      "defined_in": "polaris/infrastructure/cognitive_runtime/tests/test_sqlite_store.py"
-    },
-    {
-      "type": "function",
-      "name": "test_sqlite_store_serializes_receipt_writes_across_threads",
-      "description": "",
-      "defined_in": "polaris/infrastructure/cognitive_runtime/tests/test_sqlite_store.py"
-    },
-    {
-      "type": "function",
-      "name": "_worker",
-      "description": "",
-      "defined_in": "polaris/infrastructure/cognitive_runtime/tests/test_sqlite_store.py"
-    },
-    {
-      "type": "function",
-      "name": "test_sqlite_store_close_rejects_new_writes",
-      "description": "",
-      "defined_in": "polaris/infrastructure/cognitive_runtime/tests/test_sqlite_store.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

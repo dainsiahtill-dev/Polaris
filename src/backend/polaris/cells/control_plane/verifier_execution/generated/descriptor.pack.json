@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T20:42:48.597457Z",
-  "source_hash": "20287be8c32c4966",
+  "generated_at": "2026-07-02T03:36:24.951480Z",
+  "source_hash": "f7c8ac3ffd893ce4",
   "cell_id": "control_plane.verifier_execution",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -79,42 +79,6 @@
       "name": "run_verifier_policy",
       "description": "Run enabled verifier providers and return a Run Ledger gate patch.",
       "defined_in": "polaris/cells/control_plane/verifier_execution/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_policy",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/verifier_execution/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_custom_script_verifier_is_disabled_without_environment_flag",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/verifier_execution/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_custom_script_verifier_executes_when_explicitly_enabled",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/verifier_execution/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_custom_script_verifier_accepts_gate_policy_fragment",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/verifier_execution/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_custom_script_verifier_rejects_path_traversal",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/verifier_execution/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_custom_script_verifier_reports_failure",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/verifier_execution/tests/test_public_service.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

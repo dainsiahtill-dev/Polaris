@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:45.518518Z",
-  "source_hash": "b71884d7110900a8",
+  "generated_at": "2026-07-02T03:36:25.871579Z",
+  "source_hash": "8fa63c5975662a6a",
   "cell_id": "director.task_consumer",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -14,6 +14,30 @@
     },
     {
       "type": "class",
+      "name": "InterfaceContractAmendmentRequiredError",
+      "description": "Execution evidence proved CE must revise the interface contract.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "InterfaceContractRepairRequiredError",
+      "description": "Execution evidence proved Director should repair within the interface contract.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "ScopeConflictDetector",
       "description": "Detect scope path conflicts with other in-progress tasks.",
       "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py",
@@ -23,7 +47,7 @@
           "doc": "Return True if any other IN_EXECUTION task shares scope paths with current task."
         },
         {
-          "name": "_extract_scope_paths",
+          "name": "extract_conflict_paths",
           "doc": ""
         },
         {
@@ -59,7 +83,7 @@
     {
       "type": "class",
       "name": "DirectorExecutionConsumer",
-      "description": "Director consumer with Safe Parallel support.",
+      "description": "Canonical TaskMarket consumer for ``pending_exec`` Director work.",
       "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py",
       "methods": [
         {
@@ -87,6 +111,10 @@
           "doc": "Process a single claimed execution task."
         },
         {
+          "name": "_append_final_convergence_event",
+          "doc": ""
+        },
+        {
           "name": "_register_compensation_actions",
           "doc": ""
         },
@@ -100,7 +128,7 @@
         },
         {
           "name": "run",
-          "doc": "Continuously poll and process PENDING_EXEC tasks until stop() is called."
+          "doc": "Continuously process PENDING_EXEC tasks until stop() is called."
         },
         {
           "name": "stop",
@@ -115,6 +143,42 @@
     {
       "type": "function",
       "name": "_normalize_task_market_route",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_validated_blueprint_handoff",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_handoff_validation_result",
+      "description": "Normalize legacy test shims and the strict production validation result.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_attach_handoff_validation_payload",
+      "description": "Project strict handoff evidence into the Director execution payload.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_job_token_from_payload",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping_copy",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_execution_timeout_seconds",
       "description": "",
       "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
     },
@@ -145,6 +209,24 @@
     {
       "type": "function",
       "name": "_allows_no_execution_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_verified_existing_scope_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_evidence_status",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_verified_existing_scope_covers_target",
       "description": "",
       "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
     },
@@ -246,6 +328,48 @@
     },
     {
       "type": "function",
+      "name": "_scan_director_artifact_quality_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_interface_contract_amendment_from_adapter_failure",
+      "description": "Return CE amendment evidence when artifact quality proves design drift.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_interface_contract_repair_from_adapter_failure",
+      "description": "Return Director repair evidence when the contract is valid but implementation is not.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_final_convergence_scan_scope",
+      "description": "Return existing files that represent the final Director output surface.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_final_convergence_failure",
+      "description": "Validate final files after all Director writes/fallbacks have settled.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_contract_amendment_scan_scope",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedupe_normalized_paths",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
       "name": "_pre_state_punch_list",
       "description": "施工现状勘察（缺陷清单 / punch list, Fix-13）。",
       "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
@@ -255,370 +379,6 @@
       "name": "_build_director_adapter_input",
       "description": "",
       "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
-    },
-    {
-      "type": "class",
-      "name": "TestDirectorExecutionConsumerInit",
-      "description": "",
-      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
-      "methods": [
-        {
-          "name": "test_valid_construction",
-          "doc": ""
-        },
-        {
-          "name": "test_custom_params",
-          "doc": ""
-        },
-        {
-          "name": "test_stop_event_initial_state",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FakeDirectorAdapter",
-      "description": "",
-      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FakeDirectorAdapter",
-      "description": "",
-      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FakeDirectorAdapter",
-      "description": "",
-      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestDirectorExecutionConsumerPollOnce",
-      "description": "",
-      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
-      "methods": [
-        {
-          "name": "test_no_claimable_tasks_returns_empty_list",
-          "doc": ""
-        },
-        {
-          "name": "test_successful_execution_acks_pending_qa",
-          "doc": "Verify director claims, executes, and advances to PENDING_QA."
-        },
-        {
-          "name": "test_direct_route_uses_pm_contract_without_blueprint",
-          "doc": "Legacy direct routes must not bypass ChiefEngineer blueprint metadata."
-        },
-        {
-          "name": "test_no_execution_evidence_requeues_pending_exec",
-          "doc": "Placeholder/no-evidence execution must not advance to QA."
-        },
-        {
-          "name": "test_step_target_not_in_changed_files_requeues",
-          "doc": "A fission step that changed OTHER files but not its declared"
-        },
-        {
-          "name": "test_direct_route_target_file_not_in_changed_files_requeues",
-          "doc": "ChiefEngineer-mediated single-file work must enforce target_files."
-        },
-        {
-          "name": "test_execute_task_forwards_bounce_teaching_to_adapter_context",
-          "doc": "A requeued step's last_failure must reach the adapter context —"
-        },
-        {
-          "name": "test_step_target_covered_advances_to_qa",
-          "doc": ""
-        },
-        {
-          "name": "test_execute_task_delegates_to_director_adapter_for_existing_workspace",
-          "doc": ""
-        },
-        {
-          "name": "test_execute_task_requeues_failed_director_adapter",
-          "doc": ""
-        },
-        {
-          "name": "test_successful_execution_registers_and_commits_compensation_actions",
-          "doc": ""
-        },
-        {
-          "name": "test_missing_blueprint_dead_letters",
-          "doc": "Verify task without blueprint_id is moved to dead_letter."
-        },
-        {
-          "name": "test_execution_failure_requeues_pending_exec",
-          "doc": "Verify execution failure requeues to pending_exec."
-        },
-        {
-          "name": "test_unrecoverable_execution_compensates_and_dead_letters",
-          "doc": ""
-        },
-        {
-          "name": "test_scope_conflict_when_safe_parallel_enabled",
-          "doc": "Verify scope conflict requeues when enable_safe_parallel=True."
-        },
-        {
-          "name": "test_execution_renews_lease_heartbeat",
-          "doc": ""
-        },
-        {
-          "name": "_slow_execute",
-          "doc": ""
-        },
-        {
-          "name": "test_active_claim_snapshot_is_visible_only_during_execution",
-          "doc": ""
-        },
-        {
-          "name": "_blocking_execute",
-          "doc": ""
-        },
-        {
-          "name": "_run_poll",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestScopeConflictDetector",
-      "description": "",
-      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
-      "methods": [
-        {
-          "name": "test_no_conflict_when_empty_scope",
-          "doc": ""
-        },
-        {
-          "name": "test_returns_false_regardless_of_service_response",
-          "doc": "No overlap -> no conflict."
-        },
-        {
-          "name": "test_detects_conflict_with_other_in_execution_scope_overlap",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestDirectorExecutionConsumerRunStop",
-      "description": "Tests for the run() / stop() durable consumer loop.",
-      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
-      "methods": [
-        {
-          "name": "test_run_polls_until_stop",
-          "doc": "run() loops until stop() signals _stop_event."
-        },
-        {
-          "name": "counting_poll",
-          "doc": ""
-        },
-        {
-          "name": "test_run_isolates_exceptions",
-          "doc": "Exceptions in poll_once do not kill the run loop."
-        },
-        {
-          "name": "flaky_poll",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestAdapterFailureMessage",
-      "description": "Fix-10 (live I3-r12): the market bounce carried only the generic",
-      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
-      "methods": [
-        {
-          "name": "_message",
-          "doc": ""
-        },
-        {
-          "name": "test_carries_first_quality_error_detail",
-          "doc": ""
-        },
-        {
-          "name": "test_detail_is_truncated",
-          "doc": ""
-        },
-        {
-          "name": "test_without_quality_errors_keeps_marker_only",
-          "doc": ""
-        },
-        {
-          "name": "test_blank_quality_entries_are_skipped",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestPreStatePunchList",
-      "description": "Fix-13 缺陷清单(punch list): 改建式步骤的施工单必须携带现状勘察 ——",
-      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
-      "methods": [
-        {
-          "name": "_punch",
-          "doc": ""
-        },
-        {
-          "name": "test_no_verify_returns_none",
-          "doc": ""
-        },
-        {
-          "name": "test_passing_pre_state_reports_exit_zero",
-          "doc": ""
-        },
-        {
-          "name": "test_failing_clauses_are_listed",
-          "doc": ""
-        },
-        {
-          "name": "test_state_carrying_chain_reports_whole_failure_only",
-          "doc": ""
-        },
-        {
-          "name": "test_top_level_or_reports_whole_failure_only",
-          "doc": ""
-        },
-        {
-          "name": "test_list_verify_is_joined",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestRepairShrinkGuard",
-      "description": "R7-C (I3-r28): deterministic anti-shrink backstop on repair turns —",
-      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
-      "methods": [
-        {
-          "name": "_prior_size",
-          "doc": ""
-        },
-        {
-          "name": "_shrink_error",
-          "doc": ""
-        },
-        {
-          "name": "_repair_payload",
-          "doc": ""
-        },
-        {
-          "name": "test_prior_size_returns_bytes_on_repair_turn",
-          "doc": ""
-        },
-        {
-          "name": "test_prior_size_none_without_last_failure",
-          "doc": ""
-        },
-        {
-          "name": "test_prior_size_none_when_target_absent",
-          "doc": ""
-        },
-        {
-          "name": "test_shrink_below_floor_returns_teaching_error",
-          "doc": ""
-        },
-        {
-          "name": "test_preserved_size_returns_none",
-          "doc": ""
-        },
-        {
-          "name": "test_tiny_prior_file_not_guarded",
-          "doc": ""
-        },
-        {
-          "name": "test_env_overrides_ratio",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestRepairShrinkGuardWiring",
-      "description": "",
-      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
-      "methods": [
-        {
-          "name": "test_shrunk_repair_requeues_pending_exec",
-          "doc": ""
-        },
-        {
-          "name": "_shrink_exec",
-          "doc": ""
-        },
-        {
-          "name": "test_preserving_repair_acks_pending_qa",
-          "doc": ""
-        },
-        {
-          "name": "_edit_exec",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FakeDirectorAdapter",
-      "description": "",
-      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FakeDirectorAdapter",
-      "description": "",
-      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestPunchListWiring",
-      "description": "",
-      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
-      "methods": [
-        {
-          "name": "test_execute_task_attaches_pre_state_verify_to_context",
-          "doc": ""
-        },
-        {
-          "name": "test_execute_task_injects_consumed_interfaces",
-          "doc": ""
-        }
-      ]
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

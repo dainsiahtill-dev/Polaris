@@ -1,10 +1,478 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:49.269974Z",
-  "source_hash": "06e88db9e07a5b13",
+  "generated_at": "2026-07-02T03:36:29.472455Z",
+  "source_hash": "488c49518a0bcc44",
   "cell_id": "orchestration.pm_dispatch",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "function",
+      "name": "_get_chief_engineer_service",
+      "description": "Lazy import for chief_engineer.blueprint to avoid module-level cross-Cell coupling.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/_lazy_imports.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_chief_engineer_blueprint_services",
+      "description": "Lazy import for chief_engineer.blueprint public blueprint generation.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/_lazy_imports.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_workflow_runtime",
+      "description": "Lazy import for workflow_runtime to avoid module-level cross-Cell coupling.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/_lazy_imports.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_task_market_services",
+      "description": "Lazy import for runtime.task_market to avoid module-level cross-Cell coupling.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/_lazy_imports.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_task_market_requeue_services",
+      "description": "Lazy import for supervisor requeue without widening module-level coupling.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/_lazy_imports.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_task_market_revision_services",
+      "description": "Lazy import for task_market revision/change-order contracts.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/_lazy_imports.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_task_market_consumers",
+      "description": "Lazy import for CE/Director/QA task-market consumers.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/_lazy_imports.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_shared_quality",
+      "description": "Lazy import for shared_quality to avoid circular imports.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/_lazy_imports.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_cognitive_runtime_services",
+      "description": "Lazy import for factory.cognitive_runtime public contracts.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/_lazy_imports.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_io_utils",
+      "description": "Lazy import for events to avoid circular imports.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/_lazy_imports.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_tasks_utils",
+      "description": "Return task utility functions from the Cell's own port module.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/_lazy_imports.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_shangshuling_port",
+      "description": "Return the cell-local Shangshuling port.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/_lazy_imports.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_traceability_safety",
+      "description": "Lazy import for traceability safety helpers.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/_lazy_imports.py"
+    },
+    {
+      "type": "function",
+      "name": "_nop_update_role_status",
+      "description": "No-op fallback when no callback is provided.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/engine_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "_chief_engineer_preflight_block_reason",
+      "description": "Return a non-empty reason when CE preflight must block dispatch.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/engine_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_chief_engineer_blocked_director_result",
+      "description": "Build a Director-compatible blocked result for failed CE preflight.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/engine_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_workflow_input",
+      "description": "Build the workflow submission input object.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/engine_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_director_workflow_result",
+      "description": "Normalize workflow submission outcome into Director result payload.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/engine_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "_stable_sha256",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_classify_integration_qa_evidence",
+      "description": "Classify integration QA evidence strength for audit consumers.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_context_snapshot_evidence",
+      "description": "Extract compact, stable Context OS evidence from a resolved snapshot.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_pm_dispatch_qa_cognitive_receipt",
+      "description": "Record Cognitive Runtime evidence for PM dispatch integration QA.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_attach_pm_dispatch_qa_cognitive_receipt",
+      "description": "Attach Cognitive Runtime receipt evidence and fail closed when required.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "run_integration_qa",
+      "description": "Run integration QA after dispatch.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_tasks_touch_docs_only",
+      "description": "Check if all tasks only touch docs.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_post_dispatch_integration_qa_result",
+      "description": "Create the baseline integration QA result payload.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_non_empty_mapping_value",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_lineage_payload_from_tasks",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_post_dispatch_skip_reason",
+      "description": "Set a deterministic skip reason. Returns True when execution should stop.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_verify_runner",
+      "description": "Resolve the verify runner used by integration QA.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_execute_post_dispatch_integration_qa",
+      "description": "Execute integration QA and mutate the result payload in place.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_integration_qa_failure_should_requeue",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_task_id",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_director_assigned_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_list_from_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_list_from_result_field",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_integration_qa_last_failure",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_integration_qa_verification_failure_report",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_integration_qa_rework_blueprint_context",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_generate_integration_qa_rework_blueprint",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_integration_qa_requeue_target_ids",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_requeue_director_tasks_after_integration_qa_failure",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_persist_post_dispatch_integration_qa_result",
+      "description": "Persist the integration QA result payload.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_integration_qa_job_token",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_post_dispatch_integration_qa_run_ledger_event",
+      "description": "Append platform Run Ledger evidence for integration QA.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_emit_post_dispatch_integration_qa_result",
+      "description": "Emit integration QA completion events after the result is persisted.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "run_post_dispatch_integration_qa",
+      "description": "Run project-level integration QA after task dispatch when all director tasks are done.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "record_dispatch_status_to_shangshuling",
+      "description": "Record task dispatch status to shangshuling.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/integration_qa.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_task_market_mode",
+      "description": "Resolve task-market mode to a stable internal value.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/task_market_publish.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_task_market_rollout_mode",
+      "description": "Resolve task-market rollout phase from environment.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/task_market_publish.py"
+    },
+    {
+      "type": "function",
+      "name": "_hash_payload",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/task_market_publish.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_revision_context",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/task_market_publish.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_task_dependencies",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/task_market_publish.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_bool",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/task_market_publish.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_task_market_route",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/task_market_publish.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_market_route_for_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/task_market_publish.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_market_stage_for_route",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/task_market_publish.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_market_lineage_snapshot",
+      "description": "Return task-market state scoped to this dispatch's published lineage.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/task_market_publish.py"
+    },
+    {
+      "type": "function",
+      "name": "_pool_trace",
+      "description": "Emit a Director-pool trace to stderr (captured by run wrappers) when",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_positive_int_env",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_bool_env",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_drive_role_workers",
+      "description": "Continuously drain ready stage items across a ROLE's worker pool.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_consumer_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_notify_pool",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_stop_pool",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_wait_for_pool_signal",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_wait_until_deadline",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_wake_bridge",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_batch_shows_live_backend",
+      "description": "True if the claim proves the bound backend ran (a resolved step or a",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_binding_provider_id",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_binding_model",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_binding_id",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_binding_slot_index",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_active_claim_snapshot",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_retire",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_run",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_drive_director_workers",
+      "description": "Byte-identical Director facade over the role-generalized :func:`_drive_role_workers`.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_log_director_backend_distribution",
+      "description": "Emit a one-line per-backend claim distribution so 4-Director load is visible.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/worker_pool.py"
+    },
     {
       "type": "class",
       "name": "DispatchCallbacks",
@@ -14,200 +482,20 @@
     },
     {
       "type": "function",
-      "name": "_pool_trace",
-      "description": "Emit a Director-pool trace to stderr (captured by run wrappers) when",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_nop_update_role_status",
-      "description": "No-op fallback when no callback is provided.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_get_chief_engineer_service",
-      "description": "Lazy import for chief_engineer.blueprint to avoid module-level cross-Cell coupling.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_get_workflow_runtime",
-      "description": "Lazy import for workflow_runtime to avoid module-level cross-Cell coupling.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_get_task_market_services",
-      "description": "Lazy import for runtime.task_market to avoid module-level cross-Cell coupling.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_get_task_market_requeue_services",
-      "description": "Lazy import for supervisor requeue without widening module-level coupling.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_get_task_market_revision_services",
-      "description": "Lazy import for task_market revision/change-order contracts.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_get_task_market_consumers",
-      "description": "Lazy import for CE/Director/QA task-market consumers.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_get_shared_quality",
-      "description": "Lazy import for shared_quality to avoid circular imports.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_classify_integration_qa_evidence",
-      "description": "Classify integration QA evidence strength for audit consumers.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_get_cognitive_runtime_services",
-      "description": "Lazy import for factory.cognitive_runtime public contracts.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_context_snapshot_evidence",
-      "description": "Extract compact, stable Context OS evidence from a resolved snapshot.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_record_pm_dispatch_qa_cognitive_receipt",
-      "description": "Record Cognitive Runtime evidence for PM dispatch integration QA.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_attach_pm_dispatch_qa_cognitive_receipt",
-      "description": "Attach Cognitive Runtime receipt evidence and fail closed when required.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_get_io_utils",
-      "description": "Lazy import for events to avoid circular imports.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_get_tasks_utils",
-      "description": "Return task utility functions from the Cell's own port module.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_get_shangshuling_port",
-      "description": "Return the cell-local Shangshuling port.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_get_traceability_safety",
-      "description": "Lazy import for traceability safety helpers.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_chief_engineer_preflight_block_reason",
-      "description": "Return a non-empty reason when CE preflight must block dispatch.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_chief_engineer_blocked_director_result",
-      "description": "Build a Director-compatible blocked result for failed CE preflight.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_resolve_task_market_mode",
-      "description": "Resolve task-market mode to a stable internal value.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_resolve_task_market_rollout_mode",
-      "description": "Resolve task-market rollout phase from environment.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_hash_payload",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_revision_context",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_task_dependencies",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_bool",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_task_market_route",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_market_route_for_task",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_market_stage_for_route",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_sync_revision_and_change_order",
-      "description": "Best-effort revision registration and change-order submission.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_read_positive_int_env",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_read_bool_env",
-      "description": "",
+      "name": "_load_dispatch_submodule",
+      "description": "Load a sibling ``internal.dispatch`` submodule, importable in isolation.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
     },
     {
       "type": "function",
       "name": "_endpoint_reachable",
       "description": "True if an OpenAI-compatible ``/v1/models`` endpoint responds.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_base_url_requires_anonymous_probe",
+      "description": "Return true when an anonymous ``/models`` probe is a reliable health signal.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
     },
     {
@@ -236,68 +524,20 @@
     },
     {
       "type": "function",
-      "name": "_drive_role_workers",
-      "description": "Continuously drain ready stage items across a ROLE's worker pool.",
+      "name": "_is_transient_worker_requeue_result",
+      "description": "Return True for expected transient worker results that requeued work.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
     },
     {
       "type": "function",
-      "name": "_batch_shows_live_backend",
-      "description": "True if the claim proves the bound backend ran (a resolved step or a",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_binding_provider_id",
+      "name": "_build_inline_qa_consumer",
       "description": "",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
     },
     {
       "type": "function",
-      "name": "_binding_model",
+      "name": "_write_mainline_full_integration_qa_result",
       "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_binding_id",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_binding_slot_index",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_active_claim_snapshot",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_retire",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_run",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_drive_director_workers",
-      "description": "Byte-identical Director facade over the role-generalized :func:`_drive_role_workers`.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_log_director_backend_distribution",
-      "description": "Emit a one-line per-backend claim distribution so 4-Director load is visible.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
     },
     {
@@ -345,19 +585,19 @@
     {
       "type": "function",
       "name": "_shadow_publish_dispatch_tasks_to_task_market",
-      "description": "Best-effort task market publication for dispatch tasks.",
+      "description": "Compatibility helper that now publishes only governed design work.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_sync_revision_and_change_order",
+      "description": "Best-effort revision registration and change-order submission.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
     },
     {
       "type": "function",
       "name": "resolve_director_dispatch_tasks",
       "description": "Resolve tasks ready for Director dispatch.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "record_dispatch_status_to_shangshuling",
-      "description": "Record task dispatch status to shangshuling.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
     },
     {
@@ -380,18 +620,6 @@
     },
     {
       "type": "function",
-      "name": "_build_workflow_input",
-      "description": "Build the workflow submission input object.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_director_workflow_result",
-      "description": "Normalize workflow submission outcome into Director result payload.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
       "name": "_emit_engine_dispatch_status",
       "description": "Emit a structured engine dispatch status event.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
@@ -400,108 +628,6 @@
       "type": "function",
       "name": "run_engine_dispatch",
       "description": "Run engine dispatch for tasks.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "run_integration_qa",
-      "description": "Run integration QA after dispatch.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_tasks_touch_docs_only",
-      "description": "Check if all tasks only touch docs.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_post_dispatch_integration_qa_result",
-      "description": "Create the baseline integration QA result payload.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_post_dispatch_skip_reason",
-      "description": "Set a deterministic skip reason. Returns True when execution should stop.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_resolve_verify_runner",
-      "description": "Resolve the verify runner used by integration QA.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_execute_post_dispatch_integration_qa",
-      "description": "Execute integration QA and mutate the result payload in place.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_integration_qa_failure_should_requeue",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_task_id",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_is_director_assigned_task",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_string_list_from_task",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_string_list_from_result_field",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_integration_qa_last_failure",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_resolve_integration_qa_requeue_target_ids",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_requeue_director_tasks_after_integration_qa_failure",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_persist_post_dispatch_integration_qa_result",
-      "description": "Persist the integration QA result payload.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_emit_post_dispatch_integration_qa_result",
-      "description": "Emit integration QA completion events after the result is persisted.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "run_post_dispatch_integration_qa",
-      "description": "Run project-level integration QA after task dispatch when all director tasks are done.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
     },
     {
@@ -719,8 +845,68 @@
     },
     {
       "type": "function",
+      "name": "_canonical_factory_stage_sequence",
+      "description": "Return the unique PM -> Chief Engineer -> Director factory task chain.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_id_from_payload",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_validated_chief_engineer_handoff",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_chief_engineer_handoff",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_path_mtime",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_find_chief_engineer_blueprint_for_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_attach_chief_engineer_handoff_from_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
       "name": "_pm_task_rows_from_payload",
       "description": "Extract PM task rows from the persisted PM task contract payload.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_augment_task_delivery_targets",
+      "description": "Include explicit file tokens from task text in Director write scope.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_explicit_task_file_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_task_file_token",
+      "description": "",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
     },
     {
@@ -731,8 +917,14 @@
     },
     {
       "type": "function",
+      "name": "_candidate_pm_task_payload_paths",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
       "name": "_load_pm_task_contract_rows",
-      "description": "Read runtime/contracts/pm_tasks.contract.json if it exists.",
+      "description": "Read persisted PM task payloads from contracts, runtime plans, or Factory mirrors.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
     },
     {
@@ -750,7 +942,13 @@
     {
       "type": "function",
       "name": "_director_role_entry_input",
-      "description": "",
+      "description": "Build Director user message with full PM task contract injection (D-09).",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_pm_task_contract_section",
+      "description": "Build structured PM task contract section for Director prompt context (D-09).",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
     },
     {

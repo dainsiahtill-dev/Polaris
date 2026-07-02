@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:54.182267Z",
-  "source_hash": "2b93ba953b020337",
+  "generated_at": "2026-07-02T03:36:32.685692Z",
+  "source_hash": "7065d1d339706cfa",
   "cell_id": "llm.provider_runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -133,6 +133,12 @@
     {
       "type": "function",
       "name": "_truthy_config_flag",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/runtime_support.py"
+    },
+    {
+      "type": "function",
+      "name": "_minimax_director_contract_supported",
       "description": "",
       "defined_in": "polaris/cells/llm/provider_runtime/internal/runtime_support.py"
     },

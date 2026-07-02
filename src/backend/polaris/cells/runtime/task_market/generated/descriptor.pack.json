@@ -1,10 +1,410 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:55.704820Z",
-  "source_hash": "1ce341ff1a202544",
+  "generated_at": "2026-07-02T03:36:33.733784Z",
+  "source_hash": "1893fac6f39d706f",
   "cell_id": "runtime.task_market",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "function",
+      "name": "_stable_outbox_id",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/internal/_outbox.py"
+    },
+    {
+      "type": "class",
+      "name": "ServiceBaseMixin",
+      "description": "Shared transactional plumbing shared by every task-market mixin.",
+      "defined_in": "polaris/cells/runtime/task_market/internal/_service_base.py",
+      "methods": [
+        {
+          "name": "_maybe_start_reconciliation_loop",
+          "doc": ""
+        },
+        {
+          "name": "_escalate_to_human_review_no_lock",
+          "doc": ""
+        },
+        {
+          "name": "_compensate_task_no_lock",
+          "doc": ""
+        },
+        {
+          "name": "_compensate_children_for_parent_failure",
+          "doc": ""
+        },
+        {
+          "name": "_strip_compensation_side_effects",
+          "doc": ""
+        },
+        {
+          "name": "_collect_compensation_transitions",
+          "doc": ""
+        },
+        {
+          "name": "_collect_compensation_outbox",
+          "doc": ""
+        },
+        {
+          "name": "reconcile_parent_statuses",
+          "doc": ""
+        },
+        {
+          "name": "requeue_drifted_items",
+          "doc": ""
+        },
+        {
+          "name": "sweep_escalation_timeouts",
+          "doc": ""
+        },
+        {
+          "name": "relay_outbox_messages",
+          "doc": ""
+        },
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_lock",
+          "doc": ""
+        },
+        {
+          "name": "_read_bool_env",
+          "doc": ""
+        },
+        {
+          "name": "_read_float_env",
+          "doc": ""
+        },
+        {
+          "name": "_get_store",
+          "doc": "Return the appropriate store backend (lazy)."
+        },
+        {
+          "name": "_atomic_save_changed_items",
+          "doc": "Persist only rows whose read-version baseline is known."
+        },
+        {
+          "name": "_coerce_optional_bool",
+          "doc": ""
+        },
+        {
+          "name": "_payload_flag",
+          "doc": ""
+        },
+        {
+          "name": "_task_market_session_id",
+          "doc": ""
+        },
+        {
+          "name": "_record_cognitive_runtime_lifecycle_receipt",
+          "doc": "Record a Cognitive Runtime receipt for a task-market lifecycle event."
+        },
+        {
+          "name": "_attach_lifecycle_evidence",
+          "doc": ""
+        },
+        {
+          "name": "_observe",
+          "doc": "Record operation metrics, structured logging, and OTel span."
+        },
+        {
+          "name": "_require_item",
+          "doc": ""
+        },
+        {
+          "name": "_result_from_item",
+          "doc": ""
+        },
+        {
+          "name": "_maybe_emit_webhook",
+          "doc": "Emit a webhook outbox record if callback_url is provided."
+        },
+        {
+          "name": "_build_outbox_record",
+          "doc": "Build an outbox record for later atomic write or direct append."
+        },
+        {
+          "name": "_emit_fact",
+          "doc": "Write an outbox record for async fact_stream delivery via relay."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "HumanReviewMixin",
+      "description": "WAITING_HUMAN / HITL / Tri-Council management.",
+      "defined_in": "polaris/cells/runtime/task_market/internal/_service_human_review.py",
+      "methods": [
+        {
+          "name": "request_human_review",
+          "doc": ""
+        },
+        {
+          "name": "resolve_human_review",
+          "doc": ""
+        },
+        {
+          "name": "advance_human_review_escalation",
+          "doc": ""
+        },
+        {
+          "name": "query_pending_human_reviews",
+          "doc": ""
+        },
+        {
+          "name": "sweep_escalation_timeouts",
+          "doc": "Auto-escalate HITL reviews whose escalation_deadline has passed."
+        },
+        {
+          "name": "_escalate_to_human_review_no_lock",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "LifecycleMixin",
+      "description": "Lease-aware publish / claim / acknowledge / fail / requeue path.",
+      "defined_in": "polaris/cells/runtime/task_market/internal/_service_lifecycle.py",
+      "methods": [
+        {
+          "name": "publish_work_item",
+          "doc": ""
+        },
+        {
+          "name": "claim_work_item",
+          "doc": ""
+        },
+        {
+          "name": "renew_task_lease",
+          "doc": ""
+        },
+        {
+          "name": "acknowledge_task_stage",
+          "doc": ""
+        },
+        {
+          "name": "fail_task_stage",
+          "doc": ""
+        },
+        {
+          "name": "requeue_task",
+          "doc": ""
+        },
+        {
+          "name": "move_task_to_dead_letter",
+          "doc": ""
+        },
+        {
+          "name": "query_status",
+          "doc": ""
+        },
+        {
+          "name": "_cascade_dead_letter_dependents",
+          "doc": "Dead-letter ``pending_exec`` steps whose dependency terminally failed."
+        },
+        {
+          "name": "_reconcile_parents_after_terminal_children",
+          "doc": "Synchronously reconcile parent rows during queue-scan sweeps."
+        },
+        {
+          "name": "_expected_parent_state_from_children",
+          "doc": ""
+        },
+        {
+          "name": "_select_claim_candidate",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_feedback_counters",
+          "doc": ""
+        },
+        {
+          "name": "_requeue_context_payload",
+          "doc": ""
+        },
+        {
+          "name": "_integration_qa_reopen_allowed",
+          "doc": ""
+        },
+        {
+          "name": "_resolved_reopen_allowed",
+          "doc": ""
+        },
+        {
+          "name": "_resolved_reopen_policy",
+          "doc": ""
+        },
+        {
+          "name": "_string_list",
+          "doc": ""
+        },
+        {
+          "name": "_reopen_policy_source_allowed",
+          "doc": ""
+        },
+        {
+          "name": "_policy_max_reopen_count",
+          "doc": ""
+        },
+        {
+          "name": "_safe_reopen_count",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ReconciliationMixin",
+      "description": "Background convergence + reconciliation/consumer loop lifecycle.",
+      "defined_in": "polaris/cells/runtime/task_market/internal/_service_reconciliation.py",
+      "methods": [
+        {
+          "name": "start_reconciliation_loop",
+          "doc": ""
+        },
+        {
+          "name": "stop_reconciliation_loop",
+          "doc": ""
+        },
+        {
+          "name": "stop_all_reconciliation_loops",
+          "doc": ""
+        },
+        {
+          "name": "_maybe_start_reconciliation_loop",
+          "doc": ""
+        },
+        {
+          "name": "reconcile_parent_statuses",
+          "doc": "Reconcile parent task status with current child aggregate state."
+        },
+        {
+          "name": "start_consumer_loops",
+          "doc": "Start durable consumer daemon threads for a workspace."
+        },
+        {
+          "name": "stop_consumer_loops",
+          "doc": "Stop durable consumer daemon threads for a workspace."
+        },
+        {
+          "name": "stop_all_consumer_loops",
+          "doc": "Stop all running consumer loop managers. Returns count stopped."
+        },
+        {
+          "name": "query_consumer_loop_status",
+          "doc": "Return consumer loop status for a workspace."
+        },
+        {
+          "name": "requeue_drifted_items",
+          "doc": "Detect revision drift and auto-requeue drifted items to pending_design."
+        },
+        {
+          "name": "_compute_expected_parent_state",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RevisionSagaMixin",
+      "description": "Plan-revision / change-order / saga-compensation responsibilities.",
+      "defined_in": "polaris/cells/runtime/task_market/internal/_service_revision_saga.py",
+      "methods": [
+        {
+          "name": "register_plan_revision",
+          "doc": ""
+        },
+        {
+          "name": "query_plan_revisions",
+          "doc": ""
+        },
+        {
+          "name": "submit_change_order",
+          "doc": ""
+        },
+        {
+          "name": "query_change_orders",
+          "doc": ""
+        },
+        {
+          "name": "register_compensation_action",
+          "doc": ""
+        },
+        {
+          "name": "commit_compensation_actions",
+          "doc": ""
+        },
+        {
+          "name": "compensate_task",
+          "doc": ""
+        },
+        {
+          "name": "detect_revision_drift",
+          "doc": "Detect work items whose plan_revision_id lags behind the latest revision."
+        },
+        {
+          "name": "analyze_change_order_impact",
+          "doc": "Preview the impact of a change order without mutating any state."
+        },
+        {
+          "name": "validate_dependency_dag",
+          "doc": "Validate the depends_on graph for cycles and orphan references."
+        },
+        {
+          "name": "dfs",
+          "doc": ""
+        },
+        {
+          "name": "_classify_impact",
+          "doc": "Classify the impact of a change order on a task based on its current status (read-only)."
+        },
+        {
+          "name": "_strip_compensation_side_effects",
+          "doc": ""
+        },
+        {
+          "name": "_collect_compensation_transitions",
+          "doc": ""
+        },
+        {
+          "name": "_collect_compensation_outbox",
+          "doc": ""
+        },
+        {
+          "name": "_apply_change_order_impact",
+          "doc": ""
+        },
+        {
+          "name": "_compensate_task_no_lock",
+          "doc": ""
+        },
+        {
+          "name": "_compensate_children_for_parent_failure",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "exec_claim_ready",
+      "description": "Execution-stage readiness gate (three-tier fission).",
+      "defined_in": "polaris/cells/runtime/task_market/internal/claim_readiness.py"
+    },
+    {
+      "type": "function",
+      "name": "_target",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/internal/claim_readiness.py"
+    },
+    {
+      "type": "function",
+      "name": "design_claim_ready",
+      "description": "Design-stage ordering gate (组合律 / cross-parent interface coherence).",
+      "defined_in": "polaris/cells/runtime/task_market/internal/claim_readiness.py"
+    },
     {
       "type": "class",
       "name": "_Consumer",
@@ -69,15 +469,11 @@
         },
         {
           "name": "_run_outbox_relay",
-          "doc": "Thread target for periodic outbox relay."
+          "doc": "Thread target for event-woken outbox relay."
         },
         {
           "name": "_record_consumer_metrics",
           "doc": "Record consumer poll metrics via TaskMarketMetrics."
-        },
-        {
-          "name": "_default_consumer_types",
-          "doc": "Lazy-import default consumer classes."
         }
       ]
     },
@@ -490,6 +886,24 @@
       "defined_in": "polaris/cells/runtime/task_market/internal/models.py"
     },
     {
+      "type": "function",
+      "name": "_require_non_empty_field",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/internal/models.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_stage_field",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/internal/models.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_status_field",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/internal/models.py"
+    },
+    {
       "type": "class",
       "name": "_ReconcileService",
       "description": "",
@@ -592,284 +1006,10 @@
       "defined_in": "polaris/cells/runtime/task_market/internal/service.py",
       "methods": [
         {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "_workspace_lock",
-          "doc": ""
-        },
-        {
-          "name": "_read_bool_env",
-          "doc": ""
-        },
-        {
-          "name": "_read_float_env",
-          "doc": ""
-        },
-        {
-          "name": "start_reconciliation_loop",
-          "doc": ""
-        },
-        {
-          "name": "stop_reconciliation_loop",
-          "doc": ""
-        },
-        {
-          "name": "stop_all_reconciliation_loops",
-          "doc": ""
-        },
-        {
-          "name": "_maybe_start_reconciliation_loop",
-          "doc": ""
-        },
-        {
-          "name": "_get_store",
-          "doc": "Return the appropriate store backend (lazy)."
-        },
-        {
-          "name": "_atomic_save_changed_items",
-          "doc": "Persist only rows whose read-version baseline is known."
-        },
-        {
-          "name": "_coerce_optional_bool",
-          "doc": ""
-        },
-        {
-          "name": "_payload_flag",
-          "doc": ""
-        },
-        {
-          "name": "_task_market_session_id",
-          "doc": ""
-        },
-        {
-          "name": "_record_cognitive_runtime_lifecycle_receipt",
-          "doc": "Record a Cognitive Runtime receipt for a task-market lifecycle event."
-        },
-        {
-          "name": "_attach_lifecycle_evidence",
-          "doc": ""
-        },
-        {
-          "name": "publish_work_item",
-          "doc": ""
-        },
-        {
-          "name": "claim_work_item",
-          "doc": ""
-        },
-        {
-          "name": "renew_task_lease",
-          "doc": ""
-        },
-        {
-          "name": "acknowledge_task_stage",
-          "doc": ""
-        },
-        {
-          "name": "fail_task_stage",
-          "doc": ""
-        },
-        {
-          "name": "requeue_task",
-          "doc": ""
-        },
-        {
-          "name": "move_task_to_dead_letter",
-          "doc": ""
-        },
-        {
-          "name": "request_human_review",
-          "doc": ""
-        },
-        {
-          "name": "resolve_human_review",
-          "doc": ""
-        },
-        {
-          "name": "advance_human_review_escalation",
-          "doc": ""
-        },
-        {
-          "name": "query_pending_human_reviews",
-          "doc": ""
-        },
-        {
           "name": "relay_outbox_messages",
           "doc": ""
-        },
-        {
-          "name": "query_status",
-          "doc": ""
-        },
-        {
-          "name": "register_plan_revision",
-          "doc": ""
-        },
-        {
-          "name": "query_plan_revisions",
-          "doc": ""
-        },
-        {
-          "name": "submit_change_order",
-          "doc": ""
-        },
-        {
-          "name": "query_change_orders",
-          "doc": ""
-        },
-        {
-          "name": "register_compensation_action",
-          "doc": ""
-        },
-        {
-          "name": "commit_compensation_actions",
-          "doc": ""
-        },
-        {
-          "name": "compensate_task",
-          "doc": ""
-        },
-        {
-          "name": "reconcile_parent_statuses",
-          "doc": "Reconcile parent task status with current child aggregate state."
-        },
-        {
-          "name": "start_consumer_loops",
-          "doc": "Start durable consumer daemon threads for a workspace."
-        },
-        {
-          "name": "stop_consumer_loops",
-          "doc": "Stop durable consumer daemon threads for a workspace."
-        },
-        {
-          "name": "stop_all_consumer_loops",
-          "doc": "Stop all running consumer loop managers. Returns count stopped."
-        },
-        {
-          "name": "query_consumer_loop_status",
-          "doc": "Return consumer loop status for a workspace."
-        },
-        {
-          "name": "sweep_escalation_timeouts",
-          "doc": "Auto-escalate HITL reviews whose escalation_deadline has passed."
-        },
-        {
-          "name": "requeue_drifted_items",
-          "doc": "Detect revision drift and auto-requeue drifted items to pending_design."
-        },
-        {
-          "name": "detect_revision_drift",
-          "doc": "Detect work items whose plan_revision_id lags behind the latest revision."
-        },
-        {
-          "name": "analyze_change_order_impact",
-          "doc": "Preview the impact of a change order without mutating any state."
-        },
-        {
-          "name": "validate_dependency_dag",
-          "doc": "Validate the depends_on graph for cycles and orphan references."
-        },
-        {
-          "name": "dfs",
-          "doc": ""
-        },
-        {
-          "name": "_observe",
-          "doc": "Record operation metrics, structured logging, and OTel span."
-        },
-        {
-          "name": "_require_item",
-          "doc": ""
-        },
-        {
-          "name": "_classify_impact",
-          "doc": "Classify the impact of a change order on a task based on its current status (read-only)."
-        },
-        {
-          "name": "_strip_compensation_side_effects",
-          "doc": ""
-        },
-        {
-          "name": "_collect_compensation_transitions",
-          "doc": ""
-        },
-        {
-          "name": "_collect_compensation_outbox",
-          "doc": ""
-        },
-        {
-          "name": "_apply_change_order_impact",
-          "doc": ""
-        },
-        {
-          "name": "_compute_expected_parent_state",
-          "doc": ""
-        },
-        {
-          "name": "_compensate_task_no_lock",
-          "doc": ""
-        },
-        {
-          "name": "_compensate_children_for_parent_failure",
-          "doc": ""
-        },
-        {
-          "name": "_escalate_to_human_review_no_lock",
-          "doc": ""
-        },
-        {
-          "name": "_cascade_dead_letter_dependents",
-          "doc": "Dead-letter ``pending_exec`` steps whose dependency terminally failed."
-        },
-        {
-          "name": "_exec_claim_ready",
-          "doc": "Execution-stage readiness gate (three-tier fission)."
-        },
-        {
-          "name": "_target",
-          "doc": ""
-        },
-        {
-          "name": "_design_claim_ready",
-          "doc": "Design-stage ordering gate (组合律 / cross-parent interface coherence)."
-        },
-        {
-          "name": "_select_claim_candidate",
-          "doc": ""
-        },
-        {
-          "name": "_result_from_item",
-          "doc": ""
-        },
-        {
-          "name": "_normalize_feedback_counters",
-          "doc": ""
-        },
-        {
-          "name": "_integration_qa_reopen_allowed",
-          "doc": ""
-        },
-        {
-          "name": "_maybe_emit_webhook",
-          "doc": "Emit a webhook outbox record if callback_url is provided."
-        },
-        {
-          "name": "_build_outbox_record",
-          "doc": "Build an outbox record for later atomic write or direct append."
-        },
-        {
-          "name": "_emit_fact",
-          "doc": "Write an outbox record for async fact_stream delivery via relay."
         }
       ]
-    },
-    {
-      "type": "function",
-      "name": "_stable_outbox_id",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/internal/service.py"
     },
     {
       "type": "function",
@@ -1284,6 +1424,36 @@
       "defined_in": "polaris/cells/runtime/task_market/internal/tracing.py"
     },
     {
+      "type": "function",
+      "name": "_workspace_token",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/internal/wake_bus.py"
+    },
+    {
+      "type": "function",
+      "name": "get_task_market_work_event",
+      "description": "Return the event used to wake a role consumer for a workspace.",
+      "defined_in": "polaris/cells/runtime/task_market/internal/wake_bus.py"
+    },
+    {
+      "type": "function",
+      "name": "get_task_market_outbox_event",
+      "description": "Return the event used to wake the outbox relay for a workspace.",
+      "defined_in": "polaris/cells/runtime/task_market/internal/wake_bus.py"
+    },
+    {
+      "type": "function",
+      "name": "notify_task_market_workspace",
+      "description": "Wake all local task-market workers and the outbox relay for a workspace.",
+      "defined_in": "polaris/cells/runtime/task_market/internal/wake_bus.py"
+    },
+    {
+      "type": "function",
+      "name": "notify_task_market_outbox",
+      "description": "Wake the local outbox relay after a direct outbox append.",
+      "defined_in": "polaris/cells/runtime/task_market/internal/wake_bus.py"
+    },
+    {
       "type": "class",
       "name": "_WorkItemRecord",
       "description": "Internal in-memory record for a work item's two-stage lifecycle.",
@@ -1669,2392 +1839,6 @@
       "name": "get_worker_load",
       "description": "Get worker load summary.",
       "defined_in": "polaris/cells/runtime/task_market/public/projection_api.py"
-    },
-    {
-      "type": "class",
-      "name": "TestStageClaimManager",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming.py",
-      "methods": [
-        {
-          "name": "test_get_state_returns_pending_for_unknown_item",
-          "doc": ""
-        },
-        {
-          "name": "test_claim_stage1_success_on_first_attempt",
-          "doc": ""
-        },
-        {
-          "name": "test_claim_stage1_fails_when_already_claimed",
-          "doc": ""
-        },
-        {
-          "name": "test_claim_stage1_fails_after_stage1_complete",
-          "doc": ""
-        },
-        {
-          "name": "test_claim_stage1_fails_after_stage2_claimed",
-          "doc": ""
-        },
-        {
-          "name": "test_complete_stage1_only_by_claimant",
-          "doc": ""
-        },
-        {
-          "name": "test_complete_stage1_rejected_for_wrong_worker",
-          "doc": ""
-        },
-        {
-          "name": "test_complete_stage1_rejected_when_not_claimed",
-          "doc": ""
-        },
-        {
-          "name": "test_claim_stage2_success_after_stage1_complete",
-          "doc": ""
-        },
-        {
-          "name": "test_claim_stage2_fails_when_stage1_not_complete",
-          "doc": ""
-        },
-        {
-          "name": "test_claim_stage2_fails_when_pending",
-          "doc": ""
-        },
-        {
-          "name": "test_claim_stage2_fails_when_already_stage2_claimed",
-          "doc": ""
-        },
-        {
-          "name": "test_claim_stage2_fails_when_stage2_complete",
-          "doc": ""
-        },
-        {
-          "name": "test_complete_stage2_only_by_claimant",
-          "doc": ""
-        },
-        {
-          "name": "test_complete_stage2_rejected_for_wrong_worker",
-          "doc": ""
-        },
-        {
-          "name": "test_complete_stage2_rejected_when_not_claimed",
-          "doc": ""
-        },
-        {
-          "name": "test_multiple_items_are_isolated",
-          "doc": ""
-        },
-        {
-          "name": "test_full_lifecycle_happy_path",
-          "doc": ""
-        },
-        {
-          "name": "test_source_chain_and_consolidated_from_defaults",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestFullTwoStageLifecycle",
-      "description": "Test complete two-stage lifecycle: publish -> stage1 claim ->",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming_integration.py",
-      "methods": [
-        {
-          "name": "test_happy_path_full_lifecycle",
-          "doc": "Full happy-path two-stage lifecycle completes successfully."
-        },
-        {
-          "name": "test_stage2_blocked_until_stage1_complete",
-          "doc": "Stage 2 claim is blocked until stage 1 is complete."
-        },
-        {
-          "name": "test_state_transitions_match_lifecycle",
-          "doc": "State transitions follow the expected lifecycle."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestDeduplicationBehavior",
-      "description": "Test dedup behavior: second stage1 claim returns merged=True.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming_integration.py",
-      "methods": [
-        {
-          "name": "test_second_stage1_claim_returns_merged",
-          "doc": "Second stage1 claim returns merged=True for deduplication."
-        },
-        {
-          "name": "test_second_stage1_claim_after_complete_returns_merged",
-          "doc": "Second stage1 claim after completion returns merged=True."
-        },
-        {
-          "name": "test_stage2_dedup_not_possible",
-          "doc": "Stage 2 does not have deduplication - only one claim at a time."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestAuthorizationEnforcement",
-      "description": "Test authorization: only original claimant can complete each stage.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming_integration.py",
-      "methods": [
-        {
-          "name": "test_stage1_only_by_original_claimant",
-          "doc": "Stage 1 completion requires original claimant."
-        },
-        {
-          "name": "test_stage2_only_by_original_claimant",
-          "doc": "Stage 2 completion requires original claimant."
-        },
-        {
-          "name": "test_complete_stage1_without_claim_fails",
-          "doc": "Cannot complete stage 1 without a prior claim."
-        },
-        {
-          "name": "test_complete_stage2_without_claim_fails",
-          "doc": "Cannot complete stage 2 without a prior claim."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestConsolidatedResultAccumulation",
-      "description": "Test consolidated_from accumulates merge sources.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming_integration.py",
-      "methods": [
-        {
-          "name": "test_stage1_result_passed_to_stage2",
-          "doc": "Stage 1 result is available to stage 2 claimant."
-        },
-        {
-          "name": "test_stage2_result_overwrites_consolidated",
-          "doc": "Stage 2 result becomes the final consolidated result."
-        },
-        {
-          "name": "test_consolidated_result_none_until_stage1_complete",
-          "doc": "Stage 2 cannot access result until stage 1 is complete."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestResultStructures",
-      "description": "Verify ClaimStage1Result and ClaimStage2Result structures.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming_integration.py",
-      "methods": [
-        {
-          "name": "test_claim_stage1_result_fields",
-          "doc": "ClaimStage1Result has all required fields."
-        },
-        {
-          "name": "test_claim_stage2_result_fields",
-          "doc": "ClaimStage2Result has all required fields."
-        },
-        {
-          "name": "test_task_work_item_state_values",
-          "doc": "TaskWorkItemState enum has expected values."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestMultipleItemsIsolation",
-      "description": "Test that multiple work items are isolated from each other.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming_integration.py",
-      "methods": [
-        {
-          "name": "test_independent_items",
-          "doc": "Multiple work items operate independently."
-        },
-        {
-          "name": "test_item_a_claims_do_not_affect_item_b",
-          "doc": "Claims on item A don't affect item B."
-        },
-        {
-          "name": "test_parallel_stages_for_different_items",
-          "doc": "Different items can be in different stages simultaneously."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestEdgeCases",
-      "description": "Test edge cases and boundary conditions.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming_integration.py",
-      "methods": [
-        {
-          "name": "test_unknown_item_returns_pending",
-          "doc": "Unknown item ID returns PENDING state."
-        },
-        {
-          "name": "test_get_record_returns_none_for_unknown",
-          "doc": "get_record returns None for unknown item."
-        },
-        {
-          "name": "test_complete_stage2_without_stage1_claim_fails",
-          "doc": "Cannot claim stage 2 without stage 1 claim."
-        },
-        {
-          "name": "test_stage1_claim_after_stage2_claimed_fails",
-          "doc": "Stage 1 cannot be claimed after stage 2 is claimed."
-        },
-        {
-          "name": "test_stage2_claim_after_stage2_complete_fails",
-          "doc": "Stage 2 cannot be claimed after stage 2 is complete."
-        },
-        {
-          "name": "test_empty_result_handling",
-          "doc": "Empty results are handled correctly."
-        },
-        {
-          "name": "test_complex_result_handling",
-          "doc": "Complex nested results are preserved."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "manager",
-      "description": "Return a fresh StageClaimManager instance.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming_integration.py"
-    },
-    {
-      "type": "class",
-      "name": "FakeConsumer",
-      "description": "Minimal consumer stub that tracks run/stop calls.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_consumer_loop.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "run",
-          "doc": ""
-        },
-        {
-          "name": "stop",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "CrashingConsumer",
-      "description": "Consumer that raises on first run.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_consumer_loop.py",
-      "methods": [
-        {
-          "name": "run",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestConsumerLoopManagerStartStop",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_consumer_loop.py",
-      "methods": [
-        {
-          "name": "test_start_returns_true_and_creates_threads",
-          "doc": ""
-        },
-        {
-          "name": "test_start_returns_false_if_already_running",
-          "doc": ""
-        },
-        {
-          "name": "test_stop_joins_all_threads",
-          "doc": ""
-        },
-        {
-          "name": "test_status_reports_running_state",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestConsumerLoopManagerExceptionIsolation",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_consumer_loop.py",
-      "methods": [
-        {
-          "name": "test_exception_in_one_consumer_does_not_kill_others",
-          "doc": "One crashing consumer should not affect other consumer threads."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestConsumerLoopManagerOutboxRelay",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_consumer_loop.py",
-      "methods": [
-        {
-          "name": "test_outbox_relay_calls_service",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestConsumerLoopManagerInit",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_consumer_loop.py",
-      "methods": [
-        {
-          "name": "test_empty_workspace_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_workspace_stored",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "test_publish_contract_validates_required_fields",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_publish_contract_normalizes_revision_fields",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_publish_contract_rejects_unknown_stage",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_claim_contract_requires_positive_visibility_timeout",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_ack_contract_defaults_terminal_to_resolved",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_query_contract_rejects_non_positive_limit",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_renew_contract_requires_non_empty_lease_token",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_register_plan_revision_requires_non_empty_plan_id",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_submit_change_order_normalizes_type_and_ids",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_submit_change_order_rejects_same_revision",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_request_human_review_requires_reason",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_resolve_human_review_normalizes_resolution",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_query_pending_human_reviews_requires_positive_limit",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "_publish_with_deps",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_dag_validator.py"
-    },
-    {
-      "type": "function",
-      "name": "test_dag_valid_no_deps",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_dag_validator.py"
-    },
-    {
-      "type": "function",
-      "name": "test_dag_valid_linear_chain",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_dag_validator.py"
-    },
-    {
-      "type": "function",
-      "name": "test_dag_detects_cycle",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_dag_validator.py"
-    },
-    {
-      "type": "function",
-      "name": "test_dag_detects_three_node_cycle",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_dag_validator.py"
-    },
-    {
-      "type": "function",
-      "name": "test_dag_orphan_depends_on",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_dag_validator.py"
-    },
-    {
-      "type": "function",
-      "name": "test_dag_filters_by_plan",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_dag_validator.py"
-    },
-    {
-      "type": "function",
-      "name": "test_dag_empty_workspace",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_dag_validator.py"
-    },
-    {
-      "type": "class",
-      "name": "TestDLQManager",
-      "description": "Unit tests for DLQManager.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_dlq.py",
-      "methods": [
-        {
-          "name": "mock_store",
-          "doc": ""
-        },
-        {
-          "name": "item",
-          "doc": ""
-        },
-        {
-          "name": "dlq",
-          "doc": ""
-        },
-        {
-          "name": "test_move_to_dead_letter_updates_item",
-          "doc": ""
-        },
-        {
-          "name": "test_move_to_dead_letter_calls_append",
-          "doc": ""
-        },
-        {
-          "name": "test_load_dlq_items_delegates",
-          "doc": ""
-        },
-        {
-          "name": "test_replay_item_resets_attempts",
-          "doc": ""
-        },
-        {
-          "name": "test_replay_item_raises_if_not_dead_letter",
-          "doc": ""
-        },
-        {
-          "name": "test_replay_item_raises_if_not_found",
-          "doc": ""
-        },
-        {
-          "name": "test_get_dlq_stats_aggregates",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestReplayDlqItem",
-      "description": "Unit tests for ``replay_dlq_item``.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_dlq_replay.py",
-      "methods": [
-        {
-          "name": "mock_store",
-          "doc": ""
-        },
-        {
-          "name": "dlq_item",
-          "doc": ""
-        },
-        {
-          "name": "test_replay_item_to_pending_design",
-          "doc": ""
-        },
-        {
-          "name": "test_replay_item_to_pending_exec",
-          "doc": ""
-        },
-        {
-          "name": "test_replay_item_invalid_target_stage",
-          "doc": ""
-        },
-        {
-          "name": "test_replay_item_not_in_dlq",
-          "doc": ""
-        },
-        {
-          "name": "test_replay_item_not_found",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestGetDlqStats",
-      "description": "Unit tests for ``get_dlq_stats``.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_dlq_replay.py",
-      "methods": [
-        {
-          "name": "test_get_dlq_stats_returns_counts",
-          "doc": ""
-        },
-        {
-          "name": "test_get_dlq_stats_empty",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestListDlqItems",
-      "description": "Unit tests for ``list_dlq_items``.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_dlq_replay.py",
-      "methods": [
-        {
-          "name": "test_list_dlq_items_returns_items",
-          "doc": ""
-        },
-        {
-          "name": "test_list_dlq_items_default_limit",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "_TrackingService",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_drift_requeue.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "reconcile_parent_statuses",
-          "doc": ""
-        },
-        {
-          "name": "sweep_escalation_timeouts",
-          "doc": ""
-        },
-        {
-          "name": "requeue_drifted_items",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_publish",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_drift_requeue.py"
-    },
-    {
-      "type": "function",
-      "name": "test_drift_requeue_requeues_lagged_items",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_drift_requeue.py"
-    },
-    {
-      "type": "function",
-      "name": "test_drift_requeue_updates_revision_and_stage",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_drift_requeue.py"
-    },
-    {
-      "type": "function",
-      "name": "test_drift_requeue_skips_item_with_active_lease",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_drift_requeue.py"
-    },
-    {
-      "type": "function",
-      "name": "test_drift_requeue_skips_terminal_and_dead_letter",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_drift_requeue.py"
-    },
-    {
-      "type": "function",
-      "name": "test_drift_requeue_no_drift_returns_zero",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_drift_requeue.py"
-    },
-    {
-      "type": "function",
-      "name": "test_drift_requeue_empty_workspace",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_drift_requeue.py"
-    },
-    {
-      "type": "function",
-      "name": "test_reconciler_run_once_calls_drift_requeue",
-      "description": "Verify reconciler.run_once calls requeue_drifted_items and returns result.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_drift_requeue.py"
-    },
-    {
-      "type": "class",
-      "name": "FakeCEConsumer",
-      "description": "Claims pending_design, acks to pending_exec with blueprint metadata.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_e2e_pipeline.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "run",
-          "doc": ""
-        },
-        {
-          "name": "stop",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FakeDirectorConsumer",
-      "description": "Claims pending_exec, acks to pending_qa with execution metadata.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_e2e_pipeline.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "run",
-          "doc": ""
-        },
-        {
-          "name": "stop",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FakeQAConsumer",
-      "description": "Claims pending_qa, acks with terminal_status='resolved'.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_e2e_pipeline.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "run",
-          "doc": ""
-        },
-        {
-          "name": "stop",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FailOnceCEConsumer",
-      "description": "Claims pending_design then fails with to_dead_letter=True.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_e2e_pipeline.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "run",
-          "doc": ""
-        },
-        {
-          "name": "stop",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "EscalateQAConsumer",
-      "description": "Claims pending_qa and escalates to human review instead of resolving.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_e2e_pipeline.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "run",
-          "doc": ""
-        },
-        {
-          "name": "stop",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_wait_for_status",
-      "description": "Poll until a task reaches the expected status.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_e2e_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "test_e2e_happy_path",
-      "description": "PM publish → CE → Director → QA → resolved through daemon threads.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_e2e_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "test_e2e_dead_letter_path",
-      "description": "Task with max_attempts=1 should dead-letter after the first consumer claim+fail.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_e2e_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "test_e2e_human_review_escalation_and_resolve",
-      "description": "QA escalates to human review → director resolves → task continues.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_e2e_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_create_review",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_escalation_timeout.py"
-    },
-    {
-      "type": "function",
-      "name": "test_review_has_escalation_deadline",
-      "description": "A newly created review should have an escalation_deadline set.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_escalation_timeout.py"
-    },
-    {
-      "type": "function",
-      "name": "test_sweep_does_nothing_when_not_expired",
-      "description": "Sweep should not escalate reviews with future deadlines.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_escalation_timeout.py"
-    },
-    {
-      "type": "function",
-      "name": "test_sweep_escalates_when_deadline_passed",
-      "description": "Sweep should auto-escalate reviews with past deadlines.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_escalation_timeout.py"
-    },
-    {
-      "type": "function",
-      "name": "test_sweep_stops_at_terminal_role",
-      "description": "When current_role is 'human' (terminal), sweep should not escalate.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_escalation_timeout.py"
-    },
-    {
-      "type": "function",
-      "name": "test_reconciler_calls_sweep",
-      "description": "TaskReconciliationLoop.run_once should include escalation_sweep.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_escalation_timeout.py"
-    },
-    {
-      "type": "class",
-      "name": "TestExecClaimReadySameFile",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_exec_claim_ready_samefile.py",
-      "methods": [
-        {
-          "name": "test_same_file_dep_at_qa_blocks_dependent",
-          "doc": ""
-        },
-        {
-          "name": "test_same_file_dep_resolved_unblocks",
-          "doc": ""
-        },
-        {
-          "name": "test_same_file_active_writer_blocks_even_without_declared_dep",
-          "doc": ""
-        },
-        {
-          "name": "test_same_file_expired_writer_does_not_block_recovery",
-          "doc": ""
-        },
-        {
-          "name": "test_different_file_dep_at_qa_keeps_fastpath",
-          "doc": ""
-        },
-        {
-          "name": "test_normalizes_dot_slash_when_comparing_targets",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_item",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_exec_claim_ready_samefile.py"
-    },
-    {
-      "type": "class",
-      "name": "TestTaskStageFSM",
-      "description": "Unit tests for the FSM.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_fsm.py",
-      "methods": [
-        {
-          "name": "fsm",
-          "doc": ""
-        },
-        {
-          "name": "test_is_terminal_resolved",
-          "doc": ""
-        },
-        {
-          "name": "test_is_terminal_dead_letter",
-          "doc": ""
-        },
-        {
-          "name": "test_is_terminal_pending_design",
-          "doc": ""
-        },
-        {
-          "name": "test_is_queue_stage",
-          "doc": ""
-        },
-        {
-          "name": "test_is_in_progress",
-          "doc": ""
-        },
-        {
-          "name": "test_get_in_progress_status_design",
-          "doc": ""
-        },
-        {
-          "name": "test_get_in_progress_status_exec",
-          "doc": ""
-        },
-        {
-          "name": "test_get_in_progress_status_qa",
-          "doc": ""
-        },
-        {
-          "name": "test_get_queue_stage_for_status",
-          "doc": ""
-        },
-        {
-          "name": "test_publish_to_pending_design",
-          "doc": ""
-        },
-        {
-          "name": "test_claim_pending_design",
-          "doc": ""
-        },
-        {
-          "name": "test_ack_in_design_to_pending_exec",
-          "doc": ""
-        },
-        {
-          "name": "test_ack_in_design_to_pending_design_requeue",
-          "doc": ""
-        },
-        {
-          "name": "test_fail_in_design_to_dead_letter",
-          "doc": ""
-        },
-        {
-          "name": "test_claim_pending_exec",
-          "doc": ""
-        },
-        {
-          "name": "test_ack_in_execution_to_pending_qa",
-          "doc": ""
-        },
-        {
-          "name": "test_ack_in_execution_to_pending_exec_is_legal_for_supervision_parent",
-          "doc": ""
-        },
-        {
-          "name": "test_ack_in_execution_to_resolved_is_legal",
-          "doc": ""
-        },
-        {
-          "name": "test_ack_in_execution_to_pending_design_is_illegal",
-          "doc": ""
-        },
-        {
-          "name": "test_fail_in_execution_to_dead_letter",
-          "doc": ""
-        },
-        {
-          "name": "test_ack_in_qa_to_resolved_is_legal",
-          "doc": ""
-        },
-        {
-          "name": "test_ack_in_qa_to_waiting_human_is_legal",
-          "doc": ""
-        },
-        {
-          "name": "test_ack_pending_qa_to_resolved",
-          "doc": ""
-        },
-        {
-          "name": "test_ack_pending_qa_to_rejected",
-          "doc": ""
-        },
-        {
-          "name": "test_illegal_pending_qa_claim_in_design",
-          "doc": ""
-        },
-        {
-          "name": "test_illegal_ack_terminal_without_terminal_status",
-          "doc": ""
-        },
-        {
-          "name": "test_illegal_unknown_event",
-          "doc": ""
-        },
-        {
-          "name": "test_priority_ordering",
-          "doc": ""
-        },
-        {
-          "name": "test_all_stages_non_empty",
-          "doc": ""
-        },
-        {
-          "name": "test_queue_stages_disjoint_from_terminal",
-          "doc": ""
-        },
-        {
-          "name": "test_get_fsm_returns_same_instance",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestResolutionActions",
-      "description": "Unit tests for RESOLUTION_ACTIONS constant.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_hitl_api.py",
-      "methods": [
-        {
-          "name": "test_resolution_actions_contains_expected_values",
-          "doc": ""
-        },
-        {
-          "name": "test_resolution_actions_is_frozenset",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestEscalationChain",
-      "description": "Unit tests for Tri-Council escalation chain.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_hitl_api.py",
-      "methods": [
-        {
-          "name": "test_escalation_chain_order",
-          "doc": ""
-        },
-        {
-          "name": "test_get_next_escalation_role_director",
-          "doc": ""
-        },
-        {
-          "name": "test_get_next_escalation_role_chief_engineer",
-          "doc": ""
-        },
-        {
-          "name": "test_get_next_escalation_role_pm",
-          "doc": ""
-        },
-        {
-          "name": "test_get_next_escalation_role_architect",
-          "doc": ""
-        },
-        {
-          "name": "test_get_next_escalation_role_human_is_none",
-          "doc": ""
-        },
-        {
-          "name": "test_get_next_escalation_role_unknown_is_none",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestGetEscalationChain",
-      "description": "Unit tests for ``get_escalation_chain``.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_hitl_api.py",
-      "methods": [
-        {
-          "name": "test_get_escalation_chain_returns_list",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestGetNextRole",
-      "description": "Unit tests for ``get_next_role``.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_hitl_api.py",
-      "methods": [
-        {
-          "name": "test_get_next_role_director",
-          "doc": ""
-        },
-        {
-          "name": "test_get_next_role_human",
-          "doc": ""
-        },
-        {
-          "name": "test_get_next_role_unknown",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestResolveReview",
-      "description": "Unit tests for ``resolve_review``.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_hitl_api.py",
-      "methods": [
-        {
-          "name": "mock_service",
-          "doc": ""
-        },
-        {
-          "name": "test_resolve_review_invalid_resolution",
-          "doc": ""
-        },
-        {
-          "name": "test_resolve_review_valid_action",
-          "doc": ""
-        },
-        {
-          "name": "test_resolve_review_normalizes_resolution",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestEscalateToCouncil",
-      "description": "Unit tests for ``escalate_to_council``.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_hitl_api.py",
-      "methods": [
-        {
-          "name": "mock_service",
-          "doc": ""
-        },
-        {
-          "name": "test_escalate_to_council_success",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestListPendingReviews",
-      "description": "Unit tests for ``list_pending_reviews``.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_hitl_api.py",
-      "methods": [
-        {
-          "name": "test_list_pending_reviews_returns_list",
-          "doc": ""
-        },
-        {
-          "name": "test_list_pending_reviews_default_limit",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestAdvanceCouncilRole",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_hitl_api.py",
-      "methods": [
-        {
-          "name": "test_advance_council_role_success",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_create_review",
-      "description": "Helper: publish a task and request human review.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_hitl_authority.py"
-    },
-    {
-      "type": "function",
-      "name": "test_resolve_by_matching_role_succeeds",
-      "description": "Director resolving when current_role=director should succeed.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_hitl_authority.py"
-    },
-    {
-      "type": "function",
-      "name": "test_resolve_by_human_always_succeeds",
-      "description": "'human' is the terminal role and always has authority.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_hitl_authority.py"
-    },
-    {
-      "type": "function",
-      "name": "test_resolve_by_mismatched_role_raises",
-      "description": "Chief engineer resolving when current_role=director should fail.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_hitl_authority.py"
-    },
-    {
-      "type": "function",
-      "name": "test_resolve_by_unknown_identity_succeeds",
-      "description": "Unknown identity (no role prefix) falls through for backward compat.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_hitl_authority.py"
-    },
-    {
-      "type": "function",
-      "name": "test_resolve_after_escalation_requires_new_role",
-      "description": "After escalation to chief_engineer, only chief_engineer or human can resolve.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_hitl_authority.py"
-    },
-    {
-      "type": "class",
-      "name": "TestHumanReviewManager",
-      "description": "Unit tests for HumanReviewManager (logic-only, store mocked).",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_human_review.py",
-      "methods": [
-        {
-          "name": "test_resolve_review_rejects_invalid_resolution",
-          "doc": ""
-        },
-        {
-          "name": "test_resolution_actions_defined",
-          "doc": ""
-        },
-        {
-          "name": "test_resolution_to_stage_mapping",
-          "doc": ""
-        },
-        {
-          "name": "test_create_review_request_uses_atomic_cas_item_write",
-          "doc": ""
-        },
-        {
-          "name": "test_resolve_review_uses_atomic_cas_item_write",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestEscalationChain",
-      "description": "Tests for Tri-Council escalation chain.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_human_review.py",
-      "methods": [
-        {
-          "name": "test_get_next_escalation_role_director",
-          "doc": ""
-        },
-        {
-          "name": "test_get_next_escalation_role_last_human",
-          "doc": ""
-        },
-        {
-          "name": "test_get_next_escalation_role_unknown",
-          "doc": ""
-        },
-        {
-          "name": "test_escalation_chain_complete",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_item",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_human_review.py"
-    },
-    {
-      "type": "function",
-      "name": "_store_with_item",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_human_review.py"
-    },
-    {
-      "type": "function",
-      "name": "_publish_and_claim",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_impact_analyzer.py"
-    },
-    {
-      "type": "function",
-      "name": "test_impact_analyzer_pending_items_are_superseded",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_impact_analyzer.py"
-    },
-    {
-      "type": "function",
-      "name": "test_impact_analyzer_resolved_needs_revalidation",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_impact_analyzer.py"
-    },
-    {
-      "type": "function",
-      "name": "test_impact_analyzer_in_progress_cancel_requested",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_impact_analyzer.py"
-    },
-    {
-      "type": "function",
-      "name": "test_impact_analyzer_with_task_filter",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_impact_analyzer.py"
-    },
-    {
-      "type": "function",
-      "name": "test_impact_analyzer_empty_workspace",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_impact_analyzer.py"
-    },
-    {
-      "type": "class",
-      "name": "TestLeaseManager",
-      "description": "Unit tests for LeaseManager.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_lease_manager.py",
-      "methods": [
-        {
-          "name": "mock_store",
-          "doc": ""
-        },
-        {
-          "name": "item",
-          "doc": ""
-        },
-        {
-          "name": "lm",
-          "doc": ""
-        },
-        {
-          "name": "test_grant_lease_generates_token",
-          "doc": ""
-        },
-        {
-          "name": "test_grant_lease_updates_item",
-          "doc": ""
-        },
-        {
-          "name": "test_grant_lease_increments_attempts",
-          "doc": ""
-        },
-        {
-          "name": "test_grant_lease_raises_if_not_claimable",
-          "doc": ""
-        },
-        {
-          "name": "test_renew_lease_success",
-          "doc": ""
-        },
-        {
-          "name": "test_renew_lease_fails_on_mismatch",
-          "doc": ""
-        },
-        {
-          "name": "test_renew_lease_fails_on_empty_token",
-          "doc": ""
-        },
-        {
-          "name": "test_renew_lease_fails_when_existing_lease_expired",
-          "doc": ""
-        },
-        {
-          "name": "test_validate_token_raises_on_mismatch",
-          "doc": ""
-        },
-        {
-          "name": "test_validate_token_raises_on_empty",
-          "doc": ""
-        },
-        {
-          "name": "test_is_lease_expired_true_when_no_token",
-          "doc": ""
-        },
-        {
-          "name": "test_is_lease_expired_false_when_in_future",
-          "doc": ""
-        },
-        {
-          "name": "test_is_lease_expired_true_when_in_past",
-          "doc": ""
-        },
-        {
-          "name": "test_clear_lease_resets_all_fields",
-          "doc": ""
-        },
-        {
-          "name": "test_is_claimable_delegates_to_item",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "test_metrics_record_operation_increments_counter",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_metrics.py"
-    },
-    {
-      "type": "function",
-      "name": "test_metrics_record_latency_populates_histogram",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_metrics.py"
-    },
-    {
-      "type": "function",
-      "name": "test_metrics_prometheus_format_empty_when_disabled",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_metrics.py"
-    },
-    {
-      "type": "function",
-      "name": "test_metrics_queue_depth_gauge",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_metrics.py"
-    },
-    {
-      "type": "function",
-      "name": "test_metrics_outbox_relay_counters",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_metrics.py"
-    },
-    {
-      "type": "function",
-      "name": "test_metrics_consumer_poll",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_metrics.py"
-    },
-    {
-      "type": "function",
-      "name": "test_metrics_reset_clears_all",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_metrics.py"
-    },
-    {
-      "type": "function",
-      "name": "test_metrics_time_operation_context_manager",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_metrics.py"
-    },
-    {
-      "type": "function",
-      "name": "test_metrics_thread_safety",
-      "description": "Rapid concurrent record_operation calls should not lose data.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_metrics.py"
-    },
-    {
-      "type": "function",
-      "name": "worker",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_metrics.py"
-    },
-    {
-      "type": "function",
-      "name": "test_reset_task_market_metrics_for_testing",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_metrics.py"
-    },
-    {
-      "type": "function",
-      "name": "test_service_records_metrics_on_publish",
-      "description": "Integration: publish_work_item records a publish metric.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_metrics.py"
-    },
-    {
-      "type": "function",
-      "name": "test_service_records_metrics_on_fail",
-      "description": "Integration: fail_task_stage records a fail metric with ok=True (since the failure is handled).",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_metrics.py"
-    },
-    {
-      "type": "class",
-      "name": "FakeConsumer",
-      "description": "Minimal consumer that polls the service and tracks calls.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_multi_workspace_isolation.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "run",
-          "doc": ""
-        },
-        {
-          "name": "stop",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_publish",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_multi_workspace_isolation.py"
-    },
-    {
-      "type": "function",
-      "name": "test_independent_managers_for_different_workspaces",
-      "description": "Each workspace gets its own ConsumerLoopManager with independent threads.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_multi_workspace_isolation.py"
-    },
-    {
-      "type": "function",
-      "name": "test_consumers_only_claim_from_own_workspace",
-      "description": "Consumer threads in workspace A should not claim items from workspace B.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_multi_workspace_isolation.py"
-    },
-    {
-      "type": "function",
-      "name": "test_stop_one_workspace_does_not_affect_other",
-      "description": "Stopping one workspace's manager should not affect the other.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_multi_workspace_isolation.py"
-    },
-    {
-      "type": "function",
-      "name": "test_service_start_stop_consumer_loops_multi_workspace",
-      "description": "TaskMarketService manages consumer loops across multiple workspaces.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_multi_workspace_isolation.py"
-    },
-    {
-      "type": "function",
-      "name": "test_three_workspaces_concurrent_operations",
-      "description": "Three workspaces can run consumers concurrently without interference.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_multi_workspace_isolation.py"
-    },
-    {
-      "type": "function",
-      "name": "_publish_batch",
-      "description": "Publish a batch of work items, return task IDs.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_performance_benchmarks.py"
-    },
-    {
-      "type": "function",
-      "name": "test_publish_throughput",
-      "description": "Benchmark: publish 100 work items and measure throughput.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_performance_benchmarks.py"
-    },
-    {
-      "type": "function",
-      "name": "test_claim_throughput",
-      "description": "Benchmark: sequential claim of 50 work items.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_performance_benchmarks.py"
-    },
-    {
-      "type": "function",
-      "name": "test_acknowledge_throughput",
-      "description": "Benchmark: sequential acknowledge of 50 claimed items.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_performance_benchmarks.py"
-    },
-    {
-      "type": "function",
-      "name": "test_concurrent_claims_no_double_claim",
-      "description": "Multiple threads claiming from the same pool — no double claims.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_performance_benchmarks.py"
-    },
-    {
-      "type": "function",
-      "name": "worker",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_performance_benchmarks.py"
-    },
-    {
-      "type": "function",
-      "name": "test_concurrent_publish_and_claim",
-      "description": "Concurrent publishers and claimers operating simultaneously.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_performance_benchmarks.py"
-    },
-    {
-      "type": "function",
-      "name": "publisher",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_performance_benchmarks.py"
-    },
-    {
-      "type": "function",
-      "name": "claimer",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_performance_benchmarks.py"
-    },
-    {
-      "type": "function",
-      "name": "test_full_lifecycle_throughput",
-      "description": "Benchmark: publish → claim → ack → claim → ack → resolve for 20 items.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_performance_benchmarks.py"
-    },
-    {
-      "type": "function",
-      "name": "test_query_status_performance",
-      "description": "Benchmark: query_status with 200 items.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_performance_benchmarks.py"
-    },
-    {
-      "type": "class",
-      "name": "TestTaskMarketProjection",
-      "description": "Unit tests for TaskMarketProjection.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_projection.py",
-      "methods": [
-        {
-          "name": "test_queue_depth_counts_queue_stages",
-          "doc": ""
-        },
-        {
-          "name": "test_queue_depth_excludes_other_workspace",
-          "doc": ""
-        },
-        {
-          "name": "test_in_progress_counts_active_items",
-          "doc": ""
-        },
-        {
-          "name": "test_dead_letter_count_returns_length",
-          "doc": ""
-        },
-        {
-          "name": "test_active_items_excludes_terminal",
-          "doc": ""
-        },
-        {
-          "name": "test_active_items_filters_by_stage",
-          "doc": ""
-        },
-        {
-          "name": "test_active_items_respects_limit",
-          "doc": ""
-        },
-        {
-          "name": "test_active_items_sorted_by_updated_at_desc",
-          "doc": ""
-        },
-        {
-          "name": "test_worker_load_counts_claimed_tasks",
-          "doc": ""
-        },
-        {
-          "name": "test_trace_timeline_returns_matching_items",
-          "doc": ""
-        },
-        {
-          "name": "test_trace_timeline_sorted_by_created_at",
-          "doc": ""
-        },
-        {
-          "name": "test_dashboard_summary_contains_all_fields",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestProjectionAPI",
-      "description": "Unit tests for projection_api functions.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_projection.py",
-      "methods": [
-        {
-          "name": "test_get_dashboard_returns_summary",
-          "doc": ""
-        },
-        {
-          "name": "test_list_active_items_returns_filtered",
-          "doc": ""
-        },
-        {
-          "name": "test_get_worker_load_returns_load_dict",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "mock_store",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_projection.py"
-    },
-    {
-      "type": "function",
-      "name": "projection",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_projection.py"
-    },
-    {
-      "type": "function",
-      "name": "sample_items",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_projection.py"
-    },
-    {
-      "type": "class",
-      "name": "_FakeService",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_reconciler.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "reconcile_parent_statuses",
-          "doc": ""
-        },
-        {
-          "name": "sweep_escalation_timeouts",
-          "doc": ""
-        },
-        {
-          "name": "requeue_drifted_items",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "test_reconciler_run_once_invokes_service",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_reconciler.py"
-    },
-    {
-      "type": "function",
-      "name": "test_reconciler_start_stop_runs_background_loop",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_reconciler.py"
-    },
-    {
-      "type": "function",
-      "name": "_setup_workspace",
-      "description": "Helper: publish tasks and register revisions for drift testing.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_revision_drift.py"
-    },
-    {
-      "type": "function",
-      "name": "test_detect_revision_drift_finds_lagged_items",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_revision_drift.py"
-    },
-    {
-      "type": "function",
-      "name": "test_detect_revision_drift_no_drift",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_revision_drift.py"
-    },
-    {
-      "type": "function",
-      "name": "test_detect_revision_drift_filters_by_plan",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_revision_drift.py"
-    },
-    {
-      "type": "function",
-      "name": "test_detect_revision_drift_skips_terminal",
-      "description": "Terminal tasks should not be flagged as drifted.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_revision_drift.py"
-    },
-    {
-      "type": "function",
-      "name": "test_detect_revision_drift_empty_workspace",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_revision_drift.py"
-    },
-    {
-      "type": "function",
-      "name": "test_commit_clears_actions_and_skips_later_compensation",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_saga.py"
-    },
-    {
-      "type": "function",
-      "name": "test_compensate_file_delete_removes_workspace_file",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_saga.py"
-    },
-    {
-      "type": "function",
-      "name": "test_compensate_rejects_path_escape_and_flags_manual_intervention",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_saga.py"
-    },
-    {
-      "type": "class",
-      "name": "_FakeCognitiveRuntimeService",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "record_runtime_receipt",
-          "doc": ""
-        },
-        {
-          "name": "close",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "_RecordingStore",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "save_items_and_outbox_atomic",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FakeConsumerForService",
-      "description": "Minimal consumer stub for service-level consumer loop tests.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "run",
-          "doc": ""
-        },
-        {
-          "name": "stop",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestExecClaimReadinessGate",
-      "description": "Three-tier fission (I2): queue-scan claims at pending_exec must skip",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py",
-      "methods": [
-        {
-          "name": "_publish",
-          "doc": ""
-        },
-        {
-          "name": "_scan_claim",
-          "doc": ""
-        },
-        {
-          "name": "test_non_leaf_parent_skipped_on_scan",
-          "doc": ""
-        },
-        {
-          "name": "test_dependency_unready_blocks_scan_claim",
-          "doc": ""
-        },
-        {
-          "name": "test_orphan_dependency_blocks",
-          "doc": ""
-        },
-        {
-          "name": "test_ack_metadata_demotes_parent_to_non_leaf",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestDesignClaimOrderingGate",
-      "description": "组合律 (live I3-r14): a pending_design parent that depends_on another",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py",
-      "methods": [
-        {
-          "name": "_publish_design",
-          "doc": ""
-        },
-        {
-          "name": "_claim_design",
-          "doc": ""
-        },
-        {
-          "name": "test_consumer_parent_waits_for_producer_to_leave_design",
-          "doc": ""
-        },
-        {
-          "name": "test_independent_parents_not_blocked",
-          "doc": ""
-        },
-        {
-          "name": "test_orphan_design_dependency_does_not_block",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestDependencyTerminalCascade",
-      "description": "Dependents of a terminally-failed dependency must cascade into the",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py",
-      "methods": [
-        {
-          "name": "_claim_targeted",
-          "doc": ""
-        },
-        {
-          "name": "_dead_letter",
-          "doc": ""
-        },
-        {
-          "name": "test_dead_lettered_dependency_cascades_dependent_to_dlq",
-          "doc": ""
-        },
-        {
-          "name": "test_rejected_dependency_cascades_dependent",
-          "doc": ""
-        },
-        {
-          "name": "test_cascade_is_transitive_across_dependency_chain",
-          "doc": ""
-        },
-        {
-          "name": "test_failed_requeued_dependency_does_not_cascade",
-          "doc": ""
-        },
-        {
-          "name": "test_in_flight_dependent_not_swept",
-          "doc": "A claimed step keeps stage pending_exec with status in_execution —"
-        },
-        {
-          "name": "test_receipt_failure_skips_item_without_poisoning_claims",
-          "doc": "A required-receipt failure on one cascade candidate must not abort"
-        },
-        {
-          "name": "poisoned",
-          "doc": ""
-        },
-        {
-          "name": "test_replay_unblocks_cascaded_dependent",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCrossParentFileOwnershipSerialization",
-      "description": "I3-r18 FIX-1 load-bearing proof: the market serializes two same-file writers",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py",
-      "methods": [
-        {
-          "name": "_stub",
-          "doc": ""
-        },
-        {
-          "name": "test_dependent_blocked_until_owner_leaves_exec_queue",
-          "doc": ""
-        },
-        {
-          "name": "test_failed_owner_requeue_keeps_dependent_blocked",
-          "doc": ""
-        },
-        {
-          "name": "test_no_dependency_makes_both_concurrently_claimable_regression",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "test_publish_claim_ack_flow",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_hot_mutation_paths_pass_expected_versions_to_atomic_store",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_human_review_state_and_review_record_share_atomic_write",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_dead_letter_record_shares_atomic_write_with_item_state",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_leaf_execution_ack_to_pending_exec_is_rejected",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_ack_rejects_illegal_fsm_transition_without_persisting",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_qa_ack_waiting_human_from_in_qa_creates_review",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_publish_claim_ack_records_cognitive_runtime_lifecycle_receipts",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_required_cognitive_runtime_receipt_failure_blocks_publish",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_publish_preserves_revision_context_fields",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_register_and_query_plan_revision",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_submit_change_order_applies_status_aware_impact",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_visibility_timeout_allows_reclaim",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_claim_skips_same_file_task_while_writer_lease_active",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_fail_stage_moves_to_dead_letter_after_retry_exhaustion",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_scope_conflict_requeue_does_not_consume_retry_budget",
-      "description": "Transient safe-parallel file scope conflicts must wait, not dead-letter.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_claim_with_task_id_filter_respects_stage_param",
-      "description": "A1: _select_claim_candidate must call is_claimable(stage, ...) not is_claimable(item.stage, ...).",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_renew_lease_returns_utc_iso_string",
-      "description": "A2: renew_task_lease must return an actual expires_at UTC ISO string, not now_iso().",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_acknowledge_stage_merges_metadata_into_payload",
-      "description": "Acknowledge with metadata must merge into item.payload so downstream consumers get the data.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_fail_stage_records_previous_status_in_transition",
-      "description": "A3: fail_task_stage append_transition must use previous_status (before mutation), not item.status.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_move_to_dead_letter_records_previous_status_in_transition",
-      "description": "A3: move_task_to_dead_letter append_transition must use previous_status (before DLQ mutation).",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_validate_token_rejects_expired_lease",
-      "description": "A4: validate_token must raise StaleLeaseTokenError for an expired lease.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_reconcile_parent_resolved_when_all_children_resolved",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_reconcile_parent_dead_letter_when_child_dead_letter",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_reconcile_parent_dead_letter_with_mixed_resolved_children",
-      "description": "dead_letter precedence over resolved in the parent merge: one dead",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_reconcile_parent_in_execution_when_child_exec_queue_present",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_fail_stage_terminal_runs_registered_saga_compensation",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_parent_terminal_failure_compensates_child_pending_qa",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_reconciliation_loop_can_start_and_stop_manually",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_publish_auto_starts_reconciliation_when_enabled",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_request_and_resolve_human_review_flow",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_fail_stage_with_manual_escalation_routes_to_waiting_human",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_fact_emit_writes_outbox_and_marks_sent",
-      "description": "Test that publish_work_item writes outbox record with pending status.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_fact_emit_failure_marks_failed_and_relay_recovers",
-      "description": "Test that relay marks outbox as failed when append_fact_event fails, and recovers on retry.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_outbox_relay_retry_after_mark_sent_failure_is_idempotent",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "flaky_mark_sent",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_atomic_write_preserves_items_and_outbox_together",
-      "description": "Verify that save_items_and_outbox_atomic writes items, transitions,",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_atomic_rollback_on_store_failure",
-      "description": "Verify that if the store's save_items_and_outbox_atomic fails,",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_start_consumer_loops_creates_manager",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_start_consumer_loops_returns_false_if_already_running",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_stop_consumer_loops_cleans_up",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_query_consumer_loop_status_for_unknown_workspace",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_json_store_dead_letter_append_is_idempotent_by_task_id",
-      "description": "A retried dead-letter (replayed cascade sweep) must replace, not",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_stage_advance_resets_attempt_budget",
-      "description": "Live I3-r9: a step that succeeded on its final exec attempt was",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_claim",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_requeue_carries_failure_teaching_and_advance_clears_it",
-      "description": "Live I3-r10: claim results expose payload (not last_error), so a",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_claim",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_requeue_task_can_teach_next_claim_without_worker_lease",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_requeue_task_rejects_actively_leased_work",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_requeue_task_rejects_terminal_and_legacy_terminal_statuses",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_requeue_task_allows_integration_qa_to_reopen_resolved_work",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_requeue_task_allows_expired_lease_recovery",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
-    },
-    {
-      "type": "class",
-      "name": "TestTaskMarketSQLiteStore",
-      "description": "Integration tests for SQLite WAL store.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_store_sqlite.py",
-      "methods": [
-        {
-          "name": "workspace",
-          "doc": ""
-        },
-        {
-          "name": "store",
-          "doc": ""
-        },
-        {
-          "name": "test_upsert_and_load_item",
-          "doc": ""
-        },
-        {
-          "name": "test_upsert_updates_existing",
-          "doc": ""
-        },
-        {
-          "name": "test_save_items_and_outbox_atomic_rejects_stale_expected_version",
-          "doc": ""
-        },
-        {
-          "name": "test_revision_fields_round_trip",
-          "doc": ""
-        },
-        {
-          "name": "test_load_items_returns_all_for_workspace",
-          "doc": ""
-        },
-        {
-          "name": "test_append_and_load_transition",
-          "doc": ""
-        },
-        {
-          "name": "test_append_and_load_dead_letters",
-          "doc": ""
-        },
-        {
-          "name": "test_dead_letters_respects_limit",
-          "doc": ""
-        },
-        {
-          "name": "test_upsert_and_load_plan_revision",
-          "doc": ""
-        },
-        {
-          "name": "test_append_and_load_change_order",
-          "doc": ""
-        },
-        {
-          "name": "test_append_load_and_mark_outbox_message",
-          "doc": ""
-        },
-        {
-          "name": "test_wal_journal_mode",
-          "doc": ""
-        },
-        {
-          "name": "test_concurrent_upsert_no_corruption",
-          "doc": ""
-        },
-        {
-          "name": "writer",
-          "doc": ""
-        },
-        {
-          "name": "test_workspace_isolation",
-          "doc": ""
-        },
-        {
-          "name": "test_rejects_empty_workspace",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "test_tracing_disabled_is_noop",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_tracing.py"
-    },
-    {
-      "type": "function",
-      "name": "test_noop_span_is_context_manager",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_tracing.py"
-    },
-    {
-      "type": "function",
-      "name": "test_tracer_default_disabled_without_env",
-      "description": "When KERNELONE_TASK_MARKET_TRACING_ENABLED is not set, tracer is disabled.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_tracing.py"
-    },
-    {
-      "type": "function",
-      "name": "test_tracer_enabled_via_env",
-      "description": "When env var is set to true and OTel SDK is available, tracer is enabled.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_tracing.py"
-    },
-    {
-      "type": "function",
-      "name": "test_reset_tracer_for_testing",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_tracing.py"
-    },
-    {
-      "type": "function",
-      "name": "test_tracer_start_span_returns_context_manager",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_tracing.py"
-    },
-    {
-      "type": "function",
-      "name": "_publish_task",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_webhook_callback.py"
-    },
-    {
-      "type": "function",
-      "name": "test_webhook_outbox_on_review_request",
-      "description": "When callback_url is set, request_human_review should create an outbox record.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_webhook_callback.py"
-    },
-    {
-      "type": "function",
-      "name": "test_webhook_outbox_on_review_resolve",
-      "description": "When callback_url is set, resolve_human_review should create an outbox record.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_webhook_callback.py"
-    },
-    {
-      "type": "function",
-      "name": "test_no_webhook_when_callback_url_empty",
-      "description": "When callback_url is empty, no webhook outbox record should be created.",
-      "defined_in": "polaris/cells/runtime/task_market/tests/test_webhook_callback.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

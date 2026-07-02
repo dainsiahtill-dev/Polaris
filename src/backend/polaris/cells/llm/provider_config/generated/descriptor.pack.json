@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:53.679407Z",
-  "source_hash": "08bca3c2030c5df4",
+  "generated_at": "2026-07-02T03:36:32.327044Z",
+  "source_hash": "f3d2d98a3b9cccd0",
   "cell_id": "llm.provider_config",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -11,6 +11,12 @@
       "description": "",
       "defined_in": "polaris/cells/llm/provider_config/internal/provider_context.py",
       "methods": []
+    },
+    {
+      "type": "function",
+      "name": "load_llm_config_port",
+      "description": "Load LLM config via the KernelOne config-store primitive.",
+      "defined_in": "polaris/cells/llm/provider_config/internal/provider_context.py"
     },
     {
       "type": "function",
@@ -29,25 +35,6 @@
       "name": "sync_settings_from_llm",
       "description": "Apply relevant LLM config fields back onto process settings.",
       "defined_in": "polaris/cells/llm/provider_config/internal/settings_sync.py"
-    },
-    {
-      "type": "class",
-      "name": "LlmTestExecutionContext",
-      "description": "",
-      "defined_in": "polaris/cells/llm/provider_config/internal/test_context.py",
-      "methods": []
-    },
-    {
-      "type": "function",
-      "name": "load_llm_config_port",
-      "description": "Delegate config loading through the control-plane module at call time.",
-      "defined_in": "polaris/cells/llm/provider_config/internal/test_context.py"
-    },
-    {
-      "type": "function",
-      "name": "resolve_llm_test_execution_context",
-      "description": "",
-      "defined_in": "polaris/cells/llm/provider_config/internal/test_context.py"
     },
     {
       "type": "class",

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:45.711825Z",
-  "source_hash": "ac158896553c696f",
+  "generated_at": "2026-07-02T03:36:27.042913Z",
+  "source_hash": "7787d1376e624a73",
   "cell_id": "code_intelligence.engine",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -66,24 +66,6 @@
       "name": "verify_ast_dependency",
       "description": "Verify a symbol/dependency target through the code intelligence public contract.",
       "defined_in": "polaris/cells/code_intelligence/engine/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_verify_ast_dependency_query_normalizes_required_fields",
-      "description": "",
-      "defined_in": "polaris/cells/code_intelligence/engine/public/tests/test_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_verify_ast_dependency_query_rejects_empty_symbol",
-      "description": "",
-      "defined_in": "polaris/cells/code_intelligence/engine/public/tests/test_contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "test_verify_ast_dependency_public_service_uses_typed_result",
-      "description": "",
-      "defined_in": "polaris/cells/code_intelligence/engine/public/tests/test_contracts.py"
     },
     {
       "type": "function",

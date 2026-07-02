@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:53.477281Z",
-  "source_hash": "d354c9b4c07a0238",
+  "generated_at": "2026-07-02T03:36:32.207281Z",
+  "source_hash": "870b74d148eb9a2e",
   "cell_id": "finops.budget_guard",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [

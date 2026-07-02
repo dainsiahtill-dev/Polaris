@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T07:21:59.862203Z",
-  "source_hash": "902da8b61e8716c4",
+  "generated_at": "2026-07-02T03:36:32.388748Z",
+  "source_hash": "485be5e9c2d5194a",
   "cell_id": "llm.dialogue",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -409,86 +409,6 @@
       "name": "_create_role_runtime_service",
       "description": "",
       "defined_in": "polaris/cells/llm/dialogue/public/service.py"
-    },
-    {
-      "type": "class",
-      "name": "_RaisingExecutor",
-      "description": "",
-      "defined_in": "polaris/cells/llm/dialogue/tests/test_docs_suggest.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "test_build_default_docs_fields_preserves_goal_and_backlog_defaults",
-      "description": "",
-      "defined_in": "polaris/cells/llm/dialogue/tests/test_docs_suggest.py"
-    },
-    {
-      "type": "class",
-      "name": "TestGenerateRoleResponseStreamingSessionResolution",
-      "description": "",
-      "defined_in": "polaris/cells/llm/dialogue/tests/test_role_dialogue_session_continuity.py",
-      "methods": [
-        {
-          "name": "test_missing_session_id_creates_fresh_ad_hoc_session",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestRoleOutputSchemaEnum",
-      "description": "",
-      "defined_in": "polaris/cells/llm/dialogue/tests/test_role_output_schema_enum.py",
-      "methods": [
-        {
-          "name": "test_invalid_qa_verdict_fails_with_enum_error",
-          "doc": ""
-        },
-        {
-          "name": "test_valid_qa_verdict_passes",
-          "doc": ""
-        },
-        {
-          "name": "test_invalid_pm_priority_enum_fails",
-          "doc": ""
-        },
-        {
-          "name": "test_valid_resident_agi_decision_passes",
-          "doc": ""
-        },
-        {
-          "name": "test_invalid_resident_agi_verdict_fails",
-          "doc": ""
-        },
-        {
-          "name": "test_resident_agi_downstream_allowed_must_be_boolean",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "test_registered_roles_include_resident_agi",
-      "description": "",
-      "defined_in": "polaris/cells/llm/dialogue/tests/test_role_registry.py"
-    },
-    {
-      "type": "function",
-      "name": "test_role_prompt_templates_are_available_from_public_boundary",
-      "description": "",
-      "defined_in": "polaris/cells/llm/dialogue/tests/test_role_registry.py"
-    },
-    {
-      "type": "function",
-      "name": "test_resident_agi_prompt_uses_shared_role_foundation",
-      "description": "",
-      "defined_in": "polaris/cells/llm/dialogue/tests/test_role_registry.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

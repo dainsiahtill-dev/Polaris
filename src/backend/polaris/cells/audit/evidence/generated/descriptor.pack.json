@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:46.294173Z",
-  "source_hash": "7e18d214b4faadc2",
+  "generated_at": "2026-07-02T03:36:27.446879Z",
+  "source_hash": "1332473a5bc93eab",
   "cell_id": "audit.evidence",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -296,8 +296,44 @@
     },
     {
       "type": "function",
+      "name": "_evidence_logical_paths",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_evidence_records",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_event_sort_key",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_all_evidence_records",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/service.py"
+    },
+    {
+      "type": "function",
       "name": "append_evidence_event",
       "description": "Append one typed evidence event through the audit.evidence public boundary.",
+      "defined_in": "polaris/cells/audit/evidence/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_evidence_events",
+      "description": "Read typed evidence events through the audit.evidence public boundary.",
+      "defined_in": "polaris/cells/audit/evidence/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "verify_evidence_chain",
+      "description": "Verify evidence event IDs without mutating source evidence.",
       "defined_in": "polaris/cells/audit/evidence/public/service.py"
     },
     {
@@ -339,256 +375,6 @@
       "defined_in": "polaris/cells/audit/evidence/task_service.py"
     },
     {
-      "type": "class",
-      "name": "TestAppendEvidenceEventCommandV1",
-      "description": "Command carries kind and payload.",
-      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
-      "methods": [
-        {
-          "name": "test_basic_construction",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_payload_accepted",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestQueryEvidenceEventsV1",
-      "description": "Default limit is 50.",
-      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
-      "methods": [
-        {
-          "name": "test_default_limit",
-          "doc": ""
-        },
-        {
-          "name": "test_custom_limit",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestVerifyEvidenceChainV1",
-      "description": "start_at is optional.",
-      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
-      "methods": [
-        {
-          "name": "test_default_start_at_none",
-          "doc": ""
-        },
-        {
-          "name": "test_explicit_start_at",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestEvidenceQueryResultV1",
-      "description": "Result carries events and total count.",
-      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
-      "methods": [
-        {
-          "name": "test_basic_construction",
-          "doc": ""
-        },
-        {
-          "name": "test_events_are_tuple",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestEvidenceVerificationResultV1",
-      "description": "Result carries ok flag and checked count.",
-      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
-      "methods": [
-        {
-          "name": "test_verification_ok",
-          "doc": ""
-        },
-        {
-          "name": "test_verification_failed",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestEvidenceAppendedEventV1EdgeCases",
-      "description": "EvidenceAppendedEventV1 is a frozen dataclass; field validation is caller responsibility.",
-      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
-      "methods": [
-        {
-          "name": "test_frozen_prevents_modification",
-          "doc": ""
-        },
-        {
-          "name": "test_constructs_with_any_string_values",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestEvidenceAuditError",
-      "description": "Structured exception from evidence boundary.",
-      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
-      "methods": [
-        {
-          "name": "test_default_construction",
-          "doc": ""
-        },
-        {
-          "name": "test_raised_and_caught",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "_FakeKernelFs",
-      "description": "",
-      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "append_jsonl",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestDetectLanguage",
-      "description": "Language detection from file path extension.",
-      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
-      "methods": [
-        {
-          "name": "test_python_py_file_detected",
-          "doc": ""
-        },
-        {
-          "name": "test_typescript_tsx_detected",
-          "doc": ""
-        },
-        {
-          "name": "test_rust_detected",
-          "doc": ""
-        },
-        {
-          "name": "test_go_detected",
-          "doc": ""
-        },
-        {
-          "name": "test_yaml_detected",
-          "doc": ""
-        },
-        {
-          "name": "test_json_detected",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_path_returns_unknown",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestBuildFileEvidence",
-      "description": "File evidence construction from list of file dicts.",
-      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
-      "methods": [
-        {
-          "name": "test_single_file_creates_one_evidence",
-          "doc": ""
-        },
-        {
-          "name": "test_path_extracted",
-          "doc": ""
-        },
-        {
-          "name": "test_language_from_path",
-          "doc": ""
-        },
-        {
-          "name": "test_skips_non_dict_entry",
-          "doc": ""
-        },
-        {
-          "name": "test_missing_content_field",
-          "doc": ""
-        },
-        {
-          "name": "test_content_truncated_at_1000_chars",
-          "doc": ""
-        },
-        {
-          "name": "test_multiple_files",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestBuildErrorEvidence",
-      "description": "Error evidence construction.",
-      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
-      "methods": [
-        {
-          "name": "test_single_evidence_created",
-          "doc": ""
-        },
-        {
-          "name": "test_duration_in_metadata",
-          "doc": ""
-        },
-        {
-          "name": "test_content_is_error_text",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_error_text",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestEvidenceServiceDelegation",
-      "description": "EvidenceService delegates to module-level helpers.",
-      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
-      "methods": [
-        {
-          "name": "test_detect_language_delegates",
-          "doc": ""
-        },
-        {
-          "name": "test_build_file_evidence_delegates",
-          "doc": ""
-        },
-        {
-          "name": "test_build_error_evidence_delegates",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "test_append_evidence_event_public_service_writes_append_only_jsonl_utf8",
-      "description": "",
-      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py"
-    },
-    {
       "type": "function",
       "name": "get_runtime_root",
       "description": "Get runtime root path from settings.",
@@ -622,6 +408,12 @@
       "type": "function",
       "name": "_resolve_failure_hops_events_path",
       "description": "",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_failure_hops_json",
+      "description": "Read and parse a pre-computed failure_hops.json file.",
       "defined_in": "polaris/delivery/http/audit_router.py"
     },
     {
@@ -671,6 +463,12 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_copy_kernel_event",
+      "description": "Copy an audit event so storage signing cannot mutate caller-owned state.",
+      "defined_in": "polaris/infrastructure/audit/adapters/store_adapter.py"
     },
     {
       "type": "class",
@@ -785,18 +583,6 @@
           "doc": "Get path to current audit log file."
         }
       ]
-    },
-    {
-      "type": "function",
-      "name": "audit_event_to_kernel",
-      "description": "Convert AuditEvent to canonical KernelAuditEvent.",
-      "defined_in": "polaris/infrastructure/audit/stores/audit_store.py"
-    },
-    {
-      "type": "function",
-      "name": "kernel_event_to_audit",
-      "description": "Convert KernelAuditEvent to AuditEvent (for backward compatibility).",
-      "defined_in": "polaris/infrastructure/audit/stores/audit_store.py"
     },
     {
       "type": "function",
@@ -1177,6 +963,12 @@
     },
     {
       "type": "function",
+      "name": "_find_raw_tool_failure_receipt_hits",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
       "name": "_count_roles",
       "description": "",
       "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
@@ -1312,6 +1104,18 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_require_audit_string",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_audit_mapping",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/contracts.py"
     },
     {
       "type": "class",
@@ -2352,6 +2156,59 @@
     },
     {
       "type": "class",
+      "name": "_DedupEntry",
+      "description": "Internal bookkeeping for one dedup key.",
+      "defined_in": "polaris/kernelone/audit/omniscient/dedup.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LLMEventDeduplicator",
+      "description": "Sliding-window deduplicator for LLM audit events.",
+      "defined_in": "polaris/kernelone/audit/omniscient/dedup.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "should_emit",
+          "doc": "Return ``True`` if this event should be emitted (not a duplicate)."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Return dedup statistics for monitoring."
+        },
+        {
+          "name": "reset",
+          "doc": "Clear all state (for testing)."
+        },
+        {
+          "name": "_evict_if_needed",
+          "doc": "Evict oldest entries when the table exceeds max_entries."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_content_hash",
+      "description": "Stable short hash of the event payload (ignoring volatile fields).",
+      "defined_in": "polaris/kernelone/audit/omniscient/dedup.py"
+    },
+    {
+      "type": "function",
+      "name": "get_global_llm_dedup",
+      "description": "Get or create the global LLMEventDeduplicator singleton.",
+      "defined_in": "polaris/kernelone/audit/omniscient/dedup.py"
+    },
+    {
+      "type": "function",
+      "name": "set_global_llm_dedup",
+      "description": "Replace the global singleton (for testing or custom config).",
+      "defined_in": "polaris/kernelone/audit/omniscient/dedup.py"
+    },
+    {
+      "type": "class",
       "name": "DegradationLevel",
       "description": "System degradation levels.",
       "defined_in": "polaris/kernelone/audit/omniscient/high_availability.py",
@@ -2861,6 +2718,70 @@
       "name": "decorator",
       "description": "",
       "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm_interceptor.py"
+    },
+    {
+      "type": "class",
+      "name": "LLMEventRecord",
+      "description": "Single bounded LLM call event record.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm_metrics.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_DimensionAccumulator",
+      "description": "Internal per-(role, provider, model) accumulator.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm_metrics.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LLMMetricsStore",
+      "description": "Time-windowed LLM metrics store with bounded ring buffer.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm_metrics.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "record",
+          "doc": "Record a single LLM call completion event."
+        },
+        {
+          "name": "query",
+          "doc": "Return aggregated metrics for the requested window."
+        },
+        {
+          "name": "_percentile",
+          "doc": "Compute the *p*-th percentile from a pre-sorted list."
+        },
+        {
+          "name": "_build_rows",
+          "doc": ""
+        },
+        {
+          "name": "_build_total_row",
+          "doc": ""
+        },
+        {
+          "name": "_empty_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "reset",
+          "doc": "Clear all buffered events."
+        },
+        {
+          "name": "event_count",
+          "doc": "Number of buffered events."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_llm_metrics_store",
+      "description": "Return the process-global ``LLMMetricsStore`` singleton.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm_metrics.py"
     },
     {
       "type": "class",
@@ -3738,585 +3659,6 @@
       ]
     },
     {
-      "type": "class",
-      "name": "TestAuditContext",
-      "description": "Tests for AuditContext dataclass.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_context.py",
-      "methods": [
-        {
-          "name": "test_create_empty_context",
-          "doc": "Test creating an empty context."
-        },
-        {
-          "name": "test_create_full_context",
-          "doc": "Test creating a context with all fields."
-        },
-        {
-          "name": "test_context_is_immutable",
-          "doc": "Test that AuditContext is immutable (frozen)."
-        },
-        {
-          "name": "test_with_span",
-          "doc": "Test creating new context with span chaining."
-        },
-        {
-          "name": "test_with_metadata",
-          "doc": "Test adding metadata to context."
-        },
-        {
-          "name": "test_to_dict",
-          "doc": "Test serialization to dict."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestAuditContextManager",
-      "description": "Tests for async context manager.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_context.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TestThreadAuditContextManager",
-      "description": "Tests for sync thread context manager.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_context.py",
-      "methods": [
-        {
-          "name": "test_sync_context_manager",
-          "doc": "Test sync context manager sets and clears."
-        },
-        {
-          "name": "test_sync_context_manager_restores_previous",
-          "doc": "Test sync context manager restores previous context."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestContextVars",
-      "description": "Tests for context variable helpers.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_context.py",
-      "methods": [
-        {
-          "name": "test_clear_thread_audit_context",
-          "doc": "Test clearing thread context."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "temp_runtime_root",
-      "description": "Provide a temporary runtime root for audit files.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_audit_chain.py"
-    },
-    {
-      "type": "function",
-      "name": "adapter_config",
-      "description": "Low-latency config for tests.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_audit_chain.py"
-    },
-    {
-      "type": "function",
-      "name": "reset_singleton_state",
-      "description": "Reset bus singleton state after each test.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_audit_chain.py"
-    },
-    {
-      "type": "function",
-      "name": "test_metrics_collector_prometheus_output",
-      "description": "Verify AuditMetricsCollector outputs valid Prometheus format.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_audit_chain.py"
-    },
-    {
-      "type": "function",
-      "name": "test_schema_registry_auto_registers_all_schemas",
-      "description": "Verify SchemaRegistry registers all 6 AuditEvent schemas on init.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_audit_chain.py"
-    },
-    {
-      "type": "function",
-      "name": "test_unified_audit_context_with_span_chaining",
-      "description": "Verify UnifiedAuditContext.with_span() correctly chains parent span.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_audit_chain.py"
-    },
-    {
-      "type": "function",
-      "name": "test_unified_audit_context_with_metadata",
-      "description": "Verify UnifiedAuditContext.with_metadata() merges correctly.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_audit_chain.py"
-    },
-    {
-      "type": "function",
-      "name": "temp_runtime",
-      "description": "Provide a temporary runtime root for audit files.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_full_chain.py"
-    },
-    {
-      "type": "function",
-      "name": "reset_state",
-      "description": "Reset all global state before and after each test.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_full_chain.py"
-    },
-    {
-      "type": "function",
-      "name": "test_metrics_collector_tracks_full_event_lifecycle",
-      "description": "Verify AuditMetricsCollector tracks events through full lifecycle.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_full_chain.py"
-    },
-    {
-      "type": "function",
-      "name": "test_apply_ha_config_still_works",
-      "description": "apply_ha_config() still works and creates storm detector.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_ha_integration.py"
-    },
-    {
-      "type": "function",
-      "name": "clean_bus",
-      "description": "Provide a fresh bus instance per test.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_integration.py"
-    },
-    {
-      "type": "class",
-      "name": "_FakeSpan",
-      "description": "Fake span for testing.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_interceptors.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "set_tag",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "_FakeTracer",
-      "description": "Fake tracer for testing TracingAuditInterceptor.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_interceptors.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "start_span",
-          "doc": ""
-        },
-        {
-          "name": "end_span",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "test_otel_exporter_init_defaults",
-      "description": "Exporter initializes with correct defaults.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_otel_exporter_init_custom",
-      "description": "Exporter accepts custom configuration.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_otel_sampling_drops_events",
-      "description": "Sampling rate of 0.0 drops all events.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_otel_sampling_allows_all",
-      "description": "Sampling rate of 1.0 allows all events into the batch.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_otel_export_span_sampling_100",
-      "description": "100% sampling rate accepts all spans.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_otel_to_otlp_span_conversion",
-      "description": "_to_otlp_span() converts span dict to OTLP format.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_otel_to_otlp_span_error_status",
-      "description": "Error status is correctly mapped.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_otel_build_payload",
-      "description": "_build_otlp_payload() creates valid JSON payload.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_otel_export_batch",
-      "description": "export_batch() exports multiple spans.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_otel_stats",
-      "description": "get_stats() returns correct statistics.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_jaeger_exporter_init_defaults",
-      "description": "JaegerExporter initializes with correct defaults.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_jaeger_to_span_conversion",
-      "description": "_to_jaeger_span() converts to Jaeger format.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_jaeger_span_error_handling",
-      "description": "Error spans include error tags.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_jaeger_build_payload",
-      "description": "_build_jaeger_payload() creates valid JSON.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_otel_endpoint_env_default",
-      "description": "DEFAULT_OTEL_ENDPOINT and JAEGER_ENDPOINT are set.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
-    },
-    {
-      "type": "class",
-      "name": "TestSensitiveFieldRedactor",
-      "description": "Tests for SensitiveFieldRedactor.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_redaction.py",
-      "methods": [
-        {
-          "name": "test_redact_password",
-          "doc": "Test password field redaction."
-        },
-        {
-          "name": "test_redact_nested_password",
-          "doc": "Test redaction in nested dictionaries."
-        },
-        {
-          "name": "test_redact_list_of_dicts",
-          "doc": "Test redaction in lists of dictionaries."
-        },
-        {
-          "name": "test_redact_case_insensitive",
-          "doc": "Test redaction is case-insensitive."
-        },
-        {
-          "name": "test_preserves_non_sensitive_fields",
-          "doc": "Test that non-sensitive fields are preserved."
-        },
-        {
-          "name": "test_preserves_structure",
-          "doc": "Test that structure is preserved (same keys, same indices)."
-        },
-        {
-          "name": "test_preserves_primitives",
-          "doc": "Test that primitive values are returned as-is."
-        },
-        {
-          "name": "test_redact_token_string_values",
-          "doc": "Test that strings that look like tokens are redacted."
-        },
-        {
-          "name": "test_redact_long_hex_strings",
-          "doc": "Test that long hex strings are treated as tokens."
-        },
-        {
-          "name": "test_redact_jwt_tokens",
-          "doc": "Test JWT token detection and redaction."
-        },
-        {
-          "name": "test_redact_base64_strings",
-          "doc": "Test base64 string detection."
-        },
-        {
-          "name": "test_extra_sensitive_patterns",
-          "doc": "Test extra sensitive patterns can be added."
-        },
-        {
-          "name": "test_custom_placeholder",
-          "doc": "Test custom placeholder text."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestModuleFunctions",
-      "description": "Tests for module-level convenience functions.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_redaction.py",
-      "methods": [
-        {
-          "name": "test_redact_sensitive_data",
-          "doc": "Test convenience function."
-        },
-        {
-          "name": "test_get_default_redactor",
-          "doc": "Test default redactor is shared."
-        },
-        {
-          "name": "test_reset_default_redactor",
-          "doc": "Test reset clears the singleton."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestEdgeCases",
-      "description": "Edge case tests.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_redaction.py",
-      "methods": [
-        {
-          "name": "test_empty_dict",
-          "doc": "Test empty dict handling."
-        },
-        {
-          "name": "test_empty_list",
-          "doc": "Test empty list handling."
-        },
-        {
-          "name": "test_empty_string",
-          "doc": "Test empty string handling."
-        },
-        {
-          "name": "test_deeply_nested",
-          "doc": "Test deeply nested structures."
-        },
-        {
-          "name": "test_mixed_nested_list_dict",
-          "doc": "Test mixed list and dict nesting."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "temp_runtime",
-      "description": "Provide a temporary runtime root.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_is_hot_recent_event",
-      "description": "Recent events (within TTL) are hot.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_is_hot_event_dict_with_recent_timestamp",
-      "description": "Event dict with recent timestamp is hot.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_is_cold_old_event",
-      "description": "Old events (beyond hot TTL) are cold.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_get_tier_hot",
-      "description": "Events within hot TTL return 'hot'.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_get_tier_cold",
-      "description": "Events beyond hot but within cold TTL return 'cold'.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_get_tier_expired",
-      "description": "Events beyond cold TTL return 'expired'.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_get_tier_with_iso_string",
-      "description": "ISO date strings are correctly classified.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "test_default_ttl_constants",
-      "description": "Default TTL values are correct.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
-    },
-    {
-      "type": "class",
-      "name": "TestAuditStormDetector",
-      "description": "Tests for AuditStormDetector.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storm_detector.py",
-      "methods": [
-        {
-          "name": "test_create_detector",
-          "doc": "Test creating a detector with default thresholds."
-        },
-        {
-          "name": "test_create_detector_with_custom_thresholds",
-          "doc": "Test creating a detector with custom thresholds."
-        },
-        {
-          "name": "test_invalid_window_seconds",
-          "doc": "Test that invalid window_seconds raises ValueError."
-        },
-        {
-          "name": "test_invalid_elevated_threshold",
-          "doc": "Test that invalid elevated_threshold raises ValueError."
-        },
-        {
-          "name": "test_invalid_threshold_order",
-          "doc": "Test that threshold ordering is validated."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestStormDetectorLevels",
-      "description": "Tests for storm detection levels.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storm_detector.py",
-      "methods": [
-        {
-          "name": "test_normal_level",
-          "doc": "Test that normal level is returned with low event count."
-        },
-        {
-          "name": "test_elevated_level",
-          "doc": "Test elevated level is reached."
-        },
-        {
-          "name": "test_warning_level",
-          "doc": "Test warning level is reached."
-        },
-        {
-          "name": "test_critical_level",
-          "doc": "Test critical level is reached."
-        },
-        {
-          "name": "test_emergency_level",
-          "doc": "Test emergency level is reached."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestStormDetectorSlidingWindow",
-      "description": "Tests for sliding window behavior.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storm_detector.py",
-      "methods": [
-        {
-          "name": "test_sliding_window_expiry",
-          "doc": "Test that events expire after window duration."
-        },
-        {
-          "name": "test_partial_window_expiry",
-          "doc": "Test that only old events expire."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestStormDetectorShouldDrop",
-      "description": "Tests for should_drop() behavior.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storm_detector.py",
-      "methods": [
-        {
-          "name": "test_should_drop_at_emergency",
-          "doc": "Test that should_drop returns True at emergency level."
-        },
-        {
-          "name": "test_should_not_drop_below_emergency",
-          "doc": "Test that should_drop returns False below emergency level."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestStormDetectorShouldSkipBody",
-      "description": "Tests for should_skip_body() behavior.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storm_detector.py",
-      "methods": [
-        {
-          "name": "test_should_skip_body_at_critical",
-          "doc": "Test that should_skip_body returns True at critical level."
-        },
-        {
-          "name": "test_should_not_skip_body_below_critical",
-          "doc": "Test that should_skip_body returns False below critical level."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestStormDetectorPerTypeCounting",
-      "description": "Tests for per-type event counting.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storm_detector.py",
-      "methods": [
-        {
-          "name": "test_per_type_stats",
-          "doc": "Test that per-type stats are tracked."
-        },
-        {
-          "name": "test_should_drop_event_type",
-          "doc": "Test that specific event types can be dropped."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestStormDetectorStats",
-      "description": "Tests for storm detector statistics.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storm_detector.py",
-      "methods": [
-        {
-          "name": "test_get_stats_structure",
-          "doc": "Test that get_stats returns correct structure."
-        },
-        {
-          "name": "test_reset",
-          "doc": "Test that reset clears all state."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestStormDetectorConcurrency",
-      "description": "Tests for thread safety.",
-      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storm_detector.py",
-      "methods": [
-        {
-          "name": "test_concurrent_record_events",
-          "doc": "Test that concurrent event recording is safe."
-        },
-        {
-          "name": "record_events",
-          "doc": ""
-        }
-      ]
-    },
-    {
       "type": "function",
       "name": "set_audit_store_factory",
       "description": "Set the factory for creating audit stores.",
@@ -4531,961 +3873,6 @@
         {
           "name": "health_check",
           "doc": "Perform health check on the audit runtime."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestAuditIndexCreation",
-      "description": "Test suite for AuditIndex initialization.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_index.py",
-      "methods": [
-        {
-          "name": "test_default_initialization",
-          "doc": "Test index initializes with default parameters."
-        },
-        {
-          "name": "test_custom_max_entries",
-          "doc": "Test index with custom max_entries."
-        },
-        {
-          "name": "test_custom_window_hours",
-          "doc": "Test index with custom window_hours."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestAuditIndexBasicOperations",
-      "description": "Test suite for AuditIndex basic operations.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_index.py",
-      "methods": [
-        {
-          "name": "_make_event",
-          "doc": "Helper to create a test event."
-        },
-        {
-          "name": "test_index_single_event",
-          "doc": "Test indexing a single event."
-        },
-        {
-          "name": "test_index_multiple_events",
-          "doc": "Test indexing multiple events."
-        },
-        {
-          "name": "test_query_by_task_id",
-          "doc": "Test querying events by task_id."
-        },
-        {
-          "name": "test_query_by_trace_id",
-          "doc": "Test querying events by trace_id."
-        },
-        {
-          "name": "test_query_by_type",
-          "doc": "Test querying events by event type."
-        },
-        {
-          "name": "test_query_by_type_with_limit",
-          "doc": "Test querying events by type with limit."
-        },
-        {
-          "name": "test_query_recent",
-          "doc": "Test querying recent events."
-        },
-        {
-          "name": "test_query_recent_no_events",
-          "doc": "Test querying recent events when none exist."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestAuditIndexEviction",
-      "description": "Test suite for AuditIndex eviction logic.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_index.py",
-      "methods": [
-        {
-          "name": "_make_event",
-          "doc": "Helper to create a test event."
-        },
-        {
-          "name": "test_evict_old_by_time",
-          "doc": "Test evicting old events by datetime."
-        },
-        {
-          "name": "test_evict_old_none_to_evict",
-          "doc": "Test evicting when no old events exist."
-        },
-        {
-          "name": "test_max_entries_eviction",
-          "doc": "Test that index evicts oldest entries when max_entries exceeded."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestAuditIndexThreadSafety",
-      "description": "Test suite for AuditIndex thread safety.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_index.py",
-      "methods": [
-        {
-          "name": "_make_event",
-          "doc": "Helper to create a test event."
-        },
-        {
-          "name": "test_concurrent_indexing",
-          "doc": "Test concurrent event indexing."
-        },
-        {
-          "name": "index_events",
-          "doc": ""
-        },
-        {
-          "name": "test_concurrent_query_and_index",
-          "doc": "Test concurrent querying and indexing."
-        },
-        {
-          "name": "indexer",
-          "doc": ""
-        },
-        {
-          "name": "querier",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestAuditIndexEdgeCases",
-      "description": "Test suite for AuditIndex edge cases.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_index.py",
-      "methods": [
-        {
-          "name": "_make_event",
-          "doc": "Helper to create a test event."
-        },
-        {
-          "name": "test_event_with_empty_task_id",
-          "doc": "Test indexing event with empty task_id."
-        },
-        {
-          "name": "test_event_with_empty_trace_id",
-          "doc": "Test indexing event with empty trace_id."
-        },
-        {
-          "name": "test_query_nonexistent_task_id",
-          "doc": "Test querying non-existent task_id."
-        },
-        {
-          "name": "test_query_nonexistent_trace_id",
-          "doc": "Test querying non-existent trace_id."
-        },
-        {
-          "name": "test_query_nonexistent_event_type",
-          "doc": "Test querying non-existent event type."
-        },
-        {
-          "name": "test_index_after_eviction",
-          "doc": "Test that indexing works correctly after eviction."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "MockAuditStore",
-      "description": "Mock audit store for testing.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "runtime_root",
-          "doc": ""
-        },
-        {
-          "name": "append",
-          "doc": ""
-        },
-        {
-          "name": "query",
-          "doc": ""
-        },
-        {
-          "name": "export_json",
-          "doc": ""
-        },
-        {
-          "name": "export_csv",
-          "doc": ""
-        },
-        {
-          "name": "verify_chain",
-          "doc": ""
-        },
-        {
-          "name": "get_stats",
-          "doc": ""
-        },
-        {
-          "name": "cleanup_old_logs",
-          "doc": ""
-        },
-        {
-          "name": "_hash_event",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditRuntimeCreation",
-      "description": "Test suite for KernelAuditRuntime creation.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py",
-      "methods": [
-        {
-          "name": "test_singleton_instances_tracked",
-          "doc": "Test that singleton instances are tracked in _instances dict."
-        },
-        {
-          "name": "test_runtime_root_property",
-          "doc": "Test runtime_root property returns correct path."
-        },
-        {
-          "name": "test_raw_store_property_with_wrapper",
-          "doc": "Test raw_store property when store has raw_store attribute."
-        },
-        {
-          "name": "test_windows_key_permission_check_skips_posix_warning",
-          "doc": "Windows reports POSIX-like modes loosely; do not warn there."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditRuntimeEmitEvent",
-      "description": "Test suite for emit_event method.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py",
-      "methods": [
-        {
-          "name": "test_emit_minimal_event",
-          "doc": "Test emitting minimal event."
-        },
-        {
-          "name": "test_emit_full_event",
-          "doc": "Test emitting event with all fields."
-        },
-        {
-          "name": "test_emit_event_derives_task_id",
-          "doc": "Test that task_id is derived when not provided."
-        },
-        {
-          "name": "test_emit_event_derives_trace_id",
-          "doc": "Test that trace_id is derived when not provided."
-        },
-        {
-          "name": "test_emit_event_signs_chain",
-          "doc": "Test that event is signed with HMAC."
-        },
-        {
-          "name": "test_emit_event_sets_prev_hash",
-          "doc": "Test that prev_hash is set correctly."
-        },
-        {
-          "name": "test_emit_event_normalizes_event_type_string",
-          "doc": "Test that string event type is normalized to enum."
-        },
-        {
-          "name": "test_emit_event_strips_whitespace",
-          "doc": "Test that whitespace is stripped from inputs."
-        },
-        {
-          "name": "test_emit_event_indexes_event",
-          "doc": "Test that emitted event is added to index."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditRuntimeEmitLlmEvent",
-      "description": "Test suite for emit_llm_event method.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py",
-      "methods": [
-        {
-          "name": "test_emit_llm_event_basic",
-          "doc": "Test emitting basic LLM event."
-        },
-        {
-          "name": "test_emit_llm_event_with_error",
-          "doc": "Test emitting LLM event with error."
-        },
-        {
-          "name": "test_emit_llm_event_calculates_total_tokens",
-          "doc": "Test that total_tokens is calculated correctly."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditRuntimeEmitDialogue",
-      "description": "Test suite for emit_dialogue method.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py",
-      "methods": [
-        {
-          "name": "test_emit_dialogue_basic",
-          "doc": "Test emitting basic dialogue event."
-        },
-        {
-          "name": "test_emit_dialogue_truncates_long_summary",
-          "doc": "Test that long message summary is truncated to 500 chars."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditRuntimeQueryEvents",
-      "description": "Test suite for query_events method.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py",
-      "methods": [
-        {
-          "name": "test_query_events_empty",
-          "doc": "Test querying when no events exist."
-        },
-        {
-          "name": "test_query_events_returns_all",
-          "doc": "Test querying returns all events."
-        },
-        {
-          "name": "test_query_events_by_type",
-          "doc": "Test querying by event type."
-        },
-        {
-          "name": "test_query_events_with_limit",
-          "doc": "Test querying with limit."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditRuntimeQueryByRunId",
-      "description": "Test suite for query_by_run_id method.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py",
-      "methods": [
-        {
-          "name": "test_query_by_run_id",
-          "doc": "Test querying events by run_id."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditRuntimeQueryByTaskId",
-      "description": "Test suite for query_by_task_id method.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py",
-      "methods": [
-        {
-          "name": "test_query_by_task_id",
-          "doc": "Test querying events by task_id using index."
-        },
-        {
-          "name": "test_query_by_task_id_empty",
-          "doc": "Test querying non-existent task_id."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditRuntimeQueryByTraceId",
-      "description": "Test suite for query_by_trace_id method.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py",
-      "methods": [
-        {
-          "name": "test_query_by_trace_id",
-          "doc": "Test querying events by trace_id using index."
-        },
-        {
-          "name": "test_query_by_trace_id_empty",
-          "doc": "Test querying non-existent trace_id."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditRuntimeExport",
-      "description": "Test suite for export methods.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py",
-      "methods": [
-        {
-          "name": "test_export_json",
-          "doc": "Test JSON export."
-        },
-        {
-          "name": "test_export_csv",
-          "doc": "Test CSV export."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditRuntimeVerifyChain",
-      "description": "Test suite for verify_chain method.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py",
-      "methods": [
-        {
-          "name": "test_verify_chain_empty",
-          "doc": "Test chain verification with no events."
-        },
-        {
-          "name": "test_verify_chain_with_events",
-          "doc": "Test chain verification with events."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditRuntimeGetStats",
-      "description": "Test suite for get_stats method.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py",
-      "methods": [
-        {
-          "name": "test_get_stats",
-          "doc": "Test getting stats."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditRuntimeHealthCheck",
-      "description": "Test suite for health_check method.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py",
-      "methods": [
-        {
-          "name": "test_health_check_healthy",
-          "doc": "Test health check when system is healthy."
-        },
-        {
-          "name": "test_health_check_with_events",
-          "doc": "Test health check after emitting events."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditRuntimeCleanup",
-      "description": "Test suite for cleanup_old_logs method.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py",
-      "methods": [
-        {
-          "name": "test_cleanup_dry_run",
-          "doc": "Test cleanup in dry-run mode."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditRuntimeSignatureVerification",
-      "description": "Test suite for HMAC signature verification.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py",
-      "methods": [
-        {
-          "name": "test_signature_is_hmac_sha256",
-          "doc": "Test that signature is HMAC-SHA256."
-        },
-        {
-          "name": "test_signature_changes_with_different_event",
-          "doc": "Test that different events produce different signatures."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditRuntimeShutdown",
-      "description": "Test suite for shutdown_all method.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py",
-      "methods": [
-        {
-          "name": "test_shutdown_all_clears_instances",
-          "doc": "Test that shutdown_all clears all singleton instances."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "temp_runtime_root",
-      "description": "Create a temporary runtime root.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "mock_store",
-      "description": "Create a mock audit store.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "runtime",
-      "description": "Create a KernelAuditRuntime instance with mock store.",
-      "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py"
-    },
-    {
-      "type": "class",
-      "name": "_Ledger",
-      "description": "",
-      "defined_in": "polaris/kernelone/audit/tests/test_context_os_prompt.py",
-      "methods": []
-    },
-    {
-      "type": "function",
-      "name": "test_context_os_prompt_audit_accepts_state_first_projection_with_user_literal_key",
-      "description": "",
-      "defined_in": "polaris/kernelone/audit/tests/test_context_os_prompt.py"
-    },
-    {
-      "type": "function",
-      "name": "test_context_os_prompt_audit_rejects_control_plane_content_leak",
-      "description": "",
-      "defined_in": "polaris/kernelone/audit/tests/test_context_os_prompt.py"
-    },
-    {
-      "type": "function",
-      "name": "test_context_os_audit_summary_from_ledger_is_prompt_text_free",
-      "description": "",
-      "defined_in": "polaris/kernelone/audit/tests/test_context_os_prompt.py"
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditEventType",
-      "description": "Test suite for KernelAuditEventType enum.",
-      "defined_in": "polaris/kernelone/audit/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_all_event_types_exist",
-          "doc": "Test that all expected event types are defined."
-        },
-        {
-          "name": "test_event_type_values",
-          "doc": "Test event type string values."
-        },
-        {
-          "name": "test_event_type_is_string_enum",
-          "doc": "Test that event types are string enums."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditRole",
-      "description": "Test suite for KernelAuditRole enum.",
-      "defined_in": "polaris/kernelone/audit/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_system_role_value",
-          "doc": "Test that SYSTEM role has correct value."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestGenesisHash",
-      "description": "Test suite for GENESIS_HASH constant.",
-      "defined_in": "polaris/kernelone/audit/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_genesis_hash_is_64_zeros",
-          "doc": "Test that GENESIS_HASH is 64 zero characters."
-        },
-        {
-          "name": "test_genesis_hash_equals_constant",
-          "doc": "Test that imported GENESIS_HASH matches constant module."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditEventCreation",
-      "description": "Test suite for KernelAuditEvent creation.",
-      "defined_in": "polaris/kernelone/audit/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_minimal_event_creation",
-          "doc": "Test creating event with minimal required fields."
-        },
-        {
-          "name": "test_full_event_creation",
-          "doc": "Test creating event with all fields."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditEventToDict",
-      "description": "Test suite for KernelAuditEvent.to_dict method.",
-      "defined_in": "polaris/kernelone/audit/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_to_dict_includes_all_fields",
-          "doc": "Test that to_dict serializes all fields correctly."
-        },
-        {
-          "name": "test_to_dict_returns_new_dict",
-          "doc": "Test that to_dict returns a new dict (not a reference)."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditEventFromDict",
-      "description": "Test suite for KernelAuditEvent.from_dict method.",
-      "defined_in": "polaris/kernelone/audit/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_from_dict_minimal",
-          "doc": "Test creating event from minimal dict."
-        },
-        {
-          "name": "test_from_dict_with_z_suffix",
-          "doc": "Test creating event from dict with Z timestamp suffix."
-        },
-        {
-          "name": "test_from_dict_full",
-          "doc": "Test creating event from full dict."
-        },
-        {
-          "name": "test_from_dict_missing_timestamp_raises",
-          "doc": "Test that missing timestamp raises ValueError."
-        },
-        {
-          "name": "test_from_dict_empty_timestamp_raises",
-          "doc": "Test that empty timestamp raises ValueError."
-        },
-        {
-          "name": "test_from_dict_whitespace_timestamp_raises",
-          "doc": "Test that whitespace-only timestamp raises ValueError."
-        },
-        {
-          "name": "test_from_dict_invalid_event_type_raises",
-          "doc": "Test that invalid event_type raises ValueError."
-        },
-        {
-          "name": "test_from_dict_default_values",
-          "doc": "Test that missing optional fields get defaults."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelChainVerificationResult",
-      "description": "Test suite for KernelChainVerificationResult dataclass.",
-      "defined_in": "polaris/kernelone/audit/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_creation",
-          "doc": "Test creating verification result."
-        },
-        {
-          "name": "test_with_invalid_events",
-          "doc": "Test verification result with invalid events list."
-        },
-        {
-          "name": "test_is_frozen",
-          "doc": "Test that dataclass is frozen."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestKernelAuditWriteResult",
-      "description": "Test suite for KernelAuditWriteResult dataclass.",
-      "defined_in": "polaris/kernelone/audit/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_success_result",
-          "doc": "Test creating successful write result."
-        },
-        {
-          "name": "test_result_with_warnings",
-          "doc": "Test creating result with warnings."
-        },
-        {
-          "name": "test_result_with_error",
-          "doc": "Test creating result with error."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestEventRoundTrip",
-      "description": "Test suite for event serialization round-trip.",
-      "defined_in": "polaris/kernelone/audit/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_to_dict_from_dict_roundtrip",
-          "doc": "Test that event survives to_dict -> from_dict round-trip."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestValidateRunId",
-      "description": "Test suite for validate_run_id function.",
-      "defined_in": "polaris/kernelone/audit/tests/test_validators.py",
-      "methods": [
-        {
-          "name": "test_valid_run_id_simple",
-          "doc": "Test valid simple run_id."
-        },
-        {
-          "name": "test_valid_run_id_with_dots",
-          "doc": "Test valid run_id with dots."
-        },
-        {
-          "name": "test_valid_run_id_with_underscores",
-          "doc": "Test valid run_id with underscores."
-        },
-        {
-          "name": "test_valid_run_id_with_hyphens",
-          "doc": "Test valid run_id with hyphens."
-        },
-        {
-          "name": "test_valid_run_id_with_colons",
-          "doc": "Test valid run_id with colons."
-        },
-        {
-          "name": "test_valid_run_id_minimum_length",
-          "doc": "Test run_id with minimum valid length (3 chars)."
-        },
-        {
-          "name": "test_invalid_empty_run_id",
-          "doc": "Test invalid empty run_id."
-        },
-        {
-          "name": "test_invalid_none_run_id",
-          "doc": "Test invalid None run_id."
-        },
-        {
-          "name": "test_invalid_single_char",
-          "doc": "Test invalid single character run_id (must be at least 3)."
-        },
-        {
-          "name": "test_invalid_starts_with_number",
-          "doc": "Test run_id starting with number is actually valid (regex allows alphanumeric start)."
-        },
-        {
-          "name": "test_invalid_special_chars",
-          "doc": "Test invalid special characters."
-        },
-        {
-          "name": "test_invalid_space",
-          "doc": "Test run_id with spaces is invalid."
-        },
-        {
-          "name": "test_valid_long_run_id",
-          "doc": "Test valid long run_id (up to 128 chars)."
-        },
-        {
-          "name": "test_invalid_too_long_run_id",
-          "doc": "Test run_id exceeding maximum length."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestRequireValidRunId",
-      "description": "Test suite for require_valid_run_id function.",
-      "defined_in": "polaris/kernelone/audit/tests/test_validators.py",
-      "methods": [
-        {
-          "name": "test_valid_run_id_returns_token",
-          "doc": "Test valid run_id is returned stripped."
-        },
-        {
-          "name": "test_empty_run_id_returns_empty",
-          "doc": "Test that empty run_id is returned as-is (no raise for empty)."
-        },
-        {
-          "name": "test_whitespace_only_returns_empty",
-          "doc": "Test that whitespace-only run_id is returned as empty string."
-        },
-        {
-          "name": "test_invalid_run_id_raises",
-          "doc": "Test invalid non-empty run_id raises ValueError."
-        },
-        {
-          "name": "test_invalid_run_id_raises_with_none",
-          "doc": "Test None run_id returns empty string (not raises)."
-        },
-        {
-          "name": "test_strips_whitespace",
-          "doc": "Test that whitespace is stripped."
-        },
-        {
-          "name": "test_valid_run_id_preserves_case",
-          "doc": "Test that case is preserved."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestNormalizeWorkspacePath",
-      "description": "Test suite for normalize_workspace_path function.",
-      "defined_in": "polaris/kernelone/audit/tests/test_validators.py",
-      "methods": [
-        {
-          "name": "test_returns_absolute_path",
-          "doc": "Test that absolute path is returned."
-        },
-        {
-          "name": "test_empty_defaults_to_cwd",
-          "doc": "Test that empty input defaults to current working directory."
-        },
-        {
-          "name": "test_strips_whitespace",
-          "doc": "Test that whitespace is stripped."
-        },
-        {
-          "name": "test_resolves_relative_path",
-          "doc": "Test that relative path is resolved."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestNormalizeOptionalMapping",
-      "description": "Test suite for normalize_optional_mapping function.",
-      "defined_in": "polaris/kernelone/audit/tests/test_validators.py",
-      "methods": [
-        {
-          "name": "test_valid_dict",
-          "doc": "Test normalization of valid dict."
-        },
-        {
-          "name": "test_none_returns_empty_dict",
-          "doc": "Test that None returns empty dict."
-        },
-        {
-          "name": "test_non_dict_returns_empty_dict",
-          "doc": "Test that non-dict input returns empty dict."
-        },
-        {
-          "name": "test_converts_keys_to_strings",
-          "doc": "Test that non-string keys are converted to strings."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestDeriveTaskId",
-      "description": "Test suite for derive_task_id function.",
-      "defined_in": "polaris/kernelone/audit/tests/test_validators.py",
-      "methods": [
-        {
-          "name": "test_uses_run_id_when_provided",
-          "doc": "Test task_id is derived from run_id when provided."
-        },
-        {
-          "name": "test_derives_timestamp_when_no_run_id",
-          "doc": "Test timestamp-based derivation when no run_id."
-        },
-        {
-          "name": "test_strips_run_id",
-          "doc": "Test that run_id is stripped."
-        },
-        {
-          "name": "test_custom_timestamp",
-          "doc": "Test with custom timestamp."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestDeriveTraceId",
-      "description": "Test suite for derive_trace_id function.",
-      "defined_in": "polaris/kernelone/audit/tests/test_validators.py",
-      "methods": [
-        {
-          "name": "test_returns_hex_string",
-          "doc": "Test that trace_id is a hex string."
-        },
-        {
-          "name": "test_length_is_16",
-          "doc": "Test that trace_id is 16 characters."
-        },
-        {
-          "name": "test_unique_per_call",
-          "doc": "Test that each call returns a unique ID."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestNormalizeEventType",
-      "description": "Test suite for normalize_event_type function.",
-      "defined_in": "polaris/kernelone/audit/tests/test_validators.py",
-      "methods": [
-        {
-          "name": "test_passes_enum_through",
-          "doc": "Test that enum values pass through unchanged."
-        },
-        {
-          "name": "test_converts_string_to_enum",
-          "doc": "Test that string is converted to enum."
-        },
-        {
-          "name": "test_converts_llm_call_string",
-          "doc": "Test LLM_CALL string conversion."
-        },
-        {
-          "name": "test_handles_whitespace",
-          "doc": "Test handling of whitespace."
-        },
-        {
-          "name": "test_invalid_string_raises",
-          "doc": "Test that invalid string raises ValueError."
-        },
-        {
-          "name": "test_empty_string_raises",
-          "doc": "Test empty string raises ValueError."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestNormalizeRole",
-      "description": "Test suite for normalize_role function.",
-      "defined_in": "polaris/kernelone/audit/tests/test_validators.py",
-      "methods": [
-        {
-          "name": "test_passes_enum_value",
-          "doc": "Test that enum values return their string value."
-        },
-        {
-          "name": "test_passes_string_through",
-          "doc": "Test that strings pass through unchanged."
-        },
-        {
-          "name": "test_strips_whitespace",
-          "doc": "Test that whitespace is stripped."
-        },
-        {
-          "name": "test_empty_string",
-          "doc": "Test empty string handling."
-        },
-        {
-          "name": "test_none_returns_empty",
-          "doc": "Test that None returns empty string."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestSystemRole",
-      "description": "Test suite for SYSTEM_ROLE constant.",
-      "defined_in": "polaris/kernelone/audit/tests/test_validators.py",
-      "methods": [
-        {
-          "name": "test_is_system_string",
-          "doc": "Test that SYSTEM_ROLE is 'system' string."
         }
       ]
     },

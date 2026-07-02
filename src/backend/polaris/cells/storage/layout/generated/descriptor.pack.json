@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:56.103108Z",
-  "source_hash": "c9f247568077ac4e",
+  "generated_at": "2026-07-02T03:36:34.051898Z",
+  "source_hash": "01f219ad1b8cb02d",
   "cell_id": "storage.layout",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -601,24 +601,6 @@
       "type": "function",
       "name": "get_lifecycle_for_path",
       "description": "Get the lifecycle for a logical path.",
-      "defined_in": "polaris/kernelone/storage/policy.py"
-    },
-    {
-      "type": "function",
-      "name": "get_artifact_policy_metadata",
-      "description": "Get policy metadata for an artifact key.",
-      "defined_in": "polaris/kernelone/storage/policy.py"
-    },
-    {
-      "type": "function",
-      "name": "should_compress_artifact",
-      "description": "Check if an artifact should be compressed when archiving.",
-      "defined_in": "polaris/kernelone/storage/policy.py"
-    },
-    {
-      "type": "function",
-      "name": "should_archive_artifact",
-      "description": "Check if an artifact should be archived on terminal state.",
       "defined_in": "polaris/kernelone/storage/policy.py"
     }
   ],

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:54.615537Z",
-  "source_hash": "55e9c503fa2c378d",
+  "generated_at": "2026-07-02T03:36:32.712859Z",
+  "source_hash": "7ccbb46278d1f8b5",
   "cell_id": "policy.workspace_guard",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -72,106 +72,6 @@
       "name": "check_workspace_write_guard_batch",
       "description": "Evaluate multiple workspace write guard paths through one public query.",
       "defined_in": "polaris/cells/policy/workspace_guard/public/service.py"
-    },
-    {
-      "type": "class",
-      "name": "TestWorkspaceWriteGuardQueryV1HappyPath",
-      "description": "",
-      "defined_in": "polaris/cells/policy/workspace_guard/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_construction",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestWorkspaceWriteGuardBatchQueryV1HappyPath",
-      "description": "",
-      "defined_in": "polaris/cells/policy/workspace_guard/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_construction",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestWorkspaceArchiveWriteGuardQueryV1HappyPath",
-      "description": "",
-      "defined_in": "polaris/cells/policy/workspace_guard/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_construction",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestWorkspaceGuardDecisionV1HappyPath",
-      "description": "",
-      "defined_in": "polaris/cells/policy/workspace_guard/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_allowed",
-          "doc": ""
-        },
-        {
-          "name": "test_denied",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestWorkspaceGuardBatchDecisionV1HappyPath",
-      "description": "",
-      "defined_in": "polaris/cells/policy/workspace_guard/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_allowed",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestWorkspaceWriteGuardBatchService",
-      "description": "",
-      "defined_in": "polaris/cells/policy/workspace_guard/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_allowed_batch_deduplicates_paths",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestWorkspaceGuardViolationEventV1HappyPath",
-      "description": "",
-      "defined_in": "polaris/cells/policy/workspace_guard/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_construction",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestWorkspaceGuardError",
-      "description": "",
-      "defined_in": "polaris/cells/policy/workspace_guard/public/tests/test_public_contracts.py",
-      "methods": [
-        {
-          "name": "test_raise_and_catch",
-          "doc": ""
-        }
-      ]
     },
     {
       "type": "function",

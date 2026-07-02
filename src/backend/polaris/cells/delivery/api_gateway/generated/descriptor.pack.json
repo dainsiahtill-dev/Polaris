@@ -1,10 +1,22 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:44.431454Z",
-  "source_hash": "ccd40d60c9d9d2e4",
+  "generated_at": "2026-07-02T03:36:24.938221Z",
+  "source_hash": "1d82ae60848dfc7f",
   "cell_id": "delivery.api_gateway",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "function",
+      "name": "get_effective_token",
+      "description": "Return the token that Auth() is enforcing at runtime.",
+      "defined_in": "polaris/delivery/http/app_factory.py"
+    },
+    {
+      "type": "function",
+      "name": "is_auth_token_discovery_enabled",
+      "description": "Return whether the public auth-token discovery endpoint may expose a token.",
+      "defined_in": "polaris/delivery/http/app_factory.py"
+    },
     {
       "type": "function",
       "name": "create_app",
@@ -390,6 +402,12 @@
     },
     {
       "type": "function",
+      "name": "_director_binding_skip_reason",
+      "description": "Return a reason when a Director binding may be explicitly skipped.",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
       "name": "_dedupe_index_candidates",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/_shared.py"
@@ -486,8 +504,20 @@
     },
     {
       "type": "function",
-      "name": "legacy_sse_removed",
-      "description": "Fail closed for removed HTTP event-stream endpoints.",
+      "name": "_env_flag_enabled",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "internal_bench_surface_enabled",
+      "description": "Return whether internal Factory/Bench HTTP surfaces may be exposed.",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "require_internal_bench_surface",
+      "description": "Fail closed for Bench/Factory APIs in formal product mode.",
       "defined_in": "polaris/delivery/http/routers/_shared.py"
     },
     {

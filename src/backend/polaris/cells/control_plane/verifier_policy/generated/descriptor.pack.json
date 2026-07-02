@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-01T20:42:48.625636Z",
-  "source_hash": "d67a58f6538fcf35",
+  "generated_at": "2026-07-02T03:36:24.971426Z",
+  "source_hash": "41b960e2e55d80b2",
   "cell_id": "control_plane.verifier_policy",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -196,72 +196,6 @@
       "name": "update_verifier_policy",
       "description": "Persist platform verifier policy for the workspace.",
       "defined_in": "polaris/cells/control_plane/verifier_policy/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_verifier_policy_defaults_all_optional_modalities_disabled",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/verifier_policy/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_verifier_policy_persists_enabled_browser_and_visual",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/verifier_policy/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_verifier_policy_rejects_required_disabled_modality",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/verifier_policy/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_verifier_policy_rejects_required_unavailable_modality",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/verifier_policy/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_verifier_policy_persists_required_custom_script_even_when_runtime_disabled",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/verifier_policy/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_verifier_policy_rejects_absolute_custom_script_path",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/verifier_policy/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_verifier_policy_exports_gate_policy_fragment",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/verifier_policy/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_evidence_policy_compiler_keeps_unavailable_browser_advisory_by_default",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/verifier_policy/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_evidence_policy_compiler_requires_browser_when_available",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/verifier_policy/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_evidence_policy_compiler_blocks_explicit_unavailable_required_modality",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/verifier_policy/tests/test_public_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_evidence_policy_compiler_maps_api_service_to_contract_and_integration",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/verifier_policy/tests/test_public_service.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

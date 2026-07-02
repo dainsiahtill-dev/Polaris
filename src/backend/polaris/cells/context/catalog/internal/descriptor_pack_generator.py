@@ -237,6 +237,58 @@ class FunctionalAnalyzer(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+def _should_analyze_source_file(path: Path) -> bool:
+    """Return whether a Python file belongs in a descriptor capability pack.
+
+    Descriptor packs are prompt/context assets for Cell runtime capability
+    discovery. They should describe production source surfaces, not test
+    fixtures, generated outputs, virtual environments, or cache directories.
+    Filtering here keeps AI context focused and prevents compatibility tests
+    from being mistaken for active public capabilities.
+    """
+
+    if path.suffix != ".py":
+        return False
+
+    ignored_parts = {
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".venv",
+        "__pycache__",
+        "generated",
+        "testing",
+        "tests",
+        "venv",
+    }
+    if any(part in ignored_parts for part in path.parts):
+        return False
+
+    filename = path.name
+    return not (filename.startswith("test_") or filename.endswith("_test.py"))
+
+
+def _should_process_cell_dir(cell_dir: Path) -> bool:
+    """Return whether a discovered ``cell.yaml`` belongs to a real Cell.
+
+    ``run_all`` starts from ``polaris/cells`` and walks recursively because Cells
+    can be nested by domain. Test fixtures may also embed miniature Polaris
+    workspaces under that tree; those manifests are useful test data but must not
+    be regenerated as production descriptors.
+    """
+
+    ignored_parts = {
+        ".venv",
+        "__pycache__",
+        "fixtures",
+        "generated",
+        "testing",
+        "tests",
+        "venv",
+    }
+    return not any(part in ignored_parts for part in cell_dir.parts)
+
+
 def analyze_file(path: Path) -> dict[str, Any]:
     """Analyze a single Python file."""
     try:
@@ -325,8 +377,7 @@ async def generate_pack(
     source_files_for_hash: list[Path] = []
 
     for py_file in sorted(py_files):
-        # Avoid analyzing generated files themselves or 3rd party
-        if "generated/" in py_file.as_posix() or "venv" in py_file.as_posix():
+        if not _should_analyze_source_file(py_file):
             continue
 
         source_files_for_hash.append(py_file)
@@ -467,7 +518,9 @@ async def run_all(
         return
 
     # Collect all cell directories first
-    cell_dirs = [cell_yaml.parent for cell_yaml in cells_root.rglob("cell.yaml")]
+    cell_dirs = [
+        cell_yaml.parent for cell_yaml in cells_root.rglob("cell.yaml") if _should_process_cell_dir(cell_yaml.parent)
+    ]
 
     if not cell_dirs:
         logger.info("No cells found to process.")

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:55.800305Z",
-  "source_hash": "0a09439460f229e8",
+  "generated_at": "2026-07-02T03:36:33.805285Z",
+  "source_hash": "df7d14cd34879404",
   "cell_id": "runtime.task_runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -76,6 +76,24 @@
       "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
     },
     {
+      "type": "function",
+      "name": "require_non_empty_field",
+      "description": "Return a required non-empty persisted session field.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "require_positive_int_field",
+      "description": "Return a required positive integer persisted session field.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_session_status",
+      "description": "Return a required persisted session status.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
       "type": "class",
       "name": "TaskRuntimeService",
       "description": "Runtime task lifecycle service for the ``runtime.task_runtime`` cell.",
@@ -103,6 +121,14 @@
         },
         {
           "name": "task_exists",
+          "doc": ""
+        },
+        {
+          "name": "_metadata_matches_external_task_id",
+          "doc": ""
+        },
+        {
+          "name": "_get_task_by_external_task_id",
           "doc": ""
         },
         {
@@ -150,6 +176,14 @@
           "doc": ""
         },
         {
+          "name": "claim_next_execution",
+          "doc": "Atomically select and claim the next executable task."
+        },
+        {
+          "name": "_candidate_key",
+          "doc": ""
+        },
+        {
           "name": "claim_execution",
           "doc": "Claim a task for execution and persist a lease-backed session."
         },
@@ -170,7 +204,19 @@
           "doc": "Suspend a claimed task so it can be resumed later."
         },
         {
+          "name": "suspend_active_executions_for_run",
+          "doc": "Suspend every active task lease owned by an orchestration run."
+        },
+        {
           "name": "list_ready",
+          "doc": ""
+        },
+        {
+          "name": "wait_ready",
+          "doc": ""
+        },
+        {
+          "name": "add_ready_listener",
           "doc": ""
         },
         {
@@ -179,6 +225,18 @@
         },
         {
           "name": "get_stats",
+          "doc": ""
+        },
+        {
+          "name": "refresh_dependency_unblocks",
+          "doc": "Normalize stale BLOCKED rows whose dependencies are now complete."
+        },
+        {
+          "name": "_active_dependency_ids",
+          "doc": ""
+        },
+        {
+          "name": "_metadata_dependency_task_ids",
           "doc": ""
         },
         {
@@ -215,6 +273,10 @@
         },
         {
           "name": "_append_execution_event",
+          "doc": ""
+        },
+        {
+          "name": "_publish_factory_execution_event",
           "doc": ""
         },
         {
@@ -311,6 +373,30 @@
           "doc": "Board-level transaction lock for atomic cache+filesystem updates."
         },
         {
+          "name": "_is_ready_task",
+          "doc": ""
+        },
+        {
+          "name": "_has_ready_task_locked",
+          "doc": ""
+        },
+        {
+          "name": "_notify_ready_tasks",
+          "doc": ""
+        },
+        {
+          "name": "wait_ready",
+          "doc": "Block until at least one task is ready, without interval polling."
+        },
+        {
+          "name": "add_ready_listener",
+          "doc": "Register a callback fired when a ready task becomes available."
+        },
+        {
+          "name": "_unsubscribe",
+          "doc": ""
+        },
+        {
           "name": "_load_all",
           "doc": "Load all tasks from disk into in-memory cache."
         },
@@ -320,7 +406,7 @@
         },
         {
           "name": "_replace_task_file",
-          "doc": "Replace task JSON with short Windows retry for transient file locks."
+          "doc": "Replace task JSON with short retry for transient file locks."
         },
         {
           "name": "_load_max_id",
@@ -482,6 +568,18 @@
     },
     {
       "type": "function",
+      "name": "_normalize_task_id",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_task_id_list",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py"
+    },
+    {
+      "type": "function",
       "name": "create_taskboard",
       "description": "Compatibility factory used by role-agent subsystem.",
       "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py"
@@ -558,320 +656,6 @@
       "name": "_to_dict_copy",
       "description": "",
       "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
-    },
-    {
-      "type": "class",
-      "name": "TestRequireNonEmptyHelper",
-      "description": "Tests for the internal _require_non_empty helper (via public API).",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_empty_task_id_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_whitespace_only_task_id_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_none_converted_to_string_raises",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestCreateRuntimeTaskCommandV1",
-      "description": "Tests for CreateRuntimeTaskCommandV1.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_create_with_all_fields",
-          "doc": ""
-        },
-        {
-          "name": "test_create_with_payload",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_workspace_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_title_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_owner_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_is_frozen",
-          "doc": ""
-        },
-        {
-          "name": "test_payload_defaults_to_empty_dict",
-          "doc": ""
-        },
-        {
-          "name": "test_payload_is_copied",
-          "doc": ""
-        },
-        {
-          "name": "test_equality",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestUpdateRuntimeTaskCommandV1",
-      "description": "Tests for UpdateRuntimeTaskCommandV1.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_create_with_all_fields",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_status_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_payload_defaults_to_empty_dict",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestReopenRuntimeTaskCommandV1",
-      "description": "Tests for ReopenRuntimeTaskCommandV1.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_create",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_reason_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_task_id_raises",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestListRuntimeTasksQueryV1",
-      "description": "Tests for ListRuntimeTasksQueryV1.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_create_with_defaults",
-          "doc": ""
-        },
-        {
-          "name": "test_create_with_all_fields",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_workspace_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_limit_zero_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_limit_negative_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_offset_negative_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_statuses_filtered",
-          "doc": ""
-        },
-        {
-          "name": "test_owner_none_allowed",
-          "doc": ""
-        },
-        {
-          "name": "test_owner_empty_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_large_limit",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestGetRuntimeTaskQueryV1",
-      "description": "Tests for GetRuntimeTaskQueryV1.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_create",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_task_id_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_workspace_raises",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestRuntimeTaskLifecycleEventV1",
-      "description": "Tests for RuntimeTaskLifecycleEventV1.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_create",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_event_id_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_occurred_at_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_payload_defaults_to_empty_dict",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestRuntimeTaskResultV1",
-      "description": "Tests for RuntimeTaskResultV1.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_create",
-          "doc": ""
-        },
-        {
-          "name": "test_create_with_updated_false",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_task_id_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_negative_version_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_version_zero_allowed",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestRuntimeTaskRuntimeError",
-      "description": "Tests for RuntimeTaskRuntimeError exception.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_create_with_message",
-          "doc": ""
-        },
-        {
-          "name": "test_create_with_custom_code",
-          "doc": ""
-        },
-        {
-          "name": "test_create_with_details",
-          "doc": ""
-        },
-        {
-          "name": "test_empty_message_raises",
-          "doc": ""
-        },
-        {
-          "name": "test_is_runtime_error",
-          "doc": ""
-        },
-        {
-          "name": "test_raise_and_catch",
-          "doc": ""
-        },
-        {
-          "name": "test_details_is_copied",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TestModuleExports",
-      "description": "Tests for module __all__ exports.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
-      "methods": [
-        {
-          "name": "test_all_exports_present",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "test_task_runtime_service_normalizes_task_ids",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_task_runtime_service_manages_task_rows",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_task_runtime_reset_records_clears_rows_sessions_and_events",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_task_runtime_service_materializes_legacy_task_and_claims_it",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_task_runtime_service_surfaces_resumable_task_and_reclaims_it",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_task_runtime_service_persists_sessions_under_canonical_task_namespace",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/tests/test_service.py"
-    },
-    {
-      "type": "function",
-      "name": "test_task_runtime_service_emits_execution_events_via_fact_stream",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/tests/test_service.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

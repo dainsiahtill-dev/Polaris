@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:49.139376Z",
-  "source_hash": "d278c3add98814ac",
+  "generated_at": "2026-07-02T03:36:29.334751Z",
+  "source_hash": "dd2b4ce7477a974d",
   "cell_id": "orchestration.workflow_activity",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -117,6 +117,12 @@
     {
       "type": "function",
       "name": "_normalize_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/qa_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_activity_classification",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/qa_activities.py"
     },
@@ -395,6 +401,18 @@
     {
       "type": "function",
       "name": "_unwrap_workflow_result",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_snapshot_status",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_snapshot_result",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_activity/internal/embedded_api.py"
     },
@@ -843,6 +861,18 @@
     {
       "type": "function",
       "name": "_result_success",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/workflows/qa_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_payload_classification",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/workflows/qa_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_workflow_classification",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_activity/internal/workflows/qa_workflow.py"
     }
