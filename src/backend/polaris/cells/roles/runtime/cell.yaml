@@ -137,14 +137,9 @@ verification:
     MessageBus adapter for durable delivery.
 
     '
-  - "Phase 4 execution unification (Task #47): dual execution paths frozen. Transitional\
-    \ frozen surfaces (no new features, critical bug fixes only): - standalone_runner.py:\
-    \ StandaloneRoleAgent, ArchitectStandaloneAgent,\n  ChiefEngineerStandaloneAgent,\
-    \ DirectorStandaloneAgent\n- role_agent_service.py: AgentService - tui_console.py:\
-    \ RoleAgentTUI, DirectorRoleAgentTUI - standalone_entry.py: module (frozen CLI\
-    \ entry) Unified execution path (mandatory for all production):\n    RoleRuntimeService\
-    \ → RoleExecutionKernel (CHAT | WORKFLOW mode)\nPath audit: RoleRuntimeService.execute_role_task(),\
-    \ execute_role_session(), execute_role() all route through RoleExecutionKernel\
-    \ — no standalone compatibility execution paths remain in production.\n"
+  - "Role runtime execution is single-path: RoleRuntimeService.execute_role_task(),\
+    \ execute_role_session(), and execute_role() all route through RoleExecutionKernel\
+    \ (CHAT | WORKFLOW mode). Phase 4 standalone/TUI execution modules have been\
+    \ removed; architecture regression coverage now lives in workflow_runtime/tests/test_isolation.py.\n"
   smoke_commands: []
 generated_artifacts: []

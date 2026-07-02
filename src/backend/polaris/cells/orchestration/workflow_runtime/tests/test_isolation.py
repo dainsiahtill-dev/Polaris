@@ -178,29 +178,26 @@ class TestRoleExecutionKernelModeLogging:
       - Tool call events (line 1225): "mode": mode_value in metadata  ✓
     """
 
-    def test_kernel_module_has_mode_logging(self) -> None:
-        """RoleExecutionKernel source must log request.mode.value in event emission."""
-        import ast
+    def test_kernel_event_components_have_mode_logging(self) -> None:
+        """RoleExecutionKernel event components must carry execution mode metadata."""
         from pathlib import Path
 
         repo_root = Path(__file__).resolve().parents[5]
         kernel_path = repo_root / "polaris" / "cells" / "roles" / "kernel" / "internal" / "kernel" / "core.py"
-        with open(kernel_path, encoding="utf-8") as fh:
-            source = fh.read()
+        tool_executor_path = (
+            repo_root / "polaris" / "cells" / "roles" / "kernel" / "internal" / "kernel" / "tool_executor.py"
+        )
 
-        tree = ast.parse(source)
-        mode_logging_found = False
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Name) and node.id in (
-                "request.mode.value",
-                "mode_value",
-            ):
-                mode_logging_found = True
-                break
+        kernel_source = kernel_path.read_text(encoding="utf-8")
+        tool_executor_source = tool_executor_path.read_text(encoding="utf-8")
 
-        assert mode_logging_found, (
-            "RoleExecutionKernel must log request.mode.value in event metadata. "
-            "Ensure all event emission paths carry 'mode' for the evidence chain."
+        assert "execute_stream_role_turn" in kernel_source, (
+            "RoleExecutionKernel must delegate streaming turns through the unified "
+            "stream executor instead of maintaining a second event path."
+        )
+        assert '"mode": mode_value' in tool_executor_source, (
+            "Tool execution/result events must include execution mode metadata "
+            "so the evidence chain can distinguish chat and workflow turns."
         )
 
     def test_mode_enum_values_are_chat_and_workflow(self) -> None:
