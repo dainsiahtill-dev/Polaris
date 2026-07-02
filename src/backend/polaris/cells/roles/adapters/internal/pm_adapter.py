@@ -3,8 +3,10 @@
 强化任务合同生成与质量门禁，避免"有任务但不可执行"的空壳输出。
 
 本模块是 PM 适配器的 **唯一装配点（assembly point）** 与 canonical 导入路径：
-- 从 :mod:`pm.pm_text_utils` 重新导出全部冻结常量与 ``_pm_*`` 纯函数；
-- 通过组合 :mod:`pm` 下 6 个职责 mixin 定义 :class:`PMAdapter`；
+- 从 :mod:`polaris.cells.roles.adapters.internal.pm.pm_text_utils`
+  重新导出全部冻结常量与 ``_pm_*`` 纯函数；
+- 通过组合 :mod:`polaris.cells.roles.adapters.internal.pm` 下 6 个职责 mixin
+  定义 :class:`PMAdapter`；
 - 保持与历史版本完全一致的公开/私有顶层符号面（无损重构）。
 """
 

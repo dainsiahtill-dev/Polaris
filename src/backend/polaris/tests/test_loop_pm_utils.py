@@ -259,7 +259,7 @@ class TestLoopPmUtils(unittest.TestCase):
                     "id": "TASK-BACKLOG",
                     "title": "Backlog traceability",
                     "goal": "Persist backlog linkage",
-                    "target_files": ["src/backend/scripts/loop-pm.py"],
+                    "target_files": ["src/backend/polaris/delivery/cli/loop-pm.py"],
                     "acceptance_criteria": ["Task keeps backlog mapping"],
                     "backlog_ref": backlog_text,
                 }
@@ -359,7 +359,7 @@ class TestLoopPmUtils(unittest.TestCase):
                                 "expected": "all checks pass",
                                 "actual": "check failed",
                                 "artifact_path": ".polaris/runtime/results/qa.review.md",
-                                "suspected_scope": ["src/backend/scripts/loop-pm.py"],
+                                "suspected_scope": ["src/backend/polaris/delivery/cli/loop-pm.py"],
                             },
                         },
                     }

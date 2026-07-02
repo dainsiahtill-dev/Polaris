@@ -67,7 +67,7 @@ from polaris.delivery.cli.pm.agents import (
     wait_for_agents_confirmation as wait_for_agents_confirmation,
 )
 
-# Import from pm modules
+# Import from canonical PM package modules.
 from polaris.delivery.cli.pm.backend import (
     ensure_pm_backend_available as ensure_pm_backend_available,
     resolve_pm_backend_kind as resolve_pm_backend_kind,

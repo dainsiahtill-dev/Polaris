@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -68,9 +69,34 @@ RETIRED_APPLICATION_ORCHESTRATION_PATHS = [
     "polaris/tests/test_director_orchestrator_resident_decision.py",
 ]
 
+RETIRED_PM_LEGACY_TESTS = [
+    "polaris/tests/test_shangshuling_pm.py",
+    "polaris/tests/test_shangshuling_legacy_bridge.py",
+]
+
 
 def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _top_level_pm_imports() -> list[str]:
+    offenders: list[str] = []
+    for path in (BACKEND_ROOT / "polaris").rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        relative = path.relative_to(BACKEND_ROOT).as_posix()
+        source = _read_text(path)
+        tree = ast.parse(source, filename=relative)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "pm" or alias.name.startswith("pm."):
+                        offenders.append(f"{relative}:{node.lineno}: import {alias.name}")
+            if isinstance(node, ast.ImportFrom) and node.level == 0:
+                module = node.module or ""
+                if module == "pm" or module.startswith("pm."):
+                    offenders.append(f"{relative}:{node.lineno}: from {module} import ...")
+    return offenders
 
 
 @pytest.mark.parametrize("relative_path", CLI_ENTRYPOINTS)
@@ -174,11 +200,22 @@ def test_application_orchestration_has_no_source_files() -> None:
         return
 
     offenders = [
-        path.relative_to(BACKEND_ROOT).as_posix()
-        for path in root.rglob("*.py")
-        if "__pycache__" not in path.parts
+        path.relative_to(BACKEND_ROOT).as_posix() for path in root.rglob("*.py") if "__pycache__" not in path.parts
     ]
     assert not offenders, f"Retired application orchestration source files were recreated: {offenders}"
+
+
+@pytest.mark.parametrize("relative_path", RETIRED_PM_LEGACY_TESTS)
+def test_pm_legacy_stress_tests_are_removed(relative_path: str) -> None:
+    full_path = BACKEND_ROOT / relative_path
+    assert not full_path.exists(), f"Retired top-level pm legacy test was recreated: {relative_path}"
+
+
+def test_runtime_code_does_not_import_top_level_pm_package() -> None:
+    offenders = _top_level_pm_imports()
+    assert not offenders, (
+        f"Runtime code must import polaris.delivery.cli.pm or Cell contracts, not top-level pm.* modules: {offenders}"
+    )
 
 
 @pytest.mark.parametrize("relative_path", DELIVERY_ADAPTERS)

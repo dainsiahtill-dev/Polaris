@@ -3,29 +3,19 @@
 
 """PM wrapper for Ollama loop - CLI entry point.
 
-This file delegates to the canonical implementation in the pm/ package.
+This file delegates to the canonical implementation in
+``polaris.delivery.cli.pm``.
 """
 
 import sys
 from pathlib import Path
 
-# Import from pm package (renamed from loop_pm)
+# Import canonical PM package modules.
 import polaris.delivery.cli.pm.agents as _pm_agents_module
 import polaris.delivery.cli.pm.backend as _pm_backend_module
 import polaris.delivery.cli.pm.orchestration_engine as _pm_orchestration_engine_module
 
-# Import main entry point
-# Import from utils
-# Import from results
-# Import from tasks
-# Import from task_splitting
-# Import from task_special
-# Import from execution
-# Import from polaris_engine
-# Import from director_mgmt
-# Import from agents
-# Import from memo
-# Import from orchestration
+# Re-export selected PM package helpers for the direct CLI compatibility entrypoint.
 from polaris.delivery.cli.pm import (
     EngineRuntimeConfig,
     PolarisEngine,
