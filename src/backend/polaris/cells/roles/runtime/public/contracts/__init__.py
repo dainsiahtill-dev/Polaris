@@ -120,7 +120,7 @@ from polaris.cells.roles.runtime.public.contracts._validation import (
     _is_forbidden_role_object_owner_cell,
     _is_forbidden_role_object_ref_namespace,
     _is_hex_sha256,
-    _is_legacy_task_market_task_ref,
+    _is_retired_task_market_task_ref,
     _is_roles_profile_ref_namespace,
     _is_task_market_task_ref,
     _normalize_history,

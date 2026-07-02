@@ -3929,7 +3929,7 @@ def test_role_runtime_chain_step_requires_task_market_anchor_ref() -> None:
         )
 
 
-def test_role_runtime_chain_step_rejects_legacy_task_ref_shape() -> None:
+def test_role_runtime_chain_step_rejects_retired_task_ref_shape() -> None:
     with pytest.raises(ValueError, match=r"task_ref must use runtime\.task_market:task:<task_id>"):
         RoleRuntimeChainStepRef(
             role_id="qa",

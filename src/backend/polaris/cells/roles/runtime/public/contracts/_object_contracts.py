@@ -21,7 +21,7 @@ from polaris.cells.roles.runtime.public.contracts._validation import (
     _is_forbidden_role_object_owner_cell,
     _is_forbidden_role_object_ref_namespace,
     _is_hex_sha256,
-    _is_legacy_task_market_task_ref,
+    _is_retired_task_market_task_ref,
     _is_roles_profile_ref_namespace,
     _is_task_market_task_ref,
     _normalize_optional_string,
@@ -492,7 +492,7 @@ class RoleTaskMarketBinding:
         active_refs = tuple(ref for ref in (work_item_ref, lease_token_ref) if ref)
         if any(not _has_ref_namespace(ref, "runtime.task_market") for ref in active_refs):
             raise ValueError("task-market binding refs must point to runtime.task_market")
-        if _is_legacy_task_market_task_ref(work_item_ref):
+        if _is_retired_task_market_task_ref(work_item_ref):
             raise ValueError("work_item_ref active task refs must use runtime.task_market:task:<task_id>")
         object.__setattr__(self, "work_item_ref", work_item_ref)
         object.__setattr__(self, "lease_token_ref", lease_token_ref)
@@ -777,7 +777,7 @@ class RoleRuntimeChainStepRef:
             raise ValueError("chain step must include task_ref or work_item_ref")
         if task_ref and not _is_task_market_task_ref(task_ref):
             raise ValueError("task_ref must use runtime.task_market:task:<task_id>")
-        if _is_legacy_task_market_task_ref(work_item_ref):
+        if _is_retired_task_market_task_ref(work_item_ref):
             raise ValueError("work_item_ref active task refs must use runtime.task_market:task:<task_id>")
         _require_refs_namespace(
             "chain step task/work item refs",

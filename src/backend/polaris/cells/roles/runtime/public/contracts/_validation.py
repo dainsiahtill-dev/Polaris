@@ -111,7 +111,7 @@ def _is_task_market_task_ref(ref: str | None) -> bool:
     return token.startswith(_TASK_MARKET_TASK_REF_PREFIX) and bool(token[len(_TASK_MARKET_TASK_REF_PREFIX) :])
 
 
-def _is_legacy_task_market_task_ref(ref: str | None) -> bool:
+def _is_retired_task_market_task_ref(ref: str | None) -> bool:
     return str(ref or "").strip().startswith("runtime.task_market:task-")
 
 
