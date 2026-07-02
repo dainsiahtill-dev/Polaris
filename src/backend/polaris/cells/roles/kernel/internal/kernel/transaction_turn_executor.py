@@ -11,7 +11,7 @@ application-service boundary between those two layers:
 It deliberately does not perform direct tool, file, command, network, or ledger
 side effects. Those stay inside ``TransactionKernel`` and its controlled runtime
 ports. The non-streaming and streaming flows instantiate this service instead of
-reaching through legacy free-function seams.
+reaching through module-level helper boundaries.
 
 Complexity:
     Each method is O(m + t + e), where ``m`` is prompt/message size, ``t`` is
