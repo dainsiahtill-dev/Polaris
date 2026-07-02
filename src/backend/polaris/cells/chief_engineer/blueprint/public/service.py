@@ -598,7 +598,10 @@ _INTERFACE_SNAPSHOT_SOURCE_SUFFIXES = (
 
 
 def _needs_workspace_interface_snapshot(target_files: list[str]) -> bool:
-    return any(str(path or "").replace("\\", "/").lower().endswith(_INTERFACE_SNAPSHOT_SOURCE_SUFFIXES) for path in target_files)
+    return any(
+        str(path or "").replace("\\", "/").lower().endswith(_INTERFACE_SNAPSHOT_SOURCE_SUFFIXES)
+        for path in target_files
+    )
 
 
 def _owner_terms_overlap(left: list[str], right: list[str]) -> bool:
@@ -1958,21 +1961,21 @@ def build_ce_handoff_decision(
 ) -> CeHandoffDecisionV1:
     """Build the strict `ce_handoff_decision.v1` object.
 
-    This complements the legacy `HandoffDecisionV1` without changing existing
+    This complements the base `HandoffDecisionV1` without changing existing
     callers. The strict decision fails closed when required hash bindings are
     missing, making it suitable for the future execution envelope.
     """
 
-    legacy_decision = base_decision or evaluate_handoff_decision(
+    base_handoff_decision = base_decision or evaluate_handoff_decision(
         workspace,
         blueprint=blueprint,
         blueprint_id=blueprint_id,
         task_id=task_id,
     )
     resolved_blueprint_id = str(
-        blueprint_id or legacy_decision.blueprint_id or blueprint.get("blueprint_id") or ""
+        blueprint_id or base_handoff_decision.blueprint_id or blueprint.get("blueprint_id") or ""
     ).strip()
-    resolved_task_id = str(task_id or legacy_decision.task_id or blueprint.get("task_id") or "").strip()
+    resolved_task_id = str(task_id or base_handoff_decision.task_id or blueprint.get("task_id") or "").strip()
     bindings = CeHandoffDecisionBindingsV1(
         pm_contract_ref=str(blueprint.get("pm_contract_ref") or blueprint.get("pm_contract_path") or "").strip(),
         pm_contract_hash=_binding_hash_or_missing(
@@ -2001,11 +2004,13 @@ def build_ce_handoff_decision(
         for key in ("pm_contract_hash", "blueprint_hash", "execution_profile_hash")
         if str(binding_values.get(key) or "").startswith(_MISSING_HASH_PREFIX)
     ]
-    blockers = [*legacy_decision.blockers]
+    blockers = [*base_handoff_decision.blockers]
     blockers.extend(f"missing required handoff binding: {key}" for key in missing_bindings)
-    allowed = bool(legacy_decision.allowed and not missing_bindings)
+    allowed = bool(base_handoff_decision.allowed and not missing_bindings)
     risk_assessment: dict[str, Any] = {
-        "blocking_risks": list(legacy_decision.blockers) if legacy_decision.open_blocker_risk_count else [],
+        "blocking_risks": (
+            list(base_handoff_decision.blockers) if base_handoff_decision.open_blocker_risk_count else []
+        ),
         "non_blocking_warnings": [],
     }
     evidence_refs = [
@@ -2018,11 +2023,11 @@ def build_ce_handoff_decision(
         "task_id": resolved_task_id,
         "blueprint_id": resolved_blueprint_id,
         "allowed": allowed,
-        "reason": legacy_decision.reason,
+        "reason": base_handoff_decision.reason,
         "blockers": blockers,
         "warnings": [],
         "risk_assessment": risk_assessment,
-        "evaluated_at": legacy_decision.evaluated_at or _utc_now(),
+        "evaluated_at": base_handoff_decision.evaluated_at or _utc_now(),
         "evaluator": "chief_engineer.blueprint.handoff",
         "policy_version": _CE_HANDOFF_POLICY_VERSION,
         "bindings": binding_values,
@@ -2034,7 +2039,7 @@ def build_ce_handoff_decision(
         task_id=resolved_task_id,
         blueprint_id=resolved_blueprint_id,
         allowed=allowed,
-        reason=str(legacy_decision.reason or ""),
+        reason=str(base_handoff_decision.reason or ""),
         blockers=tuple(blockers),
         warnings=(),
         risk_assessment=risk_assessment,
@@ -2096,11 +2101,11 @@ def _handoff_validation_result(
     task_id: str = "",
     blueprint_id: str = "",
     blueprint_task_id: str = "",
-    legacy_decision: HandoffDecisionV1 | None = None,
+    base_handoff_decision: HandoffDecisionV1 | None = None,
     strict_decision: CeHandoffDecisionV1 | None = None,
     require_strict: bool = False,
 ) -> dict[str, Any]:
-    legacy_payload = legacy_decision.to_dict() if legacy_decision is not None else {}
+    base_payload = base_handoff_decision.to_dict() if base_handoff_decision is not None else {}
     strict_payload = strict_decision.to_dict() if strict_decision is not None else {}
     return {
         "schema_version": "chief_engineer.director_handoff_validation.v1",
@@ -2109,10 +2114,10 @@ def _handoff_validation_result(
         "task_id": task_id,
         "blueprint_id": blueprint_id,
         "blueprint_task_id": blueprint_task_id,
-        "legacy_allowed": bool(legacy_decision.allowed) if legacy_decision is not None else False,
+        "base_allowed": bool(base_handoff_decision.allowed) if base_handoff_decision is not None else False,
         "strict_allowed": bool(strict_decision.allowed) if strict_decision is not None else False,
         "require_strict": require_strict,
-        "decision_payload": legacy_payload,
+        "decision_payload": base_payload,
         "strict_decision_payload": strict_payload,
     }
 
@@ -2127,7 +2132,7 @@ def validate_director_handoff_from_payload(
 
     This is the shared pre-Director policy seam for PM dispatch, task-market
     consumers, CLI loops, and future execution-envelope creation. The default
-    remains compatibility-safe: legacy handoff authorization is authoritative,
+    remains transition-safe: base handoff authorization is authoritative,
     while the strict `ce_handoff_decision.v1` is still computed and exposed for
     audit. Callers can opt into `require_strict=True` once their dispatch path
     always carries immutable PM/CE/profile hash bindings.
@@ -2171,7 +2176,7 @@ def validate_director_handoff_from_payload(
             require_strict=require_strict,
         )
 
-    legacy_decision = evaluate_handoff_decision(
+    base_handoff_decision = evaluate_handoff_decision(
         workspace_token,
         blueprint=blueprint,
         blueprint_id=blueprint_id,
@@ -2182,16 +2187,16 @@ def validate_director_handoff_from_payload(
         blueprint=blueprint,
         blueprint_id=blueprint_id,
         task_id=task_id,
-        base_decision=legacy_decision,
+        base_decision=base_handoff_decision,
     )
-    if not legacy_decision.allowed:
+    if not base_handoff_decision.allowed:
         return _handoff_validation_result(
             allowed=False,
-            reason=legacy_decision.reason,
+            reason=base_handoff_decision.reason,
             task_id=task_id,
             blueprint_id=blueprint_id,
             blueprint_task_id=blueprint_task_id,
-            legacy_decision=legacy_decision,
+            base_handoff_decision=base_handoff_decision,
             strict_decision=strict_decision,
             require_strict=require_strict,
         )
@@ -2202,17 +2207,17 @@ def validate_director_handoff_from_payload(
             task_id=task_id,
             blueprint_id=blueprint_id,
             blueprint_task_id=blueprint_task_id,
-            legacy_decision=legacy_decision,
+            base_handoff_decision=base_handoff_decision,
             strict_decision=strict_decision,
             require_strict=require_strict,
         )
     return _handoff_validation_result(
         allowed=True,
-        reason=legacy_decision.reason,
+        reason=base_handoff_decision.reason,
         task_id=task_id,
         blueprint_id=blueprint_id,
         blueprint_task_id=blueprint_task_id,
-        legacy_decision=legacy_decision,
+        base_handoff_decision=base_handoff_decision,
         strict_decision=strict_decision,
         require_strict=require_strict,
     )

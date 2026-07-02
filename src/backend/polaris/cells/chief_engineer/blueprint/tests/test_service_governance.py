@@ -422,7 +422,7 @@ class TestServiceGovernance(unittest.TestCase):
         )
         self.assertEqual(validation["schema_version"], "chief_engineer.director_handoff_validation.v1")
         self.assertTrue(validation["allowed"])
-        self.assertTrue(validation["legacy_allowed"])
+        self.assertTrue(validation["base_allowed"])
         self.assertEqual(validation["blueprint_id"], result.blueprint_id)
         self.assertEqual(validation["task_id"], "task-shared-handoff")
         self.assertIsInstance(validation["decision_payload"], dict)
