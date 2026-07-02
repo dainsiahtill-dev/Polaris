@@ -51,6 +51,9 @@ try:
     from docs.governance.ci.scripts.shim_markers_policy import (
         evaluate_shim_markers,
     )
+    from docs.governance.ci.scripts.task_broker_policy import (
+        evaluate_task_broker,
+    )
     from docs.governance.ci.scripts.tool_compression_policy import (
         evaluate_tool_compression,
     )
@@ -85,6 +88,9 @@ except ModuleNotFoundError:
     )
     from shim_markers_policy import (
         evaluate_shim_markers,
+    )
+    from task_broker_policy import (
+        evaluate_task_broker,
     )
     from tool_compression_policy import (
         evaluate_tool_compression,
@@ -509,73 +515,15 @@ class FitnessRuleChecker:
         )
 
     def check_task_broker(self) -> FitnessCheckResult:
-        """Check that task_market is the only business broker."""
-        result = FitnessCheckResult(rule_id="task_market_is_single_business_broker", passed=True)
-        task_market_dir = self.workspace / "polaris" / "cells" / "runtime" / "task_market"
-        if not task_market_dir.exists() or not (task_market_dir / "cell.yaml").exists():
-            result.passed = False
-            result.violations.append("runtime.task_market cell not found or incomplete")
-            return result
-        result.evidence.append("runtime.task_market cell exists")
-        execution_broker_dir = self.workspace / "polaris" / "cells" / "runtime" / "execution_broker"
-        forbidden_patterns = [
-            re.compile(r"ExecutionBroker\.publish\("),
-            re.compile(r"execution_broker\.claim\("),
-            re.compile(r"execution_broker\.acquire\("),
-            re.compile(r"from.*execution_broker.*import.*publish", re.DOTALL),
-            re.compile(r"from.*execution_broker.*import.*claim", re.DOTALL),
-            re.compile(r"from.*execution_broker.*import.*acquire", re.DOTALL),
-            re.compile(r"ExecutionBroker\("),
-        ]
-        broker_violations: list[str] = []
-        if execution_broker_dir.exists():
-            for py_file in execution_broker_dir.rglob("*.py"):
-                if "test" in py_file.parts:
-                    continue
-                try:
-                    with open(py_file, encoding="utf-8") as f:
-                        content = f.read()
-                    for pat in forbidden_patterns:
-                        for match in pat.finditer(content):
-                            line_num = content[: match.start()].count("\n") + 1
-                            broker_violations.append(
-                                f"Execution broker task routing at {py_file.relative_to(self.workspace)}:{line_num}"
-                            )
-                except OSError:
-                    continue
-        if broker_violations:
-            result.passed = False
-            for v in broker_violations:
-                result.violations.append(v)
-        else:
-            result.evidence.append("execution_broker does not have business task routing")
-        cells_yaml_path = self.workspace / "docs" / "graph" / "catalog" / "cells.yaml"
-        if cells_yaml_path.exists():
-            try:
-                import yaml
-
-                with open(cells_yaml_path, encoding="utf-8") as f:
-                    catalog_data = yaml.safe_load(f)
-                cells = catalog_data.get("cells", [])
-                peer_role_ids = [
-                    "pm",
-                    "chief_engineer",
-                    "director",
-                    "qa",
-                    "roles.pm",
-                    "roles.chief_engineer",
-                    "roles.director",
-                    "roles.qa",
-                ]
-                for cell in cells:
-                    cell_id = cell.get("id", "")
-                    if any(peer in cell_id for peer in peer_role_ids):
-                        depends_on = cell.get("depends_on", [])
-                        if "runtime.task_market" not in depends_on and "task_market" not in depends_on:
-                            result.warnings.append(f"Cell '{cell_id}' missing runtime.task_market in depends_on")
-            except (OSError, ImportError) as e:
-                result.warnings.append(f"Error parsing cells.yaml for graph relations: {e}")
-        return result
+        """Check task broker ownership through the canonical policy module."""
+        policy_result = evaluate_task_broker(self.workspace)
+        return FitnessCheckResult(
+            rule_id=policy_result.rule_id,
+            passed=policy_result.passed,
+            evidence=list(policy_result.evidence),
+            violations=list(policy_result.violations),
+            warnings=list(policy_result.warnings),
+        )
 
     def check_closed_governance_ledgers_intake_only(self) -> FitnessCheckResult:
         """Check that closed convergence ledgers remain intake-only."""
