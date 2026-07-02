@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import polaris.delivery.cli as delivery_cli
 import pytest
 from polaris.delivery.cli.__main__ import (
     _bind_workspace_env,
@@ -73,6 +74,18 @@ def router() -> CliRouter:
 
 class TestMainParserConstruction:
     """Test that create_parser() builds a correctly structured parser."""
+
+    def test_package_create_parser_uses_canonical_host(self) -> None:
+        """Package-level create_parser must not point at the retired host."""
+        package_parser = delivery_cli.create_parser()
+        subparsers_actions = [
+            action
+            for action in package_parser._actions
+            if isinstance(action, argparse._SubParsersAction)  # type: ignore[attr-defined]
+        ]
+        assert len(subparsers_actions) == 1
+        choices = subparsers_actions[0].choices
+        assert {"console", "task", "session", "serve", "cell"}.issubset(set(choices.keys()))
 
     def test_parser_has_required_subcommands(self, parser: argparse.ArgumentParser) -> None:
         """The parser must expose all top-level subcommands."""
