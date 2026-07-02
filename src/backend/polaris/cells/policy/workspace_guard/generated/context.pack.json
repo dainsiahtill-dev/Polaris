@@ -5,8 +5,9 @@
   "purpose": "Enforce workspace path legality, scope constraints, and write-guard checks for runtime and archive operations.",
   "summary": "Owns workspace-scoped guard decisions so stateful cells cannot perform unsafe path access or out-of-bound writes.",
   "owned_paths": [
-    "polaris/application/policy/**",
-    "polaris/application/services/permission_service.py",
+    "polaris/cells/policy/workspace_guard/internal/guard_service.py",
+    "polaris/cells/policy/workspace_guard/public/contracts.py",
+    "polaris/cells/policy/workspace_guard/public/service.py",
     "polaris/kernelone/storage/policy.py"
   ],
   "public_contracts": {
@@ -43,11 +44,13 @@
     "all path decisions are workspace scoped"
   ],
   "hotspots": [
-    "polaris/application/policy/workspace_policy.py",
-    "polaris/application/services/permission_service.py"
+    "polaris/cells/policy/workspace_guard/internal/guard_service.py",
+    "polaris/cells/policy/workspace_guard/public/service.py",
+    "polaris/kernelone/storage/policy.py"
   ],
   "test_targets": [
-    "tests/architecture/test_polaris_kernel_fs_guard.py"
+    "polaris/cells/policy/workspace_guard/public/tests/test_public_contracts.py",
+    "polaris/tests/architecture/test_polaris_kernel_fs_guard.py"
   ],
   "change_guidance": {
     "read_order": [

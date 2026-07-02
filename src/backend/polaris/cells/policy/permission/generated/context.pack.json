@@ -7,8 +7,6 @@
   "owned_paths": [
     "polaris/cells/policy/permission/internal/**",
     "polaris/cells/policy/permission/public/**",
-    "polaris/application/services/permission_service.py",
-    "polaris/application/services/permission/**",
     "polaris/domain/entities/capability.py",
     "polaris/domain/entities/policy.py"
   ],
@@ -46,15 +44,13 @@
     "All text file reads and writes must use explicit UTF-8."
   ],
   "hotspots": [
-    "polaris/application/services/permission_service.py",
-    "polaris/application/services/permission/**",
+    "polaris/cells/policy/permission/internal/permission_service.py",
+    "polaris/cells/policy/permission/internal/condition_evaluator.py",
+    "polaris/cells/policy/permission/internal/role_graph.py",
     "polaris/domain/entities/capability.py",
     "polaris/domain/entities/policy.py"
   ],
   "test_targets": [
-    "tests/test_permission_service.py",
-    "tests/test_permission_role_inheritance.py",
-    "tests/test_permission_conditions.py",
     "polaris/cells/policy/permission/public/tests/test_public_contracts.py"
   ],
   "change_guidance": {

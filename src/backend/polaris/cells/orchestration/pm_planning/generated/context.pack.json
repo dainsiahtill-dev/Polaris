@@ -5,9 +5,11 @@
   "purpose": "Produce PM task contracts from project goals and docs, enforce planning quality gates, and publish governed planning artifacts.",
   "summary": "Business capability boundary for orchestration.pm_planning.",
   "owned_paths": [
-    "polaris/application/services/pm_service.py",
-    "polaris/application/orchestration/usecases/planning_pipeline.py",
-    "polaris/application/orchestration/support/task_quality_gate.py",
+    "polaris/cells/orchestration/pm_planning/internal/pm_agent.py",
+    "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py",
+    "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py",
+    "polaris/cells/orchestration/pm_planning/public/contracts.py",
+    "polaris/cells/orchestration/pm_planning/public/service.py",
     "polaris/delivery/http/v2/pm.py"
   ],
   "public_contracts": {
@@ -52,14 +54,15 @@
     "All text file reads and writes must use explicit UTF-8."
   ],
   "hotspots": [
-    "polaris/application/services/pm_service.py",
-    "polaris/application/orchestration/usecases/planning_pipeline.py",
-    "polaris/application/orchestration/support/task_quality_gate.py",
+    "polaris/cells/orchestration/pm_planning/internal/pm_agent.py",
+    "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py",
+    "polaris/cells/orchestration/pm_planning/public/service.py",
     "polaris/delivery/http/v2/pm.py"
   ],
   "test_targets": [
-    "tests/test_pm_task_quality_gate.py",
-    "tests/test_pm_orchestration_api.py"
+    "polaris/cells/orchestration/pm_planning/tests/test_task_quality_gate.py",
+    "polaris/cells/orchestration/pm_planning/tests/test_pm_agent.py",
+    "polaris/cells/orchestration/pm_planning/tests/test_pm_service_broker.py"
   ],
   "change_guidance": {
     "read_order": [

@@ -5,13 +5,11 @@
   "purpose": "Execute Director task workflows from claim to verification based on approved blueprints with strict policy and audit controls.",
   "summary": "Business capability boundary for director.execution; public service exposes execute_director_task for roles.runtime delegation.",
   "owned_paths": [
-    "polaris/application/services/director_service.py",
-    "polaris/application/services/director_logic.py",
-    "polaris/application/services/director_code_intel.py",
-    "polaris/application/role_agent/director_agent.py",
-    "polaris/application/role_agent/director_cli.py",
-    "polaris/kernelone/tools/director/**",
-    "polaris/delivery/http/v2/director.py"
+    "polaris/cells/director/execution/internal/director_agent.py",
+    "polaris/cells/director/execution/internal/context_gatherer.py",
+    "polaris/cells/director/execution/service.py",
+    "polaris/cells/director/execution/public/contracts.py",
+    "polaris/cells/director/execution/public/service.py"
   ],
   "public_contracts": {
     "commands": [
@@ -62,18 +60,15 @@
     "All text file reads and writes must use explicit UTF-8."
   ],
   "hotspots": [
-    "polaris/application/services/director_service.py",
-    "polaris/application/services/director_logic.py",
-    "polaris/application/services/director_code_intel.py",
-    "polaris/application/role_agent/director_agent.py",
-    "polaris/application/role_agent/director_cli.py",
-    "polaris/kernelone/tools/director/**",
-    "polaris/delivery/http/v2/director.py"
+    "polaris/cells/director/execution/internal/director_agent.py",
+    "polaris/cells/director/execution/internal/context_gatherer.py",
+    "polaris/cells/director/execution/public/service.py",
+    "polaris/cells/director/runtime/public/service.py"
   ],
   "test_targets": [
-    "tests/test_director_logic.py",
-    "tests/test_director_service_convergence.py",
-    "polaris/cells/director/execution/tests/test_execution_contracts.py"
+    "polaris/cells/director/execution/tests/test_execution_contracts.py",
+    "polaris/cells/director/execution/tests/test_task_lifecycle_contract.py",
+    "polaris/cells/director/execution/tests/test_service.py"
   ],
   "change_guidance": {
     "read_order": [
