@@ -13,7 +13,6 @@ Each rule implements a check_* method returning FitnessCheckResult.
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import subprocess
 import sys
@@ -29,6 +28,9 @@ try:
     from docs.governance.ci.scripts.closed_ledger_intake_policy import (
         RULE_ID as CLOSED_LEDGER_INTAKE_RULE_ID,
         evaluate_closed_ledger_intake,
+    )
+    from docs.governance.ci.scripts.context_pack_freshness_policy import (
+        evaluate_context_pack_freshness,
     )
     from docs.governance.ci.scripts.dangerous_pattern_source_policy import (
         evaluate_dangerous_pattern_source,
@@ -67,6 +69,9 @@ except ModuleNotFoundError:
     from closed_ledger_intake_policy import (
         RULE_ID as CLOSED_LEDGER_INTAKE_RULE_ID,
         evaluate_closed_ledger_intake,
+    )
+    from context_pack_freshness_policy import (
+        evaluate_context_pack_freshness,
     )
     from dangerous_pattern_source_policy import (
         evaluate_dangerous_pattern_source,
@@ -174,81 +179,15 @@ class FitnessRuleChecker:
         return (time.time() - self.start_time) * 1000
 
     def check_context_pack_freshness(self) -> FitnessCheckResult:
-        """Check that each Cell has a context pack with fresh timestamp."""
-        result = FitnessCheckResult(rule_id="context_pack_is_primary_ai_entry", passed=True)
-        cells_yaml_path = self.workspace / "docs" / "graph" / "catalog" / "cells.yaml"
-        if not cells_yaml_path.exists():
-            result.passed = False
-            result.violations.append(f"cells.yaml not found at {cells_yaml_path}")
-            return result
-        try:
-            import yaml
-
-            with open(cells_yaml_path, encoding="utf-8") as f:
-                catalog_data = yaml.safe_load(f)
-        except (OSError, ImportError) as e:
-            result.passed = False
-            result.violations.append(f"Failed to parse cells.yaml: {e}")
-            return result
-        cells = catalog_data.get("cells", [])
-        if not cells:
-            result.warnings.append("No cells found in cells.yaml")
-            return result
-        total_cells = len(cells)
-        cells_with_pack = 0
-        fresh_packs = 0
-        missing_packs: list[str] = []
-        stale_packs: list[str] = []
-        invalid_packs: list[str] = []
-        current_time = time.time()
-        freshness_cutoff = current_time - 7 * 24 * 60 * 60
-        for cell in cells:
-            cell_id = cell.get("id")
-            if not cell_id:
-                continue
-            cell_path = self.workspace / "polaris" / "cells" / cell_id.replace(".", "/")
-            pack_path = cell_path / "generated" / "context.pack.json"
-            if not pack_path.exists():
-                pack_path = cell_path / "context.pack.json"
-            if not pack_path.exists():
-                missing_packs.append(cell_id)
-                continue
-            cells_with_pack += 1
-            try:
-                with open(pack_path, encoding="utf-8") as f:
-                    pack_data = json.load(f)
-                if "cell_id" not in pack_data and "id" not in pack_data:
-                    invalid_packs.append(f"{cell_id}: Missing 'cell_id' or 'id' field")
-                    continue
-            except json.JSONDecodeError as e:
-                invalid_packs.append(f"{cell_id}: Invalid JSON: {e}")
-                continue
-            except OSError as e:
-                invalid_packs.append(f"{cell_id}: Cannot read: {e}")
-                continue
-            try:
-                mtime = pack_path.stat().st_mtime
-            except OSError:
-                invalid_packs.append(f"{cell_id}: cannot read modification time")
-                continue
-            if mtime >= freshness_cutoff:
-                fresh_packs += 1
-            else:
-                stale_packs.append(f"{cell_id}: context.pack.json is stale")
-        result.evidence.append(
-            f"Summary: {fresh_packs}/{cells_with_pack} packs fresh, "
-            f"{len(stale_packs)} stale, {len(missing_packs)} missing out of {total_cells} cells"
+        """Check Context Pack freshness through the canonical policy module."""
+        policy_result = evaluate_context_pack_freshness(self.workspace)
+        return FitnessCheckResult(
+            rule_id=policy_result.rule_id,
+            passed=policy_result.passed,
+            evidence=list(policy_result.evidence),
+            violations=list(policy_result.violations),
+            warnings=list(policy_result.warnings),
         )
-        if missing_packs:
-            result.violations.extend(f"Missing context.pack.json: {cell_id}" for cell_id in missing_packs)
-            result.passed = False
-        if stale_packs:
-            result.violations.extend(stale_packs)
-            result.passed = False
-        if invalid_packs:
-            result.violations.extend(invalid_packs)
-            result.passed = False
-        return result
 
     def check_semantic_retrieval_boundary(self) -> FitnessCheckResult:
         """Check that semantic retrieval respects graph boundaries."""
