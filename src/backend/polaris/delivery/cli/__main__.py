@@ -149,7 +149,7 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
             "Open the Polaris terminal console host. "
-            "Backend defaults to 'auto'; legacy textual/rich values are accepted for compatibility."
+            "Backend defaults to 'auto'; deprecated textual/rich aliases are accepted for compatibility."
         ),
     )
     _add_workspace_argument(console_parser)
@@ -403,7 +403,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--backend",
         choices=_BACKEND_CHOICES,
         default="auto",
-        help="Console backend (console mode; textual/rich kept for compatibility)",
+        help="Console backend (console mode; textual/rich are deprecated compatibility aliases)",
     )
     chat_parser.add_argument(
         "--prompt-style",

@@ -93,7 +93,7 @@ class CliRouter:
     Responsibility:
       - Register and route subcommands from argparse.
       - Normalise arguments (workspace resolution, role/mode defaults).
-      - Emit compatibility warnings for legacy entry points.
+      - Emit compatibility warnings for deprecated entry points.
       - Delegate to command-specific handlers and return exit codes.
     """
 
@@ -158,7 +158,7 @@ class CliRouter:
             "--backend",
             choices=["auto", "textual", "rich", "plain"],
             default="auto",
-            help="Console backend (legacy textual/rich values are compatibility aliases)",
+            help="Console backend (textual/rich are deprecated compatibility aliases)",
         )
         chat.add_argument("--session-id", type=str, default="", help="Session to reuse")
         chat.add_argument("--session-title", type=str, default="", help="New session title")
@@ -203,7 +203,7 @@ class CliRouter:
         tw = subparsers.add_parser(
             "test-window",
             help=argparse.SUPPRESS,
-            description="Compatibility-only legacy role test window",
+            description="Compatibility-only retired role test window",
         )
         CliRouter._add_log_level_argument(tw, default=argparse.SUPPRESS)
         tw.add_argument("--role", type=str, default="director", help="Role id")
