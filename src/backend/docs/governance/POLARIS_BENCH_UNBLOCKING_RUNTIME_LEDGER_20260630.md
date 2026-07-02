@@ -1,12 +1,14 @@
 # Polaris Bench-Unblocking Runtime Ledger
 
-Status: Active
+Status: Closed (intake-only)
 Created: 2026-06-30
 Scope: Polaris meta-platform runtime hardening only. This ledger is not a runtime fact source.
 
-This ledger tracks the current bench-blocking platform gaps separately from the
-longer legacy/shim retirement ledger. Items are closed only after a code change
-or an existing guard is verified by targeted tests.
+This ledger tracks bench-blocking platform gaps separately from the longer
+legacy/shim retirement ledger. It is closed for the current bench-unblocking
+pass and remains available only as an intake ledger for newly proven
+platform-level regressions. Items are closed only after a code change or an
+existing guard is verified by targeted tests.
 
 ## Current Count
 
@@ -15,6 +17,33 @@ or an existing guard is verified by targeted tests.
 | Closed in this pass | 9 | Verified and removed from the active bench-unblocking ledger. |
 | P0 open | 0 | Still able to block L1-L12 bench convergence or poison final Director requests. |
 | P1 open | 0 | Important follow-up hardening, but not currently counted as bench-blocking. |
+
+## Closure and Intake Rules
+
+Do not use this ledger as a catch-all for any failed Factory Bench run. A new
+`RB-*` item may be opened only when a bench artifact proves a Polaris
+platform/runtime gap that is not already covered by the execution-contract,
+KFS, catalog-boundary, or legacy/shim ledgers.
+
+Required intake evidence:
+
+1. The failing bench project id, run id, workspace, and normalized bench report
+   artifact.
+2. The platform evidence that makes it a Polaris runtime issue, such as final
+   provider request refs, Run Ledger projection, ToolCallLifecycle receipt,
+   TaskBoundary verdict, QA verdict envelope, runtime projection, tool schema
+   normalization evidence, or factory gate projection.
+3. A clear responsible owner layer, such as `roles.kernel`, `factory.pipeline`,
+   `control_plane.run_ledger`, `director.runtime`, `qa.audit_verdict`, or
+   `runtime.projection`.
+4. The intended exit gate and focused verification command.
+
+Do not open a new bench-unblocking item for target-project product quality,
+model taste, insufficient product requirements, expected deterministic test
+failures, catalog aliases, user workspace dirtiness, or known closed behavior
+that is already proven by current tests. Those belong in their owning product,
+model/prompt, catalog, legacy, or execution-contract ledger only if the
+canonical platform evidence chain is missing or contradictory.
 
 ## Ledger
 
