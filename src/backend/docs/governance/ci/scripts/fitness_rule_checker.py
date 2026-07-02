@@ -27,9 +27,6 @@ try:
     from docs.governance.ci.scripts.catalog_presence_policy import (
         evaluate_catalog_presence,
     )
-    from docs.governance.ci.scripts.check_shim_markers import (
-        ShimMarkersChecker,
-    )
     from docs.governance.ci.scripts.closed_ledger_intake_policy import (
         RULE_ID as CLOSED_LEDGER_INTAKE_RULE_ID,
         evaluate_closed_ledger_intake,
@@ -43,15 +40,15 @@ try:
     from docs.governance.ci.scripts.no_conflicting_coverage_policy import (
         evaluate_no_conflicting_coverage,
     )
+    from docs.governance.ci.scripts.shim_markers_policy import (
+        evaluate_shim_markers,
+    )
     from docs.governance.ci.scripts.verified_evidence_policy import (
         evaluate_verified_evidence,
     )
 except ModuleNotFoundError:
     from catalog_presence_policy import (
         evaluate_catalog_presence,
-    )
-    from check_shim_markers import (
-        ShimMarkersChecker,
     )
     from closed_ledger_intake_policy import (
         RULE_ID as CLOSED_LEDGER_INTAKE_RULE_ID,
@@ -65,6 +62,9 @@ except ModuleNotFoundError:
     )
     from no_conflicting_coverage_policy import (
         evaluate_no_conflicting_coverage,
+    )
+    from shim_markers_policy import (
+        evaluate_shim_markers,
     )
     from verified_evidence_policy import (
         evaluate_verified_evidence,
@@ -398,16 +398,14 @@ class FitnessRuleChecker:
         )
 
     def check_shim_markers(self) -> FitnessCheckResult:
-        """Check shim marker policy through the canonical checker implementation."""
-        external_result = ShimMarkersChecker(self.workspace).check_shim_markers()
+        """Check shim marker policy through the canonical policy module."""
+        policy_result = evaluate_shim_markers(self.workspace)
         return FitnessCheckResult(
-            rule_id=external_result.rule_id,
-            passed=external_result.passed,
-            evidence=list(external_result.evidence),
-            violations=list(external_result.violations),
-            warnings=list(external_result.warnings),
-            timestamp=external_result.timestamp,
-            duration_ms=external_result.duration_ms,
+            rule_id=policy_result.rule_id,
+            passed=policy_result.passed,
+            evidence=list(policy_result.evidence),
+            violations=list(policy_result.violations),
+            warnings=list(policy_result.warnings),
         )
 
     def check_legacy_coverage(self) -> FitnessCheckResult:

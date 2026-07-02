@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 from docs.governance.ci.scripts import fitness_rule_checker
 from docs.governance.ci.scripts.check_shim_markers import ShimMarkersChecker
+from docs.governance.ci.scripts.shim_markers_policy import evaluate_shim_markers
 
 
 def _write_shim_ledger(workspace: Path, source_path: str) -> None:
@@ -40,8 +41,8 @@ def _write_source(workspace: Path, relative_path: str, content: str) -> None:
     source_path.write_text(content, encoding="utf-8")
 
 
-def test_fitness_runner_uses_canonical_shim_marker_checker(tmp_path: Path) -> None:
-    """The aggregate fitness runner must match the canonical shim checker."""
+def test_shim_marker_entrypoints_use_canonical_policy(tmp_path: Path) -> None:
+    """The aggregate and CLI-compatible entrypoints must match the policy."""
     source_path = "legacy/shim.py"
     _write_shim_ledger(tmp_path, source_path)
     _write_source(
@@ -50,19 +51,21 @@ def test_fitness_runner_uses_canonical_shim_marker_checker(tmp_path: Path) -> No
         "# SHIM: temporary compatibility bridge until the target Cell owns this behavior.\n",
     )
 
+    policy = evaluate_shim_markers(tmp_path)
     canonical = ShimMarkersChecker(tmp_path).check_shim_markers()
     aggregate = fitness_rule_checker.FitnessRuleChecker(tmp_path).check_shim_markers()
 
+    assert policy.passed is True
     assert canonical.passed is True
     assert aggregate.passed is True
-    assert aggregate.rule_id == canonical.rule_id
-    assert aggregate.violations == canonical.violations
-    assert aggregate.warnings == canonical.warnings
+    assert aggregate.rule_id == policy.rule_id == canonical.rule_id
+    assert aggregate.violations == list(policy.violations) == canonical.violations
+    assert aggregate.warnings == list(policy.warnings) == canonical.warnings
     assert "with markers: 1" in "\n".join(aggregate.evidence)
 
 
 def test_fitness_runner_reports_missing_shim_markers(tmp_path: Path) -> None:
-    """The aggregate runner must preserve canonical shim-marker failures."""
+    """The aggregate runner must preserve canonical policy failures."""
     source_path = "legacy/missing_marker.py"
     _write_shim_ledger(tmp_path, source_path)
     _write_source(
@@ -71,11 +74,13 @@ def test_fitness_runner_reports_missing_shim_markers(tmp_path: Path) -> None:
         "def bridge() -> str:\n    return 'still routed through old behavior'\n",
     )
 
+    policy = evaluate_shim_markers(tmp_path)
     canonical = ShimMarkersChecker(tmp_path).check_shim_markers()
     aggregate = fitness_rule_checker.FitnessRuleChecker(tmp_path).check_shim_markers()
 
+    assert policy.passed is False
     assert canonical.passed is False
     assert aggregate.passed is False
-    assert aggregate.rule_id == canonical.rule_id
-    assert aggregate.violations == canonical.violations
+    assert aggregate.rule_id == policy.rule_id == canonical.rule_id
+    assert aggregate.violations == list(policy.violations) == canonical.violations
     assert any("No migration markers" in violation for violation in aggregate.violations)
