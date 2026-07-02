@@ -1,6 +1,6 @@
 # Polaris Legacy/Shim Convergence Ledger
 
-Status: Active  
+Status: Closed (intake-only)
 Created: 2026-06-30  
 Scope: Polaris meta-platform source only. This ledger is not a runtime fact source.  
 

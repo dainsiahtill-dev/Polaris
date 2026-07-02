@@ -1,6 +1,6 @@
 # Polaris Execution Contract Gap Ledger
 
-Status: Active
+Status: Closed (intake-only)
 Owner: Polaris backend governance
 Created: 2026-06-27
 Scope: PM Contract -> Chief Engineer Blueprint/Handoff -> Execution Envelope -> Director Dispatch/Tools -> QA/Provenance
