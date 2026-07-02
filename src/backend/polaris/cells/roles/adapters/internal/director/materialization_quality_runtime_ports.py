@@ -29,12 +29,14 @@ def build_materialization_quality_step_runner(
     task: Mapping[str, Any] | None,
     task_id: str,
     artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[Any] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> Callable[[DirectorRepairMaterializationQualityStepV1], list[dict[str, Any]]]:
     """Return the adapter-owned materialization step runner port."""
 
     task_payload = dict(task or {})
     quality_errors = [str(item) for item in artifact_quality_errors]
+    advisory_notes = tuple(advisor_notes or ())
 
     def _run_step(step: DirectorRepairMaterializationQualityStepV1) -> list[dict[str, Any]]:
         return callback_ports._run_materialization_quality_repair_step(
@@ -43,6 +45,7 @@ def build_materialization_quality_step_runner(
             task=task_payload,
             task_id=task_id,
             artifact_quality_errors=quality_errors,
+            advisor_notes=advisory_notes,
             convergence_verifier=convergence_verifier,
         )
 

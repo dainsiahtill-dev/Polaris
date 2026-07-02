@@ -99,6 +99,7 @@ def _run_materialization_quality_repair_step(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    advisor_notes: tuple[Any, ...] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     if step_id == "materialization.hygiene_scaffold":
@@ -171,6 +172,7 @@ def _run_materialization_quality_repair_step(
             task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            advisor_notes=advisor_notes,
             convergence_verifier=convergence_verifier,
         )
     raise RuntimeError(f"materialization quality repair step has no runtime runner: {step_id}")
@@ -867,6 +869,7 @@ def _run_materialization_go_import(
     task: Mapping[str, Any] | None = None,
     task_id: str,
     artifact_quality_errors: list[str],
+    advisor_notes: tuple[Any, ...] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     return _run_materialization_go_import_repairs(
@@ -874,6 +877,7 @@ def _run_materialization_go_import(
         task=task,
         task_id=task_id,
         artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
         convergence_verifier=convergence_verifier,
     )
 

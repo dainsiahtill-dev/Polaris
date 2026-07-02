@@ -100,6 +100,7 @@ def run_director_materialization_quality_repair_schedule(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    advisor_notes: tuple[Any, ...] = (),
     convergence_verifier: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Run Director materialization-quality repair schedule as a tuple projection."""
@@ -110,6 +111,7 @@ def run_director_materialization_quality_repair_schedule(
             task=task,
             task_id=task_id,
             artifact_quality_errors=tuple(artifact_quality_errors),
+            advisor_notes=tuple(advisor_notes or ()),
             convergence_verifier=convergence_verifier,
         )
     )
@@ -151,6 +153,7 @@ def run_director_materialization_quality_repair_schedule_result(
             task=task,
             task_id=command.task_id,
             artifact_quality_errors=artifact_quality_errors,
+            advisor_notes=command.advisor_notes,
             convergence_verifier=command.convergence_verifier,
         ),
         plan_probe_preaudit=plan_probe_preaudit,

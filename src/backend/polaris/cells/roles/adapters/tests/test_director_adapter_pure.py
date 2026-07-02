@@ -78,12 +78,34 @@ from polaris.cells.roles.adapters.internal.director.runtime_repair_tool_adapter 
     run_runtime_repair_with_director_tools,
 )
 from polaris.cells.roles.adapters.public import service as roles_adapters_public_service
+from polaris.cells.roles.adapters.public.contracts import RunDirectorMaterializationQualityRepairScheduleCommandV1
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1, RoleExecutionResultV1
 from polaris.kernelone.quality import scan_workspace_artifact_quality
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _run_go_materialization_quality_schedule(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str] | tuple[str, ...] = (),
+    advisor_notes: tuple[Any, ...] = (),
+) -> list[dict[str, Any]]:
+    """Run Go materialization repair through the typed roles adapter boundary."""
+
+    result = roles_adapters_public_service.run_director_materialization_quality_repair_schedule_result(
+        RunDirectorMaterializationQualityRepairScheduleCommandV1(
+            adapter_port=adapter,
+            task={},
+            task_id=task_id,
+            artifact_quality_errors=tuple(artifact_quality_errors),
+            advisor_notes=tuple(advisor_notes),
+        )
+    )
+    return [dict(item) for item in result.tool_results]
 
 
 def _make_adapter(tmp_path: Any, task_board: Any = None, task_runtime: Any = None) -> DirectorAdapter:
@@ -1195,9 +1217,6 @@ def test_go_bare_import_string_repair_uses_director_runtime_kernel(
     tmp_path: Any,
 ) -> None:
     from polaris.cells.director.runtime.public import RepairAdvisoryV1
-    from polaris.cells.roles.adapters.internal.director.materialization_quality_runtime_ports import (
-        _run_materialization_go_import_repairs,
-    )
 
     target = tmp_path / "cmd" / "app" / "main.go"
     target.parent.mkdir(parents=True)
@@ -1213,7 +1232,7 @@ def test_go_bare_import_string_repair_uses_director_runtime_kernel(
             self.progress.append((task_id, state, current_file))
 
     adapter = FakeAdapter()
-    results = _run_materialization_go_import_repairs(
+    results = _run_go_materialization_quality_schedule(
         adapter,
         task_id="task-go",
         advisor_notes=(
@@ -11701,10 +11720,6 @@ class TestQualityRepairMissingTargetContract:
     def test_go_module_import_repair_runs_through_runtime_bridge(self, tmp_path) -> None:
         from types import SimpleNamespace
 
-        from polaris.cells.roles.adapters.internal.director.materialization_quality_runtime_ports import (
-            _run_materialization_go_import_repairs,
-        )
-
         class _Adapter:
             workspace = str(tmp_path)
             _execution = SimpleNamespace(_message_bus=None)
@@ -11722,7 +11737,7 @@ class TestQualityRepairMissingTargetContract:
             encoding="utf-8",
         )
 
-        results = _run_materialization_go_import_repairs(
+        results = _run_go_materialization_quality_schedule(
             _Adapter(),
             task_id="factory-quality-gate:test",
             artifact_quality_errors=[
@@ -11742,10 +11757,6 @@ class TestQualityRepairMissingTargetContract:
 
     def test_go_unused_import_repair_runs_through_runtime_bridge(self, tmp_path) -> None:
         from types import SimpleNamespace
-
-        from polaris.cells.roles.adapters.internal.director.materialization_quality_runtime_ports import (
-            _run_materialization_go_import_repairs,
-        )
 
         class _Adapter:
             workspace = str(tmp_path)
@@ -11771,7 +11782,7 @@ class TestQualityRepairMissingTargetContract:
             encoding="utf-8",
         )
 
-        results = _run_materialization_go_import_repairs(
+        results = _run_go_materialization_quality_schedule(
             _Adapter(),
             task_id="factory-quality-gate:test",
             artifact_quality_errors=[
@@ -11792,10 +11803,6 @@ class TestQualityRepairMissingTargetContract:
 
     def test_go_error_string_helper_repair_runs_through_runtime_bridge(self, tmp_path) -> None:
         from types import SimpleNamespace
-
-        from polaris.cells.roles.adapters.internal.director.materialization_quality_runtime_ports import (
-            _run_materialization_go_import_repairs,
-        )
 
         class _Adapter:
             workspace = str(tmp_path)
@@ -11821,7 +11828,7 @@ class TestQualityRepairMissingTargetContract:
             encoding="utf-8",
         )
 
-        results = _run_materialization_go_import_repairs(
+        results = _run_go_materialization_quality_schedule(
             _Adapter(),
             task_id="factory-quality-gate:test",
             artifact_quality_errors=[

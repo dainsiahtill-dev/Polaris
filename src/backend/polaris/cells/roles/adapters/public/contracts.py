@@ -87,12 +87,18 @@ class RoleAdapterResultV1:
 
 @dataclass(frozen=True)
 class RunDirectorMaterializationQualityRepairScheduleCommandV1:
-    """Command for the roles adapter materialization-quality repair boundary."""
+    """Command for the roles adapter materialization-quality repair boundary.
+
+    ``advisor_notes`` are non-authoritative repair hints forwarded to
+    director.runtime planning; they never expand path, command, or write
+    authority granted by the validated task and execution envelope.
+    """
 
     adapter_port: Any
     task: Mapping[str, Any]
     task_id: str
     artifact_quality_errors: tuple[str, ...] = ()
+    advisor_notes: tuple[Any, ...] = ()
     convergence_verifier: Any = None
 
     def __post_init__(self) -> None:
@@ -103,6 +109,7 @@ class RunDirectorMaterializationQualityRepairScheduleCommandV1:
             "artifact_quality_errors",
             tuple(str(item) for item in self.artifact_quality_errors if str(item or "").strip()),
         )
+        object.__setattr__(self, "advisor_notes", tuple(self.advisor_notes or ()))
 
 
 @dataclass(frozen=True)
