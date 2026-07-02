@@ -10,9 +10,9 @@ Intended to own code/patch application, file application, existence gate, and th
 repair loop for Director tasks, plus the KernelOne tool chain execution capability
 (`polaris/kernelone/tools/`).
 
-## Migration Status
+## Runtime Ownership Status
 
-⚠️ **PARTIAL IMPLEMENTATION — MIGRATION NOT COMPLETED** (status 2026-06-25)
+⚠️ **RUNTIME KERNEL ACTIVE — ADAPTER CUTOVER IN PROGRESS** (status 2026-07-02)
 
 `runtime/internal/repair_kernel/` is the cell-private implementation for Director
 Repair Kernel contracts, diagnostic normalization, patch composition, policy
@@ -33,14 +33,14 @@ include repair, C++ missing private members repair, C++ placeholder declaration
 repair, C++ struct getter field-access repair, and generic patch residue cleanup.
 Future migrations must extend the internal dispatcher, registry, strategy
 catalog, and contract tests first; they must not route these rules back through
-legacy direct-write helpers.
+previous regex/direct-write helpers.
 Runtime execution is fail-closed: only source tools returned by
 `runtime_repair_bindings()` with `implementation_status=executable_runtime` may
 be invoked through `PlanDirectorRepairCommandV1` or
 `RunDirectorRepairCommandV1`. Unknown, unregistered, `reserved_only`, or
 catalog-only source tools must return `unsupported_repair_source_tool` as a
 first-class public result `error_code`, must not write the workspace, and must
-not fall back to legacy regex/direct-write helpers.
+not fall back to adapter-hosted regex/direct-write helpers.
 Runtime schedule steps also expose `source_tool_kind` and
 `executable_runtime_source_tool`. Schedule labels such as
 `deterministic_rust_post_repair` or materialization-quality step source tools
@@ -83,13 +83,13 @@ Language-specific post repair functions must not hide their own unbounded
 convergence loops; they must be migrated behind this scheduler contract.
 The post-execution language repair schedule catalog is exposed through
 `query_director_repair_post_execution_schedule`. `roles.adapters` may bind
-runtime-declared `step_id` values to legacy runners during migration, but it
+runtime-declared `step_id` values to adapter runner bindings during cutover, but it
 must not redefine phase, priority, or dependency metadata locally.
 The materialization-quality repair path follows the same rule:
 `query_director_repair_materialization_quality_schedule` and
 `run_director_materialization_quality_repair_schedule` are the public schedule
 boundary, while `roles.adapters` may only bind declared `step_id` values to
-legacy runners.
+adapter runner bindings.
 
 Task-boundary validation is the preferred quality loop for completed CE tasks.
 QA may observe intermediate evidence, but final task-level repair convergence
@@ -150,13 +150,13 @@ external shadow run has been compared through
 
 Repair `tool_results` summary projection is a typed runtime public boundary.
 Cross-cell callers must use `ProjectDirectorRepairKernelSummaryV1` with
-`project_director_repair_kernel_summary` to project legacy writes into
+`project_director_repair_kernel_summary` to project adapter write results into
 repair-kernel receipts and coverage reports. `build_director_repair_kernel_summary`
-is a compatibility helper only; `roles.adapters` must not call it directly.
+is an internal projection helper only; `roles.adapters` must not call it directly.
 
 The production deterministic repair strategies are still migrated through
 `roles.adapters/internal/director/deterministic_repairs/` during cutover. That
-directory is a legacy strategy host only: it must not own a repair kernel,
+directory is an adapter strategy host only: it must not own a repair kernel,
 strategy catalog, policy gate, receipt contract, or AGI advisory contract.
 
 Future language coverage must grow through this kernel, not by adding more
@@ -189,17 +189,17 @@ Remaining code still lives elsewhere:
   `polaris/cells/director/tasking/internal/patch_apply_engine.py` and
   `polaris/cells/director/tasking/internal/existence_gate.py` (there are no
   `PatchApplyEngine` / `ExistenceGate` classes).
-- Deleted compatibility shims under `polaris/cells/director/execution/internal/`
+- Deleted transitional modules under `polaris/cells/director/execution/internal/`
   must not be restored. Remaining files in that package are active execution
-  implementation modules, not a compatibility surface for migrated tasking,
+  implementation modules, not a public surface for migrated tasking,
   planning, runtime, or delivery symbols.
-- Legacy deterministic repair strategy functions remain in
+- Adapter-hosted deterministic repair strategy functions remain in
   `polaris/cells/roles/adapters/internal/director/deterministic_repairs/`; those
-  modules must remain thin migration shims or strategy hosts until the runtime
+  modules must remain thin adapter hosts until the runtime
   cutover is complete. Any new deterministic repair planning, patch composition,
   receipt projection, strategy catalog, or future AGI advisory contract must be
   added to `polaris/cells/director/runtime/` first and exposed through the
-  generic public repair commands before legacy callers can consume it.
+  generic public repair commands before adapter callers can consume it.
 - The post-execution language path must stay behind
   `roles.adapters/internal/director/post_execution_repair_bridge.py` while
   cutover is incomplete. The bridge must consume
@@ -225,7 +225,7 @@ Remaining code still lives elsewhere:
   `materialization.rust_compiler`,
   `materialization.target_runtime`, `materialization.python_import`, and
   `materialization.go_import`; do not collapse them back into a single
-  `materialization.quality_repair_host` step. The legacy
+  `materialization.quality_repair_host` step. The removed
   `_apply_deterministic_materialization_quality_repairs` facade has been
   hard-cut and must not be restored, forwarded, or used by tests, bench harnesses,
   or agents.
