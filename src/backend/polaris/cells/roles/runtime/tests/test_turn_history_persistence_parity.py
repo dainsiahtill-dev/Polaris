@@ -48,7 +48,7 @@ class TestPersistSessionTurnStateSignatures:
                 f"Call site {i} missing turn_history= within 600 chars of call. Call starts: {window[:100]}"
             )
 
-    def test_no_legacy_fallback_else_branch(self) -> None:
+    def test_no_turn_history_fallback_else_branch(self) -> None:
         """_persist_session_turn_state must not have 'else' fallback for turn_history."""
         from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
@@ -58,9 +58,7 @@ class TestPersistSessionTurnStateSignatures:
             "Found 'if turn_history:' conditional in _persist_session_turn_state - "
             "turn_history is now required, no conditional check needed"
         )
-        assert "else:" not in source or "# legacy" in source, (
-            "Found 'else:' branch - this is the legacy fallback that must be removed"
-        )
+        assert "else:" not in source, "Found 'else:' branch - turn_history fallback must stay removed"
 
 
 class TestPersistSessionTurnStateSemantics:

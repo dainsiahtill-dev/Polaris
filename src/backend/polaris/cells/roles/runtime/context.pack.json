@@ -49,7 +49,7 @@
   ],
   "phase5_chain_invariants": [
     "RoleRuntimeChainStepRef must include task_ref or work_item_ref so every chain step is anchored to runtime.task_market.",
-    "RoleRuntimeChainStepRef.task_ref must use runtime.task_market:task:<task_id>; legacy runtime.task_market:task-1 refs are rejected before chain assembly.",
+    "RoleRuntimeChainStepRef.task_ref must use runtime.task_market:task:<task_id>; unqualified runtime.task_market:task-1 refs are rejected before chain assembly.",
     "assemble_role_runtime_chain rejects required role steps that violate declared required_roles order, preserving the PM -> Chief Engineer -> Director -> QA Phase 5 chain.",
     "assemble_role_runtime_chain rejects callers that include all default PM -> Chief Engineer -> Director -> QA steps but downgrade required_roles to a subset.",
     "A complete default PM -> Chief Engineer -> Director -> QA Phase 5 chain must include at least one runtime.projection ref before assembly succeeds.",

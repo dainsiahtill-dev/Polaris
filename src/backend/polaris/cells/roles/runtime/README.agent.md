@@ -94,7 +94,7 @@ Defined in `public/contracts.py`:
 ## Design Notes
 - New code should depend on the public contracts only.
 - Direct cross-cell access to `internal/**` is not allowed.
-- Latest-only runtime ports do not keep prompt-driven fallback behavior; legacy
+- Latest-only runtime ports do not keep prompt-driven fallback behavior; retired
   adapter call paths are migration targets and must not gain new behavior.
 - Role capability ports reject mounted capabilities without an explicit
   `allowed_roles` allow-list, so an empty role scope cannot be interpreted as
