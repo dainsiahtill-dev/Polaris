@@ -4,45 +4,46 @@ Identity tuple::
 
     ("validate_cell_boundary_change", "architect.design", "GenerateArchitectureDesignCommandV1")
 
-This is a VERBATIM re-shaping of the legacy ``is_architect_boundary_validation``
-arm of ``execute_role_capability_invocation`` onto the
+This is a parity-preserving extraction of the previous inline
+``is_architect_boundary_validation`` branch of
+``execute_role_capability_invocation`` onto the
 :class:`~polaris.cells.roles.runtime.internal.capability.protocol.CapabilityHandler`
 surface. It is the LARGEST and most NON-UNIFORM branch: it chains three owner-cell
 stages — ``policy.permission`` evaluation → ``policy.workspace_guard`` batch check
 → ``architect.design`` generation (under a wall-clock timeout) — and emits
 thirteen distinct ``error_code`` literals.
 
-The three :class:`CapabilityHandler` methods reproduce the legacy control flow
-without re-ordering any guard:
+The three :class:`CapabilityHandler` methods preserve the prior inline control
+flow without re-ordering any guard:
 
 * :meth:`validate` reproduces the *pure*, pre-RPC payload rejections that the
-  legacy branch performs BEFORE the first owner-cell call (permission
+  extracted branch performs BEFORE the first owner-cell call (permission
   evaluation): the ``context`` / ``constraints`` mapping guards
   (``invalid_architect_boundary_context`` / ``invalid_architect_boundary_constraints``),
   the ``changed_paths`` null + empty guards (``invalid_architect_boundary_changed_paths``),
   the ``target_cell`` guard (``invalid_architect_boundary_target_cell``), and the
   ``EvaluatePermissionCommandV1`` construction guard (``invalid_permission_command``).
-* :meth:`invoke` performs the three side-effectful owner-cell stages in legacy
-  order, raising :class:`CapabilityInvocationError` with the matching legacy
+* :meth:`invoke` performs the three side-effectful owner-cell stages in the
+  same order, raising :class:`CapabilityInvocationError` with the same
   ``error_code`` (``permission_evaluation_failed`` / ``permission_denied`` /
   ``workspace_guard_failed`` / ``workspace_guard_denied`` /
   ``invalid_architect_design_command`` / ``architect_design_timeout`` /
   ``architect_design_failed``). The ``permission_denied`` /
   ``workspace_guard_denied`` / ``architect_design_timeout`` rejections carry the
-  exact ``_capability_available_metadata`` payload the legacy branch attached, so
+  same ``_capability_available_metadata`` payload the inline branch attached, so
   the dispatcher's single ``CapabilityInvocationError`` catch renders the failure
-  result byte-identically.
+  result shape stable.
 * :meth:`map_result` builds the not-ok (``architect_design_rejected``) and the
-  success :class:`RoleCapabilityInvocationResultV1` verbatim from the legacy tail
-  (lines ~2129-2166), reading the design result + accumulated ``guard_metadata``
+  success :class:`RoleCapabilityInvocationResultV1` from the extracted tail,
+  reading the design result + accumulated ``guard_metadata``
   carried out of :meth:`invoke` via :class:`_BoundaryInvokeResult`.
 
 The pre-RPC payload validation + permission-command construction is a pure
 function of ``command`` (helper :func:`_validate_boundary_payload`), so
 :meth:`validate` and :meth:`invoke` reproduce it identically without sharing
-mutable state. The ``boundary_context`` mutation (legacy lines ~2068-2079) is
+mutable state. The ``boundary_context`` mutation (source branch lines ~2068-2079) is
 performed inside :meth:`invoke` only, after the guard stages pass, exactly as the
-legacy branch does.
+extracted branch does.
 """
 
 from __future__ import annotations
@@ -82,7 +83,7 @@ class _BoundaryValidatedPayload:
     """Pure pre-RPC validation product of the boundary-validation branch.
 
     Carries the validated payload values plus the resolved module-level
-    ``evaluate_permission`` callable (legacy lines ~1989-1998 bundle the
+    ``evaluate_permission`` callable (source branch lines ~1989-1998 bundle the
     contract + service import with the command construction inside the
     ``invalid_permission_command`` try; this dataclass preserves that scope while
     keeping a single source of the construction logic for ``validate``/``invoke``).
@@ -117,8 +118,8 @@ class _BoundaryInvokeResult:
     """Owner-cell product of :meth:`BoundaryValidationHandler.invoke`.
 
     ``design_result`` is the raw ``architect.design`` result; ``guard_metadata``
-    is the accumulated permission + workspace-guard metadata block the legacy
-    branch folds into both the rejected and the success result (legacy lines
+    is the accumulated permission + workspace-guard metadata block the extracted
+    branch folds into both the rejected and the success result (source lines
     ~2051-2057 / ~2130-2135).
     """
 
@@ -137,8 +138,8 @@ def _validate_boundary_payload(
 ) -> _BoundaryValidatedPayload:
     """Reproduce the pure, pre-RPC payload rejections + permission command build.
 
-    Mirrors legacy lines ~1929-1998 byte-for-byte, raising
-    :class:`CapabilityInvocationError` with the legacy ``error_code`` literals on
+    Mirrors the extracted pre-RPC branch, raising
+    :class:`CapabilityInvocationError` with the stable ``error_code`` literals on
     each pre-invoke rejection path. Performs NO owner-cell RPC and does NOT mutate
     ``boundary_context`` (that mutation is done by :meth:`invoke` after the guard
     stages pass).
