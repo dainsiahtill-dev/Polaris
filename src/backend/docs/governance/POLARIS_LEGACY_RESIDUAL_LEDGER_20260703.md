@@ -42,20 +42,20 @@ as the live work queue for new findings.
 | LR-20 | Retired `polaris_cli.py` parser/dispatch implementation | `polaris_cli.py` still defined its own chat/status/workflow parser and `_run_*` dispatch helpers even after `main()` became a canonical wrapper. | Reduced `polaris_cli.py` to a no-execution compatibility module: `create_parser()` and `main()` delegate to `__main__.py`, helper functions remain for historical imports, and old `_dispatch` / `_run_*` execution functions were removed. | `rtk pytest src/backend/polaris/tests/delivery/cli/test_polaris_cli.py src/backend/polaris/delivery/cli/tests/test_cli_log_level_option.py src/backend/polaris/tests/unit/delivery/cli/test_cli_commands.py -q -k "polaris_cli or PolarisCli or log_level"`; `rtk ruff check`; `rtk mypy`; negative source scan. |
 | LR-21 | Old `cli_router.CliRouter` no-handler success | The old argparse router still parsed `test-window` and returned success when a parsed command had no registered handler, creating a silent acknowledged-but-not-executed path. | Removed `test-window` from the old router parser and changed missing-handler dispatch to fail closed with exit code 1. | `rtk pytest src/backend/polaris/delivery/cli/tests/test_cli_router.py src/backend/polaris/tests/unit/delivery/cli/test_cli_commands.py -q -k "CliRouter or cli_router or router_parser or no_handler or test_window"`; `rtk ruff check`; `rtk mypy`; negative source scan. |
 | LR-22 | Console backend alias fallback | The canonical CLI still accepted retired `textual` / `rich` backend aliases and `run_role_console()` silently downgraded unsupported backend values to plain output. | Reduced parser choices to `auto` / `plain` and changed direct console invocation with unsupported backend tokens to fail fast with `ValueError`. | `rtk pytest src/backend/polaris/tests/unit/delivery/cli/test_cli_commands.py src/backend/polaris/delivery/cli/tests/test_cli_router.py src/backend/polaris/delivery/cli/tests/test_terminal_console.py -q -k "backend_aliases or console_subcommand_has_expected_flags or chat_subcommand_has_expected_arguments"`; `rtk ruff check`; `rtk mypy`; negative source scan. |
+| LR-23 | Workspace docs migration | Docs-init still generated retired flat docs (`docs/00_overview.md`, `docs/10_requirements.md`, `docs/40_quality.md`) and retired `docs/.polaris.json`, while runtime artifact goals preferred the retired overview before canonical `docs/product/requirements.md`. | Docs-init now generates only canonical `docs/product/*` templates and the HTTP apply allowlist rejects retired flat docs; runtime goal loading prefers product requirements and keeps retired overview only as read-only migration fallback; PM diagnostics label now says `retired_requirements_fallback`. | `rtk pytest src/backend/polaris/cells/workspace/integrity/tests/test_workspace_service.py src/backend/polaris/tests/test_docs_template_quality.py src/backend/polaris/tests/unit/delivery/http/routers/test_docs_v2.py src/backend/polaris/tests/unit/cells/runtime/artifact_store/internal/test_artifacts_docs_goals.py -q -k "docs_templates or docs_init_preview_jetstream or retired_flat or retired_docs_metadata or load_goals"`; `rtk ruff check`; `rtk mypy`; negative source scan. |
 
 ## Open Residual Buckets
 
-These are not all equal. The first bucket is the only one that can affect bench
-execution correctness directly.
+No open runtime residual buckets remain in this intake after LR-23. New findings
+must be added with fresh codegraph evidence before edits.
 
-| Bucket | Priority | Current Evidence | Exit Criteria |
+| Bucket | Priority | Disposition | Guardrail |
 | --- | --- | --- | --- |
-| CLI compatibility surfaces | P2 | CLI/router/console/director_v2 still accept or warn about retired modes, test-window, textual/rich aliases, and `--state`. | Either remove the compatibility options or fence them as explicit fail-closed/deprecation errors with tests. |
-| Workspace/docs migration paths | P3 | Docs/workspace integrity still references old docs layout and metadata paths for migration. | Keep as accepted read-only migration only, or remove after confirming no workspace bootstrap relies on it. |
+| CLI compatibility surfaces | Closed by LR-14 through LR-22 | Canonical CLI dispatch is `polaris.delivery.cli.__main__`; retired aliases are fail-closed or removed; retired backend aliases are rejected. | Do not reintroduce second parser/dispatch hosts, silent no-handler success, `test-window`, textual/rich backend aliases, or Director state override inputs. |
+| Workspace/docs migration paths | Closed by LR-23 | New docs-init output is canonical `docs/product/*`; old flat docs are no longer generated or accepted by docs-init apply. Remaining old paths are read-only fallback only. | Product docs must stay first in candidate ordering; old `00_overview.md` / `10_requirements.md` may be read for migration but must not become write targets or primary facts. |
 | Domain vocabulary, not debt | Not counted | Tech Radar uses `deprecated` as a library ring; PM requirements use `deprecated` as a soft-delete state. | Do not remove; these are business states, not architecture drift. |
 | Generated descriptor text | Not counted | Generated packs may still contain retired names until descriptor refresh. | Refresh in a descriptor wave after source convergence; do not hand-edit generated packs. |
 
 ## Next Closure Order
 
-1. P2 CLI compatibility surfaces.
-2. P3 workspace/docs migration paths.
+Current intake is closed. Reopen only with a new evidence-backed ledger item.

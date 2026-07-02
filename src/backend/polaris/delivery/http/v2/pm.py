@@ -283,7 +283,7 @@ def _build_workspace_diagnostics(
 _PM_PLANNING_INPUT_CANDIDATES: tuple[tuple[str, str], ...] = (
     ("runtime_requirements", "runtime/contracts/requirements.md"),
     ("workspace_requirements", "workspace/docs/product/requirements.md"),
-    ("legacy_requirements", "workspace/docs/10_requirements.md"),
+    ("retired_requirements_fallback", "workspace/docs/10_requirements.md"),
     ("runtime_plan", "runtime/contracts/plan.md"),
     ("workspace_plan", "workspace/docs/product/plan.md"),
 )

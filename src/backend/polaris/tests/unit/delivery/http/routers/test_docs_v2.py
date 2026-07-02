@@ -670,7 +670,11 @@ async def test_docs_init_preview_jetstream_starts_nat_channel_and_publishes_even
     monkeypatch.setattr(docs, "_resolve_docs_preview_ai_fields", _fake_resolve_docs_preview_ai_fields)
     monkeypatch.setattr(docs, "detect_project_profile", lambda _workspace: {"type": "python"})
     monkeypatch.setattr(docs, "default_qa_commands", lambda _profile: ["pytest"])
-    monkeypatch.setattr(docs, "build_docs_templates", lambda *_args: {"docs/00_overview.md": "# Overview"})
+    monkeypatch.setattr(
+        docs,
+        "build_docs_templates",
+        lambda *_args: {"docs/product/requirements.md": "# Product Requirements"},
+    )
     monkeypatch.setattr(docs, "select_docs_target_root", lambda _workspace: "docs")
     monkeypatch.setattr(docs, "resolve_artifact_path", lambda *_args: "/tmp/polaris-docs-preview-test.md")
     monkeypatch.setattr(docs, "workspace_has_docs", lambda _workspace: False)

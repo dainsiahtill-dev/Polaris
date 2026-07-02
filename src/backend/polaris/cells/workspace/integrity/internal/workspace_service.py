@@ -284,7 +284,7 @@ def build_docs_templates(
     fields: dict[str, str],
     qa_commands: list[str],
 ) -> dict[str, str]:
-    """Build docs-init template map for product and legacy paths."""
+    """Build canonical docs-init templates under ``docs/product``."""
     goal = fields.get("goal") or ""
     if mode == "import_readme" and not goal:
         goal = read_readme_title(workspace)
@@ -335,34 +335,4 @@ def build_docs_templates(
     )
     docs["docs/product/constraints.md"] = "# Constraints\n\n" + _format_list(constraints_items) + "\n"
 
-    # Keep legacy docs layout for callers not yet switched to docs/product/*.
-    docs["docs/00_overview.md"] = (
-        "# Overview\n\n"
-        "## Goal\n"
-        f"{goal_text}\n\n"
-        "## In Scope\n"
-        f"{_format_list(in_scope_items)}\n\n"
-        "## Out of Scope\n"
-        f"{_format_list(out_scope_items)}\n"
-    )
-    docs["docs/10_requirements.md"] = (
-        "# Requirements\n\n"
-        "## Key Requirements\n"
-        f"{_format_list(in_scope_items)}\n\n"
-        "## Acceptance Criteria\n"
-        f"{_format_list(dod_items)}\n"
-    )
-    docs["docs/20_constraints.md"] = "# Constraints\n\n" + _format_list(constraints_items) + "\n"
-    docs["docs/30_backlog.md"] = "# Backlog\n\n" + _format_list(backlog_items) + "\n"
-    docs["docs/40_quality.md"] = (
-        f"# Quality\n\n## Definition of Done\n{_format_list(dod_items)}\n\n## Default QA Commands\n{qa_lines}\n"
-    )
-    metadata = {
-        "schema_version": 2,
-        "created_at": utc_now_str(),
-        "docs_mode": mode,
-        "requirements_path": "workspace/docs/product/requirements.md",
-        "qa_commands": effective_qa,
-    }
-    docs["docs/.polaris.json"] = json.dumps(metadata, ensure_ascii=False, indent=2) + "\n"
     return docs

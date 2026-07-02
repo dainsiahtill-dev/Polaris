@@ -298,8 +298,8 @@ def _extract_goals(md_text: str) -> list[str]:
 def _load_goals(workspace: str) -> list[str]:
     """Load goals from workspace documentation files."""
     candidates = [
-        os.path.join(workspace, "docs", "00_overview.md"),
         os.path.join(workspace, "docs", "product", "requirements.md"),
+        os.path.join(workspace, "docs", "00_overview.md"),
     ]
     for candidate in candidates:
         text = read_file_head(candidate, max_chars=20000)

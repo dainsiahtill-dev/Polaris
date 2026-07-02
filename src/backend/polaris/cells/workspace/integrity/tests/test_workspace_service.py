@@ -302,32 +302,25 @@ class TestBuildDocsTemplates:
         assert "Test goal" in docs["docs/product/requirements.md"]
         assert "item1" in docs["docs/product/requirements.md"]
 
-    def test_builds_legacy_templates(self, tmp_path: Path) -> None:
+    def test_does_not_build_retired_flat_templates(self, tmp_path: Path) -> None:
         docs = build_docs_templates(
             workspace=str(tmp_path),
             mode="product",
-            fields={"goal": "Legacy test", "backlog": "task1"},
+            fields={"goal": "Retired layout test", "backlog": "task1"},
             qa_commands=[],
         )
-        assert "docs/00_overview.md" in docs
-        assert "docs/10_requirements.md" in docs
-        assert "docs/40_quality.md" in docs
-        assert "Legacy test" in docs["docs/00_overview.md"]
+        assert "docs/00_overview.md" not in docs
+        assert "docs/10_requirements.md" not in docs
+        assert "docs/40_quality.md" not in docs
 
-    def test_includes_polaris_metadata(self, tmp_path: Path) -> None:
+    def test_does_not_build_retired_docs_metadata(self, tmp_path: Path) -> None:
         docs = build_docs_templates(
             workspace=str(tmp_path),
             mode="product",
             fields={},
             qa_commands=["pytest"],
         )
-        assert "docs/.polaris.json" in docs
-        import json
-
-        meta: dict[str, Any] = json.loads(docs["docs/.polaris.json"])
-        assert meta["schema_version"] == 2
-        assert meta["docs_mode"] == "product"
-        assert "pytest" in meta["qa_commands"]
+        assert "docs/.polaris.json" not in docs
 
     def test_goal_from_readme_in_import_mode(self, tmp_path: Path) -> None:
         # read_readme_title looks for tui_runtime.md (not README.md)

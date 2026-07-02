@@ -63,12 +63,6 @@ _BACKGROUND_DOCS_JETSTREAM_TASKS: set[asyncio.Task[None]] = set()
 _SAFE_DOCS_EVENT_ID_PATTERN = re.compile(r"[^a-zA-Z0-9._-]+")
 _DOCS_INIT_ACTIVE_SUFFIXES = frozenset(
     {
-        ".polaris.json",
-        "00_overview.md",
-        "10_requirements.md",
-        "20_constraints.md",
-        "30_backlog.md",
-        "40_quality.md",
         "product/requirements.md",
         "product/plan.md",
         "product/interface_contract.md",
