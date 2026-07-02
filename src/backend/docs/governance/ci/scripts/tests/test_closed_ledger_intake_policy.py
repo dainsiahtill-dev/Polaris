@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+import yaml
 from docs.governance.ci.scripts import fitness_rule_checker
 from docs.governance.ci.scripts.check_closed_ledger_intake import (
     CLOSED_LEDGER_EXPECTATIONS,
     ClosedLedgerExpectation,
     ClosedLedgerIntakeChecker,
 )
+
+_FITNESS_RULES_PATH = Path(__file__).resolve().parents[2] / "fitness-rules.yaml"
 
 
 def _write_ledger(workspace: Path, ledger: ClosedLedgerExpectation, text: str) -> Path:
@@ -20,6 +24,23 @@ def _write_ledger(workspace: Path, ledger: ClosedLedgerExpectation, text: str) -
     path = ledger_dir / ledger.filename
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def _load_fitness_rule(rule_id: str) -> Mapping[str, object]:
+    """Load one rule declaration from the governance fitness-rule registry."""
+    with _FITNESS_RULES_PATH.open(encoding="utf-8") as stream:
+        rules_doc = yaml.safe_load(stream)
+    if not isinstance(rules_doc, Mapping):
+        raise AssertionError(f"{_FITNESS_RULES_PATH} must contain a mapping")
+
+    rules = rules_doc.get("rules")
+    if not isinstance(rules, list):
+        raise AssertionError(f"{_FITNESS_RULES_PATH} must contain a rules list")
+
+    for rule in rules:
+        if isinstance(rule, Mapping) and rule.get("id") == rule_id:
+            return rule
+    raise AssertionError(f"missing fitness rule declaration: {rule_id}")
 
 
 def test_live_closed_governance_ledgers_are_intake_only() -> None:
@@ -46,6 +67,24 @@ def test_default_fitness_rule_suite_includes_closed_ledger_rule() -> None:
     checker = fitness_rule_checker.get_checker()
     for rule_id in fitness_rule_checker.DEFAULT_RULE_IDS:
         assert hasattr(checker, f"check_{rule_id}"), rule_id
+
+
+def test_closed_ledger_fitness_rule_declaration_matches_default_suite() -> None:
+    """The YAML rule declaration and default runner must stay wired together."""
+    rule = _load_fitness_rule("closed_governance_ledgers_intake_only")
+
+    assert rule.get("severity") == "high"
+    assert rule.get("current_status") == "enforced_non_regressive"
+    assert "closed_governance_ledgers_intake_only" in fitness_rule_checker.DEFAULT_RULE_IDS
+
+    evidence = rule.get("evidence")
+    assert isinstance(evidence, list)
+    expected_evidence = {f"docs/governance/{ledger.filename}" for ledger in CLOSED_LEDGER_EXPECTATIONS}
+    assert expected_evidence.issubset(set(evidence))
+
+    desired_automation = rule.get("desired_automation")
+    assert isinstance(desired_automation, list)
+    assert any("check_closed_ledger_intake.py --json" in step for step in desired_automation)
 
 
 @pytest.mark.parametrize("status", ("Status: Active", "Status: Closed"))
