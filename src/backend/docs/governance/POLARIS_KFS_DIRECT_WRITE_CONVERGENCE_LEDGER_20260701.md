@@ -19,6 +19,28 @@ bounded owner surface at a time to canonical KFS APIs, then rerun the guard.
 | P1 open | 0 | Runtime/control-plane direct-write gaps remaining at P1. |
 | P2 open | 0 | Internal Factory/bench write paths that still must converge. |
 
+## Closure and Intake Rules
+
+This ledger is closed for the current KFS direct-write convergence pass. It must
+not be used as an open-ended search list for every `write_text` symbol in the
+repository. New findings belong here only when the architecture guard or a
+concrete runtime/bench artifact proves an unbaselined direct write in Polaris
+runtime/business code outside the approved `KernelFileSystem` or
+`kernelone.fs` helper boundaries.
+
+Do not reopen a closed KFS row to describe a new symptom. Open a new `KFS-*`
+item with:
+
+1. The owner surface and exact unbaselined file path.
+2. Evidence from `test_polaris_kernel_fs_guard.py` or an equivalent guard output.
+3. The intended canonical write boundary (`KernelFileSystem`,
+   `kernelone.fs.text_ops`, or another approved KFS helper).
+4. Focused behavior tests plus a before/after direct-write scan.
+
+Not every write-like symbol is debt. Protocol methods, adapter interfaces,
+tests/fixtures, generated descriptor text, benchmark-owned temporary work, and
+historical docs are out of scope unless they become production runtime facts.
+
 ## Closed Cuts
 
 | ID | Severity | Status | Owner Surface | Evidence | Verification |
