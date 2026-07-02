@@ -1,6 +1,6 @@
 """Tests for Polaris PM management v2 routes in pm_management.py.
 
-Covers legacy v2 aliases under /pm/v2/pm/* and desktop aliases under /v2/pm/*.
+Covers the global desktop `/v2/pm/*` and `/v2/pm/management/*` surfaces.
 External PM service is mocked to avoid DI container and storage dependencies.
 """
 
@@ -101,7 +101,7 @@ async def client(mock_settings: Settings, mock_app_state: AppState) -> AsyncIter
 
 
 def test_desktop_v2_pm_management_routes_are_registered(mock_settings: Settings) -> None:
-    """Desktop PM document/task/requirement endpoints must be mounted at /v2/pm."""
+    """Desktop PM management endpoints must be mounted only on canonical v2 paths."""
     from polaris.delivery.http.app_factory import create_app
 
     app = create_app(settings=mock_settings)
@@ -126,11 +126,46 @@ def test_desktop_v2_pm_management_routes_are_registered(mock_settings: Settings)
         "/v2/pm/search/tasks",
         "/v2/pm/requirements",
         "/v2/pm/requirements/{req_id}",
+        "/v2/pm/management/status",
+        "/v2/pm/management/health",
+        "/v2/pm/management/init",
+    }
+    retired_nested_paths = {
+        "/pm/v2/pm/documents",
+        "/pm/v2/pm/tasks",
+        "/pm/v2/pm/requirements",
+        "/pm/v2/pm/status",
+        "/pm/v2/pm/health",
+        "/pm/v2/pm/init",
     }
 
     assert expected_paths.issubset(route_paths)
+    assert route_paths.isdisjoint(retired_nested_paths)
     assert ("/v2/pm/tasks", "GET") in route_methods
     assert ("/v2/pm/tasks", "POST") in route_methods
+    assert ("/v2/pm/management/init", "POST") in route_methods
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("get", "/pm/v2/pm/tasks"),
+        ("get", "/pm/v2/pm/documents"),
+        ("get", "/pm/v2/pm/status"),
+        ("get", "/pm/v2/pm/health"),
+        ("post", "/pm/v2/pm/init"),
+    ],
+)
+async def test_retired_nested_pm_v2_routes_are_not_registered(
+    client: AsyncClient,
+    method: str,
+    path: str,
+) -> None:
+    """Nested /pm/v2/pm/* aliases are retired and must not reach PM management."""
+    response = await getattr(client, method)(path)
+
+    assert response.status_code == 404
 
 
 def _mock_pm_adapter(
@@ -276,7 +311,7 @@ async def test_v2_pm_management_status_accepts_workspace_query_override(
             return_value={},
         ),
     ):
-        response = await client.get("/pm/v2/pm/status", params={"workspace": "C:/Temp/Product"})
+        response = await client.get("/v2/pm/management/status", params={"workspace": "C:/Temp/Product"})
 
     assert response.status_code == 200
     assert response.json()["workspace"] == "C:/Temp/Product"
@@ -297,7 +332,7 @@ async def test_v2_pm_management_health_accepts_workspace_query_override(
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ) as adapter_cls:
-        response = await client.get("/pm/v2/pm/health", params={"workspace": "C:/Temp/Product"})
+        response = await client.get("/v2/pm/management/health", params={"workspace": "C:/Temp/Product"})
 
     assert response.status_code == 200
     adapter_cls.assert_called_once_with("C:/Temp/Product")
@@ -318,7 +353,7 @@ async def test_v2_pm_management_init_accepts_workspace_query_override(
         return_value=mock_pm,
     ) as adapter_cls:
         response = await client.post(
-            "/pm/v2/pm/init",
+            "/v2/pm/management/init",
             params={
                 "project_name": "My Project",
                 "description": "A test project",
@@ -350,7 +385,7 @@ async def test_v2_pm_management_requires_configured_workspace(
 
 @pytest.mark.asyncio
 async def test_v2_list_documents(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/documents should return document list."""
+    """GET /v2/pm/documents should return document list."""
     mock_pm = _mock_pm_adapter(
         list_documents_result={
             "documents": [
@@ -370,7 +405,7 @@ async def test_v2_list_documents(client: AsyncClient) -> None:
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/documents")
+        response = await client.get("/v2/pm/documents")
         assert response.status_code == 200
         data = response.json()
         assert len(data["documents"]) == 1
@@ -380,21 +415,21 @@ async def test_v2_list_documents(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_list_documents_with_filters(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/documents should pass query params to PM adapter."""
+    """GET /v2/pm/documents should pass query params to PM adapter."""
     mock_pm = _mock_pm_adapter()
 
     with patch(
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/documents?doc_type=md&pattern=*.md&limit=10&offset=5")
+        response = await client.get("/v2/pm/documents?doc_type=md&pattern=*.md&limit=10&offset=5")
         assert response.status_code == 200
         mock_pm.list_documents.assert_called_once_with(doc_type="md", pattern="*.md", limit=10, offset=5)
 
 
 @pytest.mark.asyncio
 async def test_v2_get_document(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/documents/{path} should return document details."""
+    """GET /v2/pm/documents/{path} should return document details."""
     mock_pm = _mock_pm_adapter(
         get_document_result={
             "path": "docs/readme.md",
@@ -416,7 +451,7 @@ async def test_v2_get_document(client: AsyncClient) -> None:
             return_value="/workspace/docs/readme.md",
         ),
     ):
-        response = await client.get("/pm/v2/pm/documents/docs/readme.md")
+        response = await client.get("/v2/pm/documents/docs/readme.md")
         assert response.status_code == 200
         data = response.json()
         assert data["path"] == "docs/readme.md"
@@ -427,7 +462,7 @@ async def test_v2_get_document(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_get_document_with_version(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/documents/{path} should accept version query."""
+    """GET /v2/pm/documents/{path} should accept version query."""
     mock_pm = _mock_pm_adapter(
         get_document_result={
             "path": "docs/readme.md",
@@ -449,7 +484,7 @@ async def test_v2_get_document_with_version(client: AsyncClient) -> None:
             return_value="/workspace/docs/readme.md",
         ),
     ):
-        response = await client.get("/pm/v2/pm/documents/docs/readme.md?version=1")
+        response = await client.get("/v2/pm/documents/docs/readme.md?version=1")
         assert response.status_code == 200
         data = response.json()
         assert data["path"] == "docs/readme.md"
@@ -459,7 +494,7 @@ async def test_v2_get_document_with_version(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_get_document_not_found(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/documents/{path} should 404 when document missing."""
+    """GET /v2/pm/documents/{path} should 404 when document missing."""
     mock_pm = _mock_pm_adapter(get_document_result=None)
 
     with (
@@ -472,14 +507,14 @@ async def test_v2_get_document_not_found(client: AsyncClient) -> None:
             return_value="/workspace/docs/missing.md",
         ),
     ):
-        response = await client.get("/pm/v2/pm/documents/docs/missing.md")
+        response = await client.get("/v2/pm/documents/docs/missing.md")
         assert response.status_code == 404
         assert "DOCUMENT_NOT_FOUND" in response.json()["error"]["code"]
 
 
 @pytest.mark.asyncio
 async def test_v2_create_or_update_document(client: AsyncClient) -> None:
-    """POST /pm/v2/pm/documents/{path} should create or update document."""
+    """POST /v2/pm/documents/{path} should create or update document."""
 
     @dataclass
     class _FakeVersion:
@@ -501,7 +536,7 @@ async def test_v2_create_or_update_document(client: AsyncClient) -> None:
         ),
     ):
         response = await client.post(
-            "/pm/v2/pm/documents/docs/readme.md",
+            "/v2/pm/documents/docs/readme.md",
             json={"content": "# Updated", "change_summary": "update test"},
         )
         assert response.status_code == 200
@@ -519,7 +554,7 @@ async def test_v2_create_or_update_document(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_create_or_update_document_failed(client: AsyncClient) -> None:
-    """POST /pm/v2/pm/documents/{path} should 500 when PM operation fails."""
+    """POST /v2/pm/documents/{path} should 500 when PM operation fails."""
     mock_pm = _mock_pm_adapter(create_or_update_document_result=None)
 
     with (
@@ -533,7 +568,7 @@ async def test_v2_create_or_update_document_failed(client: AsyncClient) -> None:
         ),
     ):
         response = await client.post(
-            "/pm/v2/pm/documents/docs/readme.md",
+            "/v2/pm/documents/docs/readme.md",
             json={"content": "# Updated"},
         )
         assert response.status_code == 500
@@ -542,7 +577,7 @@ async def test_v2_create_or_update_document_failed(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_delete_document(client: AsyncClient) -> None:
-    """DELETE /pm/v2/pm/documents/{path} should delete document."""
+    """DELETE /v2/pm/documents/{path} should delete document."""
     mock_pm = _mock_pm_adapter(delete_document_result=True)
 
     with (
@@ -555,7 +590,7 @@ async def test_v2_delete_document(client: AsyncClient) -> None:
             return_value="/workspace/docs/readme.md",
         ),
     ):
-        response = await client.delete("/pm/v2/pm/documents/docs/readme.md")
+        response = await client.delete("/v2/pm/documents/docs/readme.md")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -565,7 +600,7 @@ async def test_v2_delete_document(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_delete_document_without_file_delete(client: AsyncClient) -> None:
-    """DELETE /pm/v2/pm/documents/{path} should respect delete_file flag."""
+    """DELETE /v2/pm/documents/{path} should respect delete_file flag."""
     mock_pm = _mock_pm_adapter(delete_document_result=True)
 
     with (
@@ -578,14 +613,14 @@ async def test_v2_delete_document_without_file_delete(client: AsyncClient) -> No
             return_value="/workspace/docs/readme.md",
         ),
     ):
-        response = await client.delete("/pm/v2/pm/documents/docs/readme.md?delete_file=false")
+        response = await client.delete("/v2/pm/documents/docs/readme.md?delete_file=false")
         assert response.status_code == 200
         mock_pm.delete_document.assert_called_once_with("/workspace/docs/readme.md", delete_file=False)
 
 
 @pytest.mark.asyncio
 async def test_v2_delete_document_failed(client: AsyncClient) -> None:
-    """DELETE /pm/v2/pm/documents/{path} should 500 when deletion fails."""
+    """DELETE /v2/pm/documents/{path} should 500 when deletion fails."""
     mock_pm = _mock_pm_adapter(delete_document_result=False)
 
     with (
@@ -598,14 +633,14 @@ async def test_v2_delete_document_failed(client: AsyncClient) -> None:
             return_value="/workspace/docs/readme.md",
         ),
     ):
-        response = await client.delete("/pm/v2/pm/documents/docs/readme.md")
+        response = await client.delete("/v2/pm/documents/docs/readme.md")
         assert response.status_code == 500
         assert "PM_OPERATION_FAILED" in response.json()["error"]["code"]
 
 
 @pytest.mark.asyncio
 async def test_v2_get_document_versions(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/documents/{path}/versions should return versions."""
+    """GET /v2/pm/documents/{path}/versions should return versions."""
 
     @dataclass
     class _FakeVersion:
@@ -629,7 +664,7 @@ async def test_v2_get_document_versions(client: AsyncClient) -> None:
             return_value="/workspace/docs/readme.md",
         ),
     ):
-        response = await client.get("/pm/v2/pm/documents/docs/readme.md/versions")
+        response = await client.get("/v2/pm/documents/docs/readme.md/versions")
         assert response.status_code == 200
         data = response.json()
         assert data["path"] == "/workspace/docs/readme.md"
@@ -640,7 +675,7 @@ async def test_v2_get_document_versions(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_compare_document_versions(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/documents/{path}/compare should return diff."""
+    """GET /v2/pm/documents/{path}/compare should return diff."""
 
     @dataclass
     class _FakeDiff:
@@ -666,7 +701,7 @@ async def test_v2_compare_document_versions(client: AsyncClient) -> None:
             return_value="/workspace/docs/readme.md",
         ),
     ):
-        response = await client.get("/pm/v2/pm/documents/docs/readme.md/compare?old_version=1&new_version=2")
+        response = await client.get("/v2/pm/documents/docs/readme.md/compare?old_version=1&new_version=2")
         assert response.status_code == 200
         data = response.json()
         assert data["old_version"] == "1"
@@ -677,7 +712,7 @@ async def test_v2_compare_document_versions(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_search_documents(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/search/documents should search documents."""
+    """GET /v2/pm/search/documents should search documents."""
     mock_pm = _mock_pm_adapter(
         search_documents_result=[{"path": "docs/readme.md", "snippet": "hello"}],
     )
@@ -686,7 +721,7 @@ async def test_v2_search_documents(client: AsyncClient) -> None:
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/search/documents?q=hello&limit=10")
+        response = await client.get("/v2/pm/search/documents?q=hello&limit=10")
         assert response.status_code == 200
         data = response.json()
         assert data["query"] == "hello"
@@ -754,7 +789,7 @@ async def test_v2_pm_document_read_routes_return_idle_projection_when_pm_adapter
 
 @pytest.mark.asyncio
 async def test_v2_list_tasks(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/tasks should return task list."""
+    """GET /v2/pm/tasks should return task list."""
     mock_pm = _mock_pm_adapter(
         list_tasks_result={
             "tasks": [
@@ -773,7 +808,7 @@ async def test_v2_list_tasks(client: AsyncClient) -> None:
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/tasks")
+        response = await client.get("/v2/pm/tasks")
         assert response.status_code == 200
         data = response.json()
         assert len(data["tasks"]) == 1
@@ -786,20 +821,20 @@ async def test_v2_list_tasks(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_list_tasks_with_filters(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/tasks should pass filters to PM adapter."""
+    """GET /v2/pm/tasks should pass filters to PM adapter."""
     mock_pm = _mock_pm_adapter()
 
     with patch(
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/tasks?status=pending&assignee=user1&limit=20&offset=10")
+        response = await client.get("/v2/pm/tasks?status=pending&assignee=user1&limit=20&offset=10")
         assert response.status_code == 200
         mock_pm.list_tasks.assert_called_once_with(status="pending", assignee="user1", limit=20, offset=10)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path", ["/pm/v2/pm/tasks", "/v2/pm/tasks"])
+@pytest.mark.parametrize("path", ["/v2/pm/tasks"])
 async def test_v2_list_tasks_returns_idle_projection_when_pm_runtime_import_fails(
     client: AsyncClient,
     path: str,
@@ -854,8 +889,8 @@ async def test_v2_list_tasks_returns_idle_projection_when_pm_adapter_get_pm_fail
         ("/v2/pm/search/tasks?q=quality", "task_search"),
         ("/v2/pm/requirements", "requirement_list"),
         ("/v2/pm/requirements/REQ-1", "requirement_detail"),
-        ("/pm/v2/pm/status", "status"),
-        ("/pm/v2/pm/health", "health"),
+        ("/v2/pm/management/status", "status"),
+        ("/v2/pm/management/health", "health"),
     ],
 )
 async def test_v2_pm_read_routes_return_idle_projection_when_pm_adapter_get_pm_fails(
@@ -905,7 +940,7 @@ async def test_v2_pm_read_routes_return_idle_projection_when_pm_adapter_get_pm_f
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path", ["/pm/v2/pm/tasks", "/v2/pm/tasks"])
+@pytest.mark.parametrize("path", ["/v2/pm/tasks"])
 async def test_v2_create_task_aliases(client: AsyncClient, path: str) -> None:
     """POST PM task aliases should create through the PM task adapter."""
     mock_pm = _mock_pm_adapter(
@@ -964,7 +999,7 @@ async def test_v2_create_task_aliases(client: AsyncClient, path: str) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_get_task_history(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/tasks/history should return task history."""
+    """GET /v2/pm/tasks/history should return task history."""
     mock_pm = _mock_pm_adapter(
         get_task_history_result={
             "history": [{"id": "task-1", "action": "created"}],
@@ -977,7 +1012,7 @@ async def test_v2_get_task_history(client: AsyncClient) -> None:
         return_value=mock_pm,
     ):
         response = await client.get(
-            "/pm/v2/pm/tasks/history?task_id=task-1&assignee=user1&status=done"
+            "/v2/pm/tasks/history?task_id=task-1&assignee=user1&status=done"
             "&start_date=2026-01-01&end_date=2026-12-31&limit=50&offset=10"
         )
         assert response.status_code == 200
@@ -996,7 +1031,7 @@ async def test_v2_get_task_history(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_get_director_task_history(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/tasks/director should return director task history."""
+    """GET /v2/pm/tasks/director should return director task history."""
     mock_pm = _mock_pm_adapter(
         get_director_task_history_result={
             "iterations": [{"iteration": 1, "tasks": []}],
@@ -1008,7 +1043,7 @@ async def test_v2_get_director_task_history(client: AsyncClient) -> None:
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/tasks/director?iteration=1&limit=25&offset=5")
+        response = await client.get("/v2/pm/tasks/director?iteration=1&limit=25&offset=5")
         assert response.status_code == 200
         data = response.json()
         assert len(data["iterations"]) == 1
@@ -1017,7 +1052,7 @@ async def test_v2_get_director_task_history(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_get_task(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/tasks/{task_id} should return task details."""
+    """GET /v2/pm/tasks/{task_id} should return task details."""
 
     @dataclass
     class _FakeTask:
@@ -1055,7 +1090,7 @@ async def test_v2_get_task(client: AsyncClient) -> None:
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/tasks/task-1")
+        response = await client.get("/v2/pm/tasks/task-1")
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == "task-1"
@@ -1066,21 +1101,21 @@ async def test_v2_get_task(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_get_task_not_found(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/tasks/{task_id} should 404 when task missing."""
+    """GET /v2/pm/tasks/{task_id} should 404 when task missing."""
     mock_pm = _mock_pm_adapter(get_task_result=None)
 
     with patch(
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/tasks/missing")
+        response = await client.get("/v2/pm/tasks/missing")
         assert response.status_code == 404
         assert "TASK_NOT_FOUND" in response.json()["error"]["code"]
 
 
 @pytest.mark.asyncio
 async def test_v2_get_task_assignments(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/tasks/{task_id}/assignments should return assignments."""
+    """GET /v2/pm/tasks/{task_id}/assignments should return assignments."""
     mock_pm = _mock_pm_adapter(
         get_task_assignments_result=[{"assignee": "user1", "at": "2026-01-01T00:00:00Z"}],
     )
@@ -1089,7 +1124,7 @@ async def test_v2_get_task_assignments(client: AsyncClient) -> None:
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/tasks/task-1/assignments?limit=50")
+        response = await client.get("/v2/pm/tasks/task-1/assignments?limit=50")
         assert response.status_code == 200
         data = response.json()
         assert data["task_id"] == "task-1"
@@ -1099,7 +1134,7 @@ async def test_v2_get_task_assignments(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_search_tasks(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/search/tasks should search tasks."""
+    """GET /v2/pm/search/tasks should search tasks."""
     mock_pm = _mock_pm_adapter(
         search_tasks_result=[{"id": "task-1", "title": "Find me"}],
     )
@@ -1108,7 +1143,7 @@ async def test_v2_search_tasks(client: AsyncClient) -> None:
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/search/tasks?q=find&limit=10")
+        response = await client.get("/v2/pm/search/tasks?q=find&limit=10")
         assert response.status_code == 200
         data = response.json()
         assert data["query"] == "find"
@@ -1118,14 +1153,14 @@ async def test_v2_search_tasks(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_search_tasks_not_initialized(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/search/tasks should return an idle empty projection before PM starts."""
+    """GET /v2/pm/search/tasks should return an idle empty projection before PM starts."""
     mock_pm = _mock_pm_adapter(initialized=False)
 
     with patch(
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/search/tasks?q=find")
+        response = await client.get("/v2/pm/search/tasks?q=find")
         assert response.status_code == 200
         data = response.json()
         assert data["ok"] is True
@@ -1145,7 +1180,7 @@ async def test_v2_search_tasks_not_initialized(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_list_requirements(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/requirements should return requirements list."""
+    """GET /v2/pm/requirements should return requirements list."""
     mock_pm = _mock_pm_adapter(
         list_requirements_result={
             "requirements": [
@@ -1164,7 +1199,7 @@ async def test_v2_list_requirements(client: AsyncClient) -> None:
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/requirements")
+        response = await client.get("/v2/pm/requirements")
         assert response.status_code == 200
         data = response.json()
         assert len(data["requirements"]) == 1
@@ -1176,21 +1211,21 @@ async def test_v2_list_requirements(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_list_requirements_with_filters(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/requirements should pass filters."""
+    """GET /v2/pm/requirements should pass filters."""
     mock_pm = _mock_pm_adapter()
 
     with patch(
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/requirements?status=open&priority=high&limit=20&offset=5")
+        response = await client.get("/v2/pm/requirements?status=open&priority=high&limit=20&offset=5")
         assert response.status_code == 200
         mock_pm.list_requirements.assert_called_once_with(status="open", priority="high", limit=20, offset=5)
 
 
 @pytest.mark.asyncio
 async def test_v2_get_requirement(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/requirements/{req_id} should return requirement."""
+    """GET /v2/pm/requirements/{req_id} should return requirement."""
     mock_pm = _mock_pm_adapter(
         get_requirement_result={
             "id": "req-1",
@@ -1203,7 +1238,7 @@ async def test_v2_get_requirement(client: AsyncClient) -> None:
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/requirements/req-1")
+        response = await client.get("/v2/pm/requirements/req-1")
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == "req-1"
@@ -1212,14 +1247,14 @@ async def test_v2_get_requirement(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_get_requirement_not_found(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/requirements/{req_id} should 404 when missing."""
+    """GET /v2/pm/requirements/{req_id} should 404 when missing."""
     mock_pm = _mock_pm_adapter(get_requirement_result=None)
 
     with patch(
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/requirements/missing")
+        response = await client.get("/v2/pm/requirements/missing")
         assert response.status_code == 404
         assert "REQUIREMENT_NOT_FOUND" in response.json()["error"]["code"]
 
@@ -1231,7 +1266,7 @@ async def test_v2_get_requirement_not_found(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_get_pm_status_initialized(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/status should return status when initialized."""
+    """GET /v2/pm/management/status should return status when initialized."""
     mock_pm = _mock_pm_adapter(
         get_status_result={
             "initialized": True,
@@ -1251,7 +1286,7 @@ async def test_v2_get_pm_status_initialized(client: AsyncClient) -> None:
             return_value={},
         ),
     ):
-        response = await client.get("/pm/v2/pm/status")
+        response = await client.get("/v2/pm/management/status")
         assert response.status_code == 200
         data = response.json()
         assert data["initialized"] is True
@@ -1260,7 +1295,7 @@ async def test_v2_get_pm_status_initialized(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_get_pm_status_merges_execution_broker_status(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/status should expose live PM process state."""
+    """GET /v2/pm/management/status should expose live PM process state."""
     mock_pm = _mock_pm_adapter(
         get_status_result={
             "initialized": True,
@@ -1285,7 +1320,7 @@ async def test_v2_get_pm_status_merges_execution_broker_status(client: AsyncClie
             },
         ),
     ):
-        response = await client.get("/pm/v2/pm/status")
+        response = await client.get("/v2/pm/management/status")
         assert response.status_code == 200
         data = response.json()
         assert data["initialized"] is True
@@ -1296,7 +1331,7 @@ async def test_v2_get_pm_status_merges_execution_broker_status(client: AsyncClie
 
 @pytest.mark.asyncio
 async def test_v2_get_pm_status_not_initialized(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/status should return minimal status when not initialized."""
+    """GET /v2/pm/management/status should return minimal status when not initialized."""
     mock_pm = _mock_pm_adapter(initialized=False)
 
     with (
@@ -1310,7 +1345,7 @@ async def test_v2_get_pm_status_not_initialized(client: AsyncClient) -> None:
             return_value={},
         ),
     ):
-        response = await client.get("/pm/v2/pm/status")
+        response = await client.get("/v2/pm/management/status")
         assert response.status_code == 200
         data = response.json()
         assert data["initialized"] is False
@@ -1319,7 +1354,7 @@ async def test_v2_get_pm_status_not_initialized(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_get_pm_health(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/health should return health analysis."""
+    """GET /v2/pm/management/health should return health analysis."""
     mock_pm = _mock_pm_adapter(
         analyze_project_health_result={
             "overall": "healthy",
@@ -1333,7 +1368,7 @@ async def test_v2_get_pm_health(client: AsyncClient) -> None:
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/health")
+        response = await client.get("/v2/pm/management/health")
         assert response.status_code == 200
         data = response.json()
         assert data["overall"] == "healthy"
@@ -1342,7 +1377,7 @@ async def test_v2_get_pm_health(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_init_pm(client: AsyncClient) -> None:
-    """POST /pm/v2/pm/init should initialize PM system."""
+    """POST /v2/pm/management/init should initialize PM system."""
     mock_pm = _mock_pm_adapter(
         initialized=False,
         initialize_result={
@@ -1356,7 +1391,7 @@ async def test_v2_init_pm(client: AsyncClient) -> None:
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.post("/pm/v2/pm/init?project_name=My%20Project&description=A%20test%20project")
+        response = await client.post("/v2/pm/management/init?project_name=My%20Project&description=A%20test%20project")
         assert response.status_code == 200
         data = response.json()
         assert data["initialized"] is True
@@ -1366,14 +1401,14 @@ async def test_v2_init_pm(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_init_pm_already_initialized(client: AsyncClient) -> None:
-    """POST /pm/v2/pm/init should return already-initialized message."""
+    """POST /v2/pm/management/init should return already-initialized message."""
     mock_pm = _mock_pm_adapter(initialized=True)
 
     with patch(
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.post("/pm/v2/pm/init")
+        response = await client.post("/v2/pm/management/init")
         assert response.status_code == 200
         data = response.json()
         assert data["initialized"] is True
@@ -1387,14 +1422,14 @@ async def test_v2_init_pm_already_initialized(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_list_documents_not_initialized(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/documents should return an idle empty projection before PM starts."""
+    """GET /v2/pm/documents should return an idle empty projection before PM starts."""
     mock_pm = _mock_pm_adapter(initialized=False)
 
     with patch(
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/documents")
+        response = await client.get("/v2/pm/documents")
         assert response.status_code == 200
         data = response.json()
         assert data["ok"] is True
@@ -1407,14 +1442,14 @@ async def test_v2_list_documents_not_initialized(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_search_documents_not_initialized(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/search/documents should return an idle empty projection before PM starts."""
+    """GET /v2/pm/search/documents should return an idle empty projection before PM starts."""
     mock_pm = _mock_pm_adapter(initialized=False)
 
     with patch(
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/search/documents?q=plan")
+        response = await client.get("/v2/pm/search/documents?q=plan")
         assert response.status_code == 200
         data = response.json()
         assert data["ok"] is True
@@ -1429,14 +1464,14 @@ async def test_v2_search_documents_not_initialized(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_get_health_not_initialized(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/health should return a degraded desktop projection when PM is idle."""
+    """GET /v2/pm/management/health should return a degraded desktop projection when PM is idle."""
     mock_pm = _mock_pm_adapter(initialized=False)
 
     with patch(
         "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
         return_value=mock_pm,
     ):
-        response = await client.get("/pm/v2/pm/health")
+        response = await client.get("/v2/pm/management/health")
         assert response.status_code == 200
         data = response.json()
         assert data["overall"] == "unavailable"

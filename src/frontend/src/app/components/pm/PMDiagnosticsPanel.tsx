@@ -621,7 +621,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
                       <div className="grid gap-3 sm:grid-cols-2">
                         <ManagementMetricBlock
                           label="状态"
-                          endpoint={evidenceEndpoint('/pm/v2/pm/status', workspace)}
+                          endpoint={evidenceEndpoint('/v2/pm/management/status', workspace)}
                           endpointTestId="pm-management-status-endpoint"
                           rows={[
                             ['Initialized', String(managementStatus.status?.initialized ?? false)],
@@ -632,7 +632,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
                         />
                         <ManagementMetricBlock
                           label="健康"
-                          endpoint={evidenceEndpoint('/pm/v2/pm/health', workspace)}
+                          endpoint={evidenceEndpoint('/v2/pm/management/health', workspace)}
                           endpointTestId="pm-management-health-endpoint"
                           rows={[
                             ['Overall', managementStatus.health?.overall || (managementStatus.status?.initialized ? 'unavailable' : 'not initialized')],
@@ -670,7 +670,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
                           <div className="mb-2 flex items-center justify-between gap-2 text-xs text-amber-100">
                             <span className="font-medium">PM 管理尚未初始化</span>
                             <EndpointChip
-                              endpoint={evidenceEndpoint('/pm/v2/pm/init', workspace)}
+                              endpoint={evidenceEndpoint('/v2/pm/management/init', workspace)}
                               method="POST"
                               testId="pm-management-init-endpoint"
                             />

@@ -179,14 +179,14 @@ export async function getPmStartupDiagnostics(workspace = ''): Promise<ApiResult
 
 export async function getPmManagementStatus(workspace = ''): Promise<ApiResult<PmManagementStatusResponse>> {
   return apiGet<PmManagementStatusResponse>(
-    `/pm/v2/pm/status${workspaceQuerySuffix(workspace)}`,
+    `/v2/pm/management/status${workspaceQuerySuffix(workspace)}`,
     'Failed to load PM management status',
   );
 }
 
 export async function getPmManagementHealth(workspace = ''): Promise<ApiResult<PmManagementHealthResponse>> {
   return apiGet<PmManagementHealthResponse>(
-    `/pm/v2/pm/health${workspaceQuerySuffix(workspace)}`,
+    `/v2/pm/management/health${workspaceQuerySuffix(workspace)}`,
     'Failed to load PM management health',
   );
 }
@@ -205,7 +205,7 @@ export async function initializePmManagement(
   setWorkspaceQuery(query, workspace);
   const suffix = query.toString();
   return apiPostEmpty<PmManagementInitResponse>(
-    suffix ? `/pm/v2/pm/init?${suffix}` : '/pm/v2/pm/init',
+    suffix ? `/v2/pm/management/init?${suffix}` : '/v2/pm/management/init',
     'Failed to initialize PM management',
   );
 }

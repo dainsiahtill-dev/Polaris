@@ -1050,11 +1050,10 @@ def init_pm(
     return response
 
 
-# --- V2 namespace aliases (backward-compatible) ---
+# --- V2 PM management endpoints ---
 
 
 @v2_router.get("/v2/pm/documents", dependencies=[Depends(require_auth)], response_model=DocumentListResponse)
-@router.get("/v2/pm/documents", dependencies=[Depends(require_auth)], response_model=DocumentListResponse)
 def v2_list_documents(
     request: Request,
     doc_type: str | None = Query(None, description="Filter by document type"),
@@ -1085,11 +1084,6 @@ def v2_list_documents(
     dependencies=[Depends(require_auth)],
     response_model=DocumentVersionsResponse,
 )
-@router.get(
-    "/v2/pm/documents/{doc_path:path}/versions",
-    dependencies=[Depends(require_auth)],
-    response_model=DocumentVersionsResponse,
-)
 def v2_get_document_versions(
     request: Request,
     doc_path: str,
@@ -1111,11 +1105,6 @@ def v2_get_document_versions(
 
 
 @v2_router.get(
-    "/v2/pm/documents/{doc_path:path}/compare",
-    dependencies=[Depends(require_auth)],
-    response_model=DocumentDiffResponse,
-)
-@router.get(
     "/v2/pm/documents/{doc_path:path}/compare",
     dependencies=[Depends(require_auth)],
     response_model=DocumentDiffResponse,
@@ -1152,9 +1141,6 @@ def v2_compare_document_versions(
 @v2_router.get(
     "/v2/pm/documents/{doc_path:path}", dependencies=[Depends(require_auth)], response_model=DocumentDetailResponse
 )
-@router.get(
-    "/v2/pm/documents/{doc_path:path}", dependencies=[Depends(require_auth)], response_model=DocumentDetailResponse
-)
 def v2_get_document(
     request: Request,
     doc_path: str,
@@ -1179,9 +1165,6 @@ def v2_get_document(
 @v2_router.post(
     "/v2/pm/documents/{doc_path:path}", dependencies=[Depends(require_auth)], response_model=DocumentWriteResponse
 )
-@router.post(
-    "/v2/pm/documents/{doc_path:path}", dependencies=[Depends(require_auth)], response_model=DocumentWriteResponse
-)
 def v2_create_or_update_document(
     request: Request,
     doc_path: str,
@@ -1195,9 +1178,6 @@ def v2_create_or_update_document(
 @v2_router.delete(
     "/v2/pm/documents/{doc_path:path}", dependencies=[Depends(require_auth)], response_model=DocumentDeleteResponse
 )
-@router.delete(
-    "/v2/pm/documents/{doc_path:path}", dependencies=[Depends(require_auth)], response_model=DocumentDeleteResponse
-)
 def v2_delete_document(
     request: Request,
     doc_path: str,
@@ -1209,7 +1189,6 @@ def v2_delete_document(
 
 
 @v2_router.get("/v2/pm/search/documents", dependencies=[Depends(require_auth)], response_model=DocumentSearchResponse)
-@router.get("/v2/pm/search/documents", dependencies=[Depends(require_auth)], response_model=DocumentSearchResponse)
 def v2_search_documents(
     request: Request,
     q: str = Query(..., description="Search query"),
@@ -1232,7 +1211,6 @@ def v2_search_documents(
 
 
 @v2_router.get("/v2/pm/tasks", dependencies=[Depends(require_auth)], response_model=TaskListResponse)
-@router.get("/v2/pm/tasks", dependencies=[Depends(require_auth)], response_model=TaskListResponse)
 def v2_list_tasks(
     request: Request,
     status: str | None = Query(None, description="Filter by status"),
@@ -1259,7 +1237,6 @@ def v2_list_tasks(
 
 
 @v2_router.post("/v2/pm/tasks", dependencies=[Depends(require_auth)], response_model=TaskDetailResponse)
-@router.post("/v2/pm/tasks", dependencies=[Depends(require_auth)], response_model=TaskDetailResponse)
 def v2_create_task(
     request: Request,
     body: PMTaskCreateRequest,
@@ -1270,7 +1247,6 @@ def v2_create_task(
 
 
 @v2_router.get("/v2/pm/tasks/history", dependencies=[Depends(require_auth)], response_model=TaskHistoryResponse)
-@router.get("/v2/pm/tasks/history", dependencies=[Depends(require_auth)], response_model=TaskHistoryResponse)
 def v2_get_task_history(
     request: Request,
     task_id: str | None = Query(None, description="Filter by task ID"),
@@ -1300,7 +1276,6 @@ def v2_get_task_history(
 
 
 @v2_router.get("/v2/pm/tasks/director", dependencies=[Depends(require_auth)], response_model=TaskHistoryResponse)
-@router.get("/v2/pm/tasks/director", dependencies=[Depends(require_auth)], response_model=TaskHistoryResponse)
 def v2_get_director_task_history(
     request: Request,
     iteration: int | None = Query(None, description="Filter by PM iteration number"),
@@ -1328,9 +1303,6 @@ def v2_get_director_task_history(
 @v2_router.get(
     "/v2/pm/tasks/{task_id}/assignments", dependencies=[Depends(require_auth)], response_model=TaskAssignmentsResponse
 )
-@router.get(
-    "/v2/pm/tasks/{task_id}/assignments", dependencies=[Depends(require_auth)], response_model=TaskAssignmentsResponse
-)
 def v2_get_task_assignments(
     request: Request,
     task_id: str,
@@ -1353,7 +1325,6 @@ def v2_get_task_assignments(
 
 
 @v2_router.get("/v2/pm/tasks/{task_id}", dependencies=[Depends(require_auth)], response_model=TaskDetailResponse)
-@router.get("/v2/pm/tasks/{task_id}", dependencies=[Depends(require_auth)], response_model=TaskDetailResponse)
 def v2_get_task(
     request: Request,
     task_id: str,
@@ -1375,7 +1346,6 @@ def v2_get_task(
 
 
 @v2_router.get("/v2/pm/search/tasks", dependencies=[Depends(require_auth)], response_model=TaskSearchResponse)
-@router.get("/v2/pm/search/tasks", dependencies=[Depends(require_auth)], response_model=TaskSearchResponse)
 def v2_search_tasks(
     request: Request,
     q: str = Query(..., description="Search query"),
@@ -1396,7 +1366,6 @@ def v2_search_tasks(
 
 
 @v2_router.get("/v2/pm/requirements", dependencies=[Depends(require_auth)], response_model=RequirementListResponse)
-@router.get("/v2/pm/requirements", dependencies=[Depends(require_auth)], response_model=RequirementListResponse)
 def v2_list_requirements(
     request: Request,
     status: str | None = Query(None, description="Filter by status"),
@@ -1426,9 +1395,6 @@ def v2_list_requirements(
 @v2_router.get(
     "/v2/pm/requirements/{req_id}", dependencies=[Depends(require_auth)], response_model=RequirementDetailResponse
 )
-@router.get(
-    "/v2/pm/requirements/{req_id}", dependencies=[Depends(require_auth)], response_model=RequirementDetailResponse
-)
 def v2_get_requirement(
     request: Request,
     req_id: str,
@@ -1449,7 +1415,7 @@ def v2_get_requirement(
         )
 
 
-@router.get("/v2/pm/status", dependencies=[Depends(require_auth)], response_model=PMStatusResponse)
+@v2_router.get("/v2/pm/management/status", dependencies=[Depends(require_auth)], response_model=PMStatusResponse)
 async def v2_get_pm_status(
     request: Request,
     workspace: str = Query("", description="Workspace override"),
@@ -1466,7 +1432,7 @@ async def v2_get_pm_status(
         )
 
 
-@router.get("/v2/pm/health", dependencies=[Depends(require_auth)], response_model=PMHealthResponse)
+@v2_router.get("/v2/pm/management/health", dependencies=[Depends(require_auth)], response_model=PMHealthResponse)
 def v2_get_pm_health(
     request: Request,
     workspace: str = Query("", description="Workspace override"),
@@ -1485,7 +1451,7 @@ def v2_get_pm_health(
         )
 
 
-@router.post("/v2/pm/init", dependencies=[Depends(require_auth)], response_model=PMInitResponse)
+@v2_router.post("/v2/pm/management/init", dependencies=[Depends(require_auth)], response_model=PMInitResponse)
 def v2_init_pm(
     request: Request,
     project_name: str = Query("", description="Project name"),

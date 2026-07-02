@@ -194,7 +194,7 @@ class TestPMManagementRouter:
             data = response.json()
             assert data["initialized"] is True
 
-    @pytest.mark.parametrize("path", ["/pm/tasks", "/pm/v2/pm/tasks", "/v2/pm/tasks"])
+    @pytest.mark.parametrize("path", ["/pm/tasks", "/v2/pm/tasks"])
     def test_list_tasks_requires_auth_before_pm_adapter_access(self, path: str) -> None:
         """PM task list aliases should reject unauthenticated requests before touching the PM adapter."""
         app = _build_minimal_app()

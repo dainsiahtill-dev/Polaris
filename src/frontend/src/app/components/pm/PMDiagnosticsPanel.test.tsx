@@ -264,16 +264,16 @@ describe('PMDiagnosticsPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /PM 管理状态/ }));
     const management = await screen.findByTestId('pm-management-diagnostics');
-    expect(management).not.toHaveTextContent('/pm/v2/pm/status');
+    expect(management).not.toHaveTextContent('/v2/pm/management/status');
     expect(screen.getByTestId('pm-management-status-endpoint')).toHaveAttribute(
       'data-endpoint',
-      '/pm/v2/pm/status?workspace=C%3A%2FTemp%2FProduct',
+      '/v2/pm/management/status?workspace=C%3A%2FTemp%2FProduct',
     );
     expect(management).toHaveTextContent('Product');
-    expect(management).not.toHaveTextContent('/pm/v2/pm/health');
+    expect(management).not.toHaveTextContent('/v2/pm/management/health');
     expect(screen.getByTestId('pm-management-health-endpoint')).toHaveAttribute(
       'data-endpoint',
-      '/pm/v2/pm/health?workspace=C%3A%2FTemp%2FProduct',
+      '/v2/pm/management/health?workspace=C%3A%2FTemp%2FProduct',
     );
     expect(management).toHaveTextContent('healthy');
     expect(management).toHaveTextContent('docs · ok');
@@ -329,11 +329,11 @@ describe('PMDiagnosticsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /PM 管理状态/ }));
 
     const initPanel = await screen.findByTestId('pm-management-init-panel');
-    expect(initPanel).not.toHaveTextContent('/pm/v2/pm/init');
+    expect(initPanel).not.toHaveTextContent('/v2/pm/management/init');
     expect(screen.getByTestId('pm-management-init-endpoint')).toHaveTextContent('POST API');
     expect(screen.getByTestId('pm-management-init-endpoint')).toHaveAttribute(
       'data-endpoint',
-      '/pm/v2/pm/init?workspace=C%3A%2FTemp%2FProduct',
+      '/v2/pm/management/init?workspace=C%3A%2FTemp%2FProduct',
     );
     fireEvent.change(screen.getByTestId('pm-management-init-project'), {
       target: { value: 'Recovered Project' },

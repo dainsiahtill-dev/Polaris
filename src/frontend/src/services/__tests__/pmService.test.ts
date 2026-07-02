@@ -138,7 +138,7 @@ describe('pmService', () => {
 
       const result = await pmService.getPmManagementStatus();
 
-      expect(mockApiGet).toHaveBeenCalledWith('/pm/v2/pm/status', 'Failed to load PM management status');
+      expect(mockApiGet).toHaveBeenCalledWith('/v2/pm/management/status', 'Failed to load PM management status');
       expect(result.ok).toBe(true);
       expect(result.data?.initialized).toBe(true);
     });
@@ -155,7 +155,7 @@ describe('pmService', () => {
       await pmService.getPmManagementStatus('C:/Temp/Product');
 
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/pm/v2/pm/status?workspace=C%3A%2FTemp%2FProduct',
+        '/v2/pm/management/status?workspace=C%3A%2FTemp%2FProduct',
         'Failed to load PM management status',
       );
     });
@@ -173,7 +173,7 @@ describe('pmService', () => {
 
       const result = await pmService.getPmManagementHealth();
 
-      expect(mockApiGet).toHaveBeenCalledWith('/pm/v2/pm/health', 'Failed to load PM management health');
+      expect(mockApiGet).toHaveBeenCalledWith('/v2/pm/management/health', 'Failed to load PM management health');
       expect(result.ok).toBe(true);
       expect(result.data?.overall).toBe('healthy');
     });
@@ -192,7 +192,7 @@ describe('pmService', () => {
       await pmService.getPmManagementHealth('C:/Temp/Product');
 
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/pm/v2/pm/health?workspace=C%3A%2FTemp%2FProduct',
+        '/v2/pm/management/health?workspace=C%3A%2FTemp%2FProduct',
         'Failed to load PM management health',
       );
     });
@@ -213,7 +213,7 @@ describe('pmService', () => {
       });
 
       expect(mockApiPostEmpty).toHaveBeenCalledWith(
-        '/pm/v2/pm/init?project_name=My+Project&description=A+PM+managed+workspace',
+        '/v2/pm/management/init?project_name=My+Project&description=A+PM+managed+workspace',
         'Failed to initialize PM management',
       );
       expect(result.ok).toBe(true);
@@ -239,7 +239,7 @@ describe('pmService', () => {
       );
 
       expect(mockApiPostEmpty).toHaveBeenCalledWith(
-        '/pm/v2/pm/init?project_name=My+Project&description=A+PM+managed+workspace&workspace=C%3A%2FTemp%2FProduct',
+        '/v2/pm/management/init?project_name=My+Project&description=A+PM+managed+workspace&workspace=C%3A%2FTemp%2FProduct',
         'Failed to initialize PM management',
       );
     });
