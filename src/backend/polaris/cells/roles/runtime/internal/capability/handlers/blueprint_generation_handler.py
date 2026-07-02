@@ -5,7 +5,7 @@ Identity tuples::
     ("generate_diff_specification", "chief_engineer.blueprint", "GenerateTaskBlueprintCommandV1")
     ("record_arch_memo", "chief_engineer.blueprint", "GenerateTaskBlueprintCommandV1")
 
-This is a VERBATIM re-shaping of the legacy ``is_blueprint_generation`` arm of
+This is a verbatim extraction of the ``is_blueprint_generation`` dispatcher arm of
 ``execute_role_capability_invocation`` onto the
 :class:`~polaris.cells.roles.runtime.internal.capability.protocol.CapabilityHandler`
 surface. The branch admits two capability ids (``generate_diff_specification``
@@ -19,7 +19,7 @@ identity tuples:
   :class:`GenerateTaskBlueprintCommandV1` construction guard
   (``invalid_blueprint_command``) — raising :class:`CapabilityInvocationError`
   instead of returning a failure result.
-* :meth:`invoke` performs the blueprint generation exactly as the legacy branch:
+* :meth:`invoke` performs the blueprint generation exactly as the extracted branch:
   ``deps.blueprint_service`` when set, else the ``chief_engineer.blueprint``
   module-level public function when the port is ``None``; it raises
   ``blueprint_generation_failed`` on any downstream exception.
@@ -68,9 +68,9 @@ def _build_blueprint_command(
 ) -> tuple[GenerateTaskBlueprintCommandV1, dict[str, str], str, str]:
     """Construct the ``GenerateTaskBlueprintCommandV1`` + asset refs from ``command``.
 
-    Mirrors the legacy branch's context-mutation + command construction
+    Mirrors the extracted branch's context-mutation + command construction
     statements byte-for-byte. Raises :class:`CapabilityInvocationError` with the
-    legacy ``error_code`` literals on the three pre-invoke rejection paths.
+    stable ``error_code`` literals on the three pre-invoke rejection paths.
 
     Returns the constructed command together with the Chief Engineer asset-ref
     bundle and the resolved ``target_asset_mount`` / ``target_asset_ref`` so the
@@ -138,7 +138,7 @@ def _build_blueprint_metadata(
     target_asset_mount: str,
     target_asset_ref: str,
 ) -> tuple[str, dict[str, Any]]:
-    """Build the ``(blueprint_ref, metadata)`` pair verbatim from the legacy branch."""
+    """Build the ``(blueprint_ref, metadata)`` pair from the extracted branch."""
     blueprint_ref_id = blueprint_result.blueprint_id or blueprint_result.task_id
     blueprint_ref = f"chief_engineer.blueprint:blueprint:{blueprint_ref_id}"
     metadata: dict[str, Any] = {

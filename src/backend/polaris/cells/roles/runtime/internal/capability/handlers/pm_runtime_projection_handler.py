@@ -4,7 +4,7 @@ Identity tuple::
 
     ("project_runtime_status", "runtime.projection", "RuntimeProjectionQueryV1")
 
-This is a VERBATIM re-shaping of the legacy ``is_pm_runtime_projection`` arm of
+This is a verbatim extraction of the ``is_pm_runtime_projection`` dispatcher arm of
 ``execute_role_capability_invocation`` onto the
 :class:`~polaris.cells.roles.runtime.internal.capability.protocol.CapabilityHandler`
 surface:
@@ -13,10 +13,10 @@ surface:
   :class:`RuntimeProjectionQueryV1` construction guard
   (``invalid_runtime_projection_query``) — raising
   :class:`CapabilityInvocationError` instead of returning a failure result.
-* :meth:`invoke` performs the runtime-projection query exactly as the legacy
+* :meth:`invoke` performs the runtime-projection query exactly as the extracted
   branch: it requires the injected ``deps.runtime_projection_service`` port —
   raising ``runtime_projection_service_unavailable`` when the port is ``None``
-  (the legacy branch has NO module-level public-function fall-back here; the
+  (this branch has NO module-level public-function fall-back; the
   host boundary MUST inject the service) — then calls
   ``query_runtime_projection`` and raises ``runtime_projection_query_failed`` on
   any downstream exception.
@@ -59,8 +59,8 @@ def _build_projection_query(
 ) -> RuntimeProjectionQueryV1:
     """Construct the ``RuntimeProjectionQueryV1`` from ``command``.
 
-    Mirrors the legacy branch's query construction statement byte-for-byte.
-    Raises :class:`CapabilityInvocationError` with the legacy
+    Mirrors the extracted branch's query construction statement byte-for-byte.
+    Raises :class:`CapabilityInvocationError` with the stable
     ``invalid_runtime_projection_query`` literal on the construction-guard
     rejection path.
     """

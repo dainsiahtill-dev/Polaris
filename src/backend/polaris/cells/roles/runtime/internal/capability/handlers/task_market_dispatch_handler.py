@@ -4,7 +4,7 @@ Identity tuple::
 
     ("dispatch_task_to_market", "runtime.task_market", "PublishTaskWorkItemCommandV1")
 
-This is a VERBATIM re-shaping of the legacy ``is_not_task_market_dispatch`` arm of
+This is a verbatim extraction of the ``is_not_task_market_dispatch`` dispatcher arm of
 ``execute_role_capability_invocation`` onto the
 :class:`~polaris.cells.roles.runtime.internal.capability.protocol.CapabilityHandler`
 surface:
@@ -16,7 +16,7 @@ surface:
   the :class:`PublishTaskWorkItemCommandV1` construction guard
   (``invalid_task_market_command``) — raising :class:`CapabilityInvocationError`
   instead of returning a failure result.
-* :meth:`invoke` performs the work-item publish exactly as the legacy branch:
+* :meth:`invoke` performs the work-item publish exactly as the extracted branch:
   ``deps.task_market_service`` when set, else the ``runtime.task_market``
   module-level ``get_task_market_service()`` public function when the port is
   ``None``; it raises ``task_market_publish_failed`` on any downstream exception.
@@ -61,11 +61,11 @@ def _resolve_capability(command: ExecuteRoleCapabilityInvocationCommandV1) -> Ro
 
 
 def _check_supported_contract(capability: RoleCapabilityDescriptor) -> None:
-    """Reproduce the legacy ``is_not_task_market_dispatch`` identity guard.
+    """Reproduce the extracted ``is_not_task_market_dispatch`` identity guard.
 
     Raises :class:`CapabilityInvocationError` with ``unsupported_capability_contract``
     when the resolved capability is not the task-market dispatch identity tuple,
-    byte-identically to the legacy ``if is_not_task_market_dispatch:`` arm.
+    byte-identically to the pre-extraction ``if is_not_task_market_dispatch:`` arm.
     """
     is_not_task_market_dispatch = (
         capability.capability_id != "dispatch_task_to_market"
@@ -86,9 +86,9 @@ def _build_publish_command(
 ) -> PublishTaskWorkItemCommandV1:
     """Construct the ``PublishTaskWorkItemCommandV1`` from ``command``.
 
-    Mirrors the legacy branch's payload/metadata guards, metadata-mutation, and
+    Mirrors the extracted branch's payload/metadata guards, metadata-mutation, and
     command construction statements byte-for-byte. Raises
-    :class:`CapabilityInvocationError` with the legacy ``error_code`` literals on
+    :class:`CapabilityInvocationError` with the stable ``error_code`` literals on
     the three pre-invoke rejection paths.
     """
     runtime_object = command.runtime_object

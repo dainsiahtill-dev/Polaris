@@ -27,7 +27,7 @@ class CapabilityInvocationError(KernelOneError):
 
     The ``code`` attribute MUST be one of the dispatcher's existing
     ``error_code`` literals so that the failure result rendered by
-    ``execute_role_capability_invocation`` stays byte-identical to the legacy
+    ``execute_role_capability_invocation`` stays byte-identical to the pre-extraction
     ``if/elif`` arm it replaces. ``owner_cell`` carries the rejecting
     capability's owner cell so the dispatcher can attach it to the structured
     failure result without re-deriving it.

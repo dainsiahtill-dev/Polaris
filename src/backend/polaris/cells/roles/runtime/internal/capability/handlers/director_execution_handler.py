@@ -4,7 +4,7 @@ Identity tuple::
 
     ("execute_director_task", "director.execution", "ExecuteDirectorTaskCommandV1")
 
-This is a VERBATIM re-shaping of the legacy ``is_director_task_execution`` arm of
+This is a verbatim extraction of the ``is_director_task_execution`` dispatcher arm of
 ``execute_role_capability_invocation`` onto the
 :class:`~polaris.cells.roles.runtime.internal.capability.protocol.CapabilityHandler`
 surface:
@@ -14,7 +14,7 @@ surface:
   :class:`ExecuteDirectorTaskCommandV1` construction guard
   (``invalid_director_execution_command``) — raising
   :class:`CapabilityInvocationError` instead of returning a failure result.
-* :meth:`invoke` performs the director execution exactly as the legacy branch:
+* :meth:`invoke` performs the director execution exactly as the extracted branch:
   ``deps.director_execution_service`` (service-object or callable form) or the
   ``director.execution`` module-level public function when the port is ``None``;
   it raises ``director_execution_failed`` on any downstream exception.
@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 
 
 def _director_asset_refs(runtime_object: RoleRuntimeObject) -> dict[str, str]:
-    """Build the director asset-ref bundle (verbatim from the legacy branch)."""
+    """Build the director asset-ref bundle from the extracted branch."""
     return {
         "execution_task": _asset_mount_ref(runtime_object, "ExecutionTask"),
         "director_execution_state": _asset_mount_ref(runtime_object, "DirectorExecutionState"),
@@ -69,9 +69,9 @@ def _build_director_command(
 ) -> tuple[ExecuteDirectorTaskCommandV1, dict[str, str]]:
     """Construct the ``ExecuteDirectorTaskCommandV1`` + asset refs from ``command``.
 
-    Mirrors the legacy branch's metadata-mutation + command construction
+    Mirrors the extracted branch's metadata-mutation + command construction
     statements byte-for-byte. Raises :class:`CapabilityInvocationError` with the
-    legacy ``error_code`` literals on the two pre-invoke rejection paths.
+    stable ``error_code`` literals on the two pre-invoke rejection paths.
     """
     runtime_object = command.runtime_object
     invocation = command.invocation

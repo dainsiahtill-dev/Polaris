@@ -4,7 +4,7 @@ A capability handler decomposes one capability-identity branch of
 ``execute_role_capability_invocation`` into three single-responsibility steps:
 
 * :meth:`validate` — reject a malformed payload / failed precondition by raising
-  :class:`CapabilityInvocationError` with a code that mirrors the legacy
+  :class:`CapabilityInvocationError` with a code that preserves the stable
   ``error_code`` literal byte-for-byte. Returns ``None`` on success.
 * :meth:`invoke` — call the owner cell's public contract (via the matching
   :class:`CapabilityDeps` port, or the cell's module-level function when the port
@@ -39,8 +39,8 @@ class CapabilityHandler(Protocol):
 
         Raises:
             CapabilityInvocationError: when the payload is malformed or a
-                precondition fails; the raised ``code`` mirrors the dispatcher's
-                legacy ``error_code`` literal byte-for-byte.
+                precondition fails; the raised ``code`` preserves the
+                dispatcher's stable ``error_code`` literal byte-for-byte.
         """
         ...
 

@@ -4,7 +4,7 @@ Identity tuple::
 
     ("issue_visual_audit_verdict", "qa.audit_verdict", "RunVisualQaAuditCommandV1")
 
-This is a VERBATIM re-shaping of the legacy ``is_qa_visual_audit_verdict`` arm of
+This is a verbatim extraction of the ``is_qa_visual_audit_verdict`` dispatcher arm of
 ``execute_role_capability_invocation`` onto the
 :class:`~polaris.cells.roles.runtime.internal.capability.protocol.CapabilityHandler`
 surface. The branch is NON-UNIFORM: before the owner-cell visual-audit call it
@@ -18,9 +18,9 @@ classic ``validate -> invoke -> map`` shape absorbs that divergence as follows:
   (``visual_model_capability_override_denied``), and the
   :class:`CheckLlmModelCapabilityQueryV1` construction guard
   (``invalid_visual_model_capability_query``) — raising
-  :class:`CapabilityInvocationError` (with the legacy ``owner_cell`` /
+  :class:`CapabilityInvocationError` (with the stable ``owner_cell`` /
   ``capability_available`` / ``metadata``) instead of returning a failure result.
-* :meth:`invoke` runs the two RPC sub-flows exactly as the legacy branch: the
+* :meth:`invoke` runs the two RPC sub-flows exactly as the extracted branch: the
   ``llm.control_plane`` capability check (port
   ``deps.llm_control_plane_service.check_model_capability`` or the module-level
   ``check_llm_model_capability`` when the port is ``None``), the ``ok`` /
@@ -98,7 +98,7 @@ def _validate_payload(
 
     Returns the validated ``(image_refs, visual_criteria, evidence_paths,
     required_model_capability)`` tuple, or raises
-    :class:`CapabilityInvocationError` with the legacy ``error_code`` literals.
+    :class:`CapabilityInvocationError` with the stable ``error_code`` literals.
     """
     image_refs = _payload_string_tuple(command.payload, "image_refs")
     if image_refs is None or not image_refs:
@@ -159,7 +159,7 @@ def _build_model_query(
     """Construct the ``CheckLlmModelCapabilityQueryV1`` (verbatim).
 
     Raises :class:`CapabilityInvocationError` with ``invalid_visual_model_capability_query``
-    on the legacy construction-guard path.
+    on the extracted construction-guard path.
     """
     runtime_object = command.runtime_object
     invocation = command.invocation
@@ -228,7 +228,7 @@ class QaVisualAuditVerdictHandler:
             ) from exc
 
         # ``model_query.capability`` is, by construction, ``required_model_capability``;
-        # the legacy branch reads ``model_query.capability`` here — using the typed
+        # the extracted branch reads ``model_query.capability`` here — using the typed
         # local is byte-identical and keeps ``model_query`` opaque (zero ``Any``).
         model_metadata: dict[str, Any] = {
             "model_capability_supported": bool(getattr(model_capability, "supported", False)),

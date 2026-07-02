@@ -4,7 +4,7 @@ Identity tuple::
 
     ("invoke_container_pytest", "factory.verification_guard", "VerifyCompletionCommandV1")
 
-This is a VERBATIM re-shaping of the legacy ``is_qa_pytest_verification`` arm of
+This is a verbatim extraction of the ``is_qa_pytest_verification`` dispatcher arm of
 ``execute_role_capability_invocation`` onto the
 :class:`~polaris.cells.roles.runtime.internal.capability.protocol.CapabilityHandler`
 surface:
@@ -15,7 +15,7 @@ surface:
   ``invalid_verification_metadata``) and the :class:`VerifyCompletionCommandV1`
   construction guard (``invalid_verification_command``) — raising
   :class:`CapabilityInvocationError` instead of returning a failure result.
-* :meth:`invoke` performs the verification exactly as the legacy branch:
+* :meth:`invoke` performs the verification exactly as the extracted branch:
   ``deps.verification_guard_service.verify_completion`` when the port is set, else
   the ``factory.verification_guard`` module-level public function when the port is
   ``None``; it raises ``verification_guard_failed`` on any downstream exception.
@@ -63,9 +63,9 @@ def _build_verification_command(
 ) -> VerifyCompletionCommandV1:
     """Construct the ``VerifyCompletionCommandV1`` from ``command``.
 
-    Mirrors the legacy branch's payload-shape validation + metadata-mutation +
+    Mirrors the extracted branch's payload-shape validation + metadata-mutation +
     command construction statements byte-for-byte. Raises
-    :class:`CapabilityInvocationError` with the legacy ``error_code`` literals on
+    :class:`CapabilityInvocationError` with the stable ``error_code`` literals on
     the five pre-invoke rejection paths.
     """
     runtime_object = command.runtime_object

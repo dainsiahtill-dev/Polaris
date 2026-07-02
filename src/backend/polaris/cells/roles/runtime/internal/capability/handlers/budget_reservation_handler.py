@@ -4,8 +4,8 @@ Identity tuple::
 
     ("allocate_context_token_budget", "finops.budget_guard", "ReserveBudgetCommandV1")
 
-This is a VERBATIM re-shaping of the legacy ``is_architect_budget_reservation``
-arm of ``execute_role_capability_invocation`` onto the
+This is a verbatim extraction of the ``is_architect_budget_reservation``
+dispatcher arm of ``execute_role_capability_invocation`` onto the
 :class:`~polaris.cells.roles.runtime.internal.capability.protocol.CapabilityHandler`
 surface. The branch is **non-uniform**: it chains a multi-stage validation
 (``invalid_budget_metadata`` -> ``invalid_budget_command`` ->
@@ -17,7 +17,7 @@ surface. The branch is **non-uniform**: it chains a multi-stage validation
   (``invalid_budget_command``, raised by the ``int(...)`` token-budget coercion
   or the contract ``__post_init__`` on ``TypeError``/``ValueError``) — raising
   :class:`CapabilityInvocationError` instead of returning a failure result.
-* :meth:`invoke` performs the reservation exactly as the legacy branch:
+* :meth:`invoke` performs the reservation exactly as the extracted branch:
   ``deps.budget_guard_service.reserve_budget`` when the port is set, else the
   ``finops.budget_guard`` module-level public function when the port is ``None``;
   it raises ``budget_guard_failed`` on any downstream exception.
@@ -66,9 +66,9 @@ def _build_reserve_command(
 ) -> ReserveBudgetCommandV1:
     """Construct the ``ReserveBudgetCommandV1`` from ``command``.
 
-    Mirrors the legacy branch's metadata-mutation + command construction
+    Mirrors the extracted branch's metadata-mutation + command construction
     statements byte-for-byte. Raises :class:`CapabilityInvocationError` with the
-    legacy ``error_code`` literals on the two pre-invoke rejection paths.
+    stable ``error_code`` literals on the two pre-invoke rejection paths.
     """
     runtime_object = command.runtime_object
     invocation = command.invocation

@@ -1,15 +1,16 @@
 """The default, process-wide :class:`CapabilityHandlerRegistry`.
 
-``default_capability_registry`` assembles every migrated capability handler into
+``default_capability_registry`` assembles every extracted capability handler into
 one immutable, identity-keyed registry and caches it for the process. The
 dispatcher falls back to this registry when no explicit ``handlers`` registry is
-injected, so each migrated family short-circuits the legacy ``if/elif`` ladder.
+injected, so each extracted family short-circuits the previous inline
+``if/elif`` ladder.
 
-All thirteen capability families are migrated. The fourteen identity tuples below
+All thirteen capability families are extracted. The fourteen identity tuples below
 must equal :data:`..._oracle.CAPABILITY_IDENTITY_TUPLES` (the blueprint family
 answers two capability ids for one owner + contract); the Phase-5 fitness test
 asserts that equality so the table can never silently drift from the dispatcher's
-historical branch set.
+stable branch identity set.
 """
 
 from __future__ import annotations
@@ -41,7 +42,7 @@ from polaris.cells.roles.runtime.internal.capability.registry import (
 def _handler_bindings() -> dict[CapabilityIdentity, CapabilityHandler]:
     """Return the identity-tuple -> handler bindings for all migrated families.
 
-    Each migrated handler is instantiated once and bound to every identity triple
+    Each extracted handler is instantiated once and bound to every identity triple
     it answers. The ``chief_engineer.blueprint`` family answers two capability ids
     (``generate_diff_specification`` and ``record_arch_memo``) for the same owner
     cell and command contract, so its single handler is bound to two triples.

@@ -4,7 +4,7 @@ Identity tuple::
 
     ("evaluate_critical_path", "runtime.task_market", "QueryTaskMarketStatusV1")
 
-This is a VERBATIM re-shaping of the legacy ``is_pm_critical_path`` arm of
+This is a verbatim extraction of the ``is_pm_critical_path`` dispatcher arm of
 ``execute_role_capability_invocation`` onto the
 :class:`~polaris.cells.roles.runtime.internal.capability.protocol.CapabilityHandler`
 surface:
@@ -13,7 +13,7 @@ surface:
   :class:`QueryTaskMarketStatusV1` construction guard
   (``invalid_task_market_status_query``) — raising
   :class:`CapabilityInvocationError` instead of returning a failure result.
-* :meth:`invoke` performs the task-market status query exactly as the legacy
+* :meth:`invoke` performs the task-market status query exactly as the extracted
   branch: ``deps.task_market_service`` when provided, else the
   ``runtime.task_market`` module-level public ``get_task_market_service()``
   service when the port is ``None``; it raises ``task_market_status_query_failed``
@@ -63,8 +63,8 @@ def _build_status_query(
 ) -> QueryTaskMarketStatusV1:
     """Construct the ``QueryTaskMarketStatusV1`` from ``command``.
 
-    Mirrors the legacy branch's query construction byte-for-byte. Raises
-    :class:`CapabilityInvocationError` with the legacy ``error_code`` literal on
+    Mirrors the extracted branch's query construction byte-for-byte. Raises
+    :class:`CapabilityInvocationError` with the stable ``error_code`` literal on
     the construction rejection path.
     """
     runtime_object = command.runtime_object

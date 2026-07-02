@@ -4,7 +4,7 @@ Identity tuple::
 
     ("verify_ast_dependency", "code_intelligence.engine", "VerifyAstDependencyQueryV1")
 
-This is a VERBATIM re-shaping of the legacy ``is_ce_ast_dependency`` arm of
+This is a verbatim extraction of the ``is_ce_ast_dependency`` dispatcher arm of
 ``execute_role_capability_invocation`` onto the
 :class:`~polaris.cells.roles.runtime.internal.capability.protocol.CapabilityHandler`
 surface:
@@ -14,7 +14,7 @@ surface:
   :class:`VerifyAstDependencyQueryV1` construction guard
   (``invalid_ast_dependency_query``) — raising :class:`CapabilityInvocationError`
   instead of returning a failure result.
-* :meth:`invoke` performs the AST dependency verification exactly as the legacy
+* :meth:`invoke` performs the AST dependency verification exactly as the extracted
   branch: ``deps.code_intelligence_service.verify_ast_dependency`` when the port
   is set, else the ``code_intelligence.engine`` module-level public function when
   the port is ``None``; it raises ``ast_dependency_verification_failed`` on any
@@ -62,8 +62,8 @@ def _build_ast_query(
 ) -> VerifyAstDependencyQueryV1:
     """Construct the ``VerifyAstDependencyQueryV1`` from ``command``.
 
-    Mirrors the legacy branch's metadata-mutation + query construction statements
-    byte-for-byte. Raises :class:`CapabilityInvocationError` with the legacy
+    Mirrors the extracted branch's metadata-mutation + query construction statements
+    byte-for-byte. Raises :class:`CapabilityInvocationError` with the stable
     ``error_code`` literals on the two pre-invoke rejection paths.
     """
     runtime_object = command.runtime_object

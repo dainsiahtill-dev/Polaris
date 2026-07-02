@@ -4,7 +4,7 @@ Identity tuple::
 
     ("parse_traceback_frames", "qa.audit_verdict", "ParseTracebackFramesCommandV1")
 
-This is a VERBATIM re-shaping of the legacy ``is_qa_traceback_parse`` arm of
+This is a verbatim extraction of the ``is_qa_traceback_parse`` dispatcher arm of
 ``execute_role_capability_invocation`` onto the
 :class:`~polaris.cells.roles.runtime.internal.capability.protocol.CapabilityHandler`
 surface:
@@ -15,7 +15,7 @@ surface:
   :class:`ParseTracebackFramesCommandV1` construction guard
   (``invalid_traceback_parse_command``) — raising
   :class:`CapabilityInvocationError` instead of returning a failure result.
-* :meth:`invoke` performs the traceback parse exactly as the legacy branch:
+* :meth:`invoke` performs the traceback parse exactly as the extracted branch:
   ``deps.qa_audit_service`` when set, else the ``qa.audit_verdict`` module-level
   public function when the port is ``None``; it raises ``traceback_parse_failed``
   on any downstream exception.
@@ -63,9 +63,9 @@ def _build_parse_command(
 ) -> ParseTracebackFramesCommandV1:
     """Construct the ``ParseTracebackFramesCommandV1`` from ``command``.
 
-    Mirrors the legacy branch's metadata/text guards + metadata-mutation +
+    Mirrors the extracted branch's metadata/text guards + metadata-mutation +
     command construction statements byte-for-byte. Raises
-    :class:`CapabilityInvocationError` with the legacy ``error_code`` literals on
+    :class:`CapabilityInvocationError` with the stable ``error_code`` literals on
     the three pre-invoke rejection paths.
     """
     runtime_object = command.runtime_object

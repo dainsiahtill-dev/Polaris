@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T04:52:01.038421Z",
-  "source_hash": "04535124e19d3436",
+  "generated_at": "2026-07-02T04:57:18.773801Z",
+  "source_hash": "b6e57a295f467888",
   "cell_id": "roles.runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -598,7 +598,7 @@
     {
       "type": "function",
       "name": "_build_blueprint_metadata",
-      "description": "Build the ``(blueprint_ref, metadata)`` pair verbatim from the legacy branch.",
+      "description": "Build the ``(blueprint_ref, metadata)`` pair from the extracted branch.",
       "defined_in": "polaris/cells/roles/runtime/internal/capability/handlers/blueprint_generation_handler.py"
     },
     {
@@ -741,7 +741,7 @@
     {
       "type": "function",
       "name": "_director_asset_refs",
-      "description": "Build the director asset-ref bundle (verbatim from the legacy branch).",
+      "description": "Build the director asset-ref bundle from the extracted branch.",
       "defined_in": "polaris/cells/roles/runtime/internal/capability/handlers/director_execution_handler.py"
     },
     {
@@ -990,7 +990,7 @@
     {
       "type": "function",
       "name": "_check_supported_contract",
-      "description": "Reproduce the legacy ``is_not_task_market_dispatch`` identity guard.",
+      "description": "Reproduce the extracted ``is_not_task_market_dispatch`` identity guard.",
       "defined_in": "polaris/cells/roles/runtime/internal/capability/handlers/task_market_dispatch_handler.py"
     },
     {

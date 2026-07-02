@@ -149,7 +149,7 @@ class CapabilityDeps:
     """Frozen bundle of the optional service ports a handler may consume.
 
     Every port is optional: when ``None`` the handler falls back to its owner
-    cell's module-level public function (the same fall-back the legacy dispatcher
+    cell's module-level public function (the same fall-back the previous inline dispatcher
     branches already implement). This mirrors the twelve ``*_service=None``
     keyword defaults one-for-one — but with zero ``Any`` on the type surface.
     """
