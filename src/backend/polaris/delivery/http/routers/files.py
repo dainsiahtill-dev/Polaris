@@ -407,20 +407,6 @@ def _read_file_response(
     }
 
 
-@router.get("/files/read", dependencies=[Depends(require_auth)], response_model=FileReadResponse)  # DEPRECATED
-def read_file(
-    request: Request,
-    path: str,
-    tail_lines: int = 400,
-    max_chars: int = 20000,
-    scope: str = "artifact",
-    read_mode: str = "tail",
-) -> dict[str, Any]:
-    workspace = _workspace_from_request(request)
-    cache_root = build_cache_root("", str(workspace))
-    return _read_file_response(str(workspace), str(cache_root), path, tail_lines, max_chars, scope, read_mode)
-
-
 @router.get("/v2/files/read", dependencies=[Depends(require_auth)], response_model=FileReadResponse)
 def v2_read_file(
     request: Request,

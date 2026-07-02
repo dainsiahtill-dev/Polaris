@@ -380,7 +380,7 @@ export function LogsModal({
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch(`/files/read?path=${encodeURIComponent(activeSource.path)}&tail_lines=400`);
+      const res = await apiFetch(`/v2/files/read?path=${encodeURIComponent(activeSource.path)}&tail_lines=400`);
       if (!res.ok) {
         throw new Error('读取案牍失败');
       }

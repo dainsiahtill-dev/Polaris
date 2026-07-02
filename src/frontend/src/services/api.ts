@@ -837,7 +837,7 @@ export const fileService = {
     tailLines?: number,
   ): Promise<ApiResult<FilePayload>> {
     const normalizedPath = normalizeArtifactPath(path);
-    let url = `/files/read?path=${encodeURIComponent(normalizedPath)}`;
+    let url = `/v2/files/read?path=${encodeURIComponent(normalizedPath)}`;
     if (tailLines) {
       url += `&tail_lines=${tailLines}`;
     }

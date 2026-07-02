@@ -44,7 +44,7 @@ export async function readFile(
     tail_lines: tailLines,
   });
 
-  return apiGet<FilePayload>(`/files/read${query}`, 'Failed to read file');
+  return apiGet<FilePayload>(`/v2/files/read${query}`, 'Failed to read file');
 }
 
 export async function readWorkspaceFile(

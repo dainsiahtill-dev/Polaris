@@ -26,7 +26,7 @@ class TestFilesRouter:
     """Contract tests for the files router."""
 
     def test_read_file_happy_path(self) -> None:
-        """GET /files/read returns 200 with file metadata and content."""
+        """GET /v2/files/read returns 200 with file metadata and content."""
         client = _build_client()
         with (
             patch(
@@ -46,7 +46,7 @@ class TestFilesRouter:
                 return_value="2026-04-24T00:00:00",
             ),
         ):
-            response = client.get("/files/read", params={"path": "test.py"})
+            response = client.get("/v2/files/read", params={"path": "test.py"})
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
@@ -55,14 +55,20 @@ class TestFilesRouter:
         assert "path" in payload
         assert "mtime" in payload
 
-    def test_read_file_missing_path_param(self) -> None:
-        """GET /files/read without required path param returns 422."""
+    def test_legacy_read_file_route_is_not_registered(self) -> None:
+        """Retired /files/read alias must fail closed."""
         client = _build_client()
-        response = client.get("/files/read")
+        response = client.get("/files/read", params={"path": "test.py"})
+        assert response.status_code == 404
+
+    def test_read_file_missing_path_param(self) -> None:
+        """GET /v2/files/read without required path param returns 422."""
+        client = _build_client()
+        response = client.get("/v2/files/read")
         assert response.status_code == 422
 
     def test_read_file_with_tail_lines(self) -> None:
-        """GET /files/read respects tail_lines query parameter."""
+        """GET /v2/files/read respects tail_lines query parameter."""
         client = _build_client()
         with (
             patch(
@@ -83,7 +89,7 @@ class TestFilesRouter:
             ),
         ):
             response = client.get(
-                "/files/read",
+                "/v2/files/read",
                 params={"path": "test.py", "tail_lines": 10, "max_chars": 5000},
             )
 
@@ -96,7 +102,7 @@ class TestFilesRouter:
         )
 
     def test_read_file_dialogue_jsonl_no_fallback(self) -> None:
-        """GET /files/read for dialogue.jsonl disables fallback."""
+        """GET /v2/files/read for dialogue.jsonl disables fallback."""
         client = _build_client()
         with (
             patch(
@@ -117,7 +123,7 @@ class TestFilesRouter:
             ),
         ):
             response = client.get(
-                "/files/read",
+                "/v2/files/read",
                 params={"path": "dialogue.jsonl"},
             )
 

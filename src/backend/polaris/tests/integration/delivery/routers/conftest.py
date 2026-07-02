@@ -38,7 +38,7 @@ def client_factory():
         def test_something(client_factory):
             from polaris.delivery.http.routers import files
             client = client_factory(files.router)
-            response = client.get("/files/read", params={"path": "x"})
+            response = client.get("/v2/files/read", params={"path": "x"})
     """
 
     def _factory(router, *, dependencies=None):

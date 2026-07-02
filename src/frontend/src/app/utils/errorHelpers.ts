@@ -66,7 +66,7 @@ export async function fetchLogTail(
   maxLines = 20
 ): Promise<string> {
   try {
-    const res = await apiFetch(`/files/read?path=${encodeURIComponent(logPath)}&tail_lines=200`);
+    const res = await apiFetch(`/v2/files/read?path=${encodeURIComponent(logPath)}&tail_lines=200`);
     if (!res.ok) return '';
     const payload = (await res.json()) as FilePayload;
     if (!payload.content) return '';

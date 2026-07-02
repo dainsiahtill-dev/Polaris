@@ -1226,7 +1226,7 @@ class TestFilesRouter:
         return app
 
     def test_read_file_requires_auth(self) -> None:
-        """GET /files/read should require authentication."""
+        """GET /v2/files/read should require authentication."""
         app = _build_minimal_app()
         # Override auth so it raises 401
         app.dependency_overrides[require_auth] = lambda: (_ for _ in ()).throw(
@@ -1235,14 +1235,14 @@ class TestFilesRouter:
         app.include_router(files_router.router)
 
         client = TestClient(app)
-        response = client.get("/files/read", params={"path": "test.py"})
+        response = client.get("/v2/files/read", params={"path": "test.py"})
 
         # Note: The actual response may be 500 due to how FastAPI handles
         # dependency override exceptions vs 401 from the endpoint
         assert response.status_code in [401, 500]
 
     def test_read_file_happy_path(self) -> None:
-        """GET /files/read should return file metadata and content."""
+        """GET /v2/files/read should return file metadata and content."""
         app = self._build_files_app()
         client = TestClient(app)
 
@@ -1264,7 +1264,7 @@ class TestFilesRouter:
                 return_value="2026-04-24T00:00:00",
             ),
         ):
-            response = client.get("/files/read", params={"path": "test.py"})
+            response = client.get("/v2/files/read", params={"path": "test.py"})
 
         assert response.status_code == 200
         data = response.json()
@@ -1274,16 +1274,16 @@ class TestFilesRouter:
         assert "mtime" in data
 
     def test_read_file_missing_path_returns_422(self) -> None:
-        """GET /files/read without path param should return 422."""
+        """GET /v2/files/read without path param should return 422."""
         app = self._build_files_app()
         client = TestClient(app)
 
-        response = client.get("/files/read")
+        response = client.get("/v2/files/read")
 
         assert response.status_code == 422
 
     def test_read_file_with_tail_lines(self) -> None:
-        """GET /files/read should respect tail_lines parameter."""
+        """GET /v2/files/read should respect tail_lines parameter."""
         app = self._build_files_app()
         client = TestClient(app)
 
@@ -1306,7 +1306,7 @@ class TestFilesRouter:
             ),
         ):
             response = client.get(
-                "/files/read",
+                "/v2/files/read",
                 params={"path": "test.py", "tail_lines": 10, "max_chars": 5000},
             )
 
@@ -1319,7 +1319,7 @@ class TestFilesRouter:
         )
 
     def test_read_file_dialogue_jsonl_disables_fallback(self) -> None:
-        """GET /files/read for dialogue.jsonl should disable fallback."""
+        """GET /v2/files/read for dialogue.jsonl should disable fallback."""
         app = self._build_files_app()
         client = TestClient(app)
 
@@ -1342,7 +1342,7 @@ class TestFilesRouter:
             ),
         ):
             response = client.get(
-                "/files/read",
+                "/v2/files/read",
                 params={"path": "dialogue.jsonl"},
             )
 
@@ -1421,7 +1421,7 @@ class TestEdgeCases:
             mock_resolve.return_value = "/workspace/allowed/test.py"
 
             response = client.get(
-                "/files/read",
+                "/v2/files/read",
                 params={"path": "../../../etc/passwd"},
             )
 
@@ -1492,9 +1492,9 @@ class TestEdgeCases:
         ):
             # Make multiple concurrent requests
             responses = [
-                client.get("/files/read", params={"path": "test1.py"}),
-                client.get("/files/read", params={"path": "test2.py"}),
-                client.get("/files/read", params={"path": "test3.py"}),
+                client.get("/v2/files/read", params={"path": "test1.py"}),
+                client.get("/v2/files/read", params={"path": "test2.py"}),
+                client.get("/v2/files/read", params={"path": "test3.py"}),
             ]
 
             # All should succeed
