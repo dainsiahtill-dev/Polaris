@@ -62,7 +62,7 @@ _CONTROL_KWARGS = {
     "run_timeout",
 }
 _WORKFLOW_CONTRACT_MODE_KEY = "_workflow_contract_mode"
-_WORKFLOW_CONTRACT_MODE_LEGACY = "legacy"
+_WORKFLOW_CONTRACT_MODE_COMPAT = "compat"
 
 
 @dataclass
@@ -486,7 +486,7 @@ def _unwrap_workflow_result(snapshot_result: Any) -> Any:
     status = str(snapshot_result.get("status") or "").strip().lower()
     if status == "completed" and "result" in snapshot_result:
         return snapshot_result.get("result")
-    if snapshot_result.get("mode") == "legacy" and "result" in snapshot_result:
+    if snapshot_result.get("mode") == "compat" and "result" in snapshot_result:
         return snapshot_result.get("result")
     return snapshot_result
 
@@ -752,7 +752,7 @@ class EmbeddedWorkflowAPI:
         )
         payload_value = kwargs.get("input", args[0] if args else {})
         payload = _payload_from_value(payload_value)
-        payload.setdefault(_WORKFLOW_CONTRACT_MODE_KEY, _WORKFLOW_CONTRACT_MODE_LEGACY)
+        payload.setdefault(_WORKFLOW_CONTRACT_MODE_KEY, _WORKFLOW_CONTRACT_MODE_COMPAT)
         payload.setdefault("timeout_seconds", timeout_seconds)
 
         submission = await runtime_engine.start_workflow(

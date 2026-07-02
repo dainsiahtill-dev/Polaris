@@ -188,9 +188,9 @@ class WorkflowContract:
         orchestration = (
             normalized_payload.get("orchestration") if isinstance(normalized_payload.get("orchestration"), dict) else {}
         )
-        if requested_mode == "legacy":
+        if requested_mode == "compat":
             return cls(
-                mode="legacy",
+                mode="compat",
                 task_specs=(),
                 max_concurrency=max(1, int(default_max_concurrency)),
                 continue_on_error=False,
@@ -206,7 +206,7 @@ class WorkflowContract:
             raw_tasks = normalized_payload.get("tasks") if isinstance(normalized_payload, dict) else None
         if not isinstance(raw_tasks, list):
             return cls(
-                mode="legacy",
+                mode="compat",
                 task_specs=(),
                 max_concurrency=max(1, int(default_max_concurrency)),
                 continue_on_error=False,

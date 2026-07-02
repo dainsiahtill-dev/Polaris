@@ -404,7 +404,7 @@ def _unwrap_workflow_result(snapshot_result: Any) -> Any:
     status = str(snapshot_result.get("status") or "").strip().lower()
     if status == "completed" and "result" in snapshot_result:
         return snapshot_result.get("result")
-    if snapshot_result.get("mode") == "legacy" and "result" in snapshot_result:
+    if snapshot_result.get("mode") == "compat" and "result" in snapshot_result:
         return snapshot_result.get("result")
     return snapshot_result
 

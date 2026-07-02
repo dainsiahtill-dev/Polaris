@@ -467,9 +467,9 @@ class TopLevelWorkflow:
         snapshot = {"status": "completed", "result": {"final": 99}}
         assert _unwrap_workflow_result(snapshot) == {"final": 99}
 
-    def test_unwrap_workflow_result_legacy(self) -> None:
-        snapshot = {"mode": "legacy", "result": {"legacy": True}}
-        assert _unwrap_workflow_result(snapshot) == {"legacy": True}
+    def test_unwrap_workflow_result_compat(self) -> None:
+        snapshot = {"mode": "compat", "result": {"compat": True}}
+        assert _unwrap_workflow_result(snapshot) == {"compat": True}
 
     def test_unwrap_workflow_result_non_dict(self) -> None:
         assert _unwrap_workflow_result("not a dict") == "not a dict"
@@ -1297,8 +1297,8 @@ class TestUnwrapWorkflowResult:
         result = _unwrap_workflow_result({"status": "completed", "result": 42})
         assert result == 42
 
-    def test_mode_legacy_with_result(self) -> None:
-        result = _unwrap_workflow_result({"mode": "legacy", "result": "hello"})
+    def test_mode_compat_with_result(self) -> None:
+        result = _unwrap_workflow_result({"mode": "compat", "result": "hello"})
         assert result == "hello"
 
     def test_status_completed_without_result(self) -> None:
@@ -1365,9 +1365,9 @@ class TestUnwrapWorkflowResultBranches:
         # Falls through to return the snapshot dict as-is
         assert result == snapshot
 
-    def test_legacy_mode_without_result(self) -> None:
-        """mode=legacy but no result key → return snapshot as-is."""
-        snapshot = {"mode": "legacy"}
+    def test_compat_mode_without_result(self) -> None:
+        """mode=compat but no result key returns the snapshot as-is."""
+        snapshot = {"mode": "compat"}
         result = _unwrap_workflow_result(snapshot)
         assert result == snapshot
 

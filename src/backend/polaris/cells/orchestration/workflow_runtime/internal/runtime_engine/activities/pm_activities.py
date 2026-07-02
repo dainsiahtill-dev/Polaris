@@ -299,7 +299,7 @@ async def generate_pm_tasks(workflow_input: PMWorkflowInput) -> dict[str, Any]:
         ).to_dict()
     return ActivityExecutionResult(
         success=True,
-        summary="Using precomputed PM payload from legacy orchestrator",
+        summary="Using precomputed PM payload from embedded workflow bridge",
         payload={"tasks": tasks, "task_count": len(tasks)},
     ).to_dict()
 

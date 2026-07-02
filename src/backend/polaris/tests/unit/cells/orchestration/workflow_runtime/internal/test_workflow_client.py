@@ -73,7 +73,7 @@ class TestSubmitPmWorkflowSync:
                     workflow_id=workflow_id,
                     run_id=workflow_id,
                     status="running",
-                    result={"mode": "legacy"},
+                    result={"mode": "compat"},
                     error="",
                 )
 

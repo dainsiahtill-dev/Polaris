@@ -235,7 +235,7 @@ class TestEmbeddedWorkflowAPI:
         await coro
 
     @pytest.mark.asyncio
-    async def test_child_workflow_input_tasks_are_legacy_payload_not_dag_contract(self) -> None:
+    async def test_child_workflow_input_tasks_are_compat_payload_not_dag_contract(self) -> None:
         from polaris.cells.orchestration.workflow_runtime.internal.models import (
             DirectorWorkflowInput,
             TaskContract,
@@ -273,11 +273,11 @@ class TestEmbeddedWorkflowAPI:
             clear_workflow_context(token)
 
         payload = engine.start_workflow.await_args.kwargs["payload"]
-        assert payload["_workflow_contract_mode"] == "legacy"
+        assert payload["_workflow_contract_mode"] == "compat"
         assert payload["timeout_seconds"] == 120.0
         assert payload["tasks"][0]["id"] == "task-1"
         assert "task_id" not in payload["tasks"][0]
-        assert WorkflowContract.from_payload(payload).mode == "legacy"
+        assert WorkflowContract.from_payload(payload).mode == "compat"
 
     @pytest.mark.asyncio
     async def test_child_workflow_run_timeout_is_forwarded_to_runtime_payload(self) -> None:
