@@ -43,11 +43,11 @@ def sample_case() -> UnifiedBenchmarkCase:
         case_id="locate_bug_root_cause",
         role="director",
         title="Locate Bug Root Cause",
-        prompt="Find the bug in polaris/kernelone/context/strategy_*.py",
+        prompt="Find the bug in polaris/kernelone/benchmark strategy evaluation flow",
         expected_evidence_path=(
-            "polaris/kernelone/context/strategy_benchmark.py",
-            "polaris/kernelone/context/strategy_scoring.py",
-            "polaris/kernelone/context/strategy_receipts.py",
+            "polaris/kernelone/benchmark/adapters/strategy_adapter.py",
+            "polaris/kernelone/benchmark/unified_runner.py",
+            "polaris/kernelone/benchmark/unified_models.py",
         ),
         judge=JudgeConfig(
             score_threshold=0.70,
@@ -117,7 +117,7 @@ class TestContextBenchmarkAdapter:
     ) -> None:
         """Partial recall returns intermediate score."""
         adapter = ContextBenchmarkAdapter(
-            compiler=_FakeCompiler(selected_files=["polaris/kernelone/context/strategy_benchmark.py"]),
+            compiler=_FakeCompiler(selected_files=["polaris/kernelone/benchmark/adapters/strategy_adapter.py"]),
             metrics_calculator=_FakeMetricsCalculator(),
         )
 

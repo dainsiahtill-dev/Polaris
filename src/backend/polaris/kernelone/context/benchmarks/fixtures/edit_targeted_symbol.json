@@ -1,10 +1,10 @@
 {
   "case_id": "edit_targeted_symbol",
   "description": "Edit a specific function or class symbol to add input validation, without touching unrelated code.",
-  "user_prompt": "In polaris/kernelone/context/strategy_benchmark.py, the BenchmarkCase dataclass should validate that score_threshold is between 0.0 and 1.0. Add a __post_init__ check.",
-  "workspace_fixture": "polaris/kernelone/context/strategy_benchmark.py BenchmarkCase dataclass.",
+  "user_prompt": "In polaris/kernelone/benchmark/unified_models.py, the UnifiedBenchmarkCase dataclass should preserve JudgeConfig score_threshold validation when loading from JSON. Add or tighten the targeted validation path.",
+  "workspace_fixture": "polaris/kernelone/benchmark/unified_models.py UnifiedBenchmarkCase and JudgeConfig dataclasses.",
   "expected_evidence_path": [
-    "polaris/kernelone/context/strategy_benchmark.py"
+    "polaris/kernelone/benchmark/unified_models.py"
   ],
   "expected_answer_shape": "edit",
   "budget_conditions": {

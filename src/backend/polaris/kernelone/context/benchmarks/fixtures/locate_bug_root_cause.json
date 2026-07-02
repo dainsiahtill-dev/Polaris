@@ -1,13 +1,13 @@
 {
   "case_id": "locate_bug_root_cause",
-  "description": "Locate the root cause of a strategy receipt scoring inconsistency where offline benchmark scores differ from live run receipts.",
-  "user_prompt": "There's a bug where score_receipt_from_case() returns a different overall_score than what the live StrategyReceiptEmitter emits. Find the root cause and explain the fix.",
-  "workspace_fixture": "polaris/kernelone/context/ directory — specifically strategy_benchmark.py, strategy_scoring.py, strategy_receipts.py, and strategy_contracts.py.",
+  "description": "Locate the root cause of a strategy benchmark scoring inconsistency where adapter observations differ from unified runner verdicts.",
+  "user_prompt": "There's a bug where StrategyBenchmarkAdapter observations produce a different score than UnifiedBenchmarkRunner verdicts. Find the root cause and explain the fix.",
+  "workspace_fixture": "polaris/kernelone/benchmark/ directory — specifically adapters/strategy_adapter.py, unified_runner.py, unified_models.py, and unified_judge.py.",
   "expected_evidence_path": [
-    "polaris/kernelone/context/strategy_benchmark.py",
-    "polaris/kernelone/context/strategy_scoring.py",
-    "polaris/kernelone/context/strategy_receipts.py",
-    "polaris/kernelone/context/strategy_contracts.py"
+    "polaris/kernelone/benchmark/adapters/strategy_adapter.py",
+    "polaris/kernelone/benchmark/unified_runner.py",
+    "polaris/kernelone/benchmark/unified_models.py",
+    "polaris/kernelone/benchmark/unified_judge.py"
   ],
   "expected_answer_shape": "diagnosis",
   "budget_conditions": {
