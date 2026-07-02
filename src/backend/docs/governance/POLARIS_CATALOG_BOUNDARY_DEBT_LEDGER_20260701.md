@@ -1,6 +1,6 @@
 # Polaris Catalog Boundary Debt Ledger
 
-Status: Active
+Status: Closed (intake-only)
 Owner: Polaris backend governance
 Created: 2026-07-01
 Scope: Cell catalog schema, cross-Cell public boundaries, declared dependencies, and declared side effects.
@@ -26,6 +26,29 @@ reported:
 | Total baseline issues | 41 | Existing baseline, `new_issue_count=0`. |
 | Blockers | 15 | Cross-Cell internal imports or public-boundary violations. |
 | High | 26 | Missing `depends_on` declarations or undeclared side effects. |
+
+## Current Closure State
+
+This ledger is closed for the current catalog-boundary convergence pass. The
+catalog gate baseline is now 0 issues with 0 blockers and 0 high findings after
+CD-11. The ledger remains available only for newly proven Cell catalog boundary
+regressions.
+
+New `CB-*` or `CD-*` items must include:
+
+1. The exact catalog gate finding from
+   `run_catalog_governance_gate.py --workspace src/backend --mode audit-only`.
+2. The owning Cell, imported Cell or effect, and whether the issue is a public
+   boundary violation, undeclared dependency, undeclared effect, schema drift, or
+   ownership overlap.
+3. The intended canonical boundary: public contract import, manifest dependency,
+   manifest effect declaration, or schema change.
+4. A verification command that includes the catalog governance gate and focused
+   tests or static checks for the changed Cell.
+
+Do not use this ledger for ordinary code style issues, legacy/shim cleanup,
+bench output quality, target-project failures, or documentation wording unless
+the catalog gate reports a concrete Cell boundary regression.
 
 ## Ledger
 
