@@ -19,13 +19,14 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
-import yaml
+try:
+    from docs.governance.ci.scripts.no_conflicting_coverage_policy import evaluate_no_conflicting_coverage
+except ModuleNotFoundError:
+    from no_conflicting_coverage_policy import evaluate_no_conflicting_coverage
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Path Setup
@@ -83,198 +84,6 @@ class FitnessCheckResult:
         return "\n".join(lines)
 
 
-@dataclass(frozen=True)
-class SourceRef:
-    """A source reference in a migration unit."""
-
-    path: str
-    kind: str  # file, directory, glob
-    coverage: str  # full, partial
-    note: str = ""
-
-
-@dataclass(frozen=True)
-class TargetPaths:
-    """Target paths for a migration unit."""
-
-    target_paths: tuple[str, ...]
-    root_dirs: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class MigrationUnit:
-    """A migration unit from the ledger."""
-
-    id: str
-    title: str
-    status: str
-    source_refs: tuple[SourceRef, ...]
-    target: TargetPaths
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Ledger Parser
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def _normalize_path(path: str) -> str:
-    """Normalize path for comparison (Windows/Unix compatible)."""
-    return str(path).replace("\\", "/").strip()
-
-
-def _load_ledger(repo_root: Path) -> dict[str, Any] | None:
-    """Load the migration ledger YAML file."""
-    ledger_path = repo_root / "docs" / "migration" / "ledger.yaml"
-    if not ledger_path.exists():
-        return None
-    with open(ledger_path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-def _parse_source_ref(raw: dict[str, Any]) -> SourceRef:
-    """Parse a source_ref entry from a migration unit."""
-    return SourceRef(
-        path=_normalize_path(raw.get("path", "")),
-        kind=str(raw.get("kind", "file")),
-        coverage=str(raw.get("coverage", "partial")),
-        note=str(raw.get("note", "")),
-    )
-
-
-def _parse_target(raw: dict[str, Any]) -> TargetPaths:
-    """Parse target paths from a migration unit."""
-    return TargetPaths(
-        target_paths=tuple(_normalize_path(p) for p in raw.get("target_paths", [])),
-        root_dirs=tuple(_normalize_path(d) for d in raw.get("root_dirs", [])),
-    )
-
-
-def _parse_units(ledger: dict[str, Any]) -> list[MigrationUnit]:
-    """Parse all migration units from the ledger."""
-    units: list[MigrationUnit] = []
-    for raw_unit in ledger.get("units", []):
-        source_refs = tuple(_parse_source_ref(sr) for sr in raw_unit.get("source_refs", []))
-        target = _parse_target(raw_unit.get("target", {}))
-        units.append(
-            MigrationUnit(
-                id=str(raw_unit.get("id", "")),
-                title=str(raw_unit.get("title", "")),
-                status=str(raw_unit.get("status", "")),
-                source_refs=source_refs,
-                target=target,
-            )
-        )
-    return units
-
-
-def _is_active_status(status: str) -> bool:
-    """Check if a migration unit status is considered 'active'.
-
-    Active statuses are those that have not completed the migration lifecycle.
-    Verified and retired units are considered completed.
-    """
-    completed_statuses = {"verified", "retired"}
-    return status not in completed_statuses
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Conflict Detection
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def _expand_path_for_comparison(path: str) -> set[str]:
-    """Expand a path to include all potential sub-paths for overlap detection.
-
-    For a directory like 'src/backend/core/', this returns:
-    - 'src/backend/core/'
-    - 'src/backend/core' (without trailing slash)
-    """
-    normalized = _normalize_path(path)
-    paths: set[str] = {normalized}
-    # Also add without trailing slash for comparison
-    if normalized.endswith("/"):
-        paths.add(normalized.rstrip("/"))
-    return paths
-
-
-def _check_source_ref_conflicts(units: list[MigrationUnit]) -> list[str]:
-    """Check for conflicting full coverage claims on source paths.
-
-    Returns a list of violation messages for any conflicts found.
-    """
-    # Map: normalized_path -> list of (unit_id, coverage_type)
-    path_owners: dict[str, list[tuple[str, str]]] = defaultdict(list)
-
-    for unit in units:
-        if not _is_active_status(unit.status):
-            continue
-        for ref in unit.source_refs:
-            if ref.coverage == "full":
-                path_owners[ref.path].append((unit.id, ref.coverage))
-
-    violations: list[str] = []
-    for path, owners in path_owners.items():
-        if len(owners) > 1:
-            unit_ids = [u[0] for u in owners]
-            violations.append(f"Source path '{path}' claimed with full coverage by multiple active units: {unit_ids}")
-
-    return violations
-
-
-def _check_target_path_overlaps(units: list[MigrationUnit]) -> list[str]:
-    """Check for overlapping target paths between active migration units.
-
-    Target paths should not overlap unless explicitly marked as partial with
-    justification in the notes.
-    """
-    # Map: normalized_target_path -> list of unit_ids claiming it
-    target_owners: dict[str, list[str]] = defaultdict(list)
-
-    for unit in units:
-        if not _is_active_status(unit.status):
-            continue
-        for target_path in unit.target.target_paths:
-            target_owners[target_path].append(unit.id)
-
-    # Also check root_dirs overlap
-    root_owners: dict[str, list[str]] = defaultdict(list)
-    for unit in units:
-        if not _is_active_status(unit.status):
-            continue
-        for root_dir in unit.target.root_dirs:
-            root_owners[root_dir].append(unit.id)
-
-    violations: list[str] = []
-
-    # Check target_paths conflicts
-    for path, owners in target_owners.items():
-        if len(owners) > 1:
-            violations.append(f"Target path '{path}' claimed by multiple active units: {owners}")
-
-    # Check root_dirs conflicts
-    for path, owners in root_owners.items():
-        if len(owners) > 1:
-            violations.append(f"Target root_dir '{path}' claimed by multiple active units: {owners}")
-
-    return violations
-
-
-def _get_active_unit_count(units: list[MigrationUnit]) -> int:
-    """Count active migration units."""
-    return sum(1 for u in units if _is_active_status(u.status))
-
-
-def _get_units_with_full_coverage(units: list[MigrationUnit]) -> list[str]:
-    """Get list of active units that claim full coverage on some source_ref."""
-    result: list[str] = []
-    for unit in units:
-        if not _is_active_status(unit.status):
-            continue
-        if any(ref.coverage == "full" for ref in unit.source_refs):
-            result.append(unit.id)
-    return result
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Main Checker
 # ─────────────────────────────────────────────────────────────────────────────
@@ -299,53 +108,15 @@ class NoConflictChecker:
         2. No two active units have overlapping target paths
         3. Any overlapping paths are explicitly justified as partial
         """
-        result = FitnessCheckResult(
-            rule_id="migration_no_conflicting_full_coverage",
-            passed=True,
+        policy_result = evaluate_no_conflicting_coverage(self.workspace)
+        return FitnessCheckResult(
+            rule_id=policy_result.rule_id,
+            passed=policy_result.passed,
+            evidence=list(policy_result.evidence),
+            violations=list(policy_result.violations),
+            warnings=list(policy_result.warnings),
+            duration_ms=self._elapsed_ms(),
         )
-
-        # Load and parse the ledger
-        ledger = _load_ledger(self.workspace)
-        if ledger is None:
-            result.passed = False
-            result.violations.append("docs/migration/ledger.yaml not found - cannot verify migration coverage")
-            result.duration_ms = self._elapsed_ms()
-            return result
-
-        units = _parse_units(ledger)
-
-        if not units:
-            result.evidence.append("No migration units found in ledger")
-            result.duration_ms = self._elapsed_ms()
-            return result
-
-        # Record evidence
-        active_count = _get_active_unit_count(units)
-        result.evidence.append(f"Total migration units: {len(units)}")
-        result.evidence.append(f"Active migration units: {active_count}")
-
-        full_coverage_units = _get_units_with_full_coverage(units)
-        result.evidence.append(f"Active units with full coverage claims: {len(full_coverage_units)}")
-
-        if not full_coverage_units:
-            result.evidence.append("No active units claim full coverage - check passes vacuously")
-            result.duration_ms = self._elapsed_ms()
-            return result
-
-        # Check for source_ref conflicts
-        source_conflicts = _check_source_ref_conflicts(units)
-        for conflict in source_conflicts:
-            result.passed = False
-            result.violations.append(conflict)
-
-        # Check for target path overlaps
-        target_overlaps = _check_target_path_overlaps(units)
-        for overlap in target_overlaps:
-            result.passed = False
-            result.violations.append(overlap)
-
-        result.duration_ms = self._elapsed_ms()
-        return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────

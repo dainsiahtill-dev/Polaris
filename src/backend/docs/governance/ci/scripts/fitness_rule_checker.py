@@ -19,7 +19,6 @@ import re
 import subprocess
 import sys
 import time
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +34,9 @@ try:
     from docs.governance.ci.scripts.legacy_coverage_policy import (
         evaluate_legacy_coverage,
     )
+    from docs.governance.ci.scripts.no_conflicting_coverage_policy import (
+        evaluate_no_conflicting_coverage,
+    )
     from docs.governance.ci.scripts.verified_evidence_policy import (
         evaluate_verified_evidence,
     )
@@ -48,6 +50,9 @@ except ModuleNotFoundError:
     )
     from legacy_coverage_policy import (
         evaluate_legacy_coverage,
+    )
+    from no_conflicting_coverage_policy import (
+        evaluate_no_conflicting_coverage,
     )
     from verified_evidence_policy import (
         evaluate_verified_evidence,
@@ -359,65 +364,15 @@ class FitnessRuleChecker:
         return result
 
     def check_no_conflicting_coverage(self) -> FitnessCheckResult:
-        """Check that migration units don't claim conflicting full coverage."""
-        result = FitnessCheckResult(rule_id="migration_units_do_not_conflict", passed=True)
-        ledger_path = self.workspace / "docs" / "migration" / "ledger.yaml"
-        if not ledger_path.exists():
-            result.passed = False
-            result.violations.append("docs/migration/ledger.yaml not found")
-            return result
-        try:
-            import yaml
-
-            with open(ledger_path, encoding="utf-8") as f:
-                ledger = yaml.safe_load(f)
-        except (OSError, ImportError) as e:
-            result.passed = False
-            result.violations.append(f"Failed to parse ledger.yaml: {e}")
-            return result
-        units = ledger.get("units", [])
-        if not units:
-            result.evidence.append("No migration units found in ledger")
-            return result
-        completed = {"verified", "retired"}
-        path_owners: dict[str, list[str]] = defaultdict(list)
-        target_owners: dict[str, list[str]] = defaultdict(list)
-        root_owners: dict[str, list[str]] = defaultdict(list)
-        for unit in units:
-            status = str(unit.get("status", ""))
-            if status in completed:
-                continue
-            unit_id = str(unit.get("id", "unknown"))
-            for sr in unit.get("source_refs", []):
-                if str(sr.get("coverage", "")) == "full":
-                    path = str(sr.get("path", "")).replace("\\", "/").strip()
-                    if path:
-                        path_owners[path].append(unit_id)
-            target = unit.get("target", {})
-            for tp in target.get("target_paths", []):
-                p = str(tp).replace("\\", "/").strip()
-                if p:
-                    target_owners[p].append(unit_id)
-            for rd in target.get("root_dirs", []):
-                p = str(rd).replace("\\", "/").strip()
-                if p:
-                    root_owners[p].append(unit_id)
-        for path, owners in path_owners.items():
-            if len(owners) > 1:
-                result.passed = False
-                result.violations.append(
-                    f"Source path '{path}' claimed with full coverage by multiple active units: {owners}"
-                )
-        for path, owners in target_owners.items():
-            if len(owners) > 1:
-                result.passed = False
-                result.violations.append(f"Target path '{path}' claimed by multiple active units: {owners}")
-        for path, owners in root_owners.items():
-            if len(owners) > 1:
-                result.passed = False
-                result.violations.append(f"Target root_dir '{path}' claimed by multiple active units: {owners}")
-        result.evidence.append(f"Checked {len(units)} migration units")
-        return result
+        """Check migration coverage conflicts through the canonical policy module."""
+        policy_result = evaluate_no_conflicting_coverage(self.workspace)
+        return FitnessCheckResult(
+            rule_id=policy_result.rule_id,
+            passed=policy_result.passed,
+            evidence=list(policy_result.evidence),
+            violations=list(policy_result.violations),
+            warnings=list(policy_result.warnings),
+        )
 
     def check_catalog_presence(self) -> FitnessCheckResult:
         """Check that target Cells are present in catalog."""
