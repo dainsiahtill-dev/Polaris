@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T05:18:18.699489Z",
-  "source_hash": "0563b469f734a213",
+  "generated_at": "2026-07-02T06:52:21.572932Z",
+  "source_hash": "afa98278fca7d859",
   "cell_id": "roles.adapters",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -7223,12 +7223,7 @@
       "name": "DirectorMaterializationQualityRepairScheduleResultV1",
       "description": "Result for the roles adapter materialization-quality repair boundary.",
       "defined_in": "polaris/cells/roles/adapters/public/contracts.py",
-      "methods": [
-        {
-          "name": "to_legacy_tuple",
-          "doc": ""
-        }
-      ]
+      "methods": []
     },
     {
       "type": "class",
@@ -7323,7 +7318,7 @@
     {
       "type": "function",
       "name": "run_director_materialization_quality_repair_schedule",
-      "description": "Run Director materialization-quality repair schedule through the legacy tuple boundary.",
+      "description": "Run Director materialization-quality repair schedule as a tuple projection.",
       "defined_in": "polaris/cells/roles/adapters/public/service.py"
     },
     {

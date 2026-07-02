@@ -2353,7 +2353,8 @@ def test_materialization_public_schedule_entrypoint_forwards_bridge(
             artifact_quality_errors=("Go syntax check failed",),
         )
     )
-    results, summary = typed_result.to_legacy_tuple()
+    results = [dict(item) for item in typed_result.tool_results]
+    summary = dict(typed_result.summary)
 
     assert isinstance(typed_result, DirectorMaterializationQualityRepairScheduleResultV1)
     assert len(calls) == 1
@@ -2367,7 +2368,7 @@ def test_materialization_public_schedule_entrypoint_forwards_bridge(
     assert public_boundary["typed_result"] == "DirectorMaterializationQualityRepairScheduleResultV1"
     assert summary["runtime_materialization_facade"]["owner_cell"] == "director.runtime"
 
-    legacy_results, legacy_summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
+    tuple_results, tuple_summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["main.go"]},
         task_id="task-materialization-schedule",
@@ -2375,9 +2376,9 @@ def test_materialization_public_schedule_entrypoint_forwards_bridge(
     )
 
     assert len(calls) == 2
-    assert legacy_results == results
-    assert legacy_summary["public_boundary"] == public_boundary
-    assert "migration_only_compatibility_shim" not in public_boundary
+    assert tuple_results == results
+    assert tuple_summary["public_boundary"] == public_boundary
+    assert "migration_only_compatibility_layer" not in public_boundary
     assert not hasattr(roles_adapters_public_service, "apply_deterministic_materialization_quality_repairs")
 
 

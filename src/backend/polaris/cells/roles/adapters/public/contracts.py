@@ -126,9 +126,6 @@ class DirectorMaterializationQualityRepairScheduleResultV1:
             _require_non_empty("execution_boundary", self.execution_boundary),
         )
 
-    def to_legacy_tuple(self) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        return [dict(item) for item in self.tool_results], dict(self.summary)
-
 
 class RoleAdaptersError(RuntimeError):
     """Structured contract error for `roles.adapters`."""

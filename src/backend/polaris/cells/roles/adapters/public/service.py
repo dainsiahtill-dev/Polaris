@@ -102,7 +102,7 @@ def run_director_materialization_quality_repair_schedule(
     artifact_quality_errors: list[str],
     convergence_verifier: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Run Director materialization-quality repair schedule through the legacy tuple boundary."""
+    """Run Director materialization-quality repair schedule as a tuple projection."""
 
     result = run_director_materialization_quality_repair_schedule_result(
         RunDirectorMaterializationQualityRepairScheduleCommandV1(
@@ -113,7 +113,7 @@ def run_director_materialization_quality_repair_schedule(
             convergence_verifier=convergence_verifier,
         )
     )
-    return result.to_legacy_tuple()
+    return [dict(item) for item in result.tool_results], dict(result.summary)
 
 
 def run_director_materialization_quality_repair_schedule_result(
