@@ -31,9 +31,9 @@
 | Target Cell | 角色 | 当前迁移来源候选 |
 | --- | --- | --- |
 | `runtime.state_owner` | 统一运行时状态唯一写入口与受控查询出口 | `polaris/application/app/routers/runtime.py`、`polaris/application/app/services/task_board.py`、`polaris/application/app/services/task_board_refactored.py`、`polaris/application/app/services/orchestration_command_service.py` |
-| `archive.run_archive` | 将终态 run 从 `runtime/runs/*` 发布到 `workspace/history/runs/*` | `polaris/application/app/services/history_archive_service.py`、`polaris/application/app/services/history_manifest_repository.py` |
-| `archive.task_snapshot_archive` | 将 PM/Task 终态快照发布到 `workspace/history/tasks/*` | `polaris/application/app/services/archive_hook.py`、`polaris/application/app/services/history_archive_service.py` |
-| `archive.factory_archive` | 将 Factory 终态产物发布到 `workspace/history/factory/*` | `polaris/application/app/services/archive_hook.py`、`polaris/application/app/services/factory_run_service.py`、`polaris/application/app/services/factory_store.py` |
+| `archive.run_archive` | 将终态 run 从 `runtime/runs/*` 发布到 `workspace/history/runs/*` | `polaris/cells/archive/run_archive/internal/history_archive_service.py`、`polaris/cells/archive/run_archive/internal/archive_hook.py`、`polaris/kernelone/storage/history_manifest_repository.py` |
+| `archive.task_snapshot_archive` | 将 PM/Task 终态快照发布到 `workspace/history/tasks/*` | `polaris/cells/archive/task_snapshot_archive/internal/task_snapshot_archive_service.py`、`polaris/kernelone/storage/history_manifest_repository.py` |
+| `archive.factory_archive` | 将 Factory 终态产物发布到 `workspace/history/factory/*` | `polaris/cells/archive/factory_archive/internal/factory_archive_service.py`、`polaris/kernelone/storage/history_manifest_repository.py` |
 
 ## 约束
 

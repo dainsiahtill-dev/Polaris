@@ -49,12 +49,13 @@
 - history index 更新必须幂等
 - 所有文本写入必须显式 UTF-8
 
-## Migration Sources
+## Current Implementation Anchors
 
-当前最可能的迁移来源候选包括：
+当前模板应指向已经收敛的 archive Cell 与共享 KernelOne 索引仓储：
 
-- `polaris/application/app/services/history_archive_service.py`
-- `polaris/application/app/services/history_manifest_repository.py`
+- `polaris/cells/archive/run_archive/internal/history_archive_service.py`
+- `polaris/cells/archive/run_archive/internal/archive_hook.py`
+- `polaris/kernelone/storage/history_manifest_repository.py`
 
 ## Read Order for AI
 

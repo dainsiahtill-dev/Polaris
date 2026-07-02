@@ -44,9 +44,8 @@
   ],
   "hotspots": [
     "cells/archive/factory_archive/internal/application/service.py",
-    "polaris/application/app/services/archive_hook.py",
-    "polaris/application/app/services/factory_run_service.py",
-    "polaris/application/app/services/factory_store.py"
+    "polaris/cells/archive/factory_archive/internal/factory_archive_service.py",
+    "polaris/kernelone/storage/history_manifest_repository.py"
   ],
   "test_targets": [
     "cells/archive/factory_archive/tests/test_contracts.py",

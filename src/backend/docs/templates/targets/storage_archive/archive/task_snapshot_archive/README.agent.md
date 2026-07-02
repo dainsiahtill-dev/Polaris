@@ -46,12 +46,13 @@
 - manifest 必须保持 task 与 plan 的可追踪关联
 - 所有文本写入必须显式 UTF-8
 
-## Migration Sources
+## Current Implementation Anchors
 
-当前最可能的迁移来源候选包括：
+当前模板应指向已经收敛的 archive Cell 与共享 KernelOne 索引仓储：
 
-- `polaris/application/app/services/archive_hook.py`
-- `polaris/application/app/services/history_archive_service.py`
+- `polaris/cells/archive/task_snapshot_archive/internal/task_snapshot_archive_service.py`
+- `polaris/cells/archive/task_snapshot_archive/public/service.py`
+- `polaris/kernelone/storage/history_manifest_repository.py`
 
 ## Read Order for AI
 

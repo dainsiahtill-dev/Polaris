@@ -5,11 +5,9 @@
   "purpose": "Archive terminal factory outputs into immutable workspace history factory records.",
   "summary": "Owns archived factory history publication and index updates while keeping runtime source-of-truth unchanged.",
   "owned_paths": [
-    "polaris/application/services/history_archive_service.py",
-    "polaris/application/services/factory_run_service.py",
-    "polaris/application/services/archive_hook.py",
-    "polaris/application/services/history_manifest_repository.py",
-    "polaris/delivery/http/routers/history.py"
+    "polaris/cells/archive/factory_archive/internal/factory_archive_service.py",
+    "polaris/cells/archive/factory_archive/public/contracts.py",
+    "polaris/cells/archive/factory_archive/public/service.py"
   ],
   "public_contracts": {
     "commands": [
@@ -47,8 +45,8 @@
     "all text writes use explicit UTF-8"
   ],
   "hotspots": [
-    "polaris/application/services/history_archive_service.py",
-    "polaris/application/services/factory_run_service.py"
+    "polaris/cells/archive/factory_archive/internal/factory_archive_service.py",
+    "polaris/kernelone/storage/history_manifest_repository.py"
   ],
   "test_targets": [
     "tests/archive/test_factory_archive_contracts.py"
@@ -63,4 +61,3 @@
     "expand_to_neighbors_only_when_needed": true
   }
 }
-

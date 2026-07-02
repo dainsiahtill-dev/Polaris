@@ -5,10 +5,9 @@
   "purpose": "Archive terminal runtime task snapshots and related contracts into immutable workspace history task records.",
   "summary": "Owns archived task history publication and task index updates without mutating runtime source-of-truth state.",
   "owned_paths": [
-    "polaris/application/services/history_archive_service.py",
-    "polaris/application/services/archive_hook.py",
-    "polaris/application/services/history_manifest_repository.py",
-    "polaris/delivery/http/routers/history.py"
+    "polaris/cells/archive/task_snapshot_archive/internal/task_snapshot_archive_service.py",
+    "polaris/cells/archive/task_snapshot_archive/public/contracts.py",
+    "polaris/cells/archive/task_snapshot_archive/public/service.py"
   ],
   "public_contracts": {
     "commands": [
@@ -47,8 +46,8 @@
     "all text writes use explicit UTF-8"
   ],
   "hotspots": [
-    "polaris/application/services/history_archive_service.py",
-    "polaris/application/services/archive_hook.py"
+    "polaris/cells/archive/task_snapshot_archive/internal/task_snapshot_archive_service.py",
+    "polaris/kernelone/storage/history_manifest_repository.py"
   ],
   "test_targets": [
     "tests/archive/test_task_snapshot_archive_contracts.py"
@@ -63,4 +62,3 @@
     "expand_to_neighbors_only_when_needed": true
   }
 }
-

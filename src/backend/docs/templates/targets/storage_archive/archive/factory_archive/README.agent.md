@@ -45,13 +45,13 @@
 - manifest 必须保留 artifact lineage
 - 所有文本写入必须显式 UTF-8
 
-## Migration Sources
+## Current Implementation Anchors
 
-当前最可能的迁移来源候选包括：
+当前模板应指向已经收敛的 archive Cell 与共享 KernelOne 索引仓储：
 
-- `polaris/application/app/services/archive_hook.py`
-- `polaris/application/app/services/factory_run_service.py`
-- `polaris/application/app/services/factory_store.py`
+- `polaris/cells/archive/factory_archive/internal/factory_archive_service.py`
+- `polaris/cells/archive/factory_archive/public/service.py`
+- `polaris/kernelone/storage/history_manifest_repository.py`
 
 ## Read Order for AI
 
