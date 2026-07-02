@@ -223,6 +223,93 @@ def test_deferred_followup_routes_to_director_retry(tmp_path: Path) -> None:
     assert payload["classification"]["repairable_by_director"] is True
 
 
+def test_task_boundary_evidence_missing_routes_to_director_retry(tmp_path: Path) -> None:
+    envelope = QAVerdictEngine(str(tmp_path)).build_envelope(
+        task_id="task-qa",
+        payload=_payload(),
+        ledger_projection={
+            "audit_path": "runtime/control_plane/ledger",
+            "evidence_policy": {},
+            "task_boundary": {
+                "ok": False,
+                "latest": {
+                    "status": "execution_evidence_missing",
+                    "ok": False,
+                    "failure_class": "EXECUTION_EVIDENCE_MISSING",
+                    "responsible_layer": "director",
+                    "reason": "Required execution evidence was not committed",
+                },
+            },
+        },
+        artifact_quality={"errors": []},
+    )
+    payload = envelope.to_dict()
+
+    assert payload["verdict"] == "FAIL"
+    assert payload["next_stage"] == "pending_exec"
+    assert payload["classification"]["failure_class"] == "EXECUTION_EVIDENCE_MISSING"
+    assert payload["classification"]["repairable_by_director"] is True
+    assert payload["classification"]["owner"] == "director"
+
+
+def test_task_boundary_implementation_defect_routes_to_director_retry(tmp_path: Path) -> None:
+    envelope = QAVerdictEngine(str(tmp_path)).build_envelope(
+        task_id="task-qa",
+        payload=_payload(),
+        ledger_projection={
+            "audit_path": "runtime/control_plane/ledger",
+            "evidence_policy": {},
+            "task_boundary": {
+                "ok": False,
+                "latest": {
+                    "status": "required_verifier_failed",
+                    "ok": False,
+                    "failure_class": "IMPLEMENTATION_DEFECT",
+                    "responsible_layer": "director",
+                    "reason": "Required verifier execution failed",
+                },
+            },
+        },
+        artifact_quality={"errors": []},
+    )
+    payload = envelope.to_dict()
+
+    assert payload["verdict"] == "FAIL"
+    assert payload["next_stage"] == "pending_exec"
+    assert payload["classification"]["failure_class"] == "IMPLEMENTATION_DEFECT"
+    assert payload["classification"]["repairable_by_director"] is True
+    assert payload["classification"]["owner"] == "director"
+
+
+def test_task_boundary_dependency_not_unlocked_blocks_execution_control_plane(tmp_path: Path) -> None:
+    envelope = QAVerdictEngine(str(tmp_path)).build_envelope(
+        task_id="task-qa",
+        payload=_payload(),
+        ledger_projection={
+            "audit_path": "runtime/control_plane/ledger",
+            "evidence_policy": {},
+            "task_boundary": {
+                "ok": False,
+                "latest": {
+                    "status": "dependency_not_unlocked",
+                    "ok": False,
+                    "failure_class": "DEPENDENCY_NOT_UNLOCKED",
+                    "responsible_layer": "execution_control_plane",
+                    "reason": "Task dependencies are not unlocked for completion",
+                },
+            },
+        },
+        artifact_quality={"errors": []},
+    )
+    payload = envelope.to_dict()
+
+    assert payload["verdict"] == "BLOCKED"
+    assert payload["next_stage"] == "pending_exec"
+    assert payload["classification"]["failure_class"] == "DEPENDENCY_NOT_UNLOCKED"
+    assert payload["classification"]["repairable_by_director"] is False
+    assert payload["classification"]["owner"] == "execution_control_plane"
+
+
 def test_verdict_diff_reports_shadow_mismatch(tmp_path: Path) -> None:
     envelope = QAVerdictEngine(str(tmp_path)).build_envelope(
         task_id="task-qa",

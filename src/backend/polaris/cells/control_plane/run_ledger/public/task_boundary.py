@@ -189,6 +189,23 @@ def _workspace_entrypoint_targets(workspace: Path) -> list[str]:
     )
 
 
+def _required_items_not_satisfied(
+    *,
+    required: tuple[str, ...],
+    present: tuple[str, ...],
+    failed: tuple[str, ...],
+    explicit_missing: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Return required obligations with no present or failed evidence."""
+
+    observed = set(present) | set(failed)
+    missing: list[str] = [item for item in required if item not in observed]
+    for item in explicit_missing:
+        if item not in observed and item not in missing:
+            missing.append(item)
+    return tuple(missing)
+
+
 @dataclass(frozen=True)
 class TaskBoundaryVerdictV1:
     """Canonical task-boundary completion verdict.
@@ -210,6 +227,15 @@ class TaskBoundaryVerdictV1:
     missing_entrypoint_targets: tuple[str, ...] = field(default_factory=tuple)
     downstream_pending_artifacts: tuple[str, ...] = field(default_factory=tuple)
     completed_artifacts: tuple[str, ...] = field(default_factory=tuple)
+    blocked_dependencies: tuple[str, ...] = field(default_factory=tuple)
+    required_evidence_modalities: tuple[str, ...] = field(default_factory=tuple)
+    present_evidence_modalities: tuple[str, ...] = field(default_factory=tuple)
+    missing_required_evidence_modalities: tuple[str, ...] = field(default_factory=tuple)
+    failed_required_evidence_modalities: tuple[str, ...] = field(default_factory=tuple)
+    required_verifiers: tuple[str, ...] = field(default_factory=tuple)
+    completed_verifiers: tuple[str, ...] = field(default_factory=tuple)
+    missing_required_verifiers: tuple[str, ...] = field(default_factory=tuple)
+    failed_required_verifiers: tuple[str, ...] = field(default_factory=tuple)
     tool_dispatch: dict[str, Any] = field(default_factory=dict)
     evidence_refs: tuple[str, ...] = field(default_factory=tuple)
     schema_version: str = "polaris.task_boundary_verdict.v1"
@@ -229,6 +255,15 @@ class TaskBoundaryVerdictV1:
             "missing_entrypoint_targets": list(self.missing_entrypoint_targets),
             "downstream_pending_artifacts": list(self.downstream_pending_artifacts),
             "completed_artifacts": list(self.completed_artifacts),
+            "blocked_dependencies": list(self.blocked_dependencies),
+            "required_evidence_modalities": list(self.required_evidence_modalities),
+            "present_evidence_modalities": list(self.present_evidence_modalities),
+            "missing_required_evidence_modalities": list(self.missing_required_evidence_modalities),
+            "failed_required_evidence_modalities": list(self.failed_required_evidence_modalities),
+            "required_verifiers": list(self.required_verifiers),
+            "completed_verifiers": list(self.completed_verifiers),
+            "missing_required_verifiers": list(self.missing_required_verifiers),
+            "failed_required_verifiers": list(self.failed_required_verifiers),
             "tool_dispatch": dict(self.tool_dispatch),
             "evidence_refs": list(self.evidence_refs),
         }
@@ -286,6 +321,15 @@ def evaluate_task_boundary_verdict(
     target_files: list[str] | tuple[str, ...] | None = None,
     completed_artifacts: list[str] | tuple[str, ...] | None = None,
     downstream_pending_artifacts: list[str] | tuple[str, ...] | None = None,
+    blocked_dependencies: list[str] | tuple[str, ...] | None = None,
+    required_evidence_modalities: list[str] | tuple[str, ...] | None = None,
+    present_evidence_modalities: list[str] | tuple[str, ...] | None = None,
+    missing_required_evidence_modalities: list[str] | tuple[str, ...] | None = None,
+    failed_required_evidence_modalities: list[str] | tuple[str, ...] | None = None,
+    required_verifiers: list[str] | tuple[str, ...] | None = None,
+    completed_verifiers: list[str] | tuple[str, ...] | None = None,
+    missing_required_verifiers: list[str] | tuple[str, ...] | None = None,
+    failed_required_verifiers: list[str] | tuple[str, ...] | None = None,
     tool_dispatch: dict[str, Any] | None = None,
     evidence_refs: list[str] | tuple[str, ...] | None = None,
 ) -> TaskBoundaryVerdictV1:
@@ -295,41 +339,76 @@ def evaluate_task_boundary_verdict(
     targets = tuple(_string_list(target_files))
     completed = tuple(_string_list(completed_artifacts))
     downstream = tuple(_string_list(downstream_pending_artifacts))
+    blocked = tuple(_string_list(blocked_dependencies))
+    required_evidence = tuple(_string_list(required_evidence_modalities))
+    present_evidence = tuple(_string_list(present_evidence_modalities))
+    failed_evidence = tuple(_string_list(failed_required_evidence_modalities))
+    missing_evidence = _required_items_not_satisfied(
+        required=required_evidence,
+        present=present_evidence,
+        failed=failed_evidence,
+        explicit_missing=tuple(_string_list(missing_required_evidence_modalities)),
+    )
+    required_verifier_names = tuple(_string_list(required_verifiers))
+    completed_verifier_names = tuple(_string_list(completed_verifiers))
+    failed_verifier_names = tuple(_string_list(failed_required_verifiers))
+    missing_verifier_names = _required_items_not_satisfied(
+        required=required_verifier_names,
+        present=completed_verifier_names,
+        failed=failed_verifier_names,
+        explicit_missing=tuple(_string_list(missing_required_verifiers)),
+    )
     evidence = tuple(_string_list(evidence_refs))
     dispatch = dict(tool_dispatch or {})
+    base_kwargs: dict[str, Any] = {
+        "task_id": str(task_id or "").strip(),
+        "run_id": str(run_id or "").strip(),
+        "target_files": targets,
+        "completed_artifacts": completed,
+        "downstream_pending_artifacts": downstream,
+        "blocked_dependencies": blocked,
+        "required_evidence_modalities": required_evidence,
+        "present_evidence_modalities": present_evidence,
+        "missing_required_evidence_modalities": missing_evidence,
+        "failed_required_evidence_modalities": failed_evidence,
+        "required_verifiers": required_verifier_names,
+        "completed_verifiers": completed_verifier_names,
+        "missing_required_verifiers": missing_verifier_names,
+        "failed_required_verifiers": failed_verifier_names,
+        "tool_dispatch": dispatch,
+        "evidence_refs": evidence,
+    }
 
     if bool(dispatch.get("dropped")) or str(dispatch.get("status") or "").strip() == "dropped":
         return TaskBoundaryVerdictV1(
-            task_id=str(task_id or "").strip(),
-            run_id=str(run_id or "").strip(),
             status="tool_dispatch_dropped",
             ok=False,
             failure_class="TOOL_DISPATCH_DROPPED",
             responsible_layer="execution_control_plane",
             reason="Provider emitted tool calls, but no authoritative tool dispatch receipt was committed",
-            target_files=targets,
-            completed_artifacts=completed,
-            downstream_pending_artifacts=downstream,
-            tool_dispatch=dispatch,
-            evidence_refs=evidence,
+            **base_kwargs,
+        )
+
+    if blocked:
+        return TaskBoundaryVerdictV1(
+            status="dependency_not_unlocked",
+            ok=False,
+            failure_class="DEPENDENCY_NOT_UNLOCKED",
+            responsible_layer="execution_control_plane",
+            reason="Task dependencies are not unlocked for completion",
+            **base_kwargs,
         )
 
     missing_targets = tuple(path for path in targets if not _path_exists(workspace_path, path))
     if missing_targets:
         return TaskBoundaryVerdictV1(
-            task_id=str(task_id or "").strip(),
-            run_id=str(run_id or "").strip(),
             status="incomplete_materialization",
             ok=False,
             failure_class="INCOMPLETE_MATERIALIZATION",
             responsible_layer="director",
             reason="Required target files were not materialized",
-            target_files=targets,
             missing_target_files=missing_targets,
-            completed_artifacts=completed,
-            downstream_pending_artifacts=downstream,
-            tool_dispatch=dispatch,
-            evidence_refs=evidence,
+            **base_kwargs,
         )
 
     known_artifacts = set(targets) | set(completed) | set(downstream)
@@ -340,26 +419,62 @@ def evaluate_task_boundary_verdict(
     )
     if missing_entrypoints:
         return TaskBoundaryVerdictV1(
-            task_id=str(task_id or "").strip(),
-            run_id=str(run_id or "").strip(),
             status="missing_entrypoint_target",
             ok=False,
             failure_class="MISSING_ENTRYPOINT_TARGET",
             responsible_layer="task_boundary",
             reason="Manifest references local entrypoint files that are neither complete nor declared downstream",
-            target_files=targets,
             missing_entrypoint_targets=missing_entrypoints,
-            completed_artifacts=completed,
-            downstream_pending_artifacts=downstream,
-            tool_dispatch=dispatch,
-            evidence_refs=evidence,
+            **base_kwargs,
         )
 
-    return build_completed_task_boundary_verdict(
-        task_id=task_id,
-        run_id=run_id,
-        target_files=targets,
-        evidence_refs=evidence,
+    if missing_evidence:
+        return TaskBoundaryVerdictV1(
+            status="execution_evidence_missing",
+            ok=False,
+            failure_class="EXECUTION_EVIDENCE_MISSING",
+            responsible_layer="director",
+            reason="Required execution evidence was not committed",
+            **base_kwargs,
+        )
+
+    if failed_evidence:
+        return TaskBoundaryVerdictV1(
+            status="required_evidence_failed",
+            ok=False,
+            failure_class="IMPLEMENTATION_DEFECT",
+            responsible_layer="director",
+            reason="Required execution evidence was committed but failed",
+            **base_kwargs,
+        )
+
+    if missing_verifier_names:
+        return TaskBoundaryVerdictV1(
+            status="required_verifier_missing",
+            ok=False,
+            failure_class="EXECUTION_EVIDENCE_MISSING",
+            responsible_layer="director",
+            reason="Required verifier execution was not committed",
+            **base_kwargs,
+        )
+
+    if failed_verifier_names:
+        return TaskBoundaryVerdictV1(
+            status="required_verifier_failed",
+            ok=False,
+            failure_class="IMPLEMENTATION_DEFECT",
+            responsible_layer="director",
+            reason="Required verifier execution failed",
+            **base_kwargs,
+        )
+
+    return TaskBoundaryVerdictV1(
+        status="completed_verified",
+        ok=True,
+        failure_class="PASSED",
+        responsible_layer="execution_control_plane",
+        reason="Task boundary materialization, entrypoint, evidence, and verifier obligations are satisfied",
+        **base_kwargs,
     )
 
 

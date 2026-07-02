@@ -29,6 +29,28 @@ def _extend_context_paths(paths: list[str], value: Any) -> None:
             paths.append(path)
 
 
+def _mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _string_items(value: Any) -> list[str]:
+    raw_values = value if isinstance(value, (list, tuple, set)) else [value]
+    items: list[str] = []
+    seen: set[str] = set()
+    for raw_value in raw_values:
+        item = str(raw_value or "").strip()
+        if item and item not in seen:
+            items.append(item)
+            seen.add(item)
+    return items
+
+
+def _extend_context_items(items: list[str], value: Any) -> None:
+    for item in _string_items(value):
+        if item not in items:
+            items.append(item)
+
+
 def director_task_boundary_target_files(context_override: Any) -> list[str]:
     """Extract Director target files from the current role-turn context."""
     if not isinstance(context_override, dict):
@@ -49,6 +71,72 @@ def director_task_boundary_target_files(context_override: Any) -> list[str]:
         if isinstance(task, dict):
             _extend_context_paths(paths, task.get("target_files"))
     return paths
+
+
+def director_task_boundary_blocked_dependencies(context_override: Any) -> list[str]:
+    """Extract explicit blocked dependency ids from the current context.
+
+    Plain ``depends_on`` values are not treated as blockers. The caller must
+    provide a blocked/unresolved dependency projection to prevent false blocks
+    for normal task graphs.
+    """
+
+    if not isinstance(context_override, dict):
+        return []
+    dependencies: list[str] = []
+    for key in ("blocked_dependencies", "unresolved_dependencies"):
+        _extend_context_items(dependencies, context_override.get(key))
+    task_boundary = _mapping(context_override.get("task_boundary"))
+    for key in ("blocked_dependencies", "unresolved_dependencies"):
+        _extend_context_items(dependencies, task_boundary.get(key))
+    return dependencies
+
+
+def director_task_boundary_evidence_policy(context_override: Any) -> dict[str, Any]:
+    """Extract the current evidence policy projection from role context."""
+
+    if not isinstance(context_override, dict):
+        return {}
+    direct_policy = _mapping(context_override.get("evidence_policy"))
+    if direct_policy:
+        return direct_policy
+    for key in ("run_ledger", "run_ledger_projection", "ledger_projection"):
+        nested = _mapping(context_override.get(key))
+        policy = _mapping(nested.get("evidence_policy"))
+        if policy:
+            return policy
+    return {}
+
+
+def director_task_boundary_verifier_policy(context_override: Any) -> dict[str, list[str]]:
+    """Extract required/completed/failed verifier names from role context."""
+
+    if not isinstance(context_override, dict):
+        return {"required": [], "completed": [], "missing": [], "failed": []}
+    verifier_policy = _mapping(context_override.get("verifier_policy"))
+    task_boundary = _mapping(context_override.get("task_boundary"))
+    return {
+        "required": [
+            *_string_items(context_override.get("required_verifiers")),
+            *_string_items(verifier_policy.get("required_verifiers")),
+            *_string_items(task_boundary.get("required_verifiers")),
+        ],
+        "completed": [
+            *_string_items(context_override.get("completed_verifiers")),
+            *_string_items(verifier_policy.get("completed_verifiers")),
+            *_string_items(task_boundary.get("completed_verifiers")),
+        ],
+        "missing": [
+            *_string_items(context_override.get("missing_required_verifiers")),
+            *_string_items(verifier_policy.get("missing_required_verifiers")),
+            *_string_items(task_boundary.get("missing_required_verifiers")),
+        ],
+        "failed": [
+            *_string_items(context_override.get("failed_required_verifiers")),
+            *_string_items(verifier_policy.get("failed_required_verifiers")),
+            *_string_items(task_boundary.get("failed_required_verifiers")),
+        ],
+    }
 
 
 def completed_artifacts_from_tool_results(tool_results: list[dict[str, Any]]) -> list[str]:
@@ -87,7 +175,18 @@ def build_director_task_boundary_verdict(
     target_files = director_task_boundary_target_files(context_override)
     completed_artifacts = completed_artifacts_from_tool_results(tool_results)
     dispatch = dict(tool_dispatch or {})
-    if not target_files and not completed_artifacts and not bool(dispatch.get("dropped")):
+    blocked_dependencies = director_task_boundary_blocked_dependencies(context_override)
+    evidence_policy = director_task_boundary_evidence_policy(context_override)
+    verifier_policy = director_task_boundary_verifier_policy(context_override)
+    has_boundary_obligation = bool(
+        target_files
+        or completed_artifacts
+        or dispatch.get("dropped")
+        or blocked_dependencies
+        or evidence_policy
+        or any(verifier_policy.values())
+    )
+    if not has_boundary_obligation:
         return None
     from polaris.cells.control_plane.run_ledger.public import evaluate_task_boundary_verdict
 
@@ -97,6 +196,19 @@ def build_director_task_boundary_verdict(
         run_id=run_id,
         target_files=target_files,
         completed_artifacts=completed_artifacts,
+        blocked_dependencies=blocked_dependencies,
+        required_evidence_modalities=evidence_policy.get("required_evidence_modalities")
+        or evidence_policy.get("required_modalities"),
+        present_evidence_modalities=evidence_policy.get("present_evidence_modalities")
+        or evidence_policy.get("present_modalities"),
+        missing_required_evidence_modalities=evidence_policy.get("missing_required_evidence_modalities")
+        or evidence_policy.get("missing_required_modalities"),
+        failed_required_evidence_modalities=evidence_policy.get("failed_required_evidence_modalities")
+        or evidence_policy.get("failed_required_modalities"),
+        required_verifiers=verifier_policy["required"],
+        completed_verifiers=verifier_policy["completed"],
+        missing_required_verifiers=verifier_policy["missing"],
+        failed_required_verifiers=verifier_policy["failed"],
         tool_dispatch=dispatch,
         evidence_refs=evidence_refs,
     ).to_dict()

@@ -200,6 +200,40 @@ def _route_classification(
                 evidence_refs=evidence_refs,
             )
             return "FAIL", False, "pending_exec", "", classification
+        if boundary_failure_class == "EXECUTION_EVIDENCE_MISSING":
+            classification = build_qa_failure_classification_v1(
+                failure_class="EXECUTION_EVIDENCE_MISSING",
+                route="pending_exec",
+                reason=boundary_reason,
+                repairable_by_director=True,
+                owner="director",
+                responsible_layer=responsible_layer or "director",
+                evidence_refs=evidence_refs,
+            )
+            return "FAIL", False, "pending_exec", "", classification
+        if boundary_failure_class == "IMPLEMENTATION_DEFECT":
+            classification = build_qa_failure_classification_v1(
+                failure_class="IMPLEMENTATION_DEFECT",
+                route="pending_exec",
+                reason=boundary_reason,
+                repairable_by_director=True,
+                owner="director",
+                responsible_layer=responsible_layer or "director",
+                evidence_refs=evidence_refs,
+            )
+            return "FAIL", False, "pending_exec", "", classification
+        if boundary_failure_class == "DEPENDENCY_NOT_UNLOCKED":
+            classification = build_qa_failure_classification_v1(
+                failure_class="DEPENDENCY_NOT_UNLOCKED",
+                route="pending_exec",
+                reason=boundary_reason,
+                repairable_by_director=False,
+                severity="medium",
+                owner="execution_control_plane",
+                responsible_layer=responsible_layer or "execution_control_plane",
+                evidence_refs=evidence_refs,
+            )
+            return "BLOCKED", False, "pending_exec", "", classification
         if boundary_failure_class == "MISSING_ENTRYPOINT_TARGET":
             classification = build_qa_failure_classification_v1(
                 failure_class="MISSING_ENTRYPOINT_TARGET",

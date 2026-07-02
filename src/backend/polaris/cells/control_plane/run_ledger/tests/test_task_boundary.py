@@ -124,3 +124,92 @@ def test_task_boundary_reports_tool_dispatch_dropped(tmp_path: Path) -> None:
     assert verdict["status"] == "tool_dispatch_dropped"
     assert verdict["failure_class"] == "TOOL_DISPATCH_DROPPED"
     assert verdict["responsible_layer"] == "execution_control_plane"
+
+
+def test_task_boundary_reports_blocked_dependencies(tmp_path: Path) -> None:
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-2",
+        run_id="run-1",
+        blocked_dependencies=["TASK-1"],
+    ).to_dict()
+
+    assert verdict["ok"] is False
+    assert verdict["status"] == "dependency_not_unlocked"
+    assert verdict["failure_class"] == "DEPENDENCY_NOT_UNLOCKED"
+    assert verdict["blocked_dependencies"] == ["TASK-1"]
+
+
+def test_task_boundary_reports_missing_required_evidence(tmp_path: Path) -> None:
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-1",
+        run_id="run-1",
+        required_evidence_modalities=["command", "tool_effect"],
+        present_evidence_modalities=["tool_effect"],
+    ).to_dict()
+
+    assert verdict["ok"] is False
+    assert verdict["status"] == "execution_evidence_missing"
+    assert verdict["failure_class"] == "EXECUTION_EVIDENCE_MISSING"
+    assert verdict["missing_required_evidence_modalities"] == ["command"]
+
+
+def test_task_boundary_reports_failed_required_evidence(tmp_path: Path) -> None:
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-1",
+        run_id="run-1",
+        required_evidence_modalities=["command"],
+        failed_required_evidence_modalities=["command"],
+    ).to_dict()
+
+    assert verdict["ok"] is False
+    assert verdict["status"] == "required_evidence_failed"
+    assert verdict["failure_class"] == "IMPLEMENTATION_DEFECT"
+    assert verdict["failed_required_evidence_modalities"] == ["command"]
+
+
+def test_task_boundary_failed_evidence_takes_precedence_over_missing_flag(tmp_path: Path) -> None:
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-1",
+        run_id="run-1",
+        required_evidence_modalities=["command"],
+        missing_required_evidence_modalities=["command"],
+        failed_required_evidence_modalities=["command"],
+    ).to_dict()
+
+    assert verdict["ok"] is False
+    assert verdict["status"] == "required_evidence_failed"
+    assert verdict["failure_class"] == "IMPLEMENTATION_DEFECT"
+    assert verdict["missing_required_evidence_modalities"] == []
+
+
+def test_task_boundary_reports_missing_required_verifier(tmp_path: Path) -> None:
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-1",
+        run_id="run-1",
+        required_verifiers=["python -m unittest"],
+    ).to_dict()
+
+    assert verdict["ok"] is False
+    assert verdict["status"] == "required_verifier_missing"
+    assert verdict["failure_class"] == "EXECUTION_EVIDENCE_MISSING"
+    assert verdict["missing_required_verifiers"] == ["python -m unittest"]
+
+
+def test_task_boundary_reports_failed_required_verifier(tmp_path: Path) -> None:
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-1",
+        run_id="run-1",
+        required_verifiers=["npm test"],
+        failed_required_verifiers=["npm test"],
+    ).to_dict()
+
+    assert verdict["ok"] is False
+    assert verdict["status"] == "required_verifier_failed"
+    assert verdict["failure_class"] == "IMPLEMENTATION_DEFECT"
+    assert verdict["failed_required_verifiers"] == ["npm test"]

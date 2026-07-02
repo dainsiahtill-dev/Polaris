@@ -45,6 +45,66 @@ def test_director_task_boundary_verdict_reports_dropped_dispatch(tmp_path: Path)
     assert verdict["responsible_layer"] == "execution_control_plane"
 
 
+def test_director_task_boundary_verdict_projects_evidence_policy(tmp_path: Path) -> None:
+    verdict = build_director_task_boundary_verdict(
+        role="director",
+        workspace=str(tmp_path),
+        task_id="TASK-1",
+        run_id="run-1",
+        context_override={
+            "evidence_policy": {
+                "required_modalities": ["command", "tool_effect"],
+                "present_modalities": ["tool_effect"],
+                "missing_required_modalities": ["command"],
+                "failed_required_modalities": [],
+            }
+        },
+        tool_results=[],
+    )
+
+    assert verdict is not None
+    assert verdict["status"] == "execution_evidence_missing"
+    assert verdict["failure_class"] == "EXECUTION_EVIDENCE_MISSING"
+    assert verdict["missing_required_evidence_modalities"] == ["command"]
+
+
+def test_director_task_boundary_verdict_projects_blocked_dependencies(tmp_path: Path) -> None:
+    verdict = build_director_task_boundary_verdict(
+        role="director",
+        workspace=str(tmp_path),
+        task_id="TASK-2",
+        run_id="run-1",
+        context_override={"blocked_dependencies": ["TASK-1"], "depends_on": ["TASK-0"]},
+        tool_results=[],
+    )
+
+    assert verdict is not None
+    assert verdict["status"] == "dependency_not_unlocked"
+    assert verdict["failure_class"] == "DEPENDENCY_NOT_UNLOCKED"
+    assert verdict["blocked_dependencies"] == ["TASK-1"]
+
+
+def test_director_task_boundary_verdict_projects_verifier_policy(tmp_path: Path) -> None:
+    verdict = build_director_task_boundary_verdict(
+        role="director",
+        workspace=str(tmp_path),
+        task_id="TASK-1",
+        run_id="run-1",
+        context_override={
+            "verifier_policy": {
+                "required_verifiers": ["npm test"],
+                "failed_required_verifiers": ["npm test"],
+            }
+        },
+        tool_results=[],
+    )
+
+    assert verdict is not None
+    assert verdict["status"] == "required_verifier_failed"
+    assert verdict["failure_class"] == "IMPLEMENTATION_DEFECT"
+    assert verdict["failed_required_verifiers"] == ["npm test"]
+
+
 def test_director_task_boundary_verdict_skips_non_director(tmp_path: Path) -> None:
     assert (
         build_director_task_boundary_verdict(
