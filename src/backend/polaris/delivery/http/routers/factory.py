@@ -555,7 +555,7 @@ def _director_resume_workspace_slug(workspace_key: str) -> str:
     return str(match.group("slug")) if match else workspace_key
 
 
-def _director_resume_legacy_task_dirs(workspace: str) -> list[Path]:
+def _director_resume_source_task_dirs(workspace: str) -> list[Path]:
     roots = resolve_storage_roots(workspace)
     current_task_dir = Path(resolve_runtime_path(workspace, "runtime/tasks")).resolve()
     slug = _director_resume_workspace_slug(str(roots.workspace_key))
@@ -635,7 +635,7 @@ def _rehydrate_director_resume_taskboard(workspace: str) -> str:
         _reset_current_director_resume_taskboard(workspace, target_dir=target_dir)
         return ""
     candidates = sorted(
-        _director_resume_legacy_task_dirs(workspace),
+        _director_resume_source_task_dirs(workspace),
         key=_director_resume_taskboard_score,
         reverse=True,
     )

@@ -171,7 +171,7 @@ def _write_director_resume_evidence(workspace: Path) -> None:
     )
 
 
-def test_director_resume_evidence_rehydrates_legacy_taskboard(
+def test_director_resume_evidence_rehydrates_source_taskboard(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
