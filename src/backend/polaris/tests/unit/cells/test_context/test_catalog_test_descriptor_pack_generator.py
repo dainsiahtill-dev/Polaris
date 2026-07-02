@@ -401,6 +401,7 @@ class TestShouldAnalyzeSourceFile:
         "relative_path",
         [
             "polaris/cells/example/generated/service.py",
+            "polaris/cells/example/fixtures/sample/service.py",
             "polaris/cells/example/tests/test_service.py",
             "polaris/cells/example/internal/testing/fake_tools.py",
             "polaris/cells/example/internal/__pycache__/service.py",
@@ -546,6 +547,9 @@ class TestGeneratePack:
         gen_dir = py_dir / "generated"
         gen_dir.mkdir()
         (gen_dir / "skip.py").write_text("def skip(): pass\n", encoding="utf-8")
+        fixtures_dir = py_dir / "fixtures"
+        fixtures_dir.mkdir()
+        (fixtures_dir / "fixture_skip.py").write_text("def fixture_skip(): pass\n", encoding="utf-8")
         venv_dir = py_dir / "venv"
         venv_dir.mkdir()
         (venv_dir / "venv_skip.py").write_text("def venv_skip(): pass\n", encoding="utf-8")

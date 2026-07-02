@@ -256,6 +256,7 @@ def _should_analyze_source_file(path: Path) -> bool:
         ".ruff_cache",
         ".venv",
         "__pycache__",
+        "fixtures",
         "generated",
         "testing",
         "tests",

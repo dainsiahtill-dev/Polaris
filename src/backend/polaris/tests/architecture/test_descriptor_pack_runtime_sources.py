@@ -11,6 +11,7 @@ DISALLOWED_SOURCE_PARTS = frozenset(
     {
         ".venv",
         "__pycache__",
+        "fixtures",
         "generated",
         "testing",
         "tests",
