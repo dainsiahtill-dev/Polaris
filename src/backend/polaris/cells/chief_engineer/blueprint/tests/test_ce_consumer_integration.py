@@ -62,7 +62,7 @@ class TestCEConsumerTaskMarketHandoffIntegration:
         ack_call_args = mock_svc.acknowledge_task_stage.call_args
         assert ack_call_args is not None
         cmd = ack_call_args[0][0]
-        assert cmd.metadata.get("director_pool_assignment") == "deferred_to_task_market"
+        assert cmd.metadata.get("director_execution_assignment") == "deferred_to_task_market"
         assert cmd.metadata.get("blueprint_id") == "bp-task-42"
         assert cmd.metadata.get("blueprint_path") == "runtime/blueprints/bp-task-42.json"
         assert cmd.metadata.get("runtime_blueprint_path") == "runtime/blueprints/bp-task-42.json"

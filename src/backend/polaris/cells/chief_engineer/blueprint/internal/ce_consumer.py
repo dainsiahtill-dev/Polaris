@@ -467,9 +467,9 @@ class CEConsumer:
         worker_id: Unique identifier for this worker instance.
         visibility_timeout_seconds: How long a claimed task is locked before it
             becomes visible to other workers again on failure.
-        poll_interval: Deprecated compatibility argument; consumers now wait on
+        poll_interval: Compatibility argument; consumers now wait on
             task-market wake signals when no task is found.
-        enable_director_pool: Legacy flag for ADRStore-backed blueprint persistence.
+        enable_adr_blueprint_store: Enable ADRStore-backed blueprint persistence.
     """
 
     def __init__(
@@ -479,7 +479,7 @@ class CEConsumer:
         analysis_runner: Any | None = None,
         visibility_timeout_seconds: int = 900,
         poll_interval: float = 5.0,
-        enable_director_pool: bool = True,
+        enable_adr_blueprint_store: bool = True,
         wake_event: threading.Event | None = None,
     ) -> None:
         self._workspace = str(workspace or "").strip()
@@ -494,9 +494,9 @@ class CEConsumer:
         self._stop_event = threading.Event()
         self._work_event = wake_event or threading.Event()
         self._svc = get_task_market_service()
-        self._enable_director_pool = bool(enable_director_pool)
+        self._enable_adr_blueprint_store = bool(enable_adr_blueprint_store)
         self._adr_store: ADRStore | None = None
-        if self._enable_director_pool:
+        if self._enable_adr_blueprint_store:
             self._adr_store = ADRStore(workspace=self._workspace)
 
     def poll_once(self) -> list[dict[str, Any]]:
@@ -723,14 +723,14 @@ class CEConsumer:
                 **requeue_context_payload,
             }
 
-            if self._enable_director_pool and self._adr_store is not None:
+            if self._enable_adr_blueprint_store and self._adr_store is not None:
                 self._adr_store.create_blueprint(
                     blueprint_id,
                     blueprint_record,
                 )
                 self._adr_store.compile(blueprint_id)
 
-                ack_payload["director_pool_assignment"] = "deferred_to_task_market"
+                ack_payload["director_execution_assignment"] = "deferred_to_task_market"
             else:
                 BlueprintPersistence(self._workspace).save(blueprint_id, blueprint_record)
 

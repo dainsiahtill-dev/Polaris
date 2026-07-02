@@ -216,7 +216,7 @@ class TestCEConsumerPollOnce:
         consumer = CEConsumer(
             workspace=str(tmp_path),
             worker_id="w1",
-            enable_director_pool=False,
+            enable_adr_blueprint_store=False,
         )
 
         with patch.object(
