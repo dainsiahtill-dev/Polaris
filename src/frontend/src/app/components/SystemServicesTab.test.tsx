@@ -25,11 +25,11 @@ describe('SystemServicesTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     apiFetchMock.mockImplementation((path: string) => {
-      if (path === '/arsenal/mcp/status') {
+      if (path === '/arsenal/v2/mcp/status') {
         return Promise.resolve(jsonResponse({ available: true, tools: ['read_file'] }));
       }
 
-      if (path === '/arsenal/director/capabilities') {
+      if (path === '/arsenal/v2/director/capabilities') {
         return Promise.resolve(
           jsonResponse({
             ok: true,
@@ -42,7 +42,7 @@ describe('SystemServicesTab', () => {
         );
       }
 
-      if (path === '/arsenal/vision/status') {
+      if (path === '/arsenal/v2/vision/status') {
         return Promise.resolve(jsonResponse({ pil_available: true, model_loaded: false }));
       }
 
@@ -67,7 +67,7 @@ describe('SystemServicesTab', () => {
     ]);
   });
 
-  it('renders the legacy Director capability map as online desktop evidence', async () => {
+  it('renders the Director capability map as online desktop evidence', async () => {
     render(<SystemServicesTab />);
 
     await screen.findByText('Director Capabilities Overview');
@@ -77,7 +77,7 @@ describe('SystemServicesTab', () => {
     expect(screen.getByText('electron_workbench: write_files')).toBeInTheDocument();
     expect(screen.getByText('workflow: execute_tests')).toBeInTheDocument();
     await waitFor(() => {
-      expect(apiFetchMock).toHaveBeenCalledWith('/arsenal/director/capabilities');
+      expect(apiFetchMock).toHaveBeenCalledWith('/arsenal/v2/director/capabilities');
     });
   });
 });

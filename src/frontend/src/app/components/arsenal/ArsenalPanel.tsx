@@ -21,7 +21,7 @@ export function ArsenalPanel() {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch('/arsenal/code_map', { signal });
+      const res = await apiFetch('/arsenal/v2/code_map', { signal });
       if (!res.ok) throw new Error('拉取军械库图谱失败');
       const json = await res.json();
       if (signal?.aborted) return;

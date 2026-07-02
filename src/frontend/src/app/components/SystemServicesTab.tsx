@@ -80,7 +80,7 @@ export function SystemServicesTab() {
 
     // MCP Status
     try {
-      const res = await apiFetch('/arsenal/mcp/status');
+      const res = await apiFetch('/arsenal/v2/mcp/status');
       const data = await res.json();
       results.push({
         name: 'MCP Policy Service',
@@ -102,7 +102,7 @@ export function SystemServicesTab() {
 
     // Director Capabilities
     try {
-      const res = await apiFetch('/arsenal/director/capabilities');
+      const res = await apiFetch('/arsenal/v2/director/capabilities');
       const data = await res.json();
       const capabilityLabels = normalizeCapabilityLabels(data.capabilities);
       results.push({
@@ -129,7 +129,7 @@ export function SystemServicesTab() {
 
     // Vision Service
     try {
-      const res = await apiFetch('/arsenal/vision/status');
+      const res = await apiFetch('/arsenal/v2/vision/status');
       const data = await res.json();
       results.push({
         name: '视察司服务',
@@ -178,7 +178,7 @@ export function SystemServicesTab() {
   const handleIndex = async () => {
     setIndexing(true);
     try {
-      const res = await apiFetch('/arsenal/code/index', { method: 'POST' });
+      const res = await apiFetch('/arsenal/v2/code/index', { method: 'POST' });
       const data = await res.json();
       if (data.ok) {
         toast.success(`Indexed ${data.files} files (${data.chunks} chunks)`);
@@ -197,7 +197,7 @@ export function SystemServicesTab() {
     if (!searchQuery.trim()) return;
     setSearching(true);
     try {
-      const res = await apiFetch('/arsenal/code/search', {
+      const res = await apiFetch('/arsenal/v2/code/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: searchQuery, limit: 20 }),
