@@ -819,7 +819,7 @@ export const residentService = {
 
 export const lancedbService = {
   async getStatus(): Promise<ApiResult<LanceDbStatus>> {
-    const res = await apiFetch("/lancedb/status");
+    const res = await apiFetch("/v2/lancedb/status");
     return handleResponse(res, "Failed to load LanceDB status");
   },
 };
@@ -855,7 +855,7 @@ export const fileService = {
 
 export const memoService = {
   async list(limit = 200) {
-    const res = await apiFetch(`/memos/list?limit=${limit}`);
+    const res = await apiFetch(`/v2/memos/list?limit=${limit}`);
     return handleResponse<{
       items: Array<{ path: string; name: string; mtime?: string }>;
       count: number;
@@ -883,7 +883,7 @@ export const ollamaService = {
   async stopModels(): Promise<
     ApiResult<{ stopped?: string[]; failed?: Array<{ model: string }> }>
   > {
-    const res = await apiFetch("/ollama/stop", { method: "POST" });
+    const res = await apiFetch("/v2/ollama/stop", { method: "POST" });
     return handleResponse(res, "Failed to stop Ollama models");
   },
 };
@@ -897,7 +897,7 @@ export const healthService = {
 
 export const agentsService = {
   async applyDraft(draftPath: string): Promise<ApiResult<void>> {
-    const res = await apiFetch("/agents/apply", {
+    const res = await apiFetch("/v2/agents/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ draft_path: draftPath }),
@@ -908,7 +908,7 @@ export const agentsService = {
   async saveFeedback(
     text: string,
   ): Promise<ApiResult<{ mtime?: string; cleared?: boolean }>> {
-    const res = await apiFetch("/agents/feedback", {
+    const res = await apiFetch("/v2/agents/feedback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),

@@ -44,11 +44,16 @@ def test_removed_stream_paths_are_normal_absent_actions() -> None:
 
 
 def test_bootstrap_endpoints_are_loopback_sensitive_not_public() -> None:
-    for path in ("/settings", "/runtime/storage-layout", "/llm/status", "/memos/list"):
+    for path in ("/settings", "/runtime/storage-layout", "/llm/status", "/v2/memos/list"):
         assert classify_endpoint(path) == EndpointPolicy.AUTH_BOOTSTRAP
         assert is_bootstrap_rate_limit_sensitive(path) is True
         assert is_always_rate_limit_exempt(path) is False
         assert is_public_probe(path) is False
+
+
+def test_retired_memos_alias_is_not_bootstrap_sensitive() -> None:
+    assert classify_endpoint("/memos/list") == EndpointPolicy.AUTH_ACTION
+    assert is_bootstrap_rate_limit_sensitive("/memos/list") is False
 
 
 def test_factory_control_plane_paths_are_loopback_rate_limit_exempt_only() -> None:

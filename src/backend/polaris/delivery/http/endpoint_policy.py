@@ -47,7 +47,6 @@ _AUTH_BOOTSTRAP_EXACT = frozenset(
         "/v2/state/snapshot",
         "/llm/status",
         "/v2/llm/status",
-        "/memos/list",
         "/v2/memos/list",
     }
 )
