@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 
 import polaris.infrastructure.log_pipeline.writer as writer_module
-from polaris.delivery.http.routers.logs import log_user_action
+from polaris.delivery.http.routers.logs import v2_log_user_action
 from polaris.infrastructure.log_pipeline.query import LogQuery, LogQueryService
 from polaris.infrastructure.log_pipeline.writer import LogEventWriter
 from polaris.kernelone.storage import (
@@ -49,7 +49,7 @@ def test_logs_router_user_action_writes_to_runtime_layout(tmp_path, monkeypatch)
     monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
 
     payload = asyncio.run(
-        log_user_action(
+        v2_log_user_action(
             action="open-settings",
             user="tester",
             metadata={"source": "test"},

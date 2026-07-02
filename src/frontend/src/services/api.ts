@@ -1532,7 +1532,7 @@ export const shutdownV2Service = {
 };
 
 export const logsV2Service = {
-  /** GET /v2/logs/query — Query logs */
+  /** GET /logs/v2/query - Query logs */
   async query(params?: {
     level?: string;
     channel?: string;
@@ -1549,15 +1549,15 @@ export const logsV2Service = {
     if (params?.start) searchParams.set("start", params.start);
     if (params?.end) searchParams.set("end", params.end);
     const query = searchParams.toString();
-    const res = await apiFetch(`/v2/logs/query${query ? `?${query}` : ""}`);
+    const res = await apiFetch(`/logs/v2/query${query ? `?${query}` : ""}`);
     return handleResponse(res, "Failed to query logs");
   },
 
-  /** POST /v2/logs/user-action — Log user action */
+  /** POST /logs/v2/user-action - Log user action */
   async logUserAction(
     request: import("./api.types").LogUserActionV2Request,
   ): Promise<ApiResult<import("./api.types").LogUserActionV2Response>> {
-    const res = await apiFetch("/v2/logs/user-action", {
+    const res = await apiFetch("/logs/v2/user-action", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
@@ -1565,11 +1565,11 @@ export const logsV2Service = {
     return handleResponse(res, "Failed to log user action");
   },
 
-  /** GET /v2/logs/channels — Log channels */
+  /** GET /logs/v2/channels - Log channels */
   async channels(): Promise<
     ApiResult<import("./api.types").LogChannelsV2Response>
   > {
-    const res = await apiFetch("/v2/logs/channels");
+    const res = await apiFetch("/logs/v2/channels");
     return handleResponse(res, "Failed to load log channels");
   },
 };

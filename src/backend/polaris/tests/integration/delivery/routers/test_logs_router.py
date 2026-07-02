@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from polaris.delivery.http.routers import logs as logs_router
@@ -45,8 +46,24 @@ class _FakeQueryResult:
 class TestLogsRouter:
     """Contract tests for the logs router."""
 
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        (
+            ("GET", "/logs/query"),
+            ("POST", "/logs/user-action"),
+            ("GET", "/logs/channels"),
+        ),
+    )
+    def test_retired_logs_alias_routes_are_not_registered(self, method: str, path: str) -> None:
+        """Logs APIs must use the canonical /logs/v2 namespace."""
+        client = _build_client()
+
+        response = client.request(method, path, json={})
+
+        assert response.status_code == 404
+
     def test_query_logs_happy_path(self) -> None:
-        """GET /logs/query returns 200 with filtered log events."""
+        """GET /logs/v2/query returns 200 with filtered log events."""
         client = _build_client()
         with patch(
             "polaris.delivery.http.routers.logs.LogQueryService",
@@ -56,7 +73,7 @@ class TestLogsRouter:
             mock_service_cls.return_value = mock_service
 
             response = client.get(
-                "/logs/query",
+                "/logs/v2/query",
                 params={
                     "run_id": "run-1",
                     "channel": "system",
@@ -73,13 +90,13 @@ class TestLogsRouter:
         assert payload["has_more"] is True
 
     def test_query_logs_invalid_limit(self) -> None:
-        """GET /logs/query with out-of-range limit returns 422."""
+        """GET /logs/v2/query with out-of-range limit returns 422."""
         client = _build_client()
-        response = client.get("/logs/query", params={"limit": 5000})
+        response = client.get("/logs/v2/query", params={"limit": 5000})
         assert response.status_code == 422
 
     def test_query_logs_invalid_channel(self) -> None:
-        """GET /logs/query with invalid channel is treated as None (no filter)."""
+        """GET /logs/v2/query with invalid channel is treated as None (no filter)."""
         client = _build_client()
         with patch(
             "polaris.delivery.http.routers.logs.LogQueryService",
@@ -89,7 +106,7 @@ class TestLogsRouter:
             mock_service_cls.return_value = mock_service
 
             response = client.get(
-                "/logs/query",
+                "/logs/v2/query",
                 params={"channel": "invalid_channel"},
             )
 
@@ -99,7 +116,7 @@ class TestLogsRouter:
         assert call_args.channel is None
 
     def test_log_user_action_happy_path(self) -> None:
-        """POST /logs/user-action returns 200 when action is logged."""
+        """POST /logs/v2/user-action returns 200 when action is logged."""
         client = _build_client()
         with (
             patch(
@@ -115,7 +132,7 @@ class TestLogsRouter:
             ),
         ):
             response = client.post(
-                "/logs/user-action",
+                "/logs/v2/user-action",
                 json={"action": "click", "user": "tester", "metadata": {"page": "home"}},
             )
 
@@ -126,15 +143,15 @@ class TestLogsRouter:
         mock_append.assert_called_once()
 
     def test_log_user_action_missing_action(self) -> None:
-        """POST /logs/user-action without action returns 422."""
+        """POST /logs/v2/user-action without action returns 422."""
         client = _build_client()
-        response = client.post("/logs/user-action", json={"user": "tester"})
+        response = client.post("/logs/v2/user-action", json={"user": "tester"})
         assert response.status_code == 422
 
     def test_get_channels_happy_path(self) -> None:
-        """GET /logs/channels returns 200 with available channels."""
+        """GET /logs/v2/channels returns 200 with available channels."""
         client = _build_client()
-        response = client.get("/logs/channels")
+        response = client.get("/logs/v2/channels")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
