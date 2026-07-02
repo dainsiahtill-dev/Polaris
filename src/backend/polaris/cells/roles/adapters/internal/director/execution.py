@@ -215,28 +215,29 @@ class DirectorPatchExecutor:
         del update_task_progress_fn  # Text patch execution is intentionally disabled.
         response_text = str(response or "")
         if _TEXTUAL_TOOL_PROTOCOL_PATTERN.search(response_text):
+            error_code = "text_tool_protocol_disabled"
             return [
                 {
                     "tool": "text_tool_protocol",
                     "success": False,
                     "ok": False,
-                    "error": "legacy_text_tool_protocol_disabled",
-                    "failure_class": "tool_text_protocol_disabled",
-                    "protocol_violation": "legacy_text_tool_protocol_disabled",
+                    "error": error_code,
+                    "failure_class": error_code,
+                    "protocol_violation": error_code,
                     "task_id": task_id,
                 }
             ]
         if looks_like_protocol_patch_response(response_text) or self._extract_markdown_file_blocks(response_text):
-            return [self._legacy_patch_protocol_disabled_result(task_id, allow_patch_fallback=allow_patch_fallback)]
+            return [self._patch_file_protocol_disabled_result(task_id, allow_patch_fallback=allow_patch_fallback)]
         return []
 
     @staticmethod
-    def _legacy_patch_protocol_disabled_result(
+    def _patch_file_protocol_disabled_result(
         task_id: str,
         *,
         allow_patch_fallback: bool,
     ) -> dict[str, Any]:
-        error_code = "legacy_patch_file_protocol_disabled"
+        error_code = "patch_file_protocol_disabled"
         return {
             "tool": "patch_apply",
             "tool_name": "patch_apply",

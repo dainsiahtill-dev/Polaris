@@ -185,7 +185,7 @@ async def test_markdown_patch_file_is_fail_closed_without_file_event(tmp_path: P
     assert len(results) == 1
     assert results[0]["tool"] == "patch_apply"
     assert results[0]["success"] is False
-    assert results[0]["error"] == "legacy_patch_file_protocol_disabled"
+    assert results[0]["error"] == "patch_file_protocol_disabled"
     assert results[0]["writes_allowed"] is False
     assert results[0]["result"]["repair_path"] == "native_tools_or_director_runtime_repair_required"
     assert not (tmp_path / "src" / "patch.ts").exists()
@@ -215,9 +215,9 @@ async def test_write_only_tool_fallback_rejects_read_calls_and_patch_blocks(tmp_
             "tool": "text_tool_protocol",
             "success": False,
             "ok": False,
-            "error": "legacy_text_tool_protocol_disabled",
-            "failure_class": "tool_text_protocol_disabled",
-            "protocol_violation": "legacy_text_tool_protocol_disabled",
+            "error": "text_tool_protocol_disabled",
+            "failure_class": "text_tool_protocol_disabled",
+            "protocol_violation": "text_tool_protocol_disabled",
             "task_id": "task-write-only",
         }
     ]
@@ -241,7 +241,7 @@ async def test_write_only_tool_fallback_does_not_apply_markdown_without_write_to
     assert len(results) == 1
     assert results[0]["tool"] == "patch_apply"
     assert results[0]["success"] is False
-    assert results[0]["error"] == "legacy_patch_file_protocol_disabled"
+    assert results[0]["error"] == "patch_file_protocol_disabled"
     assert results[0]["allow_patch_fallback_requested"] is False
     assert not (tmp_path / "src" / "ignored.ts").exists()
 
@@ -259,7 +259,7 @@ async def test_markdown_patch_file_returns_disabled_receipt_without_persisting_e
     assert item["tool_name"] == "patch_apply"
     assert item["status"] == "blocked"
     assert item["success"] is False
-    assert item["error"] == "legacy_patch_file_protocol_disabled"
+    assert item["error"] == "patch_file_protocol_disabled"
     assert item["result"]["authoritative_receipt"] is False
     assert not (tmp_path / "src" / "patch.ts").exists()
 
