@@ -34,6 +34,9 @@ try:
         RULE_ID as CLOSED_LEDGER_INTAKE_RULE_ID,
         evaluate_closed_ledger_intake,
     )
+    from docs.governance.ci.scripts.dangerous_pattern_source_policy import (
+        evaluate_dangerous_pattern_source,
+    )
     from docs.governance.ci.scripts.legacy_coverage_policy import (
         evaluate_legacy_coverage,
     )
@@ -53,6 +56,9 @@ except ModuleNotFoundError:
     from closed_ledger_intake_policy import (
         RULE_ID as CLOSED_LEDGER_INTAKE_RULE_ID,
         evaluate_closed_ledger_intake,
+    )
+    from dangerous_pattern_source_policy import (
+        evaluate_dangerous_pattern_source,
     )
     from legacy_coverage_policy import (
         evaluate_legacy_coverage,
@@ -427,57 +433,15 @@ class FitnessRuleChecker:
         )
 
     def check_command_pattern_source(self) -> FitnessCheckResult:
-        """Check that dangerous command patterns have single source."""
-        result = FitnessCheckResult(rule_id="canonical_dangerous_patterns", passed=True)
-        canonical_path = self.workspace / "polaris" / "kernelone" / "security" / "dangerous_patterns.py"
-        if not canonical_path.exists():
-            result.passed = False
-            result.violations.append("Canonical dangerous_patterns not found in kernelone/security/")
-            return result
-        try:
-            with open(canonical_path, encoding="utf-8") as f:
-                content = f.read()
-            if "_DANGEROUS_PATTERNS" not in content and "DANGEROUS_PATTERNS" not in content:
-                result.passed = False
-                result.violations.append("Canonical dangerous_patterns file lacks pattern definitions")
-                return result
-        except OSError:
-            result.passed = False
-            result.violations.append("Cannot read canonical dangerous_patterns file")
-            return result
-        result.evidence.append("Canonical dangerous_patterns verified")
-        cells_dir = self.workspace / "polaris" / "cells"
-        dangerous_patterns = [
-            re.compile(r"_DANGEROUS_PATTERNS\s*=\s*\["),
-            re.compile(r"DANGEROUS_PATTERNS\s*=\s*\["),
-            re.compile(r"DANGEROUS_PATTERNS\s*:\s*list"),
-            re.compile(r"_DANGEROUS_PATTERNS\s*:\s*list"),
-        ]
-        violations: list[str] = []
-        if cells_dir.exists():
-            for py_file in cells_dir.rglob("*.py"):
-                if py_file == canonical_path:
-                    continue
-                if "test" in py_file.parts or "_fixture" in py_file.name:
-                    continue
-                try:
-                    with open(py_file, encoding="utf-8") as f:
-                        file_content = f.read()
-                    for pat in dangerous_patterns:
-                        for match in pat.finditer(file_content):
-                            line_num = file_content[: match.start()].count("\n") + 1
-                            violations.append(
-                                f"Local pattern definition at {py_file.relative_to(self.workspace)}:{line_num}"
-                            )
-                except OSError:
-                    continue
-        if violations:
-            result.passed = False
-            for v in violations:
-                result.violations.append(v)
-        else:
-            result.evidence.append("No local dangerous pattern definitions found in cells/")
-        return result
+        """Check dangerous command patterns through the canonical policy module."""
+        policy_result = evaluate_dangerous_pattern_source(self.workspace)
+        return FitnessCheckResult(
+            rule_id=policy_result.rule_id,
+            passed=policy_result.passed,
+            evidence=list(policy_result.evidence),
+            violations=list(policy_result.violations),
+            warnings=list(policy_result.warnings),
+        )
 
     def check_event_usage(self) -> FitnessCheckResult:
         """Check that events use kernelone.events."""
