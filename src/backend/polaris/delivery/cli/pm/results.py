@@ -230,7 +230,7 @@ def build_pm_review(result: dict[str, Any], attempt: int, attempts: int, qa_enab
     return "收到，但仍未达成验收。先暂停这条任务，后续我会调整任务和要求。"
 
 
-def emit_pm_director_conversation(
+def emit_pm_execution_review_conversation(
     dialogue_full: str,
     run_id: str,
     pm_iteration: int,
@@ -241,7 +241,7 @@ def emit_pm_director_conversation(
     attempts: int,
     qa_enabled: bool,
 ) -> tuple:
-    """Emit PM-Director conversation to dialogue."""
+    """Emit PM execution-review dialogue for Director and QA evidence."""
     from polaris.kernelone.events import emit_dialogue
 
     pm_question = "请确认：刚刚分配的任务你完成了哪些部分？还有哪些未完成？"
@@ -296,7 +296,7 @@ __all__ = [
     "build_director_response",
     "build_pm_review",
     "classify_director_start_state",
-    "emit_pm_director_conversation",
+    "emit_pm_execution_review_conversation",
     "is_director_done",
     "match_director_result",
     "match_director_result_any",

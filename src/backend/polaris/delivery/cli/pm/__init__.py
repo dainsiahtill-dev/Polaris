@@ -116,6 +116,7 @@ _SYMBOL_MAP = {
     "extract_defect_ticket": ("pm.task_helpers", None),
     "validate_ticket_fields": ("pm.task_helpers", None),
     "build_defect_followup_task": ("pm.task_special", None),
+    "build_resume_payload_from_last_tasks": ("pm.task_special", None),
     # Execution exports
     "execute_non_director_tasks": ("pm.execution", None),
     "run_chief_engineer_analysis": ("pm.chief_engineer", None),
@@ -139,7 +140,7 @@ _SYMBOL_MAP = {
     "classify_director_start_state": ("pm.results", None),
     "build_director_response": ("pm.results", None),
     "build_pm_review": ("pm.results", None),
-    "emit_pm_director_conversation": ("pm.results", None),
+    "emit_pm_execution_review_conversation": ("pm.results", None),
     # Memo exports
     "build_pm_memo": ("pm.memo", None),
     "write_pm_memo": ("pm.memo", None),
@@ -155,6 +156,19 @@ _SYMBOL_MAP = {
 
 # Cache for imported symbols
 _import_cache: dict[str, Any] = {}
+
+
+def _resolve_pm_module_path(module_path: str) -> str:
+    """Resolve historical ``pm.*`` module ids to this package's canonical path.
+
+    The CLI package can still be imported as top-level ``pm`` by old direct
+    script entrypoints, but normal application code imports it as
+    ``polaris.delivery.cli.pm``. Keeping this conversion in one place prevents
+    lazy exports from depending on caller cwd or ``sys.path`` mutation.
+    """
+    if __name__ != "pm" and module_path.startswith("pm."):
+        return f"{__name__}{module_path.removeprefix('pm')}"
+    return module_path
 
 
 def __getattr__(name: str):
@@ -175,7 +189,7 @@ def __getattr__(name: str):
         try:
             import importlib
 
-            core = importlib.import_module("pm.orchestration_core")
+            core = importlib.import_module(_resolve_pm_module_path("pm.orchestration_core"))
             value = getattr(core, name, None)
             globals()[name] = value
             return value
@@ -195,7 +209,8 @@ def __getattr__(name: str):
         try:
             import importlib
 
-            module = importlib.import_module(module_path)
+            resolved_module_path = _resolve_pm_module_path(module_path)
+            module = importlib.import_module(resolved_module_path)
             value = getattr(module, actual_name)
             _import_cache[name] = value
             return value
@@ -214,7 +229,7 @@ def __getattr__(name: str):
         try:
             import importlib
 
-            module = importlib.import_module("pm.director_interface_integration")
+            module = importlib.import_module(_resolve_pm_module_path("pm.director_interface_integration"))
             value = getattr(module, name)
             globals()[name] = value
             return value
@@ -314,6 +329,7 @@ __all__ = [
     "build_pm_prompt",
     "build_pm_review",
     "build_pm_spin_fingerprint",
+    "build_resume_payload_from_last_tasks",
     "build_run_dir",
     "build_utf8_env",
     "classify_director_start_state",
@@ -323,7 +339,7 @@ __all__ = [
     "create_director_for_pm",
     "detect_plan_missing",
     "document_manager",
-    "emit_pm_director_conversation",
+    "emit_pm_execution_review_conversation",
     "enforce_utf8",
     "ensure_docs_ready",
     "ensure_pm_backend_available",

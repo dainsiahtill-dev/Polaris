@@ -1,28 +1,19 @@
-import importlib.util
+import importlib
 import os
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 
-def _load_loop_pm():
-    repo_root = Path(__file__).resolve().parents[1]
-    module_path = repo_root / "src" / "backend" / "scripts" / "loop-pm.py"
-    if not module_path.is_file():
-        raise RuntimeError(f"Failed to locate loop-pm.py: {module_path}")
-    spec = importlib.util.spec_from_file_location("loop_pm", module_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Failed to load loop-pm.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def _load_loop_pm() -> ModuleType:
+    return importlib.import_module("polaris.delivery.cli.pm")
 
 
 class TestLoopPmUtils(unittest.TestCase):
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         cls.loop_pm = _load_loop_pm()
 
     def test_normalize_tasks_generates_id(self):
@@ -385,8 +376,8 @@ class TestLoopPmUtils(unittest.TestCase):
             followup = payload["generated_director_tasks"][0]
             self.assertEqual(followup["assigned_to"], "Director")
             self.assertIn("D-100", followup["title"])
-            from io_utils import resolve_artifact_path
-            from pm.director_mgmt import build_run_dir
+            from polaris.delivery.cli.pm.director_mgmt import build_run_dir
+            from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
             summary_path = Path(
                 resolve_artifact_path(
@@ -587,7 +578,7 @@ class TestLoopPmUtils(unittest.TestCase):
             run_dir = workspace_path / "runtime" / "runs" / "pm-00001"
             run_dir.mkdir(parents=True, exist_ok=True)
             with patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False):
-                from io_utils import interrupt_notice_path
+                from polaris.kernelone.fs.control_flags import interrupt_notice_path
 
                 interrupt_path = Path(interrupt_notice_path(str(workspace_path)))
                 interrupt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -744,10 +735,11 @@ class TestLoopPmUtils(unittest.TestCase):
         self.assertIn("Resumed prior task", payload["notes"])
 
     def test_resolve_agents_approval_mode_auto_switches_by_session_type(self):
+        pm_agents = importlib.import_module("polaris.delivery.cli.pm.agents")
         args = SimpleNamespace(agents_approval_mode="auto", loop=False)
-        with patch.object(self.loop_pm, "_is_interactive_session", return_value=False):
+        with patch.object(pm_agents, "_is_interactive_session", return_value=False):
             self.assertEqual(self.loop_pm.resolve_agents_approval_mode(args), "auto_accept")
-        with patch.object(self.loop_pm, "_is_interactive_session", return_value=True):
+        with patch.object(pm_agents, "_is_interactive_session", return_value=True):
             self.assertEqual(self.loop_pm.resolve_agents_approval_mode(args), "wait")
 
     def test_wait_for_agents_confirmation_auto_accept_creates_agents(self):
@@ -788,7 +780,8 @@ class TestLoopPmUtils(unittest.TestCase):
                 loop=False,
             )
 
-            with patch.object(self.loop_pm, "maybe_generate_agents_draft", return_value=str(draft)):
+            pm_agents = importlib.import_module("polaris.delivery.cli.pm.agents")
+            with patch.object(pm_agents, "maybe_generate_agents_draft", return_value=str(draft)):
                 ok = self.loop_pm.wait_for_agents_confirmation(
                     workspace,
                     "",
@@ -846,7 +839,9 @@ class TestLoopPmUtils(unittest.TestCase):
             self.assertFalse(ok)
             self.assertTrue(pm_state.get("awaiting_manual_intervention"))
             self.assertEqual(pm_state.get("manual_intervention_reason_code"), "AGENTS_APPROVAL_TIMEOUT")
-            pause_path = Path(self.loop_pm.pause_flag_path(workspace))
+            from polaris.kernelone.fs.control_flags import pause_flag_path
+
+            pause_path = Path(pause_flag_path(workspace))
             self.assertFalse(pause_path.exists())
             self.assertFalse((Path(workspace) / "AGENTS.md").exists())
 
@@ -877,7 +872,8 @@ class TestLoopPmUtils(unittest.TestCase):
                 loop=False,
             )
 
-            with patch.object(self.loop_pm, "maybe_generate_agents_draft", return_value=str(draft)):
+            pm_agents = importlib.import_module("polaris.delivery.cli.pm.agents")
+            with patch.object(pm_agents, "maybe_generate_agents_draft", return_value=str(draft)):
                 ok = self.loop_pm.wait_for_agents_confirmation(
                     workspace,
                     "",
@@ -895,7 +891,9 @@ class TestLoopPmUtils(unittest.TestCase):
             self.assertFalse(ok)
             self.assertTrue(pm_state.get("awaiting_manual_intervention"))
             self.assertEqual(pm_state.get("manual_intervention_mode"), "pause")
-            pause_path = Path(self.loop_pm.pause_flag_path(workspace))
+            from polaris.kernelone.fs.control_flags import pause_flag_path
+
+            pause_path = Path(pause_flag_path(workspace))
             self.assertTrue(pause_path.is_file())
 
     def test_build_pm_prompt_includes_bootstrap_first_rules(self):
@@ -906,8 +904,14 @@ class TestLoopPmUtils(unittest.TestCase):
             "context_pack": None,
         }
         with (
-            patch.object(self.loop_pm, "_use_context_engine_v2", return_value=False),
-            patch.object(self.loop_pm, "get_anthropomorphic_context", return_value=mock_ctx),
+            patch.object(
+                importlib.import_module("polaris.delivery.cli.pm.backend"), "_use_context_engine_v2", return_value=False
+            ),
+            patch.object(
+                importlib.import_module("polaris.delivery.cli.pm.backend"),
+                "get_anthropomorphic_context",
+                return_value=mock_ctx,
+            ),
         ):
             prompt = self.loop_pm.build_pm_prompt(
                 requirements="req",
