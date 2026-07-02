@@ -13,7 +13,6 @@ Each rule implements a check_* method returning FitnessCheckResult.
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 import re
 import subprocess
@@ -46,6 +45,9 @@ try:
     from docs.governance.ci.scripts.no_conflicting_coverage_policy import (
         evaluate_no_conflicting_coverage,
     )
+    from docs.governance.ci.scripts.role_call_hierarchy_policy import (
+        evaluate_role_call_hierarchy,
+    )
     from docs.governance.ci.scripts.shim_markers_policy import (
         evaluate_shim_markers,
     )
@@ -77,6 +79,9 @@ except ModuleNotFoundError:
     )
     from no_conflicting_coverage_policy import (
         evaluate_no_conflicting_coverage,
+    )
+    from role_call_hierarchy_policy import (
+        evaluate_role_call_hierarchy,
     )
     from shim_markers_policy import (
         evaluate_shim_markers,
@@ -493,67 +498,15 @@ class FitnessRuleChecker:
         )
 
     def check_role_call_hierarchy(self) -> FitnessCheckResult:
-        """Check that roles don't directly call同级 peers."""
-        result = FitnessCheckResult(rule_id="no_direct_role_call", passed=True)
-        cells_dir = self.workspace / "polaris" / "cells"
-        role_call_pattern = re.compile(
-            r"(DirectorService|ChiefEngineerService|PmService|QaService|"
-            r"RoleService|RoleAgent|"
-            r"execute_role|invoke_role|run_role|call_role)"
+        """Check role hierarchy through the canonical policy module."""
+        policy_result = evaluate_role_call_hierarchy(self.workspace)
+        return FitnessCheckResult(
+            rule_id=policy_result.rule_id,
+            passed=policy_result.passed,
+            evidence=list(policy_result.evidence),
+            violations=list(policy_result.violations),
+            warnings=list(policy_result.warnings),
         )
-        allowed_patterns = [
-            re.compile(r"from polaris\.cells\.runtime\.task_market"),
-            re.compile(r"from polaris\.cells\.roles\.runtime"),
-            re.compile(r"\.task_market"),
-            re.compile(r"TaskMarket"),
-            re.compile(r"WorkItem"),
-        ]
-        orchestrator_dirs = [
-            cells_dir / "director" / "execution",
-            cells_dir / "pm" / "workflow",
-            cells_dir / "roles" / "runtime",
-        ]
-        violations: list[str] = []
-        for dir_path in orchestrator_dirs:
-            if not dir_path.exists():
-                continue
-            for py_file in dir_path.rglob("*.py"):
-                if "test" in py_file.parts:
-                    continue
-                try:
-                    with open(py_file, encoding="utf-8") as f:
-                        content = f.read()
-                    tree = ast.parse(content, filename=str(py_file))
-                    for node in ast.walk(tree):
-                        if isinstance(node, ast.ImportFrom):
-                            module = node.module or ""
-                            if "polaris.cells.roles" in module or "polaris.cells.director" in module:
-                                for alias in node.names:
-                                    name = alias.name
-                                    if name.endswith(("Service", "Agent", "Adapter")) and any(
-                                        role in module for role in ["pm", "director", "chief_engineer", "qa"]
-                                    ):
-                                        violations.append(
-                                            f"Direct peer role import at {py_file.relative_to(self.workspace)}:{node.lineno}: {module}.{name}"
-                                        )
-                    for match in role_call_pattern.finditer(content):
-                        line_num = content[: match.start()].count("\n") + 1
-                        line = content.split("\n")[line_num - 1] if line_num <= len(content.split("\n")) else ""
-                        if not any(p.search(line) for p in allowed_patterns):
-                            violations.append(
-                                f"Suspicious role call at {py_file.relative_to(self.workspace)}:{line_num}: {match.group()}"
-                            )
-                except OSError:
-                    pass
-                except SyntaxError:
-                    pass
-        if violations:
-            result.passed = False
-            for v in violations:
-                result.violations.append(v)
-        else:
-            result.evidence.append("No direct peer role calls found in mainline orchestration")
-        return result
 
     def check_task_broker(self) -> FitnessCheckResult:
         """Check that task_market is the only business broker."""
