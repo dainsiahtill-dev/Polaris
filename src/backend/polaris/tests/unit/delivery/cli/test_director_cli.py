@@ -13,12 +13,14 @@ import argparse
 
 # Import cli_entrypoint directly to bypass __init__.py circular import issues
 import importlib.util
+import inspect
 import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from polaris.delivery.cli import director_v2
 from polaris.delivery.cli.director.cli_thin import (
     create_parser as director_thin_create_parser,
     main as director_thin_main,
@@ -59,6 +61,25 @@ def director_thin_parser() -> argparse.ArgumentParser:
 def director_entrypoint_parser() -> argparse.ArgumentParser:
     """Return a fresh director-entrypoint parser."""
     return director_entrypoint_create_parser()
+
+
+# ---------------------------------------------------------------------------
+# Test: director_v2.py
+# ---------------------------------------------------------------------------
+
+
+class TestDirectorV2Cli:
+    """Test canonical Director v2 CLI parser boundaries."""
+
+    def test_director_v2_parser_rejects_state_override(self) -> None:
+        """Director state must come from runtime services, not a CLI override."""
+        parser = director_v2.create_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--state", "running"])
+
+    def test_director_v2_run_director_signature_has_no_state_parameter(self) -> None:
+        """run_director must not expose a second state fact source."""
+        assert "state" not in inspect.signature(director_v2.run_director).parameters
 
 
 # ---------------------------------------------------------------------------

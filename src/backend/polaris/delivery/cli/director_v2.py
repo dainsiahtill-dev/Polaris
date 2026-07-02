@@ -70,13 +70,6 @@ def create_parser() -> argparse.ArgumentParser:
         help="Maximum parallel workers (default: 1)",
     )
     parser.add_argument(
-        "--state",
-        type=str,
-        choices=["idle", "running", "completed", "failed"],
-        default="idle",
-        help="Initial state (default: idle)",
-    )
-    parser.add_argument(
         "--command",
         type=str,
         default=None,
@@ -122,7 +115,6 @@ async def run_director(
     workspace: str,
     iterations: int,
     max_workers: int,
-    state: str,
     command: str | None,
     *,
     model: str = "",
@@ -130,9 +122,6 @@ async def run_director(
 ) -> None:
     """Run director in iterative mode."""
     director_config_cls, director_service_cls, iteration_service_cls, task_priority_cls = _bootstrap_backend_import_path()
-
-    if state != "idle":
-        logger.warning("Ignoring deprecated --state=%s; Director v2 derives state from runtime services.", state)
 
     if command:
         service = director_service_cls(
@@ -192,7 +181,6 @@ def main() -> int:
             workspace,
             parsed.iterations,
             parsed.max_workers,
-            parsed.state,
             parsed.command,
             model=parsed.model,
             forever=bool(parsed.forever),
