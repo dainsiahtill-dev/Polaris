@@ -13,7 +13,6 @@ surface for non-canonical hosts.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import os
 from datetime import datetime, timezone
@@ -32,12 +31,10 @@ from polaris.cells.roles.runtime.public.contracts import GetRoleRuntimeStatusQue
 from polaris.cells.roles.runtime.public.service import RoleRuntimeService, query_role_runtime_status
 from polaris.delivery.cli.logging_policy import (
     CLI_LOG_LEVEL_CHOICES,
-    configure_cli_logging,
 )
 from polaris.delivery.cli.terminal import run_role_console
 from polaris.infrastructure.storage import LocalFileSystemAdapter
 from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
-from polaris.kernelone.fs.encoding import enforce_utf8
 from polaris.kernelone.fs.runtime import KernelFileSystem
 
 if TYPE_CHECKING:
@@ -492,21 +489,10 @@ async def _dispatch(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    enforce_utf8()
-    parser = create_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
-    try:
-        configure_cli_logging(getattr(args, "log_level", None))
-    except ValueError as exc:
-        raise SystemExit(str(exc)) from exc
-    args.workspace = _resolve_workspace(args.workspace)
-    _bind_workspace_environment(args.workspace)
-    _ensure_cli_runtime_bindings()
-    if args.command == "chat" and str(getattr(args, "mode", "") or "").strip() == "console":
-        return _run_console_chat(args)
-    if args.command == "workflow":
-        return _run_workflow(args)
-    return asyncio.run(_dispatch(args))
+    """Compatibility entry point that delegates to the canonical CLI host."""
+    from polaris.delivery.cli.__main__ import main as canonical_main
+
+    return canonical_main(argv)
 
 
 if __name__ == "__main__":
