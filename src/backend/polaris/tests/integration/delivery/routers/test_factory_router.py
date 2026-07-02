@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from polaris.delivery.http.error_handlers import setup_exception_handlers
@@ -73,6 +74,26 @@ def _make_mock_service() -> MagicMock:
 
 class TestFactoryRouter:
     """Contract tests for the factory router."""
+
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        (
+            ("GET", "/factory/runs"),
+            ("POST", "/factory/runs"),
+            ("GET", "/factory/runs/run-1"),
+            ("GET", "/factory/runs/run-1/events"),
+            ("GET", "/factory/runs/run-1/audit-bundle"),
+            ("POST", "/factory/runs/run-1/control"),
+            ("GET", "/factory/runs/run-1/artifacts"),
+        ),
+    )
+    def test_retired_factory_run_alias_routes_are_not_registered(self, method: str, path: str) -> None:
+        """Factory run APIs must use the canonical /v2/factory/runs namespace."""
+        client = _build_client()
+
+        response = client.request(method, path, json={})
+
+        assert response.status_code == 404
 
     def test_list_factory_runs_happy_path(self) -> None:
         """GET /v2/factory/runs returns 200 with run list."""
