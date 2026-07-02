@@ -202,7 +202,7 @@ class DirectorPatchExecutor:
         allowed_tool_names: set[str] | None = None,
         allow_patch_fallback: bool = True,
     ) -> list[dict[str, Any]]:
-        """Reject legacy non-native fallback formats with audit evidence.
+        """Reject non-native fallback formats with audit evidence.
 
         Native provider tool calls are handled before this adapter path. Textual
         tool protocols such as ``[TOOL_CALL]`` and ``[WRITE_FILE]`` are no
@@ -212,7 +212,7 @@ class DirectorPatchExecutor:
         the director.runtime repair kernel.
         """
         del allowed_tool_names  # Textual tool parsing is disabled in this path.
-        del update_task_progress_fn  # Legacy patch execution is intentionally disabled.
+        del update_task_progress_fn  # Text patch execution is intentionally disabled.
         response_text = str(response or "")
         if _TEXTUAL_TOOL_PROTOCOL_PATTERN.search(response_text):
             return [

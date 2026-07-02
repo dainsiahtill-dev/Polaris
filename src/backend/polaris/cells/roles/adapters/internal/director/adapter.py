@@ -2069,7 +2069,7 @@ class DirectorAdapter(BaseRoleAdapter):
         return taskboard_snapshot_brief(snapshot)
 
     # -------------------------------------------------------------------------
-    # Compatibility Proxy Methods (thin shims for test / legacy callers)
+    # State Tracker Proxy Methods (stable support delegates)
     # -------------------------------------------------------------------------
 
     def _collect_workspace_code_files(self) -> dict[str, str]:

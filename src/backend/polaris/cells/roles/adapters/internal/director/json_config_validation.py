@@ -2,7 +2,7 @@
 
 This module is validation infrastructure, not a deterministic repair strategy
 host. It intentionally lives outside ``deterministic_repairs`` so tool execution
-does not depend on the legacy repair package.
+does not depend on retired repair packages.
 """
 
 from __future__ import annotations

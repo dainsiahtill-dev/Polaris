@@ -1516,7 +1516,7 @@ async def _claim_task_with_retry(
     session_data = claim_next_result.get("session")
     claim_attempts = claim_next_result.get("attempts", [])
 
-    # Convert claim_next_execution attempts to legacy format
+    # Convert claim_next_execution attempts to the adapter result format.
     attempts = []
     for i, attempt in enumerate(claim_attempts, 1):
         attempts.append(
@@ -3933,7 +3933,9 @@ def _phase_missing_write_receipt(
 
 
 def _cross_artifact_llm_escalation_enabled() -> bool:
-    """Default OFF -> byte-identical legacy behaviour. Opt in via env to escalate
+    """Default OFF -> preserve current deterministic fail-closed behavior.
+
+    Opt in via env to escalate
     residual cross-artifact quality errors to a bounded Director LLM re-generation
     before the hard materialization-quality fail."""
     raw = str(os.environ.get("KERNELONE_DIRECTOR_CROSS_ARTIFACT_LLM_ESCALATION", "")).strip().lower()
@@ -4270,7 +4272,7 @@ async def _attach_director_file_event_bus(adapter: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Lossless helper re-export surface (decomposition shim)
+# Lossless helper re-export surface (module decomposition boundary)
 #
 # ``execute_method`` stays the canonical import path. The bodies below were
 # moved verbatim into sibling modules; non-repair helpers are re-imported here

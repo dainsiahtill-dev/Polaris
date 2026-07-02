@@ -731,7 +731,7 @@ def _deterministic_single_missing_python_module_alias_to_write_file(
     repair_target_files: list[str],
     artifact_quality_errors: list[str],
 ) -> list[dict[str, Any]]:
-    """Create a narrow source-root shim for tests importing a nested Python module."""
+    """Create a narrow source-root bridge for tests importing a nested module."""
 
     if len(repair_target_files) != 1:
         return []
@@ -4671,7 +4671,7 @@ def _missing_python_module_alias_repair_target_files(
     artifact_quality_errors: list[str],
     workspace_full: str,
 ) -> list[str]:
-    """Return missing Python module shim targets implied by test import errors."""
+    """Return missing Python module bridge targets implied by import errors."""
 
     workspace = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
     if workspace is None or not workspace.is_dir():
