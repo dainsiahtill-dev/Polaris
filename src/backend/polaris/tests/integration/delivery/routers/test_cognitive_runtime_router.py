@@ -42,6 +42,17 @@ def _make_err_result(error_code: str = "not_found", error_message: str = "missin
 class TestCognitiveRuntimeRouter:
     """Contract tests for the cognitive runtime router."""
 
+    def test_retired_nested_v2_alias_route_is_not_registered(self) -> None:
+        """Nested /cognitive-runtime/v2/cognitive-runtime/* aliases are retired."""
+        client = _build_client()
+
+        response = client.post(
+            "/cognitive-runtime/v2/cognitive-runtime/resolve-context",
+            json={"workspace": ".", "role": "pm", "query": "test"},
+        )
+
+        assert response.status_code == 404
+
     def test_resolve_context_happy_path(self) -> None:
         """POST /cognitive-runtime/resolve-context returns 200 with snapshot."""
         client = _build_client()
