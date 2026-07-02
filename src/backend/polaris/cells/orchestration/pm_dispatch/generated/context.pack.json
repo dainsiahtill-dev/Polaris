@@ -5,13 +5,13 @@
   "purpose": "Dispatch PM contracts into executable task iterations, drive task assignment and lifecycle transitions, and record dispatch outcomes.",
   "summary": "Business capability boundary for orchestration.pm_dispatch.",
   "owned_paths": [
-    "polaris/application/orchestration/support/dispatch_pipeline.py",
-    "polaris/application/orchestration/support/iteration_state.py",
-    "polaris/application/orchestration/support/file_change_tracker.py",
-    "polaris/application/orchestration/support/error_classifier.py",
-    "polaris/application/orchestration/usecases/orchestration_command_service.py",
-    "polaris/application/orchestration/state_bridge.py",
-    "polaris/delivery/http/v2/orchestration.py"
+    "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py",
+    "polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py",
+    "polaris/cells/orchestration/pm_dispatch/internal/error_classifier.py",
+    "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py",
+    "polaris/cells/orchestration/pm_dispatch/internal/state_bridge.py",
+    "polaris/cells/orchestration/pm_dispatch/public/contracts.py",
+    "polaris/cells/orchestration/pm_dispatch/public/service.py"
   ],
   "public_contracts": {
     "commands": [
@@ -57,17 +57,15 @@
     "All text file reads and writes must use explicit UTF-8."
   ],
   "hotspots": [
-    "polaris/application/orchestration/support/dispatch_pipeline.py",
-    "polaris/application/orchestration/support/iteration_state.py",
-    "polaris/application/orchestration/support/file_change_tracker.py",
-    "polaris/application/orchestration/support/error_classifier.py",
-    "polaris/application/orchestration/usecases/orchestration_command_service.py",
-    "polaris/application/orchestration/state_bridge.py",
-    "polaris/delivery/http/v2/orchestration.py"
+    "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py",
+    "polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py",
+    "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py",
+    "polaris/cells/orchestration/pm_dispatch/public/service.py"
   ],
   "test_targets": [
-    "tests/test_dispatch_pipeline_engine_dispatch.py",
-    "tests/test_orchestration_command_service.py"
+    "polaris/cells/orchestration/pm_dispatch/tests/test_dispatch_pipeline.py",
+    "polaris/cells/orchestration/pm_dispatch/tests/test_iteration_state.py",
+    "polaris/cells/orchestration/pm_dispatch/tests/test_dispatch_contract.py"
   ],
   "change_guidance": {
     "read_order": [

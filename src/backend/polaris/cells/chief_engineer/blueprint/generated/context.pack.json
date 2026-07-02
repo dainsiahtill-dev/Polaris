@@ -5,10 +5,12 @@
   "purpose": "Generate task-level implementation blueprints and dependency analysis for Director execution without performing code write operations.",
   "summary": "Business capability boundary for chief_engineer.blueprint.",
   "owned_paths": [
-    "polaris/application/orchestration/usecases/chief_engineer_preflight.py",
-    "polaris/application/role_agent/chief_engineer_agent.py",
-    "polaris/application/role_agent/chief_engineer_cli.py",
-    "polaris/infrastructure/legacy_core/code_intelligence.py"
+    "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py",
+    "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_agent.py",
+    "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_cli.py",
+    "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+    "polaris/cells/chief_engineer/blueprint/public/service.py",
+    "polaris/cells/code_intelligence/engine/public/service.py"
   ],
   "public_contracts": {
     "commands": [
@@ -53,13 +55,15 @@
     "All text file reads and writes must use explicit UTF-8."
   ],
   "hotspots": [
-    "polaris/application/orchestration/usecases/chief_engineer_preflight.py",
-    "polaris/application/role_agent/chief_engineer_agent.py",
-    "polaris/application/role_agent/chief_engineer_cli.py",
-    "polaris/infrastructure/legacy_core/code_intelligence.py"
+    "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py",
+    "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_agent.py",
+    "polaris/cells/chief_engineer/blueprint/public/service.py",
+    "polaris/cells/code_intelligence/engine/public/service.py"
   ],
   "test_targets": [
-    "tests/test_chief_engineer_preflight.py"
+    "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
+    "polaris/cells/chief_engineer/blueprint/tests/test_service_governance.py",
+    "polaris/cells/code_intelligence/engine/public/tests/test_contracts.py"
   ],
   "change_guidance": {
     "read_order": [

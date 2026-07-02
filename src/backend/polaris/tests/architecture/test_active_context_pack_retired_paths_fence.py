@@ -7,8 +7,11 @@ from typing import Any
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 
 FOUNDATIONAL_CONTEXT_PACKS = (
+    "polaris/cells/chief_engineer/blueprint/generated/context.pack.json",
     "polaris/cells/director/execution/generated/context.pack.json",
     "polaris/cells/orchestration/pm_planning/generated/context.pack.json",
+    "polaris/cells/orchestration/pm_dispatch/generated/context.pack.json",
+    "polaris/cells/orchestration/workflow_runtime/generated/context.pack.json",
     "polaris/cells/runtime/state_owner/generated/context.pack.json",
     "polaris/cells/policy/permission/generated/context.pack.json",
     "polaris/cells/policy/workspace_guard/generated/context.pack.json",
@@ -19,6 +22,7 @@ RETIRED_APPLICATION_MARKERS = (
     "polaris/application/app/services/",
     "polaris/application/orchestration/",
     "polaris/application/role_agent/",
+    "polaris/infrastructure/legacy_core/",
 )
 
 

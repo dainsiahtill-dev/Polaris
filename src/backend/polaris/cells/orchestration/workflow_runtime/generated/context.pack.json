@@ -5,11 +5,12 @@
   "purpose": "Own workflow engine runtime, activity and workflow registration, and workflow state persistence for PM, Director and QA orchestration.",
   "summary": "Business capability boundary for orchestration.workflow_runtime.",
   "owned_paths": [
-    "polaris/application/orchestration/runtime_engine/**",
-    "polaris/application/orchestration/core/runtime_orchestrator.py",
-    "polaris/application/orchestration/core/event_stream.py",
-    "polaris/kernelone/workflow/**",
-    "polaris/infrastructure/db/repositories/workflow_runtime_store.py"
+    "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/**",
+    "polaris/cells/orchestration/workflow_runtime/internal/runtime_orchestrator.py",
+    "polaris/cells/orchestration/workflow_runtime/internal/event_stream.py",
+    "polaris/cells/orchestration/workflow_runtime/internal/process_launcher.py",
+    "polaris/cells/orchestration/workflow_runtime/public/contracts.py",
+    "polaris/cells/orchestration/workflow_runtime/public/service.py"
   ],
   "public_contracts": {
     "commands": [
@@ -56,15 +57,15 @@
     "All text file reads and writes must use explicit UTF-8."
   ],
   "hotspots": [
-    "polaris/application/orchestration/runtime_engine/**",
-    "polaris/application/orchestration/core/runtime_orchestrator.py",
-    "polaris/application/orchestration/core/event_stream.py",
-    "polaris/kernelone/workflow/**",
-    "polaris/infrastructure/db/repositories/workflow_runtime_store.py"
+    "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/**",
+    "polaris/cells/orchestration/workflow_runtime/internal/runtime_orchestrator.py",
+    "polaris/cells/orchestration/workflow_runtime/internal/event_stream.py",
+    "polaris/cells/orchestration/workflow_runtime/public/service.py"
   ],
   "test_targets": [
-    "tests/orchestration/test_workflow_runtime.py",
-    "tests/test_embedded_orchestration_dag.py"
+    "polaris/cells/orchestration/workflow_runtime/tests/test_workflow_runtime_models.py",
+    "polaris/cells/orchestration/workflow_runtime/tests/test_unified_orchestration_service.py",
+    "polaris/cells/orchestration/workflow_runtime/tests/test_workflow_runtime_acyclicity.py"
   ],
   "change_guidance": {
     "read_order": [
