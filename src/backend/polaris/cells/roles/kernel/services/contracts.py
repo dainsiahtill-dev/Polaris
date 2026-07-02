@@ -115,10 +115,10 @@ class IOutputParser(Protocol):
     """Output parser contract for role-kernel execution.
 
     Execution-facing callers must use the typed raw-content boundary. The
-    concrete OutputParser may keep compatibility helpers for tests or legacy
-    callers, but this service protocol exposes only the executable parser stage
-    so dependency-injected implementations cannot accidentally consume sanitized
-    transcript text as tool-call input.
+    concrete OutputParser may keep compatibility helpers for tests or
+    non-execution callers, but this service protocol exposes only the
+    executable parser stage so dependency-injected implementations cannot
+    accidentally consume sanitized transcript text as tool-call input.
     """
 
     def parse_execution_tool_calls(
