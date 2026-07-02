@@ -4,11 +4,11 @@ Identity tuple::
 
     ("intercept_illegal_mutations", "policy.workspace_guard", "WorkspaceWriteGuardQueryV1")
 
-This is a VERBATIM re-shaping of the legacy ``is_architect_workspace_guard`` arm
-of ``execute_role_capability_invocation`` onto the
+This is a verbatim extraction of the ``is_architect_workspace_guard`` dispatcher
+arm of ``execute_role_capability_invocation`` onto the
 :class:`~polaris.cells.roles.runtime.internal.capability.protocol.CapabilityHandler`
-surface. The legacy branch is NON-UNIFORM: it first validates the payload path,
-then constructs the single-path guard query, then performs the guard check —
+surface. This dispatcher arm is non-uniform: it first validates the payload path,
+then constructs the single-path guard query, then performs the guard check;
 ``validate``/``invoke`` absorb that per-branch divergence while keeping the
 three-method surface stable.
 
@@ -17,17 +17,17 @@ three-method surface stable.
   :class:`WorkspaceWriteGuardQueryV1` construction guard
   (``invalid_workspace_guard_query``) — raising
   :class:`CapabilityInvocationError` instead of returning a failure result. Both
-  legacy rejections passed ``capability_available=True`` with no extra metadata,
-  so the raised errors carry ``capability_available=True`` and leave
-  ``metadata`` at its default (the dispatcher then renders the legacy
-  ``{capability_available: True, capability_id: <id>}`` payload byte-for-byte).
-* :meth:`invoke` performs the workspace-guard check exactly as the legacy branch:
+  original rejections passed ``capability_available=True`` with no extra
+  metadata, so the raised errors carry ``capability_available=True`` and leave
+  ``metadata`` at its default; the dispatcher then renders the stable
+  ``{capability_available: True, capability_id: <id>}`` payload.
+* :meth:`invoke` performs the workspace-guard check exactly as the extracted arm:
   ``deps.workspace_guard_service`` when set, else the ``policy.workspace_guard``
   module-level public function ``check_workspace_write_guard`` via a
   function-local import; it raises ``workspace_guard_failed`` on any downstream
   exception.
 * :meth:`map_result` builds the success (``ALLOWED``) / denied (``DENIED``)
-  :class:`RoleCapabilityInvocationResultV1` verbatim, including the legacy plain
+  :class:`RoleCapabilityInvocationResultV1` verbatim, including the stable plain
   ``metadata`` dict literal (``capability_available`` / ``mutation_allowed`` /
   ``guard_reason`` / ``path`` / ``operation``) — NOT the
   ``_capability_available_metadata`` envelope used by other families.
@@ -65,9 +65,9 @@ def _build_workspace_guard_query(
 ) -> WorkspaceWriteGuardQueryV1:
     """Construct the ``WorkspaceWriteGuardQueryV1`` from ``command``.
 
-    Mirrors the legacy branch's path validation + query construction statements
-    byte-for-byte. Raises :class:`CapabilityInvocationError` with the legacy
-    ``error_code`` literals on the two pre-invoke rejection paths.
+    Mirrors the extracted branch's path validation + query construction
+    statements byte-for-byte. Raises :class:`CapabilityInvocationError` with the
+    stable ``error_code`` literals on the two pre-invoke rejection paths.
     """
     target_path = _payload_string(command.payload, "path")
     operation = _payload_string(command.payload, "operation", "write")
