@@ -2,7 +2,7 @@
 """Migrate historical Polaris artifact path aliases to canonical paths.
 
 Default mode is dry-run. Pass ``--apply`` to copy UTF-8 text artifacts from
-legacy locations into their canonical runtime paths.
+historical locations into their canonical runtime paths.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ _BACKEND_ROOT = _SCRIPT_PATH.parents[1]
 if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
 
-from polaris.cells.audit.verdict.internal.artifact_service import migrate_legacy_artifact_aliases  # noqa: E402
+from polaris.cells.audit.verdict.internal.artifact_service import migrate_historical_artifact_aliases  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -31,7 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    summary = migrate_legacy_artifact_aliases(
+    summary = migrate_historical_artifact_aliases(
         workspace=args.workspace,
         cache_root=args.cache_root,
         dry_run=not bool(args.apply),

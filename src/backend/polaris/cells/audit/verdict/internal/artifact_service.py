@@ -1,7 +1,8 @@
 """Artifact Service - Unified artifact I/O service for Polaris runtime.
 
 This module provides a centralized service for reading and writing canonical
-runtime artifacts with consistent UTF-8 encoding, atomic writes, and legacy path support.
+runtime artifacts with consistent UTF-8 encoding, atomic writes, and
+historical read-only alias support.
 
 Usage:
     from polaris.cells.audit.verdict.internal.artifact_service import ArtifactService
@@ -357,16 +358,16 @@ KERNELONE_ARTIFACT_POLICY_METADATA: dict[str, dict[str, Any]] = {
 
 
 def _resolve_artifact_key(key: str) -> str:
-    """Resolve a key to its canonical technical key, supporting legacy aliases."""
-    return LEGACY_KEY_MAPPING.get(key, key)
+    """Resolve a key to its canonical technical key, supporting historical aliases."""
+    return HISTORICAL_KEY_ALIASES.get(key, key)
 
 
 def get_artifact_policy_metadata(key: str) -> dict[str, Any] | None:
     """Get lifecycle policy metadata for a Polaris artifact key.
 
     Args:
-        key: Artifact key (e.g., "contract.pm_tasks", "PLAN") - legacy
-            aliases are resolved automatically.
+        key: Artifact key (for example, ``contract.pm_tasks`` or historical
+            alias ``PLAN``). Historical aliases are resolved automatically.
 
     Returns:
         Policy metadata dict with keys: ``category``, ``lifecycle``,
@@ -448,8 +449,9 @@ ARTIFACT_REGISTRY: dict[str, str] = {
     "contract.agents_feedback": "runtime/contracts/agents.feedback.md",
 }
 
-# Mapping from legacy keys to canonical technical keys for backward compatibility
-LEGACY_KEY_MAPPING: dict[str, str] = {
+# Read-only historical key aliases for workspaces created before the canonical
+# artifact registry. New writes must use keys from ARTIFACT_REGISTRY.
+HISTORICAL_KEY_ALIASES: dict[str, str] = {
     "PLAN": "contract.plan",
     "GAP_REPORT": "contract.gap_report",
     "PM_TASKS_CONTRACT": "contract.pm_tasks",
@@ -479,8 +481,8 @@ LEGACY_KEY_MAPPING: dict[str, str] = {
     "AGENTS_FEEDBACK": "contract.agents_feedback",
 }
 
-# Legacy path aliases for backward compatibility (path -> key)
-LEGACY_PATH_ALIASES: dict[str, str] = {
+# Historical path aliases that may exist in older workspace runtime folders.
+HISTORICAL_PATH_ALIASES: dict[str, str] = {
     "runtime/contracts/pm_tasks.json": "contract.pm_tasks",
     "runtime/contracts/tasks.json": "contract.pm_tasks",
     "runtime/results/director_result.json": "runtime.result.director",
@@ -493,14 +495,16 @@ _REGISTRY_KEY_TO_CANONICAL: dict[str, str] = {v: k for k, v in ARTIFACT_REGISTRY
 
 def _resolve_key(key: str) -> str:
     """Resolve a key to its canonical technical key."""
-    return LEGACY_KEY_MAPPING.get(key, key)
+    return HISTORICAL_KEY_ALIASES.get(key, key)
 
 
 def _resolve_key_for_write(key: str) -> str:
     """Resolve a key for new writes, rejecting historical aliases."""
-    if key in LEGACY_KEY_MAPPING:
-        canonical_key = LEGACY_KEY_MAPPING[key]
-        raise KeyError(f"Legacy artifact key is read-only: {key}. Use canonical key {canonical_key!r} for writes.")
+    if key in HISTORICAL_KEY_ALIASES:
+        canonical_key = HISTORICAL_KEY_ALIASES[key]
+        raise KeyError(
+            f"Historical artifact key alias is read-only: {key}. Use canonical key {canonical_key!r} for writes."
+        )
     return key
 
 
@@ -527,8 +531,8 @@ def get_artifact_path(key: str) -> str:
 def get_artifact_path_for_write(key: str) -> str:
     """Get canonical path for artifact writes.
 
-    Legacy artifact keys remain readable for historical workspaces, but all new
-    writes must use canonical registry keys.
+    Historical artifact key aliases remain readable for old workspaces, but all
+    new writes must use canonical registry keys.
     """
     canonical_key = _resolve_key_for_write(key)
     if canonical_key not in ARTIFACT_REGISTRY:
@@ -556,7 +560,7 @@ def list_artifact_keys() -> list[str]:
     return sorted(ARTIFACT_REGISTRY.keys())
 
 
-def migrate_legacy_artifact_aliases(
+def migrate_historical_artifact_aliases(
     workspace: str,
     cache_root: str = "",
     *,
@@ -566,8 +570,8 @@ def migrate_legacy_artifact_aliases(
     """Migrate historical artifact path aliases to canonical paths.
 
     This is an explicit maintenance operation, not a runtime read fallback.
-    Legacy aliases are copied only when their source exists and the canonical
-    target is absent, unless ``overwrite`` is explicitly enabled.
+    Historical aliases are copied only when their source exists and the
+    canonical target is absent, unless ``overwrite`` is explicitly enabled.
     """
     workspace_abs = os.path.abspath(workspace)
     cache_root_abs = os.path.abspath(cache_root) if cache_root else ""
@@ -575,25 +579,25 @@ def migrate_legacy_artifact_aliases(
     copied = 0
     planned = 0
     skipped = 0
-    for legacy_rel, canonical_key in sorted(LEGACY_PATH_ALIASES.items()):
+    for alias_rel, canonical_key in sorted(HISTORICAL_PATH_ALIASES.items()):
         canonical_rel = get_artifact_path_for_write(canonical_key)
-        legacy_path = resolve_artifact_path(workspace_abs, cache_root_abs, legacy_rel)
+        alias_path = resolve_artifact_path(workspace_abs, cache_root_abs, alias_rel)
         canonical_path = resolve_artifact_path(workspace_abs, cache_root_abs, canonical_rel)
-        legacy_exists = os.path.isfile(legacy_path)
+        alias_exists = os.path.isfile(alias_path)
         canonical_exists = os.path.isfile(canonical_path)
         item = {
-            "legacy_path": legacy_path,
-            "legacy_rel_path": legacy_rel,
+            "alias_path": alias_path,
+            "alias_rel_path": alias_rel,
             "canonical_key": canonical_key,
             "canonical_path": canonical_path,
             "canonical_rel_path": canonical_rel,
-            "legacy_exists": legacy_exists,
+            "alias_exists": alias_exists,
             "canonical_exists": canonical_exists,
             "action": "skip",
             "reason": "",
         }
-        if not legacy_exists:
-            item["reason"] = "legacy_missing"
+        if not alias_exists:
+            item["reason"] = "alias_missing"
             skipped += 1
         elif canonical_exists and not overwrite:
             item["reason"] = "canonical_exists"
@@ -603,7 +607,7 @@ def migrate_legacy_artifact_aliases(
             item["action"] = "copy"
             item["reason"] = "dry_run" if dry_run else "copied"
             if not dry_run:
-                text = _read_file_safe(legacy_path, workspace=workspace_abs)
+                text = _read_file_safe(alias_path, workspace=workspace_abs)
                 parent = os.path.dirname(canonical_path)
                 if parent:
                     os.makedirs(parent, exist_ok=True)
@@ -682,7 +686,7 @@ class ArtifactService:
     """Unified service for runtime artifact I/O.
 
     Provides consistent interfaces for reading and writing canonical artifacts
-    with automatic UTF-8 encoding, atomic writes, and legacy path support.
+    with automatic UTF-8 encoding, atomic writes, and historical alias support.
     """
 
     def __init__(
@@ -1236,7 +1240,7 @@ class ArtifactService:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Convenience Functions (for backward compatibility)
+# Convenience Functions
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -1258,9 +1262,9 @@ def create_artifact_service(
 
 __all__ = [
     "ARTIFACT_REGISTRY",
+    "HISTORICAL_KEY_ALIASES",
+    "HISTORICAL_PATH_ALIASES",
     "KERNELONE_ARTIFACT_POLICY_METADATA",
-    "LEGACY_KEY_MAPPING",
-    "LEGACY_PATH_ALIASES",
     "ArtifactService",
     "create_artifact_service",
     "get_artifact_key",
@@ -1268,7 +1272,7 @@ __all__ = [
     "get_artifact_path_for_write",
     "get_artifact_policy_metadata",
     "list_artifact_keys",
-    "migrate_legacy_artifact_aliases",
+    "migrate_historical_artifact_aliases",
     "should_archive_artifact",
     "should_compress_artifact",
 ]

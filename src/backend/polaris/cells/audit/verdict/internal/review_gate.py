@@ -290,8 +290,8 @@ def create_review_gate() -> ReviewGate:
     return ReviewGate()
 
 
-# Singleton accessor for backward compatibility with callers that expect a
-# shared instance (e.g. HTTP routers, cross-task state queries).
+# Stable singleton accessor for callers that require a shared review gate
+# instance (e.g. HTTP routers, cross-task state queries).
 # Tests should use ``create_review_gate()`` or ``ReviewGate()`` for isolation.
 _review_gate_singleton: ReviewGate | None = None
 _review_gate_singleton_lock = threading.Lock()

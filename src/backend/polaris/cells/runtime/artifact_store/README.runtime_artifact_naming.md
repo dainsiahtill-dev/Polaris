@@ -5,11 +5,11 @@ This document defines the canonical artifact keys and their corresponding logica
 ## 1. Core Principles
 - **Separation of Concerns**: Keys describe the *nature* of the artifact (technical), not the *source* role (business semantics) where possible.
 - **Technical Keying**: Use `category.name` or `category.sub.name` format.
-- **Backward Compatibility**: Legacy uppercase keys (e.g., `PM_TASKS_CONTRACT`) are mapped to new technical keys in the `ArtifactService`.
+- **Historical Read Alias**: Historical uppercase keys (e.g., `PM_TASKS_CONTRACT`) remain readable, but new writes must use canonical technical keys through `ArtifactService`.
 
 ## 2. Artifact Registry
 
-| Artifact Key (Technical) | Logical Path | Description | Legacy Alias |
+| Artifact Key (Technical) | Logical Path | Description | Historical Alias |
 | :--- | :--- | :--- | :--- |
 | `contract.plan` | `runtime/contracts/plan.md` | Implementation plan | `PLAN` |
 | `contract.gap_report` | `runtime/contracts/gap_report.md` | Gap analysis report | `GAP_REPORT` |

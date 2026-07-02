@@ -17,8 +17,8 @@ from polaris.cells.audit.verdict.public.contracts import AuditVerdictResultV1, Q
 
 _PUBLIC_NAMES = (
     "ARTIFACT_REGISTRY",
-    "LEGACY_KEY_MAPPING",
-    "LEGACY_PATH_ALIASES",
+    "HISTORICAL_KEY_ALIASES",
+    "HISTORICAL_PATH_ALIASES",
     "ArtifactService",
     "AuditContext",
     "CodeChange",
@@ -105,8 +105,8 @@ def __getattr__(name: str) -> Any:
     """Lazy import dispatcher for internal modules."""
     if name in {
         "ARTIFACT_REGISTRY",
-        "LEGACY_KEY_MAPPING",
-        "LEGACY_PATH_ALIASES",
+        "HISTORICAL_KEY_ALIASES",
+        "HISTORICAL_PATH_ALIASES",
         "ArtifactService",
         "create_artifact_service",
         "get_artifact_key",
@@ -116,8 +116,8 @@ def __getattr__(name: str) -> Any:
         # Lazy import to avoid cross-boundary import at module load time.
         from polaris.cells.audit.verdict.internal.artifact_service import (
             ARTIFACT_REGISTRY,
-            LEGACY_KEY_MAPPING,
-            LEGACY_PATH_ALIASES,
+            HISTORICAL_KEY_ALIASES,
+            HISTORICAL_PATH_ALIASES,
             ArtifactService,
             create_artifact_service,
             get_artifact_key,
@@ -127,8 +127,8 @@ def __getattr__(name: str) -> Any:
 
         g = globals()
         g["ARTIFACT_REGISTRY"] = ARTIFACT_REGISTRY
-        g["LEGACY_KEY_MAPPING"] = LEGACY_KEY_MAPPING
-        g["LEGACY_PATH_ALIASES"] = LEGACY_PATH_ALIASES
+        g["HISTORICAL_KEY_ALIASES"] = HISTORICAL_KEY_ALIASES
+        g["HISTORICAL_PATH_ALIASES"] = HISTORICAL_PATH_ALIASES
         g["ArtifactService"] = ArtifactService
         g["create_artifact_service"] = create_artifact_service
         g["get_artifact_key"] = get_artifact_key

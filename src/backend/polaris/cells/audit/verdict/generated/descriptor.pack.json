@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:12.869711Z",
-  "source_hash": "7a8bd31bfad93b24",
+  "generated_at": "2026-07-02T04:27:28.961558Z",
+  "source_hash": "4c08bcbc8ac9a523",
   "cell_id": "audit.verdict",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -310,7 +310,7 @@
     {
       "type": "function",
       "name": "_resolve_artifact_key",
-      "description": "Resolve a key to its canonical technical key, supporting legacy aliases.",
+      "description": "Resolve a key to its canonical technical key, supporting historical aliases.",
       "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
     },
     {
@@ -369,7 +369,7 @@
     },
     {
       "type": "function",
-      "name": "migrate_legacy_artifact_aliases",
+      "name": "migrate_historical_artifact_aliases",
       "description": "Migrate historical artifact path aliases to canonical paths.",
       "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
     },

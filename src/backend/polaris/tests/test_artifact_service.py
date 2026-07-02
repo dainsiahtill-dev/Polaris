@@ -3,7 +3,7 @@
 These tests verify:
 1. ArtifactService can read/write canonical artifacts
 2. UTF-8 encoding is properly handled
-3. Legacy path fallback works correctly
+3. Historical path alias migration is explicit
 4. Registry consistency is maintained
 """
 
@@ -24,13 +24,13 @@ class TestArtifactRegistry:
         """Verify all expected artifact keys exist in registry."""
         from polaris.cells.audit.verdict.internal.artifact_service import (
             ARTIFACT_REGISTRY,
-            LEGACY_KEY_MAPPING,
+            HISTORICAL_KEY_ALIASES,
             list_artifact_keys,
         )
 
         actual_keys = set(list_artifact_keys())
         assert actual_keys == set(ARTIFACT_REGISTRY.keys())
-        assert set(LEGACY_KEY_MAPPING.values()).issubset(actual_keys)
+        assert set(HISTORICAL_KEY_ALIASES.values()).issubset(actual_keys)
 
     def test_registry_paths_are_valid(self):
         """Verify all registry paths start with runtime/."""
@@ -433,9 +433,9 @@ class TestArtifactServiceGeneric:
         service = ArtifactService(workspace=temp_workspace)
         content = "Generic text content"
 
-        path = service.write_text("PLAN", content)
+        path = service.write_text("contract.plan", content)
         assert os.path.isfile(path)
-        assert service.read_text("PLAN") == content
+        assert service.read_text("contract.plan") == content
 
     def test_generic_write_json(self, temp_workspace):
         """Test generic write_json."""
@@ -444,10 +444,10 @@ class TestArtifactServiceGeneric:
         service = ArtifactService(workspace=temp_workspace)
         data = {"key": "value", "number": 42}
 
-        path = service.write_json("PM_STATE", data)
+        path = service.write_json("runtime.state.pm", data)
         assert os.path.isfile(path)
 
-        read_data = service.read_json("PM_STATE")
+        read_data = service.read_json("runtime.state.pm")
         assert read_data == data
 
     def test_generic_read_nonexistent(self, temp_workspace):
@@ -463,15 +463,15 @@ class TestArtifactServiceGeneric:
         assert service.read_json("PM_STATE") is None
 
 
-class TestLegacyPathAliases:
-    """Tests for legacy path handling."""
+class TestHistoricalPathAliases:
+    """Tests for historical path alias metadata."""
 
-    def test_legacy_aliases_defined(self):
-        """Verify legacy path aliases are defined."""
-        from polaris.cells.audit.verdict.internal.artifact_service import LEGACY_PATH_ALIASES
+    def test_historical_aliases_defined(self):
+        """Verify historical path aliases are defined."""
+        from polaris.cells.audit.verdict.internal.artifact_service import HISTORICAL_PATH_ALIASES
 
-        assert len(LEGACY_PATH_ALIASES) > 0
-        assert "runtime/contracts/pm_tasks.json" in LEGACY_PATH_ALIASES
+        assert len(HISTORICAL_PATH_ALIASES) > 0
+        assert "runtime/contracts/pm_tasks.json" in HISTORICAL_PATH_ALIASES
 
 
 if __name__ == "__main__":

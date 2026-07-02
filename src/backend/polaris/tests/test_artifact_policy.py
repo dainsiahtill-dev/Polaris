@@ -201,11 +201,11 @@ class TestArtifactPolicyArchive:
         assert should_archive_artifact("nonexistent.artifact") is False
 
 
-class TestLegacyKeyAliases:
-    """Test that legacy key names are resolved to canonical keys."""
+class TestHistoricalKeyAliases:
+    """Test that historical key aliases are resolved to canonical keys."""
 
-    def test_legacy_plan_key(self) -> None:
-        """Legacy PLAN resolves to contract.plan."""
+    def test_historical_plan_key_alias(self) -> None:
+        """Historical PLAN alias resolves to contract.plan."""
         from polaris.cells.audit.verdict.internal.artifact_service import (
             get_artifact_policy_metadata,
         )
@@ -214,8 +214,8 @@ class TestLegacyKeyAliases:
         assert metadata is not None
         assert metadata["lifecycle"] == "active"
 
-    def test_legacy_pm_tasks_contract(self) -> None:
-        """Legacy PM_TASKS_CONTRACT resolves to contract.pm_tasks."""
+    def test_historical_pm_tasks_contract_alias(self) -> None:
+        """Historical PM_TASKS_CONTRACT alias resolves to contract.pm_tasks."""
         from polaris.cells.audit.verdict.internal.artifact_service import (
             get_artifact_policy_metadata,
         )
@@ -224,8 +224,8 @@ class TestLegacyKeyAliases:
         assert metadata is not None
         assert metadata["archive_on_terminal"] is True
 
-    def test_legacy_director_result(self) -> None:
-        """Legacy DIRECTOR_RESULT resolves to runtime.result.director."""
+    def test_historical_director_result_alias(self) -> None:
+        """Historical DIRECTOR_RESULT alias resolves to runtime.result.director."""
         from polaris.cells.audit.verdict.internal.artifact_service import (
             get_artifact_policy_metadata,
         )
@@ -234,24 +234,24 @@ class TestLegacyKeyAliases:
         assert metadata is not None
         assert metadata["archive_on_terminal"] is True
 
-    def test_legacy_runtime_events(self) -> None:
-        """Legacy RUNTIME_EVENTS resolves to audit.events.runtime."""
+    def test_historical_runtime_events_alias(self) -> None:
+        """Historical RUNTIME_EVENTS alias resolves to audit.events.runtime."""
         from polaris.cells.audit.verdict.internal.artifact_service import (
             should_compress_artifact,
         )
 
         assert should_compress_artifact("RUNTIME_EVENTS") is True
 
-    def test_legacy_pm_stop_flag(self) -> None:
-        """Legacy PM_STOP_FLAG resolves to runtime.control.pm_stop."""
+    def test_historical_pm_stop_flag_alias(self) -> None:
+        """Historical PM_STOP_FLAG alias resolves to runtime.control.pm_stop."""
         from polaris.cells.audit.verdict.internal.artifact_service import (
             should_archive_artifact,
         )
 
         assert should_archive_artifact("PM_STOP_FLAG") is False
 
-    def test_legacy_director_stop_flag(self) -> None:
-        """Legacy DIRECTOR_STOP_FLAG resolves to runtime.control.director_stop."""
+    def test_historical_director_stop_flag_alias(self) -> None:
+        """Historical DIRECTOR_STOP_FLAG alias resolves to runtime.control.director_stop."""
         from polaris.cells.audit.verdict.internal.artifact_service import (
             should_archive_artifact,
         )
