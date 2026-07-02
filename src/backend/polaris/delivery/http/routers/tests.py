@@ -105,8 +105,7 @@ async def _publish_test_chunk(*, run_id: str, chunk: dict[str, Any], seq: int) -
     )
 
 
-@router.post("/llm/test", response_model=LlmTestReportResponse, dependencies=[Depends(require_auth)])  # DEPRECATED
-async def llm_test(request: Request, payload: LlmTestPayload) -> dict[str, Any]:
+async def _run_llm_test(request: Request, payload: LlmTestPayload) -> dict[str, Any]:
     state = get_state(request)
     workspace_raw = state.settings.workspace
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
@@ -134,10 +133,7 @@ async def llm_test(request: Request, payload: LlmTestPayload) -> dict[str, Any]:
     return report
 
 
-@router.get(
-    "/llm/test/{test_run_id}", response_model=LlmTestReportResponse, dependencies=[Depends(require_auth)]
-)  # DEPRECATED
-async def llm_test_report(request: Request, test_run_id: str) -> dict[str, Any]:
+async def _load_llm_test_report(request: Request, test_run_id: str) -> dict[str, Any]:
     state = get_state(request)
     workspace_raw = state.settings.workspace
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
@@ -153,10 +149,7 @@ async def llm_test_report(request: Request, test_run_id: str) -> dict[str, Any]:
     return _normalize_report_payload(data)
 
 
-@router.get(
-    "/llm/test/{test_run_id}/transcript", response_model=LlmTestTranscriptResponse, dependencies=[Depends(require_auth)]
-)  # DEPRECATED
-async def llm_test_transcript(request: Request, test_run_id: str) -> dict[str, Any]:
+async def _load_llm_test_transcript(request: Request, test_run_id: str) -> dict[str, Any]:
     state = get_state(request)
     workspace_raw = state.settings.workspace
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
@@ -253,7 +246,7 @@ async def _run_llm_test_jetstream(
 @router.post("/v2/llm/test", response_model=LlmTestReportResponse, dependencies=[Depends(require_auth)])
 async def v2_llm_test(request: Request, payload: LlmTestPayload) -> dict[str, Any]:
     """Run LLM readiness tests and return a report."""
-    return await llm_test(request, payload)
+    return await _run_llm_test(request, payload)
 
 
 @router.post("/v2/llm/test/jetstream", dependencies=[Depends(require_auth)])
@@ -293,7 +286,7 @@ async def v2_llm_test_jetstream(request: Request, payload: LlmTestPayload) -> di
 @router.get("/v2/llm/test/{test_run_id}", response_model=LlmTestReportResponse, dependencies=[Depends(require_auth)])
 async def v2_llm_test_report(request: Request, test_run_id: str) -> dict[str, Any]:
     """Get a persisted LLM test report by run ID."""
-    return await llm_test_report(request, test_run_id)
+    return await _load_llm_test_report(request, test_run_id)
 
 
 @router.get(
@@ -303,7 +296,7 @@ async def v2_llm_test_report(request: Request, test_run_id: str) -> dict[str, An
 )
 async def v2_llm_test_transcript(request: Request, test_run_id: str) -> dict[str, Any]:
     """Get a persisted LLM test transcript by run ID."""
-    return await llm_test_transcript(request, test_run_id)
+    return await _load_llm_test_transcript(request, test_run_id)
 
 
 def _resolve_test_path(settings: Settings, run_id: str, filename: str, workspace: str) -> str:

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -28,13 +30,25 @@ class TestLlmTestsRouter:
     """Contract tests for the LLM tests router."""
 
     def test_llm_test_validation_error(self) -> None:
-        """POST /llm/test returns 422 for invalid payload."""
+        """POST /v2/llm/test returns 422 for invalid payload."""
         client = _build_client()
         response = client.post(
-            "/llm/test",
+            "/v2/llm/test",
             json={"test_level": 123},  # test_level should be string
         )
         assert response.status_code == 422
+
+    def test_legacy_llm_test_routes_are_not_registered(self) -> None:
+        """Retired non-v2 LLM test aliases must fail closed."""
+        client = _build_client()
+
+        responses = [
+            client.post("/llm/test", json={"test_level": 123}),
+            client.get("/llm/test/nonexistent"),
+            client.get("/llm/test/test-123/transcript"),
+        ]
+
+        assert [response.status_code for response in responses] == [404, 404, 404]
 
     def test_v2_llm_test_jetstream_starts_nat_channel_and_publishes_events(
         self,
@@ -42,8 +56,8 @@ class TestLlmTestsRouter:
     ) -> None:
         """POST /v2/llm/test/jetstream should publish test events through runtime JetStream."""
         client = _build_client()
-        scheduled: list[object] = []
-        published: list[tuple[str, dict[str, object]]] = []
+        scheduled: list[Awaitable[Any]] = []
+        published: list[tuple[str, dict[str, Any]]] = []
 
         async def _fake_run_llm_tests(**kwargs):
             assert kwargs["provider_id"] == "provider-1"
@@ -61,12 +75,12 @@ class TestLlmTestsRouter:
                 "final": {"ready": True, "grade": "PASS"},
             }
 
-        async def _fake_publish_to_jetstream(*, subject: str, payload: dict[str, object]) -> bool:
+        async def _fake_publish_to_jetstream(*, subject: str, payload: dict[str, Any]) -> bool:
             published.append((subject, payload))
             return True
 
         class _CapturedTask:
-            def __init__(self, coro: object) -> None:
+            def __init__(self, coro: Awaitable[Any]) -> None:
                 self.coro = coro
 
             def add_done_callback(self, callback) -> None:
@@ -129,10 +143,10 @@ class TestLlmTestsRouter:
 
 
 class TestLlmTestReport:
-    """Tests for GET /llm/test/{test_run_id} endpoint."""
+    """Tests for GET /v2/llm/test/{test_run_id} endpoint."""
 
     def test_llm_test_report_not_found(self) -> None:
-        """GET /llm/test/{id} returns 404 when report not found."""
+        """GET /v2/llm/test/{id} returns 404 when report not found."""
         client = _build_client()
         with (
             patch(
@@ -148,24 +162,24 @@ class TestLlmTestReport:
                 return_value=False,
             ),
         ):
-            response = client.get("/llm/test/nonexistent")
+            response = client.get("/v2/llm/test/nonexistent")
 
         assert response.status_code == 404
         assert response.json()["error"]["message"] == "report not found"
 
     def test_llm_test_report_invalid_id(self) -> None:
-        """GET /llm/test/{id} returns 400 for invalid test run id."""
+        """GET /v2/llm/test/{id} returns 400 for invalid test run id."""
         client = _build_client()
-        response = client.get("/llm/test/invalid@id#")
+        response = client.get("/v2/llm/test/invalid@id#")
         assert response.status_code == 400
         assert "invalid test run id" in response.json()["error"]["message"]
 
 
 class TestLlmTestTranscript:
-    """Tests for GET /llm/test/{test_run_id}/transcript endpoint."""
+    """Tests for GET /v2/llm/test/{test_run_id}/transcript endpoint."""
 
     def test_llm_test_transcript_not_found(self) -> None:
-        """GET /llm/test/{id}/transcript returns 404 when transcript not found."""
+        """GET /v2/llm/test/{id}/transcript returns 404 when transcript not found."""
         client = _build_client()
         with (
             patch(
@@ -181,7 +195,7 @@ class TestLlmTestTranscript:
                 return_value=False,
             ),
         ):
-            response = client.get("/llm/test/test-123/transcript")
+            response = client.get("/v2/llm/test/test-123/transcript")
 
         assert response.status_code == 404
         assert response.json()["error"]["message"] == "transcript not found"
@@ -311,6 +325,7 @@ class TestResolveTestPath:
             _resolve_test_path(settings, "invalid@id", "report", "/tmp/workspace")
 
         assert exc_info.value.status_code == 400
+        assert isinstance(exc_info.value.detail, dict)
         assert "invalid test run id" in exc_info.value.detail["message"]
 
 
