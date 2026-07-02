@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from polaris.delivery.http.error_handlers import setup_exception_handlers
@@ -45,8 +46,28 @@ class _FakeProviderInfo:
 class TestProvidersRouter:
     """Contract tests for the providers router."""
 
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        (
+            ("GET", "/llm/providers"),
+            ("GET", "/llm/providers/test/info"),
+            ("GET", "/llm/providers/test/config"),
+            ("POST", "/llm/providers/test/validate"),
+            ("POST", "/llm/providers/health-all"),
+            ("POST", "/llm/providers/test/health"),
+            ("POST", "/llm/providers/test/models"),
+        ),
+    )
+    def test_retired_provider_alias_routes_are_not_registered(self, method: str, path: str) -> None:
+        """Provider APIs must use the canonical /v2/llm/providers namespace."""
+        client = _build_client()
+
+        response = client.request(method, path, json={})
+
+        assert response.status_code == 404
+
     def test_list_providers_happy_path(self) -> None:
-        """GET /llm/providers returns 200 with provider list."""
+        """GET /v2/llm/providers returns 200 with provider list."""
         client = _build_client()
         mock_manager = MagicMock()
         mock_manager.list_provider_info.return_value = [_FakeProviderInfo()]
@@ -54,7 +75,7 @@ class TestProvidersRouter:
             "polaris.delivery.http.routers.providers._provider_manager",
             mock_manager,
         ):
-            response = client.get("/llm/providers")
+            response = client.get("/v2/llm/providers")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
@@ -63,7 +84,7 @@ class TestProvidersRouter:
         assert payload["providers"][0]["name"] == "TestProvider"
 
     def test_list_providers_runtime_error(self) -> None:
-        """GET /llm/providers handles runtime error with 500."""
+        """GET /v2/llm/providers handles runtime error with 500."""
         client = _build_client()
         mock_manager = MagicMock()
         mock_manager.list_provider_info.side_effect = RuntimeError("boom")
@@ -71,13 +92,13 @@ class TestProvidersRouter:
             "polaris.delivery.http.routers.providers._provider_manager",
             mock_manager,
         ):
-            response = client.get("/llm/providers")
+            response = client.get("/v2/llm/providers")
 
         assert response.status_code == 500
         assert response.json()["error"]["message"] == "internal error"
 
     def test_get_provider_info_happy_path(self) -> None:
-        """GET /llm/providers/{type}/info returns 200 with provider info."""
+        """GET /v2/llm/providers/{type}/info returns 200 with provider info."""
         client = _build_client()
         mock_manager = MagicMock()
         mock_manager.get_provider_info.return_value = _FakeProviderInfo()
@@ -85,7 +106,7 @@ class TestProvidersRouter:
             "polaris.delivery.http.routers.providers._provider_manager",
             mock_manager,
         ):
-            response = client.get("/llm/providers/test/info")
+            response = client.get("/v2/llm/providers/test/info")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
@@ -93,7 +114,7 @@ class TestProvidersRouter:
         assert payload["type"] == "test"
 
     def test_get_provider_info_not_found(self) -> None:
-        """GET /llm/providers/{type}/info returns 404 when provider not found."""
+        """GET /v2/llm/providers/{type}/info returns 404 when provider not found."""
         client = _build_client()
         mock_manager = MagicMock()
         mock_manager.get_provider_info.return_value = None
@@ -101,13 +122,13 @@ class TestProvidersRouter:
             "polaris.delivery.http.routers.providers._provider_manager",
             mock_manager,
         ):
-            response = client.get("/llm/providers/unknown/info")
+            response = client.get("/v2/llm/providers/unknown/info")
 
         assert response.status_code == 404
         assert response.json()["error"]["message"] == "Provider not found"
 
     def test_get_provider_default_config_happy_path(self) -> None:
-        """GET /llm/providers/{type}/config returns 200 with default config."""
+        """GET /v2/llm/providers/{type}/config returns 200 with default config."""
         client = _build_client()
         mock_manager = MagicMock()
         mock_manager.get_provider_default_config.return_value = {
@@ -117,14 +138,14 @@ class TestProvidersRouter:
             "polaris.delivery.http.routers.providers._provider_manager",
             mock_manager,
         ):
-            response = client.get("/llm/providers/test/config")
+            response = client.get("/v2/llm/providers/test/config")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
         assert payload["base_url"] == "https://api.test.com"
 
     def test_get_provider_default_config_not_found(self) -> None:
-        """GET /llm/providers/{type}/config returns 404 when provider not found."""
+        """GET /v2/llm/providers/{type}/config returns 404 when provider not found."""
         client = _build_client()
         mock_manager = MagicMock()
         mock_manager.get_provider_default_config.return_value = None
@@ -132,13 +153,13 @@ class TestProvidersRouter:
             "polaris.delivery.http.routers.providers._provider_manager",
             mock_manager,
         ):
-            response = client.get("/llm/providers/unknown/config")
+            response = client.get("/v2/llm/providers/unknown/config")
 
         assert response.status_code == 404
         assert response.json()["error"]["message"] == "Provider not found"
 
     def test_validate_provider_config_happy_path(self) -> None:
-        """POST /llm/providers/{type}/validate returns validation result."""
+        """POST /v2/llm/providers/{type}/validate returns validation result."""
         client = _build_client()
         fake_result = MagicMock()
         fake_result.valid = True
@@ -156,7 +177,7 @@ class TestProvidersRouter:
             mock_manager,
         ):
             response = client.post(
-                "/llm/providers/test/validate",
+                "/v2/llm/providers/test/validate",
                 json={"api_key": "secret"},
             )
 
@@ -166,7 +187,7 @@ class TestProvidersRouter:
         assert payload["normalized_config"] == {"model": "gpt-4"}
 
     def test_validate_provider_config_unknown_type(self) -> None:
-        """POST /llm/providers/{type}/validate returns 404 for unknown type."""
+        """POST /v2/llm/providers/{type}/validate returns 404 for unknown type."""
         client = _build_client()
         mock_manager = MagicMock()
         mock_manager.get_provider_class.return_value = None
@@ -175,7 +196,7 @@ class TestProvidersRouter:
             mock_manager,
         ):
             response = client.post(
-                "/llm/providers/unknown/validate",
+                "/v2/llm/providers/unknown/validate",
                 json={},
             )
 
@@ -184,7 +205,7 @@ class TestProvidersRouter:
         assert payload["error"]["code"] == "PROVIDER_NOT_FOUND"
 
     def test_health_check_all_happy_path(self) -> None:
-        """POST /llm/providers/health-all returns aggregated health results."""
+        """POST /v2/llm/providers/health-all returns aggregated health results."""
         client = _build_client()
         mock_manager = MagicMock()
         mock_manager.health_check_all.return_value = {"openai": {"ok": True}}
@@ -193,7 +214,7 @@ class TestProvidersRouter:
             mock_manager,
         ):
             response = client.post(
-                "/llm/providers/health-all",
+                "/v2/llm/providers/health-all",
                 json={"providers": {"openai": {}}},
             )
 
@@ -202,7 +223,7 @@ class TestProvidersRouter:
         assert payload["openai"]["ok"] is True
 
     def test_provider_health_happy_path(self) -> None:
-        """POST /llm/providers/{id}/health returns health status."""
+        """POST /v2/llm/providers/{id}/health returns health status."""
         client = _build_client()
         mock_manager = MagicMock()
         mock_manager.get_provider_info.return_value = _FakeProviderInfo()
@@ -221,7 +242,7 @@ class TestProvidersRouter:
             )
             mock_run.return_value = {"status": "healthy", "latency_ms": 42}
             response = client.post(
-                "/llm/providers/test/health",
+                "/v2/llm/providers/test/health",
                 json={"api_key": "secret", "headers": {}},
             )
 
@@ -231,7 +252,7 @@ class TestProvidersRouter:
         assert payload["latency_ms"] == 42
 
     def test_provider_models_happy_path(self) -> None:
-        """POST /llm/providers/{id}/models returns model list."""
+        """POST /v2/llm/providers/{id}/models returns model list."""
         client = _build_client()
         mock_manager = MagicMock()
         mock_manager.get_provider_info.return_value = _FakeProviderInfo()
@@ -250,7 +271,7 @@ class TestProvidersRouter:
             )
             mock_run.return_value = {"models": [{"id": "gpt-4", "name": "GPT-4"}]}
             response = client.post(
-                "/llm/providers/test/models",
+                "/v2/llm/providers/test/models",
                 json={"api_key": "secret", "headers": {}},
             )
 
