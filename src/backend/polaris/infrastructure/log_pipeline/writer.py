@@ -5,7 +5,7 @@ All code should use this writer instead of directly appending to JSONL files.
 
 Key features:
 - Per-run sequence numbers (monotonic, no seq=0 issues)
-- Automatic channel mapping from legacy channels
+- Automatic channel mapping from compatibility channels
 - Three-layer persistence (raw, norm, enriched)
 - Fingerprint-based deduplication
 - Thread-safe operation
@@ -435,8 +435,8 @@ class LogEventWriter:
             refs=refs or {},
             tags=tags or [],
             raw=raw,
-            legacy_input=input_data,
-            legacy_output=output_data,
+            compat_input=input_data,
+            compat_output=output_data,
         )
 
         # Compute fingerprint for deduplication
@@ -459,30 +459,30 @@ class LogEventWriter:
 
         return event
 
-    def write_from_legacy(
+    def write_from_compat(
         self,
-        legacy_channel: str,
+        compat_channel: str,
         raw_event: dict[str, Any],
         run_id: str | None = None,
     ) -> CanonicalLogEventV2:
-        """Write an event from legacy format to the pipeline.
+        """Write an event from compatibility format to the pipeline.
 
-        This handles events from old emit_event, emit_llm_event, emit_dialogue
+        This handles events from compatibility emit_event, emit_llm_event, emit_dialogue
         functions and normalizes them to the canonical format.
 
         Args:
-            legacy_channel: Old channel name (e.g., 'pm_log', 'runtime_events')
+            compat_channel: Compatibility channel name (e.g., 'pm_log', 'runtime_events')
             raw_event: Raw event dict
             run_id: Run identifier
 
         Returns:
             The written CanonicalLogEventV2 event
         """
-        from .canonical_event import normalize_legacy_event
+        from .canonical_event import normalize_compat_event
 
         # Normalize to canonical format
         effective_run_id = run_id or self.run_id
-        canonical = normalize_legacy_event(raw_event, legacy_channel, effective_run_id)
+        canonical = normalize_compat_event(raw_event, compat_channel, effective_run_id)
 
         # Get sequence number
         canonical.seq = _next_seq_for_run(effective_run_id)

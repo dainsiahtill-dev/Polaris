@@ -100,25 +100,25 @@ class CanonicalLogEventV2(BaseModel):
     # LLM enrichment (async, populated by background worker)
     enrichment: LogEnrichmentV1 | None = None
 
-    # Legacy compatibility fields (for backward compatibility with old channels)
+    # Compatibility projection fields (for compatibility projection with compatibility channels)
     # These are populated by the adapter layer when reading
-    legacy_name: str | None = None  # Old 'name' field
-    legacy_output: dict[str, Any] | None = None  # Old 'output' field
-    legacy_input: dict[str, Any] | None = None  # Old 'input' field
+    compat_name: str | None = None  # Compatibility 'name' field
+    compat_output: dict[str, Any] | None = None  # Compatibility 'output' field
+    compat_input: dict[str, Any] | None = None  # Compatibility 'input' field
 
     def compute_fingerprint(self) -> str:
         """Compute deduplication fingerprint for this event."""
         content = f"{self.channel}:{self.kind}:{self.actor}:{self.message[:200]}"
         return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
 
-    def to_legacy_projection(self, legacy_channel: str) -> dict[str, Any]:
-        """Project this event to legacy format for backward compatibility.
+    def to_compat_projection(self, compat_channel: str) -> dict[str, Any]:
+        """Project this event to compatibility format for compatibility projection.
 
         Args:
-            legacy_channel: The old channel name (e.g., 'pm_log', 'runtime_events')
+            compat_channel: The compatibility channel name (e.g., 'pm_log', 'runtime_events')
 
         Returns:
-            Dict that mimics the old event format
+            Dict that mimics the compatibility event format
         """
         projection: dict[str, Any] = {
             "ts": self.ts,
@@ -126,45 +126,45 @@ class CanonicalLogEventV2(BaseModel):
             "seq": self.seq,
             "event_id": self.event_id,
             "run_id": self.run_id,
-            # Legacy 'name' field maps to message
+            # Compatibility 'name' field maps to message
             "name": self.message[:100] if self.message else "",
-            # Legacy 'data' or 'output' field
+            # Compatibility 'data' or 'output' field
             "data": self.raw or self.enrichment.normalized_fields if self.enrichment else {},
             # Type-specific projections
         }
 
-        if legacy_channel in {"pm_subprocess", "director_console", "runlog"}:
+        if compat_channel in {"pm_subprocess", "director_console", "runlog"}:
             # Process channel: preserve raw text
             projection["type"] = "line"
             projection["text"] = self.message
             if self.raw:
                 projection["text"] = self.raw.get("text", self.message)
 
-        elif legacy_channel in {"pm_llm", "director_llm", "ollama"}:
+        elif compat_channel in {"pm_llm", "director_llm", "ollama"}:
             # LLM channel: preserve role and event
             projection["role"] = self.actor
             projection["event"] = self.kind  # or specific LLM event type
             if self.raw:
                 projection["data"] = self.raw
 
-        elif legacy_channel in {"runtime_events", "engine_status"}:
+        elif compat_channel in {"runtime_events", "engine_status"}:
             # System channel: state events
             projection["kind"] = self.kind
             projection["actor"] = self.actor
             projection["summary"] = self.message
 
-        elif legacy_channel in {"pm_log", "pm_report", "planner", "qa", "dialogue"}:
+        elif compat_channel in {"pm_log", "pm_report", "planner", "qa", "dialogue"}:
             # System channel with structured data
             projection["type"] = self.kind
-            projection["output"] = self.legacy_output or {}
-            projection["input"] = self.legacy_input or {}
+            projection["output"] = self.compat_output or {}
+            projection["input"] = self.compat_input or {}
 
         return projection
 
 
-# Channel mapping for legacy compatibility
-# Maps old channel names to new channel + metadata
-LEGACY_CHANNEL_MAPPING: dict[str, dict[str, Any]] = {
+# Channel mapping for compatibility projection
+# Maps compatibility channel names to new channel + metadata
+COMPAT_CHANNEL_MAPPING: dict[str, dict[str, Any]] = {
     # Process channels (subprocess stdout/stderr)
     "pm_subprocess": {"channel": "process", "domain": "process", "actor": "PM"},
     "director_console": {"channel": "process", "domain": "process", "actor": "Director"},
@@ -184,25 +184,25 @@ LEGACY_CHANNEL_MAPPING: dict[str, dict[str, Any]] = {
 }
 
 
-def normalize_legacy_event(
+def normalize_compat_event(
     raw: dict[str, Any],
-    legacy_channel: str,
+    compat_channel: str,
     run_id: str = "",
 ) -> CanonicalLogEventV2:
-    """Normalize a legacy event to CanonicalLogEventV2.
+    """Normalize a compatibility event to CanonicalLogEventV2.
 
-    This function handles events from old channels and converts them
+    This function handles events from compatibility channels and converts them
     to the unified schema.
 
     Args:
-        raw: Raw event dict from old format
-        legacy_channel: Source channel name (e.g., 'pm_log')
+        raw: Raw event dict from compatibility format
+        compat_channel: Source channel name (e.g., 'pm_log')
         run_id: Run identifier
 
     Returns:
         CanonicalLogEventV2 instance
     """
-    mapping = LEGACY_CHANNEL_MAPPING.get(legacy_channel, {})
+    mapping = COMPAT_CHANNEL_MAPPING.get(compat_channel, {})
     channel = mapping.get("channel", "system")
     domain = mapping.get("domain", "system")
     actor = mapping.get("actor", "system")
@@ -215,15 +215,15 @@ def normalize_legacy_event(
 
     # Extract message based on channel type
     message = ""
-    if legacy_channel in {"pm_subprocess", "director_console", "runlog"}:
+    if compat_channel in {"pm_subprocess", "director_console", "runlog"}:
         message = raw.get("text", raw.get("message", ""))
-    elif legacy_channel in {"pm_llm", "director_llm", "ollama"}:
+    elif compat_channel in {"pm_llm", "director_llm", "ollama"}:
         # LLM events have role/event/data structure
         role = raw.get("role", actor)
         event_type = raw.get("event", "")
         data = raw.get("data", {})
         message = f"[{role}] {event_type}: {str(data)[:100]}"
-    elif legacy_channel in {"runtime_events", "engine_status"}:
+    elif compat_channel in {"runtime_events", "engine_status"}:
         message = raw.get("summary", raw.get("message", raw.get("name", "")))
     else:
         message = raw.get("message", raw.get("summary", raw.get("name", "")))
@@ -254,12 +254,12 @@ def normalize_legacy_event(
         severity=severity,
         kind=kind,
         actor=raw.get("actor", actor),
-        source=legacy_channel,
+        source=compat_channel,
         message=message,
         refs=raw.get("refs", {}),
         tags=raw.get("tags", []),
         raw=raw,
-        legacy_name=raw.get("name"),
-        legacy_output=raw.get("output", raw.get("data")),
-        legacy_input=raw.get("input"),
+        compat_name=raw.get("name"),
+        compat_output=raw.get("output", raw.get("data")),
+        compat_input=raw.get("input"),
     )

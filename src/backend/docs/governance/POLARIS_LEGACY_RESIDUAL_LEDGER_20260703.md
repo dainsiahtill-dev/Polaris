@@ -26,6 +26,7 @@ as the live work queue for new findings.
 | LR-04 | Director planning | `director.planning.internal.director_logic.py` retained a simplified write gate and `_dl_*` aliases beside canonical `director_logic_rules`. | Deleted the retired module and removed `_dl_*` package-root exports. | `rtk pytest src/backend/polaris/tests/test_director_logic.py src/backend/polaris/tests/unit/cells/test_director/execution/test_logic.py -q`; negative import scan. |
 | LR-05 | CE blueprint | `enable_director_pool` and `director_pool_assignment` names implied CE still managed Director execution when the actual path is ADRStore persistence plus TaskMarket handoff. | Renamed to `enable_adr_blueprint_store` and `director_execution_assignment`. | `rtk pytest src/backend/polaris/cells/chief_engineer/blueprint/internal/tests/test_ce_consumer.py src/backend/polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py src/backend/polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py -q`; negative source scan. |
 | LR-06 | Storage layout | `save_persisted_settings` still dual-wrote the old home settings file, creating a second settings fact source. | Stopped dual-writing the migration path; retained one-way read migration into canonical global settings. | `rtk pytest src/backend/polaris/cells/storage/layout/tests/test_storage_layout_cell.py src/backend/polaris/tests/test_workspace_settings_sync.py src/backend/polaris/tests/test_llm_phase0_regression.py -q -k "settings"`; negative source scan. |
+| LR-07 | Log pipeline | Log pipeline compatibility projection used `LEGACY_CHANNEL_MAPPING`, `normalize_legacy_event`, `to_legacy_projection`, and `legacy_*` model fields, making compatibility input look like a second event fact source. | Renamed the layer to `COMPAT_CHANNEL_MAPPING`, `normalize_compat_event`, `to_compat_projection`, and `compat_*` fields while keeping canonical event writing behavior. | `rtk pytest src/backend/polaris/tests/infrastructure/log_pipeline/test_canonical_event.py -q`; `rtk ruff check`; `rtk mypy`; negative source scan. |
 
 ## Open Residual Buckets
 
@@ -34,7 +35,6 @@ execution correctness directly.
 
 | Bucket | Priority | Current Evidence | Exit Criteria |
 | --- | --- | --- | --- |
-| Log/event projection compatibility | P1 | `infrastructure.log_pipeline.*` still exposes legacy channel/event projection wording and conversion helpers. | Confirm whether these are still required by runtime.v2/EventBus consumers; if not, remove or rename to canonical projection language and keep one event truth source. |
 | Workflow embedded compatibility mode | P1 | `workflow_activity/internal/embedded_api.py` and `workflow_runtime/internal/embedded_api.py` still branch on `mode == "legacy"`. | Determine whether workflow snapshots can be normalized before this boundary; remove legacy mode or fence it as read-only import migration. |
 | PM/orchestration migration paths | P1 | PM integration and orchestration modules still sync or materialize legacy tasks into canonical task rows. | Ensure TaskMarket/Execution Ledger is the only active execution fact source; keep only one-way import migration if needed. |
 | Audit diagnosis script payload flattening | P2 | Audit diagnosis toolkit still emits `legacy` script-friendly payloads. | Replace with explicit `script_projection` naming or remove if no active caller needs the flattened shape. |
@@ -45,9 +45,8 @@ execution correctness directly.
 
 ## Next Closure Order
 
-1. P1 log/event projection compatibility.
-2. P1 workflow embedded compatibility mode.
-3. P1 PM/orchestration migration paths.
-4. P2 audit diagnosis script projection.
-5. P2 CLI compatibility surfaces.
-6. P3 workspace/docs migration paths.
+1. P1 workflow embedded compatibility mode.
+2. P1 PM/orchestration migration paths.
+3. P2 audit diagnosis script projection.
+4. P2 CLI compatibility surfaces.
+5. P3 workspace/docs migration paths.

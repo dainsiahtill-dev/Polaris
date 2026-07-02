@@ -19,14 +19,14 @@ from __future__ import annotations
 
 # Re-export key types
 from .canonical_event import (
-    LEGACY_CHANNEL_MAPPING,
+    COMPAT_CHANNEL_MAPPING,
     CanonicalLogEventV2,
     LogChannel,
     LogDomain,
     LogEnrichmentV1,
     LogKind,
     LogSeverity,
-    normalize_legacy_event,
+    normalize_compat_event,
 )
 
 # Re-export enrichment
@@ -55,7 +55,7 @@ from .writer import LogEventWriter, get_writer
 
 __all__ = [
     # Legacy mapping
-    "LEGACY_CHANNEL_MAPPING",
+    "COMPAT_CHANNEL_MAPPING",
     # Run context
     "ActiveRunContext",
     # Core model
@@ -80,7 +80,7 @@ __all__ = [
     "get_enrichment_pool",
     "get_query_service",
     "get_writer",
-    "normalize_legacy_event",
+    "normalize_compat_event",
     "resolve_current_run_id",
     "resolve_current_workspace",
     "set_active_run_context",
