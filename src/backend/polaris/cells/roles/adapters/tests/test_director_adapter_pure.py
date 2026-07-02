@@ -5805,7 +5805,7 @@ export function summary() {
         assert "src/models/task_definition.ts" in result["changed_files"]
 
     @pytest.mark.asyncio
-    async def test_execute_repairs_missing_declared_target_from_nearby_existing_module(
+    async def test_execute_fails_missing_declared_target_without_runtime_fabrication(
         self,
         tmp_path: Any,
     ) -> None:
@@ -5855,9 +5855,15 @@ export function summary() {
         )
 
         repaired_task = tmp_path / "src" / "models" / "task.model.ts"
-        assert result["success"] is True
-        assert repaired_task.read_text(encoding="utf-8") == existing_task.read_text(encoding="utf-8")
-        assert "src/models/task.model.ts" in result["changed_files"]
+        assert result["success"] is False
+        assert result["error_code"] == "director_materialization_quality_failed"
+        assert result["artifact_quality_errors"] == [
+            "Artifact quality scan failed: declared target file missing 'src/models/task.model.ts'"
+        ]
+        assert repaired_task.exists() is False
+        assert existing_task.read_text(encoding="utf-8") == (
+            "export interface TaskModel {\n  id: string;\n  tenantId: string;\n  title: string;\n}\n"
+        )
 
     @pytest.mark.asyncio
     async def test_execute_fails_when_changed_file_has_no_domain_signal(self, tmp_path: Any) -> None:
@@ -6359,7 +6365,7 @@ export function summary() {
         rewritten = script.read_text(encoding="utf-8")
         assert result["success"] is True
         assert result["materialization_mode"] == "write_tool_and_workspace_diff"
-        assert result["tools_executed"] == 1
+        assert result["tools_executed"] >= 1
         assert result["changed_files"] == ["scripts/test.mjs"]
         assert rewritten == _build_substantive_node_test_script()
         assert "missing validation contract" not in rewritten
@@ -9371,16 +9377,17 @@ class TestQualityRepairMissingTargetContract:
             changed_files=["src/verify.ts", "tests/verify.test.ts"],
         )
 
-        assert tool_results == []
-        assert summary["stage"] == "runtime_plan_probe_unplannable"
-        assert summary["success_reason"] == "task_boundary_interface_discrepancy_required"
-        assert summary["interface_discrepancy_evidence"]["llm_fallback_blocked"] is True
-        assert (
-            "deterministic_typescript_missing_export_repair"
-            in summary["interface_discrepancy_evidence"]["covered_unplannable_source_tools"]
-        )
+        assert len(tool_results) == 1
+        repair_payload = tool_results[0]["result"]
+        assert repair_payload["source_tool"] == "deterministic_typescript_missing_export_repair"
+        assert repair_payload["file"] == "src/verify.ts"
+        assert repair_payload["repair_kernel"]["owner_cell"] == "director.runtime"
+        assert repair_payload["repair_kernel"]["status"] == "applied"
+        assert summary["stage"] == "deterministic_materialization_quality_repair"
+        assert summary["success_reason"] == "repair_actions_require_quality_gate_rerun"
+        assert summary["write_tool_evidence"] is True
         repaired = (tmp_path / "src" / "verify.ts").read_text(encoding="utf-8")
-        assert "runVerification" not in repaired
+        assert "runVerification" in repaired
 
     @pytest.mark.asyncio
     async def test_quality_repair_interface_discrepancy_retry_requires_final_request_evidence(

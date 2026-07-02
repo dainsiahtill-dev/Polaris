@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -118,6 +119,44 @@ def run_director_materialization_quality_repair_schedule(
     return [dict(item) for item in result.tool_results], dict(result.summary)
 
 
+def _split_materialization_effect_results(
+    tool_results: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split runtime schedule evidence from actual tool/effect results.
+
+    Director Runtime may return ``missing_evidence`` rows to preserve schedule
+    observability. Those rows are useful diagnostics, but they are not tool
+    effects and must not drive adapter execution counters, changed-file checks,
+    or write-evidence decisions.
+    """
+
+    effect_results: list[dict[str, Any]] = []
+    diagnostic_results: list[dict[str, Any]] = []
+    for item in tool_results:
+        copied = dict(item)
+        if (
+            str(copied.get("evidence_status") or "").strip() == "missing_evidence"
+            and not _materialization_result_has_effect_payload(copied)
+        ):
+            diagnostic_results.append(copied)
+            continue
+        effect_results.append(copied)
+    return effect_results, diagnostic_results
+
+
+def _materialization_result_has_effect_payload(item: dict[str, Any]) -> bool:
+    """Return whether a projected runtime row represents an actual tool effect."""
+
+    result = item.get("result")
+    if not isinstance(result, Mapping):
+        return False
+    if str(result.get("file") or result.get("source_tool") or "").strip():
+        return True
+    if isinstance(result.get("repair_kernel"), Mapping):
+        return True
+    return result.get("ok") is not None or result.get("success") is not None
+
+
 def run_director_materialization_quality_repair_schedule_result(
     command: RunDirectorMaterializationQualityRepairScheduleCommandV1,
 ) -> DirectorMaterializationQualityRepairScheduleResultV1:
@@ -159,10 +198,11 @@ def run_director_materialization_quality_repair_schedule_result(
         plan_probe_preaudit=plan_probe_preaudit,
         convergence_verifier_present=command.convergence_verifier is not None,
     )
-    results = [dict(item) for item in facade_result.tool_results]
+    all_results = [dict(item) for item in facade_result.tool_results]
+    results, diagnostic_results = _split_materialization_effect_results(all_results)
     public_summary = project_materialization_quality_facade_summary(
         ordered_steps=facade_result.ordered_steps,
-        tool_results=results,
+        tool_results=all_results,
         artifact_quality_errors=artifact_quality_errors,
         coverage_preaudit=dict(facade_result.coverage_preaudit),
         plan_probe_preaudit=dict(facade_result.plan_probe_preaudit),
@@ -189,6 +229,9 @@ def run_director_materialization_quality_repair_schedule_result(
         public_summary.pop(internal_key, None)
     if runtime_ports_diagnostics:
         public_summary["runtime_ports_diagnostics"] = runtime_ports_diagnostics
+    if diagnostic_results:
+        public_summary["non_effect_evidence_result_count"] = len(diagnostic_results)
+        public_summary["non_effect_evidence_results"] = diagnostic_results
     public_summary["runtime_facade_summary"] = dict(facade_result.summary)
     public_summary["coverage_preaudit"] = dict(facade_result.coverage_preaudit)
     public_summary["plan_probe_preaudit"] = dict(facade_result.plan_probe_preaudit)
