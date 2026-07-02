@@ -18,9 +18,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-# Add parent to path for polaris imports
-sys.path.insert(0, str(Path(__file__).parents[2]))
-
 from polaris.cells.orchestration.workflow_runtime.public.process_launch import (
     ProcessLaunchRequest,
     ProcessLaunchResult,

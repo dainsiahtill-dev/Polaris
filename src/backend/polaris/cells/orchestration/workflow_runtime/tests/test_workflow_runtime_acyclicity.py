@@ -60,6 +60,31 @@ def _forbidden_imports_in_file(path: Path) -> list[str]:
     return violations
 
 
+def _sys_path_mutations_in_file(path: Path) -> list[str]:
+    """Collect import-time ``sys.path`` mutations in workflow_runtime modules."""
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(path))
+    violations: list[str] = []
+
+    for node in tree.body:
+        if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
+            continue
+        call = node.value
+        func = call.func
+        if not isinstance(func, ast.Attribute):
+            continue
+        value = func.value
+        if (
+            isinstance(value, ast.Attribute)
+            and value.attr == "path"
+            and isinstance(value.value, ast.Name)
+            and value.value.id == "sys"
+            and func.attr in {"append", "insert", "extend"}
+        ):
+            violations.append(f"{path}:{node.lineno}: sys.path.{func.attr}(...)")
+    return violations
+
+
 def test_workflow_runtime_does_not_import_roles_adapters() -> None:
     """No workflow_runtime module may import polaris.cells.roles.adapters."""
     # Arrange
@@ -76,4 +101,19 @@ def test_workflow_runtime_does_not_import_roles_adapters() -> None:
         "workflow_runtime must not import roles.adapters (CYCLE-13). "
         "Obtain role adapters via get_orchestration_role_adapter_factory() instead. "
         "Offending imports:\n" + "\n".join(violations)
+    )
+
+
+def test_workflow_runtime_does_not_mutate_sys_path_at_import_time() -> None:
+    """Workflow runtime is a Cell; imports must not mutate global import state."""
+    files = _iter_workflow_runtime_python_files()
+    assert files, "Expected to discover workflow_runtime python files to scan."
+
+    violations: list[str] = []
+    for path in files:
+        violations.extend(_sys_path_mutations_in_file(path))
+
+    assert not violations, (
+        "workflow_runtime modules must use canonical package imports instead of "
+        "mutating sys.path at import time. Offending calls:\n" + "\n".join(violations)
     )
