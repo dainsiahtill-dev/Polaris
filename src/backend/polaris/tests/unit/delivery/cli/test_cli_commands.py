@@ -2,7 +2,7 @@
 
 Covers:
   - __main__.py parser construction and argument validation
-  - polaris_cli.py (legacy host) parser and dispatch paths
+  - polaris_cli.py (retired host) parser and dispatch paths
   - cli_router.py in-app command parsing
   - Help text, error cases, and happy paths
 """
@@ -587,14 +587,14 @@ class TestMainCliRouterRetiredAliases:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Retired aliases must fail closed instead of invoking the legacy host."""
+        """Retired aliases must fail closed instead of invoking the retired host."""
         from polaris.delivery.cli import polaris_cli
         from polaris.delivery.cli.router import CliRouter as MainCliRouter
 
-        def _fail_legacy_main(*_args: object, **_kwargs: object) -> int:
-            raise AssertionError("legacy polaris_cli.main must not be called")
+        def _fail_retired_main(*_args: object, **_kwargs: object) -> int:
+            raise AssertionError("retired polaris_cli.main must not be called")
 
-        monkeypatch.setattr(polaris_cli, "main", _fail_legacy_main)
+        monkeypatch.setattr(polaris_cli, "main", _fail_retired_main)
 
         for command in ("chat", "status", "workflow", "test-window"):
             exit_code = MainCliRouter().route(argparse.Namespace(command=command))
@@ -602,7 +602,7 @@ class TestMainCliRouterRetiredAliases:
 
         err = capsys.readouterr().err
         assert "retired" in err
-        assert "old CLI host" in err
+        assert "retired command host" in err
 
 
 # ---------------------------------------------------------------------------

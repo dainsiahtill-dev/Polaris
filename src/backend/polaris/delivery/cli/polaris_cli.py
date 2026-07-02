@@ -6,7 +6,7 @@ Product direction:
   - multi-mode
 
 This CLI is the main product-facing shell for Polaris roles with a pure
-terminal console host. Legacy test-window routing remains as compatibility
+terminal console host. Retired test-window routing remains as compatibility
 surface for non-canonical hosts.
 """
 
@@ -229,11 +229,11 @@ def create_parser() -> argparse.ArgumentParser:
     test_window_parser = subparsers.add_parser(
         "test-window",
         help=argparse.SUPPRESS,
-        description="Compatibility-only legacy test window surface.",
+        description="Compatibility-only retired test-window surface.",
     )
     _add_workspace_argument(test_window_parser, default=argparse.SUPPRESS)
     _add_log_level_argument(test_window_parser, default=argparse.SUPPRESS)
-    test_window_parser.add_argument("--role", type=str, default="director", help="Role id for the legacy window")
+    test_window_parser.add_argument("--role", type=str, default="director", help="Role id for the retired window")
     test_window_parser.add_argument(
         "--surface",
         choices=["tui"],

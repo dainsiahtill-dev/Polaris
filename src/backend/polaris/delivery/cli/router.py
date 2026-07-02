@@ -871,27 +871,27 @@ class CliRouter:
             return _route_sync(args)
 
         # Retired command names. Keep parser compatibility, but do not dispatch
-        # through the old polaris_cli host because that preserves a second
+        # through the retired polaris_cli host because that preserves a second
         # executable route surface outside the canonical CLI/router contract.
         if cmd in {"chat", "status", "workflow", "test-window"}:
-            return self._route_retired_legacy(args)
+            return self._route_retired_command(args)
 
         # Fallback: unknown command
         print(f"Error: unknown command: {cmd!r}", file=sys.stderr)
         return 1
 
-    def _route_retired_legacy(self, args: argparse.Namespace) -> int:
+    def _route_retired_command(self, args: argparse.Namespace) -> int:
         """Return a migration response for retired top-level commands."""
         cmd = str(getattr(args, "command", "") or "").strip().lower()
         replacements = {
             "chat": "Use `console` for role interaction, or `/v2/role/{role}/chat` for HTTP role chat.",
             "status": "Use `/v2/runtime/status` or role-specific `/v2/{role}/status` HTTP projections.",
             "workflow": "Use `/v2/pm/run` or `/v2/director/run`; workflow execution must remain inside the governed chain.",
-            "test-window": "The legacy test window has been retired; use the canonical console or runtime UI.",
+            "test-window": "The retired test-window surface is disabled; use the canonical console or runtime UI.",
         }
         message = replacements.get(cmd, "Use a canonical Polaris CLI or HTTP route.")
         print(
-            f"Error: command {cmd!r} is retired and will not be dispatched through the old CLI host. {message}",
+            f"Error: command {cmd!r} is retired and will not be dispatched through the retired command host. {message}",
             file=sys.stderr,
         )
         return 1
