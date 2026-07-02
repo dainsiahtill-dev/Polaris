@@ -1552,6 +1552,62 @@ def _filter_npm_script_entrypoint_errors_to_task_write_scope(
     return _dedupe_preserve_order(retained)
 
 
+def _filter_missing_workspace_file_errors_to_task_write_scope(
+    errors: list[str],
+    *,
+    task: dict[str, Any],
+    workspace_full: str,
+    workspace_name: str = "",
+    context: dict[str, Any] | None = None,
+) -> list[str]:
+    """Defer verifier missing-file diagnostics that belong to another task."""
+
+    if not _task_write_scope_candidates(task, workspace_name=workspace_name):
+        return errors
+    if not str(workspace_full or "").strip():
+        return errors
+    retained: list[str] = []
+    deferred_errors: list[str] = []
+    deferred_targets: list[str] = []
+    for error in errors:
+        text = str(error or "")
+        missing_targets = _missing_workspace_file_quality_repair_target_files(
+            artifact_quality_errors=[text],
+            workspace_full=workspace_full,
+        )
+        if not missing_targets:
+            retained.append(text)
+            continue
+        defer_candidates = [target for target in missing_targets if _should_defer_missing_workspace_target(target)]
+        if not defer_candidates:
+            retained.append(text)
+            continue
+        in_scope, out_of_scope = _partition_paths_by_task_write_scope(
+            defer_candidates,
+            task=task,
+            workspace_name=workspace_name,
+        )
+        if defer_candidates and not in_scope:
+            deferred_errors.append(text)
+            deferred_targets.extend(out_of_scope)
+            continue
+        retained.append(text)
+    _record_deferred_task_boundary_quality_errors(
+        context,
+        errors=_dedupe_preserve_order(deferred_errors),
+        target_files=_dedupe_preserve_order(deferred_targets),
+        reason="missing_workspace_file_outside_current_task_target_files",
+    )
+    return _dedupe_preserve_order(retained)
+
+
+def _should_defer_missing_workspace_target(path: str) -> bool:
+    normalized = _normalize_declared_task_path(path)
+    if not normalized:
+        return False
+    return not ("/" not in normalized and normalized in _MISSING_WORKSPACE_ROOT_FILE_ALLOWLIST)
+
+
 def _collect_materialization_quality_errors(
     adapter: Any,
     *,
@@ -1598,9 +1654,16 @@ def _collect_materialization_quality_errors(
             workspace_name=workspace_name,
         )
     )
-    return _filter_npm_script_entrypoint_errors_to_task_write_scope(
+    scoped_errors = _filter_npm_script_entrypoint_errors_to_task_write_scope(
         _dedupe_preserve_order(errors),
         task=task,
+        workspace_name=workspace_name,
+        context=context,
+    )
+    return _filter_missing_workspace_file_errors_to_task_write_scope(
+        scoped_errors,
+        task=task,
+        workspace_full=workspace_full,
         workspace_name=workspace_name,
         context=context,
     )
@@ -1797,21 +1860,36 @@ async def _run_materialization_quality_repair_retry(
         task=task,
         context=deferred_scope_context,
     )
+    repair_quality_errors = _filter_missing_workspace_file_errors_to_task_write_scope(
+        repair_quality_errors,
+        task=task,
+        workspace_full=workspace_full,
+        context=deferred_scope_context,
+    )
     deferred_scope_records = deferred_scope_context.get("director_task_boundary_deferred_quality_errors")
     deferred_scope_targets: list[str] = []
+    deferred_scope_reasons: list[str] = []
     if isinstance(deferred_scope_records, list):
         for record in deferred_scope_records:
             if not isinstance(record, dict):
                 continue
+            raw_reason = str(record.get("reason") or "").strip()
+            if raw_reason:
+                deferred_scope_reasons.append(raw_reason)
             raw_targets = record.get("target_files")
             if isinstance(raw_targets, list):
                 deferred_scope_targets.extend(str(item) for item in raw_targets if str(item or "").strip())
     task_scope_filter_evidence: dict[str, Any] = {}
     if deferred_scope_targets:
+        scope_filter_reason = (
+            deferred_scope_reasons[0]
+            if len(set(deferred_scope_reasons)) == 1
+            else "quality_repair_targets_outside_current_task_target_files"
+        )
         task_scope_filter_evidence = _task_boundary_scope_filter_evidence(
             task,
             target_files=deferred_scope_targets,
-            reason="npm_script_entrypoint_outside_current_task_target_files",
+            reason=scope_filter_reason,
         )
     if not repair_quality_errors and task_scope_filter_evidence:
         return [], {
@@ -2754,6 +2832,14 @@ _PYTHON_TRACEBACK_FILE_RE = re.compile(r'File "(?P<path>[^"]+)", line \d+', re.I
 _MISSING_WORKSPACE_FILE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"No such file or directory:\s*(?P<path>['\"`][^'\"`]+['\"`]|[^;\n]+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"Cannot find module ['\"](?P<path>[^'\"]+)['\"]",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:compiled\s+)?entrypoint missing:\s*(?P<path>['\"`][^'\"`]+['\"`]|[^\s;\n]+)",
         re.IGNORECASE,
     ),
     re.compile(

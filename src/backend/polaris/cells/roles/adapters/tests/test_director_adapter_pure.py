@@ -10380,6 +10380,74 @@ class TestQualityRepairMissingTargetContract:
         assert summary["repair_target_files"] == []
         assert summary["task_boundary_scope_filter"]["out_of_scope_repair_target_files"] == ["src/index.js"]
 
+    @pytest.mark.asyncio
+    async def test_workspace_validation_missing_module_retry_blocks_out_of_scope_target(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                del result
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                raise AssertionError("out-of-scope workspace missing module must not reach LLM repair")
+
+        (tmp_path / "package.json").write_text(
+            '{"scripts":{"build":"node src/index.js"}}\n',
+            encoding="utf-8",
+        )
+        missing_entrypoint = tmp_path / "src" / "index.js"
+
+        tool_results, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["src/engine/rules.js", "src/engine/runner.js"]},
+            target_task_id="task-2",
+            run_id="run-1",
+            context={},
+            original_message="Create source engine files.",
+            llm_call_timeout=1.0,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run build): "
+                f"Error: Cannot find module '{missing_entrypoint}'",
+            ],
+            changed_files=["package.json", "src/engine/rules.js"],
+        )
+
+        assert tool_results == []
+        assert summary["stage"] == "task_boundary_repair_targets_deferred"
+        assert summary["success_reason"] == "repair_targets_outside_current_task_target_files"
+        assert summary["repair_target_files"] == []
+        assert summary["task_boundary_scope_filter"]["reason"] == (
+            "missing_workspace_file_outside_current_task_target_files"
+        )
+        assert summary["task_boundary_scope_filter"]["out_of_scope_repair_target_files"] == ["src/index.js"]
+
     def test_node_test_directory_quality_error_targets_package_json(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
             _semantic_quality_repair_target_files,
