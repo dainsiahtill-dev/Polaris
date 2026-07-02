@@ -643,6 +643,54 @@ class TestChiefEngineerBlueprintPublicService:
         assert persisted["target_files"] == list(result.target_files)
         assert persisted["contract_completeness"]["handoff_ready"] is True
 
+    def test_generate_task_blueprint_does_not_promote_default_test_into_manifest_boundary(self, tmp_path) -> None:
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-JS-MANIFEST",
+            workspace=str(tmp_path),
+            objective="Build JavaScript package manifest and script contract only.",
+            context={
+                "language": "javascript",
+                "target_files": ["package.json"],
+                "scope_paths": ["package.json"],
+                "project_declared_target_files": [
+                    "package.json",
+                    "src/index.js",
+                    "tests/product.test.js",
+                ],
+                "acceptance_criteria": ["package manifest exists"],
+                "execution_checklist": ["Materialize only the listed manifest file"],
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "language": "javascript",
+                    "product_intent": {
+                        "primary_entities": ["meteor", "wish", "queue", "priority"],
+                    },
+                    "minimums": {
+                        "min_test_files": 1,
+                        "min_test_assertions": 8,
+                    },
+                },
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "language": "javascript",
+                    "product_summary": {
+                        "core_terms": ["meteor", "wish", "queue", "priority"],
+                    },
+                },
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        assert result.target_files == ("package.json",)
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert persisted["target_files"] == ["package.json"]
+        semantic_alignment = persisted["contract_completeness"]["semantic_alignment"]
+        assert semantic_alignment["support_boundary"] is True
+        assert persisted["contract_completeness"]["handoff_ready"] is True
+
     def test_generate_task_blueprint_adds_existing_test_targets_to_scope(self, tmp_path) -> None:
         cmd = GenerateTaskBlueprintCommandV1(
             task_id="TASK-TS-SCOPE",

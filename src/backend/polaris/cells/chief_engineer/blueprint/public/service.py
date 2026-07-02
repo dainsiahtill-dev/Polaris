@@ -1040,9 +1040,7 @@ def _apply_delivery_depth_test_targets(
         or _infer_language_from_targets(target_files)
     ).strip()
     project_declared_test_targets = [
-        path
-        for path in _string_list(context.get("project_declared_target_files"))
-        if _path_looks_like_test(path)
+        path for path in _string_list(context.get("project_declared_target_files")) if _path_looks_like_test(path)
     ]
     promote_default_test_target = (
         min_test_files > 0
