@@ -100,7 +100,7 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
     setIsClearing(true);
     setError(null);
     try {
-      const res = await apiFetch('/runtime/clear', {
+      const res = await apiFetch('/v2/runtime/clear', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scope: clearScope }),

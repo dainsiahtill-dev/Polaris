@@ -874,7 +874,7 @@ export const runtimeService = {
   },
 
   async resetTasks(): Promise<ApiResult<void>> {
-    const res = await apiFetch("/runtime/reset-tasks", { method: "POST" });
+    const res = await apiFetch("/v2/runtime/reset/tasks", { method: "POST" });
     return handleResponse(res, "重置任务失败");
   },
 };

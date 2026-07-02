@@ -25,4 +25,13 @@ describe('runtimeService', () => {
       body: JSON.stringify({ scope: 'dialogue' }),
     });
   });
+
+  it('resets tasks through the v2 runtime reset endpoint', async () => {
+    apiFetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const result = await runtimeService.resetTasks();
+
+    expect(result.ok).toBe(true);
+    expect(apiFetchMock).toHaveBeenCalledWith('/v2/runtime/reset/tasks', { method: 'POST' });
+  });
 });

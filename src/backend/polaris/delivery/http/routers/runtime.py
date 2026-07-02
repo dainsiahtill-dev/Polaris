@@ -236,15 +236,6 @@ def _runtime_clear_core(request: Request, payload: RuntimeClearPayload) -> dict[
 
 
 @router.post(
-    "/runtime/clear",
-    dependencies=[Depends(require_auth)],
-    response_model=RuntimeClearResponse,
-)
-async def runtime_clear(request: Request, payload: RuntimeClearPayload) -> dict[str, Any]:  # DEPRECATED
-    return _runtime_clear_core(request, payload)
-
-
-@router.post(
     "/v2/runtime/clear",
     dependencies=[Depends(require_auth)],
     response_model=RuntimeClearResponse,
@@ -560,15 +551,6 @@ async def _runtime_reset_tasks_core(request: Request) -> dict[str, Any]:
         "task_runtime_reset": task_runtime_reset_result,
         **result,
     }
-
-
-@router.post(
-    "/runtime/reset-tasks",
-    dependencies=[Depends(require_auth)],
-    response_model=RuntimeResetTasksResponse,
-)
-async def runtime_reset_tasks(request: Request) -> dict[str, Any]:  # DEPRECATED
-    return await _runtime_reset_tasks_core(request)
 
 
 @router.post(

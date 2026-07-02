@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -77,77 +77,16 @@ class TestRuntimeRouter:
         assert "migration_version" in payload
         assert payload["migration_version"] == 2
 
-    async def test_runtime_clear_all_scope(self) -> None:
-        """POST /runtime/clear with scope=all returns 200."""
+    async def test_retired_runtime_clear_alias_route_is_not_registered(self) -> None:
+        """POST /runtime/clear is retired; callers must use /v2/runtime/clear."""
         app = _build_app()
-        with patch(
-            "polaris.delivery.http.routers.runtime.clear_runtime_scope",
-            return_value={"cleared_files": 10, "cleared_dirs": 2},
-        ):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await client.post(
-                    "/runtime/clear",
-                    json={"scope": "all"},
-                )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/runtime/clear",
+                json={"scope": "all"},
+            )
 
-        assert response.status_code == 200
-        payload: dict[str, Any] = response.json()
-        assert payload["ok"] is True
-        assert payload["scope"] == "all"
-
-    async def test_runtime_clear_pm_scope(self) -> None:
-        """POST /runtime/clear with scope=pm returns 200."""
-        app = _build_app()
-        with patch(
-            "polaris.delivery.http.routers.runtime.clear_runtime_scope",
-            return_value={"cleared_files": 5},
-        ):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await client.post(
-                    "/runtime/clear",
-                    json={"scope": "pm"},
-                )
-
-        assert response.status_code == 200
-        payload: dict[str, Any] = response.json()
-        assert payload["ok"] is True
-        assert payload["scope"] == "pm"
-
-    async def test_runtime_clear_director_scope(self) -> None:
-        """POST /runtime/clear with scope=director returns 200."""
-        app = _build_app()
-        with patch(
-            "polaris.delivery.http.routers.runtime.clear_runtime_scope",
-            return_value={"cleared_files": 3},
-        ):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await client.post(
-                    "/runtime/clear",
-                    json={"scope": "director"},
-                )
-
-        assert response.status_code == 200
-        payload: dict[str, Any] = response.json()
-        assert payload["ok"] is True
-        assert payload["scope"] == "director"
-
-    async def test_runtime_clear_dialogue_scope(self) -> None:
-        """POST /runtime/clear with scope=dialogue returns 200."""
-        app = _build_app()
-        with patch(
-            "polaris.delivery.http.routers.runtime.clear_runtime_scope",
-            return_value={"cleared_files": 1},
-        ):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await client.post(
-                    "/runtime/clear",
-                    json={"scope": "dialogue"},
-                )
-
-        assert response.status_code == 200
-        payload: dict[str, Any] = response.json()
-        assert payload["ok"] is True
-        assert payload["scope"] == "dialogue"
+        assert response.status_code == 404
 
     async def test_migration_status_v1(self) -> None:
         """GET /runtime/migration-status returns v1 status when no version file."""
@@ -174,156 +113,13 @@ class TestRuntimeRouter:
         assert payload["version"] == 1
         assert payload["strict_mode"] is False
 
-    async def test_reset_tasks_happy_path(self) -> None:
-        """POST /runtime/reset-tasks returns 200 with reset status."""
+    async def test_retired_runtime_reset_tasks_alias_route_is_not_registered(self) -> None:
+        """POST /runtime/reset-tasks is retired; callers must use /v2/runtime/reset/tasks."""
         app = _build_app()
-        with (
-            patch(
-                "polaris.infrastructure.di.container.get_container",
-            ) as mock_get_container,
-            patch(
-                "polaris.delivery.http.routers.runtime.terminate_external_loop_pm_processes",
-                return_value=[],
-            ),
-            patch(
-                "polaris.delivery.http.routers.runtime.clear_stop_flag",
-            ),
-            patch(
-                "polaris.delivery.http.routers.runtime.clear_director_stop_flag",
-            ),
-            patch(
-                "polaris.delivery.http.routers.runtime.reset_runtime_records",
-                return_value={"records_reset": 5},
-            ),
-            patch(
-                "polaris.delivery.http.routers.runtime.reset_runtime_task_records",
-                return_value={},
-            ),
-            patch(
-                "polaris.delivery.http.routers.runtime.build_director_runtime_status",
-                return_value={"running": False},
-            ),
-        ):
-            mock_pm_service = MagicMock()
-            mock_pm_service.get_status.return_value = {"running": False}
-            mock_pm_service.stop = AsyncMock()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/runtime/reset-tasks")
 
-            mock_director_service = MagicMock()
-            mock_director_service.get_status = AsyncMock(return_value={"state": "idle"})
-            mock_director_service.stop = AsyncMock()
-
-            mock_container = MagicMock()
-            mock_container.resolve = MagicMock(
-                side_effect=lambda cls: mock_pm_service if "PMService" in str(cls) else mock_director_service
-            )
-            mock_container.resolve_async = AsyncMock(
-                side_effect=lambda cls: mock_pm_service if "PMService" in str(cls) else mock_director_service
-            )
-            mock_get_container.return_value = mock_container
-
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await client.post("/runtime/reset-tasks")
-
-        assert response.status_code == 200
-        payload: dict[str, Any] = response.json()
-        assert payload["ok"] is True
-        assert "pm_running" in payload
-        assert "director_running" in payload
-
-    async def test_reset_tasks_with_running_pm(self) -> None:
-        """POST /runtime/reset-tasks stops running PM and returns status."""
-        app = _build_app()
-        with (
-            patch(
-                "polaris.infrastructure.di.container.get_container",
-            ) as mock_get_container,
-            patch(
-                "polaris.delivery.http.routers.runtime.terminate_external_loop_pm_processes",
-                return_value=[],
-            ),
-            patch(
-                "polaris.delivery.http.routers.runtime.clear_stop_flag",
-            ),
-            patch(
-                "polaris.delivery.http.routers.runtime.clear_director_stop_flag",
-            ),
-            patch(
-                "polaris.delivery.http.routers.runtime.reset_runtime_records",
-                return_value={"records_reset": 0},
-            ),
-            patch(
-                "polaris.delivery.http.routers.runtime.reset_runtime_task_records",
-                return_value={},
-            ),
-            patch(
-                "polaris.delivery.http.routers.runtime.build_director_runtime_status",
-                return_value={"running": False},
-            ),
-        ):
-            mock_pm_service = MagicMock()
-            mock_pm_service.get_status.return_value = {"running": True}
-            mock_pm_service.stop = AsyncMock()
-
-            mock_director_service = MagicMock()
-            mock_director_service.get_status = AsyncMock(return_value={"state": "idle"})
-            mock_director_service.stop = AsyncMock()
-
-            mock_container = MagicMock()
-            mock_container.resolve = MagicMock(
-                side_effect=lambda cls: mock_pm_service if "PMService" in str(cls) else mock_director_service
-            )
-            mock_container.resolve_async = AsyncMock(
-                side_effect=lambda cls: mock_pm_service if "PMService" in str(cls) else mock_director_service
-            )
-            mock_get_container.return_value = mock_container
-
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await client.post("/runtime/reset-tasks")
-
-        assert response.status_code == 200
-        payload: dict[str, Any] = response.json()
-        assert payload["ok"] is True
-        assert payload["pm_running"] is True
-        # Verify PM stop was called
-        mock_pm_service.stop.assert_called_once()
-
-    async def test_reset_tasks_graceful_degradation(self) -> None:
-        """POST /runtime/reset-tasks handles service unavailability gracefully."""
-        app = _build_app()
-        with (
-            patch(
-                "polaris.infrastructure.di.container.get_container",
-                side_effect=RuntimeError("Container unavailable"),
-            ),
-            patch(
-                "polaris.delivery.http.routers.runtime.terminate_external_loop_pm_processes",
-                return_value=[],
-            ),
-            patch(
-                "polaris.delivery.http.routers.runtime.clear_stop_flag",
-            ),
-            patch(
-                "polaris.delivery.http.routers.runtime.clear_director_stop_flag",
-            ),
-            patch(
-                "polaris.delivery.http.routers.runtime.reset_runtime_records",
-                return_value={"records_reset": 0},
-            ),
-            patch(
-                "polaris.delivery.http.routers.runtime.reset_runtime_task_records",
-                return_value={},
-            ),
-            patch(
-                "polaris.delivery.http.routers.runtime.build_director_runtime_status",
-                return_value={"running": False},
-            ),
-        ):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await client.post("/runtime/reset-tasks")
-
-        assert response.status_code == 200
-        payload: dict[str, Any] = response.json()
-        assert payload["ok"] is True
+        assert response.status_code == 404
 
 
 class TestStorageClassification:

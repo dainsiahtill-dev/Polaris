@@ -29,7 +29,7 @@ def test_runtime_clear_dialogue_scope_clears_runtime_paths(tmp_path: Path) -> No
     primary.parent.mkdir(parents=True, exist_ok=True)
     primary.write_text('{"event_id":"a"}\n', encoding="utf-8")
 
-    response = client.post("/runtime/clear", json={"scope": "dialogue"})
+    response = client.post("/v2/runtime/clear", json={"scope": "dialogue"})
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
@@ -83,7 +83,7 @@ def test_runtime_reset_tasks_clears_runtime_records_and_history(tmp_path: Path) 
         "polaris.delivery.http.routers.runtime.terminate_external_loop_pm_processes",
         return_value=[7788],
     ) as external_pm_mock:
-        response = client.post("/runtime/reset-tasks")
+        response = client.post("/v2/runtime/reset/tasks")
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
