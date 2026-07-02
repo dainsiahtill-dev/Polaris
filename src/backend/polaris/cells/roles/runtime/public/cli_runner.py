@@ -8,7 +8,6 @@ Wave 3 extraction - E4: Service Layer Lead.
 Architecture:
     CliRunner depends on IRoleRuntime (RoleRuntimeService) for execution.
     RoleRuntimeService retains core execution responsibilities.
-    Backward compatibility maintained via __getattr__ lazy forwarding.
 """
 
 from __future__ import annotations
@@ -33,8 +32,9 @@ logger = logging.getLogger(__name__)
 class CliRunner:
     """CLI execution modes for role agents.
 
-    This class provides feature parity with the deprecated StandaloneRoleAgent CLI
-    modes, routing all execution through IRoleRuntime (RoleRuntimeService).
+    This class is the terminal/API host adapter for role execution. It keeps
+    input/output concerns at the edge while routing every turn through
+    IRoleRuntime (RoleRuntimeService).
 
     Args:
         runtime: The role runtime service to delegate execution to.
@@ -48,7 +48,6 @@ class CliRunner:
         role: str,
         workspace: str,
         welcome_message: str = "",
-        project_history: Any = None,
     ) -> None:
         """Interactive REPL loop for a role.
 
@@ -56,7 +55,6 @@ class CliRunner:
             role: Role name (e.g. 'architect', 'director').
             workspace: Workspace directory path.
             welcome_message: Optional banner to print before the REPL starts.
-            project_history: Optional history projection callback (deprecated).
         """
         from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
@@ -246,7 +244,6 @@ class CliRunner:
         workspace: str,
         host: str = "127.0.0.1",
         port: int = 50000,
-        project_history: Any = None,
     ) -> None:
         """Run a FastAPI server for programmatic role access.
 
@@ -255,7 +252,6 @@ class CliRunner:
             workspace: Workspace directory path.
             host: Server bind host.
             port: Server bind port.
-            project_history: Optional history projection callback (deprecated).
         """
         from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
