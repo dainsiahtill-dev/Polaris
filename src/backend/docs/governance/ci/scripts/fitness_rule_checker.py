@@ -40,6 +40,9 @@ try:
     from docs.governance.ci.scripts.legacy_coverage_policy import (
         evaluate_legacy_coverage,
     )
+    from docs.governance.ci.scripts.llm_import_policy import (
+        evaluate_llm_import,
+    )
     from docs.governance.ci.scripts.no_conflicting_coverage_policy import (
         evaluate_no_conflicting_coverage,
     )
@@ -68,6 +71,9 @@ except ModuleNotFoundError:
     )
     from legacy_coverage_policy import (
         evaluate_legacy_coverage,
+    )
+    from llm_import_policy import (
+        evaluate_llm_import,
     )
     from no_conflicting_coverage_policy import (
         evaluate_no_conflicting_coverage,
@@ -476,41 +482,15 @@ class FitnessRuleChecker:
         )
 
     def check_llm_import(self) -> FitnessCheckResult:
-        """Check that LLM calls use kernelone.llm."""
-        result = FitnessCheckResult(rule_id="CELL_KERNELONE_08", passed=True)
-        kernelone_llm_dir = self.workspace / "polaris" / "kernelone" / "llm"
-        if not kernelone_llm_dir.exists():
-            result.passed = False
-            result.violations.append("kernelone/llm/ directory not found")
-            return result
-        result.evidence.append("kernelone/llm/ directory exists")
-        cells_dir = self.workspace / "polaris" / "cells"
-        local_patterns = [
-            re.compile(r"def _call_role_llm\s*\("),
-            re.compile(r"def role_llm_invoke\s*\("),
-            re.compile(r"class RoleLLMInvoker\b"),
-        ]
-        violations: list[str] = []
-        if cells_dir.exists():
-            for py_file in cells_dir.rglob("*.py"):
-                if "test" in py_file.parts or "_fixture" in py_file.name:
-                    continue
-                try:
-                    with open(py_file, encoding="utf-8") as f:
-                        file_content = f.read()
-                    for pat in local_patterns:
-                        for match in pat.finditer(file_content):
-                            line_num = file_content[: match.start()].count("\n") + 1
-                            violations.append(f"Local LLM caller at {py_file.relative_to(self.workspace)}:{line_num}")
-                except OSError:
-                    continue
-        if violations:
-            result.passed = False
-            for v in violations:
-                result.violations.append(v)
-        else:
-            result.evidence.append("No local _call_role_llm implementations found in cells/")
-        return result
+        """Check LLM invocation through the canonical policy module."""
+        policy_result = evaluate_llm_import(self.workspace)
+        return FitnessCheckResult(
+            rule_id=policy_result.rule_id,
+            passed=policy_result.passed,
+            evidence=list(policy_result.evidence),
+            violations=list(policy_result.violations),
+            warnings=list(policy_result.warnings),
+        )
 
     def check_role_call_hierarchy(self) -> FitnessCheckResult:
         """Check that roles don't directly call同级 peers."""
