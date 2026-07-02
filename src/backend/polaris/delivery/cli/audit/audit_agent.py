@@ -25,9 +25,9 @@ def _bootstrap_backend_import_path():
         if backend_root_str not in sys.path:
             sys.path.insert(0, backend_root_str)
 
-    from polaris.cells.audit.diagnosis.public import resolve_runtime_root, run_audit_command, to_legacy_result
+    from polaris.cells.audit.diagnosis.public import resolve_runtime_root, run_audit_command, to_script_projection
 
-    return resolve_runtime_root, run_audit_command, to_legacy_result
+    return resolve_runtime_root, run_audit_command, to_script_projection
 
 
 logger = logging.getLogger(__name__)
