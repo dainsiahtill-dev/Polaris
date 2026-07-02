@@ -629,7 +629,7 @@ def _offline_stats(
     end_dt = _parse_iso8601(params.get("end_time"))
     facade = _get_audit_facade(runtime_root)
     stats = facade.get_stats(start_time=start_dt, end_time=end_dt)
-    legacy = {
+    script_projection = {
         "total_events": stats.get("total_events", 0),
         "event_types": stats.get("by_type", {}),
         "sources": stats.get("by_role", {}),
@@ -640,7 +640,7 @@ def _offline_stats(
             "start": params.get("start_time"),
             "end": params.get("end_time"),
         },
-        "legacy": legacy,
+        "script_projection": script_projection,
     }
 
 
@@ -1062,8 +1062,8 @@ def run_audit_command(
         )
 
 
-def to_legacy_result(envelope: dict[str, Any]) -> dict[str, Any]:
-    """Flatten unified envelope to legacy script-friendly payload."""
+def to_script_projection(envelope: dict[str, Any]) -> dict[str, Any]:
+    """Flatten unified envelope to the script-friendly projection payload."""
     data = envelope.get("data")
     if isinstance(data, dict):
         result: dict[str, Any] = dict(data)

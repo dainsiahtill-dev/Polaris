@@ -32,6 +32,7 @@ as the live work queue for new findings.
 | LR-10 | Delivery PM CLI import | Delivery-layer PM import code used `legacy_id`, `legacy_task`, `legacy_sync`, and `sync_from_legacy_tasks` while importing source payloads into canonical PM task rows. | Renamed the import boundary to `source_task_id`, `source_task`, `source_task_sync`, and `sync_from_source_tasks`; updated loop-director and Director node selectors to use source-task terminology. | `rtk pytest src/backend/polaris/tests/unit/delivery/cli/test_pm_cli.py -q`; `rtk ruff check`; `rtk mypy`; negative source scan. |
 | LR-11 | Factory resume evidence | Director-only Factory resume helpers used `legacy_task_dirs` / `legacy_taskboard` names while rehydrating source task-directory evidence. | Renamed the helpers and tests to `source_task_dirs` / `source_taskboard` without changing resume selection behavior. | `rtk pytest src/backend/polaris/tests/unit/delivery/http/routers/test_factory_v2.py -q -k "director_resume or source_taskboard"`; `rtk ruff check`; `rtk mypy`; negative source scan. |
 | LR-12 | Role runtime task-ref guard | Role runtime contract validation intentionally rejected retired task-market ref shapes through `_is_legacy_task_market_task_ref`, leaving old terminology in the fail-closed guard. | Renamed the helper/test to `retired_task_market_task_ref` while preserving the active `runtime.task_market:task:<task_id>` requirement. | `rtk pytest src/backend/polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py -q -k "retired_task_ref or task_ref_shape or task_market"`; `rtk ruff check`; `rtk mypy`; negative source scan. |
+| LR-13 | Audit diagnosis script projection | `audit.diagnosis` public/internal toolkit exposed `to_legacy_result` and `"legacy"` stats payloads for script-friendly flattened output. | Renamed the public projection to `to_script_projection` and the stats field to `script_projection`. | `rtk pytest src/backend/polaris/tests/audit/test_audit_service.py::test_to_script_projection_flattens_errors -q`; `rtk ruff check`; `rtk mypy`; negative source scan. Full `test_audit_service.py` currently has unrelated `Audit store factory not registered` failures. |
 
 ## Open Residual Buckets
 
@@ -40,7 +41,6 @@ execution correctness directly.
 
 | Bucket | Priority | Current Evidence | Exit Criteria |
 | --- | --- | --- | --- |
-| Audit diagnosis script payload flattening | P2 | Audit diagnosis toolkit still emits `legacy` script-friendly payloads. | Replace with explicit `script_projection` naming or remove if no active caller needs the flattened shape. |
 | CLI compatibility surfaces | P2 | CLI/router/console/director_v2 still accept or warn about retired modes, test-window, textual/rich aliases, and `--state`. | Either remove the compatibility options or fence them as explicit fail-closed/deprecation errors with tests. |
 | Workspace/docs migration paths | P3 | Docs/workspace integrity still references old docs layout and metadata paths for migration. | Keep as accepted read-only migration only, or remove after confirming no workspace bootstrap relies on it. |
 | Domain vocabulary, not debt | Not counted | Tech Radar uses `deprecated` as a library ring; PM requirements use `deprecated` as a soft-delete state. | Do not remove; these are business states, not architecture drift. |
@@ -48,6 +48,5 @@ execution correctness directly.
 
 ## Next Closure Order
 
-1. P2 audit diagnosis script projection.
-2. P2 CLI compatibility surfaces.
-3. P3 workspace/docs migration paths.
+1. P2 CLI compatibility surfaces.
+2. P3 workspace/docs migration paths.

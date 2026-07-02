@@ -14,7 +14,7 @@ import pytest
 if importlib.util.find_spec("polaris.cells.audit.diagnosis.public") is None:
     pytest.skip("Module not available: polaris.cells.audit.diagnosis.public", allow_module_level=True)
 
-from polaris.cells.audit.diagnosis.public import run_audit_command, to_legacy_result
+from polaris.cells.audit.diagnosis.public import run_audit_command, to_script_projection
 
 
 def _write_audit_event(runtime_root, event: dict) -> None:
@@ -334,7 +334,7 @@ def test_run_audit_command_trace_offline(runtime_root):
     assert int(data.get("event_count") or 0) >= 1
 
 
-def test_to_legacy_result_flattens_errors():
+def test_to_script_projection_flattens_errors():
     envelope = {
         "schema_version": "2.1",
         "command": "triage",
@@ -344,6 +344,6 @@ def test_to_legacy_result_flattens_errors():
         "data": {},
         "errors": [{"code": "invalid_input", "message": "run_id is required"}],
     }
-    flattened = to_legacy_result(envelope)
+    flattened = to_script_projection(envelope)
     assert flattened["status"] == "error"
     assert flattened["error"] == "run_id is required"

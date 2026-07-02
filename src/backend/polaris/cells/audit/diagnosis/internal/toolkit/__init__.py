@@ -17,7 +17,7 @@
 - ErrorChain - 错误链数据类
 - ErrorChainLink - 错误链环节
 - run_audit_command() - 统一执行入口（在线/离线）
-- to_legacy_result() - 兼容旧脚本返回格式
+- to_script_projection() - 返回脚本友好的扁平投影
 
 错误链条追溯功能 (error_chain.py):
 - 支持通过错误内容搜索事件（exact/substring/regex/fuzzy）
@@ -51,9 +51,9 @@ def run_audit_command(*args, **kwargs) -> Any:
     return _impl(*args, **kwargs)
 
 
-def to_legacy_result(*args, **kwargs) -> Any:
+def to_script_projection(*args, **kwargs) -> Any:
     """Lazy import to avoid package-level circular dependency."""
-    from .service import to_legacy_result as _impl
+    from .service import to_script_projection as _impl
 
     return _impl(*args, **kwargs)
 
@@ -71,7 +71,7 @@ __all__ = [
     "query_events",
     "run_audit_command",
     "search_error_chains",
-    "to_legacy_result",
+    "to_script_projection",
     "verify_chain",
     "verify_file_integrity",
 ]

@@ -17,7 +17,7 @@ from polaris.cells.audit.diagnosis.public.service import (
     query_audit_diagnosis_trail,
     resolve_runtime_root,
     run_audit_command,
-    to_legacy_result,
+    to_script_projection,
     write_ws_connection_event,
     write_ws_connection_event_sync,
 )
@@ -37,7 +37,7 @@ __all__ = [
     "query_audit_diagnosis_trail",
     "resolve_runtime_root",
     "run_audit_command",
-    "to_legacy_result",
+    "to_script_projection",
     "write_ws_connection_event",
     "write_ws_connection_event_sync",
 ]

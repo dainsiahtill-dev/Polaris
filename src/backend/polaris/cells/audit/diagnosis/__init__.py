@@ -10,7 +10,7 @@ from polaris.cells.audit.diagnosis.public import (
     QueryAuditDiagnosisTrailV1,
     RunAuditDiagnosisCommandV1,
     run_audit_command,
-    to_legacy_result,
+    to_script_projection,
     write_ws_connection_event,
     write_ws_connection_event_sync,
 )
@@ -25,7 +25,7 @@ __all__ = [
     "QueryAuditDiagnosisTrailV1",
     "RunAuditDiagnosisCommandV1",
     "run_audit_command",
-    "to_legacy_result",
+    "to_script_projection",
     "write_ws_connection_event",
     "write_ws_connection_event_sync",
 ]

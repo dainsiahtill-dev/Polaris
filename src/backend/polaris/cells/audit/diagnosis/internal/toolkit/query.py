@@ -134,7 +134,7 @@ def query_events(
         records.sort(key=lambda e: e.get("timestamp") or "")
         return records[offset : offset + limit]
     except ValueError:
-        # Preserve legacy behavior: unknown event type yields empty result.
+        # Preserve the query contract: unknown event type yields empty result.
         return []
     except RuntimeError as exc:
         logger.warning("Kernel audit query failed, fallback to raw scan: %s", exc)
