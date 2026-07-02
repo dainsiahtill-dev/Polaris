@@ -409,12 +409,12 @@ class ToolBatchRuntime:
         for tool in serial_writes:
             result = await self._execute_single(tool, turn_id, context=effective_context)
             if result.status == ToolExecutionStatus.SUCCESS and not result.effect_receipt:
-                logger.warning(
-                    "Write tool %s (call_id=%s) executed without effect_receipt; "
-                    "continuing with synthetic receipt to maintain benchmark compatibility",
+                logger.error(
+                    "Write tool %s (call_id=%s) succeeded without effect_receipt; marking the tool lifecycle as failed",
                     result.tool_name,
                     result.call_id,
                 )
+                result = self._missing_effect_receipt_result(result)
             receipts.append(self._result_to_receipt([result], turn_id))
 
         # 4. 异步工具(不等待结果)
@@ -698,6 +698,24 @@ class ToolBatchRuntime:
                     "recoverable_context": recoverable_context,
                 }
             ],
+        )
+
+    @staticmethod
+    def _missing_effect_receipt_result(result: ToolResult) -> ToolResult:
+        """Convert a write result without effect evidence into a fail-closed result."""
+
+        return ToolResult(
+            call_id=result.call_id,
+            tool_name=result.tool_name,
+            status=ToolExecutionStatus.ERROR,
+            result={
+                "failure_class": "missing_effect_receipt",
+                "responsible_layer": "tool_lifecycle",
+                "original_result": result.result,
+            },
+            error="Write tool succeeded without effect_receipt; tool lifecycle receipt is incomplete.",
+            execution_time_ms=result.execution_time_ms,
+            effect_receipt=None,
         )
 
     def _result_to_receipt(self, results: list[ToolResult], turn_id: TurnId | None = None) -> BatchReceipt:

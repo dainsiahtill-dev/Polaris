@@ -448,6 +448,41 @@ class TestMixedBatch:
         assert receipts[0]["results"][0]["effect_receipt"] == {"operation": "modify", "file": "nested.txt"}
 
     @pytest.mark.asyncio
+    async def test_write_without_effect_receipt_fails_closed(self, runtime) -> None:
+        """成功写工具缺少 effect_receipt 时必须失败闭合。"""
+
+        async def missing_receipt_executor(tool_name, arguments):
+            return {"success": True, "result": {"message": "write reported success"}}
+
+        runtime.executor = missing_receipt_executor
+
+        write_inv = ToolInvocation(
+            call_id=ToolCallId("w_missing_receipt"),
+            tool_name="write_file",
+            arguments={"path": "missing_receipt.txt", "content": "x"},
+            effect_type="write",
+            execution_mode=ToolExecutionMode.WRITE_SERIAL,
+        )
+        batch = ToolBatch(
+            batch_id=BatchId("missing_receipt_batch"),
+            invocations=[write_inv],
+            parallel_readonly=[],
+            serial_writes=[write_inv],
+            async_receipts=[],
+        )
+
+        receipts = await runtime.execute_batch(batch, TurnId("turn_missing_receipt"))
+
+        assert receipts[0]["success_count"] == 0
+        assert receipts[0]["failure_count"] == 1
+        assert receipts[0]["results"][0]["status"] == "error"
+        assert receipts[0]["results"][0]["effect_receipt"] is None
+        assert receipts[0]["results"][0]["result"]["failure_class"] == "missing_effect_receipt"
+        assert receipts[0]["raw_results"][0]["error"] == (
+            "Write tool succeeded without effect_receipt; tool lifecycle receipt is incomplete."
+        )
+
+    @pytest.mark.asyncio
     async def test_ok_false_result_maps_to_error_status(self, runtime) -> None:
         """仅返回 ok=false 的结果应被记为 error，而不是 success。"""
 

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T05:11:22.449708Z",
-  "source_hash": "9c347abb149ff2ac",
+  "generated_at": "2026-07-02T05:25:44.488189Z",
+  "source_hash": "00cdaca17d6d0f2d",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -8046,6 +8046,10 @@
         {
           "name": "_resolve_execution_plan",
           "doc": "解析批次执行计划,严格使用显式分组;禁止按工具名回退。"
+        },
+        {
+          "name": "_missing_effect_receipt_result",
+          "doc": "Convert a write result without effect evidence into a fail-closed result."
         },
         {
           "name": "_result_to_receipt",
