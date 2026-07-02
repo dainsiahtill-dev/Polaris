@@ -1517,17 +1517,14 @@ def execute_role_capability_invocation(
     """Execute a mounted role capability through its declared public contract.
 
     ``handlers`` is an optional typed :class:`CapabilityHandlerRegistry` seam for
-    the in-progress decomposition of this dispatcher. Capability families that
-    have been migrated onto a :class:`CapabilityHandler` are routed through the
-    registry (the explicit ``handlers`` argument, else the process-wide
-    :func:`default_capability_registry`); families not yet migrated fall through
-    to the legacy ``if/elif`` ladder below. Behavior is byte-identical either way.
+    dependency injection in tests and embedded runtimes. Capability families are
+    routed through the explicit registry, or through the process-wide
+    :func:`default_capability_registry` when no registry is supplied.
 
-    The twelve ``*_service`` kwargs remain ``Any | None`` while the legacy ladder
-    still consumes them directly; they are funnelled into the typed
-    :class:`CapabilityDeps` at the dispatch seam so migrated handlers see a
-    zero-``Any`` port surface. Phase 4 retypes the public kwargs once every family
-    is migrated and the legacy ladder is gone.
+    The twelve ``*_service`` kwargs are optional public service ports gathered into
+    :class:`CapabilityDeps` at the dispatch seam. A mounted capability without a
+    registered handler fails closed with ``unsupported_capability_contract``; the
+    dispatcher no longer maintains a parallel hand-written command branch.
     """
     if not isinstance(command, ExecuteRoleCapabilityInvocationCommandV1):
         raise TypeError("command must be an ExecuteRoleCapabilityInvocationCommandV1")
@@ -1654,13 +1651,11 @@ def execute_role_capability_invocation(
         )
 
     # --- Typed CapabilityHandler dispatch seam --------------------------------
-    # After the verbatim cross-cutting prelude guards above, route migrated
-    # capability families through the typed registry. ``deps`` bundles the twelve
-    # optional service ports; the identity triple is exactly what the legacy
-    # ``is_*`` flags reconstruct (capability_id / owner_cell / contract_name).
-    # Families with no registered handler fall through to the legacy ``if/elif``
-    # ladder below, so this is additive and independently revertible. This single
-    # try/except is the reusable catch for EVERY migrated handler.
+    # After the verbatim cross-cutting prelude guards above, route capability
+    # families through the typed registry. ``deps`` bundles the twelve optional
+    # service ports, and the identity triple is the authoritative
+    # capability_id / owner_cell / contract_name dispatch key. This single
+    # try/except is the reusable catch for every handler.
     from polaris.cells.roles.runtime.internal.capability import (
         CapabilityDeps,
         CapabilityInvocationError,
@@ -1715,10 +1710,8 @@ def execute_role_capability_invocation(
             )
         return handler.map_result(raw_result, command)
 
-    # No registered handler for a capability that passed the prelude guards: this is
-    # the single coded unknown-capability fallback that replaces the legacy if/elif
-    # ladder (now fully migrated to internal/capability/handlers/*). It reproduces the
-    # legacy "unsupported_capability_contract" terminal failure byte-for-byte.
+    # No registered handler for a capability that passed the prelude guards:
+    # fail closed through the single coded unknown-capability response.
     return _capability_invocation_failure(
         command,
         error_code="unsupported_capability_contract",
