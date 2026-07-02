@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:18.294723Z",
-  "source_hash": "425d12438755e729",
+  "generated_at": "2026-07-02T03:53:53.748287Z",
+  "source_hash": "ddc6857a594b5d33",
   "cell_id": "llm.evaluation",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -2234,8 +2234,8 @@
     },
     {
       "type": "function",
-      "name": "_convert_result_to_legacy",
-      "description": "Convert UnifiedBenchmarkSuiteResult to legacy return format.",
+      "name": "_convert_result_to_public_report",
+      "description": "Convert a unified benchmark result into the stable public report.",
       "defined_in": "polaris/cells/llm/evaluation/public/service.py"
     },
     {
@@ -2252,8 +2252,8 @@
     },
     {
       "type": "function",
-      "name": "_convert_suite_result_to_legacy_format",
-      "description": "Convert BenchmarkSuiteResult to legacy format dict.",
+      "name": "_convert_suite_result_to_public_summary",
+      "description": "Convert BenchmarkSuiteResult to the public summary dict.",
       "defined_in": "polaris/cells/llm/evaluation/public/service.py"
     }
   ],

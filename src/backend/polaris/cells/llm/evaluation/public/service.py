@@ -16,7 +16,7 @@ from polaris.cells.llm.evaluation.internal.benchmark_loader import (
 from polaris.cells.llm.evaluation.internal.benchmark_models import (
     AgenticBenchmarkCase,
     AgenticJudgeConfig,
-    ToolArgumentRule as LegacyToolArgumentRule,
+    ToolArgumentRule as AgenticToolArgumentRule,
 )
 from polaris.cells.llm.evaluation.internal.context_projection_matrix import (
     run_context_projection_matrix_suite,
@@ -129,23 +129,23 @@ __all__ = [
 def _convert_agentic_case_to_unified(case: AgenticBenchmarkCase) -> UnifiedBenchmarkCase:
     """Convert an AgenticBenchmarkCase to UnifiedBenchmarkCase.
 
-    This enables running legacy agentic benchmark cases through the
-    unified runner infrastructure.
+    Agentic benchmark fixtures keep their historical data shape, while
+    execution now flows through the KernelOne unified runner contract.
 
     Args:
-        case: The legacy AgenticBenchmarkCase to convert.
+        case: The agentic benchmark case to convert.
 
     Returns:
         UnifiedBenchmarkCase ready for unified runner execution.
     """
-    # Convert legacy judge config
-    legacy_judge = (
+    # Normalize persisted case payloads before handing them to KernelOne.
+    agentic_judge = (
         case.judge if isinstance(case.judge, AgenticJudgeConfig) else AgenticJudgeConfig.from_dict(case.judge)
     )
 
     # Convert tool argument rules
-    def _convert_arg_rule(rule: LegacyToolArgumentRule | dict[str, Any]) -> ToolArgumentRule:
-        if isinstance(rule, LegacyToolArgumentRule):
+    def _convert_arg_rule(rule: AgenticToolArgumentRule | dict[str, Any]) -> ToolArgumentRule:
+        if isinstance(rule, AgenticToolArgumentRule):
             return ToolArgumentRule(
                 fragment=rule.fragment,
                 tools=rule.tools,
@@ -158,16 +158,16 @@ def _convert_agentic_case_to_unified(case: AgenticBenchmarkCase) -> UnifiedBench
         )
 
     judge_config = JudgeConfig(
-        score_threshold=legacy_judge.score_threshold,
-        required_tools=legacy_judge.required_tools,
-        forbidden_tools=legacy_judge.forbidden_tools,
-        required_tool_arguments=tuple(_convert_arg_rule(r) for r in legacy_judge.required_tool_arguments),
-        forbidden_tool_arguments=tuple(_convert_arg_rule(r) for r in legacy_judge.forbidden_tool_arguments),
-        min_tool_calls=legacy_judge.min_tool_calls,
-        max_tool_calls=legacy_judge.max_tool_calls,
-        required_output_substrings=legacy_judge.required_output_substrings,
-        forbidden_output_substrings=legacy_judge.forbidden_output_substrings,
-        validators=legacy_judge.validators,
+        score_threshold=agentic_judge.score_threshold,
+        required_tools=agentic_judge.required_tools,
+        forbidden_tools=agentic_judge.forbidden_tools,
+        required_tool_arguments=tuple(_convert_arg_rule(r) for r in agentic_judge.required_tool_arguments),
+        forbidden_tool_arguments=tuple(_convert_arg_rule(r) for r in agentic_judge.forbidden_tool_arguments),
+        min_tool_calls=agentic_judge.min_tool_calls,
+        max_tool_calls=agentic_judge.max_tool_calls,
+        required_output_substrings=agentic_judge.required_output_substrings,
+        forbidden_output_substrings=agentic_judge.forbidden_output_substrings,
+        validators=agentic_judge.validators,
         mode="agentic",
     )
 
@@ -186,24 +186,25 @@ def _convert_agentic_case_to_unified(case: AgenticBenchmarkCase) -> UnifiedBench
     )
 
 
-def _convert_result_to_legacy(
+def _convert_result_to_public_report(
     benchmark_result: BenchmarkSuiteResult,
-    legacy_cases: list[dict[str, Any]],
+    public_case_rows: list[dict[str, Any]],
     *,
     workspace: str,
 ) -> dict[str, Any]:
-    """Convert UnifiedBenchmarkSuiteResult to legacy return format.
+    """Convert a unified benchmark result into the stable public report.
 
-    Preserves backward compatibility for callers expecting the old
-    run_agentic_benchmark_suite return structure.
+    The public facade keeps the report shape consumed by CLI tools and
+    historical artifacts, while the execution source of truth remains
+    KernelOne's ``BenchmarkSuiteResult``.
 
     Args:
         benchmark_result: The unified benchmark suite result.
-        legacy_cases: Pre-computed legacy case list for artifact.
+        public_case_rows: Pre-computed case row order for the public report.
         workspace: The workspace path (required for correct artifact_path calculation).
 
     Returns:
-        Dict matching the legacy return format:
+        Dict matching the stable public report contract:
         - ok: bool indicating all passed
         - details: dict with cases, artifact_path, report, etc.
     """
@@ -212,7 +213,7 @@ def _convert_result_to_legacy(
         f"runtime/llm_evaluations/{benchmark_result.run_id}/AGENTIC_BENCHMARK_REPORT.json",
     )
 
-    # Build legacy verdict details from unified results
+    # Build public verdict details from unified results.
     verdicts_map: dict[str, dict[str, Any]] = {}
     for r in benchmark_result.results:
         verdicts_map[r.case_id] = {
@@ -223,12 +224,12 @@ def _convert_result_to_legacy(
             "duration_ms": r.duration_ms,
         }
 
-    # Match legacy_cases order with unified results
-    matched_legacy: list[dict[str, Any]] = []
-    for lc in legacy_cases:
-        case_id = lc.get("id", "")
+    # Keep the case order stable for existing CLI/report consumers.
+    matched_case_rows: list[dict[str, Any]] = []
+    for case_row in public_case_rows:
+        case_id = case_row.get("id", "")
         unified_verdict = verdicts_map.get(case_id, {})
-        matched_legacy.append(
+        matched_case_rows.append(
             {
                 "id": case_id,
                 "passed": unified_verdict.get("passed", False),
@@ -257,13 +258,13 @@ def _convert_result_to_legacy(
             if benchmark_result.passed_cases == benchmark_result.total_cases
             else "fix_failures",
         },
-        "cases": matched_legacy,
+        "cases": matched_case_rows,
     }
 
     return {
         "ok": benchmark_result.passed_cases == benchmark_result.total_cases,
         "details": {
-            "cases": matched_legacy,
+            "cases": matched_case_rows,
             "artifact_path": artifact_path,
             "report": artifact,
             "total_cases": benchmark_result.total_cases,
@@ -293,12 +294,12 @@ async def run_agentic_benchmark_suite(
 
     This function has been migrated to use UnifiedBenchmarkRunner.
     It loads agentic benchmark cases, converts them to unified format,
-    runs them through the unified runner, and returns results in the
-    legacy dict format for backward compatibility.
+    runs them through the unified runner, and returns the stable public
+    report contract used by CLI and artifact consumers.
 
     Args:
         provider_cfg: Provider configuration dict (currently unused,
-            kept for API compatibility).
+            retained by the stable public signature).
         model: Model name to use for the role sessions.
         role: Role identifier (e.g., "director", "pm", "qa") or "all"
             to run cases for all roles.
@@ -316,14 +317,13 @@ async def run_agentic_benchmark_suite(
         A dict containing:
         - ok (bool): True if all cases passed, False otherwise
         - details (dict): Detailed results including:
-            - cases: List of legacy case results
+            - cases: List of public case results
             - artifact_path: Path to the JSON report
             - report: Full structured report
             - total_cases, passed_cases, failed_cases, average_score
     """
-    del provider_cfg, settings  # unused but kept for API compatibility
+    del provider_cfg, settings  # unused but kept for stable public signature
 
-    # Load legacy agentic cases using existing loader
     context_payload = dict(context or {})
     options_payload = dict(options or {})
     requested_role = str(role or "all").strip().lower() or "all"
@@ -331,7 +331,6 @@ async def run_agentic_benchmark_suite(
     if case_ids and isinstance(case_ids, str):
         case_ids = [case_ids]
 
-    # Load cases via existing loader
     cases = load_builtin_agentic_benchmark_cases(role=requested_role, case_ids=case_ids or None)
     if not cases:
         return {
@@ -340,8 +339,7 @@ async def run_agentic_benchmark_suite(
             "details": {"cases": []},
         }
 
-    # Build legacy_cases list (pre-computed for artifact)
-    legacy_cases: list[dict[str, Any]] = [
+    public_case_rows: list[dict[str, Any]] = [
         {
             "id": c.case_id,
             "passed": False,
@@ -353,10 +351,8 @@ async def run_agentic_benchmark_suite(
         for c in cases
     ]
 
-    # Convert to unified format
     unified_cases = [_convert_agentic_case_to_unified(case) for case in cases]
 
-    # Run via unified runner
     runner = UnifiedBenchmarkRunner(judge=UnifiedJudge())
     benchmark_result = await runner.run_suite(
         cases=unified_cases,
@@ -364,8 +360,7 @@ async def run_agentic_benchmark_suite(
         mode="agentic",
     )
 
-    # Convert back to legacy format
-    return _convert_result_to_legacy(benchmark_result, legacy_cases, workspace=workspace)
+    return _convert_result_to_public_report(benchmark_result, public_case_rows, workspace=workspace)
 
 
 # ------------------------------------------------------------------
@@ -387,8 +382,8 @@ async def run_context_benchmark_suite(
     Uses unified_runner in context mode to evaluate context selection能力.
 
     Args:
-        provider_cfg: Provider configuration dict (unused, kept for API compat).
-        model: Model name (unused, kept for API compat).
+        provider_cfg: Provider configuration dict (unused; retained by the public signature).
+        model: Model name (unused; retained by the public signature).
         workspace: Path to the workspace root directory.
         settings: Optional settings object.
         context: Optional context mapping.
@@ -400,7 +395,7 @@ async def run_context_benchmark_suite(
     Returns:
         A dict with results, summary, run_id, timestamp, and mode.
     """
-    del provider_cfg, model, settings  # unused but kept for API compatibility
+    del provider_cfg, model, settings  # unused but retained by the public signature
 
     context_payload = dict(context or {})
     options_payload = dict(options or {})
@@ -431,7 +426,7 @@ async def run_context_benchmark_suite(
         mode="context",
     )
 
-    return _convert_suite_result_to_legacy_format(result)
+    return _convert_suite_result_to_public_summary(result)
 
 
 async def run_strategy_benchmark_suite(
@@ -448,8 +443,8 @@ async def run_strategy_benchmark_suite(
     Uses unified_runner in strategy mode to evaluate strategy planning能力.
 
     Args:
-        provider_cfg: Provider configuration dict (unused, kept for API compat).
-        model: Model name (unused, kept for API compat).
+        provider_cfg: Provider configuration dict (unused; retained by the public signature).
+        model: Model name (unused; retained by the public signature).
         workspace: Path to the workspace root directory.
         settings: Optional settings object.
         context: Optional context mapping.
@@ -461,7 +456,7 @@ async def run_strategy_benchmark_suite(
     Returns:
         A dict with results, summary, run_id, timestamp, and mode.
     """
-    del provider_cfg, model, settings  # unused but kept for API compatibility
+    del provider_cfg, model, settings  # unused but retained by the public signature
 
     context_payload = dict(context or {})
     options_payload = dict(options or {})
@@ -492,7 +487,7 @@ async def run_strategy_benchmark_suite(
         mode="strategy",
     )
 
-    return _convert_suite_result_to_legacy_format(result)
+    return _convert_suite_result_to_public_summary(result)
 
 
 def _load_context_benchmark_cases(
@@ -521,8 +516,8 @@ def _load_strategy_benchmark_cases(
     return load_builtin_agentic_benchmark_cases(role=role, case_ids=case_ids)
 
 
-def _convert_suite_result_to_legacy_format(result: BenchmarkSuiteResult) -> dict[str, Any]:
-    """Convert BenchmarkSuiteResult to legacy format dict.
+def _convert_suite_result_to_public_summary(result: BenchmarkSuiteResult) -> dict[str, Any]:
+    """Convert BenchmarkSuiteResult to the public summary dict.
 
     Args:
         result: The unified benchmark suite result.
