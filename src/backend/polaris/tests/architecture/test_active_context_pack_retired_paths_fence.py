@@ -15,6 +15,7 @@ FOUNDATIONAL_CONTEXT_PACKS = (
     "polaris/cells/runtime/state_owner/generated/context.pack.json",
     "polaris/cells/policy/permission/generated/context.pack.json",
     "polaris/cells/policy/workspace_guard/generated/context.pack.json",
+    "polaris/cells/storage/layout/generated/context.pack.json",
 )
 
 RETIRED_APPLICATION_MARKERS = (
@@ -22,6 +23,7 @@ RETIRED_APPLICATION_MARKERS = (
     "polaris/application/app/services/",
     "polaris/application/orchestration/",
     "polaris/application/role_agent/",
+    "polaris/application/storage_layout.py",
     "polaris/infrastructure/legacy_core/",
 )
 

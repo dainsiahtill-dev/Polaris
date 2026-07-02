@@ -5,11 +5,12 @@
   "purpose": "Resolve global, workspace and runtime persistence layout and path policies as a canonical storage contract for all cells.",
   "summary": "Business capability boundary for storage.layout.",
   "owned_paths": [
-    "polaris/application/storage_layout.py",
+    "polaris/cells/storage/layout/internal/layout_business.py",
+    "polaris/cells/storage/layout/internal/settings_utils.py",
+    "polaris/cells/storage/layout/public/contracts.py",
+    "polaris/cells/storage/layout/public/service.py",
     "polaris/kernelone/storage/layout.py",
-    "polaris/kernelone/storage/storage_layout.py",
-    "polaris/kernelone/storage/policy.py",
-    "polaris/infrastructure/legacy_core/storage/layout.py"
+    "polaris/kernelone/storage/policy.py"
   ],
   "public_contracts": {
     "commands": [
@@ -48,15 +49,16 @@
     "All text file reads and writes must use explicit UTF-8."
   ],
   "hotspots": [
-    "polaris/application/storage_layout.py",
+    "polaris/cells/storage/layout/internal/layout_business.py",
+    "polaris/cells/storage/layout/internal/settings_utils.py",
+    "polaris/cells/storage/layout/public/service.py",
     "polaris/kernelone/storage/layout.py",
-    "polaris/kernelone/storage/storage_layout.py",
-    "polaris/kernelone/storage/policy.py",
-    "polaris/infrastructure/legacy_core/storage/layout.py"
+    "polaris/kernelone/storage/policy.py"
   ],
   "test_targets": [
+    "polaris/cells/storage/layout/tests/test_storage_layout_cell.py",
     "polaris/kernelone/storage/tests/test_storage_layout.py",
-    "tests/test_storage_layout_v4.py"
+    "polaris/tests/test_storage_layout_v4.py"
   ],
   "change_guidance": {
     "read_order": [
