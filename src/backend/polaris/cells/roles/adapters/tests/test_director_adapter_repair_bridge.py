@@ -2707,7 +2707,7 @@ def test_post_execution_rust_migration_debt_uses_typed_receipt_gap_names(
     assert evidence["cutover_ready"] is False
     assert evidence["remaining_source_tool_count"] == 1
     assert evidence["remaining_source_tools_without_runtime_receipt"] == ["deterministic_rust_missing_fields_repair"]
-    assert evidence["remaining_legacy_subcase_count"] == 1
+    assert evidence["remaining_adapter_subcase_count"] == 1
     assert evidence["runtime_migrated_subcase_count"] == 2
     assert "typed_receipt_cutover_not_authoritative" in evidence["cutover_blockers"]
 

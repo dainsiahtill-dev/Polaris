@@ -2066,7 +2066,7 @@ def _build_rust_typed_receipt_cutover_evidence(
     allowed_source_tools: list[str],
     blocked_source_tools: list[str],
     blocked_migrated_source_tools: list[str],
-    remaining_legacy_subcases: list[str],
+    remaining_adapter_subcases: list[str],
     runtime_migrated_subcases: list[str],
     blocked_subcases: list[str],
     blocked_migrated_subcases: list[str],
@@ -2075,23 +2075,23 @@ def _build_rust_typed_receipt_cutover_evidence(
     allowed = _sorted_unique(allowed_source_tools)
     blocked = _sorted_unique(blocked_source_tools)
     blocked_migrated = _sorted_unique(blocked_migrated_source_tools)
-    remaining_subcases = _sorted_unique(remaining_legacy_subcases)
+    remaining_subcases = _sorted_unique(remaining_adapter_subcases)
     migrated_subcases = _sorted_unique(runtime_migrated_subcases)
-    blocked_legacy_subcases = _sorted_unique(blocked_subcases)
-    blocked_migrated_legacy_subcases = _sorted_unique(blocked_migrated_subcases)
+    blocked_adapter_subcases = _sorted_unique(blocked_subcases)
+    blocked_migrated_adapter_subcases = _sorted_unique(blocked_migrated_subcases)
     remaining_source_tool_blockers = _sorted_unique(f"remaining_source_tool:{source_tool}" for source_tool in remaining)
-    remaining_legacy_subcase_blockers = _sorted_unique(
-        f"remaining_legacy_subcase:{subcase}" for subcase in remaining_subcases
+    remaining_adapter_subcase_blockers = _sorted_unique(
+        f"remaining_adapter_subcase:{subcase}" for subcase in remaining_subcases
     )
     blocked_source_tool_blockers = _sorted_unique(f"blocked_source_tool:{source_tool}" for source_tool in blocked)
     blocked_migrated_source_tool_blockers = _sorted_unique(
         f"blocked_migrated_source_tool:{source_tool}" for source_tool in blocked_migrated
     )
-    blocked_legacy_subcase_blockers = _sorted_unique(
-        f"blocked_legacy_subcase:{subcase}" for subcase in blocked_legacy_subcases
+    blocked_adapter_subcase_blockers = _sorted_unique(
+        f"blocked_adapter_subcase:{subcase}" for subcase in blocked_adapter_subcases
     )
-    blocked_migrated_legacy_subcase_blockers = _sorted_unique(
-        f"blocked_migrated_subcase:{subcase}" for subcase in blocked_migrated_legacy_subcases
+    blocked_migrated_adapter_subcase_blockers = _sorted_unique(
+        f"blocked_migrated_subcase:{subcase}" for subcase in blocked_migrated_adapter_subcases
     )
     cutover_ready = not any(
         (
@@ -2099,8 +2099,8 @@ def _build_rust_typed_receipt_cutover_evidence(
             blocked,
             blocked_migrated,
             remaining_subcases,
-            blocked_legacy_subcases,
-            blocked_migrated_legacy_subcases,
+            blocked_adapter_subcases,
+            blocked_migrated_adapter_subcases,
         )
     )
     authority_blockers = [] if cutover_ready else ["typed_receipt_cutover_not_authoritative"]
@@ -2108,11 +2108,11 @@ def _build_rust_typed_receipt_cutover_evidence(
         [
             *authority_blockers,
             *remaining_source_tool_blockers,
-            *remaining_legacy_subcase_blockers,
+            *remaining_adapter_subcase_blockers,
             *blocked_source_tool_blockers,
             *blocked_migrated_source_tool_blockers,
-            *blocked_legacy_subcase_blockers,
-            *blocked_migrated_legacy_subcase_blockers,
+            *blocked_adapter_subcase_blockers,
+            *blocked_migrated_adapter_subcase_blockers,
         ]
     )
     return {
@@ -2128,11 +2128,11 @@ def _build_rust_typed_receipt_cutover_evidence(
         "cutover_ready": cutover_ready,
         "cutover_blockers": blockers,
         "remaining_source_tool_blockers": remaining_source_tool_blockers,
-        "remaining_legacy_subcase_blockers": remaining_legacy_subcase_blockers,
+        "remaining_adapter_subcase_blockers": remaining_adapter_subcase_blockers,
         "blocked_source_tool_blockers": blocked_source_tool_blockers,
         "blocked_migrated_source_tool_blockers": blocked_migrated_source_tool_blockers,
-        "blocked_legacy_subcase_blockers": blocked_legacy_subcase_blockers,
-        "blocked_migrated_subcase_blockers": blocked_migrated_legacy_subcase_blockers,
+        "blocked_adapter_subcase_blockers": blocked_adapter_subcase_blockers,
+        "blocked_migrated_subcase_blockers": blocked_migrated_adapter_subcase_blockers,
         "remaining_source_tools": remaining,
         "remaining_source_tool_count": len(remaining),
         "remaining_source_tool_counts": _source_tool_counts(remaining),
@@ -2145,18 +2145,18 @@ def _build_rust_typed_receipt_cutover_evidence(
         "blocked_migrated_source_tools": blocked_migrated,
         "blocked_migrated_source_tool_count": len(blocked_migrated),
         "blocked_migrated_source_tool_counts": _source_tool_counts(blocked_migrated),
-        "remaining_legacy_subcases": remaining_subcases,
-        "remaining_legacy_subcase_count": len(remaining_subcases),
-        "remaining_legacy_subcase_counts": _source_tool_counts(remaining_subcases),
+        "remaining_adapter_subcases": remaining_subcases,
+        "remaining_adapter_subcase_count": len(remaining_subcases),
+        "remaining_adapter_subcase_counts": _source_tool_counts(remaining_subcases),
         "runtime_migrated_subcases": migrated_subcases,
         "runtime_migrated_subcase_count": len(migrated_subcases),
         "runtime_migrated_subcase_counts": _source_tool_counts(migrated_subcases),
-        "blocked_subcases": blocked_legacy_subcases,
-        "blocked_subcase_count": len(blocked_legacy_subcases),
-        "blocked_subcase_counts": _source_tool_counts(blocked_legacy_subcases),
-        "blocked_migrated_subcases": blocked_migrated_legacy_subcases,
-        "blocked_migrated_subcase_count": len(blocked_migrated_legacy_subcases),
-        "blocked_migrated_subcase_counts": _source_tool_counts(blocked_migrated_legacy_subcases),
+        "blocked_subcases": blocked_adapter_subcases,
+        "blocked_subcase_count": len(blocked_adapter_subcases),
+        "blocked_subcase_counts": _source_tool_counts(blocked_adapter_subcases),
+        "blocked_migrated_subcases": blocked_migrated_adapter_subcases,
+        "blocked_migrated_subcase_count": len(blocked_migrated_adapter_subcases),
+        "blocked_migrated_subcase_counts": _source_tool_counts(blocked_migrated_adapter_subcases),
     }
 
 
@@ -2174,12 +2174,12 @@ def _rust_typed_receipt_cutover_projection_fields(cutover_evidence: dict[str, An
         "rust_typed_receipt_cutover_not_authoritative": not cutover_authoritative,
         "rust_typed_receipt_authority_boundary": str(evidence.get("authority_boundary") or ""),
         "rust_typed_receipt_remaining_source_tool_blockers": list(evidence.get("remaining_source_tool_blockers") or []),
-        "rust_typed_receipt_remaining_subcase_blockers": list(evidence.get("remaining_legacy_subcase_blockers") or []),
+        "rust_typed_receipt_remaining_subcase_blockers": list(evidence.get("remaining_adapter_subcase_blockers") or []),
         "rust_typed_receipt_blocked_source_tool_blockers": list(evidence.get("blocked_source_tool_blockers") or []),
         "rust_typed_receipt_blocked_migrated_source_tool_blockers": list(
             evidence.get("blocked_migrated_source_tool_blockers") or []
         ),
-        "rust_typed_receipt_blocked_subcase_blockers": list(evidence.get("blocked_legacy_subcase_blockers") or []),
+        "rust_typed_receipt_blocked_subcase_blockers": list(evidence.get("blocked_adapter_subcase_blockers") or []),
         "rust_typed_receipt_blocked_migrated_subcase_blockers": list(
             evidence.get("blocked_migrated_subcase_blockers") or []
         ),
@@ -2193,9 +2193,9 @@ def _rust_typed_receipt_cutover_projection_fields(cutover_evidence: dict[str, An
         "rust_typed_receipt_blocked_migrated_source_tool_counts": dict(
             evidence.get("blocked_migrated_source_tool_counts") or {}
         ),
-        "rust_typed_receipt_remaining_subcases": list(evidence.get("remaining_legacy_subcases") or []),
-        "rust_typed_receipt_remaining_subcase_count": int(evidence.get("remaining_legacy_subcase_count") or 0),
-        "rust_typed_receipt_remaining_subcase_counts": dict(evidence.get("remaining_legacy_subcase_counts") or {}),
+        "rust_typed_receipt_remaining_subcases": list(evidence.get("remaining_adapter_subcases") or []),
+        "rust_typed_receipt_remaining_subcase_count": int(evidence.get("remaining_adapter_subcase_count") or 0),
+        "rust_typed_receipt_remaining_subcase_counts": dict(evidence.get("remaining_adapter_subcase_counts") or {}),
         "rust_typed_receipt_runtime_migrated_subcases": list(evidence.get("runtime_migrated_subcases") or []),
         "rust_typed_receipt_runtime_migrated_subcase_count": int(evidence.get("runtime_migrated_subcase_count") or 0),
         "rust_typed_receipt_runtime_migrated_subcase_counts": dict(
@@ -2257,7 +2257,7 @@ def _build_repair_kernel_migration_debt(
         allowed_source_tools=source_tools_without_runtime_receipt,
         blocked_source_tools=rust_typed_receipt_blocked_source_tools,
         blocked_migrated_source_tools=rust_typed_receipt_blocked_migrated_source_tools,
-        remaining_legacy_subcases=remaining_subcases,
+        remaining_adapter_subcases=remaining_subcases,
         runtime_migrated_subcases=runtime_migrated_subcases,
         blocked_subcases=rust_typed_receipt_blocked_subcases,
         blocked_migrated_subcases=rust_typed_receipt_blocked_migrated_subcases,
@@ -2371,7 +2371,7 @@ def _build_step_migration_debt(
         allowed_source_tools=source_tools_without_runtime_receipt,
         blocked_source_tools=rust_typed_receipt_blocked_source_tools,
         blocked_migrated_source_tools=rust_typed_receipt_blocked_migrated_source_tools,
-        remaining_legacy_subcases=remaining_subcases,
+        remaining_adapter_subcases=remaining_subcases,
         runtime_migrated_subcases=runtime_migrated_subcases,
         blocked_subcases=rust_typed_receipt_blocked_subcases,
         blocked_migrated_subcases=rust_typed_receipt_blocked_migrated_subcases,
