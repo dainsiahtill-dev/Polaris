@@ -46,6 +46,9 @@ try:
     from docs.governance.ci.scripts.shim_markers_policy import (
         evaluate_shim_markers,
     )
+    from docs.governance.ci.scripts.tool_compression_policy import (
+        evaluate_tool_compression,
+    )
     from docs.governance.ci.scripts.verified_evidence_policy import (
         evaluate_verified_evidence,
     )
@@ -71,6 +74,9 @@ except ModuleNotFoundError:
     )
     from shim_markers_policy import (
         evaluate_shim_markers,
+    )
+    from tool_compression_policy import (
+        evaluate_tool_compression,
     )
     from verified_evidence_policy import (
         evaluate_verified_evidence,
@@ -459,52 +465,15 @@ class FitnessRuleChecker:
         )
 
     def check_tool_compression(self) -> FitnessCheckResult:
-        """Check that tool compression uses kernelone.tool."""
-        result = FitnessCheckResult(rule_id="CELL_KERNELONE_07", passed=True)
-        canonical_paths = [
-            self.workspace / "polaris" / "kernelone" / "tool" / "compaction.py",
-            self.workspace / "polaris" / "kernelone" / "tool" / "safety.py",
-            self.workspace / "polaris" / "kernelone" / "tool" / "transcript.py",
-        ]
-        canonical_found = False
-        for path in canonical_paths:
-            if path.exists():
-                canonical_found = True
-                break
-        if not canonical_found:
-            result.warnings.append("Canonical kernelone/tool/ modules not found")
-        else:
-            result.evidence.append("Canonical kernelone/tool/ modules exist")
-        cells_dir = self.workspace / "polaris" / "cells"
-        local_patterns = [
-            re.compile(r"def compact_result_payload\s*\("),
-            re.compile(r"class ToolLoopSafetyPolicy\b"),
-            re.compile(r"class ToolCompaction\b"),
-            re.compile(r"def compress_tool_result\s*\("),
-        ]
-        violations: list[str] = []
-        if cells_dir.exists():
-            for py_file in cells_dir.rglob("*.py"):
-                if "test" in py_file.parts or "_fixture" in py_file.name:
-                    continue
-                try:
-                    with open(py_file, encoding="utf-8") as f:
-                        file_content = f.read()
-                    for pat in local_patterns:
-                        for match in pat.finditer(file_content):
-                            line_num = file_content[: match.start()].count("\n") + 1
-                            violations.append(
-                                f"Local tool compression at {py_file.relative_to(self.workspace)}:{line_num}"
-                            )
-                except OSError:
-                    continue
-        if violations:
-            result.passed = False
-            for v in violations:
-                result.violations.append(v)
-        else:
-            result.evidence.append("No local tool compression implementations found in cells/")
-        return result
+        """Check tool compression through the canonical policy module."""
+        policy_result = evaluate_tool_compression(self.workspace)
+        return FitnessCheckResult(
+            rule_id=policy_result.rule_id,
+            passed=policy_result.passed,
+            evidence=list(policy_result.evidence),
+            violations=list(policy_result.violations),
+            warnings=list(policy_result.warnings),
+        )
 
     def check_llm_import(self) -> FitnessCheckResult:
         """Check that LLM calls use kernelone.llm."""
