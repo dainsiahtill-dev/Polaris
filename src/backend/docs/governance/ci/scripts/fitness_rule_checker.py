@@ -32,6 +32,9 @@ try:
         RULE_ID as CLOSED_LEDGER_INTAKE_RULE_ID,
         evaluate_closed_ledger_intake,
     )
+    from docs.governance.ci.scripts.verified_evidence_policy import (
+        evaluate_verified_evidence,
+    )
 except ModuleNotFoundError:
     from check_shim_markers import (
         ShimMarkersChecker,
@@ -39,6 +42,9 @@ except ModuleNotFoundError:
     from closed_ledger_intake_policy import (
         RULE_ID as CLOSED_LEDGER_INTAKE_RULE_ID,
         evaluate_closed_ledger_intake,
+    )
+    from verified_evidence_policy import (
+        evaluate_verified_evidence,
     )
 
 GREEN = "\033[92m"
@@ -557,55 +563,15 @@ class FitnessRuleChecker:
         return result
 
     def check_verified_evidence(self) -> FitnessCheckResult:
-        """Check that verified/retired units have evidence."""
-        result = FitnessCheckResult(rule_id="verified_or_retired_units_require_evidence", passed=True)
-        ledger_path = self.workspace / "docs" / "migration" / "ledger.yaml"
-        if not ledger_path.exists():
-            result.passed = False
-            result.violations.append(f"Ledger not found: {ledger_path}")
-            return result
-        try:
-            import yaml
-
-            with open(ledger_path, encoding="utf-8") as f:
-                ledger = yaml.safe_load(f)
-        except (OSError, ImportError) as e:
-            result.passed = False
-            result.violations.append(f"Failed to parse ledger.yaml: {e}")
-            return result
-        units = ledger.get("units", [])
-        if not units:
-            result.warnings.append("No migration units found in ledger")
-            return result
-        checked: list[str] = []
-        without_evidence: list[str] = []
-        for unit in units:
-            status = unit.get("status", "")
-            unit_id = unit.get("id", "unknown")
-            if status not in ("verified", "retired"):
-                continue
-            checked.append(unit_id)
-            verification = unit.get("verification", {})
-            evidence_fields = [
-                verification.get("checks", []),
-                verification.get("required_tests", []),
-                verification.get("docs_updates", []),
-                verification.get("graph_updates", []),
-            ]
-            has_evidence = any(isinstance(f, list) and len(f) > 0 for f in evidence_fields) or bool(
-                unit.get("evidence_notes")
-            )
-            if has_evidence:
-                result.evidence.append(f"{unit_id}: has verification evidence")
-            else:
-                without_evidence.append(unit_id)
-                result.violations.append(f"{unit_id}: status={status} but missing verification evidence")
-        if checked:
-            result.evidence.append(f"Checked {len(checked)} verified/retired units")
-        else:
-            result.warnings.append("No verified/retired units found to check")
-        result.passed = len(without_evidence) == 0
-        return result
+        """Check verified/retired units through the canonical policy module."""
+        policy_result = evaluate_verified_evidence(self.workspace)
+        return FitnessCheckResult(
+            rule_id=policy_result.rule_id,
+            passed=policy_result.passed,
+            evidence=list(policy_result.evidence),
+            violations=list(policy_result.violations),
+            warnings=list(policy_result.warnings),
+        )
 
     def check_command_pattern_source(self) -> FitnessCheckResult:
         """Check that dangerous command patterns have single source."""
