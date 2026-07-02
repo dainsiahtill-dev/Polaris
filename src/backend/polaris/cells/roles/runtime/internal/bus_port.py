@@ -342,23 +342,6 @@ class InMemoryAgentBusPort:
             self._inflight[envelope.message_id] = envelope
             return envelope
 
-    def _pop_inbox(self, receiver: str) -> AgentEnvelope | None:
-        """Pop from inbox without marking inflight (legacy helper)."""
-        with self._lock:
-            inbox = self._inbox.get(str(receiver or ""), [])
-            if not inbox:
-                return None
-            return inbox.pop(0)
-
-    def _mark_inflight(self, envelope: AgentEnvelope) -> AgentEnvelope:
-        """Mark envelope as inflight (assumes already popped from inbox).
-
-        Note: For new code, prefer _pop_and_mark_inflight() for atomicity.
-        """
-        with self._lock:
-            self._inflight[envelope.message_id] = envelope
-        return envelope
-
     def _add_dead_letter(self, env: AgentEnvelope, reason: str) -> None:
         record = DeadLetterRecord(envelope=env, reason=reason)
         with self._lock:

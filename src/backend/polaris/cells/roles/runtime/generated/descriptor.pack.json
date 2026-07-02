@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T06:24:06.386905Z",
-  "source_hash": "410aa995690ef6ad",
+  "generated_at": "2026-07-02T06:27:46.978796Z",
+  "source_hash": "4b8cb12d3758669d",
   "cell_id": "roles.runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -359,14 +359,6 @@
         {
           "name": "_pop_and_mark_inflight",
           "doc": "Atomically pop from inbox and mark as inflight."
-        },
-        {
-          "name": "_pop_inbox",
-          "doc": "Pop from inbox without marking inflight (legacy helper)."
-        },
-        {
-          "name": "_mark_inflight",
-          "doc": "Mark envelope as inflight (assumes already popped from inbox)."
         },
         {
           "name": "_add_dead_letter",
