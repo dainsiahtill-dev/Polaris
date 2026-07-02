@@ -1615,20 +1615,20 @@ export const ollamaV2Service = {
 };
 
 export const memoryV2Service = {
-  /** GET /v2/memory/state — Memory state */
+  /** GET /memory/v2/state - Memory state */
   async getState(): Promise<
     ApiResult<import("./api.types").MemoryStateV2Response>
   > {
-    const res = await apiFetch("/v2/memory/state");
+    const res = await apiFetch("/memory/v2/state");
     return handleResponse(res, "Failed to load memory state");
   },
 
-  /** DELETE /v2/memory/memories/{memory_id} — Delete memory */
+  /** DELETE /memory/v2/memories/{memory_id} - Delete memory */
   async deleteMemory(
     memoryId: string,
   ): Promise<ApiResult<import("./api.types").DeleteMemoryV2Response>> {
     const res = await apiFetch(
-      `/v2/memory/memories/${encodeURIComponent(memoryId)}`,
+      `/memory/v2/memories/${encodeURIComponent(memoryId)}`,
       { method: "DELETE" },
     );
     return handleResponse(res, "Failed to delete memory");

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from polaris.delivery.http.error_handlers import setup_exception_handlers
@@ -27,8 +28,23 @@ def _build_client() -> TestClient:
 class TestMemoryRouter:
     """Contract tests for the memory router."""
 
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        (
+            ("GET", "/memory/state"),
+            ("DELETE", "/memory/memories/mem-123"),
+        ),
+    )
+    def test_retired_memory_alias_routes_are_not_registered(self, method: str, path: str) -> None:
+        """Memory APIs must use the canonical /memory/v2 namespace."""
+        client = _build_client()
+
+        response = client.request(method, path)
+
+        assert response.status_code == 404
+
     def test_get_memory_state_happy_path(self) -> None:
-        """GET /memory/state returns 200 with AnthroState."""
+        """GET /memory/v2/state returns 200 with AnthroState."""
         client = _build_client()
         mock_mem_store = MagicMock()
         mock_mem_store.memories = ["m1", "m2"]
@@ -51,7 +67,7 @@ class TestMemoryRouter:
                 return_value=mock_ref_store,
             ),
         ):
-            response = client.get("/memory/state")
+            response = client.get("/memory/v2/state")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
@@ -61,7 +77,7 @@ class TestMemoryRouter:
         assert payload["total_reflections"] == 1
 
     def test_get_memory_state_store_not_initialized(self) -> None:
-        """GET /memory/state returns 503 when memory store is not initialized."""
+        """GET /memory/v2/state returns 503 when memory store is not initialized."""
         client = _build_client()
         with (
             patch(
@@ -72,13 +88,13 @@ class TestMemoryRouter:
                 return_value=None,
             ),
         ):
-            response = client.get("/memory/state")
+            response = client.get("/memory/v2/state")
 
         assert response.status_code == 503
         assert response.json()["error"]["message"] == "Memory store not initialized"
 
     def test_delete_memory_happy_path(self) -> None:
-        """DELETE /memory/memories/{id} returns 200 on successful deletion."""
+        """DELETE /memory/v2/memories/{id} returns 200 on successful deletion."""
         client = _build_client()
         mock_mem_store = MagicMock()
         mock_mem_store.delete.return_value = True
@@ -92,7 +108,7 @@ class TestMemoryRouter:
                 return_value=mock_mem_store,
             ),
         ):
-            response = client.delete("/memory/memories/mem-123")
+            response = client.delete("/memory/v2/memories/mem-123")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
@@ -101,7 +117,7 @@ class TestMemoryRouter:
         mock_mem_store.delete.assert_called_once_with("mem-123")
 
     def test_delete_memory_not_found(self) -> None:
-        """DELETE /memory/memories/{id} returns 404 when memory does not exist."""
+        """DELETE /memory/v2/memories/{id} returns 404 when memory does not exist."""
         client = _build_client()
         mock_mem_store = MagicMock()
         mock_mem_store.delete.return_value = False
@@ -115,13 +131,13 @@ class TestMemoryRouter:
                 return_value=mock_mem_store,
             ),
         ):
-            response = client.delete("/memory/memories/nonexistent")
+            response = client.delete("/memory/v2/memories/nonexistent")
 
         assert response.status_code == 404
         assert response.json()["error"]["message"] == "Memory not found"
 
     def test_delete_memory_store_not_initialized(self) -> None:
-        """DELETE /memory/memories/{id} returns 503 when memory store is not initialized."""
+        """DELETE /memory/v2/memories/{id} returns 503 when memory store is not initialized."""
         client = _build_client()
         with (
             patch(
@@ -132,7 +148,7 @@ class TestMemoryRouter:
                 return_value=None,
             ),
         ):
-            response = client.delete("/memory/memories/mem-123")
+            response = client.delete("/memory/v2/memories/mem-123")
 
         assert response.status_code == 503
         assert response.json()["error"]["message"] == "Memory store not initialized"
