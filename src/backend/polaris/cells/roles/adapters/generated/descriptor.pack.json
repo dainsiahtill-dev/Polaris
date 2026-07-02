@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T06:52:21.572932Z",
-  "source_hash": "afa98278fca7d859",
+  "generated_at": "2026-07-02T06:57:03.036352Z",
+  "source_hash": "318b73e3dd5377f5",
   "cell_id": "roles.adapters",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -5232,7 +5232,7 @@
     {
       "type": "function",
       "name": "project_repair_kernel_summary",
-      "description": "Project legacy adapter tool results through the Director Runtime public boundary.",
+      "description": "Project adapter tool results through the Director Runtime public boundary.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/repair_profile_projection.py"
     },
     {

@@ -1,4 +1,4 @@
-"""Legacy repair profile projection using Director Runtime public catalog."""
+"""Repair profile projection using the Director Runtime public catalog."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ def project_repair_kernel_summary(
     artifact_quality_errors: Sequence[str] = (),
     mode: str = "commit",
 ) -> dict[str, Any]:
-    """Project legacy adapter tool results through the Director Runtime public boundary."""
+    """Project adapter tool results through the Director Runtime public boundary."""
 
     return dict(
         project_director_repair_kernel_summary(
