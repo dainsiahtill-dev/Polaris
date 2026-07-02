@@ -1,6 +1,6 @@
 # Polaris KFS Direct-Write Convergence Ledger
 
-Status: Closed
+Status: Closed (intake-only)
 Created: 2026-07-01  
 Scope: Polaris meta-platform source only. This ledger tracks runtime/business
 Python files that still perform direct write I/O outside `KernelFileSystem` or

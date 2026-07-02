@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.storage.layout import resolve_logical_path
+
 
 @dataclass(frozen=True)
 class GateResult:
@@ -66,17 +68,28 @@ def _node_kind(matrix: dict[str, Any], node_id: str) -> str:
     return ""
 
 
+def _blueprint_candidate_paths(workspace: str, blueprint_id: str) -> tuple[Path, ...]:
+    """Return canonical and historical blueprint locations for a workspace."""
+    filename = f"{blueprint_id}.json"
+    return (
+        Path(resolve_logical_path(workspace, "runtime/blueprints")) / filename,
+        Path(workspace) / "runtime" / "blueprints" / filename,
+        Path(workspace) / ".polaris" / "blueprints" / filename,
+    )
+
+
 def _load_blueprint(workspace: str, blueprint_id: str) -> dict[str, Any] | None:
-    """Load a blueprint JSON directly from the workspace runtime path."""
-    p = Path(workspace) / "runtime" / "blueprints" / f"{blueprint_id}.json"
-    if not p.exists():
-        return None
-    try:
-        with open(p, encoding="utf-8") as f:
-            data: dict[str, Any] = json.load(f)
-            return data
-    except (json.JSONDecodeError, OSError, TypeError):
-        return None
+    """Load a blueprint JSON from the canonical CE blueprint storage paths."""
+    for path in _blueprint_candidate_paths(workspace, blueprint_id):
+        if not path.exists():
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                data: dict[str, Any] = json.load(f)
+                return data
+        except (json.JSONDecodeError, OSError, TypeError):
+            continue
+    return None
 
 
 def _check_gate14(workspace: str, matrix: dict[str, Any], errors: list[str]) -> None:
