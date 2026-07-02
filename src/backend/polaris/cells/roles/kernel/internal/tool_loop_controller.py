@@ -208,7 +208,7 @@ class ToolLoopController:
             else:
                 raise ValueError(
                     "ToolLoopController requires context_os_snapshot for SSOT compliance. "
-                    "request.history fallback is DEPRECATED and no longer supported. "
+                    "request.history is not a supported RoleTurnRequest context source. "
                     "Ensure the caller initializes ContextOS.project() before creating "
                     "ToolLoopController. "
                     f"request.context_override type: {type(getattr(self.request, 'context_override', None))}"
