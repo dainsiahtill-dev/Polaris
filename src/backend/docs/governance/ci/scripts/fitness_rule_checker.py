@@ -24,6 +24,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
+    from docs.governance.ci.scripts.catalog_presence_policy import (
+        evaluate_catalog_presence,
+    )
     from docs.governance.ci.scripts.check_shim_markers import (
         ShimMarkersChecker,
     )
@@ -41,6 +44,9 @@ try:
         evaluate_verified_evidence,
     )
 except ModuleNotFoundError:
+    from catalog_presence_policy import (
+        evaluate_catalog_presence,
+    )
     from check_shim_markers import (
         ShimMarkersChecker,
     )
@@ -375,55 +381,15 @@ class FitnessRuleChecker:
         )
 
     def check_catalog_presence(self) -> FitnessCheckResult:
-        """Check that target Cells are present in catalog."""
-        result = FitnessCheckResult(rule_id="catalog_missing_units_cannot_advance", passed=True)
-        cells_yaml_path = self.workspace / "docs" / "graph" / "catalog" / "cells.yaml"
-        ledger_yaml_path = self.workspace / "docs" / "migration" / "ledger.yaml"
-        cell_ids: set[str] = set()
-        if cells_yaml_path.exists():
-            try:
-                import yaml
-
-                with open(cells_yaml_path, encoding="utf-8") as f:
-                    data = yaml.safe_load(f)
-                if data and "cells" in data:
-                    for cell in data["cells"]:
-                        if "id" in cell:
-                            cell_ids.add(cell["id"])
-            except (OSError, ImportError) as e:
-                result.passed = False
-                result.violations.append(f"Failed to load cells.yaml: {e}")
-                return result
-        result.evidence.append(f"Catalog contains {len(cell_ids)} declared cells")
-        units: list[dict] = []
-        if ledger_yaml_path.exists():
-            try:
-                import yaml
-
-                with open(ledger_yaml_path, encoding="utf-8") as f:
-                    data = yaml.safe_load(f)
-                if data and "units" in data:
-                    units = data["units"]
-            except (OSError, ImportError) as e:
-                result.passed = False
-                result.violations.append(f"Failed to load ledger.yaml: {e}")
-                return result
-        result.evidence.append(f"Found {len(units)} migration units in ledger")
-        non_advanceable = {"verified", "retired"}
-        for unit in units:
-            target = unit.get("target", {})
-            catalog_status = target.get("catalog_status", "unknown")
-            current_status = unit.get("status", "")
-            unit_id = unit.get("id", "unknown")
-            target_cell = target.get("cell", "")
-            if catalog_status == "missing" and current_status in non_advanceable:
-                result.passed = False
-                result.violations.append(
-                    f"Unit '{unit_id}' advanced to {current_status} but target cell '{target_cell}' is missing from catalog"
-                )
-            if target_cell and target_cell not in cell_ids and catalog_status == "actual":
-                result.warnings.append(f"Target cell '{target_cell}' declared as 'actual' but not found in catalog")
-        return result
+        """Check target Cell catalog presence through the canonical policy module."""
+        policy_result = evaluate_catalog_presence(self.workspace)
+        return FitnessCheckResult(
+            rule_id=policy_result.rule_id,
+            passed=policy_result.passed,
+            evidence=list(policy_result.evidence),
+            violations=list(policy_result.violations),
+            warnings=list(policy_result.warnings),
+        )
 
     def check_shim_markers(self) -> FitnessCheckResult:
         """Check shim marker policy through the canonical checker implementation."""
