@@ -265,14 +265,14 @@ class TestPolarisCliParser:
     """Test polaris_cli.py create_parser and helpers."""
 
     def test_polaris_parser_has_chat_status_workflow(self, polaris_parser: argparse.ArgumentParser) -> None:
-        """polaris_cli parser must expose chat, status, workflow, test-window."""
+        """polaris_cli parser must expose chat, status, and workflow."""
         subparsers_actions = [
             action
             for action in polaris_parser._actions
             if isinstance(action, argparse._SubParsersAction)  # type: ignore[attr-defined]
         ]
         choices = subparsers_actions[0].choices
-        assert set(choices.keys()) == {"chat", "status", "workflow", "test-window"}
+        assert set(choices.keys()) == {"chat", "status", "workflow"}
 
     def test_polaris_chat_parses_role_and_mode(self, polaris_parser: argparse.ArgumentParser) -> None:
         """chat must parse --role and --mode."""

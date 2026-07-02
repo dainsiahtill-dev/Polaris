@@ -53,11 +53,10 @@ class TestCreateParser:
         assert args.command == "status"
         assert args.role == "director"
 
-    def test_parse_test_window_command(self):
+    def test_parse_test_window_command_rejected(self):
         parser = create_parser()
-        args = parser.parse_args(["test-window", "--role", "pm"])
-        assert args.command == "test-window"
-        assert args.role == "pm"
+        with pytest.raises(SystemExit):
+            parser.parse_args(["test-window", "--role", "pm"])
 
     def test_default_workspace(self):
         parser = create_parser()
@@ -245,12 +244,9 @@ class TestMainDispatch:
             assert result == 0
             mock_run.assert_called_once()
 
-    def test_main_test_window(self):
-        with patch("polaris.delivery.cli.polaris_cli._run_test_window") as mock_run:
-            mock_run.return_value = 0
-            result = main(["test-window"])
-            assert result == 0
-            mock_run.assert_called_once()
+    def test_main_test_window_rejected(self):
+        with pytest.raises(SystemExit):
+            main(["test-window"])
 
     def test_main_workflow_run(self):
         with patch("polaris.delivery.cli.polaris_cli._read_workspace_json") as mock_read:

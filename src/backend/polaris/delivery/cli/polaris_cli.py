@@ -226,21 +226,6 @@ def create_parser() -> argparse.ArgumentParser:
         help="Per-task timeout for Director workflow",
     )
 
-    test_window_parser = subparsers.add_parser(
-        "test-window",
-        help=argparse.SUPPRESS,
-        description="Compatibility-only retired test-window surface.",
-    )
-    _add_workspace_argument(test_window_parser, default=argparse.SUPPRESS)
-    _add_log_level_argument(test_window_parser, default=argparse.SUPPRESS)
-    test_window_parser.add_argument("--role", type=str, default="director", help="Role id for the retired window")
-    test_window_parser.add_argument(
-        "--surface",
-        choices=["tui"],
-        default="tui",
-        help="Legacy test surface",
-    )
-
     return parser
 
 
@@ -360,19 +345,6 @@ async def _run_status(args: argparse.Namespace) -> int:
         )
     )
     print(json.dumps(dict(status), ensure_ascii=False, indent=2))
-    return 0
-
-
-def _run_test_window(args: argparse.Namespace) -> int:
-    workspace = _resolve_workspace(args.workspace)
-    role = str(args.role or "").strip() or "director"
-    surface = str(args.surface or "tui").strip() or "tui"
-    if surface != "tui":
-        raise SystemExit(f"Unsupported test window surface: {surface}")
-
-    from polaris.cells.roles.runtime.public.service import run_tui  # via __getattr__ lazy facade
-
-    run_tui(role=role, workspace=workspace)
     return 0
 
 
@@ -516,8 +488,6 @@ async def _dispatch(args: argparse.Namespace) -> int:
         return await _run_status(args)
     if args.command == "workflow":
         return _run_workflow(args)
-    if args.command == "test-window":
-        return _run_test_window(args)
     raise SystemExit(f"Unsupported command: {args.command}")
 
 
@@ -534,8 +504,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     _ensure_cli_runtime_bindings()
     if args.command == "chat" and str(getattr(args, "mode", "") or "").strip() == "console":
         return _run_console_chat(args)
-    if args.command == "test-window":
-        return _run_test_window(args)
     if args.command == "workflow":
         return _run_workflow(args)
     return asyncio.run(_dispatch(args))
