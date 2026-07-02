@@ -12,11 +12,11 @@ Architecture
                                     v
     KernelOne LLM modules -> get_provider_manager_port() -> IProviderRegistryPort
 
-Migration Note
--------------
-Once bootstrap universally wires this port, the get_provider_manager_port() function
-should raise an error if no port is registered, instead of falling back to
-ServiceLocator.get_provider_manager().
+Initialization boundary
+-----------------------
+Bootstrap is responsible for registering the concrete provider registry port.
+Consumers may observe ``None`` only in tests or explicit pre-bootstrap probes;
+runtime code should fail closed or handle that state explicitly.
 """
 
 from __future__ import annotations
@@ -69,9 +69,9 @@ def get_provider_manager_port() -> IProviderRegistryPort | None:
     Returns:
         The registered IProviderRegistryPort, or None if not registered.
 
-    Migration Note:
-        Once bootstrap wiring is complete, this should raise an error
-        instead of returning None, to enforce proper initialization.
+    Boundary:
+        ``None`` is reserved for tests and explicit pre-bootstrap probes.
+        Runtime consumers must fail closed or handle that state explicitly.
     """
     with _provider_port_lock:
         return _provider_port

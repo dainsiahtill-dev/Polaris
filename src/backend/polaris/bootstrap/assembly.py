@@ -93,16 +93,17 @@ def _inject_embedding_port(settings: Settings) -> None:
     set_default_ollama_adapter(None)
 
     # 1. Try Local GPU Transformer
+    torch_module: Any | None
     try:
-        import torch
+        import torch as torch_module
     except ImportError:
-        torch = None
+        torch_module = None
     except OSError as exc:
         logger.debug("PyTorch import unavailable during embedding injection: %s", exc)
-        torch = None
-    if torch is not None:
+        torch_module = None
+    if torch_module is not None:
         try:
-            if torch.cuda.is_available():
+            if torch_module.cuda.is_available():
                 port = LocalTransformerEmbeddingAdapter()
                 set_default_embedding_port(port)
                 logger.info(
@@ -114,21 +115,22 @@ def _inject_embedding_port(settings: Settings) -> None:
             logger.debug("Local transformer embedding injection unavailable: %s", exc)
 
     # 2. Try Ollama
+    requests_module: Any | None
     try:
-        import requests
+        import requests as requests_module
     except ImportError:
-        requests = None
-    if requests is not None:
+        requests_module = None
+    if requests_module is not None:
         try:
             host = os.environ.get("OLLAMA_HOST", "http://120.24.117.59:11434")
-            resp = requests.get(f"{host}/api/tags", timeout=2)
+            resp = requests_module.get(f"{host}/api/tags", timeout=2)
             if resp.status_code == 200:
                 set_default_ollama_adapter(OllamaRuntimeAdapter())
                 port = OllamaEmbeddingAdapter()  # type: ignore[assignment]
                 set_default_embedding_port(port)
                 logger.info("Injected OllamaEmbeddingPort: %s", port.get_fingerprint())
                 return
-        except (OSError, RuntimeError, ValueError, requests.RequestException) as exc:
+        except (OSError, RuntimeError, ValueError, requests_module.RequestException) as exc:
             logger.debug("Ollama embedding injection unavailable: %s", exc)
 
     # 3. Fallback to Stub
@@ -143,9 +145,10 @@ def _inject_provider_manager_port() -> None:
     This enables proper dependency injection of the provider management port,
     improving testability and following the port/adapter pattern.
 
-    Migration Note:
-        Once all LLM modules use get_provider_manager_port() instead of
-        ServiceLocator.get_provider_manager(), the legacy fallback can be removed.
+    Runtime contract:
+        Bootstrap owns the provider registry adapter. KernelOne consumers read
+        it through get_provider_manager_port() and must not import the
+        infrastructure provider manager directly.
     """
     try:
         from polaris.infrastructure.llm.provider_bootstrap import ProviderAdapter
