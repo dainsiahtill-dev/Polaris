@@ -63,13 +63,13 @@ async def build_readiness_payload() -> dict[str, Any]:
     return {"ready": ready, "checks": checks}
 
 
-@primary_router.get("/health", status_code=status.HTTP_200_OK, response_model=PrimaryHealthResponse)  # DEPRECATED
+@primary_router.get("/health", status_code=status.HTTP_200_OK, response_model=PrimaryHealthResponse)
 async def health_check() -> dict[str, Any]:
     """Health check endpoint for load balancers and monitoring."""
     return {"status": "ok", "service": "polaris-backend", "version": "2.0.0"}
 
 
-@primary_router.get("/ready", response_model=PrimaryReadyResponse)  # DEPRECATED
+@primary_router.get("/ready", response_model=PrimaryReadyResponse)
 async def readiness_check() -> dict[str, Any]:
     """Readiness probe for orchestration systems (Kubernetes, etc.)."""
     payload = await build_readiness_payload()
@@ -92,7 +92,7 @@ async def readiness_check() -> dict[str, Any]:
     return payload
 
 
-@primary_router.get("/live", response_model=PrimaryLiveResponse)  # DEPRECATED
+@primary_router.get("/live", response_model=PrimaryLiveResponse)
 async def liveness_check() -> dict[str, Any]:
     """Liveness probe for container orchestration."""
     return {"alive": True, "timestamp": "ok"}
