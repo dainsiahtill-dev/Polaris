@@ -308,6 +308,26 @@ rules:
       - fail if `ported_untracked > 0`
       - report `directory_only_claimed` count trend and top offenders
 
+  - id: closed_governance_ledgers_intake_only
+    severity: high
+    description: >
+      Closed convergence ledgers must stay closed and intake-only. New platform
+      evidence must open a new ledger item with owner, evidence, and verification
+      command instead of reopening closed rows or turning old ledgers into broad
+      active backlogs.
+    evidence:
+      - docs/governance/POLARIS_EXECUTION_CONTRACT_GAP_LEDGER.md
+      - docs/governance/POLARIS_LEGACY_SHIM_CONVERGENCE_LEDGER_20260630.md
+      - docs/governance/POLARIS_KFS_DIRECT_WRITE_CONVERGENCE_LEDGER_20260701.md
+      - docs/governance/POLARIS_BENCH_UNBLOCKING_RUNTIME_LEDGER_20260630.md
+      - docs/governance/POLARIS_CATALOG_BOUNDARY_DEBT_LEDGER_20260701.md
+    current_status: enforced_non_regressive
+    desired_automation:
+      - run python docs/governance/ci/scripts/check_closed_ledger_intake.py --json
+      - fail if any closed ledger loses `Status: Closed (intake-only)`
+      - fail if a closed ledger has non-zero P0/P1/P2 open counts
+      - fail if a closed ledger lacks explicit intake/reopen rules
+
   - id: verified_or_retired_units_require_evidence
     severity: high
     description: >
