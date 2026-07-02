@@ -73,23 +73,23 @@ class TestNATSConnectionConfig:
             config = NATSConnectionConfig()
             assert config.url == "nats://custom:5222"
 
-    def test_polaris_nats_url_fallback(self) -> None:
+    def test_kernelone_nats_url_override(self) -> None:
         """KERNELONE_NATS_URL should be used when NATS_URL not set."""
         with patch.dict(
             os.environ,
-            {"KERNELONE_NATS_URL": "nats://legacy:4222"},
+            {"KERNELONE_NATS_URL": "nats://kernelone:4222"},
             clear=True,
         ):
             config = NATSConnectionConfig()
-            assert config.url == "nats://legacy:4222"
+            assert config.url == "nats://kernelone:4222"
 
-    def test_nats_url_priority_over_polaris(self) -> None:
+    def test_nats_url_priority_over_kernelone_override(self) -> None:
         """NATS_URL should take priority over KERNELONE_NATS_URL."""
         with patch.dict(
             os.environ,
             {
                 "NATS_URL": "nats://explicit:4222",
-                "KERNELONE_NATS_URL": "nats://legacy:4222",
+                "KERNELONE_NATS_URL": "nats://kernelone:4222",
             },
         ):
             config = NATSConnectionConfig()

@@ -17,7 +17,7 @@ Architecture note (2026-04-04 P0-007 Fix):
 Configuration:
   - `NATS_URL`: NATS server URL (default: "nats://127.0.0.1:4222")
   - `NATS_ENABLED`: Enable NATS transport (default: True)
-  - `KERNELONE_NATS_URL`: Alias for `NATS_URL` (for backward compatibility)
+  - `KERNELONE_NATS_URL`: Runtime-scoped NATS server URL override
 
 Implements C2 from ROLES_CELL_REFACTORING_BLUEPRINT_2026-03-26.
 """
@@ -61,7 +61,7 @@ def _get_nats_url_from_env() -> str:
 
     Priority:
     1. `NATS_URL` (explicit)
-    2. `KERNELONE_NATS_URL` (legacy compatibility)
+    2. `KERNELONE_NATS_URL` (runtime-scoped override)
     3. Default: "nats://127.0.0.1:4222"
     """
     url = os.environ.get("NATS_URL")
