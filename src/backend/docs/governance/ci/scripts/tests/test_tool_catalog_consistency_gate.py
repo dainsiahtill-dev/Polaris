@@ -3,10 +3,76 @@
 from __future__ import annotations
 
 import builtins
+import sys
 from pathlib import Path
 from typing import Any
 
-from docs.governance.ci.scripts.run_tool_catalog_consistency_gate import _check_yaml_profiles
+from docs.governance.ci.scripts.run_tool_catalog_consistency_gate import (
+    _check_yaml_profiles,
+    _extract_tool_specs_from_registry,
+)
+
+
+def _write_source(workspace: Path, relative_path: str, content: str) -> None:
+    """Write a UTF-8 Python source fixture."""
+    path = workspace / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def _clear_fake_tool_registry_modules(monkeypatch: Any) -> None:
+    """Remove cached polaris modules that would bypass a temp registry fixture."""
+    module_names = (
+        "polaris",
+        "polaris.kernelone",
+        "polaris.kernelone.tool_execution",
+        "polaris.kernelone.tool_execution.tool_spec_registry",
+    )
+    for module_name in module_names:
+        monkeypatch.delitem(sys.modules, module_name, raising=False)
+
+
+def test_tool_specs_load_from_registry_backend_root(tmp_path: Path, monkeypatch: Any) -> None:
+    """Tool specs must load from ToolSpecRegistry using the backend root path."""
+    _clear_fake_tool_registry_modules(monkeypatch)
+    _write_source(tmp_path, "polaris/__init__.py", "")
+    _write_source(tmp_path, "polaris/kernelone/__init__.py", "")
+    _write_source(tmp_path, "polaris/kernelone/tool_execution/__init__.py", "")
+    _write_source(
+        tmp_path,
+        "polaris/kernelone/tool_execution/tool_spec_registry.py",
+        """
+class ToolSpecRegistry:
+    @staticmethod
+    def get_all_specs():
+        return {"repo_tree": {"aliases": ["list_directory"]}}
+""",
+    )
+
+    result = _extract_tool_specs_from_registry(tmp_path)
+
+    assert result.error == ""
+    assert result.specs == {"repo_tree": {"aliases": ["list_directory"]}}
+
+
+def test_tool_specs_do_not_fallback_when_registry_import_fails(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """Registry import failures must be observable instead of using legacy text fallback."""
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "polaris.kernelone.tool_execution.tool_spec_registry":
+            raise ImportError("registry unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    result = _extract_tool_specs_from_registry(tmp_path)
+
+    assert result.specs == {}
+    assert "registry unavailable" in result.error
 
 
 def test_yaml_profiles_fail_closed_when_yaml_dependency_is_missing(

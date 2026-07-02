@@ -58,6 +58,14 @@ class GateIssue:
         }
 
 
+@dataclass(frozen=True)
+class ToolCatalogLoadResult:
+    """Tool catalog load result from the canonical registry."""
+
+    specs: dict[str, dict[str, Any]]
+    error: str = ""
+
+
 def _non_empty(value: Any) -> str:
     """Return stripped string or empty string."""
     return str(value or "").strip()
@@ -68,11 +76,11 @@ def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _extract_tool_specs_from_registry(backend_root: Path) -> dict[str, dict[str, Any]]:
+def _extract_tool_specs_from_registry(backend_root: Path) -> ToolCatalogLoadResult:
     """Load tool specs from the canonical ToolSpecRegistry.
 
     Returns:
-        Dict mapping canonical tool name to its spec, including aliases.
+        Structured load result with canonical specs or a failure reason.
     """
     try:
         backend_path = str(backend_root)
@@ -81,38 +89,12 @@ def _extract_tool_specs_from_registry(backend_root: Path) -> dict[str, dict[str,
 
         from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
-        return ToolSpecRegistry.get_all_specs()
-    except (ImportError, RuntimeError):
-        return {}
-
-
-def _extract_tool_specs_from_contracts_py(contracts_path: Path) -> dict[str, dict[str, Any]]:
-    """Extract tool specs from historical contracts.py text as a fallback."""
-    if not contracts_path.exists():
-        return {}
-
-    source = contracts_path.read_text(encoding="utf-8")
-
-    # Extract tool names and aliases using regex
-    # Pattern: "tool_name": { ... "aliases": ["alias1", "alias2", ...], ... }
-    tool_specs: dict[str, dict[str, Any]] = {}
-
-    # Find all tool definitions
-    tool_pattern = re.compile(r'"([a-z_][a-z0-9_]+)":\s*\{[^}]*"aliases":\s*\[([^\]]*)\]', re.MULTILINE | re.DOTALL)
-
-    for match in tool_pattern.finditer(source):
-        tool_name = match.group(1)
-        aliases_str = match.group(2)
-
-        # Parse aliases list
-        aliases: list[str] = []
-        alias_pattern = re.compile(r'"([^"]+)"')
-        for alias_match in alias_pattern.finditer(aliases_str):
-            aliases.append(alias_match.group(1))
-
-        tool_specs[tool_name] = {"aliases": aliases}
-
-    return tool_specs
+        specs = ToolSpecRegistry.get_all_specs()
+    except (ImportError, RuntimeError) as exc:
+        return ToolCatalogLoadResult(specs={}, error=f"{type(exc).__name__}: {exc}")
+    if not specs:
+        return ToolCatalogLoadResult(specs={}, error="ToolSpecRegistry returned no tool specs")
+    return ToolCatalogLoadResult(specs=specs)
 
 
 def _get_canonical_names_and_aliases(tool_specs: dict[str, dict[str, Any]]) -> tuple[set[str], dict[str, str]]:
@@ -610,15 +592,14 @@ def main() -> int:
     args = _parse_args()
     workspace = Path(args.workspace).resolve()
 
-    # Load tool specs from the canonical registry, falling back to historical
-    # text extraction only for isolated audit environments that cannot import.
-    contracts_path = workspace / "polaris" / "kernelone" / "tool_execution" / "contracts.py"
-    tool_specs = _extract_tool_specs_from_registry(workspace / "polaris")
+    # Load tool specs from the canonical registry. Historical contracts.py text
+    # parsing is intentionally not supported here; it creates a second fact
+    # source and can hide registry import failures.
+    load_result = _extract_tool_specs_from_registry(workspace)
+    tool_specs = load_result.specs
     if not tool_specs:
-        tool_specs = _extract_tool_specs_from_contracts_py(contracts_path)
-
-    if not tool_specs:
-        print("[error] tool_catalog_load: failed to load tool specs from ToolSpecRegistry")
+        detail = f": {load_result.error}" if load_result.error else ""
+        print(f"[error] tool_catalog_load: failed to load tool specs from ToolSpecRegistry{detail}")
         return 1 if args.mode == _MODE_HARD_FAIL else 0
 
     # Get canonical names and alias mapping
