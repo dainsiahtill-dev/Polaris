@@ -298,11 +298,37 @@ def _check_yaml_profiles(
 
     try:
         import yaml
-    except ImportError:
-        # YAML not available, skip
-        return issues
+    except ImportError as exc:
+        return [
+            GateIssue(
+                category="yaml_dependency_missing",
+                message="PyYAML is required to validate YAML role profiles",
+                file=str(yaml_path),
+                severity="error",
+                evidence={"dependency": "yaml", "error": str(exc)},
+            )
+        ]
 
-    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    try:
+        data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        return [
+            GateIssue(
+                category="yaml_profile_read_error",
+                message=f"failed to read YAML profile file: {exc}",
+                file=str(yaml_path),
+                severity="error",
+            )
+        ]
+    except yaml.YAMLError as exc:
+        return [
+            GateIssue(
+                category="yaml_profile_parse_error",
+                message=f"failed to parse YAML profile file: {exc}",
+                file=str(yaml_path),
+                severity="error",
+            )
+        ]
 
     profiles: list[dict[str, Any]] = []
     if isinstance(data, dict):
