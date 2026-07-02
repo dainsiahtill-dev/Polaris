@@ -9,10 +9,10 @@
  *   import { validateApiPayload, assertApiPayload } from './apiValidation';
  *   
  *   // Validation with result
- *   const { valid, errors } = validateApiPayload('/llm/interview/ask', payload);
+ *   const { valid, errors } = validateApiPayload('/v2/llm/interview/ask', payload);
  *   
  *   // Assertion (throws on failure)
- *   assertApiPayload('/llm/interview/ask', payload);
+ *   assertApiPayload('/v2/llm/interview/ask', payload);
  */
 
 import type { InterviewApiEndpoints } from '../types/llm';
@@ -34,9 +34,9 @@ const DEFAULT_VALIDATION_LOGGING_ENABLED =
  * List of endpoints that require payload validation
  */
 const VALIDATED_ENDPOINTS = [
-  '/llm/interview/ask',
-  '/llm/interview/save',
-  '/llm/interview/cancel',
+  '/v2/llm/interview/ask',
+  '/v2/llm/interview/save',
+  '/v2/llm/interview/cancel',
 ] as const;
 
 type ValidatedEndpoint = typeof VALIDATED_ENDPOINTS[number];
@@ -214,7 +214,7 @@ function sanitizePayloadForLogging(payload: Record<string, any>): Record<string,
  * 
  * Usage:
  *   const validatedFetch = createValidatedFetch(apiFetch);
- *   const response = await validatedFetch('/llm/interview/ask', { body: JSON.stringify(payload) });
+ *   const response = await validatedFetch('/v2/llm/interview/ask', { body: JSON.stringify(payload) });
  */
 export function createValidatedFetch(
   fetchImpl: (endpoint: string, options?: RequestInit) => Promise<Response>

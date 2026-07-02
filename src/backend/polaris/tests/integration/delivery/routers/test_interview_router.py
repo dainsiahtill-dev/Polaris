@@ -201,7 +201,7 @@ class TestInterviewRouterMockedHappyPath:
     """Happy path tests with mocked LLM responses (bypass TYPE_CHECKING issue)."""
 
     def test_interview_ask_happy_path(self) -> None:
-        """POST /llm/interview/ask returns 200 when payload is valid (mocked)."""
+        """POST /v2/llm/interview/ask returns 200 when payload is valid (mocked)."""
         client = _build_client()
         with patch(
             "polaris.delivery.http.routers.interview.generate_interview_answer",
@@ -213,7 +213,7 @@ class TestInterviewRouterMockedHappyPath:
             },
         ):
             response = client.post(
-                "/llm/interview/ask",
+                "/v2/llm/interview/ask",
                 json={
                     "role": "pm",
                     "provider_id": "test-provider",
@@ -228,7 +228,7 @@ class TestInterviewRouterMockedHappyPath:
         assert payload["answer"] == "Hello!"
 
     def test_interview_ask_with_optional_fields(self) -> None:
-        """POST /llm/interview/ask accepts all optional fields (mocked)."""
+        """POST /v2/llm/interview/ask accepts all optional fields (mocked)."""
         client = _build_client()
         with patch(
             "polaris.delivery.http.routers.interview.generate_interview_answer",
@@ -240,7 +240,7 @@ class TestInterviewRouterMockedHappyPath:
             },
         ):
             response = client.post(
-                "/llm/interview/ask",
+                "/v2/llm/interview/ask",
                 json={
                     "role": "pm",
                     "provider_id": "test-provider",
@@ -263,10 +263,10 @@ class TestInterviewRouterMockedHappyPath:
         assert payload["session_id"] == "session-123"
 
     def test_interview_save_happy_path(self) -> None:
-        """POST /llm/interview/save returns 200."""
+        """POST /v2/llm/interview/save returns 200."""
         client = _build_client()
         response = client.post(
-            "/llm/interview/save",
+            "/v2/llm/interview/save",
             json={
                 "role": "pm",
                 "provider_id": "test-provider",
@@ -282,10 +282,10 @@ class TestInterviewRouterMockedHappyPath:
         assert payload["saved"] is True
 
     def test_interview_cancel_happy_path(self) -> None:
-        """POST /llm/interview/cancel returns 200."""
+        """POST /v2/llm/interview/cancel returns 200."""
         client = _build_client()
         response = client.post(
-            "/llm/interview/cancel",
+            "/v2/llm/interview/cancel",
             json={"session_id": "session-123"},
         )
 
@@ -293,6 +293,30 @@ class TestInterviewRouterMockedHappyPath:
         payload: dict[str, Any] = response.json()
         assert payload["ok"] is True
         assert payload["cancelled"] is True
+
+    def test_legacy_interview_action_routes_are_not_registered(self) -> None:
+        """Retired non-v2 interview action aliases must fail closed."""
+        client = _build_client()
+
+        payloads: dict[str, dict[str, Any]] = {
+            "/llm/interview/ask": {
+                "role": "pm",
+                "provider_id": "test-provider",
+                "model": "gpt-4",
+                "question": "What is 2+2?",
+            },
+            "/llm/interview/save": {
+                "role": "pm",
+                "provider_id": "test-provider",
+                "model": "gpt-4",
+                "report": {"score": 95, "notes": "Great job"},
+            },
+            "/llm/interview/cancel": {"session_id": "session-123"},
+        }
+
+        for path, payload in payloads.items():
+            response = client.post(path, json=payload)
+            assert response.status_code == 404
 
     def test_interview_stream_route_is_not_registered(self) -> None:
         """POST /llm/interview/stream must not exist."""

@@ -777,7 +777,7 @@ export function InteractiveInterviewHall({
     pushSessionEvent({
       type: "command",
       timestamp: new Date().toISOString(),
-      content: `POST /llm/interview/ask ${stringifyEventPayload({
+      content: `POST /v2/llm/interview/ask ${stringifyEventPayload({
         role: selectedRole,
         provider_id: selectedProvider,
         model: selectedModel,
@@ -1038,7 +1038,7 @@ export function InteractiveInterviewHall({
     pushSessionEvent({
       type: "command",
       timestamp: new Date().toISOString(),
-      content: `POST /llm/interview/save ${stringifyEventPayload({
+      content: `POST /v2/llm/interview/save ${stringifyEventPayload({
         role: selectedRole,
         provider_id: selectedProvider,
         model: selectedModel,

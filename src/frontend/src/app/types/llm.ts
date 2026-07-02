@@ -5,7 +5,7 @@
  * All frontend components should use these types to ensure consistency with backend
  * Pydantic models.
  * 
- * Backend reference: backend/app/routers/llm.py
+ * Backend reference: polaris.delivery.http.routers.interview
  * - InterviewAskPayload
  * - InterviewSavePayload
  * - InterviewCancelPayload
@@ -93,7 +93,7 @@ export interface CancelInterviewPayload {
 // ============================================================================
 
 export interface InterviewApiEndpoints {
-  '/llm/interview/ask': {
+  '/v2/llm/interview/ask': {
     role: string;
     provider_id: string;
     model: string;
@@ -107,14 +107,14 @@ export interface InterviewApiEndpoints {
     env_overrides?: Record<string, string>;
     debug?: boolean | null;
   };
-  '/llm/interview/save': {
+  '/v2/llm/interview/save': {
     role: string;
     provider_id: string;
     model: string;
     report: Record<string, any>;
     session_id?: string | null;
   };
-  '/llm/interview/cancel': {
+  '/v2/llm/interview/cancel': {
     session_id: string;
   };
 }
@@ -135,7 +135,7 @@ export type ValidationRules<T> = {
 export const interviewValidationRules: {
   [K in keyof InterviewApiEndpoints]: ValidationRules<InterviewApiEndpoints[K]>;
 } = {
-  '/llm/interview/ask': {
+  '/v2/llm/interview/ask': {
     role: {
       validate: (v) => (v && typeof v === 'string' && v.length > 0 
         ? { valid: true } 
@@ -161,7 +161,7 @@ export const interviewValidationRules: {
       required: true,
     },
   },
-  '/llm/interview/save': {
+  '/v2/llm/interview/save': {
     role: {
       validate: (v) => (v && typeof v === 'string' && v.length > 0
         ? { valid: true }
@@ -187,7 +187,7 @@ export const interviewValidationRules: {
       required: true,
     },
   },
-  '/llm/interview/cancel': {
+  '/v2/llm/interview/cancel': {
     session_id: {
       validate: (v) => (v && typeof v === 'string' && v.length > 0
         ? { valid: true }

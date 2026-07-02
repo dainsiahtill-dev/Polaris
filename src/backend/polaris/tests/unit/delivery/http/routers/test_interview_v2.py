@@ -8,8 +8,9 @@ External services are mocked to avoid LLM provider dependencies.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -521,8 +522,8 @@ async def test_v2_llm_interview_jetstream_starts_nat_channel_and_publishes_event
     """POST /v2/llm/interview/jetstream should publish interview events through runtime JetStream."""
     from polaris.delivery.http.routers import interview
 
-    scheduled: list[object] = []
-    published: list[tuple[str, dict[str, object]]] = []
+    scheduled: list[Awaitable[Any]] = []
+    published: list[tuple[str, dict[str, Any]]] = []
 
     async def _fake_run_interview_streaming(settings, role, provider_id, model, question, output_queue, **kwargs):
         assert role == "pm"
@@ -542,7 +543,7 @@ async def test_v2_llm_interview_jetstream_starts_nat_channel_and_publishes_event
         return True
 
     class _CapturedTask:
-        def __init__(self, coro: object) -> None:
+        def __init__(self, coro: Awaitable[Any]) -> None:
             self.coro = coro
 
         def add_done_callback(self, callback) -> None:

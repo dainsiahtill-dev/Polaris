@@ -12,7 +12,7 @@ import {
 
 describe('API Validation', () => {
   describe('validateApiPayload', () => {
-    it('should validate a correct /llm/interview/ask payload', () => {
+    it('should validate a correct /v2/llm/interview/ask payload', () => {
       const payload = {
         role: 'pm',
         provider_id: 'minimax-123',
@@ -20,7 +20,7 @@ describe('API Validation', () => {
         question: 'What is a decorator?',
       };
       
-      const result = validateApiPayload('/llm/interview/ask', payload);
+      const result = validateApiPayload('/v2/llm/interview/ask', payload);
       
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
@@ -33,7 +33,7 @@ describe('API Validation', () => {
         // missing model and question
       };
       
-      const result = validateApiPayload('/llm/interview/ask', payload as any);
+      const result = validateApiPayload('/v2/llm/interview/ask', payload as any);
       
       expect(result.valid).toBe(false);
       expect(result.errors.length).toBeGreaterThan(0);
@@ -49,13 +49,13 @@ describe('API Validation', () => {
         question: 'What is a decorator?',
       };
       
-      const result = validateApiPayload('/llm/interview/ask', payload);
+      const result = validateApiPayload('/v2/llm/interview/ask', payload);
       
       expect(result.valid).toBe(false);
       expect(result.errors.some(e => e.includes('model'))).toBe(true);
     });
     
-    it('should validate /llm/interview/save payload', () => {
+    it('should validate /v2/llm/interview/save payload', () => {
       const payload = {
         role: 'pm',
         provider_id: 'minimax-123',
@@ -63,7 +63,7 @@ describe('API Validation', () => {
         report: { id: 'test', status: 'complete' },
       };
       
-      const result = validateApiPayload('/llm/interview/save', payload);
+      const result = validateApiPayload('/v2/llm/interview/save', payload);
       
       expect(result.valid).toBe(true);
     });
@@ -76,7 +76,7 @@ describe('API Validation', () => {
         report: { id: 'test' },
       };
       
-      const result = validateApiPayload('/llm/interview/save', payload);
+      const result = validateApiPayload('/v2/llm/interview/save', payload);
       
       expect(result.valid).toBe(false);
       expect(result.errors.some(e => e.includes('model'))).toBe(true);
@@ -91,7 +91,7 @@ describe('API Validation', () => {
         unexpectedField: 'should warn',
       };
       
-      const result = validateApiPayload('/llm/interview/ask', payload);
+      const result = validateApiPayload('/v2/llm/interview/ask', payload);
       
       expect(result.valid).toBe(true);
       expect(result.warnings.some(w => w.includes('unexpectedField'))).toBe(true);
@@ -116,7 +116,7 @@ describe('API Validation', () => {
         question: 'What?',
       };
       
-      expect(() => assertApiPayload('/llm/interview/ask', payload)).not.toThrow();
+      expect(() => assertApiPayload('/v2/llm/interview/ask', payload)).not.toThrow();
     });
     
     it('should throw for invalid payload', () => {
@@ -125,7 +125,7 @@ describe('API Validation', () => {
         // missing required fields
       };
       
-      expect(() => assertApiPayload('/llm/interview/ask', payload as any)).toThrow('API payload validation failed');
+      expect(() => assertApiPayload('/v2/llm/interview/ask', payload as any)).toThrow('API payload validation failed');
     });
     
     it('should include field names in error message', () => {
@@ -136,7 +136,7 @@ describe('API Validation', () => {
       };
       
       try {
-        assertApiPayload('/llm/interview/ask', payload as any);
+        assertApiPayload('/v2/llm/interview/ask', payload as any);
         fail('Should have thrown');
       } catch (e: any) {
         expect(e.message).toContain('model');
@@ -153,7 +153,7 @@ describe('API Validation', () => {
         // missing model and question
       };
       
-      const result = validatePayloadDetailed('/llm/interview/ask', payload as any);
+      const result = validatePayloadDetailed('/v2/llm/interview/ask', payload as any);
       
       expect(result.valid).toBe(false);
       expect(result.missing).toContain('model');
@@ -169,7 +169,7 @@ describe('API Validation', () => {
         question: 'Valid question',
       };
       
-      const result = validatePayloadDetailed('/llm/interview/ask', payload);
+      const result = validatePayloadDetailed('/v2/llm/interview/ask', payload);
       
       if (!result.valid) {
         expect(result.invalid.some(i => i.field === 'role')).toBe(true);
@@ -189,12 +189,12 @@ describe('API Validation', () => {
         question: 'What?',
       };
       
-      await validatedFetch('/llm/interview/ask', {
+      await validatedFetch('/v2/llm/interview/ask', {
         method: 'POST',
         body: JSON.stringify(payload),
       });
       
-      expect(mockFetch).toHaveBeenCalledWith('/llm/interview/ask', {
+      expect(mockFetch).toHaveBeenCalledWith('/v2/llm/interview/ask', {
         method: 'POST',
         body: JSON.stringify(payload),
       });
@@ -210,7 +210,7 @@ describe('API Validation', () => {
       };
       
       await expect(
-        validatedFetch('/llm/interview/ask', {
+        validatedFetch('/v2/llm/interview/ask', {
           method: 'POST',
           body: JSON.stringify(payload),
         })
@@ -235,7 +235,7 @@ describe('API Validation', () => {
       const mockFetch = vi.fn().mockResolvedValue(new Response());
       const validatedFetch = createValidatedFetch(mockFetch);
       
-      await validatedFetch('/llm/interview/ask', {
+      await validatedFetch('/v2/llm/interview/ask', {
         method: 'GET',
       });
       
@@ -246,7 +246,7 @@ describe('API Validation', () => {
       const mockFetch = vi.fn().mockResolvedValue(new Response());
       const validatedFetch = createValidatedFetch(mockFetch);
       
-      await validatedFetch('/llm/interview/ask', {
+      await validatedFetch('/v2/llm/interview/ask', {
         method: 'POST',
         body: 'invalid json',
       });

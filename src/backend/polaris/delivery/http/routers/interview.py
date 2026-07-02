@@ -301,28 +301,6 @@ async def _run_interview_jetstream(
             )
 
 
-@router.post(
-    "/llm/interview/ask", dependencies=[Depends(require_auth)], response_model=InterviewAskResponse
-)  # DEPRECATED
-async def llm_interview_ask(request: Request, payload: InterviewAskPayload) -> dict[str, Any]:
-    state = get_state(request)
-    return await run_interactive_interview_question(
-        state.settings,
-        payload.role,
-        payload.provider_id,
-        payload.model,
-        payload.question,
-        session_id=payload.session_id,
-        context=payload.context,
-        expects_thinking=payload.expects_thinking,
-        criteria=payload.criteria,
-        api_key=payload.api_key,
-        extra_headers=payload.headers,
-        env_overrides=payload.env_overrides,
-        debug=payload.debug,
-    )
-
-
 @router.post("/v2/llm/interview/ask", dependencies=[Depends(require_auth)], response_model=InterviewAskResponse)
 async def v2_llm_interview_ask(request: Request, payload: InterviewAskPayload) -> dict[str, Any]:
     """Generate an interview answer for a given role and question."""
@@ -344,21 +322,6 @@ async def v2_llm_interview_ask(request: Request, payload: InterviewAskPayload) -
     )
 
 
-@router.post(
-    "/llm/interview/save", dependencies=[Depends(require_auth)], response_model=InterviewSaveResponse
-)  # DEPRECATED
-def llm_interview_save(request: Request, payload: InterviewSavePayload) -> dict[str, Any]:
-    state = get_state(request)
-    return save_interactive_interview_report(
-        state.settings,
-        payload.role,
-        payload.provider_id,
-        payload.model,
-        payload.report,
-        session_id=payload.session_id,
-    )
-
-
 @router.post("/v2/llm/interview/save", dependencies=[Depends(require_auth)], response_model=InterviewSaveResponse)
 def v2_llm_interview_save(request: Request, payload: InterviewSavePayload) -> dict[str, Any]:
     """Save an interview report."""
@@ -371,14 +334,6 @@ def v2_llm_interview_save(request: Request, payload: InterviewSavePayload) -> di
         payload.report,
         session_id=payload.session_id,
     )
-
-
-@router.post(
-    "/llm/interview/cancel", dependencies=[Depends(require_auth)], response_model=InterviewCancelResponse
-)  # DEPRECATED
-def llm_interview_cancel(payload: InterviewCancelPayload) -> dict[str, Any]:
-    # Best-effort cancellation (primarily for Codex CLI streaming subprocess).
-    return cancel_interactive_interview_stream(payload.session_id)
 
 
 @router.post("/v2/llm/interview/cancel", dependencies=[Depends(require_auth)], response_model=InterviewCancelResponse)

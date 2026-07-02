@@ -136,17 +136,17 @@ namespace CancelPayloadTests {
 namespace EndpointTests {
   // Test that InterviewApiEndpoints match backend expectations
   export type AskEndpointValid = AssertAssignable<
-    InterviewApiEndpoints['/llm/interview/ask'],
+    InterviewApiEndpoints['/v2/llm/interview/ask'],
     BackendAskPayload
   >;
   
   export type SaveEndpointValid = AssertAssignable<
-    InterviewApiEndpoints['/llm/interview/save'],
+    InterviewApiEndpoints['/v2/llm/interview/save'],
     BackendSavePayload
   >;
   
   export type CancelEndpointValid = AssertAssignable<
-    InterviewApiEndpoints['/llm/interview/cancel'],
+    InterviewApiEndpoints['/v2/llm/interview/cancel'],
     BackendCancelPayload
   >;
   
@@ -169,7 +169,7 @@ namespace RequiredFieldsTests {
   };
   
   // Test that required fields are consistent
-  // Backend required fields for /llm/interview/ask: role, provider_id, model, question
+  // Backend required fields for /v2/llm/interview/ask: role, provider_id, model, question
   type BackendAskRequired = RequiredFields<BackendAskPayload>;
   type FrontendAskRequired = RequiredFields<AskInterviewPayload>;
   
