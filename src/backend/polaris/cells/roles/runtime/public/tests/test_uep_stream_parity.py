@@ -401,23 +401,20 @@ class TestUEPSilentFailure:
         assert result is False, "Publisher should return False when bus unavailable"
 
     @pytest.mark.asyncio
-    async def test_legacy_emit_llm_event_logs_error_not_warning(
+    async def test_roles_kernel_emit_llm_event_completes_without_deprecation_warning(
         self,
         temp_workspace: str,
     ) -> None:
-        """Verify legacy emit_llm_event logs error on failure."""
+        """Verify roles-kernel emit_llm_event remains a current audit sink."""
 
         from polaris.cells.roles.kernel.public.service import emit_llm_event
 
-        # Capture log output
-        with pytest.warns(DeprecationWarning):
-            # This should log an error, not warning, on failure
-            emit_llm_event(
-                event_type="llm_call_start",
-                role="director",
-                run_id="test-run",
-                metadata={"workspace": temp_workspace},
-            )
+        emit_llm_event(
+            event_type="llm_call_start",
+            role="director",
+            run_id="test-run",
+            metadata={"workspace": temp_workspace},
+        )
 
-        # The function completes without raising even on error
-        # This is the expected behavior - fail-explicit but don't crash
+        # The function completes without raising. Audit persistence failures are
+        # logged inside the sink so LLM execution is not interrupted.

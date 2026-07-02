@@ -10,7 +10,6 @@ import os
 import re
 import threading
 import time
-import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from datetime import datetime
@@ -423,11 +422,13 @@ def emit_llm_event(
     publish_realtime: bool = True,
     **kwargs,
 ) -> None:
-    """便捷的事件发射函数
+    """Emit one roles-kernel LLM audit event.
 
-    .. deprecated::
-        Use UEPEventPublisher (polaris.kernelone.events.uep_publisher)
-        for new code. This function is maintained for backward compatibility.
+    This is the roles-kernel event sink used by current LLM caller paths. It
+    normalizes unknown fields into metadata, deduplicates repeated logical
+    events, writes the disk audit record, and optionally publishes the runtime
+    realtime projection. UEP publishers may feed the same observable stream,
+    but this function remains the local audit boundary for roles-kernel events.
 
     Args:
         event_type: 事件类型
@@ -484,12 +485,6 @@ def emit_llm_event(
             sorted(unknown_kwargs.keys()),
         )
     known_kwargs["metadata"] = metadata
-
-    warnings.warn(
-        "emit_llm_event is deprecated. Use UEPEventPublisher for new code.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
 
     event = LLMCallEvent(
         event_type=event_type,
