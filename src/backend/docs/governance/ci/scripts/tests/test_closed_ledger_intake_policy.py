@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from docs.governance.ci.scripts import fitness_rule_checker
 from docs.governance.ci.scripts.check_closed_ledger_intake import (
     CLOSED_LEDGER_EXPECTATIONS,
     ClosedLedgerExpectation,
@@ -27,6 +28,15 @@ def test_live_closed_governance_ledgers_are_intake_only() -> None:
 
     assert result.passed is True
     assert result.violations == []
+    assert len(result.evidence) == len(CLOSED_LEDGER_EXPECTATIONS)
+
+
+def test_fitness_rule_checker_runs_closed_ledger_rule() -> None:
+    """The unified fitness-rule entrypoint must know the closed-ledger rule."""
+    result = fitness_rule_checker.run_rule("closed_governance_ledgers_intake_only")
+
+    assert result.passed is True
+    assert result.rule_id == "closed_governance_ledgers_intake_only"
     assert len(result.evidence) == len(CLOSED_LEDGER_EXPECTATIONS)
 
 

@@ -24,6 +24,17 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:
+    from docs.governance.ci.scripts.closed_ledger_intake_policy import (
+        RULE_ID as CLOSED_LEDGER_INTAKE_RULE_ID,
+        evaluate_closed_ledger_intake,
+    )
+except ModuleNotFoundError:
+    from closed_ledger_intake_policy import (
+        RULE_ID as CLOSED_LEDGER_INTAKE_RULE_ID,
+        evaluate_closed_ledger_intake,
+    )
+
 GREEN = "\033[92m"
 RED = "\033[91m"
 YELLOW = "\033[93m"
@@ -981,6 +992,17 @@ class FitnessRuleChecker:
                 result.warnings.append(f"Error parsing cells.yaml for graph relations: {e}")
         return result
 
+    def check_closed_governance_ledgers_intake_only(self) -> FitnessCheckResult:
+        """Check that closed convergence ledgers remain intake-only."""
+        report = evaluate_closed_ledger_intake(self.workspace)
+        return FitnessCheckResult(
+            rule_id=CLOSED_LEDGER_INTAKE_RULE_ID,
+            passed=report.passed,
+            evidence=list(report.evidence),
+            violations=list(report.violations),
+            warnings=list(report.warnings),
+        )
+
 
 def get_checker() -> FitnessRuleChecker:
     """Get the default fitness rule checker instance."""
@@ -1014,6 +1036,7 @@ def run_all() -> list[FitnessCheckResult]:
         "catalog_presence",
         "shim_markers",
         "legacy_coverage",
+        "closed_governance_ledgers_intake_only",
         "verified_evidence",
         "command_pattern_source",
         "event_usage",
