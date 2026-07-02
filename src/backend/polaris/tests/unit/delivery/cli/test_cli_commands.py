@@ -275,23 +275,24 @@ class TestMainHelpers:
 
 
 class TestPolarisCliParser:
-    """Test polaris_cli.py create_parser and helpers."""
+    """Test polaris_cli.py compatibility parser and helpers."""
 
-    def test_polaris_parser_has_chat_status_workflow(self, polaris_parser: argparse.ArgumentParser) -> None:
-        """polaris_cli parser must expose chat, status, and workflow."""
+    def test_polaris_parser_delegates_to_canonical_host(self, polaris_parser: argparse.ArgumentParser) -> None:
+        """polaris_cli parser must expose canonical top-level commands."""
         subparsers_actions = [
             action
             for action in polaris_parser._actions
             if isinstance(action, argparse._SubParsersAction)  # type: ignore[attr-defined]
         ]
         choices = subparsers_actions[0].choices
-        assert set(choices.keys()) == {"chat", "status", "workflow"}
+        assert {"console", "task", "session", "serve", "cell"}.issubset(set(choices.keys()))
 
-    def test_polaris_chat_parses_role_and_mode(self, polaris_parser: argparse.ArgumentParser) -> None:
-        """chat must parse --role and --mode."""
-        args = polaris_parser.parse_args(["chat", "--role", "qa", "--mode", "server"])
+    def test_polaris_console_parses_role_and_backend(self, polaris_parser: argparse.ArgumentParser) -> None:
+        """console must parse --role and --backend through the canonical parser."""
+        args = polaris_parser.parse_args(["console", "--role", "qa", "--backend", "plain"])
+        assert args.command == "console"
         assert args.role == "qa"
-        assert args.mode == "server"
+        assert args.backend == "plain"
 
     def test_polaris_workflow_run_parses(self, polaris_parser: argparse.ArgumentParser) -> None:
         """workflow run must parse --contracts-file and --wait."""

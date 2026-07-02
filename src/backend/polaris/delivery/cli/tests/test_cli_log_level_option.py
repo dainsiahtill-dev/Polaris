@@ -29,5 +29,5 @@ def test_polaris_cli_parser_accepts_log_level_flag() -> None:
 
 def test_polaris_cli_parser_accepts_log_level_after_subcommand() -> None:
     parser = polaris_cli.create_parser()
-    args = parser.parse_args(["chat", "--log-level", "info"])
+    args = parser.parse_args(["console", "--log-level", "info"])
     assert args.log_level == "info"
