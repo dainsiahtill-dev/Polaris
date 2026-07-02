@@ -484,7 +484,7 @@ class FakeBlueprintService:
             blueprint_path="runtime/blueprints/bp-1.json",
             summary=f"Blueprint for {command.task_id}",
             recommendations=("keep public contracts typed",),
-            risks=("legacy adapter drift",),
+            risks=("contract adapter drift",),
         )
 
 

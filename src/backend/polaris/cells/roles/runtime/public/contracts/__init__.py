@@ -108,8 +108,8 @@ from polaris.cells.roles.runtime.public.contracts._object_contracts import (
 
 # Backward-compatible re-export of the foundation validation helpers.
 # These were top-level attributes of the former ``contracts`` module; the
-# shim keeps them importable from this exact path so the public attribute
-# surface stays lossless after the module->package split.
+# re-export keeps them importable from this exact path so the public
+# attribute surface stays lossless after the module->package split.
 from polaris.cells.roles.runtime.public.contracts._validation import (
     _FORBIDDEN_ROLE_OBJECT_OWNER_CELLS,
     _TASK_MARKET_TASK_REF_PREFIX,
