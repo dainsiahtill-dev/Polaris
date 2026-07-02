@@ -862,7 +862,7 @@ def _runtime_convergence_metadata(
     ]
     return {
         **convergence_envelope_metadata(preferred_entrypoint="run_runtime_repair_convergence"),
-        "legacy_single_repair_entrypoint": "run_runtime_repair",
+        "current_single_repair_entrypoint": "run_runtime_repair",
         "source_tools": list(source_tools),
         "runtime_bindings": binding_payloads,
         "runtime_binding_count": len(binding_payloads),

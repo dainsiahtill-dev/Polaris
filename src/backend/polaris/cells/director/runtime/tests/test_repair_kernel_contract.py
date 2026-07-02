@@ -1226,6 +1226,19 @@ def test_repair_convergence_scheduler_records_revalidation_receipt_evidence(tmp_
     assert target.read_text(encoding="utf-8") == "export const done = true;\n"
 
 
+def test_runtime_convergence_metadata_uses_current_single_repair_entrypoint_key() -> None:
+    metadata = runtime_dispatch_module._runtime_convergence_metadata(
+        status="converged",
+        source_tools=("deterministic_typescript_missing_export_repair",),
+        planner_override=False,
+    )
+
+    assert metadata["current_single_repair_entrypoint"] == "run_runtime_repair"
+    single_entrypoint_keys = sorted(key for key in metadata if key.endswith("_single_repair_entrypoint"))
+    assert single_entrypoint_keys == ["current_single_repair_entrypoint"]
+    assert metadata["preferred_entrypoint"] == "run_runtime_repair_convergence"
+
+
 def test_repair_convergence_scheduler_can_use_policy_gated_editor(tmp_path: Path) -> None:
     relative_path = "src/app.ts"
     target = tmp_path / relative_path
@@ -6422,12 +6435,7 @@ def test_typescript_missing_member_infers_interface_string_and_number_properties
     )
     base_files = {
         "src/simulation.ts": (
-            "export interface Flower {\n"
-            "  mood: number;\n"
-            "}\n\n"
-            "export interface Firefly {\n"
-            "  id: string;\n"
-            "}\n"
+            "export interface Flower {\n  mood: number;\n}\n\nexport interface Firefly {\n  id: string;\n}\n"
         ),
         "src/render.ts": (
             "import type { Firefly, Flower } from './simulation.js';\n"
@@ -6460,14 +6468,11 @@ def test_typescript_missing_member_infers_interface_string_and_number_properties
 
 def test_typescript_missing_member_static_factory_without_return_evidence_is_unplannable() -> None:
     diagnostic = (
-        "src/engine/simulation.ts(3,21): error TS2339: Property 'createRandom' does not exist on type "
-        "'typeof Flower'."
+        "src/engine/simulation.ts(3,21): error TS2339: Property 'createRandom' does not exist on type 'typeof Flower'."
     )
     base_files = {
         "src/models/flower.ts": (
-            "export class Flower {\n"
-            "  constructor(name: string, color: string, isBlooming: boolean = true) {}\n"
-            "}\n"
+            "export class Flower {\n  constructor(name: string, color: string, isBlooming: boolean = true) {}\n}\n"
         ),
         "src/engine/simulation.ts": (
             "import { Flower } from '../models/flower';\n"
@@ -8654,10 +8659,7 @@ def test_rust_crate_import_legacy_source_tool_executes_through_runtime_editor(tm
 
 
 def test_rust_crate_import_legacy_source_tool_declines_declared_dependencies() -> None:
-    cargo = (
-        '[package]\nname = "kitchen-flavor-palette"\nversion = "0.1.0"\n\n'
-        "[dependencies]\nkitchen_palette = \"1\"\n"
-    )
+    cargo = '[package]\nname = "kitchen-flavor-palette"\nversion = "0.1.0"\n\n[dependencies]\nkitchen_palette = "1"\n'
     main_content = "use kitchen_palette::engine::generate_palette;\n"
     raw = "cargo check failed: error[E0433]: cannot find module or crate `kitchen_palette` in this scope"
 
