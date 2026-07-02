@@ -321,33 +321,37 @@ class ShimMarkersChecker:
                         result.warnings.append(f"Directory not found or empty: {source_ref.path} (unit: {unit.id})")
                         continue
 
-                    for file_path, has_markers, _ in dir_results:
+                    for checked_path, has_markers, _ in dir_results:
                         total_files_checked += 1
                         if has_markers:
                             files_with_markers += 1
                         else:
-                            files_without_markers.append(str(file_path))
+                            files_without_markers.append(str(checked_path))
                             result.violations.append(
-                                f"No migration markers in: {file_path} (unit: {unit.id}, source_ref: {source_ref.path})"
+                                f"No migration markers in: {checked_path} "
+                                f"(unit: {unit.id}, source_ref: {source_ref.path})"
                             )
 
                 else:
                     # Check single file
-                    file_path = _resolve_file_path(self.workspace, source_ref)
+                    resolved_file_path = _resolve_file_path(self.workspace, source_ref)
 
-                    if file_path is None:
+                    if resolved_file_path is None:
                         result.warnings.append(f"Source file not found: {source_ref.path} (unit: {unit.id})")
                         continue
 
-                    has_markers, snippets = _file_has_markers(file_path)
+                    has_markers, snippets = _file_has_markers(resolved_file_path)
 
                     if has_markers:
                         files_with_markers += 1
-                        result.evidence.append(f"Migration markers found in {file_path.name}: {snippets[0][:60]}...")
+                        result.evidence.append(
+                            f"Migration markers found in {resolved_file_path.name}: {snippets[0][:60]}..."
+                        )
                     else:
-                        files_without_markers.append(str(file_path))
+                        files_without_markers.append(str(resolved_file_path))
                         result.violations.append(
-                            f"No migration markers in: {file_path} (unit: {unit.id}, source_ref: {source_ref.path})"
+                            f"No migration markers in: {resolved_file_path} "
+                            f"(unit: {unit.id}, source_ref: {source_ref.path})"
                         )
 
         # Update result based on findings

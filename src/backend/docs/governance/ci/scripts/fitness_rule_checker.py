@@ -25,11 +25,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
+    from docs.governance.ci.scripts.check_shim_markers import (
+        ShimMarkersChecker,
+    )
     from docs.governance.ci.scripts.closed_ledger_intake_policy import (
         RULE_ID as CLOSED_LEDGER_INTAKE_RULE_ID,
         evaluate_closed_ledger_intake,
     )
 except ModuleNotFoundError:
+    from check_shim_markers import (
+        ShimMarkersChecker,
+    )
     from closed_ledger_intake_policy import (
         RULE_ID as CLOSED_LEDGER_INTAKE_RULE_ID,
         evaluate_closed_ledger_intake,
@@ -453,98 +459,17 @@ class FitnessRuleChecker:
         return result
 
     def check_shim_markers(self) -> FitnessCheckResult:
-        """Check that shim_only files have migration markers."""
-        result = FitnessCheckResult(rule_id="shim_only_units_require_markers", passed=True)
-        ledger_path = self.workspace / "docs" / "migration" / "ledger.yaml"
-        if not ledger_path.exists():
-            result.passed = False
-            result.violations.append("docs/migration/ledger.yaml not found")
-            return result
-        try:
-            import yaml
-
-            with open(ledger_path, encoding="utf-8") as f:
-                ledger = yaml.safe_load(f)
-        except (OSError, ImportError) as e:
-            result.passed = False
-            result.violations.append(f"Failed to parse ledger.yaml: {e}")
-            return result
-        units = ledger.get("units", [])
-        shim_units = [u for u in units if str(u.get("status", "")) == "shim_only"]
-        if not shim_units:
-            result.evidence.append("No shim_only migration units found - check passes vacuously")
-            return result
-        result.evidence.append(f"Found {len(shim_units)} shim_only migration unit(s)")
-        marker_patterns = [
-            re.compile(r"#\s*DEPRECATED", re.IGNORECASE),
-            re.compile(r"\.\.\s*deprecated::", re.IGNORECASE),
-            re.compile(r"warnings\.warn\([^)]*DeprecationWarning", re.IGNORECASE),
-            re.compile(r"#\s*TODO[:]\s+migrate", re.IGNORECASE),
-            re.compile(r"#\s*MIGRATED", re.IGNORECASE),
-            re.compile(r"#\s*LEGACY", re.IGNORECASE),
-            re.compile(r"#\s*SHIM", re.IGNORECASE),
-            re.compile(r"#\s*COMPATIBILITY", re.IGNORECASE),
-            re.compile(r"#\s*BACKWARD\s*COMPAT", re.IGNORECASE),
-            re.compile(r"#\s*MOVED\s*TO", re.IGNORECASE),
-            re.compile(r"#\s*\d{4}-\d{2}-\d{2}.*migration", re.IGNORECASE),
-            re.compile(r"migrated?\s+(?:on|from|to)\s+\d{4}-\d{2}-\d{2}", re.IGNORECASE),
-            re.compile(r"deprecated.*\d{4}-\d{2}-\d{2}", re.IGNORECASE),
-        ]
-        files_without_markers: list[str] = []
-        total_checked = 0
-        for unit in shim_units:
-            unit_id = unit.get("id", "unknown")
-            for sr in unit.get("source_refs", []):
-                path_str = str(sr.get("path", "")).replace("\\", "/").strip()
-                kind = str(sr.get("kind", "file"))
-                if not path_str:
-                    continue
-                possible_paths = [
-                    self.workspace / path_str,
-                    self.workspace / "src" / "backend" / path_str,
-                    self.workspace / "polaris" / path_str,
-                ]
-                if kind == "directory":
-                    dir_path = None
-                    for candidate in possible_paths:
-                        if candidate.exists() and candidate.is_dir():
-                            dir_path = candidate
-                            break
-                    if dir_path is None:
-                        result.warnings.append(f"Directory not found: {path_str} (unit: {unit_id})")
-                        continue
-                    for py_file in dir_path.rglob("*.py"):
-                        total_checked += 1
-                        try:
-                            content = py_file.read_text(encoding="utf-8")
-                        except (OSError, UnicodeDecodeError):
-                            continue
-                        has_marker = any(p.search(content) for p in marker_patterns)
-                        if not has_marker:
-                            files_without_markers.append(f"{py_file.relative_to(self.workspace)} (unit: {unit_id})")
-                else:
-                    total_checked += 1
-                    file_path = None
-                    for candidate in possible_paths:
-                        if candidate.exists() and candidate.is_file():
-                            file_path = candidate
-                            break
-                    if file_path is None:
-                        result.warnings.append(f"Source file not found: {path_str} (unit: {unit_id})")
-                        continue
-                    try:
-                        content = file_path.read_text(encoding="utf-8")
-                    except (OSError, UnicodeDecodeError):
-                        continue
-                    has_marker = any(p.search(content) for p in marker_patterns)
-                    if not has_marker:
-                        files_without_markers.append(f"{file_path.relative_to(self.workspace)} (unit: {unit_id})")
-        result.evidence.append(f"Files checked: {total_checked}, without markers: {len(files_without_markers)}")
-        if files_without_markers:
-            result.passed = False
-            for fwm in files_without_markers:
-                result.violations.append(f"No migration markers in {fwm}")
-        return result
+        """Check shim marker policy through the canonical checker implementation."""
+        external_result = ShimMarkersChecker(self.workspace).check_shim_markers()
+        return FitnessCheckResult(
+            rule_id=external_result.rule_id,
+            passed=external_result.passed,
+            evidence=list(external_result.evidence),
+            violations=list(external_result.violations),
+            warnings=list(external_result.warnings),
+            timestamp=external_result.timestamp,
+            duration_ms=external_result.duration_ms,
+        )
 
     def check_legacy_coverage(self) -> FitnessCheckResult:
         """Check that legacy path coverage is audited at file granularity."""
