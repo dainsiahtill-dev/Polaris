@@ -166,7 +166,7 @@ def test_director_adapter_does_not_execute_textual_tool_protocol() -> None:
     source = source_path.read_text(encoding="utf-8")
 
     assert "parse_tool_calls(" not in source
-    assert "legacy_text_tool_protocol_disabled" in source
+    assert "text_tool_protocol_disabled" in source
     assert "_TEXTUAL_TOOL_PROTOCOL_PATTERN" in source
 
 

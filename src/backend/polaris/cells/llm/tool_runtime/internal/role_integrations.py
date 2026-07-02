@@ -21,14 +21,14 @@ from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 logger = logging.getLogger(__name__)
 
-_LEGACY_TEXT_TOOL_PROTOCOL_NOTICE = (
-    "DEPRECATED: This compatibility integration no longer executes text-wrapped "
+_TEXT_TOOL_PROTOCOL_NOTICE = (
+    "Native-tool-only guard: this integration does not execute text-wrapped "
     "tool protocols such as TOOL_CALLS, [READ_FILE], or [WRITE_FILE]. "
     "Use RoleExecutionKernel / LLMInvoker native tool calling instead. "
     "Do not emit bracketed tool blocks in this path."
 )
 
-_LEGACY_TEXT_TOOL_PROTOCOL_PATTERN = re.compile(
+_TEXT_TOOL_PROTOCOL_PATTERN = re.compile(
     r"(?:^|\n)\s*TOOL_CALLS\b|\[(?:READ_FILE|WRITE_FILE|APPEND_TO_FILE|REPLACE_IN_FILE|"
     r"LIST_FILES|RUN_COMMAND|SEARCH_CODE|GLOB|LIST_DIRECTORY|FILE_EXISTS|EDIT_FILE|"
     r"SEARCH_REPLACE|EXECUTE_COMMAND)\]",
@@ -42,14 +42,14 @@ def _disabled_text_tool_protocol_result(
     role: str,
     include_should_continue: bool = False,
 ) -> dict[str, Any]:
-    """Fail closed for legacy text tool protocols.
+    """Fail closed for text-wrapped tool protocols.
 
-    Runtime execution is native-tool-only. These legacy compatibility integrations
-    are retained for frozen/low-priority callers, but must never execute tool
-    blocks embedded in assistant text.
+    Runtime execution is native-tool-only. These frozen integrations may still
+    be called by low-priority surfaces, but must never execute tool blocks
+    embedded in assistant text.
     """
     text = str(response or "")
-    detected = bool(_LEGACY_TEXT_TOOL_PROTOCOL_PATTERN.search(text))
+    detected = bool(_TEXT_TOOL_PROTOCOL_PATTERN.search(text))
     if detected:
         emit_debug_event(
             category="tool_execution",
@@ -62,7 +62,7 @@ def _disabled_text_tool_protocol_result(
             },
         )
         logger.warning(
-            "[role_integrations] Rejected legacy text tool protocol for role=%s",
+            "[role_integrations] Rejected text-wrapped tool protocol for role=%s",
             role,
         )
     result = {
@@ -73,7 +73,7 @@ def _disabled_text_tool_protocol_result(
     if include_should_continue:
         result["should_continue"] = False
     if detected:
-        result["protocol_violation"] = "legacy_text_tool_protocol_disabled"
+        result["protocol_violation"] = "text_tool_protocol_disabled"
     return result
 
 
@@ -251,7 +251,7 @@ class ChiefEngineerToolIntegration:
 
     def get_system_prompt(self) -> str:
         """获取带有工具说明的系统提示."""
-        return f"{_LEGACY_TEXT_TOOL_PROTOCOL_NOTICE}\n\n{CHIEF_ENGINEER_TOOL_PROMPT}"
+        return f"{_TEXT_TOOL_PROTOCOL_NOTICE}\n\n{CHIEF_ENGINEER_TOOL_PROMPT}"
 
     def process_llm_response(self, response: str) -> dict[str, Any]:
         """处理 LLM 响应，执行其中的工具调用.
@@ -489,7 +489,7 @@ class DirectorToolIntegration:
 
     def get_system_prompt(self) -> str:
         """获取带有工具说明的系统提示."""
-        return f"{_LEGACY_TEXT_TOOL_PROTOCOL_NOTICE}\n\n{DIRECTOR_TOOL_PROMPT}"
+        return f"{_TEXT_TOOL_PROTOCOL_NOTICE}\n\n{DIRECTOR_TOOL_PROMPT}"
 
     def process_llm_response(self, response: str) -> dict[str, Any]:
         """处理 LLM 响应，执行工具调用."""
@@ -614,7 +614,7 @@ class PMToolIntegration:
 
     def get_system_prompt(self) -> str:
         """获取带有工具说明的系统提示."""
-        return f"{_LEGACY_TEXT_TOOL_PROTOCOL_NOTICE}\n\n{PM_TOOL_PROMPT}"
+        return f"{_TEXT_TOOL_PROTOCOL_NOTICE}\n\n{PM_TOOL_PROMPT}"
 
     def process_llm_response(self, response: str) -> dict[str, Any]:
         """处理 LLM 响应，执行工具调用."""
@@ -706,7 +706,7 @@ class ArchitectToolIntegration:
 
     def get_system_prompt(self) -> str:
         """获取带有工具说明的系统提示."""
-        return f"{_LEGACY_TEXT_TOOL_PROTOCOL_NOTICE}\n\n{ARCHITECT_TOOL_PROMPT}"
+        return f"{_TEXT_TOOL_PROTOCOL_NOTICE}\n\n{ARCHITECT_TOOL_PROMPT}"
 
     def process_llm_response(self, response: str) -> dict[str, Any]:
         """处理 LLM 响应，执行工具调用."""
@@ -798,7 +798,7 @@ class QAToolIntegration:
 
     def get_system_prompt(self) -> str:
         """获取带有工具说明的系统提示."""
-        return f"{_LEGACY_TEXT_TOOL_PROTOCOL_NOTICE}\n\n{QA_TOOL_PROMPT}"
+        return f"{_TEXT_TOOL_PROTOCOL_NOTICE}\n\n{QA_TOOL_PROMPT}"
 
     def process_llm_response(self, response: str) -> dict[str, Any]:
         """处理 LLM 响应，执行工具调用."""
@@ -914,7 +914,7 @@ class ScoutToolIntegration:
 
     def get_system_prompt(self) -> str:
         """获取带有工具说明的系统提示."""
-        return f"{_LEGACY_TEXT_TOOL_PROTOCOL_NOTICE}\n\n{SCOUT_TOOL_PROMPT}"
+        return f"{_TEXT_TOOL_PROTOCOL_NOTICE}\n\n{SCOUT_TOOL_PROMPT}"
 
     def process_llm_response(self, response: str) -> dict[str, Any]:
         """处理 LLM 响应，执行工具调用."""

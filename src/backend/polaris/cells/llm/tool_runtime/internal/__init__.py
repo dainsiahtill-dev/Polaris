@@ -10,7 +10,7 @@ from polaris.cells.llm.tool_runtime.internal.orchestrator import (
     RoleToolRoundResult,
 )
 
-# 角色工具集成（从 KernelOne 迁移）
+# 角色工具集成
 from polaris.cells.llm.tool_runtime.internal.role_integrations import (
     # 注册表
     ROLE_TOOL_INTEGRATIONS,
@@ -21,7 +21,7 @@ from polaris.cells.llm.tool_runtime.internal.role_integrations import (
     PMToolIntegration,
     QAToolIntegration,
     ScoutToolIntegration,
-    # 兼容层
+    # Native tool-only client wrapper
     ToolEnabledLLMClient,
     # 便捷函数
     enhance_chief_engineer_prompt,
