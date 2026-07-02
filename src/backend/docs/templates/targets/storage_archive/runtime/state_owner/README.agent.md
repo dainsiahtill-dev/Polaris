@@ -58,21 +58,23 @@
 - 所有文本写入必须显式 UTF-8
 - 历史归档必须通过 `archive.*` Cell 完成
 
-## Migration Sources
+## Current Implementation Anchors
 
-当前最可能的迁移来源候选包括：
+当前实现和迁移收口必须以以下 Cell 事实源为准：
 
-- `polaris/application/app/routers/runtime.py`
-- `polaris/application/app/services/task_board.py`
-- `polaris/application/app/services/task_board_refactored.py`
-- `polaris/application/app/services/orchestration_command_service.py`
+- `polaris/cells/runtime/state_owner/**`
+- `polaris/cells/runtime/task_runtime/**`
+- `polaris/cells/runtime/task_market/**`
+- `polaris/cells/runtime/projection/**`
+
+已退休的 application services 分片不得作为迁移来源、上下文热点或 AI 读取入口。
 
 ## Read Order for AI
 
 1. `cell.yaml`
 2. `generated/context.pack.json`
 3. 运行时状态相关 Contract
-4. 当前 runtime 兼容入口与状态写入热点
+4. 当前 runtime Cell 兼容入口与状态写入热点
 5. 仅在必要时再扩张到 `storage.layout`、`policy.workspace_guard`、`audit.evidence`
 
 ## Verification

@@ -2,7 +2,7 @@
 
 ## 定位
 
-本目录承载 `runtime.state_owner` 与 `archive.*` 的目标模板资产。它们用于指导迁移与治理收口，不代表这些 Cell 已经在当前仓库中完成落地。
+本目录承载 `runtime.state_owner` 与 `archive.*` 的目标模板资产。它们用于指导迁移与治理收口；若对应 Cell 已经完成落地，模板必须指向当前 Cell/KernelOne 事实源，禁止继续引用已退休的 application 分片。
 
 当前事实图谱仍以以下资产为准：
 
@@ -28,9 +28,9 @@
 
 ## 模板清单
 
-| Target Cell | 角色 | 当前迁移来源候选 |
+| Target Cell | 角色 | 当前实现/迁移锚点 |
 | --- | --- | --- |
-| `runtime.state_owner` | 统一运行时状态唯一写入口与受控查询出口 | `polaris/application/app/routers/runtime.py`、`polaris/application/app/services/task_board.py`、`polaris/application/app/services/task_board_refactored.py`、`polaris/application/app/services/orchestration_command_service.py` |
+| `runtime.state_owner` | 统一运行时状态唯一写入口与受控查询出口 | `polaris/cells/runtime/state_owner/**`、`polaris/cells/runtime/task_runtime/**`、`polaris/cells/runtime/task_market/**`、`polaris/cells/runtime/projection/**` |
 | `archive.run_archive` | 将终态 run 从 `runtime/runs/*` 发布到 `workspace/history/runs/*` | `polaris/cells/archive/run_archive/internal/history_archive_service.py`、`polaris/cells/archive/run_archive/internal/archive_hook.py`、`polaris/kernelone/storage/history_manifest_repository.py` |
 | `archive.task_snapshot_archive` | 将 PM/Task 终态快照发布到 `workspace/history/tasks/*` | `polaris/cells/archive/task_snapshot_archive/internal/task_snapshot_archive_service.py`、`polaris/kernelone/storage/history_manifest_repository.py` |
 | `archive.factory_archive` | 将 Factory 终态产物发布到 `workspace/history/factory/*` | `polaris/cells/archive/factory_archive/internal/factory_archive_service.py`、`polaris/kernelone/storage/history_manifest_repository.py` |

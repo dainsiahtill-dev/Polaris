@@ -18,6 +18,13 @@ FOUNDATIONAL_CONTEXT_PACKS = (
     "polaris/cells/storage/layout/generated/context.pack.json",
 )
 
+TEMPLATE_CONTEXT_PACKS = ("docs/templates/targets/storage_archive/runtime/state_owner/generated/context.pack.json",)
+
+TEMPLATE_DOCS = (
+    "docs/templates/targets/storage_archive/README.md",
+    "docs/templates/targets/storage_archive/runtime/state_owner/README.agent.md",
+)
+
 RETIRED_APPLICATION_MARKERS = (
     "polaris/application/services/",
     "polaris/application/app/services/",
@@ -78,3 +85,22 @@ def test_foundational_context_pack_paths_exist() -> None:
                     offenders.append(f"{relative_path}.{field}: {candidate}")
 
     assert not offenders, f"Foundational context packs must only reference existing paths: {offenders}"
+
+
+def test_context_templates_do_not_point_agents_at_retired_application_paths() -> None:
+    offenders: list[str] = []
+    for relative_path in TEMPLATE_CONTEXT_PACKS:
+        payload_text = (BACKEND_ROOT / relative_path).read_text(encoding="utf-8")
+        for marker in RETIRED_APPLICATION_MARKERS:
+            if marker in payload_text:
+                offenders.append(f"{relative_path}: {marker}")
+
+    for relative_path in TEMPLATE_DOCS:
+        doc_text = (BACKEND_ROOT / relative_path).read_text(encoding="utf-8")
+        for marker in RETIRED_APPLICATION_MARKERS:
+            if marker in doc_text:
+                offenders.append(f"{relative_path}: {marker}")
+
+    assert not offenders, (
+        f"Context templates must not route future agents through retired application paths: {offenders}"
+    )
