@@ -343,7 +343,7 @@ class ChiefEngineerBlueprintErrorV1(RuntimeError):  # noqa: N818
         self.details = _to_dict_copy(details)
 
 
-# Backward-compatible alias — do not remove; external consumers may still import the old name.
+# Public v1 alias retained for import stability; external consumers may still use the unversioned name.
 ChiefEngineerBlueprintError = ChiefEngineerBlueprintErrorV1
 
 
@@ -1360,7 +1360,7 @@ class CeHandoffDecisionBindingsV1:
 class CeHandoffDecisionV1:
     """Schema-compatible Chief Engineer handoff authority object.
 
-    This strict object complements the legacy `HandoffDecisionV1`. It binds
+    This strict object complements the base `HandoffDecisionV1`. It binds
     the Director handoff verdict to PM contract, blueprint, and execution
     profile hashes so downstream execution can fail closed on stale or
     incomplete evidence.

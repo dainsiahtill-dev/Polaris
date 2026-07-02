@@ -170,7 +170,7 @@ class TestHandoffDecisionContract:
             blocker_count=0,
             warning_count=0,
             open_blocker_risk_count=0,
-            reason="legacy gate allowed",
+            reason="base gate allowed",
             evaluated_at="2026-06-27T00:00:00Z",
         )
 
