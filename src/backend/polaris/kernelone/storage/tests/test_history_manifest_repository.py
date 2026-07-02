@@ -1,4 +1,4 @@
-"""Unit tests for polaris.cells.archive.run_archive.internal.history_manifest_repository."""
+"""Unit tests for ``polaris.kernelone.storage.history_manifest_repository``."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from polaris.cells.archive.run_archive.internal.history_manifest_repository import (
+from polaris.kernelone.storage.history_manifest_repository import (
     FactoryIndexEntry,
     HistoryManifestRepository,
     IndexEntry,

@@ -23,10 +23,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.archive.run_archive.internal.history_manifest_repository import HistoryManifestRepository
 from polaris.cells.storage.layout.public.service import resolve_polaris_roots
 from polaris.infrastructure.storage import LocalFileSystemAdapter
 from polaris.kernelone.fs import KernelFileSystem
+from polaris.kernelone.storage.history_manifest_repository import HistoryManifestRepository
 
 logger = logging.getLogger(__name__)
 
@@ -599,7 +599,7 @@ class HistoryArchiveService:
 
         # Convert entry dict to repository index type
         if index_name == "runs":
-            from polaris.cells.archive.run_archive.internal.history_manifest_repository import RunIndexEntry
+            from polaris.kernelone.storage.history_manifest_repository import RunIndexEntry
 
             run_entry = RunIndexEntry(
                 id=str(entry.get("run_id") or entry.get("id") or "").strip(),
@@ -614,7 +614,7 @@ class HistoryArchiveService:
             )
             self._manifest_repo.append_run_entry(run_entry)
         elif index_name == "tasks":
-            from polaris.cells.archive.run_archive.internal.history_manifest_repository import TaskIndexEntry
+            from polaris.kernelone.storage.history_manifest_repository import TaskIndexEntry
 
             task_entry = TaskIndexEntry(
                 id=str(entry.get("snapshot_id") or entry.get("id") or "").strip(),
@@ -628,7 +628,7 @@ class HistoryArchiveService:
             )
             self._manifest_repo.append_task_entry(task_entry)
         elif index_name == "factory":
-            from polaris.cells.archive.run_archive.internal.history_manifest_repository import FactoryIndexEntry
+            from polaris.kernelone.storage.history_manifest_repository import FactoryIndexEntry
 
             factory_entry = FactoryIndexEntry(
                 id=str(entry.get("factory_run_id") or entry.get("id") or "").strip(),

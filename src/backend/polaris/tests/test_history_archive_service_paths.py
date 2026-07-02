@@ -42,7 +42,7 @@ def _make_service(workspace: Path):
 def _make_repo(workspace: Path):
     """Construct a HistoryManifestRepository directly, clearing the cache first."""
     clear_storage_roots_cache()
-    from polaris.cells.archive.run_archive.internal.history_manifest_repository import (
+    from polaris.kernelone.storage.history_manifest_repository import (
         HistoryManifestRepository,
     )
 
@@ -117,7 +117,7 @@ def test_index_file_paths_have_single_polaris_history_occurrence(tmp_path: Path)
     service = _make_service(workspace)
     repo = service._manifest_repo
 
-    from polaris.cells.archive.run_archive.internal.history_manifest_repository import IndexType
+    from polaris.kernelone.storage.history_manifest_repository import IndexType
 
     for index_type in IndexType:
         index_path = _to_fwd(repo._get_index_path(index_type))
@@ -170,7 +170,7 @@ def test_passing_history_root_to_repo_directly_produces_nested_path(tmp_path: Pa
 
     # Deliberately pass history_root (wrong argument) – must produce nesting
     clear_storage_roots_cache()
-    from polaris.cells.archive.run_archive.internal.history_manifest_repository import (
+    from polaris.kernelone.storage.history_manifest_repository import (
         HistoryManifestRepository,
     )
 

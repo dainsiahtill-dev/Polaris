@@ -14,7 +14,6 @@ tags: []
 owned_paths:
 - polaris/cells/archive/run_archive/internal/archive_hook.py
 - polaris/cells/archive/run_archive/internal/history_archive_service.py
-- polaris/cells/archive/run_archive/internal/history_manifest_repository.py
 public_contracts:
   modules:
   - polaris.cells.archive.run_archive.public.contracts

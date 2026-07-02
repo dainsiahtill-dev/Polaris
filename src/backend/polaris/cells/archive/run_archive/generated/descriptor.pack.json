@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-19T14:36:55.291825Z",
-  "source_hash": "475637e1c44e8d57",
+  "generated_at": "2026-07-02T02:58:23.643100Z",
+  "source_hash": "fc4eda9364af9944",
   "cell_id": "archive.run_archive",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -170,128 +170,6 @@
       "name": "create_history_archive_service",
       "description": "Factory function to create a HistoryArchiveService.",
       "defined_in": "polaris/cells/archive/run_archive/internal/history_archive_service.py"
-    },
-    {
-      "type": "class",
-      "name": "IndexType",
-      "description": "Type of history index.",
-      "defined_in": "polaris/cells/archive/run_archive/internal/history_manifest_repository.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "IndexEntry",
-      "description": "Base class for index entries.",
-      "defined_in": "polaris/cells/archive/run_archive/internal/history_manifest_repository.py",
-      "methods": [
-        {
-          "name": "to_dict",
-          "doc": ""
-        },
-        {
-          "name": "from_dict",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "RunIndexEntry",
-      "description": "Entry in the runs index.",
-      "defined_in": "polaris/cells/archive/run_archive/internal/history_manifest_repository.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TaskIndexEntry",
-      "description": "Entry in the tasks index.",
-      "defined_in": "polaris/cells/archive/run_archive/internal/history_manifest_repository.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "FactoryIndexEntry",
-      "description": "Entry in the factory index.",
-      "defined_in": "polaris/cells/archive/run_archive/internal/history_manifest_repository.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "HistoryManifestRepository",
-      "description": "Repository for managing history index files.",
-      "defined_in": "polaris/cells/archive/run_archive/internal/history_manifest_repository.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": "Initialize the repository."
-        },
-        {
-          "name": "_get_index_path",
-          "doc": "Get the path for an index file."
-        },
-        {
-          "name": "_atomic_write",
-          "doc": "Append an entry to an index file with TOCTOU-safe serialization."
-        },
-        {
-          "name": "append_run_entry",
-          "doc": "Append a run entry to the runs index."
-        },
-        {
-          "name": "append_task_entry",
-          "doc": "Append a task entry to the tasks index."
-        },
-        {
-          "name": "append_factory_entry",
-          "doc": "Append a factory entry to the factory index."
-        },
-        {
-          "name": "read_runs_index",
-          "doc": "Read entries from the runs index."
-        },
-        {
-          "name": "read_tasks_index",
-          "doc": "Read entries from the tasks index."
-        },
-        {
-          "name": "read_factory_index",
-          "doc": "Read entries from the factory index."
-        },
-        {
-          "name": "_read_index",
-          "doc": "Generic index reader."
-        },
-        {
-          "name": "get_run_entry",
-          "doc": "Get a specific run entry by ID."
-        },
-        {
-          "name": "get_task_entry",
-          "doc": "Get a specific task entry by snapshot ID."
-        },
-        {
-          "name": "get_factory_entry",
-          "doc": "Get a specific factory entry by ID."
-        },
-        {
-          "name": "count_entries",
-          "doc": "Count entries in an index."
-        },
-        {
-          "name": "clear_index",
-          "doc": "Clear all entries from an index."
-        },
-        {
-          "name": "list_indices",
-          "doc": "List all indices and their entry counts."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "create_history_manifest_repository",
-      "description": "Factory function to create a HistoryManifestRepository.",
-      "defined_in": "polaris/cells/archive/run_archive/internal/history_manifest_repository.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

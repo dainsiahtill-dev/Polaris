@@ -5,7 +5,6 @@
 polaris/bootstrap/contracts/backend_launch.py=1
 polaris/bootstrap/governance/architecture_guard_cli.py=2
 polaris/bootstrap/launch_validation.py=1
-polaris/cells/archive/run_archive/internal/history_manifest_repository.py=1
 polaris/cells/audit/diagnosis/internal/toolkit/hops.py=1
 polaris/cells/audit/diagnosis/internal/toolkit/query.py=1
 polaris/cells/audit/verdict/internal/artifact_service.py=1

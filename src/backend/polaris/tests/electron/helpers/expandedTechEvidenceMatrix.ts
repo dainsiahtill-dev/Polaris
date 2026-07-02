@@ -825,7 +825,7 @@ export const EXPANDED_TECH_CANDIDATES: ExpandedTechCandidate[] = [
     source: "factory-archive-resident-audit",
     paths: [
       "src/backend/polaris/cells/archive/run_archive/internal/history_archive_service.py",
-      "src/backend/polaris/cells/archive/run_archive/internal/history_manifest_repository.py",
+      "src/backend/polaris/kernelone/storage/history_manifest_repository.py",
       "src/backend/polaris/cells/archive/task_snapshot_archive",
       "src/backend/polaris/cells/archive/factory_archive",
     ],
