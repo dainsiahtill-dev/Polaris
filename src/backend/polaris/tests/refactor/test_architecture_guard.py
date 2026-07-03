@@ -260,6 +260,20 @@ class TestGenericWorkflow:
         for wrapper in wrappers:
             assert wrapper in content, f"{wrapper} wrapper must exist for backward compatibility"
 
+    def test_generic_pipeline_does_not_define_role_specific_stub_workflows(self):
+        """Generic pipeline must not carry role-specific success stubs."""
+        workflow_file = (
+            BACKEND_ROOT
+            / "polaris" / "cells" / "orchestration" / "workflow_runtime" / "internal"
+            / "runtime_engine" / "workflows" / "generic_pipeline_workflow.py"
+        )
+        assert workflow_file.exists(), "generic pipeline workflow must exist"
+
+        content = workflow_file.read_text(encoding="utf-8")
+        for wrapper in ("PMWorkflow", "DirectorWorkflow", "QAWorkflow"):
+            assert f"class {wrapper}" not in content
+        assert '"passed": True' not in content
+
 
 class TestUIStateContract:
     """Verify UI state contract"""
