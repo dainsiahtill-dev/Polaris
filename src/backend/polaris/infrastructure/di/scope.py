@@ -377,8 +377,7 @@ def get_or_create_scope(name: str | None = None) -> DIContainerScope:
     return DIContainerScope(name=name)
 
 
-# Convenience functions for backward compatibility with global state
-# These wrap global state access with scope-aware behavior
+# Scope-aware helpers for registering and resetting process-global state.
 
 _global_state_resetters: dict[str, Callable[[], None]] = {}
 
