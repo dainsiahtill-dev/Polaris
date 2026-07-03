@@ -1439,8 +1439,8 @@
     },
     {
       "type": "class",
-      "name": "LegacySyncHandlerAdapter",
-      "description": "Adapter to wrap synchronous handlers for use with async message bus.",
+      "name": "SyncMessageHandlerAdapter",
+      "description": "Adapt synchronous handlers for use with the async message bus.",
       "defined_in": "polaris/kernelone/events/message_bus.py",
       "methods": [
         {

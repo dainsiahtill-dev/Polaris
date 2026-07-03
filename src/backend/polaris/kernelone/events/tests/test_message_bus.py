@@ -17,10 +17,10 @@ import threading
 import pytest
 from polaris.kernelone.events.message_bus import (
     Actor,
-    LegacySyncHandlerAdapter,
     Message,
     MessageBus,
     MessageType,
+    SyncMessageHandlerAdapter,
 )
 
 
@@ -320,11 +320,12 @@ class TestMessageBusBroadcast:
         assert all(r is None for r in captured_recipient)
 
 
-class TestLegacySyncHandlerAdapter:
+class TestSyncMessageHandlerAdapter:
     """Tests for sync handler adaptation to async bus."""
 
-    def test_sync_handler_wrapped(self) -> None:
-        """LegacySyncHandlerAdapter must wrap sync handlers."""
+    @pytest.mark.asyncio
+    async def test_sync_handler_wrapped(self) -> None:
+        """SyncMessageHandlerAdapter must wrap sync handlers."""
         received: list[str] = []
         lock = threading.Lock()
 
@@ -332,12 +333,14 @@ class TestLegacySyncHandlerAdapter:
             with lock:
                 received.append(msg.sender)
 
-        adapter = LegacySyncHandlerAdapter(sync_handler)
+        adapter = SyncMessageHandlerAdapter(sync_handler)
         msg = Message(type=MessageType.TASK_SUBMITTED, sender="sync_test")
 
         # Adapter should be callable and return awaitable
         result = adapter(msg)
-        assert asyncio.iscoroutine(result) or result is None
+        assert asyncio.iscoroutine(result)
+        await result
+        assert received == ["sync_test"]
 
 
 class TestMessageBusSubclassing:

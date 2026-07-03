@@ -147,12 +147,11 @@ MessageHandler = Callable[[Message], None]
 AsyncMessageHandler = Callable[[Message], Any]
 
 
-class LegacySyncHandlerAdapter:
-    """Adapter to wrap synchronous handlers for use with async message bus.
+class SyncMessageHandlerAdapter:
+    """Adapt synchronous handlers for use with the async message bus.
 
-    This adapter allows legacy synchronous handlers to be used with the async
-    message bus by wrapping them in an async function that runs in a thread pool
-    to avoid blocking the event loop.
+    The adapter wraps a synchronous callback in an async function that runs in a
+    thread pool, keeping expensive synchronous handler work off the event loop.
     """
 
     def __init__(self, sync_handler: MessageHandler) -> None:
