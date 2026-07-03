@@ -111,7 +111,7 @@ def test_compose_case_prompt_includes_required_any_and_output_tokens() -> None:
     case = _make_case(
         judge={
             "stream": {
-                "required_any_tools": [["repo_rg", "search_code"], ["search_replace", "precision_edit"]],
+                "required_any_tools": [["repo_rg", "search_code"], ["search_replace", "edit_blocks"]],
                 "required_output_substrings": ["DEBUG = False"],
                 "min_tool_calls": 3,
             }
@@ -179,7 +179,8 @@ def test_compose_case_prompt_includes_required_tool_equivalence_hints() -> None:
 
     assert "Equivalent tools accepted:" in prompt
     assert "search_replace ->" in prompt
-    assert "precision_edit" in prompt
+    assert "edit_blocks" in prompt
+    assert "precision_edit" not in prompt
 
 
 def test_normalize_judge_args_strips_dot_slash_for_repo_tree() -> None:

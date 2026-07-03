@@ -902,7 +902,7 @@ class TestOrderedToolSequenceValidator:
         observed = make_observed(
             tool_calls=(
                 ToolCallObservation(tool="search_replace", args={}),
-                ToolCallObservation(tool="precision_edit", args={}),
+                ToolCallObservation(tool="edit_blocks", args={}),
             )
         )
         verdict = judge_agentic_case(case, observed)

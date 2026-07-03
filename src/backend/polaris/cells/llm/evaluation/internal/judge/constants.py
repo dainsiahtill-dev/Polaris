@@ -46,13 +46,11 @@ SCORE_WEIGHTS = {
 # This accounts for LLM preference for semantically clearer tool names.
 TOOL_EQUIVALENCE_GROUPS: dict[str, set[str]] = {
     # Edit/write tools - all perform code modification
-    "search_replace": {"search_replace", "precision_edit", "repo_apply_diff", "edit_file"},
+    "search_replace": {"search_replace", "edit_blocks", "repo_apply_diff", "edit_file"},
     # Read tools - all provide file content access
     "read_file": {"read_file", "repo_read_head", "repo_read_slice", "repo_read_tail", "repo_read_around"},
     # Search tools - all perform code search
-    # NOTE: precision_edit is included because it has search capabilities and models
-    # may use it as a search+replace tool (e.g. l3_search_replace case).
-    "repo_rg": {"repo_rg", "grep", "ripgrep", "search_code", "precision_edit"},
+    "repo_rg": {"repo_rg", "grep", "ripgrep", "search_code"},
     # Directory tools - all provide file listing
     "repo_tree": {"repo_tree", "list_directory", "ls"},
 }

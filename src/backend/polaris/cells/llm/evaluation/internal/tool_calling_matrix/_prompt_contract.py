@@ -221,7 +221,7 @@ def _compose_case_prompt(case: ToolCallingMatrixCase, *, mode: str) -> str:
         "repo_tree",
     }
     has_write_tools = bool(
-        set(required_tools).intersection({"append_to_file", "edit_file", "search_replace", "precision_edit"})
+        set(required_tools).intersection({"append_to_file", "edit_blocks", "edit_file", "search_replace"})
     )
     has_read_tools = bool(set(required_tools).intersection(read_like_tools))
     requires_verification_step = (
@@ -317,7 +317,7 @@ def _compose_case_prompt(case: ToolCallingMatrixCase, *, mode: str) -> str:
         )
         contract_lines.append(
             "Discovery-only batches are invalid for this case: include at least one mutation call "
-            "(precision_edit or repo_apply_diff or edit_file) in the emitted batch."
+            "(edit_blocks or repo_apply_diff or edit_file) in the emitted batch."
         )
         contract_lines.append("中文约束: 该用例要求读后改写, 读取后必须继续发出写入/编辑调用。")
     if "append_to_file" in required_tools:

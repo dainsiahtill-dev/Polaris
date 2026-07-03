@@ -652,7 +652,7 @@ def _validator_goal_persistence_check(
             "repo_tree",
             "read_file",
             "search_replace",
-            "precision_edit",
+            "edit_blocks",
             "repo_apply_diff",
             "edit_file",
             "write_file",

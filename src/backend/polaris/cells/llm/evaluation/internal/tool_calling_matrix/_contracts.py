@@ -25,18 +25,15 @@ from polaris.cells.roles.runtime.public.contracts import (
 # When a case requires one tool, equivalent tools from the same group also satisfy the requirement.
 # Search/replace-style edit tools are functionally equivalent for "use an edit tool"
 # requirements. `edit_blocks` is the director's RECOMMENDED edit tool (Aider-style
-# SEARCH/REPLACE) per the role profile; the equivalence previously listed the
-# DEPRECATED `precision_edit` but omitted `edit_blocks`, so a model correctly using the
-# recommended tool failed required_tool / required_any_tools checks. Map every member to
-# the full class so any one of them satisfies an edit-tool requirement.
-_EDIT_TOOL_EQUIVALENCE: frozenset[str] = frozenset(
-    {"search_replace", "edit_file", "precision_edit", "edit_blocks", "repo_apply_diff"}
-)
+# SEARCH/REPLACE) per the role profile. Map every active member to the full class
+# so any one of them satisfies an edit-tool requirement without accepting retired
+# exact-edit tools.
+_EDIT_TOOL_EQUIVALENCE: frozenset[str] = frozenset({"search_replace", "edit_file", "edit_blocks", "repo_apply_diff"})
 
 MATRIX_TOOL_EQUIVALENCE_GROUPS: dict[str, set[str]] = {
     **{tool: set(_EDIT_TOOL_EQUIVALENCE) for tool in _EDIT_TOOL_EQUIVALENCE},
     "read_file": {"read_file", "repo_read_head", "repo_read_slice", "repo_read_tail", "repo_read_around"},
-    "repo_rg": {"repo_rg", "grep", "ripgrep", "search_code", "precision_edit"},
+    "repo_rg": {"repo_rg", "grep", "ripgrep", "search_code"},
     "repo_tree": {"repo_tree", "list_directory", "ls"},
 }
 
