@@ -9,7 +9,7 @@ Architecture:
     - All text uses UTF-8 encoding.
 
 Ports defined:
-    - TokenBudgetObserverPort: Interface for context budget observation (renamed from ContextBudgetPort)
+    - TokenBudgetObserverPort: Interface for context budget observation
     - RoleContextCompressorPort: Interface for context compression
 
 Usage::
@@ -20,8 +20,6 @@ Usage::
     def __init__(self, context_port: TokenBudgetObserverPort | None = None):
         self._context_port = context_port or DefaultTokenBudgetObserverPort()
 
-Backward Compatibility:
-    ContextBudgetPort and DefaultContextBudgetPort are available as aliases.
 """
 
 from __future__ import annotations
@@ -81,10 +79,6 @@ class TokenBudgetObserverPort(Protocol):
             (True, "") if it fits, (False, reason) if it exceeds.
         """
         ...
-
-
-# Backward compatibility alias - use unique name to avoid conflict with context.contracts.ContextBudgetPort
-LLMBudgetObserverPort = TokenBudgetObserverPort
 
 
 @runtime_checkable
@@ -182,8 +176,6 @@ class DefaultTokenBudgetObserverPort:
 
     This is a no-op implementation that reports unlimited budget.
     Use when no real budget management is needed or available.
-
-    Renamed from DefaultContextBudgetPort.
     """
 
     _remaining: int = 200_000  # Conservative default: 200k tokens
@@ -204,10 +196,6 @@ class DefaultTokenBudgetObserverPort:
     def can_add(self, estimated_tokens: int) -> tuple[bool, str]:
         """Always returns True as no-op."""
         return True, ""
-
-
-# Backward compatibility alias
-DefaultContextBudgetPort = DefaultTokenBudgetObserverPort
 
 
 class DefaultRoleContextCompressorPort:
@@ -300,7 +288,6 @@ __all__ = [
     "ContextIdentity",
     "DefaultRoleContextCompressorPort",
     "DefaultTokenBudgetObserverPort",
-    "LLMBudgetObserverPort",  # Backward compat alias (unique name)
     "RoleContextCompressorPort",
     "TokenBudgetObserverPort",
 ]
