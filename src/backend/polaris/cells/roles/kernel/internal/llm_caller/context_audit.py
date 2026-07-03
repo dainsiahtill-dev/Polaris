@@ -396,6 +396,8 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
     )
     target_scope = _target_scope_payload(ai_request) if ai_request is not None else {}
     architecture_or_file_plan = _architecture_or_file_plan_payload(ai_request) if ai_request is not None else {}
+    failed_gate_evidence = _failed_gate_evidence_payload(ai_request) if ai_request is not None else {}
+    workspace_quality_evidence = _workspace_quality_evidence_payload(ai_request) if ai_request is not None else {}
     blueprint_absent = any(
         marker in lowered
         for marker in (
@@ -495,7 +497,8 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
                 "tests/",
             )
         ),
-        "has_failure_feedback": any(
+        "has_failure_feedback": bool(failed_gate_evidence)
+        or any(
             needle in lowered
             for needle in (
                 "exit_code",
@@ -510,7 +513,8 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
                 "工具执行返回失败",
             )
         ),
-        "has_workspace_quality_evidence": any(
+        "has_workspace_quality_evidence": bool(workspace_quality_evidence)
+        or any(
             needle in lowered
             for needle in (
                 "factory_workspace_quality",
@@ -954,6 +958,24 @@ _INTERFACE_DISCREPANCY_CONTEXT_KEYS = (
     "task_boundary_interface_discrepancy",
     "task_boundary_interface_discrepancy_retry",
     "director_interface_discrepancy_retry",
+)
+
+_FAILED_GATE_EVIDENCE_CONTEXT_KEYS = (
+    "failed_gate_evidence",
+    "failed_gate_or_verification_evidence",
+    "verification_failure_evidence",
+    "verification_evidence",
+    "failure_feedback",
+    "qa_failure_evidence",
+)
+
+_WORKSPACE_QUALITY_EVIDENCE_CONTEXT_KEYS = (
+    "workspace_quality_evidence",
+    "factory_workspace_quality",
+    "artifact_quality_evidence",
+    "quality_gate_evidence",
+    "workspace_quality",
+    "real_run_gate",
 )
 
 
@@ -1456,6 +1478,188 @@ def _interface_discrepancy_context_payload(ai_request: Any | None) -> dict[str, 
     }
 
 
+def _first_evidence_mapping(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            if isinstance(item, dict):
+                return dict(item)
+    return {}
+
+
+def _looks_like_failed_gate_evidence(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    schema_version = str(value.get("schema_version") or "").strip().lower()
+    if "failed_gate" in schema_version or "verification_failure" in schema_version:
+        return True
+    return any(
+        key in value
+        for key in (
+            "exit_code",
+            "command",
+            "stderr",
+            "stdout",
+            "diagnostics",
+            "quality_errors",
+            "failed_required_modalities",
+            "failed_checks",
+            "verifier_results",
+        )
+    )
+
+
+def _looks_like_workspace_quality_evidence(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    schema_version = str(value.get("schema_version") or "").strip().lower()
+    if "workspace_quality" in schema_version or "artifact_quality" in schema_version:
+        return True
+    return any(
+        key in value
+        for key in (
+            "all_checks_passed",
+            "quality_errors",
+            "deterministic_checks",
+            "real_run_gate",
+            "verifier_results",
+            "failed_required_modalities",
+            "missing_required_modalities",
+        )
+    )
+
+
+def _find_structured_evidence_context(
+    value: Any,
+    *,
+    keys: tuple[str, ...],
+    predicate: Any,
+    depth: int = 0,
+) -> dict[str, Any]:
+    if depth > 5:
+        return {}
+    if isinstance(value, dict):
+        for key in keys:
+            found = _first_evidence_mapping(value.get(key))
+            if predicate(found):
+                return found
+        if predicate(value):
+            return dict(value)
+        for key in (
+            "metadata",
+            "context",
+            "evidence",
+            "run_ledger",
+            "run_ledger_projection",
+            "evidence_policy",
+            "quality",
+            "quality_gate",
+            "workspace_quality",
+            "task_boundary",
+            "task_boundary_verdict",
+            "task_metadata",
+        ):
+            found = _find_structured_evidence_context(
+                value.get(key),
+                keys=keys,
+                predicate=predicate,
+                depth=depth + 1,
+            )
+            if found:
+                return found
+        modalities = value.get("modalities")
+        if isinstance(modalities, dict):
+            for modality in modalities.values():
+                found = _find_structured_evidence_context(
+                    modality,
+                    keys=keys,
+                    predicate=predicate,
+                    depth=depth + 1,
+                )
+                if found:
+                    return found
+        elif isinstance(modalities, (list, tuple)):
+            for modality in modalities:
+                found = _find_structured_evidence_context(
+                    modality,
+                    keys=keys,
+                    predicate=predicate,
+                    depth=depth + 1,
+                )
+                if found:
+                    return found
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            found = _find_structured_evidence_context(item, keys=keys, predicate=predicate, depth=depth + 1)
+            if found:
+                return found
+    return {}
+
+
+def _failed_gate_evidence_payload(ai_request: Any | None) -> dict[str, Any]:
+    if ai_request is None:
+        return {}
+    for payload in (
+        _request_context(ai_request),
+        _task_metadata(ai_request),
+        _execution_contract(ai_request),
+        _execution_envelope(ai_request),
+    ):
+        found = _find_structured_evidence_context(
+            payload,
+            keys=_FAILED_GATE_EVIDENCE_CONTEXT_KEYS,
+            predicate=_looks_like_failed_gate_evidence,
+        )
+        if found:
+            return {
+                "schema_version": "polaris.failed_gate_evidence.context_slot.v1",
+                "source_schema_version": str(found.get("schema_version") or ""),
+                "source": str(found.get("source") or found.get("modality") or "failed_gate_evidence"),
+                "command": str(found.get("command") or found.get("verifier_command") or ""),
+                "exit_code": _int_value(found.get("exit_code")),
+                "diagnostic_count": len(found.get("diagnostics") or [])
+                if isinstance(found.get("diagnostics"), (list, tuple))
+                else 0,
+                "quality_error_count": len(found.get("quality_errors") or [])
+                if isinstance(found.get("quality_errors"), (list, tuple))
+                else 0,
+                "failed_required_modalities": _string_list(found.get("failed_required_modalities")),
+                "failed_checks": _string_list(found.get("failed_checks")),
+            }
+    return {}
+
+
+def _workspace_quality_evidence_payload(ai_request: Any | None) -> dict[str, Any]:
+    if ai_request is None:
+        return {}
+    for payload in (
+        _request_context(ai_request),
+        _task_metadata(ai_request),
+        _execution_contract(ai_request),
+        _execution_envelope(ai_request),
+    ):
+        found = _find_structured_evidence_context(
+            payload,
+            keys=_WORKSPACE_QUALITY_EVIDENCE_CONTEXT_KEYS,
+            predicate=_looks_like_workspace_quality_evidence,
+        )
+        if found:
+            return {
+                "schema_version": "polaris.workspace_quality_evidence.context_slot.v1",
+                "source_schema_version": str(found.get("schema_version") or ""),
+                "source": str(found.get("source") or found.get("modality") or "workspace_quality_evidence"),
+                "all_checks_passed": _bool_value(found.get("all_checks_passed")),
+                "quality_error_count": len(found.get("quality_errors") or [])
+                if isinstance(found.get("quality_errors"), (list, tuple))
+                else 0,
+                "deterministic_check_count": len(_string_list(found.get("deterministic_checks"))),
+                "failed_required_modalities": _string_list(found.get("failed_required_modalities")),
+                "missing_required_modalities": _string_list(found.get("missing_required_modalities")),
+            }
+    return {}
+
+
 def _architecture_payload_from_blueprint(value: Any) -> dict[str, Any]:
     blueprint = _mapping(value)
     if not blueprint:
@@ -1604,6 +1808,8 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
     actual_sibling_exports = _actual_sibling_exports_payload(ai_request, module_interface_contract)
     interface_discrepancy_context = _interface_discrepancy_context_payload(ai_request)
     architecture_or_file_plan = _architecture_or_file_plan_payload(ai_request)
+    failed_gate_evidence = _failed_gate_evidence_payload(ai_request)
+    workspace_quality_evidence = _workspace_quality_evidence_payload(ai_request)
     resident_agi_audit_context = _resident_agi_audit_context_summary(ai_request)
     summary: dict[str, Any] = {
         "schema_version": "llm.request_metadata_summary.v1",
@@ -1675,6 +1881,14 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
         "architecture_or_file_plan_summary": _architecture_or_file_plan_summary(architecture_or_file_plan),
         "architecture_or_file_plan_hash": _stable_digest(architecture_or_file_plan)
         if architecture_or_file_plan
+        else "",
+        "has_failed_gate_evidence": bool(failed_gate_evidence),
+        "failed_gate_evidence_summary": failed_gate_evidence,
+        "failed_gate_evidence_hash": _stable_digest(failed_gate_evidence) if failed_gate_evidence else "",
+        "has_workspace_quality_evidence": bool(workspace_quality_evidence),
+        "workspace_quality_evidence_summary": workspace_quality_evidence,
+        "workspace_quality_evidence_hash": _stable_digest(workspace_quality_evidence)
+        if workspace_quality_evidence
         else "",
         "has_resident_agi_audit_context": bool(resident_agi_audit_context),
         "resident_agi_audit_context": resident_agi_audit_context,
@@ -2053,6 +2267,10 @@ def _included_evidence_refs(
         refs.append("interface_discrepancy_context")
     if request_metadata_summary.get("has_architecture_or_file_plan"):
         refs.append("architecture_or_file_plan")
+    if request_metadata_summary.get("has_failed_gate_evidence"):
+        refs.append("failed_gate_evidence")
+    if request_metadata_summary.get("has_workspace_quality_evidence"):
+        refs.append("workspace_quality_evidence")
     if receipt_refs:
         refs.append("receipt_store_refs")
     return _unique_strings(refs)
@@ -2195,6 +2413,8 @@ def _coverage_source(
         "actual_sibling_exports": str(request_metadata_summary.get("actual_sibling_exports_hash") or ""),
         "interface_discrepancy_context": str(request_metadata_summary.get("interface_discrepancy_context_hash") or ""),
         "architecture_or_file_plan": str(request_metadata_summary.get("architecture_or_file_plan_hash") or ""),
+        "failed_gate_evidence": str(request_metadata_summary.get("failed_gate_evidence_hash") or ""),
+        "workspace_quality_evidence": str(request_metadata_summary.get("workspace_quality_evidence_hash") or ""),
         "target_files": str(request_metadata_summary.get("target_scope_hash") or ""),
         "execution_profile": workflow_chain.get("execution_profile_hash", ""),
         "execution_envelope": workflow_chain.get("execution_envelope_hash", ""),
@@ -2219,6 +2439,8 @@ def _coverage_source(
         "actual_sibling_exports": "has_actual_sibling_exports",
         "interface_discrepancy_context": "has_interface_discrepancy_context",
         "architecture_or_file_plan": "has_architecture_or_file_plan",
+        "failed_gate_evidence": "has_failed_gate_evidence",
+        "workspace_quality_evidence": "has_workspace_quality_evidence",
         "target_files": "has_target_scope",
     }
     structured_flag = structured_metadata_flags.get(ref_type)
@@ -2241,6 +2463,8 @@ def _coverage_source(
         "actual_sibling_exports": request_metadata_summary.get("actual_sibling_exports_summary"),
         "interface_discrepancy_context": request_metadata_summary.get("interface_discrepancy_context_summary"),
         "architecture_or_file_plan": request_metadata_summary.get("architecture_or_file_plan_summary"),
+        "failed_gate_evidence": request_metadata_summary.get("failed_gate_evidence_summary"),
+        "workspace_quality_evidence": request_metadata_summary.get("workspace_quality_evidence_summary"),
         "target_files": request_metadata_summary.get("target_scope_summary"),
     }
     detail_payload = detail_by_ref.get(ref_type)
@@ -2500,6 +2724,8 @@ def _final_request_evidence_coverage(
             "actual_sibling_exports": bool(request_metadata_summary.get("has_actual_sibling_exports")),
             "interface_discrepancy_context": bool(request_metadata_summary.get("has_interface_discrepancy_context")),
             "architecture_or_file_plan": bool(request_metadata_summary.get("has_architecture_or_file_plan")),
+            "failed_gate_evidence": bool(request_metadata_summary.get("has_failed_gate_evidence")),
+            "workspace_quality_evidence": bool(request_metadata_summary.get("has_workspace_quality_evidence")),
             "target_files": bool(request_metadata_summary.get("has_target_scope")),
         },
         "workflow_chain": workflow_chain,

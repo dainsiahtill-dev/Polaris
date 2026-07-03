@@ -824,6 +824,106 @@ def test_final_request_evidence_aliases_verification_failure_and_architecture_pl
     assert audit["coverage"]["has_architecture_or_file_plan"] is True
 
 
+def test_final_request_evidence_accepts_structured_failure_and_quality_slots_without_keywords() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "director_execution_strategy": {
+                "schema_version": "task.execution_strategy.v1",
+                "evidence_requirements": [
+                    "pm_task_contract",
+                    "chief_engineer_blueprint",
+                    "target_files_or_declared_scopes",
+                    "failed_gate_or_verification_evidence",
+                    "workspace_quality_evidence",
+                    "execution_envelope",
+                ],
+            },
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+                "pm_contract": {"hash": "pm-hash"},
+                "ce_blueprint": {"hash": "ce-hash"},
+                "authorization": {
+                    "target_files": ["src/models/Fairy.ts"],
+                    "scope_paths": ["src/models/Fairy.ts"],
+                },
+            },
+            "pm_contract": {
+                "schema_version": "pm.task_contract.v1",
+                "task_id": "TASK-1",
+                "target_files": ["src/models/Fairy.ts"],
+            },
+            "ce_blueprint": {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": "ce_TASK-1",
+                "target_files": ["src/models/Fairy.ts"],
+            },
+            "failed_gate_evidence": {
+                "schema_version": "polaris.failed_gate_evidence.v1",
+                "source": "run_ledger.verifier",
+                "command": "npm test",
+                "exit_code": 1,
+                "diagnostics": [{"code": "E_ASSERT", "path": "tests/product.test.js"}],
+                "failed_checks": ["behavior"],
+            },
+            "workspace_quality_evidence": {
+                "schema_version": "polaris.workspace_quality_evidence.v1",
+                "source": "factory_workspace_quality",
+                "all_checks_passed": False,
+                "quality_errors": [{"code": "behavior_assertion"}],
+                "deterministic_checks": ["js_syntax"],
+                "failed_required_modalities": ["command"],
+            },
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "system",
+                "content": "PM Task Contract / 任务合同: TASK-1 target_files src/models/Fairy.ts. CE blueprint ready.",
+            }
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    assert audit["coverage"]["has_failure_feedback"] is True
+    assert audit["coverage"]["has_workspace_quality_evidence"] is True
+    metadata_summary = audit["request_metadata_summary"]
+    assert metadata_summary["has_failed_gate_evidence"] is True
+    assert metadata_summary["failed_gate_evidence_summary"]["diagnostic_count"] == 1
+    assert metadata_summary["has_workspace_quality_evidence"] is True
+    assert metadata_summary["workspace_quality_evidence_summary"]["quality_error_count"] == 1
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert evidence_coverage["missing_required_refs"] == []
+    assert evidence_coverage["pass"] is True
+    assert evidence_coverage["structured_evidence"]["failed_gate_evidence"] is True
+    assert evidence_coverage["structured_evidence"]["workspace_quality_evidence"] is True
+    for ref_type in ("failed_gate_evidence", "workspace_quality_evidence"):
+        source = next(item for item in evidence_coverage["coverage_sources"] if item["ref_type"] == ref_type)
+        assert source["confidence"] == "structured_metadata"
+        assert source["hash"]
+        slot = next(item for item in evidence_coverage["evidence_slots"] if item["ref_type"] == ref_type)
+        assert slot["confidence"] == "structured_metadata"
+        assert slot["hash"] == source["hash"]
+        assert slot["details"]
+    enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)
+
+
 def test_final_request_evidence_accepts_structured_architecture_plan_without_keywords() -> None:
     ai_request = AIRequest(
         task_type=TaskType.DIALOGUE,
