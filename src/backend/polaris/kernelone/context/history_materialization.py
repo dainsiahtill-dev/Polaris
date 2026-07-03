@@ -295,11 +295,11 @@ class SessionContinuityStrategy:
         self,
         profile_overrides: dict[str, Any] | None = None,
         *,
-        # Backward-compatible direct parameters
+        # Explicit policy injection for tests, diagnostics, and advanced callers.
         policy: SessionContinuityPolicy | None = None,
     ) -> None:
         self._profile_overrides = dict(profile_overrides or {})
-        # Explicit policy wins over profile overrides (backward compat)
+        # Explicit policy wins over profile overrides.
         self._policy = policy or _build_continuity_policy(self._profile_overrides)
         self._engine = SessionContinuityEngine(policy=self._policy)
         self._stripper = ReasoningStripper()
@@ -487,7 +487,7 @@ class SessionContinuityStrategy:
         )
 
     # ------------------------------------------------------------------
-    # Convenience: direct engine access for backward compatibility
+    # Advanced direct engine access
     # ------------------------------------------------------------------
 
     async def build_pack(
@@ -495,10 +495,11 @@ class SessionContinuityStrategy:
         messages: list[dict[str, Any]],
         **kwargs: Any,
     ) -> SessionContinuityPack | None:
-        """Backward-compatible pack builder.
+        """Build a continuity pack through the wrapped engine.
 
-        Delegates directly to the wrapped SessionContinuityEngine.
-        Prefer project() for strategy-compliant usage.
+        This helper is used by ContextGateway compression paths that already
+        have message lists and need a typed continuity pack for rendering.
+        Role-runtime strategy consumers should prefer ``project()``.
         """
         return await self._engine.build_pack(messages, **kwargs)
 
