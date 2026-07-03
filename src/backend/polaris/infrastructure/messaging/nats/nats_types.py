@@ -5,9 +5,8 @@ JetStream resource constants for the messaging infrastructure layer.
 
 CRITICAL: All text I/O must use UTF-8 encoding explicitly.
 
-NOTE: Event type constants are now imported from polaris.kernelone.events.constants
-to ensure consistency across the codebase. This module re-exports them for
-backward compatibility with existing NATS code.
+NOTE: Runtime event kinds are carried as payload strings. Shared event constants
+belong to ``polaris.kernelone.events.constants`` and are not re-exported here.
 """
 
 from __future__ import annotations
@@ -16,17 +15,6 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
-
-from polaris.kernelone.events.constants import (
-    EVENT_TYPE_ERROR,
-    EVENT_TYPE_STATE_SNAPSHOT,
-    EVENT_TYPE_TASK_COMPLETED,
-    EVENT_TYPE_TASK_CREATED,
-    EVENT_TYPE_TASK_FAILED,
-    EVENT_TYPE_TASK_UPDATED,
-    EVENT_TYPE_TOOL_CALL,
-    EVENT_TYPE_TOOL_RESULT,
-)
 
 _RUNTIME_EVENT_SCHEMA_VERSION = "runtime.v2"
 
@@ -108,18 +96,6 @@ class JetStreamConstants:
     CHANNEL_ARCHITECT = "architect"
     CHANNEL_CHIEF_ENGINEER = "chief_engineer"
     CHANNEL_SYSTEM = "system"
-
-    # Event kinds (using unified constants from events.constants)
-    # NOTE: Legacy aliases for backward compatibility
-    EVENT_KIND_TASK_CREATED = EVENT_TYPE_TASK_CREATED
-    EVENT_KIND_TASK_UPDATED = EVENT_TYPE_TASK_UPDATED
-    EVENT_KIND_TASK_COMPLETED = EVENT_TYPE_TASK_COMPLETED
-    EVENT_KIND_TASK_FAILED = EVENT_TYPE_TASK_FAILED
-    EVENT_KIND_MESSAGE = "message"
-    EVENT_KIND_TOOL_CALL = EVENT_TYPE_TOOL_CALL
-    EVENT_KIND_TOOL_RESULT = EVENT_TYPE_TOOL_RESULT
-    EVENT_KIND_STATE_SNAPSHOT = EVENT_TYPE_STATE_SNAPSHOT
-    EVENT_KIND_ERROR = EVENT_TYPE_ERROR
 
 
 # =============================================================================
