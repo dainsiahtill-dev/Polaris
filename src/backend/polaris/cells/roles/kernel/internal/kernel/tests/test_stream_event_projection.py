@@ -28,7 +28,8 @@ def test_lift_completion_audit_evidence_preserves_native_tool_envelopes() -> Non
     )
 
     assert metadata["required_tools"] == ["write_file"]
-    assert metadata["native_tool_calls_count"] == 9
+    assert metadata["native_tool_calls_count"] == 1
+    assert metadata["native_tool_call_names"] == ["write_file"]
     assert metadata["native_tool_call_envelopes"] == [envelope]
 
     lifecycle = record_missing_dispatch_lifecycle_receipt(
@@ -72,7 +73,8 @@ def test_lift_completion_audit_evidence_preserves_lifecycle_envelope_refs() -> N
     )
 
     assert metadata["required_tools"] == ["write_file"]
-    assert metadata["native_tool_calls_count"] == 9
+    assert metadata["native_tool_calls_count"] == 1
+    assert metadata["native_tool_call_names"] == ["write_file"]
     assert metadata["native_tool_call_envelope_refs"] == [envelope]
 
     lifecycle = record_missing_dispatch_lifecycle_receipt(

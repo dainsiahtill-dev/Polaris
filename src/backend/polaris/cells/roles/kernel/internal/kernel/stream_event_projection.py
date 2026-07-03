@@ -29,6 +29,10 @@ from polaris.cells.roles.kernel.internal.kernel.transaction_turn_completion impo
     _tool_dispatch_from_lifecycle,
     record_missing_dispatch_lifecycle_receipt,
 )
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+    native_tool_call_count_from_metadata,
+    native_tool_call_names,
+)
 from polaris.cells.roles.kernel.public.turn_events import (
     CompletionEvent,
     ContentChunkEvent,
@@ -342,6 +346,7 @@ _COMPLETION_AUDIT_EVIDENCE_KEYS: tuple[str, ...] = (
     "native_tool_call_envelopes",
     "native_tool_call_envelope_refs",
     "native_tool_calls_count",
+    "native_tool_call_names",
 )
 
 
@@ -361,6 +366,12 @@ def _lift_completion_audit_evidence(metadata: dict[str, Any], monitoring: Mappin
     lifecycle = metadata.get("tool_call_lifecycle_receipt") or metadata.get("tool_call_lifecycle")
     if isinstance(lifecycle, Mapping):
         metadata["tool_call_lifecycle_receipt"] = normalize_tool_call_lifecycle_receipt(lifecycle)
+    native_count = native_tool_call_count_from_metadata(metadata)
+    if native_count > 0:
+        metadata["native_tool_calls_count"] = native_count
+    names = native_tool_call_names(metadata, ())
+    if names:
+        metadata["native_tool_call_names"] = names
 
 
 def _task_boundary_error_message(verdict: dict[str, Any] | None, metadata: dict[str, Any]) -> str | None:

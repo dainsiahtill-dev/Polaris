@@ -65,6 +65,10 @@ ToolExecutionResult/BatchReceipt → RoleTurnResult → completion/projection
 - `roles.runtime.public.result_mapping` 的 dropped-dispatch fallback 已改为一次构造
   canonical lifecycle receipt，并同时投影 `tool_call_lifecycle_receipt` 与兼容别名
   `tool_call_lifecycle`；禁止出现只有旧别名、没有 canonical key 的 contract result。
+- `roles.kernel.internal.kernel.stream_event_projection` 的 completion audit lift 已改为在
+  复制 stream monitoring 证据后，用 envelope-first helper 重新投影
+  `native_tool_calls_count` 与 `native_tool_call_names`；stream metadata 不再保留与
+  envelope refs 冲突的旧计数字段。
 - 验证：
   `rtk pytest src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py src/backend/polaris/cells/roles/runtime/tests/test_service_helpers_characterization.py -q -k "tool_lifecycle or native_tool_call_envelope or extract_tool_calls"`；
   `rtk ruff check src/backend/polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py src/backend/polaris/cells/control_plane/run_ledger/public/__init__.py src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py src/backend/polaris/cells/roles/runtime/public/result_mapping.py`；
@@ -89,6 +93,10 @@ ToolExecutionResult/BatchReceipt → RoleTurnResult → completion/projection
   `rtk pytest src/backend/polaris/cells/roles/runtime/tests/test_service_helpers_characterization.py -q -k "tool_dispatch_dropped or lifecycle"`；
   `rtk ruff check src/backend/polaris/cells/roles/runtime/public/result_mapping.py src/backend/polaris/cells/roles/runtime/tests/test_service_helpers_characterization.py`；
   `rtk mypy src/backend/polaris/cells/roles/runtime/public/result_mapping.py`。
+  stream projection 追加验证：
+  `rtk pytest src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_stream_event_projection.py -q`；
+  `rtk ruff check src/backend/polaris/cells/roles/kernel/internal/kernel/stream_event_projection.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_stream_event_projection.py`；
+  `rtk mypy src/backend/polaris/cells/roles/kernel/internal/kernel/stream_event_projection.py`。
 
 ## 5. 风险与边界
 
