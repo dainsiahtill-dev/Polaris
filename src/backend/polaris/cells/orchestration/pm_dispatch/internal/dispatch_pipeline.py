@@ -288,7 +288,7 @@ def _build_role_worker_pool(
     # Preserve the configured worker COUNT (== len(plan) == concurrency) and round-robin
     # each worker over the LIVE slots: a worker whose backend went dark is reassigned to a
     # live binding (never stranded, never silently dropped) — this is what "honor the
-    # configured concurrency" means, and matches the legacy round-robin-over-live policy.
+    # configured concurrency" means, and matches the current round-robin-over-live policy.
     workers: list[tuple[Any, Any]] = []
     for idx in range(len(plan)):
         slot = live_slots[idx % len(live_slots)]
