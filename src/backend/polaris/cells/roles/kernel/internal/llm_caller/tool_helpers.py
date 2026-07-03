@@ -163,7 +163,9 @@ def native_tool_call_envelopes_from_metadata(metadata: Mapping[str, Any] | None)
     for key in ("native_tool_call_envelopes", "native_tool_call_envelope_refs"):
         envelopes = metadata.get(key)
         if isinstance(envelopes, (list, tuple)):
-            return tuple(item for item in envelopes if isinstance(item, Mapping))
+            valid_envelopes = tuple(item for item in envelopes if isinstance(item, Mapping))
+            if valid_envelopes:
+                return valid_envelopes
     return ()
 
 

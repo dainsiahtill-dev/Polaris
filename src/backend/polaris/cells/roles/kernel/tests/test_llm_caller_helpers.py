@@ -44,6 +44,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import (
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     build_native_tool_schemas,
+    native_tool_call_envelopes_from_metadata,
     native_tool_call_names,
 )
 from polaris.cells.roles.profile.public.service import load_core_roles
@@ -735,6 +736,22 @@ class TestExtractNativeToolCalls:
 
         assert native_tool_call_count(metadata, raw_calls) == 2
         assert native_tool_call_names(metadata, raw_calls) == ["write_file", "execute_command"]
+
+    def test_native_tool_call_envelope_refs_survive_invalid_legacy_alias(self) -> None:
+        metadata = {
+            "native_tool_call_envelopes": ["bad legacy projection"],
+            "native_tool_call_envelope_refs": [
+                {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
+            ],
+        }
+        raw_calls = [{"function": {"name": "read_file"}}]
+
+        envelopes = native_tool_call_envelopes_from_metadata(metadata)
+
+        assert len(envelopes) == 1
+        assert envelopes[0]["tool_name"] == "write_file"
+        assert native_tool_call_count(metadata, raw_calls) == 1
+        assert native_tool_call_names(metadata, raw_calls) == ["write_file"]
 
     def test_native_tool_call_names_fallback_uses_shared_aliases(self) -> None:
         raw_calls = [
