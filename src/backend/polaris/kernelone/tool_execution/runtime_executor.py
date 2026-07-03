@@ -39,7 +39,6 @@ _DIRECT_TOOL_NAMES: tuple[str, ...] = (
     "repo_symbols_index",
     "repo_apply_diff",
     "apply_patch",
-    "precision_edit",
     "search_code",
     "glob",
     "list_directory",

@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import polaris.kernelone.tool_execution.runtime_executor as runtime_executor_module
 import pytest
+from polaris.kernelone.llm.exceptions import ToolExecutionError
 from polaris.kernelone.tool_execution.runtime_executor import (
     BackendToolRuntime,
     ReadBudgetGuard,
@@ -388,3 +389,20 @@ class TestBackendToolRuntime:
         tools1 = runtime.list_tools()
         tools2 = runtime.list_tools()
         assert tools1 == tools2
+
+    def test_list_tools_excludes_deprecated_exact_edit_tool(self, tmp_path: Path) -> None:
+        runtime = BackendToolRuntime(str(tmp_path))
+        retired_tool_name = "precision" + "_edit"
+
+        assert retired_tool_name not in runtime.list_tools()
+
+    def test_invoke_rejects_deprecated_exact_edit_tool(self, tmp_path: Path) -> None:
+        runtime = BackendToolRuntime(str(tmp_path))
+        retired_tool_name = "precision" + "_edit"
+
+        with pytest.raises(ToolExecutionError, match="unknown tool"):
+            runtime.invoke(
+                retired_tool_name,
+                {"file": "example.py", "search": "old", "replace": "new"},
+                cwd=str(tmp_path),
+            )
