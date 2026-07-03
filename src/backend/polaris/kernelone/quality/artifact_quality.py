@@ -1138,13 +1138,16 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
         )
 
     errors: list[str] = []
+    issues: list[ArtifactQualityIssue] = []
     syntax = check_source_file_syntax(str(full_path))
     if syntax is not None and syntax.get("ok") is False:
         errors.append(
             f"Artifact quality scan failed: syntax error in {relative_path}: {str(syntax.get('error'))[:200]}"
         )
     if os.path.basename(relative_path).lower() == "package.json":
-        errors.extend(_scan_package_manifest(root_full, text, relative_path))
+        manifest_evidence = _scan_package_manifest_evidence(root_full, text, relative_path)
+        errors.extend(manifest_evidence.errors)
+        issues.extend(manifest_evidence.issues)
     errors.extend(_scan_typescript_imports(root_full, full_path, text, relative_path))
     errors.extend(_scan_python_imports(root_full, full_path, text, relative_path))
     errors.extend(_scan_typescript_syntax_red_flags(root_full, full_path, text, relative_path))
@@ -1169,9 +1172,18 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
                 "Artifact quality scan failed: repeated trivial arithmetic placeholder "
                 f"tests in {relative_path} (count={trivial_count})"
             )
+    direct_issue_messages = {
+        str((issue.metadata or {}).get("raw") or issue.message).strip()
+        for issue in issues
+    }
+    string_projected_issues = tuple(
+        issue
+        for issue in _artifact_quality_issues_from_errors(errors)
+        if str((issue.metadata or {}).get("raw") or issue.message).strip() not in direct_issue_messages
+    )
     return _FileArtifactQualityEvidence(
         errors=tuple(errors),
-        issues=_artifact_quality_issues_from_errors(errors),
+        issues=(*issues, *string_projected_issues),
     )
 
 
@@ -1273,12 +1285,36 @@ def _typescript_line_comment_contains_escaped_newline_code(text: str) -> bool:
 
 
 def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> list[str]:
+    """Return legacy package-manifest string findings."""
+
+    return list(_scan_package_manifest_evidence(root_full, text, relative_path).errors)
+
+
+def _package_manifest_quality_issue(error: str, relative_path: str) -> ArtifactQualityIssue:
+    message = str(error or "").strip()
+    if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
+        message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    return ArtifactQualityIssue(
+        code="npm_manifest_invalid",
+        message=message,
+        path=relative_path,
+        source="package_manifest_scanner",
+        metadata={
+            "raw": str(error or "").strip(),
+            "manifest_path": relative_path,
+        },
+    )
+
+
+def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: str) -> _FileArtifactQualityEvidence:
+    """Return package-manifest findings as legacy strings and direct typed issues."""
+
     try:
         payload = json.loads(text)
     except json.JSONDecodeError:
-        return []
+        return _FileArtifactQualityEvidence()
     if not isinstance(payload, dict):
-        return []
+        return _FileArtifactQualityEvidence()
     errors: list[str] = []
     scripts = payload.get("scripts")
     if isinstance(scripts, dict):
@@ -1368,8 +1404,14 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
                     "Artifact quality scan failed: npm package manifest declares "
                     f"Python package dependency {package_name!r} in {relative_path}"
                 )
-                return errors
-    return errors
+                return _FileArtifactQualityEvidence(
+                    errors=tuple(errors),
+                    issues=tuple(_package_manifest_quality_issue(error, relative_path) for error in errors),
+                )
+    return _FileArtifactQualityEvidence(
+        errors=tuple(errors),
+        issues=tuple(_package_manifest_quality_issue(error, relative_path) for error in errors),
+    )
 
 
 def _scan_npm_script_node_eval_syntax(tokens: list[str], script_name: str, relative_path: str) -> str:

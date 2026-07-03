@@ -43,6 +43,11 @@ Typed issues are evidence, not repair authorization. Repair still flows through
   API remains as a projection, while `scan_workspace_artifact_quality_evidence()`
   consumes direct per-file issues and avoids reparsing the same error into a
   duplicate typed issue.
+- `_scan_package_manifest_evidence()` now owns package-manifest direct typed
+  issues with `source="package_manifest_scanner"`. The legacy
+  `_scan_package_manifest()` API remains a string projection, but npm manifest
+  findings no longer need to be reparsed from prose to become
+  `ArtifactQualityIssue(code="npm_manifest_invalid", path="package.json")`.
 
 ## 4. Verification
 

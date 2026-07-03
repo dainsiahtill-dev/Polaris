@@ -54,6 +54,8 @@ def test_artifact_quality_evidence_projects_typed_issues(tmp_path: Path) -> None
     assert len(evidence.issues) == 1
     assert evidence.issues[0].code == "npm_manifest_invalid"
     assert evidence.issues[0].path == "package.json"
+    assert evidence.issues[0].source == "package_manifest_scanner"
+    assert evidence.issues[0].metadata["manifest_path"] == "package.json"
     assert evidence.to_dict()["issues"][0]["code"] == "npm_manifest_invalid"
 
 
