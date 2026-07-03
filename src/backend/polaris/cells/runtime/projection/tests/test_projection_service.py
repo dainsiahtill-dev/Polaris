@@ -391,6 +391,41 @@ def test_snapshot_task_rows_apply_run_ledger_task_boundary_overlay(
     assert snapshot["tasks"][0]["metadata"]["status_source"] == "run_ledger_projection"
 
 
+def test_snapshot_task_rows_project_run_ledger_boundary_when_rows_are_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        projection_service,
+        "load_runtime_task_rows",
+        lambda workspace: [],
+    )
+    projection = RuntimeProjection(
+        director_merged={
+            "run_ledger_projection": {
+                "task_boundary": {
+                    "latest": {
+                        "task_id": "TASK-2",
+                        "ok": False,
+                        "failure_class": "TOOL_DISPATCH_DROPPED",
+                        "responsible_layer": "platform",
+                        "reason": "provider emitted native tool calls but dispatch was dropped",
+                    }
+                }
+            }
+        }
+    )
+
+    snapshot = build_snapshot_payload_from_projection(projection, workspace=str(tmp_path))
+
+    assert snapshot["tasks"][0]["task_id"] == "TASK-2"
+    assert snapshot["tasks"][0]["status"] == "FAILED_PLATFORM"
+    assert snapshot["tasks"][0]["running"] is False
+    assert snapshot["tasks"][0]["metadata"]["source"] == "run_ledger_projection"
+    assert snapshot["tasks"][0]["responsible_layer"] == "platform"
+    assert snapshot["tasks"][0]["error_message"] == "provider emitted native tool calls but dispatch was dropped"
+
+
 def test_snapshot_task_rows_normalize_run_ledger_task_boundary_failure_class(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

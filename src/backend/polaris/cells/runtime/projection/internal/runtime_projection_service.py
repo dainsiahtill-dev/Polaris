@@ -1014,6 +1014,37 @@ def _row_task_id(row: dict[str, Any]) -> str:
     ).strip()
 
 
+def _task_boundary_row_from_latest(latest_boundary: dict[str, Any]) -> dict[str, Any]:
+    boundary_task_id = str(latest_boundary.get("task_id") or latest_boundary.get("taskId") or "").strip()
+    if not boundary_task_id:
+        return {}
+    boundary_ok = bool(latest_boundary.get("ok", True))
+    failure_class = normalize_qa_failure_class(
+        str(latest_boundary.get("failure_class") or QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS).strip()
+    )
+    execution_state = "COMPLETED_VERIFIED" if boundary_ok else _task_boundary_execution_state(failure_class)
+    reason = str(latest_boundary.get("reason") or failure_class or execution_state).strip()
+    metadata = {
+        "source": "run_ledger_projection",
+        "status_source": "run_ledger_projection",
+        "run_ledger_task_boundary": latest_boundary,
+    }
+    return {
+        "id": boundary_task_id,
+        "task_id": boundary_task_id,
+        "status": execution_state,
+        "state": execution_state,
+        "execution_state": execution_state,
+        "running": False,
+        "failure_class": "" if boundary_ok else failure_class,
+        "responsible_layer": str(latest_boundary.get("responsible_layer") or "").strip(),
+        "blocked_reason": "" if boundary_ok else failure_class.lower(),
+        "error_message": "" if boundary_ok else reason,
+        "run_ledger_projection": {"task_boundary": latest_boundary},
+        "metadata": metadata,
+    }
+
+
 def _apply_run_ledger_task_rows_overlay(
     rows: list[dict[str, Any]],
     run_ledger_projection: dict[str, Any] | None,
@@ -1025,11 +1056,12 @@ def _apply_run_ledger_task_rows_overlay(
     failed task-boundary verdicts must win in projections without mutating the
     stored TaskBoard rows.
     """
-    if not rows:
-        return rows
     latest_boundary = _latest_task_boundary(run_ledger_projection)
     if not latest_boundary:
         return rows
+    if not rows:
+        synthetic_row = _task_boundary_row_from_latest(latest_boundary)
+        return [synthetic_row] if synthetic_row else rows
 
     boundary_task_id = str(latest_boundary.get("task_id") or latest_boundary.get("taskId") or "").strip()
     if not boundary_task_id and len(rows) != 1:
