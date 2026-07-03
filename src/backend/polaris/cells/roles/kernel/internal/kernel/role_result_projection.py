@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from polaris.cells.control_plane.run_ledger.public import normalize_tool_call_lifecycle_receipt
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_call_count_from_metadata,
     native_tool_call_names,
@@ -127,6 +128,7 @@ def role_result_metadata_from_profile(
             metadata["context_os_audit"] = (
                 dict(raw_context_os_audit) if isinstance(raw_context_os_audit, dict) else raw_context_os_audit
             )
+        _project_canonical_tool_lifecycle_receipt(metadata)
         native_count = native_tool_call_count_from_metadata(llm_response_metadata)
         if native_count > 0:
             metadata.setdefault("native_tool_calls_count", native_count)
@@ -140,6 +142,16 @@ def role_result_metadata_from_profile(
             metadata["context_os_audit"] = dict(context_os_audit)
 
     return metadata
+
+
+def _project_canonical_tool_lifecycle_receipt(metadata: dict[str, Any]) -> None:
+    """Ensure RoleTurnResult metadata exposes the canonical lifecycle receipt key."""
+
+    for key in ("tool_call_lifecycle_receipt", "tool_call_lifecycle"):
+        raw = metadata.get(key)
+        if isinstance(raw, dict):
+            metadata["tool_call_lifecycle_receipt"] = normalize_tool_call_lifecycle_receipt(raw)
+            return
 
 
 def role_turn_error_result(

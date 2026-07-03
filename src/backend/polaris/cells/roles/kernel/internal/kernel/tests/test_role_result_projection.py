@@ -110,6 +110,9 @@ def test_role_result_metadata_projects_tool_lifecycle_and_derived_tool_facts() -
     )
 
     assert metadata["tool_call_lifecycle"] == lifecycle
+    assert metadata["tool_call_lifecycle_receipt"]["schema_version"] == "tool_call_lifecycle_receipt.v1"
+    assert metadata["tool_call_lifecycle_receipt"]["native_tool_calls_count"] == 2
+    assert metadata["tool_call_lifecycle_receipt"]["dispatch_status"] == "dropped"
     assert metadata["native_tool_calls_count"] == 2
     assert metadata["native_tool_call_names"] == ["write_file", "execute_command"]
 
