@@ -836,8 +836,8 @@ class TestBuildContinuitySummaryText:
 class TestRoleContextIdentity:
     """Tests for RoleContextIdentity."""
 
-    def test_legacy_field_synchronization(self) -> None:
-        """RoleContextIdentity must sync legacy and new fields."""
+    def test_source_payload_field_synchronization(self) -> None:
+        """RoleContextIdentity must sync canonical and source-payload fields."""
         identity = RoleContextIdentity(role_id="abc123")
 
         assert identity.task_id == "abc123"

@@ -220,21 +220,21 @@ class TestRoleContextIdentity:
         assert identity.task_id == "task-456"
         assert identity.role_type == "pm"
 
-    def test_sync_new_legacy_fields(self) -> None:
-        """Should sync new and legacy field names."""
+    def test_sync_canonical_source_payload_fields(self) -> None:
+        """Should sync canonical and source-payload field names."""
         from polaris.kernelone.context.compaction import RoleContextIdentity
 
         # When both role_id and task_id are set, role_id takes precedence
         identity = RoleContextIdentity(
             role_id="id-789",
-            task_id="legacy-id",
+            task_id="source-id",
             scope=["file1.py"],
             write_scope=["file2.py"],
         )
         # role_id takes precedence when both are set
         assert identity.role_id == "id-789"
         # task_id is not synced when role_id is already set
-        assert identity.task_id == "legacy-id"
+        assert identity.task_id == "source-id"
         # When both scope and write_scope are set, neither is synced
         assert identity.scope == ["file1.py"]
         assert identity.write_scope == ["file2.py"]

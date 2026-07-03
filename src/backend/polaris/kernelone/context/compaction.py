@@ -263,13 +263,13 @@ class RoleContextIdentity:
     acceptance_criteria: list[str] = field(default_factory=list)
     scope: list[str] = field(default_factory=list)  # Working scope (files, paths, domains)
     current_phase: str = "unknown"
-    # Legacy aliases retained as the same semantic values.
+    # Source-payload aliases retained as the same semantic values.
     task_id: str = ""
     write_scope: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)  # Role-specific data
 
     def __post_init__(self) -> None:
-        # Keep new/legacy identity fields synchronized.
+        # Keep canonical and source-payload identity fields synchronized.
         if not self.role_id and self.task_id:
             self.role_id = str(self.task_id)
         if not self.task_id and self.role_id:
@@ -281,7 +281,7 @@ class RoleContextIdentity:
 
     @classmethod
     def from_task(cls, task: dict[str, Any], role_type: str = "unknown") -> RoleContextIdentity:
-        """Create identity from task data (backward compatible with Director)."""
+        """Create identity from task data produced by PM/Director payloads."""
         return cls(
             role_id=task.get("id", "unknown"),
             task_id=task.get("id", "unknown"),
