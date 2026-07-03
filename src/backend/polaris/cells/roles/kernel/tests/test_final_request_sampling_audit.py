@@ -1506,6 +1506,20 @@ def test_final_request_evidence_coverage_tracks_interface_discrepancy_context() 
     )
     assert source["confidence"] == "structured_metadata"
     assert source["hash"]
+    slot = next(
+        item for item in evidence_coverage["evidence_slots"] if item["ref_type"] == "interface_discrepancy_context"
+    )
+    assert slot == {
+        "schema_version": "polaris.final_request_evidence_slot.v1",
+        "ref_type": "interface_discrepancy_context",
+        "required": True,
+        "present": True,
+        "missing": False,
+        "source": "final_provider_request",
+        "confidence": "structured_metadata",
+        "freshness": "current_turn",
+        "hash": source["hash"],
+    }
     assert evidence_coverage["missing_required_refs"] == []
     assert evidence_coverage["pass"] is True
     enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)
@@ -1553,6 +1567,13 @@ def test_final_request_evidence_coverage_blocks_missing_required_interface_discr
     evidence_coverage = audit["final_request_evidence_coverage"]
     assert "interface_discrepancy_context" in evidence_coverage["required_refs"]
     assert "interface_discrepancy_context" in evidence_coverage["missing_required_refs"]
+    slot = next(
+        item for item in evidence_coverage["evidence_slots"] if item["ref_type"] == "interface_discrepancy_context"
+    )
+    assert slot["required"] is True
+    assert slot["present"] is False
+    assert slot["missing"] is True
+    assert slot["confidence"] == "absent"
     assert evidence_coverage["pass"] is False
     violation = final_request_evidence_coverage_violation(ai_request=ai_request, audit=audit)
     assert violation is not None

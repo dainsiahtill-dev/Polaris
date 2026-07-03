@@ -2091,6 +2091,44 @@ def _coverage_source(
     return result
 
 
+def _evidence_slots(
+    *,
+    coverage_sources: list[dict[str, Any]],
+    required_refs: list[str],
+    included_refs: list[str],
+    missing_required_refs: list[str],
+) -> list[dict[str, Any]]:
+    """Build typed evidence slots from final-request coverage refs.
+
+    This additive WS6 projection keeps current pass/fail behavior unchanged
+    while giving downstream audit code a structured target instead of forcing it
+    to re-derive required/present/missing state from free-form text.
+    """
+
+    required = set(required_refs)
+    included = set(included_refs)
+    missing = set(missing_required_refs)
+    slots: list[dict[str, Any]] = []
+    for source in coverage_sources:
+        ref_type = str(source.get("ref_type") or "").strip()
+        if not ref_type:
+            continue
+        slot = {
+            "schema_version": "polaris.final_request_evidence_slot.v1",
+            "ref_type": ref_type,
+            "required": ref_type in required,
+            "present": ref_type in included,
+            "missing": ref_type in missing,
+            "source": str(source.get("source") or "final_provider_request"),
+            "confidence": str(source.get("confidence") or "absent"),
+            "freshness": str(source.get("freshness") or "unknown"),
+        }
+        if source.get("hash"):
+            slot["hash"] = str(source.get("hash"))
+        slots.append(slot)
+    return slots
+
+
 def _ledger_evidence(ai_request: Any, *, receipt_refs: list[str] | None = None) -> dict[str, Any]:
     context_payload = _request_context(ai_request)
     ledger = _mapping(context_payload.get("run_ledger")) or _mapping(context_payload.get("run_ledger_projection"))
@@ -2195,6 +2233,15 @@ def _final_request_evidence_coverage(
         envelope=envelope,
     )
     coverage_source_refs = _unique_strings([*required_refs, *included_refs])
+    coverage_sources = [
+        _coverage_source(
+            ref_type=ref,
+            present=ref in included_refs,
+            workflow_chain=workflow_chain,
+            request_metadata_summary=request_metadata_summary,
+        )
+        for ref in coverage_source_refs
+    ]
     total_required = len(required_refs) + len(required_tools)
     total_missing = len(missing_required_refs) + len(missing_required_tools)
     coverage_ratio = 1.0 if total_required == 0 else max(0.0, (total_required - total_missing) / total_required)
@@ -2214,15 +2261,13 @@ def _final_request_evidence_coverage(
         "required_refs": required_refs,
         "included_refs": included_refs,
         "missing_required_refs": missing_required_refs,
-        "coverage_sources": [
-            _coverage_source(
-                ref_type=ref,
-                present=ref in included_refs,
-                workflow_chain=workflow_chain,
-                request_metadata_summary=request_metadata_summary,
-            )
-            for ref in coverage_source_refs
-        ],
+        "coverage_sources": coverage_sources,
+        "evidence_slots": _evidence_slots(
+            coverage_sources=coverage_sources,
+            required_refs=required_refs,
+            included_refs=included_refs,
+            missing_required_refs=missing_required_refs,
+        ),
         "required_tools": required_tools,
         "allowed_tools": allowed_tools,
         "available_tools": available_tools,
