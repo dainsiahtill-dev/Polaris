@@ -181,7 +181,7 @@ class DirectorLifecycleManager:
                 return LifecycleState()
 
         # 数据解析在锁外进行，减少锁持有时间
-        # 兼容旧格式
+        # Accept persisted v1 payloads and project them into the current state model.
         if "lifecycle" in data:
             # 新格式
             lc = data.get("lifecycle", {})
@@ -284,7 +284,7 @@ class DirectorLifecycleManager:
             else:
                 payload = {}
 
-            # 初始化结构（兼容旧格式）
+            # 初始化结构（v1 payload ingestion）
             if "lifecycle" not in payload:
                 # 转换为新格式
                 old_events = payload.get("events", [])
@@ -383,7 +383,7 @@ class DirectorLifecycleManager:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 兼容性别名函数（供外部调用）
+# Module-level API wrappers
 # ═══════════════════════════════════════════════════════════════════
 
 
@@ -447,7 +447,7 @@ def update(
         error=error,
     )
 
-    # 返回兼容的 dict 格式
+    # Return the public dict projection used by HTTP/CLI callers.
     return {
         "schema_version": 2,
         "created_at": state.timestamp,
