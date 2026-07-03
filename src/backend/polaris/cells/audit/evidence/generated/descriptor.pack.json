@@ -1328,39 +1328,6 @@
       "defined_in": "polaris/kernelone/audit/evidence_paths.py"
     },
     {
-      "type": "class",
-      "name": "FailureClass",
-      "description": "Standard failure classification dictionary.",
-      "defined_in": "polaris/kernelone/audit/failure_envelope.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "FailureEnvelope",
-      "description": "Unified failure representation.",
-      "defined_in": "polaris/kernelone/audit/failure_envelope.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "to_dict",
-          "doc": "Convert to dictionary for serialization."
-        },
-        {
-          "name": "from_dict",
-          "doc": "Create from dictionary."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "create_failure",
-      "description": "Convenience function to create a FailureEnvelope.",
-      "defined_in": "polaris/kernelone/audit/failure_envelope.py"
-    },
-    {
       "type": "function",
       "name": "_emit_audit_internal_failure",
       "description": "Attempt to emit internal audit event; degrade gracefully on failure.",
