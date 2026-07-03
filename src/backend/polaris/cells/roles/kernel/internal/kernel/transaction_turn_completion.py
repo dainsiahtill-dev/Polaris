@@ -31,7 +31,6 @@ from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
 )
 from polaris.cells.roles.kernel.internal.kernel.task_boundary import append_role_turn_task_boundary_verdict
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
-    native_tool_call_count_from_metadata,
     native_tool_call_envelopes_from_metadata,
 )
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest, RoleTurnResult
@@ -293,14 +292,6 @@ def _native_tool_call_envelopes(metadata: Mapping[str, Any], ledger: Any) -> lis
     return []
 
 
-def _native_tool_calls_count(metadata: Mapping[str, Any], ledger: Any) -> int:
-    count = native_tool_call_count_from_metadata(metadata)
-    if count > 0:
-        return count
-    latest_metadata = _last_decision_metadata(ledger)
-    return native_tool_call_count_from_metadata(latest_metadata)
-
-
 def _batch_has_dispatch_evidence(batch_receipt: Mapping[str, Any] | None) -> bool:
     if not isinstance(batch_receipt, Mapping):
         return False
@@ -324,7 +315,6 @@ def _build_missing_dispatch_lifecycle_receipt(
     required_write_tools = [tool for tool in _extract_required_tools(metadata) if is_write_tool_name(tool)]
     if not required_write_tools:
         return None
-    latest_metadata = _last_decision_metadata(ledger)
     native_envelopes = _native_tool_call_envelopes(metadata, ledger)
     dropped_tool_calls = (
         []
@@ -339,8 +329,6 @@ def _build_missing_dispatch_lifecycle_receipt(
         task_id="",
         turn_id="",
         role="",
-        native_tool_calls_count=len(native_envelopes) or _native_tool_calls_count(metadata, ledger),
-        decoded_tool_calls_count=_safe_int(latest_metadata.get("tool_count")),
         dispatched_tool_calls_count=0,
         dropped_tool_calls=dropped_tool_calls,
         native_tool_call_envelopes=native_envelopes,
