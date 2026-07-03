@@ -38,8 +38,8 @@ logger = logging.getLogger(__name__)
 _MANDATORY_NATS_OVERRIDES = {"nats.enabled": True, "nats.required": True}
 
 
-# BootstrapError is defined in polaris.kernelone.errors for consistency
-# Import here for backwards compatibility
+# BootstrapError is defined in KernelOne so every bootstrap entrypoint raises
+# the same canonical configuration/runtime error type.
 from polaris.kernelone.errors import BootstrapError  # noqa: E402
 
 
@@ -177,7 +177,7 @@ class BackendBootstrapper:
             # BUG-002 fix: only mark succeeded after all startup steps complete.
             self._bootstrap_succeeded = True
 
-            # Emit backend_started event (for Electron compatibility)
+            # Emit the launcher startup contract event.
             self._emit_startup_event(actual_port, True)
 
             return BackendLaunchResult(
@@ -614,7 +614,7 @@ class BackendBootstrapper:
         )
 
     def _emit_startup_event(self, port: int, success: bool, error: str = "") -> None:
-        """Emit backend_started event for Electron compatibility.
+        """Emit the launcher startup event on stdout and the application log.
 
         Args:
             port: Server port
