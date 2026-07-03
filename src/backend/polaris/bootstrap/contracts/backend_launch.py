@@ -337,7 +337,7 @@ class BackendLaunchResult:
     def to_electron_event(self) -> dict[str, Any]:
         """Convert to Electron backend_started event format.
 
-        This maintains compatibility with the existing Electron protocol.
+        This is the launcher event payload consumed by desktop/Electron shells.
 
         Returns:
             Dictionary matching the backend_started event format
