@@ -32,9 +32,15 @@ Typed issues are evidence, not repair authorization. Repair still flows through
   from the same legacy string.
 - Workspace path scanner failures now emit direct typed issues:
   `workspace_path_unresolved` and `workspace_path_missing`.
+- Interface-ledger validation now has `DeclaredInterfaceValidationIssue` and
+  `validate_declared_interface_issues_against_snapshot()`. The legacy
+  `validate_declared_interfaces_against_snapshot()` remains as a string
+  projection, while artifact-quality evidence consumes the typed payload with
+  stable codes `declared_interface_missing` and
+  `declared_interface_signature_missing`.
 
 ## 4. Verification
 
-- `rtk pytest src/backend/polaris/kernelone/quality/tests/test_artifact_quality.py -q`
-- `rtk ruff check src/backend/polaris/kernelone/quality/artifact_quality.py src/backend/polaris/kernelone/quality/tests/test_artifact_quality.py`
-- `rtk mypy src/backend/polaris/kernelone/quality/artifact_quality.py`
+- `rtk pytest src/backend/polaris/tests/unit/kernelone/quality/test_interface_ledger.py src/backend/polaris/kernelone/quality/tests/test_artifact_quality.py -q`
+- `rtk ruff check src/backend/polaris/kernelone/quality/interface_ledger.py src/backend/polaris/kernelone/quality/artifact_quality.py src/backend/polaris/tests/unit/kernelone/quality/test_interface_ledger.py src/backend/polaris/kernelone/quality/tests/test_artifact_quality.py`
+- `rtk mypy src/backend/polaris/kernelone/quality/interface_ledger.py src/backend/polaris/kernelone/quality/artifact_quality.py`

@@ -29,6 +29,7 @@ import logging
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any
 
 from polaris.kernelone.fs.jsonl.locking import file_lock
@@ -85,6 +86,42 @@ def _string_list(value: Any) -> list[str]:
             seen.add(token)
             rows.append(token)
     return rows
+
+
+@dataclass(frozen=True, slots=True)
+class DeclaredInterfaceValidationIssue:
+    """Typed validation issue for CE-declared interface ledger facts."""
+
+    code: str
+    message: str
+    target: str
+    identifier: str = ""
+    signature: str = ""
+
+    def to_error_message(self) -> str:
+        """Render the legacy artifact-quality error string."""
+
+        return f"Artifact quality scan failed: {self.message}"
+
+    def to_artifact_quality_issue(self) -> dict[str, Any]:
+        """Project this ledger fact into ArtifactQualityIssue-compatible payload."""
+
+        metadata: dict[str, Any] = {
+            "raw": self.to_error_message(),
+            "target_file": self.target,
+        }
+        if self.identifier:
+            metadata["identifier"] = self.identifier
+        if self.signature:
+            metadata["signature"] = self.signature
+        return {
+            "code": self.code,
+            "message": self.message,
+            "path": self.target,
+            "severity": "error",
+            "source": "declared_interface_ledger",
+            "metadata": metadata,
+        }
 
 
 def _ledger_path(workspace: str, cache_root: str) -> str:
@@ -229,12 +266,12 @@ def read_all_declared_interfaces(
     return declared
 
 
-def validate_declared_interfaces_against_snapshot(
+def validate_declared_interface_issues_against_snapshot(
     workspace: str,
     cache_root: str,
     target_files: list[str] | None = None,
-) -> list[str]:
-    """Validate CE-declared interfaces against deterministic source snapshots.
+) -> tuple[DeclaredInterfaceValidationIssue, ...]:
+    """Return typed issues for CE-declared interfaces missing from source snapshots.
 
     The ledger is intentionally language-agnostic and may contain HTML ids,
     asset keys, or other domains the source-code scanner does not yet parse.
@@ -250,10 +287,10 @@ def validate_declared_interfaces_against_snapshot(
         else read_all_declared_interfaces(workspace, cache_root)
     )
     if not declared:
-        return []
+        return ()
 
     snapshot = build_symbol_index_snapshot(workspace)
-    errors: list[str] = []
+    issues: list[DeclaredInterfaceValidationIssue] = []
     for target, entry in sorted(declared.items()):
         normalized_target = _normalize_target(target)
         if normalized_target not in snapshot.files:
@@ -264,16 +301,42 @@ def validate_declared_interfaces_against_snapshot(
         symbols_to_check = _string_list(entry.get("public_symbols")) or _string_list(entry.get("identifiers"))
         for identifier in symbols_to_check:
             if identifier not in actual_names:
-                errors.append(
-                    f"Artifact quality scan failed: declared interface {identifier!r} missing from {normalized_target}"
+                issues.append(
+                    DeclaredInterfaceValidationIssue(
+                        code="declared_interface_missing",
+                        message=f"declared interface {identifier!r} missing from {normalized_target}",
+                        target=normalized_target,
+                        identifier=identifier,
+                    )
                 )
         for signature in _string_list(entry.get("signatures")):
             if signature not in actual_signatures:
-                errors.append(
-                    "Artifact quality scan failed: declared interface signature "
-                    f"{signature!r} missing from {normalized_target}"
+                issues.append(
+                    DeclaredInterfaceValidationIssue(
+                        code="declared_interface_signature_missing",
+                        message=f"declared interface signature {signature!r} missing from {normalized_target}",
+                        target=normalized_target,
+                        signature=signature,
+                    )
                 )
-    return errors
+    return tuple(issues)
+
+
+def validate_declared_interfaces_against_snapshot(
+    workspace: str,
+    cache_root: str,
+    target_files: list[str] | None = None,
+) -> list[str]:
+    """Validate CE-declared interfaces and return legacy error strings."""
+
+    return [
+        issue.to_error_message()
+        for issue in validate_declared_interface_issues_against_snapshot(
+            workspace,
+            cache_root,
+            target_files,
+        )
+    ]
 
 
 def render_assume_contract(declared: dict[str, dict[str, Any]]) -> str:
@@ -308,5 +371,6 @@ __all__ = [
     "read_declared_interfaces",
     "record_declared_interfaces",
     "render_assume_contract",
+    "validate_declared_interface_issues_against_snapshot",
     "validate_declared_interfaces_against_snapshot",
 ]

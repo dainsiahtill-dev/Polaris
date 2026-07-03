@@ -9,6 +9,7 @@ from polaris.kernelone.quality import (
     scan_workspace_artifact_quality,
     scan_workspace_artifact_quality_evidence,
 )
+from polaris.kernelone.quality.interface_ledger import record_declared_interfaces
 
 
 def test_scan_package_manifest_rejects_invalid_script_shell_syntax(tmp_path: Path) -> None:
@@ -65,6 +66,35 @@ def test_artifact_quality_evidence_uses_direct_typed_issue_for_missing_workspace
     assert evidence.errors == ("Artifact quality scan failed: workspace path does not exist",)
     assert [issue.code for issue in evidence.issues] == ["workspace_path_missing"]
     assert evidence.issues[0].source == "artifact_quality_scanner"
+
+
+def test_artifact_quality_evidence_uses_direct_declared_interface_issue(
+    tmp_path: Path,
+) -> None:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "weather.ts").write_text(
+        "export interface WeatherSnapshot { condition: string }\n",
+        encoding="utf-8",
+    )
+    record_declared_interfaces(
+        str(tmp_path),
+        str(tmp_path),
+        [{"step_id": "S1", "target_file": "src/weather.ts", "interface_names": ["WeatherReport"]}],
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path))
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: declared interface 'WeatherReport' missing from src/weather.ts",
+    )
+    assert [issue.code for issue in evidence.issues] == ["declared_interface_missing"]
+    assert evidence.issues[0].source == "declared_interface_ledger"
+    assert evidence.issues[0].metadata == {
+        "raw": "Artifact quality scan failed: declared interface 'WeatherReport' missing from src/weather.ts",
+        "target_file": "src/weather.ts",
+        "identifier": "WeatherReport",
+    }
 
 
 def test_artifact_quality_issue_projection_classifies_javascript_module_runtime_error() -> None:

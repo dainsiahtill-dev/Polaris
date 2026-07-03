@@ -14,6 +14,7 @@ from polaris.kernelone.quality.interface_ledger import (
     read_declared_interfaces,
     record_declared_interfaces,
     render_assume_contract,
+    validate_declared_interface_issues_against_snapshot,
     validate_declared_interfaces_against_snapshot,
 )
 
@@ -233,6 +234,29 @@ class TestValidateDeclaredInterfacesAgainstSnapshot:
         assert errors == [
             "Artifact quality scan failed: declared interface 'WeatherReport' missing from src/weather.ts"
         ]
+
+    def test_declared_source_interface_missing_has_typed_issue(self, tmp_path: Path) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src/weather.ts").write_text(
+            "export interface WeatherSnapshot { condition: string }\n", encoding="utf-8"
+        )
+        record_declared_interfaces(
+            str(tmp_path),
+            str(tmp_path),
+            [{"step_id": "S1", "target_file": "src/weather.ts", "interface_names": ["WeatherReport"]}],
+        )
+
+        issues = validate_declared_interface_issues_against_snapshot(str(tmp_path), str(tmp_path))
+
+        assert len(issues) == 1
+        assert issues[0].code == "declared_interface_missing"
+        assert issues[0].target == "src/weather.ts"
+        assert issues[0].identifier == "WeatherReport"
+        assert issues[0].to_artifact_quality_issue()["metadata"] == {
+            "raw": "Artifact quality scan failed: declared interface 'WeatherReport' missing from src/weather.ts",
+            "target_file": "src/weather.ts",
+            "identifier": "WeatherReport",
+        }
 
     def test_unsupported_declared_interface_domain_fails_open(self, tmp_path: Path) -> None:
         (tmp_path / "index.html").write_text("<html><canvas id='game'></canvas></html>\n", encoding="utf-8")

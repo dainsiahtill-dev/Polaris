@@ -27,7 +27,7 @@ from polaris.kernelone.quality.cross_artifact_interfaces import (
 from polaris.kernelone.quality.interface_ledger import (
     read_all_declared_interfaces,
     read_declared_interfaces,
-    validate_declared_interfaces_against_snapshot,
+    validate_declared_interface_issues_against_snapshot,
 )
 from polaris.kernelone.quality.package_scripts import package_script_cycle_reasons
 
@@ -842,6 +842,7 @@ def scan_workspace_artifact_quality_evidence(
         )
 
     errors: list[str] = []
+    typed_issues: list[Any] = []
     scanned_relative_paths: list[str] = []
     cross_artifact_issues: tuple[CrossArtifactConsistencyIssue, ...] = ()
     try:
@@ -878,16 +879,22 @@ def scan_workspace_artifact_quality_evidence(
                 issue.to_error_message() for issue in cross_artifact_issues if not issue.code.startswith("contract_")
             )
         if len(errors) < 50:
+            declared_interface_issues = _scan_declared_interface_ledger_issues(
+                root_full,
+                scanned_relative_paths if relative_paths is not None else None,
+            )
+            typed_issues.extend(declared_interface_issues)
             errors.extend(
-                _scan_declared_interface_ledger(
-                    root_full,
-                    scanned_relative_paths if relative_paths is not None else None,
-                )
+                issue["metadata"]["raw"]
+                for issue in declared_interface_issues
+                if isinstance(issue.get("metadata"), Mapping)
+                and str(issue["metadata"].get("raw") or "").strip()
             )
     except (OSError, RuntimeError, ValueError) as exc:
         return _artifact_quality_evidence(errors=(f"Artifact quality scan failed: {exc}",))
     return _artifact_quality_evidence(
         errors=errors,
+        issues=typed_issues,
         scanned_relative_paths=scanned_relative_paths,
         cross_artifact_issues=cross_artifact_issues,
         cross_artifact_repair_plans=plan_cross_artifact_repairs(cross_artifact_issues),
@@ -982,13 +989,17 @@ def _artifact_quality_task_id(
     return ""
 
 
-def _scan_declared_interface_ledger(root_full: Path, relative_paths: Iterable[str] | None) -> list[str]:
-    errors: list[str] = []
+def _scan_declared_interface_ledger_issues(
+    root_full: Path,
+    relative_paths: Iterable[str] | None,
+) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
     target_files = list(relative_paths) if relative_paths is not None else None
     for cache_root in ("", root_full.as_posix()):
         try:
-            errors.extend(
-                validate_declared_interfaces_against_snapshot(
+            issues.extend(
+                issue.to_artifact_quality_issue()
+                for issue in validate_declared_interface_issues_against_snapshot(
                     root_full.as_posix(),
                     cache_root,
                     target_files,
@@ -996,7 +1007,14 @@ def _scan_declared_interface_ledger(root_full: Path, relative_paths: Iterable[st
             )
         except (OSError, RuntimeError, ValueError):
             continue
-    return list(dict.fromkeys(errors))
+    deduped: dict[str, dict[str, Any]] = {}
+    for issue in issues:
+        metadata_raw = issue.get("metadata")
+        metadata = metadata_raw if isinstance(metadata_raw, Mapping) else {}
+        raw = str(metadata.get("raw") or issue.get("message") or "").strip()
+        if raw:
+            deduped.setdefault(raw, issue)
+    return list(deduped.values())
 
 
 def _iter_workspace_source_files(root_full: Path) -> Iterable[Path]:
