@@ -207,6 +207,7 @@ def test_local_failure_classes_do_not_leak_into_qa_or_factory() -> None:
     scoped_roots = (
         POLARIS_ROOT / "cells" / "qa",
         POLARIS_ROOT / "cells" / "factory",
+        POLARIS_ROOT / "delivery" / "http" / "routers",
     )
     for root in scoped_roots:
         for path in _production_python_files(root):
