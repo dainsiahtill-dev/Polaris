@@ -1185,7 +1185,7 @@
         },
         {
           "name": "_resolve_failure_class",
-          "doc": "将 FailureClass 映射为 continuation action。"
+          "doc": "将 TurnFailureClass 映射为 continuation action。"
         },
         {
           "name": "_detect_repetitive_failure",
@@ -1677,7 +1677,7 @@
     },
     {
       "type": "class",
-      "name": "FailureClass",
+      "name": "SequentialFailureClass",
       "description": "失败类别（用于路由决策）",
       "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
       "methods": []

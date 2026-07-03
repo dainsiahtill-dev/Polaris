@@ -311,8 +311,8 @@ class TurnOutcomeEnvelope(BaseModel):
     session_patch: dict[str, Any] = Field(default_factory=dict)
     artifacts_to_persist: list[dict[str, Any]] = Field(default_factory=list)
     speculative_hints: dict[str, Any] = Field(default_factory=dict)
-    # Phase 1.5: Failure classification for continuation policy
-    failure_class: FailureClass | None = None
+    # Phase 1.5: turn-level failure classification for continuation policy
+    failure_class: TurnFailureClass | None = None
     # Phase 2: Status Contract Protocol — subagent 必须报告明确状态
     agent_status: AgentStatus | None = Field(
         default=None,
@@ -447,7 +447,7 @@ class SealedTurn(_FrozenMappingModel):
     parent_snapshot_id: str | None = None
 
 
-class FailureClass(str, Enum):
+class TurnFailureClass(str, Enum):
     """Turn 失败分类。
 
     用于驱动 ContinuationPolicy 的自我保护决策。
@@ -496,7 +496,7 @@ class TurnOutcome(_FrozenMappingModel):
     closing: FinalizationRecord | None = None
     outcome_status: OutcomeStatus
     resolution_code: ResolutionCode
-    failure_class: FailureClass | None = None
+    failure_class: TurnFailureClass | None = None
     commit_ref: CommitReceipt | None = None
     continuation_hint: ContinuationHint | None = None
     user_visible_result_ref: str | None = None

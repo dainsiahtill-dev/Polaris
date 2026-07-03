@@ -25,8 +25,8 @@ from polaris.cells.roles.kernel.public.transaction_contracts import (
     resolve_delivery_mode,
 )
 from polaris.cells.roles.kernel.public.turn_contracts import (
-    FailureClass,
     TurnContinuationMode,
+    TurnFailureClass,
     TurnOutcomeEnvelope,
     TurnResult,
 )
@@ -1674,9 +1674,9 @@ class RoleSessionOrchestrator:
         if not next_intent:
             next_intent = event.error if turn_kind == "ask_user" else None
 
-        failure_class: FailureClass | None = None
+        failure_class: TurnFailureClass | None = None
         if event.status == "failed" and turn_kind != "ask_user":
-            failure_class = FailureClass.RUNTIME_FAILURE
+            failure_class = TurnFailureClass.RUNTIME_FAILURE
 
         # TurnId = NewType("TurnId", str)，直接使用字符串
         turn_result = TurnResult(

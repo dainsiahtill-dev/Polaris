@@ -14,12 +14,12 @@ from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.public.turn_contracts import (
     CommitReceipt,
     ContinuationHint,
-    FailureClass,
     FinalizeMode,
     OutcomeStatus,
     ResolutionCode,
     TurnDecision,
     TurnDecisionKind,
+    TurnFailureClass,
     TurnId,
     TurnOutcome,
 )
@@ -77,7 +77,7 @@ class TestTurnOutcomeSchema:
         assert outcome.commit_ref.truthlog_seq_range == (100, 110)
 
     def test_turn_outcome_failure_classification(self) -> None:
-        """FailureClass 正确映射到 OutcomeStatus。"""
+        """TurnFailureClass 正确映射到 OutcomeStatus。"""
         decision = TurnDecision(
             turn_id=TurnId("t1"),
             kind=TurnDecisionKind.FINAL_ANSWER,
@@ -91,9 +91,9 @@ class TestTurnOutcomeSchema:
             decision=decision,
             outcome_status=OutcomeStatus.PANIC,
             resolution_code=ResolutionCode.FAIL_CLOSED,
-            failure_class=FailureClass.CONTRACT_VIOLATION,
+            failure_class=TurnFailureClass.CONTRACT_VIOLATION,
         )
-        assert outcome.failure_class == FailureClass.CONTRACT_VIOLATION
+        assert outcome.failure_class == TurnFailureClass.CONTRACT_VIOLATION
         assert outcome.outcome_status == OutcomeStatus.PANIC
         assert outcome.resolution_code == ResolutionCode.FAIL_CLOSED
 
@@ -267,11 +267,11 @@ class TestTurnLedgerToOutcome:
         outcome = ledger.to_turn_outcome(
             run_id="run_001",
             decision=decision,
-            failure_class=FailureClass.CONTRACT_VIOLATION,
+            failure_class=TurnFailureClass.CONTRACT_VIOLATION,
         )
         assert outcome.outcome_status == OutcomeStatus.PANIC
         assert outcome.resolution_code == ResolutionCode.FAIL_CLOSED
-        assert outcome.failure_class == FailureClass.CONTRACT_VIOLATION
+        assert outcome.failure_class == TurnFailureClass.CONTRACT_VIOLATION
 
     def test_handoff_workflow_turn(self) -> None:
         """Handoff workflow turn。"""

@@ -1177,7 +1177,7 @@
     },
     {
       "type": "class",
-      "name": "FailureClass",
+      "name": "AuditFailureClass",
       "description": "",
       "defined_in": "polaris/kernelone/audit/error_correlator.py",
       "methods": []

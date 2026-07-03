@@ -14,8 +14,8 @@ if TYPE_CHECKING:
 
 from polaris.cells.roles.kernel.public.turn_contracts import (
     AgentStatus,
-    FailureClass,
     TurnContinuationMode,
+    TurnFailureClass,
     TurnOutcomeEnvelope,
 )
 
@@ -295,7 +295,7 @@ class ContinuationPolicy:
         5. 不能 stagnation（artifact hash 连续不变）
         6. SPECULATIVE_CONTINUE 模式下需满足 speculative worthwhile 条件
         """
-        # Phase 1.5: FailureClass-driven self-protection
+        # Phase 1.5: TurnFailureClass-driven self-protection
         _failure_class = getattr(envelope, "failure_class", None)
         failure_action = self._resolve_failure_class(_failure_class)
         if failure_action == "stop":
@@ -361,8 +361,8 @@ class ContinuationPolicy:
         return True, None
 
     @staticmethod
-    def _resolve_failure_class(failure_class: FailureClass | None) -> str:
-        """将 FailureClass 映射为 continuation action。
+    def _resolve_failure_class(failure_class: TurnFailureClass | None) -> str:
+        """将 TurnFailureClass 映射为 continuation action。
 
         Phase 1.5 冻结映射表：
         - CONTRACT_VIOLATION -> stop
@@ -373,12 +373,12 @@ class ContinuationPolicy:
         """
         if failure_class is None:
             return "continue"
-        mapping: dict[FailureClass, str] = {
-            FailureClass.CONTRACT_VIOLATION: "stop",
-            FailureClass.DURABILITY_FAILURE: "stop_and_help",
-            FailureClass.RUNTIME_FAILURE: "continue",
-            FailureClass.INSUFFICIENT_EVIDENCE: "continue",
-            FailureClass.POLICY_FAILURE: "stop",
+        mapping: dict[TurnFailureClass, str] = {
+            TurnFailureClass.CONTRACT_VIOLATION: "stop",
+            TurnFailureClass.DURABILITY_FAILURE: "stop_and_help",
+            TurnFailureClass.RUNTIME_FAILURE: "continue",
+            TurnFailureClass.INSUFFICIENT_EVIDENCE: "continue",
+            TurnFailureClass.POLICY_FAILURE: "stop",
         }
         return mapping.get(failure_class, "stop")
 

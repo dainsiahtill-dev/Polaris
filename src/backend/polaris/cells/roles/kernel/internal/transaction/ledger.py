@@ -27,12 +27,12 @@ from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
 from polaris.cells.roles.kernel.public.turn_contracts import (
     CommitReceipt,
     ContinuationHint,
-    FailureClass,
     FinalizationRecord,
     OutcomeStatus,
     ResolutionCode,
     ToolBatchExecution,
     TurnDecision,
+    TurnFailureClass,
     TurnId,
     TurnOutcome,
 )
@@ -389,7 +389,7 @@ class TurnLedger:
         decision: TurnDecision,
         execution: ToolBatchExecution | None = None,
         closing: FinalizationRecord | None = None,
-        failure_class: FailureClass | None = None,
+        failure_class: TurnFailureClass | None = None,
         commit_ref: CommitReceipt | None = None,
     ) -> TurnOutcome:
         """从账本生成 TurnOutcome。
@@ -398,10 +398,10 @@ class TurnLedger:
         下游应消费 TurnOutcome，而不是直接读取 ledger。
         """
         # 推断 outcome_status
-        if failure_class == FailureClass.CONTRACT_VIOLATION:
+        if failure_class == TurnFailureClass.CONTRACT_VIOLATION:
             outcome_status = OutcomeStatus.PANIC
             resolution_code = ResolutionCode.FAIL_CLOSED
-        elif failure_class == FailureClass.DURABILITY_FAILURE or failure_class is not None:
+        elif failure_class == TurnFailureClass.DURABILITY_FAILURE or failure_class is not None:
             outcome_status = OutcomeStatus.FAILED
             resolution_code = ResolutionCode.FAIL_CLOSED
         elif self.decisions and self.decisions[-1].get("kind") in ("handoff_workflow", "handoff_development"):
