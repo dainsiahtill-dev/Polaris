@@ -370,6 +370,29 @@ export function build() {
     }
 
 
+def test_artifact_quality_evidence_uses_direct_html_module_script_issue(tmp_path: Path) -> None:
+    (tmp_path / "index.html").write_text(
+        '<html><body><script type="module" src="./src/main.ts"></script></body></html>\n',
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["index.html"])
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: HTML module script references TypeScript source "
+        "'./src/main.ts' in index.html; static entrypoints must load JavaScript",
+    )
+    assert len(evidence.issues) == 1
+    assert evidence.issues[0].code == "html_module_script_typescript_source"
+    assert evidence.issues[0].source == "html_module_script_scanner"
+    assert evidence.issues[0].path == "index.html"
+    assert evidence.issues[0].metadata == {
+        "raw": evidence.errors[0],
+        "html_path": "index.html",
+        "script_src": "./src/main.ts",
+    }
+
+
 def test_typescript_import_scanner_ignores_fixture_string_imports(tmp_path: Path) -> None:
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir(parents=True)

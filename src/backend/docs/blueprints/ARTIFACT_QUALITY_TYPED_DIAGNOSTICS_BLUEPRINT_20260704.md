@@ -61,6 +61,10 @@ Typed issues are evidence, not repair authorization. Repair still flows through
   for TypeScript syntax red flags with
   `source="typescript_syntax_red_flag_scanner"`, while the legacy
   `_scan_typescript_syntax_red_flags()` API remains a string projection.
+- `_scan_html_typescript_module_script_evidence()` now owns direct typed
+  issues for HTML module scripts that point at TypeScript source files with
+  `source="html_module_script_scanner"`, while the legacy
+  `_scan_html_typescript_module_scripts()` API remains a string projection.
 
 ## 4. Verification
 

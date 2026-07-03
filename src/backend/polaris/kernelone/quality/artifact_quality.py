@@ -1167,7 +1167,9 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
     typescript_red_flag_evidence = _scan_typescript_syntax_red_flag_evidence(root_full, full_path, text, relative_path)
     errors.extend(typescript_red_flag_evidence.errors)
     issues.extend(typescript_red_flag_evidence.issues)
-    errors.extend(_scan_html_typescript_module_scripts(full_path, text, relative_path))
+    html_module_script_evidence = _scan_html_typescript_module_script_evidence(full_path, text, relative_path)
+    errors.extend(html_module_script_evidence.errors)
+    issues.extend(html_module_script_evidence.issues)
     for marker in _DETERMINISTIC_SCAFFOLD_MARKERS:
         if marker in text:
             errors.append(f"Artifact quality scan failed: deterministic scaffold marker {marker!r} in {relative_path}")
@@ -1311,17 +1313,49 @@ def _scan_typescript_syntax_red_flag_evidence(
 
 
 def _scan_html_typescript_module_scripts(full_path: Path, text: str, relative_path: str) -> list[str]:
+    """Return legacy HTML module-script string findings."""
+
+    return list(_scan_html_typescript_module_script_evidence(full_path, text, relative_path).errors)
+
+
+def _html_module_script_quality_issue(error: str, relative_path: str, *, src: str) -> ArtifactQualityIssue:
+    message = str(error or "").strip()
+    if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
+        message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    return ArtifactQualityIssue(
+        code="html_module_script_typescript_source",
+        message=message,
+        path=relative_path,
+        source="html_module_script_scanner",
+        metadata={
+            "raw": str(error or "").strip(),
+            "html_path": relative_path,
+            "script_src": src,
+        },
+    )
+
+
+def _scan_html_typescript_module_script_evidence(
+    full_path: Path,
+    text: str,
+    relative_path: str,
+) -> _FileArtifactQualityEvidence:
+    """Return HTML module-script findings as strings and direct typed issues."""
+
     if full_path.suffix.lower() not in {".html", ".htm"}:
-        return []
+        return _FileArtifactQualityEvidence()
     errors: list[str] = []
+    issues: list[ArtifactQualityIssue] = []
     for match in _HTML_TYPESCRIPT_MODULE_SCRIPT_RE.finditer(text):
         src = str(match.group("src") or "").strip()
         if src:
-            errors.append(
+            error = (
                 "Artifact quality scan failed: HTML module script references TypeScript source "
                 f"{src!r} in {relative_path}; static entrypoints must load JavaScript"
             )
-    return errors
+            errors.append(error)
+            issues.append(_html_module_script_quality_issue(error, relative_path, src=src))
+    return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
 
 
 def _typescript_isolated_modules_type_reexport_error(root_full: Path, text: str) -> str:
