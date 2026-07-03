@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from polaris.cells.roles.kernel.internal.transaction.constants import ACTIVE_WRITE_TOOLS, WRITE_TOOLS
 from polaris.cells.roles.kernel.internal.transaction.write_authority import (
     extract_target_path_from_payload,
     is_authoritative_write_path,
@@ -61,19 +62,6 @@ _READ_TOOLS: frozenset[str] = frozenset(
     }
 )
 
-_WRITE_TOOLS: frozenset[str] = frozenset(
-    {
-        "write_file",
-        "edit_file",
-        "edit_blocks",
-        "precision_edit",
-        "search_replace",
-        "apply_diff",
-        "repo_apply_diff",
-        "append_to_file",
-    }
-)
-
 _VERIFICATION_TOOLS: frozenset[str] = frozenset(
     {
         "execute_command",
@@ -104,48 +92,11 @@ _PHASE_TOOL_WHITELIST: dict[Phase, frozenset[str]] = {
             "repo_read_range",
         }
     ),
-    Phase.CONTENT_GATHERED: frozenset(
-        {
-            # CONTENT_GATHERED 阶段：只允许写工具和验证工具
-            # 禁止所有读工具和探索工具，防止无限重读死循环
-            "write_file",
-            "edit_file",
-            "edit_blocks",
-            "precision_edit",
-            "search_replace",
-            "apply_diff",
-            "repo_apply_diff",
-            "append_to_file",
-            "execute_command",
-            "pytest",
-            "npm_test",
-            "run_tests",
-            "python",
-            "node",
-            "final_answer",
-            "ask_user",
-        }
-    ),
-    Phase.IMPLEMENTING: frozenset(
-        {
-            "write_file",
-            "edit_file",
-            "edit_blocks",
-            "precision_edit",
-            "search_replace",
-            "apply_diff",
-            "repo_apply_diff",
-            "append_to_file",
-            "execute_command",
-            "pytest",
-            "npm_test",
-            "run_tests",
-            "python",
-            "node",
-            "final_answer",
-            "ask_user",
-        }
-    ),
+    # CONTENT_GATHERED / IMPLEMENTING: allow only active write tools plus
+    # verification/control tools. Deprecated write tools remain observable in
+    # receipts but are not admitted as future phase actions.
+    Phase.CONTENT_GATHERED: ACTIVE_WRITE_TOOLS | _VERIFICATION_TOOLS | frozenset({"final_answer", "ask_user"}),
+    Phase.IMPLEMENTING: ACTIVE_WRITE_TOOLS | _VERIFICATION_TOOLS | frozenset({"final_answer", "ask_user"}),
     Phase.VERIFYING: frozenset(
         {
             "execute_command",
@@ -192,7 +143,7 @@ class ToolResult:
                 bytes_read = len(result_data.encode("utf-8"))
 
         # 判断是否有写副作用
-        is_write = tool_name in _WRITE_TOOLS
+        is_write = tool_name in WRITE_TOOLS
         target_path = extract_target_path_from_payload(result) or ""
         is_authoritative_write = is_write and is_authoritative_write_path(target_path)
 

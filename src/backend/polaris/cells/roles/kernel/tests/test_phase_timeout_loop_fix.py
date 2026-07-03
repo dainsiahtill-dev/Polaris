@@ -462,6 +462,27 @@ class TestPhaseManagerTimeout:
 
         assert pm.current_phase == Phase.CONTENT_GATHERED
 
+    def test_deprecated_exact_edit_is_observed_but_not_phase_admitted(self) -> None:
+        """Deprecated write tools remain historical observations, not future phase actions."""
+        from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
+            _PHASE_TOOL_WHITELIST,
+            ToolResult,
+        )
+
+        retired_tool_name = "precision" + "_edit"
+        result = ToolResult.from_batch_result(
+            {
+                "tool_name": retired_tool_name,
+                "status": "success",
+                "arguments": {"file": "src/app.py"},
+                "result": {"file": "src/app.py"},
+            }
+        )
+
+        assert result.is_write is True
+        assert retired_tool_name not in _PHASE_TOOL_WHITELIST[Phase.CONTENT_GATHERED]
+        assert "edit_blocks" in _PHASE_TOOL_WHITELIST[Phase.CONTENT_GATHERED]
+
     def test_dot_polaris_runtime_write_is_not_authoritative(self) -> None:
         """`.polaris/**` 运行时写入不得满足 authoritative write。"""
         from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
