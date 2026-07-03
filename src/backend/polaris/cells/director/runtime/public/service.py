@@ -1102,12 +1102,12 @@ def query_director_repair_plan_probe(query: QueryDirectorRepairPlanProbeV1) -> D
     probe_items: list[DirectorRepairPlanProbeItemV1] = []
     for source_tool in candidate_source_tools:
         matched_items = _coverage_items_for_source_tool(coverage, source_tool)
-        matched_errors = tuple(_artifact_quality_error_from_coverage_item(item) for item in matched_items)
+        matched_diagnostics = tuple(_repair_diagnostic_from_coverage_item(item) for item in matched_items)
         planning = plan_director_repair(
             PlanDirectorRepairCommandV1(
                 source_tool=source_tool,
                 base_files=query.base_files,
-                artifact_quality_errors=matched_errors,
+                diagnostics=matched_diagnostics,
                 mode=query.mode,
                 advisor_notes=query.advisor_notes,
                 metadata={
@@ -1451,24 +1451,32 @@ def _coverage_items_for_source_tool(
     return tuple(item for item in coverage.items if source_tool in item.matched_source_tools)
 
 
-def _artifact_quality_error_from_coverage_item(item: DirectorRepairDiagnosticCoverageV1) -> str:
+def _repair_diagnostic_from_coverage_item(item: DirectorRepairDiagnosticCoverageV1) -> RepairDiagnosticV1:
     diagnostic = dict(item.diagnostic)
     raw = str(diagnostic.get("raw") or "").strip()
-    if raw:
-        return raw
-    path = str(diagnostic.get("path") or "").strip()
-    code = str(diagnostic.get("code") or "").strip()
+    path = str(diagnostic.get("path") or "").strip() or None
+    code = str(diagnostic.get("code") or "artifact_quality_issue").strip() or "artifact_quality_issue"
     message = str(diagnostic.get("message") or "").strip()
+    source = str(diagnostic.get("source") or "artifact_quality").strip() or "artifact_quality"
+    severity = str(diagnostic.get("severity") or "error").strip() or "error"
+    metadata = diagnostic.get("metadata")
+    metadata_payload = dict(metadata) if isinstance(metadata, Mapping) else {}
+    if raw and "raw" not in metadata_payload:
+        metadata_payload["raw"] = raw
     line = diagnostic.get("line")
+    if isinstance(line, int) and line > 0 and "line" not in metadata_payload:
+        metadata_payload["line"] = line
     column = diagnostic.get("column")
-    location = path
-    if path and line:
-        location = f"{path}({line},{column or 1})"
-    if location and code:
-        return f"{location}: error {code}: {message}"
-    if code:
-        return f"error {code}: {message}"
-    return message
+    if isinstance(column, int) and column > 0 and "column" not in metadata_payload:
+        metadata_payload["column"] = column
+    return RepairDiagnosticV1(
+        source=source,
+        code=code,
+        message=message,
+        path=path,
+        severity=severity,
+        metadata=metadata_payload,
+    )
 
 
 def _plan_probe_item_status(

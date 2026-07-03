@@ -171,6 +171,7 @@ from polaris.cells.director.runtime.public import (
     query_director_repair_strategy_catalog,
     run_director_materialization_quality_repair_facade,
     run_director_repair,
+    service as runtime_public_service,
     validate_director_repair_advisory,
 )
 from polaris.kernelone.quality import artifact_quality_issues_from_errors
@@ -513,6 +514,50 @@ def test_javascript_module_error_with_unquoted_export_name_stays_javascript() ->
     assert probe.status == "covered_plannable"
     assert "deterministic_javascript_esm_commonjs_entrypoint_repair" in probe.plannable_source_tools
     assert no_stack_probe.status == "covered_plannable"
+
+
+def test_plan_probe_passes_coverage_items_as_typed_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
+    error = (
+        "Artifact quality scan failed: workspace validation command failed (npm run start): "
+        "file:///tmp/project/src/index.js:1\n"
+        "SyntaxError: The requested module ./engine/AlchemyEngine.js "
+        "does not provide an export named default"
+    )
+    captured: list[PlanDirectorRepairCommandV1] = []
+
+    def fake_plan(command: PlanDirectorRepairCommandV1) -> DirectorRepairPlanningResultV1:
+        captured.append(command)
+        return DirectorRepairPlanningResultV1(
+            ok=False,
+            planned=False,
+            source_tool=command.source_tool,
+            diagnostic_count=len(command.diagnostics),
+            error_code="test_probe_planner",
+        )
+
+    monkeypatch.setattr(runtime_public_service, "plan_director_repair", fake_plan)
+    result = runtime_public_service.query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=(),
+            artifact_quality_issues=tuple(artifact_quality_issues_from_errors([error])),
+            base_files={
+                "package.json": '{"type":"module","scripts":{"start":"node src/index.js"}}',
+                "src/index.js": 'import AlchemyEngine from "./engine/AlchemyEngine.js";\n',
+                "src/engine/AlchemyEngine.js": "class AlchemyEngine {}\nmodule.exports = AlchemyEngine;\n",
+            },
+            source_tools=("deterministic_javascript_esm_commonjs_entrypoint_repair",),
+        )
+    )
+
+    assert result.items
+    assert captured
+    command = captured[0]
+    assert command.artifact_quality_errors == ()
+    assert len(command.diagnostics) == 1
+    diagnostic = command.diagnostics[0]
+    assert diagnostic.code == "javascript_module_error"
+    assert diagnostic.source == "runtime_smoke"
+    assert diagnostic.metadata["raw"] == error
 
 
 def test_materialization_allowed_paths_query_merges_base_and_runtime_changed_paths() -> None:
