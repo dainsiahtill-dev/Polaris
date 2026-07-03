@@ -93,6 +93,7 @@ from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy impor
 )
 from polaris.cells.director.runtime.internal.repair_kernel.contracts import FILE_ABSENT_HASH, sha256_text
 from polaris.cells.director.runtime.internal.repair_kernel.generic_hygiene_syntax import (
+    SCAFFOLD_MARKER_QUALITY_CLEANUP_SOURCE_TOOL,
     build_scaffold_marker_cleanup_plan,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.java_syntax import (
@@ -2651,6 +2652,79 @@ def test_runtime_dispatcher_supported_binding_runs_typed_diagnostics_without_leg
     assert result.ok is True
     assert writes == []
     assert target.read_text(encoding="utf-8") == "const label = makeLabel(String(42), width);\n"
+
+
+def test_runtime_dispatcher_generic_hygiene_uses_typed_scaffold_diagnostic_path() -> None:
+    content = 'console.log("Polaris TypeScript scaffold");\n'
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="scaffold_marker",
+        message="Scaffold marker remains in generated source.",
+        path="src/main.ts",
+        raw="Scaffold marker remains in generated source.",
+        metadata={"stable_issue_id": "typed-generic-scaffold-marker"},
+    )
+
+    planning = plan_runtime_repair(
+        source_tool=SCAFFOLD_MARKER_QUALITY_CLEANUP_SOURCE_TOOL,
+        base_files={"src/main.ts": content},
+        artifact_quality_errors=(),
+        repair_diagnostics=(diagnostic,),
+        mode="shadow",
+    )
+
+    assert planning.plan is not None
+    assert planning.composition is not None
+    assert planning.diagnostics[0].metadata["stable_issue_id"] == "typed-generic-scaffold-marker"
+    assert planning.plan.diagnostics[0].metadata["stable_issue_id"] == "typed-generic-scaffold-marker"
+    assert planning.composition.patches[0].content_after == 'console.log("TypeScript application");\n'
+
+
+def test_runtime_dispatcher_generic_hygiene_runs_typed_scaffold_diagnostic_path(tmp_path: Path) -> None:
+    relative_path = "src/main.ts"
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    content = 'console.log("Polaris TypeScript scaffold");\n'
+    target.write_text(content, encoding="utf-8")
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="scaffold_marker",
+        message="Scaffold marker remains in generated source.",
+        path=relative_path,
+        raw="Scaffold marker remains in generated source.",
+        metadata={"stable_issue_id": "typed-generic-scaffold-marker-run"},
+    )
+    writes: list[str] = []
+
+    def writer(path: str, updated: str) -> dict[str, object]:
+        writes.append(path)
+        raise AssertionError("typed scaffold marker cleanup must prefer edit_file over write_file")
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        current = target.read_text(encoding="utf-8")
+        assert operation.span_start is not None
+        assert operation.span_end is not None
+        target.write_text(
+            current[: operation.span_start] + str(operation.replacement or "") + current[operation.span_end :],
+            encoding="utf-8",
+        )
+        return {"ok": True}
+
+    result = run_runtime_repair(
+        source_tool=SCAFFOLD_MARKER_QUALITY_CLEANUP_SOURCE_TOOL,
+        workspace=tmp_path,
+        base_files={relative_path: content},
+        artifact_quality_errors=(),
+        repair_diagnostics=(diagnostic,),
+        writer=writer,
+        editor=editor,
+        allowed_paths=(relative_path,),
+    )
+
+    assert result.ok is True
+    assert writes == []
+    assert target.read_text(encoding="utf-8") == 'console.log("TypeScript application");\n'
+    assert result.planning.diagnostics[0].metadata["stable_issue_id"] == "typed-generic-scaffold-marker-run"
 
 
 def test_single_runtime_entrypoints_preserve_typed_diagnostics_on_unsupported_tool(tmp_path: Path) -> None:

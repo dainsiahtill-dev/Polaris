@@ -375,10 +375,35 @@ RuntimePlannerFn = Callable[
     [Mapping[str, str], Sequence[str], Sequence[RepairAdvisorNote] | None, str],
     "RuntimeRepairPlanning",
 ]
+RuntimeTypedPlannerFn = Callable[
+    [
+        Mapping[str, str],
+        Sequence[RepairDiagnostic],
+        Sequence[str],
+        Sequence[RepairAdvisorNote] | None,
+        str,
+    ],
+    "RuntimeRepairPlanning",
+]
 RuntimeRunnerFn = Callable[
     [
         str | Path,
         Mapping[str, str],
+        Sequence[str],
+        WriteFileFn,
+        EditFileFn | None,
+        DeleteFileFn | None,
+        Sequence[str] | None,
+        Sequence[RepairAdvisorNote] | None,
+        str,
+    ],
+    "RuntimeRepairRun",
+]
+RuntimeTypedRunnerFn = Callable[
+    [
+        str | Path,
+        Mapping[str, str],
+        Sequence[RepairDiagnostic],
         Sequence[str],
         WriteFileFn,
         EditFileFn | None,
@@ -426,6 +451,8 @@ class RuntimeRepairBinding:
     rule_id: str
     planner: RuntimePlannerFn
     runner: RuntimeRunnerFn
+    typed_planner: RuntimeTypedPlannerFn | None = None
+    typed_runner: RuntimeTypedRunnerFn | None = None
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -477,13 +504,22 @@ def plan_runtime_repair(
         artifact_quality_errors,
         repair_diagnostics,
     )
+    initial_diagnostics = _initial_runtime_diagnostics(effective_artifact_quality_errors, repair_diagnostics)
     binding = _RUNTIME_REPAIR_BINDINGS.get(normalized_source_tool)
     if binding is not None:
+        if binding.typed_planner is not None and repair_diagnostics is not None:
+            return binding.typed_planner(
+                base_files,
+                initial_diagnostics,
+                effective_artifact_quality_errors,
+                notes,
+                mode,
+            )
         return binding.planner(base_files, effective_artifact_quality_errors, notes, mode)
 
     return RuntimeRepairPlanning(
         source_tool=normalized_source_tool,
-        diagnostics=_initial_runtime_diagnostics(effective_artifact_quality_errors, repair_diagnostics),
+        diagnostics=initial_diagnostics,
         plan=None,
         composition=None,
         advisor_notes=notes,
@@ -514,8 +550,22 @@ def run_runtime_repair(
         artifact_quality_errors,
         repair_diagnostics,
     )
+    initial_diagnostics = _initial_runtime_diagnostics(effective_artifact_quality_errors, repair_diagnostics)
     binding = _RUNTIME_REPAIR_BINDINGS.get(normalized_source_tool)
     if binding is not None:
+        if binding.typed_runner is not None and repair_diagnostics is not None:
+            return binding.typed_runner(
+                workspace,
+                base_files,
+                initial_diagnostics,
+                effective_artifact_quality_errors,
+                writer,
+                editor,
+                deleter,
+                allowed_paths,
+                notes,
+                mode,
+            )
         return binding.runner(
             workspace,
             base_files,
@@ -530,7 +580,7 @@ def run_runtime_repair(
 
     planning = RuntimeRepairPlanning(
         source_tool=normalized_source_tool,
-        diagnostics=_initial_runtime_diagnostics(effective_artifact_quality_errors, repair_diagnostics),
+        diagnostics=initial_diagnostics,
         plan=None,
         composition=None,
         advisor_notes=notes,
@@ -568,7 +618,10 @@ def build_runtime_repair_convergence_planner(
             if not tool_diagnostics:
                 continue
             artifact_quality_errors = _artifact_quality_errors_from_diagnostics(tool_diagnostics)
-            planning = binding.planner(base_files, artifact_quality_errors, notes, mode)
+            if binding.typed_planner is not None:
+                planning = binding.typed_planner(base_files, tool_diagnostics, artifact_quality_errors, notes, mode)
+            else:
+                planning = binding.planner(base_files, artifact_quality_errors, notes, mode)
             if planning.plan is None:
                 continue
             plans.append(
@@ -1762,6 +1815,27 @@ def _plan_generic_hygiene(source_tool: str) -> RuntimePlannerFn:
             source_tool=source_tool,
             base_files=base_files,
             artifact_quality_errors=artifact_quality_errors,
+            advisor_notes=advisor_notes,
+            mode=mode,
+        )
+        return _runtime_planning_from_generic_hygiene(planning)
+
+    return planner
+
+
+def _plan_generic_hygiene_typed(source_tool: str) -> RuntimeTypedPlannerFn:
+    def planner(
+        base_files: Mapping[str, str],
+        repair_diagnostics: Sequence[RepairDiagnostic],
+        artifact_quality_errors: Sequence[str],
+        advisor_notes: Sequence[RepairAdvisorNote] | None,
+        mode: str,
+    ) -> RuntimeRepairPlanning:
+        planning = plan_generic_hygiene_repair(
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=artifact_quality_errors,
+            repair_diagnostics=repair_diagnostics,
             advisor_notes=advisor_notes,
             mode=mode,
         )
@@ -3259,6 +3333,37 @@ def _run_generic_hygiene(source_tool: str) -> RuntimeRunnerFn:
     return runner
 
 
+def _run_generic_hygiene_typed(source_tool: str) -> RuntimeTypedRunnerFn:
+    def runner(
+        workspace: str | Path,
+        base_files: Mapping[str, str],
+        repair_diagnostics: Sequence[RepairDiagnostic],
+        artifact_quality_errors: Sequence[str],
+        writer: WriteFileFn,
+        editor: EditFileFn | None,
+        deleter: DeleteFileFn | None,
+        allowed_paths: Sequence[str] | None,
+        advisor_notes: Sequence[RepairAdvisorNote] | None,
+        mode: str,
+    ) -> RuntimeRepairRun:
+        run = run_generic_hygiene_repair(
+            source_tool=source_tool,
+            workspace=workspace,
+            base_files=base_files,
+            artifact_quality_errors=artifact_quality_errors,
+            repair_diagnostics=repair_diagnostics,
+            writer=writer,
+            editor=editor,
+            deleter=deleter,
+            allowed_paths=allowed_paths,
+            advisor_notes=advisor_notes,
+            mode=mode,
+        )
+        return _runtime_run_from_generic_hygiene(run)
+
+    return runner
+
+
 def _run_cpp_include_path(
     workspace: str | Path,
     base_files: Mapping[str, str],
@@ -4112,6 +4217,8 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         rule_id="generic.patch_residue_cleanup",
         planner=_plan_patch_residue_cleanup,
         runner=_run_patch_residue_cleanup,
+        typed_planner=_plan_generic_hygiene_typed(PATCH_RESIDUE_CLEANUP_SOURCE_TOOL),
+        typed_runner=_run_generic_hygiene_typed(PATCH_RESIDUE_CLEANUP_SOURCE_TOOL),
     ),
     QUALITY_REPAIR_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=QUALITY_REPAIR_SOURCE_TOOL,
@@ -4119,6 +4226,8 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         rule_id="generic.quality_repair",
         planner=_plan_generic_hygiene(QUALITY_REPAIR_SOURCE_TOOL),
         runner=_run_generic_hygiene(QUALITY_REPAIR_SOURCE_TOOL),
+        typed_planner=_plan_generic_hygiene_typed(QUALITY_REPAIR_SOURCE_TOOL),
+        typed_runner=_run_generic_hygiene_typed(QUALITY_REPAIR_SOURCE_TOOL),
     ),
     RUNTIME_DEPENDENCY_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=RUNTIME_DEPENDENCY_SOURCE_TOOL,
@@ -4126,6 +4235,8 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         rule_id="generic.runtime_dependency",
         planner=_plan_generic_hygiene(RUNTIME_DEPENDENCY_SOURCE_TOOL),
         runner=_run_generic_hygiene(RUNTIME_DEPENDENCY_SOURCE_TOOL),
+        typed_planner=_plan_generic_hygiene_typed(RUNTIME_DEPENDENCY_SOURCE_TOOL),
+        typed_runner=_run_generic_hygiene_typed(RUNTIME_DEPENDENCY_SOURCE_TOOL),
     ),
     SCAFFOLD_MARKER_CLEANUP_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=SCAFFOLD_MARKER_CLEANUP_SOURCE_TOOL,
@@ -4133,6 +4244,8 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         rule_id="generic.scaffold_marker_cleanup",
         planner=_plan_generic_hygiene(SCAFFOLD_MARKER_CLEANUP_SOURCE_TOOL),
         runner=_run_generic_hygiene(SCAFFOLD_MARKER_CLEANUP_SOURCE_TOOL),
+        typed_planner=_plan_generic_hygiene_typed(SCAFFOLD_MARKER_CLEANUP_SOURCE_TOOL),
+        typed_runner=_run_generic_hygiene_typed(SCAFFOLD_MARKER_CLEANUP_SOURCE_TOOL),
     ),
     SCAFFOLD_MARKER_QUALITY_CLEANUP_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=SCAFFOLD_MARKER_QUALITY_CLEANUP_SOURCE_TOOL,
@@ -4140,6 +4253,8 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         rule_id="generic.scaffold_marker_quality_cleanup",
         planner=_plan_generic_hygiene(SCAFFOLD_MARKER_QUALITY_CLEANUP_SOURCE_TOOL),
         runner=_run_generic_hygiene(SCAFFOLD_MARKER_QUALITY_CLEANUP_SOURCE_TOOL),
+        typed_planner=_plan_generic_hygiene_typed(SCAFFOLD_MARKER_QUALITY_CLEANUP_SOURCE_TOOL),
+        typed_runner=_run_generic_hygiene_typed(SCAFFOLD_MARKER_QUALITY_CLEANUP_SOURCE_TOOL),
     ),
     SCAFFOLD_RESIDUE_CLEANUP_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=SCAFFOLD_RESIDUE_CLEANUP_SOURCE_TOOL,
@@ -4147,6 +4262,8 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         rule_id="generic.scaffold_residue_cleanup",
         planner=_plan_generic_hygiene(SCAFFOLD_RESIDUE_CLEANUP_SOURCE_TOOL),
         runner=_run_generic_hygiene(SCAFFOLD_RESIDUE_CLEANUP_SOURCE_TOOL),
+        typed_planner=_plan_generic_hygiene_typed(SCAFFOLD_RESIDUE_CLEANUP_SOURCE_TOOL),
+        typed_runner=_run_generic_hygiene_typed(SCAFFOLD_RESIDUE_CLEANUP_SOURCE_TOOL),
     ),
     JAVA_ACCESSOR_ALIAS_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=JAVA_ACCESSOR_ALIAS_SOURCE_TOOL,

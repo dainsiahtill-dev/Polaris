@@ -431,6 +431,10 @@ def _span_context_metadata(content: str, start: int, end: int) -> dict[str, str 
 def _scaffold_marker_error_paths(diagnostics: Sequence[RepairDiagnostic]) -> tuple[str, ...]:
     paths: list[str] = []
     for diagnostic in diagnostics:
+        typed_path = _typed_scaffold_marker_error_path(diagnostic)
+        if typed_path:
+            paths.append(typed_path)
+            continue
         text = "\n".join(
             item
             for item in (
@@ -446,6 +450,19 @@ def _scaffold_marker_error_paths(diagnostics: Sequence[RepairDiagnostic]) -> tup
             if path:
                 paths.append(path)
     return tuple(dict.fromkeys(paths))
+
+
+def _typed_scaffold_marker_error_path(diagnostic: RepairDiagnostic) -> str:
+    path = _normalize_repair_path(str(diagnostic.path or ""))
+    if not path:
+        return ""
+    code = str(diagnostic.code or "").casefold()
+    if "scaffold_marker" in code or "placeholder" in code:
+        return path
+    metadata_kind = str(diagnostic.metadata.get("issue_kind") or diagnostic.metadata.get("archetype") or "").casefold()
+    if "scaffold_marker" in metadata_kind or "placeholder" in metadata_kind:
+        return path
+    return ""
 
 
 def _parse_undeclared_runtime_import_packages(diagnostics: Sequence[RepairDiagnostic]) -> tuple[str, ...]:

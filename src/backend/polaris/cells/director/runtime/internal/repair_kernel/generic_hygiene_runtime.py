@@ -61,13 +61,17 @@ def plan_generic_hygiene_repair(
     source_tool: str,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
 ) -> GenericHygienePlanning:
     """Plan generic repair source tools inside the runtime kernel."""
 
     normalized_base = _normalize_base_files(base_files)
-    diagnostics = tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
+    diagnostics = _diagnostics_for_generic_hygiene(
+        artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
+    )
     notes = tuple(advisor_notes or ())
     source_tool_hint = str(source_tool or "").strip()
     plan = build_generic_hygiene_plan(
@@ -100,6 +104,7 @@ def plan_patch_residue_cleanup_repair(
     *,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
 ) -> PatchResidueCleanupPlanning:
@@ -109,6 +114,7 @@ def plan_patch_residue_cleanup_repair(
         source_tool=PATCH_RESIDUE_CLEANUP_SOURCE_TOOL,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
         advisor_notes=advisor_notes,
         mode=mode,
     )
@@ -127,6 +133,7 @@ def run_generic_hygiene_repair(
     workspace: str | Path,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
     writer: WriteFileFn,
     editor: EditFileFn | None = None,
     deleter: DeleteFileFn | None = None,
@@ -141,6 +148,7 @@ def run_generic_hygiene_repair(
         source_tool=source_tool,
         base_files=normalized_base,
         artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
         advisor_notes=advisor_notes,
         mode=mode,
     )
@@ -200,6 +208,7 @@ def run_patch_residue_cleanup_repair(
     workspace: str | Path,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
     writer: WriteFileFn,
     editor: EditFileFn | None = None,
     allowed_paths: Sequence[str] | None = None,
@@ -213,6 +222,7 @@ def run_patch_residue_cleanup_repair(
         workspace=workspace,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
         writer=writer,
         editor=editor,
         allowed_paths=allowed_paths,
@@ -228,6 +238,16 @@ def run_patch_residue_cleanup_repair(
         error_code=run.error_code,
         error_message=run.error_message,
     )
+
+
+def _diagnostics_for_generic_hygiene(
+    *,
+    artifact_quality_errors: Sequence[str],
+    repair_diagnostics: Sequence[RepairDiagnostic] | None,
+) -> tuple[RepairDiagnostic, ...]:
+    if repair_diagnostics is not None:
+        return tuple(repair_diagnostics)
+    return tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
 
 
 def _normalize_base_files(base_files: Mapping[str, str]) -> dict[str, str]:
