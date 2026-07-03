@@ -34,9 +34,6 @@ from polaris.kernelone.runtime.execution_runtime import (
 )
 from polaris.kernelone.trace import create_task_with_context
 
-# Backward compatibility alias
-DEFAULT_PROCESS_TIMEOUT_SECONDS = EXECUTION_DEFAULT_PROCESS_TIMEOUT_SECONDS
-
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine, Iterable, Sequence
     from pathlib import Path
@@ -75,7 +72,7 @@ class ProcessSpec:
     cwd: Path | None = None
     env: dict[str, str] | None = None
     stdin_lines: list[str] | None = None
-    timeout_seconds: float | None = DEFAULT_PROCESS_TIMEOUT_SECONDS
+    timeout_seconds: float | None = EXECUTION_DEFAULT_PROCESS_TIMEOUT_SECONDS
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

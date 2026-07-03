@@ -19,13 +19,6 @@ Migration notice (2026-03-22):
 
 from __future__ import annotations
 
-from polaris.kernelone.constants import (
-    EXECUTION_DEFAULT_ASYNC_CONCURRENCY,
-    EXECUTION_DEFAULT_BLOCKING_CONCURRENCY,
-    EXECUTION_DEFAULT_PROCESS_CONCURRENCY,
-    EXECUTION_DEFAULT_PROCESS_TIMEOUT_SECONDS,
-)
-
 # Result is now canonical from the contracts layer
 from polaris.kernelone.contracts.technical import (
     KernelError,
@@ -69,17 +62,8 @@ from polaris.kernelone.runtime.metrics import (
     reset_metrics,
 )
 
-DEFAULT_ASYNC_CONCURRENCY = EXECUTION_DEFAULT_ASYNC_CONCURRENCY
-DEFAULT_BLOCKING_CONCURRENCY = EXECUTION_DEFAULT_BLOCKING_CONCURRENCY
-DEFAULT_PROCESS_CONCURRENCY = EXECUTION_DEFAULT_PROCESS_CONCURRENCY
-DEFAULT_PROCESS_TIMEOUT_SECONDS = EXECUTION_DEFAULT_PROCESS_TIMEOUT_SECONDS
-
 __all__ = [
     # Unified execution substrate
-    "DEFAULT_ASYNC_CONCURRENCY",
-    "DEFAULT_BLOCKING_CONCURRENCY",
-    "DEFAULT_PROCESS_CONCURRENCY",
-    "DEFAULT_PROCESS_TIMEOUT_SECONDS",
     # High-level facade for migration/integration
     "AsyncTaskSpec",
     "BatchCancelResult",
