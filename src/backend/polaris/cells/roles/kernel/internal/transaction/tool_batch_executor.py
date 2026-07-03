@@ -816,9 +816,7 @@ def _append_tool_batch_receipts_to_run_ledger(
 ) -> None:
     decoded_count = len(invocations or [])
     merged_receipt = _merge_batch_receipts(receipts)
-    result_count = _batch_result_count(receipts)
-    has_authoritative_receipt = bool(merged_receipt and result_count > 0)
-    dispatched_count = result_count if has_authoritative_receipt else 0
+    has_authoritative_receipt = bool(merged_receipt and _batch_result_count(receipts) > 0)
     effect_receipts = _effect_receipts_from_batch_receipts(receipts) if merged_receipt else []
     token = next(
         (
@@ -842,7 +840,6 @@ def _append_tool_batch_receipts_to_run_ledger(
         provider_response_hash=provider_response_hash,
         native_tool_calls_count=native_tool_calls_count,
         decoded_tool_calls_count=decoded_count,
-        dispatched_tool_calls_count=dispatched_count,
         receipts=receipts,
         dispatch_status="" if has_authoritative_receipt else "dropped",
         failure_class="" if has_authoritative_receipt else "TOOL_DISPATCH_DROPPED",

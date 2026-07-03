@@ -49,6 +49,38 @@ def test_tool_lifecycle_receipt_links_batch_and_effect_refs() -> None:
     assert receipt["effect_receipt_refs"][0]["tool_name"] == "write_file"
 
 
+def test_tool_lifecycle_receipt_derives_dispatched_count_from_batch_receipts() -> None:
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=0,
+        receipts=[
+            {
+                "batch_id": "batch-1",
+                "results": [
+                    {
+                        "call_id": "call-1",
+                        "tool_name": "read_file",
+                        "status": "success",
+                        "result": {"ok": True},
+                    }
+                ],
+                "success_count": 1,
+                "failure_count": 0,
+            }
+        ],
+    ).to_dict()
+
+    assert receipt["dispatch_status"] == "dispatched"
+    assert receipt["dispatched_tool_calls_count"] == 1
+    assert receipt["tool_result_count"] == 1
+    assert receipt["failure_class"] == ""
+
+
 def test_tool_lifecycle_receipt_detects_missing_batch_receipt() -> None:
     receipt = build_tool_call_lifecycle_receipt(
         run_id="run-1",

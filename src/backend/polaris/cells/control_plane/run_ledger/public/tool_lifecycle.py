@@ -234,6 +234,8 @@ def build_tool_call_lifecycle_receipt(
     native_count = len(native_envelope_refs) if native_envelope_refs else _int_value(native_tool_calls_count)
     decoded_count = _int_value(decoded_tool_calls_count)
     dispatched_count = _int_value(dispatched_tool_calls_count)
+    if dispatched_count <= 0 and result_count > 0:
+        dispatched_count = result_count
     status = _clean_string(dispatch_status)
     failure = normalize_failure_class(failure_class)
     dropped: list[dict[str, Any]] = _dropped_tool_call_refs(dropped_tool_calls)
