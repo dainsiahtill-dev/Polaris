@@ -12,7 +12,7 @@ from typing import Any
 from ..language_profiles import resolve_extension_language_map
 from ..polaris_paths import default_accel_runtime_home
 
-LEGACY_DEFAULT_INDEX_INCLUDE = ["src/**", "accel/**", "tests/**"]
+BUILTIN_DEFAULT_INDEX_INCLUDE = ["src/**", "accel/**", "tests/**"]
 DEFAULT_INDEX_EXCLUDES = [
     ".git/**",
     "node_modules/**",
@@ -88,9 +88,9 @@ def _normalize_patterns(value: Any, fallback: list[str]) -> list[str]:
     return [text]
 
 
-def _is_legacy_default_include(includes: list[str]) -> bool:
+def _matches_builtin_default_include(includes: list[str]) -> bool:
     lowered = [item.strip().lower() for item in includes if str(item).strip()]
-    return sorted(lowered) == sorted(LEGACY_DEFAULT_INDEX_INCLUDE)
+    return sorted(lowered) == sorted(BUILTIN_DEFAULT_INDEX_INCLUDE)
 
 
 def _merge_exclude_patterns(excludes: list[str]) -> list[str]:
@@ -194,7 +194,7 @@ def collect_source_files(
     index_cfg = config.get("index", {})
     includes = _normalize_patterns(index_cfg.get("include", ["**/*"]), ["**/*"])
     scope_mode = _normalize_scope_mode(index_cfg.get("scope_mode", "auto"))
-    if scope_mode == "auto" and _is_legacy_default_include(includes):
+    if scope_mode == "auto" and _matches_builtin_default_include(includes):
         includes = ["**/*"]
     excludes = _merge_exclude_patterns(_normalize_patterns(index_cfg.get("exclude", []), []))
     max_file_mb = int(index_cfg.get("max_file_mb", 2))

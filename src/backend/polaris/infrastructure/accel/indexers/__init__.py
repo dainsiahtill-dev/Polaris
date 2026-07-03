@@ -50,7 +50,6 @@ INDEX_KEY_FIELDS = {
     "dependencies": "edge_from",
 }
 INDEX_PARALLEL_BACKENDS = {"auto", "process", "thread"}
-LEGACY_DEFAULT_INDEX_INCLUDE = ["src/**", "accel/**", "tests/**"]
 DEFAULT_INDEX_EXCLUDES = [
     ".git/**",
     "node_modules/**",
