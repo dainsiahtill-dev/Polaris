@@ -6,7 +6,7 @@
 - 所有可变状态封装进 DebugTracer 类，支持 install/uninstall 对称操作，
   测试可完全隔离。
 - 模块级 API（emit_debug_event, install_global_debug_hooks 等）委托给
-  一个默认实例 _default_tracer，保持向后兼容。
+  一个默认实例 _default_tracer，作为当前 public facade。
 - 测试应直接实例化 DebugTracer() 并调用 install/uninstall，而非使用
   模块级 API，从而避免交叉污染。
 """
@@ -256,7 +256,7 @@ def _sanitize_headers(headers: Any) -> dict[str, Any]:
     return out
 
 
-# 向后兼容的公开名称（旧代码可能直接 import sanitize_headers）
+# 当前公开名称：public facade 会从这里导出 sanitize_headers。
 sanitize_headers = _sanitize_headers
 
 
@@ -831,7 +831,7 @@ class DebugTracer:
 
 
 # =============================================================================
-# 默认实例（向后兼容的模块级 API）
+# 默认实例（模块级 public facade）
 # =============================================================================
 
 _default_tracer = DebugTracer()
@@ -858,7 +858,7 @@ def emit_debug_event(event: str, **payload: Any) -> None:
 
 
 def install_global_debug_hooks() -> None:
-    """安装默认追踪器的全局调试钩子（向后兼容）。"""
+    """安装默认追踪器的全局调试钩子。"""
     _default_tracer.install()
 
 
