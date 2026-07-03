@@ -2013,7 +2013,13 @@ def _included_evidence_refs(
     refs.extend(
         ref
         for flag, ref in _COVERAGE_FLAG_TO_REF.items()
-        if coverage.get(flag) and flag != "has_target_files"
+        if coverage.get(flag)
+        and flag
+        not in {
+            "has_pm_contract",
+            "has_chief_engineer_blueprint",
+            "has_target_files",
+        }
     )
     if request_metadata_summary.get("has_execution_profile"):
         refs.append("execution_profile")
@@ -2487,6 +2493,8 @@ def _final_request_evidence_coverage(
             "missing_schema_tools": missing_required_tools,
         },
         "structured_evidence": {
+            "pm_contract": bool(request_metadata_summary.get("has_pm_contract")),
+            "ce_blueprint": bool(request_metadata_summary.get("has_chief_engineer_blueprint")),
             "execution_envelope": bool(request_metadata_summary.get("has_execution_envelope")),
             "module_interface_contract": bool(request_metadata_summary.get("has_module_interface_contract")),
             "actual_sibling_exports": bool(request_metadata_summary.get("has_actual_sibling_exports")),

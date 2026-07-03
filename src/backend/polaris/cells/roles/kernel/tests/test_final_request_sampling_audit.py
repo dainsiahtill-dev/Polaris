@@ -434,6 +434,18 @@ def test_final_request_context_audit_includes_execution_envelope_coverage() -> N
             "director_execution_strategy": execution_strategy,
             "director_execution_envelope": execution_envelope,
             "execution_envelope_hash": "envelope-hash",
+            "pm_contract": {
+                "schema_version": "pm.task_contract.v1",
+                "task_id": "TASK-1",
+                "target_files": ["src/main.py"],
+                "acceptance": ["python src/main.py"],
+            },
+            "ce_blueprint": {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": "ce_TASK-1",
+                "target_files": ["src/main.py"],
+                "construction_plan": {"phase": "implement"},
+            },
         },
     )
     prepared = PreparedLLMRequest(
@@ -527,6 +539,11 @@ def test_final_request_evidence_tracks_module_interface_contract() -> None:
                     "rules": ["Every symbol imported from a sibling target module must be defined by that module."],
                 },
             },
+            "pm_contract": {
+                "schema_version": "pm.task_contract.v1",
+                "task_id": "TASK-1",
+                "target_files": ["src/models/weather.py", "src/engine/forecast.py"],
+            },
         },
     )
     prepared = PreparedLLMRequest(
@@ -611,6 +628,11 @@ def test_final_request_evidence_tracks_direct_actual_sibling_exports_payload() -
                 "schema_version": "chief_engineer.blueprint.v1",
                 "blueprint_id": "ce_TASK-2",
             },
+            "pm_contract": {
+                "schema_version": "pm.task_contract.v1",
+                "task_id": "TASK-2",
+                "target_files": ["src/main.ts"],
+            },
             "director_execution_envelope": {
                 "schema_version": "polaris.execution_envelope.v1",
                 "envelope_hash": "envelope-hash",
@@ -682,6 +704,17 @@ def test_final_request_evidence_reports_missing_module_interface_contract() -> N
                     "scope_paths": ["src/models/Fairy.ts"],
                 },
             },
+            "pm_contract": {
+                "schema_version": "pm.task_contract.v1",
+                "task_id": "TASK-1",
+                "target_files": ["src/models/Fairy.ts"],
+            },
+            "ce_blueprint": {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": "ce_TASK-1",
+                "target_files": ["src/models/Fairy.ts"],
+                "construction_plan": {"phase": "quality_repair"},
+            },
         },
     )
     prepared = PreparedLLMRequest(
@@ -741,6 +774,17 @@ def test_final_request_evidence_aliases_verification_failure_and_architecture_pl
                     "target_files": ["src/models/Fairy.ts"],
                     "scope_paths": ["src/models/Fairy.ts"],
                 },
+            },
+            "pm_contract": {
+                "schema_version": "pm.task_contract.v1",
+                "task_id": "TASK-1",
+                "target_files": ["src/models/Fairy.ts"],
+            },
+            "ce_blueprint": {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": "ce_TASK-1",
+                "target_files": ["src/models/Fairy.ts"],
+                "construction_plan": {"phase": "quality_repair"},
             },
         },
     )
@@ -813,6 +857,11 @@ def test_final_request_evidence_accepts_structured_architecture_plan_without_key
                         "decision": "Keep CLI wiring in src/main.ts and domain logic in src/models.",
                     }
                 ],
+            },
+            "pm_contract": {
+                "schema_version": "pm.task_contract.v1",
+                "task_id": "TASK-1",
+                "target_files": ["src/main.ts"],
             },
         },
     )
@@ -907,6 +956,17 @@ def test_final_request_evidence_coverage_is_ref_based_and_redacted_when_underuti
             "director_execution_strategy": execution_strategy,
             "director_execution_envelope": execution_envelope,
             "execution_envelope_hash": "envelope-hash",
+            "pm_contract": {
+                "schema_version": "pm.task_contract.v1",
+                "task_id": "TASK-1",
+                "target_files": ["src/main.py"],
+            },
+            "ce_blueprint": {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": "ce_TASK-1",
+                "target_files": ["src/main.py"],
+                "construction_plan": {"phase": "implement"},
+            },
         },
     )
     prepared = PreparedLLMRequest(
@@ -1225,6 +1285,60 @@ def test_final_request_evidence_ignores_untrusted_user_message_body_for_required
     assert violation["missing_required_refs"] == ["pm_contract", "ce_blueprint", "target_files"]
 
 
+def test_final_request_evidence_rejects_text_only_pm_and_ce_for_required_refs() -> None:
+    message = (
+        "PM Task Contract / 任务合同: TASK-1 target_files src/main.py. "
+        "Chief Engineer Blueprint / CE 蓝图交接: blueprint_id ce_TASK-1."
+    )
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "final_request_evidence_required": True,
+            "required_evidence": [
+                "pm_task_contract",
+                "chief_engineer_blueprint",
+                "target_files_or_declared_scopes",
+            ],
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+                "authorization": {
+                    "target_files": ["src/main.py"],
+                    "scope_paths": ["src/main.py"],
+                },
+            },
+            "chat_messages": [{"role": "system", "content": message}],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[{"role": "system", "content": message}],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert audit["coverage"]["has_pm_contract"] is True
+    assert audit["coverage"]["has_chief_engineer_blueprint"] is True
+    assert evidence_coverage["structured_evidence"]["pm_contract"] is False
+    assert evidence_coverage["structured_evidence"]["ce_blueprint"] is False
+    assert evidence_coverage["structured_evidence"]["target_files"] is True
+    assert "pm_contract" not in evidence_coverage["included_refs"]
+    assert "ce_blueprint" not in evidence_coverage["included_refs"]
+    assert evidence_coverage["missing_required_refs"] == ["pm_contract", "ce_blueprint"]
+
+
 def test_final_request_evidence_uses_structured_target_scope_without_text_needle() -> None:
     ai_request = AIRequest(
         task_type=TaskType.DIALOGUE,
@@ -1398,6 +1512,16 @@ def test_final_request_evidence_coverage_counts_current_provider_request() -> No
                     "target_files": ["src/main.py"],
                     "scope_paths": ["src/main.py"],
                 },
+            },
+            "pm_contract": {
+                "schema_version": "pm.task_contract.v1",
+                "task_id": "TASK-1",
+                "target_files": ["src/main.py"],
+            },
+            "ce_blueprint": {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": "ce_TASK-1",
+                "target_files": ["src/main.py"],
             },
             "chat_messages": [
                 {
