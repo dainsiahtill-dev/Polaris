@@ -511,7 +511,7 @@ class NetworkError(_get_network_error()):  # type: ignore[misc]
 
 
 # ============================================================================
-# Re-exports from kernelone.errors for backward compatibility
+# Shared resilience errors re-exported for the LLM engine boundary.
 # ============================================================================
 
 from polaris.kernelone.errors import CircuitBreakerOpenError  # noqa: E402
@@ -731,10 +731,9 @@ def wrap_tool_result_error(
 
 
 # ============================================================================
-# Backward Compatibility Aliases
+# Public exports
 # ============================================================================
 
-# Keep old name as alias for migration period
 __all__ = [
     "AuthenticationError",
     "BudgetExceededError",
@@ -753,7 +752,6 @@ __all__ = [
     "ProviderError",
     "RateLimitError",
     "ResponseParseError",
-    "TimeoutError",  # Backward compatibility alias
     # Execution errors
     "ToolExecutionError",
     # Parse errors
