@@ -121,7 +121,7 @@ class CourtWorkflowError(RuntimeError):
 @runtime_checkable
 class IDocsCourtWorkflow(Protocol):
     async def start_court(self, document_id: str, context: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Compatibility API kept for existing integrations."""
+        """Start a court workflow through the public integration entrypoint."""
 
 
 __all__ = [
