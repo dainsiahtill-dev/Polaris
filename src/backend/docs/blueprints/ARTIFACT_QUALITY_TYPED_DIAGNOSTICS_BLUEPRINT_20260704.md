@@ -38,9 +38,17 @@ Typed issues are evidence, not repair authorization. Repair still flows through
   projection, while artifact-quality evidence consumes the typed payload with
   stable codes `declared_interface_missing` and
   `declared_interface_signature_missing`.
+- `_scan_file_evidence()` now returns per-file legacy strings and direct
+  `ArtifactQualityIssue` values together. The legacy `_scan_file()` string
+  API remains as a projection, while `scan_workspace_artifact_quality_evidence()`
+  consumes direct per-file issues and avoids reparsing the same error into a
+  duplicate typed issue.
 
 ## 4. Verification
 
 - `rtk pytest src/backend/polaris/tests/unit/kernelone/quality/test_interface_ledger.py src/backend/polaris/kernelone/quality/tests/test_artifact_quality.py -q`
 - `rtk ruff check src/backend/polaris/kernelone/quality/interface_ledger.py src/backend/polaris/kernelone/quality/artifact_quality.py src/backend/polaris/tests/unit/kernelone/quality/test_interface_ledger.py src/backend/polaris/kernelone/quality/tests/test_artifact_quality.py`
 - `rtk mypy src/backend/polaris/kernelone/quality/interface_ledger.py src/backend/polaris/kernelone/quality/artifact_quality.py`
+- `rtk pytest src/backend/polaris/kernelone/quality/tests/test_artifact_quality.py -q`
+- `rtk ruff check src/backend/polaris/kernelone/quality/artifact_quality.py src/backend/polaris/kernelone/quality/tests/test_artifact_quality.py`
+- `rtk mypy src/backend/polaris/kernelone/quality/artifact_quality.py`

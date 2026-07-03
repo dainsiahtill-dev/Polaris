@@ -427,6 +427,14 @@ class ArtifactQualityEvidence:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class _FileArtifactQualityEvidence:
+    """Internal per-file scanner output with legacy strings and typed issues."""
+
+    errors: tuple[str, ...] = ()
+    issues: tuple[ArtifactQualityIssue, ...] = ()
+
+
 _ARTIFACT_QUALITY_ERROR_PREFIX = "Artifact quality scan failed:"
 _ARTIFACT_QUALITY_PATH_EXTENSIONS = (
     ".c",
@@ -860,11 +868,14 @@ def scan_workspace_artifact_quality_evidence(
             if len(errors) >= 50:
                 return _artifact_quality_evidence(
                     errors=errors,
+                    issues=typed_issues,
                     scanned_relative_paths=tuple(scanned_relative_paths),
                 )
             relative_path = full_path.relative_to(root_full).as_posix()
             scanned_relative_paths.append(relative_path)
-            errors.extend(_scan_file(root_full, full_path, relative_path))
+            file_evidence = _scan_file_evidence(root_full, full_path, relative_path)
+            errors.extend(file_evidence.errors)
+            typed_issues.extend(file_evidence.issues)
         if len(errors) < 50:
             errors.extend(_scan_typescript_project_typecheck(root_full, scanned_relative_paths))
         if len(errors) < 50:
@@ -1099,18 +1110,32 @@ def _source_narration_contamination_error(relative_path: str, text: str) -> str:
 
 
 def _scan_file(root_full: Path, full_path: Path, relative_path: str) -> list[str]:
+    """Return legacy string findings for one file."""
+
+    return list(_scan_file_evidence(root_full, full_path, relative_path).errors)
+
+
+def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) -> _FileArtifactQualityEvidence:
+    """Return legacy and typed artifact-quality findings for one file."""
+
     try:
         text = full_path.read_text(encoding="utf-8", errors="replace")[:1_000_000]
     except (OSError, RuntimeError, ValueError):
-        return []
+        return _FileArtifactQualityEvidence()
 
     receipt_error = _tool_receipt_contamination_error(relative_path, text)
     if receipt_error:
-        return [receipt_error]
+        return _FileArtifactQualityEvidence(
+            errors=(receipt_error,),
+            issues=_artifact_quality_issues_from_errors((receipt_error,)),
+        )
 
     narration_error = _source_narration_contamination_error(relative_path, text)
     if narration_error:
-        return [narration_error]
+        return _FileArtifactQualityEvidence(
+            errors=(narration_error,),
+            issues=_artifact_quality_issues_from_errors((narration_error,)),
+        )
 
     errors: list[str] = []
     syntax = check_source_file_syntax(str(full_path))
@@ -1144,7 +1169,10 @@ def _scan_file(root_full: Path, full_path: Path, relative_path: str) -> list[str
                 "Artifact quality scan failed: repeated trivial arithmetic placeholder "
                 f"tests in {relative_path} (count={trivial_count})"
             )
-    return errors
+    return _FileArtifactQualityEvidence(
+        errors=tuple(errors),
+        issues=_artifact_quality_issues_from_errors(errors),
+    )
 
 
 def _scan_typescript_syntax_red_flags(root_full: Path, full_path: Path, text: str, relative_path: str) -> list[str]:
