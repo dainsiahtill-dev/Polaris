@@ -155,15 +155,37 @@ def native_tool_call_name(call: Mapping[str, Any]) -> str:
 _native_tool_call_name = native_tool_call_name
 
 
+def _valid_native_tool_call_envelopes(value: Any) -> tuple[Mapping[str, Any], ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(item for item in value if isinstance(item, Mapping))
+
+
+def _tool_call_lifecycle_receipts_from_metadata(
+    metadata: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], ...]:
+    receipts: list[Mapping[str, Any]] = []
+    receipt = metadata.get("tool_call_lifecycle_receipt")
+    if isinstance(receipt, Mapping):
+        receipts.append(receipt)
+    receipt_rows = metadata.get("tool_call_lifecycle_receipts")
+    if isinstance(receipt_rows, (list, tuple)):
+        receipts.extend(item for item in receipt_rows if isinstance(item, Mapping))
+    return tuple(receipts)
+
+
 def native_tool_call_envelopes_from_metadata(metadata: Mapping[str, Any] | None) -> tuple[Mapping[str, Any], ...]:
     """Return valid native tool-call envelope payloads from response metadata."""
 
     if not isinstance(metadata, Mapping):
         return ()
     for key in ("native_tool_call_envelopes", "native_tool_call_envelope_refs"):
-        envelopes = metadata.get(key)
-        if isinstance(envelopes, (list, tuple)):
-            valid_envelopes = tuple(item for item in envelopes if isinstance(item, Mapping))
+        valid_envelopes = _valid_native_tool_call_envelopes(metadata.get(key))
+        if valid_envelopes:
+            return valid_envelopes
+    for receipt in _tool_call_lifecycle_receipts_from_metadata(metadata):
+        for key in ("native_tool_call_envelope_refs", "native_tool_call_envelopes"):
+            valid_envelopes = _valid_native_tool_call_envelopes(receipt.get(key))
             if valid_envelopes:
                 return valid_envelopes
     return ()

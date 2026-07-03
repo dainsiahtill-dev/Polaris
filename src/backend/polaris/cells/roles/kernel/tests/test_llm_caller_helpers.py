@@ -753,6 +753,41 @@ class TestExtractNativeToolCalls:
         assert native_tool_call_count(metadata, raw_calls) == 1
         assert native_tool_call_names(metadata, raw_calls) == ["write_file"]
 
+    def test_native_tool_call_count_and_names_derive_from_lifecycle_receipt(self) -> None:
+        metadata = {
+            "tool_call_lifecycle_receipt": {
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "native_tool_call_envelope_refs": [
+                    {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
+                    {"schema_version": "native_tool_call_envelope.v1", "tool_name": "execute_command"},
+                ],
+            }
+        }
+        raw_calls = [{"function": {"name": "read_file"}}]
+
+        envelopes = native_tool_call_envelopes_from_metadata(metadata)
+
+        assert len(envelopes) == 2
+        assert native_tool_call_count(metadata, raw_calls) == 2
+        assert native_tool_call_names(metadata, raw_calls) == ["write_file", "execute_command"]
+
+    def test_native_tool_call_envelope_refs_fall_back_to_plural_lifecycle_receipts(self) -> None:
+        metadata = {
+            "native_tool_call_envelopes": ["bad legacy projection"],
+            "tool_call_lifecycle_receipts": [
+                {"schema_version": "tool_call_lifecycle_receipt.v1"},
+                {
+                    "schema_version": "tool_call_lifecycle_receipt.v1",
+                    "native_tool_call_envelope_refs": [
+                        {"schema_version": "native_tool_call_envelope.v1", "tool_name": "repo_tree"},
+                    ],
+                },
+            ],
+        }
+        raw_calls = [{"function": {"name": "read_file"}}]
+
+        assert native_tool_call_names(metadata, raw_calls) == ["repo_tree"]
+
     def test_native_tool_call_names_fallback_uses_shared_aliases(self) -> None:
         raw_calls = [
             {"functionName": "write_file", "arguments": {"path": "x.py"}},
