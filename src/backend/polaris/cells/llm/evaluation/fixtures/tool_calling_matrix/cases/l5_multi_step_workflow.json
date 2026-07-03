@@ -15,12 +15,12 @@
       "required_tools": ["read_file"],
       "required_any_tools": [
         ["search_code", "repo_rg", "grep", "glob"],
-        ["search_replace", "edit_file", "precision_edit"]
+        ["search_replace", "edit_file", "edit_blocks"]
       ],
       "ordered_tool_groups": [
         ["search_code", "repo_rg", "grep", "glob"],
         ["read_file"],
-        ["search_replace", "edit_file", "precision_edit"],
+        ["search_replace", "edit_file", "edit_blocks"],
         ["read_file"]
       ],
       "forbidden_tools": ["execute_command"],
@@ -32,7 +32,7 @@
       "required_tools": ["read_file"],
       "required_any_tools": [
         ["search_code", "repo_rg", "grep", "glob"],
-        ["search_replace", "edit_file", "precision_edit"]
+        ["search_replace", "edit_file", "edit_blocks"]
       ],
       "forbidden_tools": ["execute_command"],
       "min_tool_calls": 3,

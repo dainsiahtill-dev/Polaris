@@ -12,13 +12,13 @@
   "judge": {
     "score_threshold": 0.80,
     "stream": {
-      "required_tools": ["precision_edit", "execute_command"],
+      "required_tools": ["edit_blocks", "execute_command"],
       "min_tool_calls": 2,
       "max_tool_calls": 4,
-      "ordered_tool_groups": [["precision_edit"], ["execute_command"]]
+      "ordered_tool_groups": [["edit_blocks"], ["execute_command"]]
     },
     "non_stream": {
-      "required_tools": ["precision_edit", "execute_command"],
+      "required_tools": ["edit_blocks", "execute_command"],
       "min_tool_calls": 2
     },
     "parity": {

@@ -13,11 +13,11 @@
     "score_threshold": 0.75,
     "stream": {
       "required_any_tools": [
-        ["search_replace", "edit_file", "append_to_file", "precision_edit"]
+        ["search_replace", "edit_file", "append_to_file", "edit_blocks"]
       ],
       "required_tools": ["read_file"],
       "ordered_tool_groups": [
-        ["search_replace", "edit_file", "append_to_file", "precision_edit"],
+        ["search_replace", "edit_file", "append_to_file", "edit_blocks"],
         ["read_file"]
       ],
       "forbidden_tools": ["execute_command"],
@@ -27,7 +27,7 @@
     },
     "non_stream": {
       "required_any_tools": [
-        ["search_replace", "edit_file", "append_to_file", "precision_edit"]
+        ["search_replace", "edit_file", "append_to_file", "edit_blocks"]
       ],
       "required_tools": ["read_file"],
       "forbidden_tools": ["execute_command"],

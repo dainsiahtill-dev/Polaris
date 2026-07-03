@@ -14,11 +14,11 @@
     "stream": {
       "required_tools": ["read_file"],
       "required_any_tools": [
-        ["search_replace", "edit_file", "precision_edit"]
+        ["search_replace", "edit_file", "edit_blocks"]
       ],
       "ordered_tool_groups": [
         ["read_file"],
-        ["search_replace", "edit_file", "precision_edit"]
+        ["search_replace", "edit_file", "edit_blocks"]
       ],
       "forbidden_tools": ["repo_rg", "repo_tree"],
       "min_tool_calls": 2,
@@ -29,7 +29,7 @@
     "non_stream": {
       "required_tools": ["read_file"],
       "required_any_tools": [
-        ["search_replace", "edit_file", "precision_edit"]
+        ["search_replace", "edit_file", "edit_blocks"]
       ],
       "forbidden_tools": ["repo_rg", "repo_tree"],
       "min_tool_calls": 2,

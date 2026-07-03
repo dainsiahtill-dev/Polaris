@@ -14,11 +14,11 @@
     "stream": {
       "required_any_tools": [
         ["read_file", "repo_read_head", "repo_read_slice"],
-        ["search_replace", "edit_file", "precision_edit", "repo_apply_diff", "append_to_file"]
+        ["search_replace", "edit_file", "edit_blocks", "repo_apply_diff", "append_to_file"]
       ],
       "ordered_tool_groups": [
         ["read_file", "repo_read_head", "repo_read_slice"],
-        ["search_replace", "edit_file", "precision_edit", "repo_apply_diff", "append_to_file"]
+        ["search_replace", "edit_file", "edit_blocks", "repo_apply_diff", "append_to_file"]
       ],
       "forbidden_tools": ["execute_command"],
       "min_tool_calls": 2
@@ -26,7 +26,7 @@
     "non_stream": {
       "required_any_tools": [
         ["read_file", "repo_read_head", "repo_read_slice"],
-        ["search_replace", "edit_file", "precision_edit", "repo_apply_diff", "append_to_file"]
+        ["search_replace", "edit_file", "edit_blocks", "repo_apply_diff", "append_to_file"]
       ],
       "forbidden_tools": ["execute_command"],
       "min_tool_calls": 2
