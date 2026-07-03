@@ -117,15 +117,15 @@ def validate_event_timestamp(ts: str | None) -> bool:
     SECURITY: Prevents replay attacks using old cached events.
     """
     if not ts:
-        return True  # Allow events without timestamp (backward compat)
+        return True  # Timestamp is optional at the event-ingress boundary.
 
     try:
-        # Parse ISO 8601 UTC timestamps. Non-UTC values are allowed for
-        # backward compatibility with older runtime events.
+        # Only UTC timestamps can be safely checked against the replay window.
+        # Other accepted timestamp shapes pass through this permissive boundary.
         normalized = ts.replace("Z", "+00:00")
         parsed = datetime.fromisoformat(normalized)
         if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
-            return True  # Allow non-UTC timestamps for compatibility
+            return True  # Do not reject non-UTC timestamps solely on shape.
 
         event_time = parsed.timestamp()
         current_time = time.time()
@@ -133,7 +133,7 @@ def validate_event_timestamp(ts: str | None) -> bool:
 
         return age <= MAX_REPLAY_WINDOW_SECONDS
     except (ValueError, OSError):
-        return True  # Allow parsing failures for backward compat
+        return True  # Preserve ingress availability; later gates still apply.
 
 
 def generate_event_signature(event_id: str, timestamp: str, payload: dict[str, Any]) -> str:

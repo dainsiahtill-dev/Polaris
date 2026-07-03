@@ -148,13 +148,13 @@ class TestSecurityValidation:
         ).isoformat()
         assert validate_event_timestamp(old_ts) is False
 
-    def test_missing_timestamp_allowed(self) -> None:
-        """Verify missing timestamps are allowed for backward compatibility."""
+    def test_missing_timestamp_allowed_at_ingress_boundary(self) -> None:
+        """Verify missing timestamps are allowed at the ingress boundary."""
         assert validate_event_timestamp(None) is True
 
-    def test_non_utc_timestamps_allowed(self) -> None:
-        """Verify non-UTC timestamps are allowed for compatibility."""
-        # Non-UTC timestamps pass through for backward compatibility
+    def test_non_utc_timestamps_allowed_at_ingress_boundary(self) -> None:
+        """Verify non-UTC timestamps pass through the ingress boundary."""
+        # Non-UTC timestamps pass through; replay-window enforcement needs UTC.
         assert validate_event_timestamp("2026-05-01T12:00:00+08:00") is True
 
     # S1: Event signature generation and verification
