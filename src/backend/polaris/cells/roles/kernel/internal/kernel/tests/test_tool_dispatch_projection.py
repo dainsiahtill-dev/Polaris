@@ -115,5 +115,8 @@ def test_append_tool_dispatch_dropped_events_preserves_native_envelopes(
     lifecycle = captured["event"]["tool_call_lifecycle_receipt"]
     assert lifecycle["native_tool_calls_count"] == 2
     assert lifecycle["native_tool_call_envelope_refs"] == envelopes
-    assert lifecycle["dropped_tool_calls"] == [{"count": 2, "reason": "native_tool_calls_without_dispatch"}]
+    assert lifecycle["dropped_tool_calls"] == [
+        {"tool_name": "read_file", "envelope_id": "native-read", "reason": "tool_dispatch_dropped"},
+        {"tool_name": "write_file", "envelope_id": "native-write", "reason": "tool_dispatch_dropped"},
+    ]
     assert captured["task_boundary"]["tool_dispatch"]["native_tool_calls_count"] == 2

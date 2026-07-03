@@ -101,7 +101,6 @@ def append_tool_dispatch_dropped_control_plane_events(
 
     native_count = 1
     decoded_count = 0
-    dispatched_count = 0
     provider_response_hash = ""
     native_tool_call_envelopes: list[dict[str, Any]] = []
     dropped_tool_calls: list[dict[str, Any]] = []
@@ -115,7 +114,6 @@ def append_tool_dispatch_dropped_control_plane_events(
                 dropped_tool_calls = [dict(item) for item in dropped_refs if isinstance(item, dict)]
             native_count = len(native_tool_call_envelopes) or max(1, int(flag.get("native_tool_calls_count") or 1))
             decoded_count = max(0, int(flag.get("decoded_tool_calls_count") or 0))
-            dispatched_count = max(0, int(flag.get("dispatched_tool_calls_count") or 0))
             provider_response_hash = str(flag.get("provider_response_hash") or "").strip()
             break
     lifecycle = build_tool_call_lifecycle_receipt(
@@ -126,7 +124,6 @@ def append_tool_dispatch_dropped_control_plane_events(
         provider_response_hash=provider_response_hash,
         native_tool_calls_count=native_count,
         decoded_tool_calls_count=decoded_count,
-        dispatched_tool_calls_count=dispatched_count,
         receipts=[],
         dropped_tool_calls=dropped_tool_calls,
         native_tool_call_envelopes=native_tool_call_envelopes,
@@ -134,6 +131,7 @@ def append_tool_dispatch_dropped_control_plane_events(
         failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
         reason=reason,
     )
+    lifecycle_payload = lifecycle.to_dict()
     append_run_ledger_event(
         AppendRunLedgerEventCommandV1(
             workspace=workspace,
@@ -143,7 +141,7 @@ def append_tool_dispatch_dropped_control_plane_events(
                 "stage": "director_tool_dispatch",
                 "task_id": str(request.task_id or ""),
                 "run_id": str(request.run_id or turn_id),
-                "tool_call_lifecycle_receipt": lifecycle.to_dict(),
+                "tool_call_lifecycle_receipt": lifecycle_payload,
                 "job_token": {
                     "run_id": str(request.run_id or turn_id),
                     "task_id": str(request.task_id or ""),
@@ -164,7 +162,7 @@ def append_tool_dispatch_dropped_control_plane_events(
         tool_dispatch={
             "status": "dropped",
             "dropped": True,
-            "native_tool_calls_count": native_count,
+            "native_tool_calls_count": lifecycle_payload["native_tool_calls_count"],
             "provider_response_hash": provider_response_hash,
         },
         evidence_refs=[str(error_metadata.get("context_snapshot_ref") or "").strip()],
