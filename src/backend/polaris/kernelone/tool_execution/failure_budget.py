@@ -300,7 +300,10 @@ class FailureBudget:
     def _escalate_suggestion(self, pattern: ToolErrorPattern) -> str:
         """Generate escalation suggestion for ESCALATE decision."""
         # Build fallback chain for edit tools
-        edit_fallback_chain = "append_to_file -> precision_edit -> edit_file -> search_replace -> write_file"
+        edit_fallback_chain = (
+            "edit_blocks(line-range when possible) -> edit_file -> search_replace -> repo_apply_diff -> "
+            "write_file(only for create/full replacement) -> append_to_file(only for explicit append tasks)"
+        )
 
         suggestions_by_type = {
             "no_match": (
@@ -353,7 +356,7 @@ class FailureBudget:
             "FORCED ACTION: You MUST call read_file() now to verify the EXACT file content character-by-character. "
             "Copy every space, indent, and newline exactly as shown in the file. "
             "Do NOT guess or infer the content - you must read it directly. "
-            "After confirming the exact content, retry precision_edit with the verified string."
+            "After confirming the exact content, prefer an edit_blocks line-range edit or edit_file with verified text."
         )
 
     def _block_suggestion(self, pattern: ToolErrorPattern) -> str:
