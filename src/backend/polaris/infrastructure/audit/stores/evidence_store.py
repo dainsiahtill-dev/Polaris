@@ -36,7 +36,7 @@ class EvidenceStore:
     """File-based evidence storage for Director v2.
 
     Evidence files are stored OUTSIDE workspace to avoid pollution.
-    Compatible with original Director evidence format for cross-version access.
+    The canonical on-disk contract is ``evidence_{iteration}.json``.
     """
 
     def __init__(self, runtime_root: str | Path) -> None:
@@ -107,10 +107,7 @@ class EvidenceStore:
         # Primary evidence file: evidence_{iteration}.json
         evidence_file = task_dir / f"evidence_{iteration:05d}.json"
 
-        # Also save as CONTEXT file for compatibility with old Director
-        nonce = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         run_id = run_id or "run"
-        context_file = task_dir / (f"CONTEXT_{task_id}_{run_id}_{iteration:05d}_{stage}_{nonce}.json")
 
         # Add metadata (on the shallow copy, not the original)
         payload["_metadata"] = {
@@ -123,14 +120,11 @@ class EvidenceStore:
         # Serialize
         serialized = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
 
-        # Write both files
-        for file_path in [evidence_file, context_file]:
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(serialized)
+        with open(evidence_file, "w", encoding="utf-8") as f:
+            f.write(serialized)
 
         return {
             "evidence_path": str(evidence_file),
-            "context_path": str(context_file),
             "size": len(serialized),
             "task_id": task_id,
             "iteration": iteration,

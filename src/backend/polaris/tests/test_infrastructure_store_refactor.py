@@ -33,7 +33,10 @@ class TestEvidenceStoreWithDictPayload:
         assert result["task_id"] == "task-123"
         assert result["iteration"] == 0
         assert "evidence_path" in result
+        assert "context_path" not in result
         assert Path(result["evidence_path"]).exists()
+        evidence_dir = Path(result["evidence_path"]).parent
+        assert not list(evidence_dir.glob("CONTEXT_*.json"))
 
         loaded = store.load_evidence("task-123", iteration=0)
         assert loaded["task_id"] == "task-123"
