@@ -452,7 +452,7 @@ class JetStreamConsumerManager:
         return dropped
 
     async def fetch_historical(self, limit: int = 200) -> list[RuntimeEventEnvelope]:
-        """Keep compatibility with previous helper API."""
+        """Return an empty history set; runtime replay is delivered by JetStream cursors."""
         del limit
         return []
 

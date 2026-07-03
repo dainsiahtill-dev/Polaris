@@ -279,6 +279,17 @@ def test_channel_filter_matches_runtime_channel_families() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fetch_historical_does_not_create_second_replay_source() -> None:
+    manager = JetStreamConsumerManager(
+        workspace_key="workspace",
+        client_id="client-1",
+        channels=["llm"],
+    )
+
+    assert await manager.fetch_historical(limit=25) == []
+
+
+@pytest.mark.asyncio
 async def test_queue_full_does_not_ack_dropped_jetstream_message(monkeypatch: pytest.MonkeyPatch) -> None:
     manager = JetStreamConsumerManager(
         workspace_key="workspace",
