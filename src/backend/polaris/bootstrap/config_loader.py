@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from polaris.bootstrap.legacy_config_audit import record_legacy_config_migration
+from polaris.bootstrap.config_alias_audit import record_config_alias_migration
 from polaris.domain.models.config_snapshot import ConfigSnapshot
 
 logger = logging.getLogger(__name__)
@@ -152,7 +152,7 @@ class ConfigLoader:
         ),
     }
 
-    LEGACY_FLAT_KEY_ALIASES: dict[str, str] = {
+    FLAT_CONFIG_KEY_ALIASES: dict[str, str] = {
         "model": "llm.model",
         "pm_backend": "pm.backend",
         "pm_model": "pm.model",
@@ -243,8 +243,8 @@ class ConfigLoader:
     ) -> ConfigSnapshot:
         """Load config from existing Settings object.
 
-        This is a compatibility method for transitioning from
-        the old Settings-based configuration.
+        This bridges an existing Settings object into the canonical
+        ConfigSnapshot format used by bootstrap services.
 
         Args:
             settings: Settings object from runtime_config.py
@@ -277,11 +277,12 @@ class ConfigLoader:
         from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 
         metadata_dir = get_workspace_metadata_dir_name()
-        # Try multiple config locations (new metadata dir first, then legacy flat file)
+        # Try multiple config locations: canonical metadata files first, then
+        # the historical workspace-local flat file for one-way migration.
         config_paths = [
             workspace / metadata_dir / "config.json",
             workspace / metadata_dir / "settings.json",
-            workspace / ".polaris.json",  # legacy flat file (backward compat)
+            workspace / ".polaris.json",
         ]
 
         for config_path in config_paths:
@@ -385,14 +386,14 @@ class ConfigLoader:
         return items
 
     def _canonicalize_flat_config(self, flat: dict[str, Any]) -> dict[str, Any]:
-        """Map legacy compatibility keys to ConfigSnapshot dot-notation keys."""
+        """Map accepted flat config aliases to ConfigSnapshot dot-notation keys."""
         result = dict(flat)
-        for legacy_key, canonical_key in self.LEGACY_FLAT_KEY_ALIASES.items():
-            if legacy_key in result and result[legacy_key] is not None:
-                result[canonical_key] = result.pop(legacy_key)
-                record_legacy_config_migration(
+        for source_key, canonical_key in self.FLAT_CONFIG_KEY_ALIASES.items():
+            if source_key in result and result[source_key] is not None:
+                result[canonical_key] = result.pop(source_key)
+                record_config_alias_migration(
                     source="ConfigLoader._canonicalize_flat_config",
-                    legacy_key=legacy_key,
+                    source_key=source_key,
                     canonical_key=canonical_key,
                 )
         return result

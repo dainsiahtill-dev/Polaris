@@ -10,14 +10,14 @@ import json
 from pathlib import Path
 
 import pytest
+from polaris.bootstrap.config_alias_audit import (
+    clear_config_alias_migration_events,
+    get_config_alias_migration_events,
+)
 from polaris.bootstrap.config_loader import (
     ConfigLoader,
     ConfigLoadError,
     load_config,
-)
-from polaris.bootstrap.legacy_config_audit import (
-    clear_legacy_config_migration_events,
-    get_legacy_config_migration_events,
 )
 
 
@@ -142,7 +142,7 @@ class TestConfigLoaderLoad:
         """Should load durable desktop settings from ~/.polaris/config/settings.json."""
         from polaris.bootstrap.config import Settings
 
-        clear_legacy_config_migration_events()
+        clear_config_alias_migration_events()
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         settings_home = tmp_path / "settings-home"
@@ -172,8 +172,8 @@ class TestConfigLoaderLoad:
         assert settings.pm_model == "gpt-5.3-codex"
         assert settings.director_model == "gpt-5.3-codex"
         migrated = {
-            (event.legacy_key, event.canonical_key)
-            for event in get_legacy_config_migration_events()
+            (event.source_key, event.canonical_key)
+            for event in get_config_alias_migration_events()
             if event.source == "ConfigLoader._canonicalize_flat_config"
         }
         assert ("pm_backend", "pm.backend") in migrated

@@ -25,9 +25,9 @@ from polaris.bootstrap.config import (
     reload_settings,
     resolve_ramdisk_root,
 )
-from polaris.bootstrap.legacy_config_audit import (
-    clear_legacy_config_migration_events,
-    get_legacy_config_migration_events,
+from polaris.bootstrap.config_alias_audit import (
+    clear_config_alias_migration_events,
+    get_config_alias_migration_events,
 )
 
 
@@ -341,9 +341,9 @@ class TestSettings:
         # Should normalize to runtime/...
         assert settings.json_log_path is not None
 
-    def test_migrate_legacy_inputs(self) -> None:
-        """Should migrate legacy flat keys to nested structures."""
-        clear_legacy_config_migration_events()
+    def test_migrate_config_alias_inputs(self) -> None:
+        """Should migrate accepted flat config aliases to nested structures."""
+        clear_config_alias_migration_events()
 
         settings = Settings(
             self_upgrade_mode=True,
@@ -359,18 +359,18 @@ class TestSettings:
         assert settings.logging.enable_debug_tracing is True
 
         migrated = {
-            (event.legacy_key, event.canonical_key)
-            for event in get_legacy_config_migration_events()
-            if event.source == "ConfigSettings.migrate_legacy_inputs"
+            (event.source_key, event.canonical_key)
+            for event in get_config_alias_migration_events()
+            if event.source == "ConfigSettings.migrate_config_alias_inputs"
         }
         assert ("model", "llm.model") in migrated
         assert ("pm_model", "pm.model") in migrated
         assert ("director_iterations", "director.iterations") in migrated
         assert ("debug_tracing", "logging.enable_debug_tracing") in migrated
 
-        event = get_legacy_config_migration_events()[0]
-        assert event.schema_version == "polaris.legacy_config_migration_event.v1"
-        assert event.sunset_policy_version == "legacy-config-sunset.v1"
+        event = get_config_alias_migration_events()[0]
+        assert event.schema_version == "polaris.config_alias_migration_event.v1"
+        assert event.sunset_policy_version == "config-alias-sunset.v1"
         assert event.sunset_not_before == "2026-12-31"
 
     def test_apply_update_pm_settings(self) -> None:

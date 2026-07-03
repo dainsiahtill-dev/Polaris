@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from polaris.bootstrap.legacy_config_audit import record_legacy_config_migration
+from polaris.bootstrap.config_alias_audit import record_config_alias_migration
 from polaris.config.director_config import DirectorConfig
 from polaris.config.llm_config import LLMConfig
 from polaris.config.nats_config import NATSConfig
@@ -576,8 +576,8 @@ class Settings(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def migrate_legacy_inputs(cls, raw: Any) -> Any:
-        """Map legacy flat keys to unified nested structures."""
+    def migrate_config_alias_inputs(cls, raw: Any) -> Any:
+        """Map accepted flat config aliases to unified nested structures."""
         if not isinstance(raw, dict):
             return raw
 
@@ -594,15 +594,15 @@ class Settings(BaseModel):
             llm = _as_dict(data.get("llm"))
             llm.setdefault("model", data.pop("model"))
             data["llm"] = llm
-            record_legacy_config_migration(
-                source="ConfigSettings.migrate_legacy_inputs",
-                legacy_key="model",
+            record_config_alias_migration(
+                source="ConfigSettings.migrate_config_alias_inputs",
+                source_key="model",
                 canonical_key="llm.model",
             )
 
         pm = _as_dict(data.get("pm"))
         pm_mapped = False
-        for legacy_key, pm_key in (
+        for source_key, pm_key in (
             ("pm_backend", "backend"),
             ("pm_model", "model"),
             ("pm_show_output", "show_output"),
@@ -619,12 +619,12 @@ class Settings(BaseModel):
             ("pm_blocked_strategy", "blocked_strategy"),
             ("pm_blocked_degrade_max_retries", "blocked_degrade_max_retries"),
         ):
-            if data.get(legacy_key) is not None:
+            if data.get(source_key) is not None:
                 pm_mapped = True
-                pm.setdefault(pm_key, data.pop(legacy_key))
-                record_legacy_config_migration(
-                    source="ConfigSettings.migrate_legacy_inputs",
-                    legacy_key=legacy_key,
+                pm.setdefault(pm_key, data.pop(source_key))
+                record_config_alias_migration(
+                    source="ConfigSettings.migrate_config_alias_inputs",
+                    source_key=source_key,
                     canonical_key=f"pm.{pm_key}",
                 )
         if pm_mapped:
@@ -632,7 +632,7 @@ class Settings(BaseModel):
 
         director = _as_dict(data.get("director"))
         director_mapped = False
-        for legacy_key, director_key in (
+        for source_key, director_key in (
             ("director_model", "model"),
             ("director_iterations", "iterations"),
             ("director_execution_mode", "execution_mode"),
@@ -645,12 +645,12 @@ class Settings(BaseModel):
             ("director_forever", "forever"),
             ("director_show_output", "show_output"),
         ):
-            if data.get(legacy_key) is not None:
+            if data.get(source_key) is not None:
                 director_mapped = True
-                director.setdefault(director_key, data.pop(legacy_key))
-                record_legacy_config_migration(
-                    source="ConfigSettings.migrate_legacy_inputs",
-                    legacy_key=legacy_key,
+                director.setdefault(director_key, data.pop(source_key))
+                record_config_alias_migration(
+                    source="ConfigSettings.migrate_config_alias_inputs",
+                    source_key=source_key,
                     canonical_key=f"director.{director_key}",
                 )
         if director_mapped:
@@ -660,17 +660,17 @@ class Settings(BaseModel):
         runtime = _as_dict(data.get("runtime"))
         if data.get("ramdisk_root") not in (None, ""):
             runtime.setdefault("ramdisk_root", data.pop("ramdisk_root"))
-            record_legacy_config_migration(
-                source="ConfigSettings.migrate_legacy_inputs",
-                legacy_key="ramdisk_root",
+            record_config_alias_migration(
+                source="ConfigSettings.migrate_config_alias_inputs",
+                source_key="ramdisk_root",
                 canonical_key="runtime.ramdisk_root",
             )
         if data.get("ramdisk_root") == "":
             data.pop("ramdisk_root")
             runtime["ramdisk_root"] = None
-            record_legacy_config_migration(
-                source="ConfigSettings.migrate_legacy_inputs",
-                legacy_key="ramdisk_root",
+            record_config_alias_migration(
+                source="ConfigSettings.migrate_config_alias_inputs",
+                source_key="ramdisk_root",
                 canonical_key="runtime.ramdisk_root",
             )
         if runtime_mapped:
@@ -680,9 +680,9 @@ class Settings(BaseModel):
             logging_cfg = _as_dict(data.get("logging"))
             logging_cfg.setdefault("enable_debug_tracing", data.pop("debug_tracing"))
             data["logging"] = logging_cfg
-            record_legacy_config_migration(
-                source="ConfigSettings.migrate_legacy_inputs",
-                legacy_key="debug_tracing",
+            record_config_alias_migration(
+                source="ConfigSettings.migrate_config_alias_inputs",
+                source_key="debug_tracing",
                 canonical_key="logging.enable_debug_tracing",
             )
 
@@ -721,13 +721,13 @@ class Settings(BaseModel):
         if not raw:
             return None
         normalized = raw.replace("\\", "/")
-        # Normalize legacy .polaris/runtime paths → runtime
-        for legacy in (".polaris/runtime", ".polaris/runtime"):
-            if normalized == legacy:
+        # Normalize historical .polaris/runtime paths to the current runtime root.
+        for historical_path in (".polaris/runtime",):
+            if normalized == historical_path:
                 return "runtime"
-            legacy_prefix = legacy + "/"
-            if normalized.startswith(legacy_prefix):
-                suffix = normalized[len(legacy_prefix) :].lstrip("/")
+            historical_prefix = historical_path + "/"
+            if normalized.startswith(historical_prefix):
+                suffix = normalized[len(historical_prefix) :].lstrip("/")
                 return f"runtime/{suffix}" if suffix else "runtime"
         return normalized
 
