@@ -48,10 +48,10 @@ class TestTodoItem:
         assert item.tags == []
         assert item.completed_at is None
 
-    def test_text_alias(self) -> None:
+    def test_content_is_canonical_field(self) -> None:
         item = TodoItem(id="t1", content="hello")
-        assert item.text == "hello"
         assert item.content == "hello"
+        assert not hasattr(item, "text")
 
     def test_to_dict(self) -> None:
         item = TodoItem(id="t1", content="hello", status=TodoStatus.COMPLETED, priority=Priority.HIGH, tags=["urgent"])
@@ -81,7 +81,6 @@ class TestTodoItem:
     def test_from_dict_with_text_field(self) -> None:
         item = TodoItem.from_dict({"id": "t1", "text": "hello", "status": "pending"})
         assert item.content == "hello"
-        assert item.text == "hello"
 
     def test_from_dict_missing_content(self) -> None:
         item = TodoItem.from_dict({"id": "t1", "status": "pending"})

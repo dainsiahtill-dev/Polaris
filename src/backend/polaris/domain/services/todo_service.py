@@ -35,7 +35,7 @@ class TodoItem:
     """A todo item."""
 
     id: str
-    content: str  # Alias for text, for backward compatibility
+    content: str
     status: TodoStatus = TodoStatus.PENDING
     priority: Priority = Priority.MEDIUM
     tags: list[str] = field(default_factory=list)
@@ -43,16 +43,10 @@ class TodoItem:
     updated_at: float = field(default_factory=time.time)
     completed_at: float | None = None
 
-    @property
-    def text(self) -> str:
-        """Backward compatibility alias for content."""
-        return self.content
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "content": self.content,
-            "text": self.text,  # For backward compatibility
             "status": self.status.value,
             "priority": self.priority.value,
             "tags": self.tags,
@@ -63,7 +57,7 @@ class TodoItem:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TodoItem:
-        # Support both 'content' and 'text' fields for backward compatibility
+        # Read old state files that used 'text', but persist only 'content'.
         content = data.get("content") or data.get("text", "")
         return cls(
             id=data["id"],
@@ -435,7 +429,7 @@ class TodoService:
         if elapsed > self.STALL_THRESHOLD_SECONDS:
             return {
                 "item_id": in_progress.id,
-                "text": in_progress.text,
+                "content": in_progress.content,
                 "elapsed_seconds": elapsed,
                 "stall_detected": True,
             }
@@ -468,7 +462,7 @@ class TodoService:
             self._nag.nag_triggered = True
             self._save_state()
             return (
-                f"⚠️ NAG REMINDER: Task '{in_progress.text}' has been in_progress "
+                f"⚠️ NAG REMINDER: Task '{in_progress.content}' has been in_progress "
                 f"for {self._nag.rounds_since_update} rounds without update. "
                 f"Please update your progress or mark as completed."
             )

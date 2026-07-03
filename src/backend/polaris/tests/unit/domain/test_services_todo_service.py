@@ -38,16 +38,17 @@ class TestTodoItem:
         assert item.status == TodoStatus.PENDING
         assert item.priority == Priority.MEDIUM
 
-    def test_text_alias(self) -> None:
+    def test_content_is_canonical_field(self) -> None:
         item = TodoItem(id="1", content="test")
-        assert item.text == "test"
+        assert item.content == "test"
+        assert not hasattr(item, "text")
 
     def test_to_dict(self) -> None:
         item = TodoItem(id="1", content="test")
         d = item.to_dict()
         assert d["id"] == "1"
         assert d["content"] == "test"
-        assert d["text"] == "test"
+        assert "text" not in d
 
     def test_from_dict(self) -> None:
         item = TodoItem.from_dict({"id": "1", "content": "test", "status": "completed"})
