@@ -2,7 +2,7 @@
 """Chief Engineer (Chief Engineer) Standalone CLI.
 
 Migration note (Task #48 Phase 2):
-    This CLI now routes through RoleRuntimeService instead of the deprecated
+    This CLI now routes through RoleRuntimeService instead of the retired
     ChiefEngineerStandaloneAgent. All execution goes through RoleExecutionKernel.
 
 Usage:
