@@ -317,6 +317,7 @@ def test_projection_exposes_failed_tool_lifecycle_without_dropped_dispatch() -> 
             }
         ],
     ).to_dict()
+    lifecycle["failure_class"] = "missing-effect-receipt"
     projection = build_run_ledger_projection(
         [
             {
@@ -345,6 +346,7 @@ def test_projection_exposes_failed_tool_lifecycle_without_dropped_dispatch() -> 
     assert projection["tool_lifecycle"]["failed_count"] == 1
     assert projection["tool_lifecycle"]["dropped_count"] == 0
     assert projection["tool_lifecycle"]["events"][0]["failed"] is True
+    assert projection["tool_lifecycle"]["events"][0]["failure_class"] == "MISSING_EFFECT_RECEIPT"
     assert summary["detail"] == "run ledger projection tool lifecycle failed: MISSING_EFFECT_RECEIPT"
     assert summary["missing"] == []
     assert summary["failed_control_plane_events"] == ["MISSING_EFFECT_RECEIPT"]

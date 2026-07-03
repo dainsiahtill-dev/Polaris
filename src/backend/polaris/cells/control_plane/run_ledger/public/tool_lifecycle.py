@@ -359,6 +359,8 @@ def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
             payload["failure_class"] = (
                 "" if payload["dispatch_status"] == "dispatched" else FailureClassV1.TOOL_LIFECYCLE_UNKNOWN.value
             )
+        else:
+            payload["failure_class"] = normalize_failure_class(payload.get("failure_class"))
         payload.setdefault(
             "ok",
             payload["dispatch_status"] == "dispatched"

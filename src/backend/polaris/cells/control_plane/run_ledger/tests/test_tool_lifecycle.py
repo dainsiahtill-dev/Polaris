@@ -186,6 +186,18 @@ def test_tool_lifecycle_normalizer_canonicalizes_legacy_dropped_tool_names() -> 
     ]
 
 
+def test_tool_lifecycle_normalizer_canonicalizes_failure_class_alias() -> None:
+    receipt = normalize_tool_call_lifecycle_receipt(
+        {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "dispatch_status": "blocked",
+            "failure_class": "missing-effect-receipt",
+        }
+    )
+
+    assert receipt["failure_class"] == FailureClassV1.MISSING_EFFECT_RECEIPT.value
+
+
 def test_tool_lifecycle_normalizer_derives_counts_from_native_envelopes() -> None:
     envelopes = [
         {
