@@ -75,7 +75,7 @@
 - `background_run/check/list/cancel/wait`
 
 #### 代码编辑（仅Director）
-- `precision_edit` - SEARCH/REPLACE编辑
+- `edit_blocks` - 锚定行范围编辑
 - `repo_apply_diff` - 应用补丁
 - `treesitter_replace_node` - AST节点替换
 - `treesitter_insert_method` - 插入方法
@@ -134,11 +134,14 @@ assert len(calls) > 0
 
 # 验证权限控制
 executor = RoleToolExecutor(workspace, 'pm')
-assert not executor.can_execute('precision_edit')  # PM不能编辑代码
+assert not executor.can_execute('edit_blocks')  # PM不能编辑代码
 
 executor = RoleToolExecutor(workspace, 'director')
-assert executor.can_execute('precision_edit')  # Director可以
+assert executor.can_execute('edit_blocks')  # Director可以
 ```
+
+`precision_edit` 已从默认模型可见工具面移除；仅允许在显式兼容识别、
+历史 receipt 分类或负向安全测试中出现。
 
 ## 使用示例
 

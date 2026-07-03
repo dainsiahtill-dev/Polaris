@@ -100,10 +100,11 @@ as the live work queue for new findings.
 | LR-78 | Generic tool-output JSON parser sample | `test_tool_output_json.py` used the retired exact-edit tool as a generic JSON payload sample and still carried an old migrated-module import shim. | Replaced the neutral sample payload with active `edit_blocks` and imported the current `polaris.kernelone.tool_execution.output_json` module directly. | `rtk pytest src/backend/polaris/tests/test_tool_output_json.py -q`; `rtk ruff check src/backend/polaris/tests/test_tool_output_json.py`; `rtk mypy src/backend/polaris/tests/test_tool_output_json.py`; negative parser-test scan. |
 | LR-79 | Tree-sitter availability active-tool sample | `test_ts_availability.py` used the retired exact-edit tool as a generic non-Tree-sitter-dependent sample. | Replaced the neutral tool sample with active `edit_blocks`; deprecated-tool coverage stays in explicit compatibility and negative tests. | `rtk pytest src/backend/polaris/kernelone/llm/toolkit/tests/test_ts_availability.py -q`; `rtk ruff check src/backend/polaris/kernelone/llm/toolkit/tests/test_ts_availability.py`; `rtk mypy src/backend/polaris/kernelone/llm/toolkit/tests/test_ts_availability.py`; negative Tree-sitter-availability test scan. |
 | LR-80 | Exploration policy edit-failure sample | `test_exploration_edit_failure_override.py` used the retired exact-edit tool as the generic example for targeted edit failure cooldown override. | Replaced the generic failure sample with active `edit_blocks`; canonical write-tool observation still covers historical deprecated receipts through `WRITE_TOOLS`. | `rtk pytest src/backend/polaris/cells/roles/kernel/tests/test_exploration_edit_failure_override.py -q`; `rtk ruff check src/backend/polaris/cells/roles/kernel/tests/test_exploration_edit_failure_override.py`; `rtk mypy src/backend/polaris/cells/roles/kernel/tests/test_exploration_edit_failure_override.py`; negative exploration-test scan. |
+| LR-81 | LLM stress integration doc retired edit claim | `TOOLS_INTEGRATION_SUMMARY.md` still documented the retired exact-edit tool as Director's normal code-edit capability and permission example. | Updated the documented edit capability and permission sample to active `edit_blocks`; added a compatibility-only note for the retired exact-edit tool. | `rtk proxy rg -n "precision_edit" src/backend/polaris/tests/llm_stress/TOOLS_INTEGRATION_SUMMARY.md`; Markdown-only change, no runtime test. |
 
 ## Open Residual Buckets
 
-No open runtime residual buckets remain in this intake after LR-80. New findings
+No open runtime residual buckets remain in this intake after LR-81. New findings
 must be added with fresh codegraph evidence before edits.
 
 | Bucket | Priority | Disposition | Guardrail |
@@ -156,6 +157,7 @@ must be added with fresh codegraph evidence before edits.
 | Generic JSON parser retired-tool sample | Closed by LR-78 | Generic stdout JSON parser tests now use active `edit_blocks` in neutral samples and import the current package module directly. | Do not use retired tools as arbitrary sample data in tests that are not explicitly about deprecated compatibility or rejection; do not preserve migrated-module import shims in active tests. |
 | Tree-sitter availability retired-tool sample | Closed by LR-79 | Tree-sitter availability tests now use active `edit_blocks` as the neutral non-Tree-sitter-dependent write-tool sample. | Availability/filtering tests that are not about deprecated compatibility must use active tools; keep retired tools in explicit compatibility or rejection tests only. |
 | Exploration policy retired-tool sample | Closed by LR-80 | Diagnostic read override tests now use active `edit_blocks` for generic targeted edit failures. | Behavioral policy tests should use active tools unless they explicitly assert deprecated compatibility or rejection. |
+| LLM stress doc retired edit claim | Closed by LR-81 | LLM stress integration docs now describe Director edit capability with active `edit_blocks` and explicitly classify retired exact-edit as compatibility-only. | Stress docs must not present retired tools as active Director capabilities or permission examples. |
 | Arsenal route aliases | Closed by LR-27 | Arsenal product calls use `/arsenal/v2/*`; non-v2 Arsenal aliases are no longer registered. | Keep Arsenal endpoints under the router's canonical `/arsenal/v2/*` namespace; do not add parallel non-v2 aliases. |
 | Factory run route aliases | Closed by LR-28 | Factory run operations use `/v2/factory/runs*`; old `/factory/runs*` aliases are no longer registered. | Factory run control-plane APIs must remain under `/v2/factory/runs*`; do not restore non-v2 aliases. |
 | Logs route aliases | Closed by LR-29 | Logs APIs use `/logs/v2/*`; old `/logs/*` aliases are no longer registered, and frontend `logsV2Service` targets the actual backend namespace. | Keep logs endpoints under `/logs/v2/*` unless the router itself is intentionally migrated; do not add parallel `/logs/*` aliases or `/v2/logs/*` callers. |
@@ -171,4 +173,4 @@ must be added with fresh codegraph evidence before edits.
 
 ## Next Closure Order
 
-Current intake is closed after LR-80. Reopen only with a new evidence-backed ledger item.
+Current intake is closed after LR-81. Reopen only with a new evidence-backed ledger item.
