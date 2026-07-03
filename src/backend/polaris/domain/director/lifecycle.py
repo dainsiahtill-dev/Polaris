@@ -34,6 +34,21 @@ from polaris.domain.director.constants import (
 from polaris.kernelone.fs.text_ops import ensure_parent_dir, write_json_atomic
 from polaris.kernelone.utils import utc_now_iso
 
+_LIFECYCLE_LOCKS_GUARD = threading.RLock()
+_LIFECYCLE_LOCKS: dict[Path, threading.RLock] = {}
+
+
+def _lock_for_path(path: Path) -> threading.RLock:
+    """Return the shared in-process lock for a lifecycle file."""
+    resolved = path.resolve()
+    with _LIFECYCLE_LOCKS_GUARD:
+        lock = _LIFECYCLE_LOCKS.get(resolved)
+        if lock is None:
+            lock = threading.RLock()
+            _LIFECYCLE_LOCKS[resolved] = lock
+        return lock
+
+
 # ═══════════════════════════════════════════════════════════════════
 # 数据类定义
 # ═══════════════════════════════════════════════════════════════════
@@ -152,9 +167,10 @@ class DirectorLifecycleManager:
             生命周期状态，如果文件不存在则返回默认状态
         """
         file_path = self._resolve_path(path)
+        file_lock = _lock_for_path(file_path)
 
         # B-11: 添加锁保护，避免读写竞态条件
-        with self._lock:
+        with file_lock:
             if not file_path.exists():
                 return LifecycleState()
 
@@ -253,8 +269,9 @@ class DirectorLifecycleManager:
         Returns:
             更新后的状态
         """
-        with self._lock:
-            file_path = self._resolve_path(path)
+        file_path = self._resolve_path(path)
+        file_lock = _lock_for_path(file_path)
+        with file_lock:
             now_iso = self._now_iso()
 
             # 读取当前状态
@@ -402,6 +419,9 @@ def update(
     Returns:
         原始格式的更新后状态（dict）
     """
+    if not str(path).strip():
+        return {}
+
     # B-04: 修复 workspace 解析 - 处理无目录的文件名
     p = Path(path)
     workspace: str | None
@@ -464,6 +484,9 @@ def read(path: str) -> dict[str, Any]:
     Returns:
         原始格式的状态（dict）
     """
+    if not str(path).strip():
+        return {}
+
     # B-04: 修复 workspace 解析 - 处理无目录的文件名
     p = Path(path)
     workspace: str | None

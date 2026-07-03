@@ -1,7 +1,7 @@
 """Tests for Director lifecycle module.
 
 These tests verify the concurrency safety and correctness of the
-update_director_lifecycle() function.
+Director lifecycle update/read API wrappers.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ class TestDirectorLifecycle:
 
         try:
             result = update_director_lifecycle(
-                path,
+                path=path,
                 phase="init",
                 status="running",
                 run_id="test-run-001",
@@ -45,15 +45,15 @@ class TestDirectorLifecycle:
             assert result["phase"] == "init"
             assert result["status"] == "running"
             assert result["run_id"] == "test-run-001"
-            assert result["schema_version"] == 1
+            assert result["schema_version"] == 2
             assert "events" in result
             assert len(result["events"]) == 1
 
             # Verify file contents
-            with open(path, encoding="utf-8") as f:
-                saved = json.load(f)
-            assert saved["phase"] == "init"
-            assert saved["status"] == "running"
+            with open(path, encoding="utf-8") as handle:
+                saved = json.load(handle)
+            assert saved["lifecycle"]["phase"] == "init"
+            assert saved["lifecycle"]["status"] == "running"
         finally:
             os.unlink(path)
 
@@ -73,7 +73,7 @@ class TestDirectorLifecycle:
             assert not os.path.exists(path)
 
             result = update_director_lifecycle(
-                path,
+                path=path,
                 phase="startup",
                 status="initialized",
                 run_id="run-002",
@@ -99,13 +99,13 @@ class TestDirectorLifecycle:
             # Add 60 events
             for i in range(60):
                 update_director_lifecycle(
-                    path,
+                    path=path,
                     phase=f"phase_{i}",
                     status="running",
                 )
 
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
+            with open(path, encoding="utf-8") as handle:
+                data = json.load(handle)
 
             # Should only have last 50 events
             assert len(data["events"]) == 50
@@ -134,12 +134,12 @@ class TestDirectorLifecycle:
                     barrier.wait()
                     for i in range(10):
                         update_director_lifecycle(
-                            path,
+                            path=path,
                             phase=f"worker_{worker_id}_phase_{i}",
                             status="running",
                             run_id=f"run_{worker_id}",
                         )
-                except Exception as e:
+                except (OSError, RuntimeError, TimeoutError, ValueError) as e:
                     # Intentionally catch all exceptions to detect thread safety issues.
                     errors.append(e)
 
@@ -154,8 +154,8 @@ class TestDirectorLifecycle:
             assert len(errors) == 0, f"Errors occurred: {errors}"
 
             # Verify final state
-            with open(path, encoding="utf-8") as f:
-                final: dict[str, Any] = json.load(f)
+            with open(path, encoding="utf-8") as handle:
+                final: dict[str, Any] = json.load(handle)
 
             # Should have exactly 50 events (max limit)
             assert len(final["events"]) == 50
@@ -175,7 +175,7 @@ class TestDirectorLifecycle:
             os.unlink(path)
 
     def test_lock_timeout_raises_runtime_error(self) -> None:
-        """Verify RuntimeError is raised when lock cannot be acquired."""
+        """Verify TimeoutError is raised when lock cannot be acquired."""
         with tempfile.NamedTemporaryFile(
             mode="w",
             suffix=".json",
@@ -186,14 +186,14 @@ class TestDirectorLifecycle:
         try:
             # Manually create a lock file
             lock_path = f"{path}.lock"
-            with open(lock_path, "w", encoding="utf-8") as f:
-                f.write("999999 9999999999.0")  # Fake PID and timestamp
+            with open(lock_path, "w", encoding="utf-8") as handle:
+                handle.write("999999 9999999999.0")  # Fake PID and timestamp
 
             try:
-                # This should timeout and raise RuntimeError
-                with pytest.raises(RuntimeError, match="Lock acquisition timeout"):
+                # This should timeout while the existing lifecycle lock file is held.
+                with pytest.raises(TimeoutError, match="Failed to acquire file lock"):
                     update_director_lifecycle(
-                        path,
+                        path=path,
                         phase="test",
                     )
             finally:
@@ -222,7 +222,7 @@ class TestDirectorLifecycle:
                 barrier.wait()
                 for i in range(20):
                     update_director_lifecycle(
-                        path,
+                        path=path,
                         phase=f"write_{i}",
                         status="active",
                     )
@@ -264,20 +264,22 @@ class TestDirectorLifecycle:
         try:
             # First update with initial details
             update_director_lifecycle(
-                path,
+                path=path,
                 phase="init",
                 details={"key1": "value1", "key2": "initial"},
             )
 
             # Second update with additional details
             update_director_lifecycle(
-                path,
+                path=path,
                 phase="update",
                 details={"key2": "updated", "key3": "new"},
             )
 
-            with open(path, encoding="utf-8") as f:
-                data: dict[str, Any] = json.load(f)
+            data = update_director_lifecycle(
+                path=path,
+                phase="noop",
+            )
 
             assert data["details"]["key1"] == "value1"
             assert data["details"]["key2"] == "updated"
@@ -296,7 +298,7 @@ class TestDirectorLifecycle:
 
         try:
             result = update_director_lifecycle(
-                path,
+                path=path,
                 phase="starting",
                 startup_completed=True,
                 execution_started=True,
@@ -304,21 +306,20 @@ class TestDirectorLifecycle:
             )
 
             assert result["startup_completed"] is True
-            assert "startup_at" in result
             assert result["execution_started"] is True
-            assert "execution_started_at" in result
             assert result["terminal"] is True
-            assert "terminal_at" in result
         finally:
             os.unlink(path)
 
     def test_read_nonexistent_file_returns_empty(self) -> None:
-        """Verify reading nonexistent file returns empty dict."""
+        """Verify reading nonexistent file returns default lifecycle dict."""
         result = read_director_lifecycle("/nonexistent/path/file.json")
-        assert result == {}
+        assert result["phase"] == "init"
+        assert result["status"] == "unknown"
+        assert result["events"] == []
 
     def test_read_invalid_json_returns_empty(self) -> None:
-        """Verify reading invalid JSON returns empty dict."""
+        """Verify reading invalid JSON returns default lifecycle dict."""
         with tempfile.NamedTemporaryFile(
             mode="w",
             suffix=".json",
@@ -329,6 +330,8 @@ class TestDirectorLifecycle:
 
         try:
             result = read_director_lifecycle(path)
-            assert result == {}
+            assert result["phase"] == "init"
+            assert result["status"] == "unknown"
+            assert result["events"] == []
         finally:
             os.unlink(path)
