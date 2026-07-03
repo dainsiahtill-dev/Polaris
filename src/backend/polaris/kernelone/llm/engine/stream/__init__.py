@@ -27,18 +27,6 @@ from .executor import (
     _stream_with_overall_timeout,
     stream_to_response,
 )
-from .result_tracker import _StreamResultTracker
-
-# Re-export utility functions from tool_accumulator for backward compatibility
-from .tool_accumulator import (
-    _debug_compact_payload,
-    _debug_tool_arguments,
-    _normalize_arguments,
-    _provider_supports_structured_stream,
-    _safe_text_length,
-    _tool_accumulator_key,
-    _ToolCallAccumulator,
-)
 
 __all__ = [
     "EventStreamer",
@@ -49,17 +37,7 @@ __all__ = [
     "StreamEventType",
     "StreamExecutor",
     "StreamState",
-    # Result tracker (internal but exported for backward compatibility)
-    "_StreamResultTracker",
-    # Tool accumulator (internal but exported for backward compatibility)
-    "_ToolCallAccumulator",
-    "_debug_compact_payload",
-    "_debug_tool_arguments",
-    "_normalize_arguments",
-    "_provider_supports_structured_stream",
-    "_safe_text_length",
     "_stream_with_overall_timeout",
-    "_tool_accumulator_key",
     "emit_debug_event",
     "get_provider_manager",
     "infer_channel",

@@ -26,12 +26,14 @@ from polaris.kernelone.llm.engine.contracts import (
 )
 from polaris.kernelone.llm.engine.stream import (
     StreamExecutor,
-    _normalize_arguments,
-    _provider_supports_structured_stream,
-    _tool_accumulator_key,
     stream_to_response,
 )
 from polaris.kernelone.llm.engine.stream.config import StreamConfig as DirectStreamConfig
+from polaris.kernelone.llm.engine.stream.tool_accumulator import (
+    _normalize_arguments,
+    _provider_supports_structured_stream,
+    _tool_accumulator_key,
+)
 from polaris.kernelone.llm.engine.telemetry import TelemetryCollector
 
 

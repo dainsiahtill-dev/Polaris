@@ -6,7 +6,8 @@ from typing import Any, cast
 
 import pytest
 from polaris.kernelone.llm.engine.contracts import AIRequest, AIStreamEvent, StreamEventType, TaskType
-from polaris.kernelone.llm.engine.stream import StreamExecutor, _safe_text_length
+from polaris.kernelone.llm.engine.stream import StreamExecutor
+from polaris.kernelone.llm.engine.stream.tool_accumulator import _safe_text_length
 from polaris.kernelone.llm.provider_adapters.anthropic_messages_adapter import AnthropicMessagesAdapter
 from polaris.kernelone.llm.provider_adapters.base import AssistantMessage, ReasoningSummary
 from polaris.kernelone.llm.provider_adapters.openai_responses_adapter import OpenAIResponsesAdapter
