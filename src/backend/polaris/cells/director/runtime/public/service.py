@@ -376,7 +376,7 @@ def attach_director_repair_revalidation_evidence(
     round_number: int | None = None,
     metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Compatibility helper for projecting post-check evidence onto receipts."""
+    """Project post-check evidence onto a repair summary and return the summary."""
 
     return project_director_repair_revalidation_evidence(
         AttachDirectorRepairRevalidationEvidenceV1(
