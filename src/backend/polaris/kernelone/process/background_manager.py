@@ -442,7 +442,7 @@ class BackgroundManagerV2:
     def _is_forbidden_command(self, command: str) -> bool:
         lowered = str(command or "").lower()
         has_redirect = ">" in lowered or "1>" in lowered or "2>" in lowered
-        # Check both legacy paths (for backward compatibility) and current runtime paths
+        # Block direct shell redirection into runtime state/event ledgers.
         blocked_target = "/runtime/state/" in lowered or "/runtime/events/" in lowered or "background_tasks" in lowered
         return has_redirect and blocked_target
 
@@ -813,38 +813,3 @@ class BackgroundManagerV2:
                 "queued": queued,
                 "available_slots": max(0, self.max_concurrent - running),
             }
-
-
-# Backwards compatibility: BackgroundManager inherits from V2
-class BackgroundManager(BackgroundManagerV2):
-    """Backwards-compatible background manager."""
-
-    def run(
-        self, *, command: str, cwd: str = ".", timeout: int = DEFAULT_OPERATION_TIMEOUT_SECONDS, command_id: str = ""
-    ) -> dict[str, Any]:
-        """Legacy run() method - delegates to submit()."""
-        return self.submit(
-            command=command,
-            cwd=cwd,
-            timeout=timeout,
-            command_id=command_id,
-        )
-
-    def drain_completed(self) -> list[dict[str, Any]]:
-        """Legacy drain method."""
-        self.poll_all()
-        drained = []
-        with self._lock:
-            for task in list(self._tasks.values()):
-                if task.status.value in _TERMINAL_STATUSES:
-                    drained.append(
-                        {
-                            "id": task.id,
-                            "command": task.command,
-                            "status": task.status.value,
-                            "exit_code": task.exit_code,
-                            "stdout": task.stdout[:10000],
-                            "stderr": task.stderr[:10000],
-                        }
-                    )
-        return drained
