@@ -30,6 +30,10 @@ from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     tool_results_from_batch_receipt,
 )
 from polaris.cells.roles.kernel.internal.kernel.task_boundary import append_role_turn_task_boundary_verdict
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+    native_tool_call_count,
+    native_tool_call_envelopes_from_metadata,
+)
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest, RoleTurnResult
 from polaris.kernelone.tools import is_write_tool_name, normalize_tool_name
 
@@ -281,24 +285,25 @@ def _last_decision_metadata(ledger: Any) -> dict[str, Any]:
 
 
 def _native_tool_call_envelopes(metadata: Mapping[str, Any], ledger: Any) -> list[dict[str, Any]]:
-    value = metadata.get("native_tool_call_envelopes")
-    if isinstance(value, list):
-        return [dict(item) for item in value if isinstance(item, Mapping)]
     latest_metadata = _last_decision_metadata(ledger)
-    latest_value = latest_metadata.get("native_tool_call_envelopes")
-    if isinstance(latest_value, list):
-        return [dict(item) for item in latest_value if isinstance(item, Mapping)]
+    for candidate in (metadata, latest_metadata):
+        envelopes = native_tool_call_envelopes_from_metadata(candidate)
+        if envelopes:
+            return [dict(item) for item in envelopes]
     return []
 
 
 def _native_tool_calls_count(metadata: Mapping[str, Any], ledger: Any) -> int:
-    envelope_count = len(_native_tool_call_envelopes(metadata, ledger))
-    if envelope_count > 0:
-        return envelope_count
+    shared_count = native_tool_call_count(metadata, ())
+    if shared_count > 0:
+        return shared_count
     count = _safe_int(metadata.get("native_tool_calls_count"))
     if count > 0:
         return count
     latest_metadata = _last_decision_metadata(ledger)
+    latest_shared_count = native_tool_call_count(latest_metadata, ())
+    if latest_shared_count > 0:
+        return latest_shared_count
     return _safe_int(latest_metadata.get("native_tool_calls_count"))
 
 

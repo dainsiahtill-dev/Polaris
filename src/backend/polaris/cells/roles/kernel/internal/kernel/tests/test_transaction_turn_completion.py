@@ -263,6 +263,45 @@ def test_missing_dispatch_lifecycle_prefers_native_tool_call_envelopes() -> None
     ]
 
 
+def test_missing_dispatch_lifecycle_accepts_lifecycle_envelope_refs() -> None:
+    envelopes = [
+        {"envelope_id": "native-ref-1", "tool_name": "write_file"},
+        {"envelope_id": "native-ref-2", "tool_name": "execute_command"},
+    ]
+
+    lifecycle = completion._build_missing_dispatch_lifecycle_receipt(
+        metadata={
+            "native_tool_calls_count": 0,
+            "final_request_context_audit": {
+                "final_request_evidence_coverage": {
+                    "required_tools": ["write_file"],
+                },
+            },
+        },
+        ledger=SimpleNamespace(
+            decisions=[
+                {
+                    "metadata": {
+                        "native_tool_calls_count": 0,
+                        "native_tool_call_envelope_refs": envelopes,
+                        "tool_count": 0,
+                    }
+                }
+            ]
+        ),
+        tool_results=[],
+        batch_receipt={},
+    )
+
+    assert lifecycle is not None
+    assert lifecycle["native_tool_calls_count"] == 2
+    assert lifecycle["native_tool_call_envelope_refs"] == envelopes
+    assert lifecycle["dropped_tool_calls"] == [
+        {"tool_name": "write_file", "envelope_id": "native-ref-1", "reason": "tool_dispatch_dropped"},
+        {"tool_name": "execute_command", "envelope_id": "native-ref-2", "reason": "tool_dispatch_dropped"},
+    ]
+
+
 def test_missing_dispatch_lifecycle_uses_native_envelope_tools_not_required_tools() -> None:
     lifecycle = completion._build_missing_dispatch_lifecycle_receipt(
         metadata={
