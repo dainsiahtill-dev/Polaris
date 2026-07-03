@@ -7,7 +7,7 @@ from polaris.kernelone.llm.contracts import ToolCall, ToolExecutionResult, ToolE
 
 
 class LLMToolkitExecutorAdapter(ToolExecutorPort):
-    """Bridge executor port to legacy `core.llm_toolkit.executor`."""
+    """Bridge the executor port to the KernelOne toolkit executor."""
 
     def execute_call(
         self,

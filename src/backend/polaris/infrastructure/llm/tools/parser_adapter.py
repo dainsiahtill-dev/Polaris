@@ -29,7 +29,7 @@ class LLMToolkitParserAdapter(ToolCallParserPort):
             provider=str(provider_hint or "auto"),
             allowed_tool_names=allowed_tool_names,
         )
-        return [self._to_tool_call(item, source="legacy_parser") for item in parsed]
+        return [self._to_tool_call(item, source="toolkit_parser") for item in parsed]
 
     def extract_calls_and_remainder(
         self,

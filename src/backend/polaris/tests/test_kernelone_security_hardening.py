@@ -150,6 +150,28 @@ def test_native_tool_runtime_rejects_malformed_tool_arguments(
     assert "invalid JSON arguments" in outcome.tool_results[0].error
 
 
+def test_toolkit_parser_adapter_uses_current_source_label() -> None:
+    parser = LLMToolkitParserAdapter()
+
+    calls = parser.parse_calls(
+        native_tool_calls=[
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": '{"path":"README.md"}',
+                },
+            }
+        ],
+        provider_hint="openai",
+        allowed_tool_names=("read_file",),
+    )
+
+    assert len(calls) == 1
+    assert calls[0].source == "toolkit_parser"
+
+
 @pytest.mark.skipif(not FASTAPI_AVAILABLE, reason="FastAPI is not installed")
 def test_role_fastapi_uses_spec_compliant_cors(tmp_path: Path) -> None:
     api = RoleFastAPI(_DummyRole, workspace=str(tmp_path))
