@@ -2256,6 +2256,32 @@ def test_single_batch_hint_allows_mixed_read_write_when_contract_bypasses_barrie
     assert "Do not mix read/search tools with write/edit tools in one parallel batch" not in hint
 
 
+def test_single_batch_required_groups_prioritize_active_edit_blocks() -> None:
+    context = [
+        {
+            "role": "user",
+            "content": "Update src/app.ts in one batch.",
+            "metadata": {
+                "tool_contract": {
+                    "single_batch": True,
+                    "required_tool_groups": [["write_file", "edit_file", "repo_apply_diff", "edit_blocks"]],
+                    "allow_mixed_read_write_batch": True,
+                }
+            },
+        }
+    ]
+    tool_definitions = [
+        {"type": "function", "function": {"name": "write_file"}},
+        {"type": "function", "function": {"name": "edit_file"}},
+        {"type": "function", "function": {"name": "repo_apply_diff"}},
+        {"type": "function", "function": {"name": "edit_blocks"}},
+    ]
+
+    hint, _metadata = build_single_batch_task_contract_hint(context, tool_definitions)
+
+    assert "Use available tools to satisfy each group in order: [edit_blocks, repo_apply_diff, edit_file, write_file]." in hint
+
+
 def test_build_decision_messages_includes_benchmark_required_tools_hint() -> None:
     controller = TurnTransactionController(
         llm_provider=AsyncMock(return_value={}),

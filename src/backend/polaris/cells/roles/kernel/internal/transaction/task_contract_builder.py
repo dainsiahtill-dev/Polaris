@@ -499,7 +499,7 @@ def build_single_batch_task_contract_hint(
     # likely to pick a tool whose signature it can correctly fill.
     _write_group_priority: dict[str, int] = {
         "append_to_file": 0,  # simplest: file + content
-        "precision_edit": 1,  # structured but well-defined
+        "edit_blocks": 1,  # line-range or block edit with explicit target
         "repo_apply_diff": 2,  # diff-based, models handle reasonably
         "search_replace": 3,  # search + replace pair
         "edit_file": 4,  # complex: needs start_line/end_line OR search/replace
