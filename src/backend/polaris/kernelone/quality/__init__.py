@@ -31,8 +31,11 @@ from polaris.kernelone.quality.scope_authority import (
     build_scope_authority_decision,
     glob_declared_scope_path_matches,
     normalize_declared_scope_path,
+    owner_task_retry_handoff_requests_from_scope_payload,
+    ownership_handoff_requests_from_scope_payload,
     path_matches_any_declared_scope_candidate,
     path_matches_declared_scope_candidate,
+    unresolved_owner_handoff_requests_from_scope_payload,
 )
 from polaris.kernelone.quality.syntax_gate import (
     SyntaxCheckResult,
@@ -64,6 +67,8 @@ __all__ = [
     "first_syntax_failure",
     "glob_declared_scope_path_matches",
     "normalize_declared_scope_path",
+    "owner_task_retry_handoff_requests_from_scope_payload",
+    "ownership_handoff_requests_from_scope_payload",
     "path_matches_any_declared_scope_candidate",
     "path_matches_declared_scope_candidate",
     "plan_cross_artifact_repairs",
@@ -71,4 +76,5 @@ __all__ = [
     "scan_cross_artifact_consistency_errors",
     "scan_workspace_artifact_quality",
     "scan_workspace_artifact_quality_evidence",
+    "unresolved_owner_handoff_requests_from_scope_payload",
 ]

@@ -133,6 +133,64 @@ class ScopeAuthorityDecision:
         }
 
 
+def ownership_handoff_requests_from_scope_payload(payload: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
+    """Extract ownership handoff requests from scope-authority projections.
+
+    Scope handoff evidence may be projected as a full scope-authority decision,
+    nested below a task-boundary scope filter, or as a flat compatibility field.
+    This read-only extractor keeps downstream routers from duplicating that
+    shape knowledge.
+    """
+
+    candidates: list[Any] = []
+    scope_filter_raw = payload.get("task_boundary_scope_filter")
+    if isinstance(scope_filter_raw, Mapping):
+        candidates.extend(_ownership_handoff_candidate_values(scope_filter_raw))
+    candidates.extend(_ownership_handoff_candidate_values(payload))
+
+    empty_list_seen = False
+    for candidate in candidates:
+        if not isinstance(candidate, list):
+            continue
+        requests = tuple(dict(item) for item in candidate if isinstance(item, Mapping) and item)
+        if requests:
+            return requests
+        empty_list_seen = True
+    if empty_list_seen:
+        return ()
+    return ()
+
+
+def owner_task_retry_handoff_requests_from_scope_payload(payload: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
+    """Return handoff requests that can be routed to the owning task."""
+
+    return tuple(
+        request
+        for request in ownership_handoff_requests_from_scope_payload(payload)
+        if bool(request.get("owner_found")) and _clean_token(request.get("recommended_route")) == "owner_task_retry"
+    )
+
+
+def unresolved_owner_handoff_requests_from_scope_payload(payload: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
+    """Return handoff requests that still need ownership resolution."""
+
+    return tuple(
+        request
+        for request in ownership_handoff_requests_from_scope_payload(payload)
+        if not bool(request.get("owner_found"))
+        or _clean_token(request.get("recommended_route")) == "scope_authority_resolution"
+    )
+
+
+def _ownership_handoff_candidate_values(payload: Mapping[str, Any]) -> tuple[Any, ...]:
+    scope_authority_raw = payload.get("scope_authority")
+    scope_authority: Mapping[str, Any] = scope_authority_raw if isinstance(scope_authority_raw, Mapping) else {}
+    return (
+        payload.get("ownership_handoff_requests"),
+        scope_authority.get("ownership_handoff_requests"),
+    )
+
+
 def build_scope_authority_decision(
     *,
     workspace: str,
@@ -168,6 +226,9 @@ __all__ = [
     "build_scope_authority_decision",
     "glob_declared_scope_path_matches",
     "normalize_declared_scope_path",
+    "owner_task_retry_handoff_requests_from_scope_payload",
+    "ownership_handoff_requests_from_scope_payload",
     "path_matches_any_declared_scope_candidate",
     "path_matches_declared_scope_candidate",
+    "unresolved_owner_handoff_requests_from_scope_payload",
 ]

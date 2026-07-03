@@ -64,6 +64,11 @@ from polaris.delivery.http.schemas import (
 )
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 from polaris.kernelone.fs.text_ops import write_text_atomic
+from polaris.kernelone.quality import (
+    owner_task_retry_handoff_requests_from_scope_payload,
+    ownership_handoff_requests_from_scope_payload,
+    unresolved_owner_handoff_requests_from_scope_payload,
+)
 from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path, resolve_storage_roots
 from polaris.kernelone.trace import create_task_with_context
 from pydantic import BaseModel, Field
@@ -1011,34 +1016,11 @@ def _task_record_needs_task_boundary_rework(record: dict[str, Any]) -> bool:
 
 
 def _ownership_handoff_requests_from_repair_payload(repair: dict[str, Any]) -> list[dict[str, Any]]:
-    scope_filter_raw = repair.get("task_boundary_scope_filter")
-    scope_filter: dict[str, Any] = scope_filter_raw if isinstance(scope_filter_raw, dict) else {}
-    candidates = (
-        scope_filter.get("ownership_handoff_requests"),
-        (scope_filter.get("scope_authority") or {}).get("ownership_handoff_requests")
-        if isinstance(scope_filter.get("scope_authority"), dict)
-        else None,
-        repair.get("ownership_handoff_requests"),
-        (repair.get("scope_authority") or {}).get("ownership_handoff_requests")
-        if isinstance(repair.get("scope_authority"), dict)
-        else None,
-    )
-    for requests_raw in candidates:
-        if isinstance(requests_raw, list):
-            return [dict(item) for item in requests_raw if isinstance(item, dict) and item]
-    return []
+    return list(ownership_handoff_requests_from_scope_payload(repair))
 
 
 def _owned_handoff_requests_from_repair_payload(repair: dict[str, Any]) -> list[dict[str, Any]]:
-    requests_raw = _ownership_handoff_requests_from_repair_payload(repair)
-    requests: list[dict[str, Any]] = []
-    for request in requests_raw:
-        if not bool(request.get("owner_found")):
-            continue
-        if str(request.get("recommended_route") or "").strip() != "owner_task_retry":
-            continue
-        requests.append(request)
-    return requests
+    return list(owner_task_retry_handoff_requests_from_scope_payload(repair))
 
 
 def _task_record_external_tokens(record: dict[str, Any]) -> set[str]:
@@ -1148,12 +1130,7 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
     repair: dict[str, Any] = repair_raw if isinstance(repair_raw, dict) else {}
     all_handoff_requests = _ownership_handoff_requests_from_repair_payload(repair)
     owner_handoff_requests = _owned_handoff_requests_from_repair_payload(repair)
-    unknown_owner_handoff_requests = [
-        dict(request)
-        for request in all_handoff_requests
-        if not bool(request.get("owner_found"))
-        or str(request.get("recommended_route") or "").strip() == "scope_authority_resolution"
-    ]
+    unknown_owner_handoff_requests = list(unresolved_owner_handoff_requests_from_scope_payload(repair))
     matched_owner_handoff_ids: set[int] = set()
     for entry in entries:
         record = entry.to_dict() if hasattr(entry, "to_dict") else entry
