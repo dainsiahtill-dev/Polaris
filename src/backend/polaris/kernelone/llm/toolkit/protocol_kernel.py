@@ -20,14 +20,14 @@ from polaris.kernelone.llm.toolkit.protocol import (
     EditType,
     # Constants
     ErrorCode,
-    # Models
     FileOperation,
+    # Models
+    FileOpValidationResult,
     OperationResult,
     OperationValidator,
     # Core classes
     ProtocolParser,
     StrictOperationApplier,
-    ValidationResult,
     _detect_path_traversal,
     _is_path_safe,
     # Path utilities (for compatibility)
@@ -45,13 +45,13 @@ __all__ = [
     # Constants
     "ErrorCode",
     # Models
+    "FileOpValidationResult",
     "FileOperation",
     "OperationResult",
     "OperationValidator",
     # Core classes
     "ProtocolParser",
     "StrictOperationApplier",
-    "ValidationResult",
     "_detect_path_traversal",
     "_is_path_safe",
     # Path utilities

@@ -97,14 +97,14 @@ from .protocol_kernel import (
     EditType,
     # 枚举
     ErrorCode,
-    # 数据类
     FileOperation,
+    # 数据类
+    FileOpValidationResult,
     OperationResult,
     OperationValidator,
     # 工具类
     ProtocolParser,
     StrictOperationApplier,
-    ValidationResult,
     apply_operations,
     apply_protocol_output,
     # 核心函数
@@ -164,6 +164,7 @@ __all__ = [
     # 枚举
     "ErrorCode",
     # 数据类
+    "FileOpValidationResult",
     "FileOperation",
     "KernelToolCallingRuntime",  # 工具调用运行时
     "ModelSpec",
@@ -190,7 +191,6 @@ __all__ = [
     # 原生 Function Calling
     # ═══════════════════════════════════════════════════════════════
     "Usage",
-    "ValidationResult",
     "XMLToolParser",  # XML 格式 (MiniMax/Claude/Llama)
     # 版本
     "__version__",

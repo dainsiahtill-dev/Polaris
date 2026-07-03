@@ -6,7 +6,7 @@ The original protocol_kernel.py has been split into the following structure:
 protocol/
     __init__.py       # Unified exports and convenience functions
     constants.py      # ErrorCode, EditType enums
-    models.py         # FileOperation, ValidationResult, OperationResult, ApplyReport
+    models.py         # FileOperation, FileOpValidationResult, OperationResult, ApplyReport
     path_utils.py     # Path safety utilities
     parser.py         # ProtocolParser
     validator.py      # OperationValidator
@@ -29,8 +29,8 @@ from polaris.kernelone.llm.toolkit.protocol.constants import (
 from polaris.kernelone.llm.toolkit.protocol.models import (
     ApplyReport,
     FileOperation,
+    FileOpValidationResult,
     OperationResult,
-    ValidationResult,
     _normalize_path,
 )
 
@@ -50,13 +50,13 @@ __all__ = [
     # Constants
     "ErrorCode",
     # Models
+    "FileOpValidationResult",
     "FileOperation",
     "OperationResult",
     "OperationValidator",
     # Core classes
     "ProtocolParser",
     "StrictOperationApplier",
-    "ValidationResult",
     # Path utilities (internal)
     "_detect_path_traversal",
     "_is_path_safe",
@@ -83,7 +83,7 @@ def parse_protocol_output(text: str) -> list[FileOperation]:
 
 def validate_operations(
     operations: list[FileOperation], workspace: str
-) -> list[tuple[FileOperation, ValidationResult]]:
+) -> list[tuple[FileOperation, FileOpValidationResult]]:
     """Batch validate operations.
 
     Args:

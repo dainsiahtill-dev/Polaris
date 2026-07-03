@@ -81,7 +81,7 @@ class FileOperation:
 class FileOpValidationResult:
     """Validation result for file operations.
 
-    Note: This is distinct from other ValidationResult types:
+    Note: This is distinct from other validation result types:
     - ToolArgValidationResult: Tool argument validation
     - ProviderConfigValidationResult: Provider configuration validation
     - LaunchValidationResult: Bootstrap launch validation
@@ -93,10 +93,6 @@ class FileOpValidationResult:
     error_message: str = ""
     normalized_path: str = ""
     normalized_move_to: str = ""
-
-
-# Backward compatibility alias (deprecated)
-ValidationResult = FileOpValidationResult
 
 
 @dataclass

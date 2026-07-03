@@ -9,7 +9,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from polaris.kernelone.llm.toolkit.protocol.constants import EditType, ErrorCode
-from polaris.kernelone.llm.toolkit.protocol.models import ValidationResult
+from polaris.kernelone.llm.toolkit.protocol.models import FileOpValidationResult
 from polaris.kernelone.llm.toolkit.protocol.path_utils import (
     _detect_path_traversal,
     _is_path_safe,
@@ -31,7 +31,7 @@ class OperationValidator:
     """
 
     @classmethod
-    def validate(cls, operation: FileOperation, workspace: str) -> ValidationResult:
+    def validate(cls, operation: FileOperation, workspace: str) -> FileOpValidationResult:
         """Validate an operation.
 
         Args:
@@ -39,11 +39,11 @@ class OperationValidator:
             workspace: Workspace root directory
 
         Returns:
-            ValidationResult with validation status
+            FileOpValidationResult with validation status
         """
         # Check for empty path
         if not operation.path or not operation.path.strip():
-            return ValidationResult(
+            return FileOpValidationResult(
                 valid=False,
                 error_code=ErrorCode.INVALID_PATH,
                 error_message="Empty path",
@@ -51,7 +51,7 @@ class OperationValidator:
 
         # Check path traversal
         if _detect_path_traversal(operation.path):
-            return ValidationResult(
+            return FileOpValidationResult(
                 valid=False,
                 error_code=ErrorCode.PATH_TRAVERSAL,
                 error_message=f"Path traversal detected: {operation.path}",
@@ -60,7 +60,7 @@ class OperationValidator:
         # Check path is within workspace
         is_safe, _result = _is_path_safe(workspace, operation.path)
         if not is_safe:
-            return ValidationResult(
+            return FileOpValidationResult(
                 valid=False,
                 error_code=ErrorCode.PATH_OUTSIDE_WORKSPACE,
                 error_message=f"Path outside workspace: {operation.path}",
@@ -70,7 +70,7 @@ class OperationValidator:
         # Check move_to path if present
         if operation.move_to:
             if _detect_path_traversal(operation.move_to):
-                return ValidationResult(
+                return FileOpValidationResult(
                     valid=False,
                     error_code=ErrorCode.PATH_TRAVERSAL,
                     error_message=f"Move-to path traversal detected: {operation.move_to}",
@@ -78,7 +78,7 @@ class OperationValidator:
 
             is_safe, _ = _is_path_safe(workspace, operation.move_to)
             if not is_safe:
-                return ValidationResult(
+                return FileOpValidationResult(
                     valid=False,
                     error_code=ErrorCode.PATH_OUTSIDE_WORKSPACE,
                     error_message=f"Move-to path outside workspace: {operation.move_to}",
@@ -89,14 +89,14 @@ class OperationValidator:
         # Check operation-specific requirements
         if operation.edit_type == EditType.SEARCH_REPLACE:
             if not operation.search:
-                return ValidationResult(
+                return FileOpValidationResult(
                     valid=False,
                     error_code=ErrorCode.INVALID_OPERATION,
                     error_message="SEARCH_REPLACE requires search text",
                     normalized_path=operation.path,
                 )
             if operation.replace is None:
-                return ValidationResult(
+                return FileOpValidationResult(
                     valid=False,
                     error_code=ErrorCode.EMPTY_OPERATION,
                     error_message="SEARCH_REPLACE requires replace text",
@@ -105,7 +105,7 @@ class OperationValidator:
 
         elif operation.edit_type in (EditType.FULL_FILE, EditType.CREATE):
             if operation.replace is None:
-                return ValidationResult(
+                return FileOpValidationResult(
                     valid=False,
                     error_code=ErrorCode.EMPTY_OPERATION,
                     error_message=f"{operation.edit_type.name} requires content",
@@ -113,7 +113,7 @@ class OperationValidator:
                 )
 
         # All checks passed
-        return ValidationResult(
+        return FileOpValidationResult(
             valid=True,
             error_code=ErrorCode.OK,
             normalized_path=operation.path,
@@ -125,7 +125,7 @@ class OperationValidator:
         cls,
         operations: list[FileOperation],
         workspace: str,
-    ) -> list[tuple[FileOperation, ValidationResult]]:
+    ) -> list[tuple[FileOperation, FileOpValidationResult]]:
         """Validate a batch of operations.
 
         Args:
