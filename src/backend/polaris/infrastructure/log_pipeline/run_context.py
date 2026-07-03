@@ -79,7 +79,7 @@ def clear_active_run_context() -> None:
     _thread_local.run_context = None
 
 
-# Global context for backward compatibility
+# Process-wide fallback context for non-thread-local run writers.
 _global_context: ActiveRunContext | None = None
 _global_lock = threading.Lock()
 
