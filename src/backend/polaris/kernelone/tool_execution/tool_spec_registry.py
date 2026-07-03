@@ -316,11 +316,13 @@ class ToolSpecRegistry:
         return dict(cls._get_registry())
 
     @classmethod
-    def get_all_tools(cls) -> list[ToolSpec]:
-        """获取所有唯一的ToolSpec列表(去重别名)"""
+    def get_all_tools(cls, *, include_deprecated: bool = True) -> list[ToolSpec]:
+        """Return all unique ToolSpecs, deduplicated by canonical tool name."""
         seen: set[str] = set()
         result: list[ToolSpec] = []
         for spec in cls._get_specs().values():
+            if not include_deprecated and cls._is_deprecated_tool(spec.canonical_name):
+                continue
             if spec.canonical_name not in seen:
                 seen.add(spec.canonical_name)
                 result.append(spec)

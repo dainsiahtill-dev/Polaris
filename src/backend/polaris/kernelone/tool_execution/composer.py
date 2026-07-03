@@ -257,7 +257,7 @@ def _build_capability_registry() -> CapabilityRegistry:
         "background_wait": ("wait", "background", "complete"),
     }
 
-    for spec in ToolSpecRegistry.get_all_tools():
+    for spec in ToolSpecRegistry.get_all_tools(include_deprecated=False):
         # Determine input/output types based on categories
         if "read" in spec.categories:
             input_type = "path_query"
@@ -510,7 +510,7 @@ class ToolComposer:
             "file_read": ("repo_read_head", "repo_read_slice", "repo_read_around", "read_file"),
             "file_search": ("repo_rg", "grep", "search"),
             "file_write": ("write_file", "append_to_file"),
-            "file_edit": ("precision_edit", "edit_file", "search_replace"),
+            "file_edit": ("edit_blocks", "edit_file", "search_replace", "repo_apply_diff"),
             "file_tree": ("repo_tree", "repo_map"),
             "git_diff": ("repo_diff",),
             "symbol_index": ("repo_symbols_index",),

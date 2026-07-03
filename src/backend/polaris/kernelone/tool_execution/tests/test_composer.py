@@ -16,6 +16,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from polaris.kernelone.tool_execution import tool_spec_registry
 from polaris.kernelone.tool_execution.composer import (
     CapabilityRegistry,
     CompositionResult,
@@ -250,6 +251,8 @@ class TestToolComposer:
     @pytest.fixture
     def composer(self, mock_llm: MagicMock) -> ToolComposer:
         """Create a ToolComposer instance with mock LLM."""
+        ToolSpecRegistry.clear()
+        tool_spec_registry.migrate_from_contracts_specs()
         return ToolComposer(
             tool_registry=ToolSpecRegistry,
             llm=mock_llm,
@@ -296,6 +299,21 @@ class TestToolComposer:
         selections = await composer._select_tools(("file_read",), constraints)
         assert len(selections) > 0
         assert selections[0].capability.tool_name is not None
+
+    @pytest.mark.asyncio
+    async def test_select_tools_does_not_choose_deprecated_edit_tool(self, mock_llm: MagicMock) -> None:
+        """ToolComposer planning must not prefer deprecated edit tools."""
+        ToolSpecRegistry.clear()
+        tool_spec_registry.migrate_from_contracts_specs()
+        composer = ToolComposer(tool_registry=ToolSpecRegistry, llm=mock_llm)
+
+        selections = await composer._select_tools(("file_edit",), Constraints())
+
+        selected_names = [selection.capability.tool_name for selection in selections]
+        retired_name = "precision_" + "edit"
+        assert selected_names
+        assert selected_names[0] == "edit_blocks"
+        assert retired_name not in selected_names
 
     @pytest.mark.asyncio
     async def test_resolve_dependencies(self, composer: ToolComposer) -> None:

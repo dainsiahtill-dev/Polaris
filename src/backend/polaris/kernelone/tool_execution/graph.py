@@ -518,7 +518,7 @@ class ToolCallGraphBuilder:
             ToolCallGraphBuilder()
             .node("read", tool_call=read_file_tool)
             .node("search", tool_call=repo_rg_tool, depends_on=["read"])
-            .node("edit", tool_call=precision_edit_tool, depends_on=["search"])
+            .node("edit", tool_call=edit_file_tool, depends_on=["search"])
             .build()
         )
 

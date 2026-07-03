@@ -264,6 +264,36 @@ class TestToolSpecRegistry:
         assert len(tools) == 1
         assert tools[0].canonical_name == "unique_tool"
 
+    def test_get_all_tools_can_filter_deprecated_specs(self) -> None:
+        """Planning consumers can ask for active tools without losing compatibility lookup."""
+        ToolSpecRegistry.register(
+            "active_tool",
+            {
+                "description": "Active tool",
+                "category": "read",
+                "aliases": [],
+                "arguments": [],
+            },
+        )
+        ToolSpecRegistry.register(
+            "retired_tool",
+            {
+                "description": "Retired tool",
+                "category": "write",
+                "aliases": [],
+                "arguments": [],
+                "deprecated": True,
+            },
+        )
+
+        all_tool_names = {tool.canonical_name for tool in ToolSpecRegistry.get_all_tools()}
+        active_tool_names = {
+            tool.canonical_name for tool in ToolSpecRegistry.get_all_tools(include_deprecated=False)
+        }
+
+        assert all_tool_names == {"active_tool", "retired_tool"}
+        assert active_tool_names == {"active_tool"}
+
     def test_generate_llm_schemas_openai(self) -> None:
         """Test generating OpenAI format schemas."""
         spec = ToolSpec(
