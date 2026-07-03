@@ -760,6 +760,68 @@ def test_quality_gate_task_boundary_validation_routes_owner_handoff_to_owner_tas
     assert rows["PM-0001-2-step-3"]["status"] == "failed"
 
 
+def test_quality_gate_task_boundary_validation_reports_unmatched_owner_handoff(temp_workspace: Path) -> None:
+    task_board = TaskRuntimeService(str(temp_workspace))
+    current_row = task_board.ensure_task_row(
+        external_task_id="PM-0001-2-step-3",
+        subject="Current task wants to repair tests",
+        metadata={
+            "external_task_id": "PM-0001-2-step-3",
+            "last_execution_error": "director_materialization_quality_failed",
+        },
+        priority=2,
+    )
+    task_board.update(current_row["id"], status="failed", assignee="director")
+
+    target = Path(resolve_logical_path(str(temp_workspace), "workspace/qa/latest.workspace-validation.json"))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(
+            {
+                "passed": False,
+                "repair": {
+                    "success_reason": "repair_targets_outside_current_task_target_files",
+                    "task_boundary_scope_filter": {
+                        "schema_version": "director.task_boundary.repair_scope_filter.v1",
+                        "reason": "quality_repair_targets_outside_current_task_target_files",
+                        "ownership_handoff_requests": [
+                            {
+                                "schema_version": "file-ownership-handoff-request/1",
+                                "target_file": "src/index.js",
+                                "requesting_task_id": "PM-0001-2-step-3",
+                                "reason": "quality_repair_targets_outside_current_task_target_files",
+                                "owner_step_id": "PM-0001-1-S4",
+                                "owner_parent": "PM-0001-1",
+                                "owner_found": True,
+                                "recommended_route": "owner_task_retry",
+                                "status": "owner_found",
+                            }
+                        ],
+                    },
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    bridge_summary = factory_router_module._apply_quality_gate_task_boundary_rework_requests(str(temp_workspace))
+
+    assert bridge_summary["requested"] is False
+    assert bridge_summary["reopened_count"] == 0
+    assert bridge_summary["skipped_count"] == 1
+    assert bridge_summary["unmatched_owner_handoff_count"] == 1
+    assert bridge_summary["unmatched_owner_handoff_requests"][0]["owner_step_id"] == "PM-0001-1-S4"
+
+    rows = {
+        row["metadata"]["external_task_id"]: row
+        for row in TaskRuntimeService(str(temp_workspace)).list_task_rows()
+    }
+    assert rows["PM-0001-2-step-3"]["status"] == "failed"
+
+
 def test_execute_run_reenters_director_when_quality_gate_requests_rework(temp_workspace: Path) -> None:
     executor = QualityReworkStageExecutor(temp_workspace)
     service = FactoryRunService(

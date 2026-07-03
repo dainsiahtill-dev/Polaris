@@ -1103,6 +1103,8 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
         "reopened_count": 0,
         "exhausted_count": 0,
         "skipped_count": 0,
+        "unmatched_owner_handoff_count": 0,
+        "unmatched_owner_handoff_requests": [],
         "tasks": [],
         "reason": _TASK_BOUNDARY_REWORK_REASON,
         "artifact": artifact,
@@ -1123,6 +1125,7 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
     repair_raw = payload.get("repair")
     repair: dict[str, Any] = repair_raw if isinstance(repair_raw, dict) else {}
     owner_handoff_requests = _owned_handoff_requests_from_repair_payload(repair)
+    matched_owner_handoff_ids: set[int] = set()
     for entry in entries:
         record = entry.to_dict() if hasattr(entry, "to_dict") else entry
         if not isinstance(record, dict):
@@ -1137,6 +1140,7 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
                 "reason": rework_reason,
                 "ownership_handoff_request": owner_handoff_request,
             }
+            matched_owner_handoff_ids.add(id(owner_handoff_request))
         elif _task_record_needs_task_boundary_rework(record):
             rework_reason = _TASK_BOUNDARY_REWORK_REASON
             task_evidence = evidence
@@ -1209,6 +1213,16 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
             summary["tasks"].append(task_summary)
         except (RuntimeError, ValueError):
             summary["skipped_count"] += 1
+
+    unmatched_owner_handoff_requests = [
+        dict(request)
+        for request in owner_handoff_requests
+        if id(request) not in matched_owner_handoff_ids
+    ]
+    if unmatched_owner_handoff_requests:
+        summary["skipped_count"] += len(unmatched_owner_handoff_requests)
+        summary["unmatched_owner_handoff_count"] = len(unmatched_owner_handoff_requests)
+        summary["unmatched_owner_handoff_requests"] = unmatched_owner_handoff_requests
 
     return summary
 
