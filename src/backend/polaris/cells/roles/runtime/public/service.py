@@ -91,13 +91,13 @@ from polaris.cells.roles.runtime.internal.protocol_fsm import (
 )
 from polaris.cells.roles.runtime.internal.role_domain_policy import RoleDomainPolicy
 from polaris.cells.roles.runtime.internal.sequential_engine import (
-    FailureClass,
     RetryHint,
     SeqEventType,
     SeqProgressDetector,
     SeqState,
     SequentialBudget,
     SequentialEngine,
+    SequentialFailureClass,
     SequentialStateProxy,
     SequentialStats,
     StepDecision,
@@ -1345,7 +1345,6 @@ __all__ = [
     "ExecuteRoleSessionCommandV1",
     "ExecuteRoleTaskCommandV1",
     "ExecuteRoleTaskMarketLifecycleCommandV1",
-    "FailureClass",
     "GetRoleRuntimeStatusQueryV1",
     "HybridEngine",
     "IRoleRuntime",
@@ -1389,6 +1388,7 @@ __all__ = [
     "SequentialBudget",
     "SequentialConfig",
     "SequentialEngine",
+    "SequentialFailureClass",
     "SequentialMode",
     "SequentialStateProxy",
     "SequentialStats",

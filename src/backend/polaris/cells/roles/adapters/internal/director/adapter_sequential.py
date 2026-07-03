@@ -10,8 +10,8 @@ import logging
 from typing import Any
 
 from polaris.cells.roles.runtime.public import (
-    FailureClass,
     SequentialEngine,
+    SequentialFailureClass,
     SequentialMode,
     SequentialTraceLevel,
 )
@@ -177,7 +177,7 @@ async def execute_sequential(
         run_id=run_id,
     )
     return {
-        "success": stats.failure_class == FailureClass.SUCCESS,  # type: ignore[attr-defined]
+        "success": stats.failure_class == SequentialFailureClass.SUCCESS.value,  # type: ignore[attr-defined]
         "task_id": task_id,
         "sequential_stats": {
             "steps": stats.steps,
