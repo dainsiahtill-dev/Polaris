@@ -453,6 +453,10 @@ _ARTIFACT_QUALITY_COMPILER_PATH_RE = re.compile(
     r"(?::|\s)"
 )
 _ARTIFACT_QUALITY_TYPESCRIPT_ERROR_RE = re.compile(r"\berror\s+(?P<code>TS\d+):", re.IGNORECASE)
+_ARTIFACT_QUALITY_RUST_ERROR_RE = re.compile(r"\berror\[(?P<code>E\d+)\]:", re.IGNORECASE)
+_ARTIFACT_QUALITY_RUST_LOCATION_RE = re.compile(
+    r"(?m)^\s*-->\s*(?P<path>[^:\n]+\.rs):(?P<line>\d+):(?P<column>\d+)"
+)
 _ARTIFACT_QUALITY_JAVASCRIPT_MODULE_ERROR_RE = re.compile(
     r"(?P<message>The requested module\s+['\"]?[^'\"\s]+['\"]?\s+"
     r"does not provide an export named\s+(?:['\"][^'\"]+['\"]|[A-Za-z_$][\w$]*)|"
@@ -494,6 +498,9 @@ def _artifact_quality_issue_code(message: str) -> str:
     typescript_match = _ARTIFACT_QUALITY_TYPESCRIPT_ERROR_RE.search(message)
     if typescript_match:
         return f"typescript_{str(typescript_match.group('code') or '').lower()}"
+    rust_match = _ARTIFACT_QUALITY_RUST_ERROR_RE.search(message)
+    if rust_match:
+        return f"rust_{str(rust_match.group('code') or '').lower()}"
     if "typescript project typecheck failed" in normalized:
         return "typescript_project_typecheck_failed"
     if "syntax error" in normalized or "invalid json" in normalized:
@@ -511,6 +518,9 @@ def _artifact_quality_issue_code(message: str) -> str:
 
 
 def _artifact_quality_issue_path(message: str) -> str | None:
+    rust_location = _ARTIFACT_QUALITY_RUST_LOCATION_RE.search(message)
+    if rust_location:
+        return str(rust_location.group("path") or "").strip().replace("\\", "/")
     for regex in (
         _ARTIFACT_QUALITY_COMPILER_PATH_RE,
         _ARTIFACT_QUALITY_QUOTED_PATH_RE,
@@ -525,7 +535,20 @@ def _artifact_quality_issue_path(message: str) -> str | None:
     return None
 
 
+def _artifact_quality_optional_int(value: object) -> int | None:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
 def _artifact_quality_issue_location(message: str) -> tuple[int | None, int | None]:
+    rust_location = _ARTIFACT_QUALITY_RUST_LOCATION_RE.search(message)
+    if rust_location:
+        return (
+            _artifact_quality_optional_int(rust_location.group("line")),
+            _artifact_quality_optional_int(rust_location.group("column")),
+        )
     match = _ARTIFACT_QUALITY_COMPILER_PATH_RE.search(message)
     if not match:
         return None, None
@@ -581,6 +604,10 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
         typescript_match = _ARTIFACT_QUALITY_TYPESCRIPT_ERROR_RE.search(message)
         if typescript_match:
             metadata["diagnostic_code"] = str(typescript_match.group("code") or "").strip()
+    elif code.startswith("rust_e"):
+        rust_match = _ARTIFACT_QUALITY_RUST_ERROR_RE.search(message)
+        if rust_match:
+            metadata["diagnostic_code"] = str(rust_match.group("code") or "").strip()
     return {key: value for key, value in metadata.items() if value}
 
 

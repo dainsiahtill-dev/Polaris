@@ -228,6 +228,26 @@ def test_public_repair_diagnostics_preserve_kernelone_issue_locations() -> None:
     )
 
 
+def test_public_repair_diagnostics_preserve_kernelone_rust_issue_locations() -> None:
+    raw_error = (
+        "error[E0583]: file not found for module `weather`\n"
+        "  --> src/main.rs:2:1\n"
+        "   |\n"
+        "2  | mod weather;\n"
+    )
+    issues = artifact_quality_issues_from_errors((raw_error,))
+
+    diagnostics = normalize_director_repair_issue_diagnostics(issues)
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].code == "rust_e0583"
+    assert diagnostics[0].path == "src/main.rs"
+    assert diagnostics[0].metadata["line"] == 2
+    assert diagnostics[0].metadata["column"] == 1
+    assert diagnostics[0].metadata["diagnostic_code"] == "E0583"
+    assert diagnostics[0].metadata["raw"] == raw_error.strip()
+
+
 def test_public_repair_diagnostics_preserve_import_issue_metadata() -> None:
     issues = artifact_quality_issues_from_errors(
         (

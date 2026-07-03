@@ -100,6 +100,23 @@ def test_artifact_quality_issue_projection_extracts_colon_line_column() -> None:
     assert issues[0]["metadata"] == {"raw": error}
 
 
+def test_artifact_quality_issue_projection_extracts_rust_compiler_code_and_location() -> None:
+    error = (
+        "error[E0583]: file not found for module `weather`\n"
+        "  --> src/main.rs:2:1\n"
+        "   |\n"
+        "2  | mod weather;\n"
+    )
+
+    issues = artifact_quality_issues_from_errors((error,))
+
+    assert issues[0]["code"] == "rust_e0583"
+    assert issues[0]["path"] == "src/main.rs"
+    assert issues[0]["line"] == 2
+    assert issues[0]["column"] == 1
+    assert issues[0]["metadata"] == {"raw": error.strip(), "diagnostic_code": "E0583"}
+
+
 def test_artifact_quality_issue_projection_extracts_declared_target_metadata() -> None:
     error = "Artifact quality scan failed: declared target file missing 'src/main.py' is missing"
 
