@@ -59,6 +59,14 @@ LOCAL_FAILURE_CLASS_BOUNDARY_DECISIONS = {
     },
 }
 
+LOCAL_FAILURE_CLASS_FIELD_USAGE_ALLOWLIST = {
+    "polaris/cells/roles/adapters/internal/director/adapter_sequential.py",
+    "polaris/cells/roles/kernel/internal/transaction/ledger.py",
+    "polaris/cells/roles/kernel/public/turn_contracts.py",
+    "polaris/cells/roles/runtime/internal/continuation_policy.py",
+    "polaris/cells/roles/runtime/internal/session_orchestrator.py",
+}
+
 
 @dataclass(frozen=True)
 class ClassDefinition:
@@ -130,8 +138,12 @@ def _imported_names(path: Path) -> set[str]:
                 names.add(alias.asname or alias.name.rsplit(".", 1)[-1])
         elif isinstance(node, ast.ImportFrom):
             for alias in node.names:
-                names.add(alias.asname or alias.name)
+                    names.add(alias.asname or alias.name)
     return names
+
+
+def _contains_failure_class_field_usage(path: Path) -> bool:
+    return "failure_class" in path.read_text(encoding="utf-8")
 
 
 def _local_failure_class_imports(root: Path) -> dict[str, tuple[str, ...]]:
@@ -177,6 +189,21 @@ def test_local_failure_class_imports_stay_inside_boundary_decisions() -> None:
     }
 
     assert actual == expected
+
+
+def test_local_failure_class_field_usage_stays_inside_turn_boundaries() -> None:
+    """Local failure enums may not silently become cross-layer failure_class fields."""
+
+    offenders: list[str] = []
+    for path in _production_python_files(POLARIS_ROOT):
+        imported = _imported_names(path)
+        if not imported.intersection(LOCAL_FAILURE_CLASS_NAMES):
+            continue
+        relative = path.relative_to(BACKEND_ROOT).as_posix()
+        if _contains_failure_class_field_usage(path) and relative not in LOCAL_FAILURE_CLASS_FIELD_USAGE_ALLOWLIST:
+            offenders.append(relative)
+
+    assert sorted(offenders) == []
 
 
 def test_canonical_failure_taxonomy_remains_run_ledger_owned() -> None:
