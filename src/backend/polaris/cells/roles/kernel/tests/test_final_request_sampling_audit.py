@@ -562,6 +562,15 @@ def test_final_request_evidence_tracks_module_interface_contract() -> None:
     metadata = audit["request_metadata_summary"]
     assert metadata["module_interface_contract_summary"]["actual_export_module_count"] == 1
     assert metadata["actual_sibling_exports_summary"]["actual_interface_snapshot_file_count"] == 1
+    module_slot = next(
+        item for item in evidence_coverage["evidence_slots"] if item["ref_type"] == "module_interface_contract"
+    )
+    exports_slot = next(
+        item for item in evidence_coverage["evidence_slots"] if item["ref_type"] == "actual_sibling_exports"
+    )
+    assert module_slot["details"]["module_count"] == 2
+    assert module_slot["details"]["actual_export_module_count"] == 1
+    assert exports_slot["details"]["actual_interface_snapshot_file_count"] == 1
 
 
 def test_final_request_evidence_tracks_direct_actual_sibling_exports_payload() -> None:
@@ -1549,7 +1558,9 @@ def test_final_request_evidence_coverage_tracks_interface_discrepancy_context() 
     slot = next(
         item for item in evidence_coverage["evidence_slots"] if item["ref_type"] == "interface_discrepancy_context"
     )
-    assert slot == {
+    assert {
+        key: value for key, value in slot.items() if key != "details"
+    } == {
         "schema_version": "polaris.final_request_evidence_slot.v1",
         "ref_type": "interface_discrepancy_context",
         "required": True,
@@ -1560,6 +1571,17 @@ def test_final_request_evidence_coverage_tracks_interface_discrepancy_context() 
         "freshness": "current_turn",
         "hash": source["hash"],
     }
+    slot_details = slot["details"]
+    assert slot_details["diagnostic_count"] == 1
+    assert slot_details["interface_delta_available"] is True
+    assert slot_details["triage_summary_available"] is True
+    assert slot_details["llm_fallback_blocked"] is False
+    assert slot_details["plan_probe_status"] == "coverage_matched_but_unplannable"
+    assert slot_details["recommended_owner"] == "director"
+    assert slot_details["recommended_route"] == "director_retry_with_interface_discrepancy_context"
+    assert slot_details["interface_delta"]["requested_symbols"] == ["WeatherKind"]
+    assert slot_details["triage_summary"]["director_retry_allowed"] is True
+    assert slot_details["source_tools"] == ["deterministic_unresolved_import_symbol_repair"]
     assert evidence_coverage["missing_required_refs"] == []
     assert evidence_coverage["pass"] is True
     enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)

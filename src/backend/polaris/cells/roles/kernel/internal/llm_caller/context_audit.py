@@ -2131,6 +2131,15 @@ def _coverage_source(
     hash_value = hash_by_ref.get(ref_type, "")
     if hash_value:
         result["hash"] = hash_value
+    detail_by_ref = {
+        "module_interface_contract": request_metadata_summary.get("module_interface_contract_summary"),
+        "actual_sibling_exports": request_metadata_summary.get("actual_sibling_exports_summary"),
+        "interface_discrepancy_context": request_metadata_summary.get("interface_discrepancy_context_summary"),
+        "architecture_or_file_plan": request_metadata_summary.get("architecture_or_file_plan_summary"),
+    }
+    detail_payload = detail_by_ref.get(ref_type)
+    if isinstance(detail_payload, dict) and detail_payload:
+        result["details"] = dict(detail_payload)
     return result
 
 
@@ -2168,6 +2177,9 @@ def _evidence_slots(
         }
         if source.get("hash"):
             slot["hash"] = str(source.get("hash"))
+        details = source.get("details")
+        if isinstance(details, dict) and details:
+            slot["details"] = dict(details)
         slots.append(slot)
     return slots
 
