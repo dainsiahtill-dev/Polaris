@@ -59,6 +59,7 @@ from polaris.cells.roles.runtime.internal.session_artifact_store import (
     SessionArtifactStore,
 )
 from polaris.kernelone.fs.text_ops import write_text_atomic
+from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
 # Lazy-loaded role profile cache (avoids circular import at module level)
 _role_profile_cache: dict[str, tuple[str, list[dict[str, Any]]]] = {}  # role -> (role_definition, tool_definitions)
@@ -88,18 +89,6 @@ def _write_checkpoint_sync(checkpoint_path: Path, serialized: str) -> None:
             cause=exc,
         ) from exc
 
-
-_WRITE_TOOL_NAMES = {
-    "write_file",
-    "edit_file",
-    "create_file",
-    "append_to_file",
-    "precision_edit",
-    "edit_blocks",
-    "search_replace",
-    "repo_apply_diff",
-    "apply_diff",
-}
 
 _READ_TOOL_NAMES = {
     "read_file",
@@ -1038,7 +1027,7 @@ class RoleSessionOrchestrator:
             return envelope
         results = receipt.get("results", [])
         has_write_tool = any(
-            isinstance(result, dict) and str(result.get("tool_name", "")) in _WRITE_TOOL_NAMES for result in results
+            isinstance(result, dict) and str(result.get("tool_name", "")) in WRITE_TOOLS for result in results
         )
         has_visible_output = bool(envelope.turn_result.visible_content and envelope.turn_result.visible_content.strip())
         if has_write_tool or not has_visible_output or self.state.turn_count < 1:

@@ -199,6 +199,42 @@ class TestRoleSessionOrchestrator:
         assert result.turn_result.kind == "final_answer"
 
     @pytest.mark.asyncio
+    async def test_read_only_termination_exemption_uses_canonical_write_tool_observation(self, tmp_workspace):
+        orch = RoleSessionOrchestrator(
+            session_id="sess-1",
+            kernel=AsyncMock(),
+            workspace=tmp_workspace,
+        )
+        orch.state.turn_count = 2
+        envelope = TurnOutcomeEnvelope(
+            turn_result=TurnResult(
+                turn_id="t0",
+                kind="final_answer",
+                visible_content="write completed",
+                decision={},
+                batch_receipt={
+                    "results": [
+                        {
+                            "tool_name": "precision_edit",
+                            "status": "success",
+                            "result": {"file": "src/example.py"},
+                        }
+                    ]
+                },
+            ),
+            continuation_mode=TurnContinuationMode.AUTO_CONTINUE,
+            next_intent=None,
+            session_patch={},
+            artifacts_to_persist=[],
+            speculative_hints={},
+        )
+
+        result = orch._apply_read_only_termination_exemption(envelope)
+
+        assert result.continuation_mode == TurnContinuationMode.AUTO_CONTINUE
+        assert result.turn_result.kind == "final_answer"
+
+    @pytest.mark.asyncio
     async def test_materialize_changes_guard_blocks_final_answer_without_write_receipt(self, tmp_workspace):
         orch = RoleSessionOrchestrator(
             session_id="sess-1",
