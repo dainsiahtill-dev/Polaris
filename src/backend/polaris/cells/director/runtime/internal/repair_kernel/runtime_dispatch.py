@@ -473,13 +473,17 @@ def plan_runtime_repair(
 
     normalized_source_tool = _normalize_source_tool(source_tool)
     notes = tuple(advisor_notes or ())
+    effective_artifact_quality_errors = _effective_artifact_quality_errors(
+        artifact_quality_errors,
+        repair_diagnostics,
+    )
     binding = _RUNTIME_REPAIR_BINDINGS.get(normalized_source_tool)
     if binding is not None:
-        return binding.planner(base_files, artifact_quality_errors, notes, mode)
+        return binding.planner(base_files, effective_artifact_quality_errors, notes, mode)
 
     return RuntimeRepairPlanning(
         source_tool=normalized_source_tool,
-        diagnostics=_initial_runtime_diagnostics(artifact_quality_errors, repair_diagnostics),
+        diagnostics=_initial_runtime_diagnostics(effective_artifact_quality_errors, repair_diagnostics),
         plan=None,
         composition=None,
         advisor_notes=notes,
@@ -506,15 +510,27 @@ def run_runtime_repair(
 
     normalized_source_tool = _normalize_source_tool(source_tool)
     notes = tuple(advisor_notes or ())
+    effective_artifact_quality_errors = _effective_artifact_quality_errors(
+        artifact_quality_errors,
+        repair_diagnostics,
+    )
     binding = _RUNTIME_REPAIR_BINDINGS.get(normalized_source_tool)
     if binding is not None:
         return binding.runner(
-            workspace, base_files, artifact_quality_errors, writer, editor, deleter, allowed_paths, notes, mode
+            workspace,
+            base_files,
+            effective_artifact_quality_errors,
+            writer,
+            editor,
+            deleter,
+            allowed_paths,
+            notes,
+            mode,
         )
 
     planning = RuntimeRepairPlanning(
         source_tool=normalized_source_tool,
-        diagnostics=_initial_runtime_diagnostics(artifact_quality_errors, repair_diagnostics),
+        diagnostics=_initial_runtime_diagnostics(effective_artifact_quality_errors, repair_diagnostics),
         plan=None,
         composition=None,
         advisor_notes=notes,
@@ -732,6 +748,18 @@ def _artifact_quality_errors_from_diagnostics(diagnostics: Sequence[RepairDiagno
         for diagnostic in diagnostics or ()
         if diagnostic.raw or diagnostic.message or diagnostic.code
     )
+
+
+def _effective_artifact_quality_errors(
+    artifact_quality_errors: Sequence[str],
+    repair_diagnostics: Sequence[RepairDiagnostic] | None,
+) -> tuple[str, ...]:
+    errors = tuple(str(item) for item in artifact_quality_errors or () if str(item or "").strip())
+    if errors:
+        return errors
+    if repair_diagnostics is None:
+        return ()
+    return _artifact_quality_errors_from_diagnostics(repair_diagnostics)
 
 
 def _executable_diagnostics_for_source_tool(

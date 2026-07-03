@@ -2567,6 +2567,92 @@ def test_typescript_number_to_string_argument_runtime_uses_editor_without_write_
     assert result.execution_result.receipt.metadata["write_file_reasons_by_path"] == {}
 
 
+def test_runtime_dispatcher_supported_binding_consumes_typed_diagnostics_without_legacy_errors() -> None:
+    content = "const label = makeLabel(42, width);\n"
+    column = content.index("42") + 1
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="typescript_ts2345",
+        message="Argument of type 'number' is not assignable to parameter of type 'string'.",
+        path="src/garden.ts",
+        line=1,
+        column=column,
+        raw=(
+            "src/garden.ts"
+            f"(1,{column}): error TS2345: Argument of type 'number' is not assignable "
+            "to parameter of type 'string'."
+        ),
+        metadata={"confidence": "parser"},
+    )
+
+    planning = plan_runtime_repair(
+        source_tool=ts_syntax.TYPESCRIPT_NUMBER_TO_STRING_ARGUMENT_SOURCE_TOOL,
+        base_files={"src/garden.ts": content},
+        artifact_quality_errors=(),
+        repair_diagnostics=(diagnostic,),
+        mode="shadow",
+    )
+
+    assert planning.plan is not None
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+    assert planning.diagnostics[0].path == "src/garden.ts"
+    assert planning.composition.patches[0].content_after == "const label = makeLabel(String(42), width);\n"
+
+
+def test_runtime_dispatcher_supported_binding_runs_typed_diagnostics_without_legacy_errors(tmp_path: Path) -> None:
+    relative_path = "src/garden.ts"
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    content = "const label = makeLabel(42, width);\n"
+    target.write_text(content, encoding="utf-8")
+    column = content.index("42") + 1
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="typescript_ts2345",
+        message="Argument of type 'number' is not assignable to parameter of type 'string'.",
+        path=relative_path,
+        line=1,
+        column=column,
+        raw=(
+            "src/garden.ts"
+            f"(1,{column}): error TS2345: Argument of type 'number' is not assignable "
+            "to parameter of type 'string'."
+        ),
+        metadata={"confidence": "parser"},
+    )
+    writes: list[str] = []
+
+    def writer(path: str, updated: str) -> dict[str, object]:
+        writes.append(path)
+        raise AssertionError("number-to-string repair must prefer edit_file over write_file")
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        current = target.read_text(encoding="utf-8")
+        assert operation.span_start is not None
+        assert operation.span_end is not None
+        target.write_text(
+            current[: operation.span_start] + str(operation.replacement or "") + current[operation.span_end :],
+            encoding="utf-8",
+        )
+        return {"ok": True}
+
+    result = run_runtime_repair(
+        source_tool=ts_syntax.TYPESCRIPT_NUMBER_TO_STRING_ARGUMENT_SOURCE_TOOL,
+        workspace=tmp_path,
+        base_files={relative_path: content},
+        artifact_quality_errors=(),
+        repair_diagnostics=(diagnostic,),
+        writer=writer,
+        editor=editor,
+        allowed_paths=(relative_path,),
+    )
+
+    assert result.ok is True
+    assert writes == []
+    assert target.read_text(encoding="utf-8") == "const label = makeLabel(String(42), width);\n"
+
+
 def test_single_runtime_entrypoints_preserve_typed_diagnostics_on_unsupported_tool(tmp_path: Path) -> None:
     diagnostic = RepairDiagnostic(
         source="artifact_quality",
