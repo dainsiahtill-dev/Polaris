@@ -15,6 +15,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+    build_native_tool_call_envelope_payloads,
+)
 from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
@@ -255,12 +258,21 @@ class TurnDecisionDecoder:
         usage = getattr(response, "usage", None)
         if not isinstance(usage, Mapping) and isinstance(response, Mapping):
             usage = response.get("usage")
-        if not isinstance(usage, Mapping):
+        usage_map = usage if isinstance(usage, Mapping) else {}
+        envelopes = usage_map.get("native_tool_call_envelopes")
+        if isinstance(envelopes, list):
+            valid_envelopes = [dict(item) for item in envelopes if isinstance(item, Mapping)]
+            if valid_envelopes:
+                return valid_envelopes
+        native_calls = TurnDecisionDecoder._native_tool_calls(response)
+        if not native_calls:
             return []
-        envelopes = usage.get("native_tool_call_envelopes")
-        if not isinstance(envelopes, list):
-            return []
-        return [dict(item) for item in envelopes if isinstance(item, Mapping)]
+        provider = str(
+            usage_map.get("tool_call_provider")
+            or usage_map.get("decision_caller_tool_call_provider")
+            or "auto"
+        ).strip()
+        return build_native_tool_call_envelope_payloads(native_calls, provider=provider)
 
     @staticmethod
     def _native_tool_name_hint(native: dict[str, Any]) -> str:

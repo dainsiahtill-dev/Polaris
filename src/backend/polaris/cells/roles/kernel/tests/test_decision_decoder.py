@@ -284,6 +284,30 @@ class TestNativeToolExecutionSource:
         assert decision["kind"] == TurnDecisionKind.TOOL_BATCH
         assert decision["metadata"]["native_tool_call_envelopes"] == [envelope]
 
+    def test_native_tool_call_envelopes_are_built_when_usage_projection_is_missing(self) -> None:
+        decoder = TurnDecisionDecoder(config=DecodeConfig(domain="document"))
+        response = RawLLMResponse(
+            content="read server.py",
+            thinking=None,
+            native_tool_calls=[
+                _native_tool("read_file", {"path": "server.py"}, call_id="call_1"),
+            ],
+            model="gpt-4",
+            usage={"tool_call_provider": "openai"},
+        )
+
+        decision = decoder.decode(response, TurnId("turn_build_envelope_metadata"))
+        envelopes = decision["metadata"]["native_tool_call_envelopes"]
+
+        assert decision["kind"] == TurnDecisionKind.TOOL_BATCH
+        assert len(envelopes) == 1
+        assert envelopes[0]["schema_version"] == "native_tool_call_envelope.v1"
+        assert envelopes[0]["provider"] == "openai"
+        assert envelopes[0]["tool_name"] == "read_file"
+        assert envelopes[0]["call_id"] == "call_1"
+        assert len(envelopes[0]["raw_call_hash"]) == 64
+        assert len(envelopes[0]["arguments_hash"]) == 64
+
 
 class TestFinalizeModeDetermination:
     """验证：finalize_mode 正确确定。"""
