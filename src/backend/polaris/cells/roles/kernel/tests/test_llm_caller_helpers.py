@@ -44,6 +44,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import (
 )
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+    _tool_call_lifecycle_receipts_from_metadata,
     build_native_tool_schemas,
     native_tool_call_envelopes_from_metadata,
     native_tool_call_names,
@@ -833,6 +834,27 @@ class TestExtractNativeToolCalls:
         assert len(envelopes) == 2
         assert native_tool_call_count(metadata, raw_calls) == 2
         assert native_tool_call_names(metadata, raw_calls) == ["write_file", "execute_command"]
+
+    def test_lifecycle_receipts_deduplicate_canonical_and_legacy_aliases(self) -> None:
+        receipt = {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_call_envelope_refs": [
+                {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
+            ],
+        }
+        metadata = {
+            "tool_call_lifecycle_receipt": receipt,
+            "tool_call_lifecycle": dict(receipt),
+            "tool_call_lifecycle_receipts": [dict(receipt)],
+        }
+
+        receipts = _tool_call_lifecycle_receipts_from_metadata(metadata)
+
+        assert len(receipts) == 1
+        assert receipts[0]["native_tool_calls_count"] == 1
+        assert receipts[0]["native_tool_call_envelope_refs"] == [
+            {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
+        ]
 
     def test_native_tool_call_envelopes_use_normalized_lifecycle_receipt_aliases(self) -> None:
         metadata = {

@@ -167,14 +167,26 @@ def _valid_native_tool_call_envelopes(value: Any) -> tuple[Mapping[str, Any], ..
 def _tool_call_lifecycle_receipts_from_metadata(
     metadata: Mapping[str, Any],
 ) -> tuple[Mapping[str, Any], ...]:
-    receipts: list[Mapping[str, Any]] = []
+    receipts: list[dict[str, Any]] = []
+    seen_receipts: set[str] = set()
+
+    def append_receipt(value: Mapping[str, Any]) -> None:
+        receipt = normalize_tool_call_lifecycle_receipt(value)
+        receipt_key = json.dumps(receipt, sort_keys=True, separators=(",", ":"), default=str)
+        if receipt_key in seen_receipts:
+            return
+        seen_receipts.add(receipt_key)
+        receipts.append(receipt)
+
     for key in ("tool_call_lifecycle_receipt", "tool_call_lifecycle"):
         receipt = metadata.get(key)
         if isinstance(receipt, Mapping):
-            receipts.append(normalize_tool_call_lifecycle_receipt(receipt))
+            append_receipt(receipt)
     receipt_rows = metadata.get("tool_call_lifecycle_receipts")
     if isinstance(receipt_rows, (list, tuple)):
-        receipts.extend(normalize_tool_call_lifecycle_receipt(item) for item in receipt_rows if isinstance(item, Mapping))
+        for item in receipt_rows:
+            if isinstance(item, Mapping):
+                append_receipt(item)
     return tuple(receipts)
 
 
