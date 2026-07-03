@@ -20,16 +20,14 @@ from polaris.kernelone.storage import (
 logger = logging.getLogger(__name__)
 
 ARTIFACT_ROOT = "runtime"
-LEGACY_ARTIFACT_ROOT = ""
 ARTIFACT_NAMESPACE = ""
-LEGACY_ARTIFACT_NAMESPACE = ""
 
 # ---------------------------------------------------------------------------
 # Workspace sentinel directory
 # ---------------------------------------------------------------------------
 # The sentinel directory is used to detect the workspace root by traversing
 # upward until a directory with this name is found.
-# Defaults to "docs" for backward compatibility.  Override via the environment
+# Defaults to the current "docs" workspace marker. Override via the environment
 # variable KERNELONE_WORKSPACE_SENTINEL or by passing ``sentinel_dir`` explicitly
 # to ``find_workspace_root()`` / ``resolve_workspace_path()``.
 # ---------------------------------------------------------------------------

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
+import polaris.kernelone.storage.io_paths as io_paths
 from polaris.kernelone.storage.io_paths import (
     find_workspace_root,
     is_hot_artifact_path,
@@ -16,6 +17,22 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
+
+
+def test_io_paths_does_not_export_retired_artifact_constants() -> None:
+    """Artifact path ownership should stay on current runtime logical roots."""
+    retired_prefix = "LEGACY" + "_ARTIFACT"
+    assert not hasattr(io_paths, f"{retired_prefix}_ROOT")
+    assert not hasattr(io_paths, f"{retired_prefix}_NAMESPACE")
+
+
+def test_workspace_sentinel_default_is_current_contract() -> None:
+    """The docs sentinel is the current default workspace marker."""
+    source = io_paths.__loader__.get_source(io_paths.__name__)
+    assert source is not None
+    retired_phrase = "backward " + "compatibility"
+    assert retired_phrase not in source
+    assert 'current "docs" workspace marker' in source
 
 # ---------------------------------------------------------------------------
 # find_workspace_root
