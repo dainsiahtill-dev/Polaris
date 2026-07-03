@@ -11,9 +11,6 @@ from polaris.kernelone.llm.engine.stream.config import (
     StreamConfig,
     StreamState,
     get_default_stream_config,
-    get_stream_timeout,
-    reset_stream_timeout,
-    set_stream_timeout,
     validate_stream_result,
 )
 
@@ -193,21 +190,7 @@ class TestValidateStreamResult:
         assert validate_stream_result(result) is False
 
 
-class TestBackwardCompatibility:
-    def test_get_stream_timeout(self) -> None:
-        with patch("polaris.kernelone.llm.engine.stream.config._get_stream_timeout_unified", return_value=300.0):
-            assert get_stream_timeout() == 300.0
-
-    def test_set_stream_timeout(self) -> None:
-        with patch("polaris.kernelone.llm.engine.stream.config._set_stream_timeout_unified") as mock_set:
-            set_stream_timeout(120.0)
-            mock_set.assert_called_once_with(120.0)
-
-    def test_reset_stream_timeout(self) -> None:
-        with patch("polaris.kernelone.llm.engine.stream.config._reset_unified_config") as mock_reset:
-            reset_stream_timeout()
-            mock_reset.assert_called_once()
-
+class TestStreamConfigDefaults:
     def test_get_default_stream_config(self) -> None:
         cfg = get_default_stream_config()
         assert isinstance(cfg, StreamConfig)

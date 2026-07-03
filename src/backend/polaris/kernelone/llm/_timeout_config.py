@@ -7,7 +7,7 @@ replacing scattered global variables and duplicate env var handling.
 Design principles:
 1. KERNELONE_* / KERNELONE_* env vars are the canonical source (via _runtime_config.py)
 2. Stream and non-stream timeouts are configurable independently but managed together
-3. Backward compatibility via deprecated globals that delegate to this module
+3. Callers consume typed getter/setter functions instead of module-level aliases
 """
 
 from __future__ import annotations
@@ -150,26 +150,7 @@ def reset_config() -> None:
     _load_config_from_env()
 
 
-# ─── Backward compatibility aliases ──────────────────────────────────────────
-# These delegate to the unified config functions above
-
-# Non-stream executor compatibility
-INVOKE_TIMEOUT_SEC = _global_invoke_timeout
-
-
-# Stream executor compatibility
-_TOKEN_TIMEOUT: float = _global_token_timeout
-_STREAM_TIMEOUT: float = _global_stream_timeout
-_MAX_PENDING_TOOL_CALLS: int = 100
-MAX_BUFFER_SIZE: int = 100
-
-
 __all__ = [
-    "INVOKE_TIMEOUT_SEC",
-    "MAX_BUFFER_SIZE",
-    "_MAX_PENDING_TOOL_CALLS",
-    "_STREAM_TIMEOUT",
-    "_TOKEN_TIMEOUT",
     "get_invoke_timeout",
     "get_max_concurrency",
     "get_stream_timeout",

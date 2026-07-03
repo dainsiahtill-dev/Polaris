@@ -19,8 +19,6 @@ from polaris.kernelone.constants import (
 from polaris.kernelone.llm._timeout_config import (
     get_stream_timeout as _get_stream_timeout_unified,
     get_token_timeout as _get_token_timeout_unified,
-    reset_config as _reset_unified_config,
-    set_stream_timeout as _set_stream_timeout_unified,
 )
 
 logger = logging.getLogger(__name__)
@@ -106,46 +104,7 @@ class StreamConfig:
         }
 
 
-# ============================================================================
-# Backward Compatibility Layer (deprecated globals - H-04 Fix)
-# ============================================================================
-# These globals are deprecated but maintained for backward compatibility
-# Use StreamConfig for new code
-
-# Default config for backward compatibility
 _DEFAULT_CONFIG = StreamConfig()
-
-# Expose defaults for external code that reads these globals
-MAX_BUFFER_SIZE: int = _DEFAULT_CONFIG.buffer_size
-_MAX_PENDING_TOOL_CALLS: int = _DEFAULT_CONFIG.max_pending_calls
-_TOKEN_TIMEOUT: float = _DEFAULT_CONFIG.token_timeout_sec
-_STREAM_TIMEOUT: float = _DEFAULT_CONFIG.timeout_sec
-
-
-def get_stream_timeout() -> float:
-    """Get the configured stream overall timeout in seconds.
-
-    DEPRECATED: Use polaris.kernelone.llm._timeout_config.get_stream_timeout() instead.
-    This function delegates to the unified timeout config for backward compatibility.
-    """
-    return _get_stream_timeout_unified()
-
-
-def set_stream_timeout(timeout_sec: float) -> None:
-    """Set stream overall timeout (for testing).
-
-    DEPRECATED: Use polaris.kernelone.llm._timeout_config.set_stream_timeout() instead.
-    """
-    _set_stream_timeout_unified(timeout_sec)
-
-
-def reset_stream_timeout() -> None:
-    """Reset stream timeout to default from environment.
-
-    DEPRECATED: Use polaris.kernelone.llm._timeout_config.reset_config() instead.
-    """
-    _reset_unified_config()
-
 
 # ============================================================================
 # Stream State Machine

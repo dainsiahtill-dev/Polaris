@@ -14,12 +14,7 @@ Usage:
 
 from __future__ import annotations
 
-# Redirect all imports to the stream module
 from polaris.kernelone.llm.engine.stream import (
-    _MAX_PENDING_TOOL_CALLS,
-    _STREAM_TIMEOUT,
-    _TOKEN_TIMEOUT,
-    MAX_BUFFER_SIZE,
     LLMStreamResult,
     StreamConfig,
     StreamEventType,
@@ -36,24 +31,13 @@ from polaris.kernelone.llm.engine.stream import (
     _StreamResultTracker,
     _tool_accumulator_key,
     _ToolCallAccumulator,
-    # Test entry points
     emit_debug_event,
     get_provider_manager,
-    # Backward compatibility globals
-    get_stream_timeout,
-    reset_stream_timeout,
-    set_stream_timeout,
-    # Utility functions
     stream_to_response,
-    # Validation functions
     validate_stream_result,
 )
 
 __all__ = [
-    "MAX_BUFFER_SIZE",
-    "_MAX_PENDING_TOOL_CALLS",
-    "_STREAM_TIMEOUT",
-    "_TOKEN_TIMEOUT",
     "LLMStreamResult",
     "StreamConfig",
     "StreamEventType",
@@ -70,9 +54,6 @@ __all__ = [
     "_tool_accumulator_key",
     "emit_debug_event",
     "get_provider_manager",
-    "get_stream_timeout",
-    "reset_stream_timeout",
-    "set_stream_timeout",
     "stream_to_response",
     "validate_stream_result",
 ]
