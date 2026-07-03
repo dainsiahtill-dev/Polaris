@@ -243,6 +243,7 @@ used as a second tool fact source.
 | Accel repository time aliases | Closed by LR-126 | Accel DB repositories call KernelOne time helpers directly (`utc_now` / `utc_now_iso`) and no longer hide them behind private `_utc_now` compatibility aliases. | Do not add `_utc_now = ...` aliases in accel repository modules. Import and call the canonical KernelOne time helper directly so dependency ownership remains visible. |
 | PM Chief Engineer CLI time alias | Closed by LR-127 | PM Chief Engineer deterministic blueprint code calls `utc_now_str()` directly and no longer hides it behind `_utc_now_iso`. | Do not add `_utc_now_iso = ...` aliases in `delivery/cli/pm/chief_engineer.py`; import and call the canonical KernelOne time helper directly. |
 | Archived config refactor script | Closed by LR-128 | `scripts/archive/refactor_config.py` is removed; it was a one-shot Windows-path migration script that copied legacy config into a bootstrap shim and rewrote imports outside the current governed tooling. | Do not restore `src/backend/scripts/archive/refactor_config.py`. Config/bootstrap migration must use current platform-governed tooling and reviewed paths, not archived one-shot scripts. |
+| Roadmap delete-list archive scripts | Closed by LR-129 | Archive scripts explicitly marked `Delete` in the legacy migration roadmap (`add_session_tool.py`, `audit_markers.py`, `find_l3_case.py`, `parse_logs.py`) are removed from `src/backend/scripts/archive`. | Do not restore one-shot local debug/migration scripts from the roadmap delete list. If similar analysis is needed, add governed tests or documented tools under current platform-owned paths. |
 | Arsenal route aliases | Closed by LR-27 | Arsenal product calls use `/arsenal/v2/*`; non-v2 Arsenal aliases are no longer registered. | Keep Arsenal endpoints under the router's canonical `/arsenal/v2/*` namespace; do not add parallel non-v2 aliases. |
 | Factory run route aliases | Closed by LR-28 | Factory run operations use `/v2/factory/runs*`; old `/factory/runs*` aliases are no longer registered. | Factory run control-plane APIs must remain under `/v2/factory/runs*`; do not restore non-v2 aliases. |
 | Logs route aliases | Closed by LR-29 | Logs APIs use `/logs/v2/*`; old `/logs/*` aliases are no longer registered, and frontend `logsV2Service` targets the actual backend namespace. | Keep logs endpoints under `/logs/v2/*` unless the router itself is intentionally migrated; do not add parallel `/logs/*` aliases or `/v2/logs/*` callers. |
@@ -258,4 +259,4 @@ used as a second tool fact source.
 
 ## Next Closure Order
 
-Current intake is closed after LR-128. Reopen only with a new evidence-backed ledger item.
+Current intake is closed after LR-129. Reopen only with a new evidence-backed ledger item.

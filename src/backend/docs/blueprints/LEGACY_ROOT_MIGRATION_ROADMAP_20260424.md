@@ -261,10 +261,10 @@ Multiple scripts import polaris/ internal modules, violating Cell boundary rules
 | contextos_gate_checker.py | 257 | Closed | polaris/delivery/cli/tools/contextos_gate_checker.py |
 | dev-tools.py | 326 | Closed | polaris/delivery/cli/tools/dev_tools.py |
 | lancedb_store.py | 111 | Evaluate | TBD |
-| add_session_tool.py | 62 | Delete | - |
-| audit_markers.py | 23 | Delete | - |
-| find_l3_case.py | 13 | Delete | - |
-| parse_logs.py | 31 | Delete | - |
+| add_session_tool.py | 62 | Removed | one-shot session tool patch script retired |
+| audit_markers.py | 23 | Removed | one-shot marker audit script retired |
+| find_l3_case.py | 13 | Removed | one-shot L3 fixture finder retired |
+| parse_logs.py | 31 | Removed | one-shot local runtime log parser retired |
 | apply_prompt_updates.py | 85 | Archive | docs/archive/migration_scripts/ |
 | apply_rw_barrier.py | 41 | Archive | docs/archive/migration_scripts/ |
 | decouple_config.py | 64 | Archive | docs/archive/migration_scripts/ |
