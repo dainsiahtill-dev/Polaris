@@ -160,10 +160,11 @@ def native_tool_call_envelopes_from_metadata(metadata: Mapping[str, Any] | None)
 
     if not isinstance(metadata, Mapping):
         return ()
-    envelopes = metadata.get("native_tool_call_envelopes")
-    if not isinstance(envelopes, list):
-        return ()
-    return tuple(item for item in envelopes if isinstance(item, Mapping))
+    for key in ("native_tool_call_envelopes", "native_tool_call_envelope_refs"):
+        envelopes = metadata.get(key)
+        if isinstance(envelopes, (list, tuple)):
+            return tuple(item for item in envelopes if isinstance(item, Mapping))
+    return ()
 
 
 def native_tool_call_count(
