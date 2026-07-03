@@ -154,6 +154,7 @@ from polaris.cells.director.runtime.public import (
     build_director_repair_kernel_summary,
     compare_director_repair_shadow_run,
     evaluate_director_repair_cutover_readiness,
+    normalize_director_repair_issue_diagnostics,
     plan_director_repair,
     project_director_repair_kernel_summary,
     project_director_repair_materialization_bridge_metadata,
@@ -173,6 +174,28 @@ from polaris.cells.director.runtime.public import (
     validate_director_repair_advisory,
 )
 from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
+
+
+def test_public_normalizes_typed_artifact_quality_issues_to_repair_diagnostics() -> None:
+    diagnostics = normalize_director_repair_issue_diagnostics(
+        (
+            {
+                "source": "artifact_quality",
+                "code": "npm_manifest_invalid",
+                "message": "npm package manifest script 'test' is invalid",
+                "path": "package.json",
+                "severity": "error",
+                "metadata": {"script": "test"},
+            },
+        )
+    )
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].source == "artifact_quality"
+    assert diagnostics[0].code == "npm_manifest_invalid"
+    assert diagnostics[0].message == "npm package manifest script 'test' is invalid"
+    assert diagnostics[0].path == "package.json"
+    assert diagnostics[0].metadata == {"script": "test"}
 
 
 def _install_delete_file_test_runtime_binding(monkeypatch: pytest.MonkeyPatch, source_tool: str) -> None:

@@ -989,6 +989,40 @@ def normalize_director_repair_diagnostics(artifact_quality_errors: Sequence[str]
     return tuple(_to_public_repair_diagnostic(diagnostic) for diagnostic in diagnostics)
 
 
+def normalize_director_repair_issue_diagnostics(
+    artifact_quality_issues: Sequence[Mapping[str, Any]],
+) -> tuple[RepairDiagnosticV1, ...]:
+    """Normalize typed artifact-quality issues into public repair diagnostics.
+
+    This consumes the JSON-ready ``ArtifactQualityIssue`` projection without
+    importing KernelOne quality types into the Director runtime public surface.
+    """
+
+    diagnostics: list[RepairDiagnosticV1] = []
+    for issue in artifact_quality_issues or ():
+        if not isinstance(issue, Mapping):
+            continue
+        code = str(issue.get("code") or "artifact_quality_issue").strip()
+        message = str(issue.get("message") or "").strip()
+        if not code or not message:
+            continue
+        path = str(issue.get("path") or "").strip() or None
+        severity = str(issue.get("severity") or "error").strip() or "error"
+        source = str(issue.get("source") or "artifact_quality").strip() or "artifact_quality"
+        metadata = issue.get("metadata")
+        diagnostics.append(
+            RepairDiagnosticV1(
+                source=source,
+                code=code,
+                message=message,
+                path=path,
+                severity=severity,
+                metadata=dict(metadata) if isinstance(metadata, Mapping) else {},
+            )
+        )
+    return tuple(diagnostics)
+
+
 def query_director_repair_coverage(query: QueryDirectorRepairCoverageV1) -> DirectorRepairCoverageReportV1:
     """Return read-only repair-rule coverage for raw artifact-quality errors."""
 
