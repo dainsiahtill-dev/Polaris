@@ -150,6 +150,10 @@ def _normalize_structured_error(raw: Mapping[str, Any]) -> RepairDiagnostic | No
         "archetype",
         "diagnostic_archetype",
         "details",
+        "path",
+        "source",
+        "severity",
+        "diagnostic_code",
     ):
         if key in raw and key not in metadata:
             metadata[key] = raw[key]

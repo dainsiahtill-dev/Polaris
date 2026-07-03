@@ -202,12 +202,13 @@ def test_public_normalizes_typed_artifact_quality_issues_to_repair_diagnostics()
     assert diagnostics[0].code == "npm_manifest_invalid"
     assert diagnostics[0].message == "npm package manifest script 'test' is invalid"
     assert diagnostics[0].path == "package.json"
-    assert diagnostics[0].metadata == {
-        "script": "test",
-        "line": 12,
-        "column": 99,
-        "symbol": "scripts.test",
-    }
+    assert diagnostics[0].metadata["script"] == "test"
+    assert diagnostics[0].metadata["line"] == 12
+    assert diagnostics[0].metadata["column"] == 99
+    assert diagnostics[0].metadata["symbol"] == "scripts.test"
+    assert diagnostics[0].metadata["path"] == "package.json"
+    assert diagnostics[0].metadata["source"] == "artifact_quality"
+    assert diagnostics[0].metadata["severity"] == "error"
 
 
 def test_public_repair_diagnostics_preserve_kernelone_issue_locations() -> None:
@@ -226,6 +227,33 @@ def test_public_repair_diagnostics_preserve_kernelone_issue_locations() -> None:
     assert diagnostics[0].metadata["raw"] == (
         "src/main.ts(3,14): error TS2322: Type 'string' is not assignable to type 'number'."
     )
+
+
+def test_public_repair_diagnostics_preserve_typed_artifact_issue_fields() -> None:
+    diagnostics = normalize_director_repair_issue_diagnostics(
+        (
+            {
+                "code": "typescript_ts2307",
+                "message": "Cannot find module './missing.js'",
+                "path": "src/main.ts",
+                "source": "typescript_compiler",
+                "severity": "error",
+                "line": 2,
+                "column": 8,
+                "metadata": {"raw": "typed diagnostic", "diagnostic_code": "TS2307"},
+            },
+        )
+    )
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].code == "typescript_ts2307"
+    assert diagnostics[0].path == "src/main.ts"
+    assert diagnostics[0].source == "typescript_compiler"
+    assert diagnostics[0].severity == "error"
+    assert diagnostics[0].metadata["path"] == "src/main.ts"
+    assert diagnostics[0].metadata["source"] == "typescript_compiler"
+    assert diagnostics[0].metadata["severity"] == "error"
+    assert diagnostics[0].metadata["diagnostic_code"] == "TS2307"
 
 
 def test_public_repair_diagnostics_preserve_kernelone_rust_issue_locations() -> None:
@@ -297,11 +325,10 @@ def test_public_repair_diagnostics_accept_top_level_import_issue_fields() -> Non
 
     assert len(diagnostics) == 1
     assert diagnostics[0].path == "src/index.ts"
-    assert diagnostics[0].metadata == {
-        "raw": "raw diagnostic",
-        "specifier": "./engine/runner",
-        "importer_path": "src/index.ts",
-    }
+    assert diagnostics[0].metadata["raw"] == "raw diagnostic"
+    assert diagnostics[0].metadata["specifier"] == "./engine/runner"
+    assert diagnostics[0].metadata["importer_path"] == "src/index.ts"
+    assert diagnostics[0].metadata["source"] == "artifact_quality"
 
 
 def test_public_repair_diagnostics_accept_top_level_owner_path() -> None:
