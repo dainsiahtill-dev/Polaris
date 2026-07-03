@@ -6,7 +6,7 @@ Subcommands:
   session  Session management (list / show / switch / clear)
   serve    Start the backend HTTP server
   cell     Cell catalog (list / info)
-  chat     Legacy role chat (interactive / oneshot / server)
+  chat     Retired role-interaction alias; use console instead
   status   Query role runtime status
   workflow Run or inspect Polaris workflow executions
 
