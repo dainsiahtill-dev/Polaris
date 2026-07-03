@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -180,6 +181,216 @@ def test_task_runtime_service_reconciles_terminal_session_before_reclaim(tmp_pat
     assert reclaimed["task"]["status"] == "completed"
     persisted = json.loads(task_path.read_text(encoding="utf-8"))
     assert persisted["status"] == "completed"
+
+
+def test_task_runtime_ready_reset_row_with_older_terminal_session_is_claimable(tmp_path: Path) -> None:
+    """A deliberate FAILED->READY reset must win over the stale terminal session.
+
+    Regression: claim_execution used to crash with
+    InvalidTaskStateTransitionError (ready -> failed) when reconciling the
+    stale terminal session against a deliberately reset row.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create(subject="retry after failure via ready reset")
+    claimed = service.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-retry-ready",
+        selection_source="task_id_lookup",
+    )
+    assert claimed["success"] is True
+    old_session_id = str(claimed["session"]["session_id"])
+
+    failed = service.fail_execution(created.id, session_id=old_session_id, error="transient failure")
+    assert failed["success"] is True
+
+    time.sleep(0.02)
+    reset = service.update_task(created.id, status="ready")
+    assert reset is not None
+    assert reset.status.value == "ready"
+
+    reclaimed = service.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-retry-ready-2",
+        selection_source="task_id_lookup",
+    )
+
+    assert reclaimed["success"] is True
+    assert reclaimed["reason"] == "claimed"
+    assert reclaimed["resumed"] is False
+    assert str(reclaimed["session"]["session_id"]) != old_session_id
+    assert reclaimed["task"]["status"] == "in_progress"
+    persisted = json.loads((service.board.tasks_dir / f"task_{created.id}.json").read_text(encoding="utf-8"))
+    assert persisted["status"] == "in_progress"
+
+
+def test_task_runtime_deliberate_pending_retry_is_claimable_and_not_flipped_to_failed(tmp_path: Path) -> None:
+    """A deliberate FAILED->PENDING retry must not be reconciled back to failed."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create(subject="retry after failure via pending reset")
+    claimed = service.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-retry-pending",
+        selection_source="task_id_lookup",
+    )
+    assert claimed["success"] is True
+    failed = service.fail_execution(
+        created.id,
+        session_id=str(claimed["session"]["session_id"]),
+        error="transient failure",
+    )
+    assert failed["success"] is True
+
+    time.sleep(0.02)
+    reset = service.update_task(created.id, status="pending")
+    assert reset is not None
+    assert reset.status.value == "pending"
+
+    reclaimed = service.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-retry-pending-2",
+        selection_source="task_id_lookup",
+    )
+
+    assert reclaimed["success"] is True
+    assert reclaimed["task"]["status"] == "in_progress"
+    persisted = json.loads((service.board.tasks_dir / f"task_{created.id}.json").read_text(encoding="utf-8"))
+    assert persisted["status"] == "in_progress"
+
+    completed = service.complete_execution(
+        created.id,
+        session_id=str(reclaimed["session"]["session_id"]),
+        result_summary="second attempt worked",
+    )
+    assert completed["success"] is True
+    assert completed["task"]["status"] == "completed"
+
+
+def test_task_runtime_stale_pending_row_with_newer_terminal_session_still_rejects_reclaim(tmp_path: Path) -> None:
+    """A stale row carrying an OLD reset marker must not beat a NEWER terminal session."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create(subject="stale row after second failure")
+    first_claim = service.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-first",
+        selection_source="task_id_lookup",
+    )
+    assert first_claim["success"] is True
+    assert service.fail_execution(
+        created.id,
+        session_id=str(first_claim["session"]["session_id"]),
+        error="first failure",
+    )["success"]
+
+    time.sleep(0.02)
+    # Sanctioned retry: stamps the terminal-reset marker.
+    assert service.update_task(created.id, status="pending") is not None
+    second_claim = service.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-second",
+        selection_source="task_id_lookup",
+    )
+    assert second_claim["success"] is True
+    time.sleep(0.02)
+    assert service.fail_execution(
+        created.id,
+        session_id=str(second_claim["session"]["session_id"]),
+        error="second failure",
+    )["success"]
+
+    # Stale byte-level rewrite: pending row with the OLD reset marker, while
+    # the terminal session on disk is NEWER than that marker.
+    task_path = service.board.tasks_dir / f"task_{created.id}.json"
+    stale_payload = json.loads(task_path.read_text(encoding="utf-8"))
+    stale_payload["status"] = "pending"
+    stale_payload["completed_at"] = None
+    task_path.write_text(json.dumps(stale_payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    reloaded = TaskRuntimeService(str(workspace))
+    reclaimed = reloaded.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-should-not-reclaim",
+        selection_source="task_id_lookup",
+    )
+
+    assert reclaimed["success"] is False
+    assert reclaimed["reason"] == "task_terminal"
+    assert reclaimed["reconciled_from_terminal_session"] is True
+    persisted = json.loads(task_path.read_text(encoding="utf-8"))
+    assert persisted["status"] == "failed"
+
+
+def test_task_runtime_stale_ready_row_reconcile_does_not_crash_claim(tmp_path: Path) -> None:
+    """A stale byte-level READY rewrite must reconcile to terminal, not crash.
+
+    READY -> failed has no valid state-machine transition; reconciliation must
+    fall back to the evidence-based bridge instead of raising
+    InvalidTaskStateTransitionError through the claim path.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create(subject="stale ready row over failed session")
+    claimed = service.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-stale-ready",
+        selection_source="task_id_lookup",
+    )
+    assert claimed["success"] is True
+    assert service.fail_execution(
+        created.id,
+        session_id=str(claimed["session"]["session_id"]),
+        error="genuine failure",
+    )["success"]
+
+    # Stale writer clobbers the row to READY without the sanctioned reset
+    # marker (bypassing the state machine entirely).
+    task_path = service.board.tasks_dir / f"task_{created.id}.json"
+    stale_payload = json.loads(task_path.read_text(encoding="utf-8"))
+    stale_payload["status"] = "ready"
+    stale_payload["completed_at"] = None
+    task_path.write_text(json.dumps(stale_payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    reloaded = TaskRuntimeService(str(workspace))
+    reclaimed = reloaded.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-should-not-reclaim",
+        selection_source="task_id_lookup",
+    )
+
+    assert reclaimed["success"] is False
+    assert reclaimed["reason"] == "task_terminal"
+    assert reclaimed["reconciled_from_terminal_session"] is True
+    assert "reconcile_error" not in reclaimed
+    persisted = json.loads(task_path.read_text(encoding="utf-8"))
+    assert persisted["status"] == "failed"
 
 
 def test_task_runtime_service_preserves_terminal_session_during_run_cancellation(tmp_path: Path) -> None:
@@ -399,8 +610,12 @@ def test_task_runtime_external_task_id_does_not_collide_with_numeric_row(tmp_pat
     )
 
     assert row["id"] != stale.id
-    assert service.get_task("TASK-1")["id"] == row["id"]
-    assert service.get_task(f"task-{stale.id}")["id"] == stale.id
+    external_lookup = service.get_task("TASK-1")
+    assert external_lookup is not None
+    assert external_lookup["id"] == row["id"]
+    stale_lookup = service.get_task(f"task-{stale.id}")
+    assert stale_lookup is not None
+    assert stale_lookup["id"] == stale.id
 
 
 def test_task_runtime_service_surfaces_resumable_task_and_reclaims_it(tmp_path: Path) -> None:

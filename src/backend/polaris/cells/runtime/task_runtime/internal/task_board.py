@@ -745,6 +745,14 @@ class TaskBoard:
             if old_status != next_status:
                 self._validate_transition(old_status, next_status)
 
+            if old_status.is_terminal and not next_status.is_terminal:
+                # Sanctioned terminal -> non-terminal transition (deliberate
+                # retry, e.g. FAILED -> PENDING/READY). Record when the row
+                # left its terminal state so runtime claim reconciliation can
+                # distinguish a deliberate reset from a stale row write that
+                # predates authoritative terminal execution evidence.
+                task.metadata["terminal_reset_at"] = time.time()
+
             task.status = next_status
 
             # Track timestamps
@@ -932,6 +940,10 @@ class TaskBoard:
             if not task.status.is_terminal:
                 return copy.deepcopy(task)
 
+            # Reopen is the sanctioned terminal-downgrade path; stamp the
+            # reset marker so runtime claim reconciliation treats the reopened
+            # row as authoritative over older terminal execution sessions.
+            task.metadata["terminal_reset_at"] = time.time()
             task.status = TaskStatus.BLOCKED if task.blocked_by else TaskStatus.PENDING
             task.assignee = ""
             task.claimed_by = None
@@ -972,6 +984,56 @@ class TaskBoard:
             self._notify_ready_tasks()
 
         return result_task
+
+    def reconcile_terminal_status(
+        self,
+        task_id: int,
+        status: TaskStatus | str,
+        result_summary: str = "",
+        evidence_refs: list[str] | None = None,
+    ) -> Task | None:
+        """Force a row to a terminal status backed by execution evidence.
+
+        Unlike :meth:`update_status`, this may bridge a non-terminal row whose
+        current status has no direct valid transition to the terminal target
+        (for example a stale ``ready`` row against a ``failed`` execution
+        session). It exists solely so reconciliation of an authoritative
+        terminal execution session can never crash the runtime claim path.
+
+        It never rewrites one terminal verdict into another: for a row already
+        in a different terminal state it raises
+        ``InvalidTaskStateTransitionError`` (``reopen`` is the only sanctioned
+        terminal-downgrade path).
+        """
+        next_status = _normalize_status(status)
+        if not next_status.is_terminal:
+            raise ValueError(f"reconcile_terminal_status requires a terminal status, got {next_status.value!r}")
+        with self.transaction():
+            task = self._load_task_from_disk(task_id) or self._cache.get(task_id)
+            if not task:
+                return None
+            if task.status.is_terminal and task.status != next_status:
+                raise InvalidTaskStateTransitionError(
+                    f"Cannot reconcile terminal task from {task.status.value!r} to "
+                    f"{next_status.value!r}; reopen is the only sanctioned terminal downgrade path"
+                )
+            allowed = _VALID_TRANSITIONS.get(task.status, {task.status})
+            if next_status not in allowed:
+                # Validation-exempt bridge write: the row is a stale
+                # non-terminal projection and the terminal execution session
+                # is authoritative. Route through IN_PROGRESS (which has valid
+                # transitions to every terminal state) so update_status()
+                # applies the full terminal bookkeeping (terminal event,
+                # dependency unblocking, state-bridge notification).
+                task.status = TaskStatus.IN_PROGRESS
+                self._cache[task_id] = task
+                self._save_task(task)
+            return self.update_status(
+                task_id,
+                next_status,
+                result_summary=result_summary,
+                evidence_refs=evidence_refs,
+            )
 
     def get_ready_tasks(self) -> list[Task]:
         """Get all tasks that are pending, unblocked, and unclaimed."""

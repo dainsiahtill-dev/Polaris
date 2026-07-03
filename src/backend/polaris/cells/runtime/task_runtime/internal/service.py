@@ -10,7 +10,12 @@ from typing import Any, Callable
 
 from polaris.cells.events.fact_stream.public.contracts import AppendFactEventCommandV1
 from polaris.cells.events.fact_stream.public.service import append_fact_event
-from polaris.cells.runtime.task_runtime.internal.task_board import Task, TaskBoard, TaskStatus
+from polaris.cells.runtime.task_runtime.internal.task_board import (
+    InvalidTaskStateTransitionError,
+    Task,
+    TaskBoard,
+    TaskStatus,
+)
 from polaris.kernelone.fs import KernelFileSystem
 from polaris.kernelone.fs.registry import get_default_adapter
 from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_roots
@@ -18,6 +23,7 @@ from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_root
 from .execution_session import (
     TaskExecutionSession,
     normalize_positive_int,
+    parse_utc_iso,
     sanitize_summary,
     utc_now,
     utc_now_iso,
@@ -499,24 +505,35 @@ class TaskRuntimeService:
                     str(existing_session.status).strip().lower()
                 )
                 if terminal_session_status is not None:
-                    updated = self._board.update(
-                        normalized,
-                        status=terminal_session_status,
-                        metadata=self._build_runtime_metadata(
+                    if self._row_authorizes_retry_over_terminal_session(task, existing_session):
+                        # Deliberate retry: the row left its terminal state
+                        # through the sanctioned state-machine path AFTER the
+                        # session terminalised, so the row is authoritative.
+                        # Rotate the stale terminal session through the
+                        # explicit downgrade path and continue with the claim.
+                        existing_session = self._rotate_terminal_session_for_retry(existing_session)
+                    else:
+                        # Stale row: the terminal session is authoritative.
+                        # Reconcile the row to the terminal verdict and reject
+                        # the claim; reconcile failures become structured
+                        # rejection evidence, never an exception.
+                        row, reconcile_error = self._apply_terminal_session_reconcile(
+                            normalized,
                             session=existing_session,
-                            effective_status=terminal_session_status.value,
-                            resume_state="",
                             extra_metadata=metadata,
-                        ),
-                    )
-                    row = self._augment_task_row(updated.to_dict() if updated is not None else task.to_dict())
-                    return {
-                        "success": False,
-                        "reason": "task_terminal",
-                        "task": row,
-                        "session": existing_session.to_dict(),
-                        "reconciled_from_terminal_session": True,
-                    }
+                        )
+                        if row is None:
+                            row = self._augment_task_row(task.to_dict())
+                        rejection: dict[str, Any] = {
+                            "success": False,
+                            "reason": "task_terminal",
+                            "task": row,
+                            "session": existing_session.to_dict(),
+                            "reconciled_from_terminal_session": not reconcile_error,
+                        }
+                        if reconcile_error:
+                            rejection["reconcile_error"] = reconcile_error
+                        return rejection
 
             if task.is_terminal:
                 return {"success": False, "reason": "task_terminal", "task": self._augment_task_row(task.to_dict())}
@@ -1173,24 +1190,139 @@ class TaskRuntimeService:
         session: TaskExecutionSession,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
+        row, _reconcile_error = self._apply_terminal_session_reconcile(
+            task_id,
+            session=session,
+            extra_metadata=metadata,
+        )
+        return row
+
+    def _apply_terminal_session_reconcile(
+        self,
+        task_id: int,
+        *,
+        session: TaskExecutionSession,
+        extra_metadata: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any] | None, str]:
+        """Project a terminal session onto its task row without ever raising.
+
+        Returns ``(row, error_code)``. ``error_code`` is empty when the row now
+        reflects the terminal session (or already did); otherwise it is a
+        structured token describing why reconciliation was rejected, and the
+        row is returned unchanged. Board transition validation failures are
+        recorded, never propagated, so lease/claim paths cannot crash on a
+        stale row shape.
+        """
         terminal_status = _TERMINAL_SESSION_STATUSES_TO_TASK_STATUS.get(str(session.status or "").strip().lower())
         if terminal_status is None:
             task = self._board.get(task_id)
-            return self._augment_task_row(task.to_dict()) if task is not None else None
-        updated = self._board.update(
-            task_id,
-            status=terminal_status,
-            metadata=self._build_runtime_metadata(
-                session=session,
-                effective_status=terminal_status.value,
-                resume_state="",
-                extra_metadata=metadata,
-            ),
+            return (self._augment_task_row(task.to_dict()) if task is not None else None), ""
+        runtime_metadata = self._build_runtime_metadata(
+            session=session,
+            effective_status=terminal_status.value,
+            resume_state="",
+            extra_metadata=extra_metadata,
         )
+        try:
+            updated = self._board.update(task_id, status=terminal_status, metadata=runtime_metadata)
+        except InvalidTaskStateTransitionError:
+            task = self._board.get(task_id)
+            if task is None:
+                return None, "task_not_found"
+            if task.is_terminal:
+                # Never rewrite one terminal verdict with another here:
+                # reopen is the only sanctioned terminal-downgrade path.
+                logger.warning(
+                    "Task %s row is terminal %r but session %s is terminal %r; keeping row verdict",
+                    task_id,
+                    task.status.value,
+                    session.session_id,
+                    terminal_status.value,
+                )
+                return self._augment_task_row(task.to_dict()), "terminal_row_conflict"
+            try:
+                forced = self._board.reconcile_terminal_status(
+                    task_id,
+                    terminal_status,
+                    result_summary=sanitize_summary(session.last_result_summary or session.last_error),
+                )
+            except InvalidTaskStateTransitionError as exc:
+                logger.warning(
+                    "Task %s terminal reconcile to %r rejected: %s",
+                    task_id,
+                    terminal_status.value,
+                    exc,
+                )
+                return self._augment_task_row(task.to_dict()), "terminal_reconcile_rejected"
+            if forced is None:
+                return None, "task_not_found"
+            updated = self._board.update(task_id, metadata=runtime_metadata) or forced
         if updated is None:
             task = self._board.get(task_id)
-            return self._augment_task_row(task.to_dict()) if task is not None else None
-        return self._augment_task_row(updated.to_dict())
+            return (self._augment_task_row(task.to_dict()) if task is not None else None), ""
+        return self._augment_task_row(updated.to_dict()), ""
+
+    def _row_authorizes_retry_over_terminal_session(
+        self,
+        task: Task,
+        session: TaskExecutionSession,
+    ) -> bool:
+        """Return True when a non-terminal row supersedes a terminal session.
+
+        A row only wins over terminal session evidence when it left its
+        terminal state through the sanctioned state-machine paths
+        (``TaskBoard.update_status`` / ``TaskBoard.reopen`` stamp
+        ``metadata.terminal_reset_at``) *after* the session reached its
+        terminal state. Anything else is a stale row and the terminal session
+        stays authoritative, so a genuinely completed/failed task cannot be
+        re-claimed through a stale byte-level row rewrite.
+        """
+        if task.is_terminal:
+            return False
+        metadata = task.metadata if isinstance(task.metadata, dict) else {}
+        raw_reset_at = metadata.get("terminal_reset_at")
+        if not isinstance(raw_reset_at, (int, float, str)) or isinstance(raw_reset_at, bool):
+            return False
+        try:
+            reset_at = float(raw_reset_at)
+        except ValueError:
+            return False
+        if reset_at <= 0.0:
+            return False
+        terminal_at = self._session_terminal_timestamp(session)
+        if terminal_at is None:
+            # Fail closed: without a trustworthy terminal timestamp the
+            # terminal session evidence stays authoritative.
+            return False
+        return reset_at > terminal_at
+
+    @staticmethod
+    def _session_terminal_timestamp(session: TaskExecutionSession) -> float | None:
+        for token in (
+            session.released_at,
+            session.lease_expires_at,
+            session.last_heartbeat_at,
+            session.claimed_at,
+        ):
+            parsed = parse_utc_iso(token)
+            if parsed is not None:
+                return parsed.timestamp()
+        return None
+
+    def _rotate_terminal_session_for_retry(self, session: TaskExecutionSession) -> TaskExecutionSession:
+        """Rotate a superseded terminal session via the explicit downgrade path.
+
+        The task row deliberately left its terminal state for a retry, so the
+        stale terminal session must not keep vetoing claims. Suspending it
+        with ``allow_terminal_downgrade=True`` mirrors what ``reopen`` does and
+        keeps the terminal-monotonic write guard intact; ``resumable=False``
+        makes the retry a fresh attempt instead of a resume.
+        """
+        session.metadata["rotated_from_terminal_status"] = str(session.status or "")
+        session.metadata["rotated_reason"] = "deliberate_row_reset_retry"
+        session.mark_suspended(reason="terminal_session_rotated_for_deliberate_retry", resumable=False)
+        self._write_session(session, allow_terminal_downgrade=True)
+        return session
 
     def _append_execution_event(
         self,
