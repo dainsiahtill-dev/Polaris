@@ -28,7 +28,6 @@ from polaris.kernelone.llm.types import (
     ModelInfo,
     ModelListResult,
     Usage,
-    estimate_usage,
 )
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 
@@ -274,7 +273,7 @@ class AsyncGeminiAPIProvider(AsyncBaseProvider):
 
         api_key = config.get("api_key")
         if not api_key:
-            usage = estimate_usage(prompt, "")
+            usage = Usage.estimate(prompt, "")
             return InvokeResult(ok=False, output="", latency_ms=0, usage=usage, error="API key is required")
 
         api_path = str(config.get("api_path", "/v1beta/models/{model}:generateContent")).strip()
@@ -371,7 +370,7 @@ class AsyncGeminiAPIProvider(AsyncBaseProvider):
                     )
         except (RuntimeError, ValueError) as e:
             logger.debug("Failed to extract usage from response: %s", e)
-        return estimate_usage(prompt, output)
+        return Usage.estimate(prompt, output)
 
     @classmethod
     def extract_thinking_support(cls, response: dict[str, Any]) -> ThinkingInfo:

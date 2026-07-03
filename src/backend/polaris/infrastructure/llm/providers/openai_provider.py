@@ -20,7 +20,7 @@ from polaris.kernelone.llm.providers import (
 )
 from polaris.kernelone.llm.providers.stream_thinking_parser import StreamThinkingParser
 from polaris.kernelone.llm.response_parser import LLMResponseParser
-from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelListResult, Usage, estimate_usage
+from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelListResult, Usage
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds, timeout_seconds_or_none
 
 if TYPE_CHECKING:
@@ -587,7 +587,7 @@ class OpenAIProvider(BaseProvider):
                 ok=False,
                 output="",
                 latency_ms=0,
-                usage=estimate_usage(prompt, ""),
+                usage=Usage.estimate(prompt, ""),
                 error=f"Invalid model resolution: {resolved.warning}",
             )
 
@@ -597,7 +597,7 @@ class OpenAIProvider(BaseProvider):
                 ok=False,
                 output="",
                 latency_ms=0,
-                usage=estimate_usage(prompt, ""),
+                usage=Usage.estimate(prompt, ""),
                 error=f"Invalid model name: {validation.error}",
             )
 
@@ -773,4 +773,4 @@ def _usage_from_response(prompt: str, output: str, data: dict[str, Any]) -> Usag
             )
     except (RuntimeError, ValueError) as e:
         logger.debug(f"Failed to estimate usage: {e}")
-    return estimate_usage(prompt, output)
+    return Usage.estimate(prompt, output)

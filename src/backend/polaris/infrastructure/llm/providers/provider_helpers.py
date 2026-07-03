@@ -52,7 +52,6 @@ from polaris.kernelone.llm.types import (
     ModelInfo,
     ModelListResult,
     Usage,
-    estimate_usage,
 )
 
 if TYPE_CHECKING:
@@ -793,7 +792,7 @@ def invoke_with_retry(
         try:
             breaker.before_call()
         except CircuitOpenError as exc:
-            usage = estimate_usage(prompt, "")
+            usage = Usage.estimate(prompt, "")
             return InvokeResult(
                 ok=False,
                 output="",
@@ -850,7 +849,7 @@ def invoke_with_retry(
                 if isinstance(status_code, int) and 500 <= status_code < 600:
                     breaker.on_failure()
                     latency_ms = int((_clock.time() - start) * 1000)
-                    usage = estimate_usage(prompt, "")
+                    usage = Usage.estimate(prompt, "")
                     return InvokeResult(
                         ok=False,
                         output="",
@@ -882,7 +881,7 @@ def invoke_with_retry(
                     rate_limit_attempt += 1
                     if rate_limit_attempt > max(retries, _rate_limit_min_retries()):
                         latency_ms = int((_clock.time() - start) * 1000)
-                        usage = estimate_usage(prompt, "")
+                        usage = Usage.estimate(prompt, "")
                         return InvokeResult(
                             ok=False,
                             output="",
@@ -909,7 +908,7 @@ def invoke_with_retry(
                 if isinstance(status_code, int) and 400 <= status_code < 500:
                     breaker.on_failure()
                     latency_ms = int((_clock.time() - start) * 1000)
-                    usage = estimate_usage(prompt, "")
+                    usage = Usage.estimate(prompt, "")
                     return InvokeResult(
                         ok=False,
                         output="",
@@ -966,7 +965,7 @@ def invoke_with_retry(
             attempt += 1
             if attempt > retries:
                 latency_ms = int((_clock.time() - start) * 1000)
-                usage = estimate_usage(prompt, "")
+                usage = Usage.estimate(prompt, "")
                 return InvokeResult(
                     ok=False,
                     output="",

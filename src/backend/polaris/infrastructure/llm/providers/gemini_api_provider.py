@@ -14,7 +14,7 @@ from polaris.kernelone.llm.providers import (
     ThinkingInfo,
     WorkingDirConfig,
 )
-from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage, estimate_usage
+from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 
 from .http_utils import join_url, normalize_base_url, validate_base_url_for_ssrf
@@ -240,7 +240,7 @@ class GeminiAPIProvider(BaseProvider):
 
         api_key = config.get("api_key")
         if not api_key:
-            usage = estimate_usage(prompt, "")
+            usage = Usage.estimate(prompt, "")
             return InvokeResult(ok=False, output="", latency_ms=0, usage=usage, error="API key is required")
 
         # Build Gemini API URL
@@ -294,7 +294,7 @@ class GeminiAPIProvider(BaseProvider):
                 attempt += 1
                 if attempt > retries:
                     latency_ms = int((time.time() - start) * 1000)
-                    usage = estimate_usage(prompt, "")
+                    usage = Usage.estimate(prompt, "")
                     return InvokeResult(ok=False, output="", latency_ms=latency_ms, usage=usage, error=str(exc))
                 time.sleep(0.5)
 
@@ -485,4 +485,4 @@ class GeminiAPIProvider(BaseProvider):
             logger.debug(f"Failed to extract usage from response: {e}")
 
         # Fallback to estimation
-        return estimate_usage(prompt, output)
+        return Usage.estimate(prompt, output)

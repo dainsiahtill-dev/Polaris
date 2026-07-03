@@ -29,7 +29,6 @@ from polaris.kernelone.llm.types import (
     ModelInfo,
     ModelListResult,
     Usage,
-    estimate_usage,
 )
 from polaris.kernelone.shared.text_utils import (
     normalize_timeout_seconds,
@@ -139,7 +138,7 @@ def _usage_from_response(prompt: str, output: str, data: dict[str, Any], is_open
                 )
     except (RuntimeError, ValueError) as e:
         logger.debug("Failed to estimate Ollama usage: %s", e)
-    return estimate_usage(prompt, output)
+    return Usage.estimate(prompt, output)
 
 
 def _extract_output(data: dict[str, Any], is_compat: bool) -> str:

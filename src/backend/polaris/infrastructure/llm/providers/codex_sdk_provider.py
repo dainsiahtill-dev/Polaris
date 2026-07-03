@@ -12,7 +12,7 @@ from polaris.kernelone.llm.providers import (
     ProviderInfo,
     ThinkingInfo,
 )
-from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage, estimate_usage
+from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 
 logger = logging.getLogger(__name__)
@@ -74,7 +74,7 @@ def _usage_from_sdk(prompt: str, output: str, usage: dict[str, Any] | None) -> U
             )
         except (RuntimeError, ValueError) as e:
             logger.debug(f"Failed to estimate usage: {e}")
-    return estimate_usage(prompt, output)
+    return Usage.estimate(prompt, output)
 
 
 def _build_sdk_config(config: dict[str, Any]) -> SDKConfig:
@@ -288,23 +288,23 @@ class CodexSDKProvider(BaseProvider):
             )
         except SDKUnavailableError as exc:
             latency_ms = int((time.time() - start) * 1000)
-            usage = estimate_usage(prompt, "")
+            usage = Usage.estimate(prompt, "")
             return InvokeResult(ok=False, output="", latency_ms=latency_ms, usage=usage, error=str(exc))
         except ConnectionError as exc:
             latency_ms = int((time.time() - start) * 1000)
-            usage = estimate_usage(prompt, "")
+            usage = Usage.estimate(prompt, "")
             return InvokeResult(
                 ok=False, output="", latency_ms=latency_ms, usage=usage, error=f"Connection error: {exc}"
             )
         except TimeoutError as exc:
             latency_ms = int((time.time() - start) * 1000)
-            usage = estimate_usage(prompt, "")
+            usage = Usage.estimate(prompt, "")
             return InvokeResult(
                 ok=False, output="", latency_ms=latency_ms, usage=usage, error=f"Request timeout: {exc}"
             )
         except (RuntimeError, ValueError) as exc:
             latency_ms = int((time.time() - start) * 1000)
-            usage = estimate_usage(prompt, "")
+            usage = Usage.estimate(prompt, "")
             return InvokeResult(ok=False, output="", latency_ms=latency_ms, usage=usage, error=str(exc))
 
     @classmethod

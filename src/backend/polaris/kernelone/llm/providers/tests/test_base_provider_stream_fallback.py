@@ -10,7 +10,7 @@ from polaris.kernelone.llm.types import (
     HealthResult,
     InvokeResult,
     ModelListResult,
-    estimate_usage,
+    Usage,
 )
 
 
@@ -55,7 +55,7 @@ class _DummyProvider(BaseProvider):
             ok=True,
             output=output,
             latency_ms=1,
-            usage=estimate_usage(prompt, output),
+            usage=Usage.estimate(prompt, output),
         )
 
 

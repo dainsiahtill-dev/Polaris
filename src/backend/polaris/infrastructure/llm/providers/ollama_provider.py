@@ -14,7 +14,7 @@ from polaris.kernelone.llm.providers import (
     ProviderConfigValidationResult,
     ProviderInfo,
 )
-from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage, estimate_usage
+from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds, timeout_seconds_or_none
 
 from .http_utils import join_url, normalize_base_url
@@ -329,7 +329,7 @@ class OllamaProvider(BaseProvider):
             return InvokeResult(ok=True, output=output.strip(), latency_ms=latency_ms, usage=usage, raw=data)
         except (requests.RequestException, RuntimeError, ValueError) as exc:
             latency_ms = int((time.time() - start) * 1000)
-            usage = estimate_usage(prompt, "")
+            usage = Usage.estimate(prompt, "")
             return InvokeResult(ok=False, output="", latency_ms=latency_ms, usage=usage, error=str(exc))
 
     async def invoke_stream_events(
@@ -530,4 +530,4 @@ def _usage_from_response(prompt: str, output: str, data: dict[str, Any], is_open
                 )
     except (RuntimeError, ValueError) as e:
         logger.debug(f"Failed to estimate Ollama usage: {e}")
-    return estimate_usage(prompt, output)
+    return Usage.estimate(prompt, output)

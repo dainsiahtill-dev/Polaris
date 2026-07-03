@@ -29,7 +29,6 @@ from polaris.kernelone.llm.types import (
     HealthResult,
     InvokeResult,
     Usage,
-    estimate_usage,
 )
 
 from .async_http_client import (
@@ -117,7 +116,7 @@ async def async_invoke_with_retry(
             try:
                 await breaker.before_call()
             except CircuitOpenError as exc:
-                usage = estimate_usage(prompt, "")
+                usage = Usage.estimate(prompt, "")
                 return InvokeResult(
                     ok=False,
                     output="",
@@ -162,7 +161,7 @@ async def async_invoke_with_retry(
                     if 500 <= result.status_code < 600:
                         await breaker.on_failure()
                         latency_ms = int((_clock.time() - start) * 1000)
-                        usage = estimate_usage(prompt, "")
+                        usage = Usage.estimate(prompt, "")
                         return InvokeResult(
                             ok=False,
                             output="",
@@ -215,7 +214,7 @@ async def async_invoke_with_retry(
                 attempt += 1
                 if attempt > retries:
                     latency_ms = int((_clock.time() - start) * 1000)
-                    usage = estimate_usage(prompt, "")
+                    usage = Usage.estimate(prompt, "")
                     return InvokeResult(
                         ok=False,
                         output="",

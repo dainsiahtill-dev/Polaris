@@ -30,7 +30,7 @@ from polaris.kernelone.llm.providers import (
     ProviderInfo,
 )
 from polaris.kernelone.llm.providers.stream_thinking_parser import ChunkKind, StreamThinkingParser
-from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage, estimate_usage
+from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds, timeout_seconds_or_none
 
 if TYPE_CHECKING:
@@ -377,7 +377,7 @@ class KimiProvider(BaseProvider):
         retries = int(config.get("retries") or 0)
         api_key = config.get("api_key")
         if not api_key:
-            usage = estimate_usage(prompt, "")
+            usage = Usage.estimate(prompt, "")
             return InvokeResult(ok=False, output="", latency_ms=0, usage=usage, error="API key is required")
         system_prompt = config.get("system_prompt")
 
@@ -430,7 +430,7 @@ class KimiProvider(BaseProvider):
             )
 
         # Fallback to estimation
-        return estimate_usage(prompt, output)
+        return Usage.estimate(prompt, output)
 
     async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]) -> AsyncGenerator[str, None]:
         """

@@ -81,13 +81,3 @@ class ModelListResult:
         if self.error:
             payload["error"] = self.error
         return payload
-
-
-# Re-export Usage.estimate as module-level function for backward compatibility.
-# The canonical implementation is exposed through engine.contracts.Usage.estimate().
-def estimate_usage(prompt: str, output: str) -> Usage:
-    """Estimate token usage for a prompt/output pair.
-
-    Note: This function is deprecated. Use Usage.estimate() instead.
-    """
-    return Usage.estimate(prompt, output)

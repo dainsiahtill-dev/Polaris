@@ -18,7 +18,7 @@ from polaris.kernelone.llm.providers import (
     ProviderInfo,
 )
 from polaris.kernelone.llm.providers.stream_thinking_parser import StreamThinkingParser
-from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage, estimate_usage
+from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds, timeout_seconds_or_none
 
 from .http_utils import join_url, normalize_base_url, validate_base_url_for_ssrf
@@ -509,7 +509,7 @@ class MiniMaxProvider(BaseProvider):
 
         api_key = config.get("api_key")
         if not api_key:
-            usage = estimate_usage(prompt, "")
+            usage = Usage.estimate(prompt, "")
             return InvokeResult(ok=False, output="", latency_ms=0, usage=usage, error="API key is required")
 
         thinking_budget_healed = False
@@ -569,7 +569,7 @@ class MiniMaxProvider(BaseProvider):
                         ok=False,
                         output="",
                         latency_ms=latency_ms,
-                        usage=estimate_usage(prompt, ""),
+                        usage=Usage.estimate(prompt, ""),
                         error=f"HTTP {response.status_code}: {response.text[:500]}",
                     )
 
@@ -641,7 +641,7 @@ class MiniMaxProvider(BaseProvider):
                                     ok=False,
                                     output="",
                                     latency_ms=latency_ms,
-                                    usage=estimate_usage(prompt, ""),
+                                    usage=Usage.estimate(prompt, ""),
                                     error=api_error,
                                 )
 
@@ -702,7 +702,7 @@ class MiniMaxProvider(BaseProvider):
                                             ok=False,
                                             output="",
                                             latency_ms=latency_ms,
-                                            usage=estimate_usage(prompt, ""),
+                                            usage=Usage.estimate(prompt, ""),
                                             error=api_error,
                                         )
 
@@ -789,7 +789,7 @@ class MiniMaxProvider(BaseProvider):
                             ok=True,
                             output=output,
                             latency_ms=latency_ms,
-                            usage=estimate_usage(prompt, output),
+                            usage=Usage.estimate(prompt, output),
                             raw=raw_payload,
                             streaming=True,
                             thinking=thinking,
@@ -816,7 +816,7 @@ class MiniMaxProvider(BaseProvider):
                                                 ok=True,
                                                 output=self._clean_content(content),
                                                 latency_ms=latency_ms,
-                                                usage=estimate_usage(prompt, content),
+                                                usage=Usage.estimate(prompt, content),
                                                 raw=raw_payload,
                                                 streaming=True,
                                                 thinking=None,
@@ -857,7 +857,7 @@ class MiniMaxProvider(BaseProvider):
                             ok=False,
                             output="",
                             latency_ms=latency_ms,
-                            usage=estimate_usage(prompt, ""),
+                            usage=Usage.estimate(prompt, ""),
                             error=(
                                 "Empty visible output from MiniMax stream "
                                 f"(thinking_chars={thinking_chars}, chunks={len(full_response)}, "
@@ -882,7 +882,7 @@ class MiniMaxProvider(BaseProvider):
                         ok=False,
                         output="",
                         latency_ms=latency_ms,
-                        usage=estimate_usage(prompt, ""),
+                        usage=Usage.estimate(prompt, ""),
                         error=f"JSON parse error: {json_err!s}, raw: {response.text[:500]}",
                     )
 
@@ -895,7 +895,7 @@ class MiniMaxProvider(BaseProvider):
                         ok=False,
                         output="",
                         latency_ms=latency_ms,
-                        usage=estimate_usage(prompt, ""),
+                        usage=Usage.estimate(prompt, ""),
                         error=api_error,
                     )
 
@@ -927,7 +927,7 @@ class MiniMaxProvider(BaseProvider):
                         ok=False,
                         output="",
                         latency_ms=latency_ms,
-                        usage=estimate_usage(prompt, ""),
+                        usage=Usage.estimate(prompt, ""),
                         error="Empty response from MiniMax API",
                     )
 
@@ -948,7 +948,7 @@ class MiniMaxProvider(BaseProvider):
 
             except CircuitOpenError as exc:
                 latency_ms = int((time.time() - start) * 1000)
-                usage = estimate_usage(prompt, "")
+                usage = Usage.estimate(prompt, "")
                 return InvokeResult(
                     ok=False,
                     output="",
@@ -961,7 +961,7 @@ class MiniMaxProvider(BaseProvider):
                 attempt += 1
                 if attempt > retries:
                     latency_ms = int((time.time() - start) * 1000)
-                    usage = estimate_usage(prompt, "")
+                    usage = Usage.estimate(prompt, "")
                     return InvokeResult(ok=False, output="", latency_ms=latency_ms, usage=usage, error=str(exc))
                 delay = min(backoff_max, backoff_base * (2 ** max(0, attempt - 1)))
                 delay += random.uniform(0.0, min(1.0, delay * 0.2))
@@ -977,7 +977,7 @@ class MiniMaxProvider(BaseProvider):
                 total_tokens=usage_data.get("total_tokens", 0),
             )
 
-        return estimate_usage(prompt, output)
+        return Usage.estimate(prompt, output)
 
     async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]) -> AsyncGenerator[str, None]:
         """

@@ -16,7 +16,7 @@ from polaris.kernelone.llm.providers import (
     ThinkingInfo,
     WorkingDirConfig,
 )
-from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, estimate_usage
+from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 
 from .codex_cli_args import (
@@ -259,7 +259,7 @@ class CodexCLIProvider(BaseProvider):
         command = str(config.get("command", "codex")).strip()
         resolved = _resolve_command(command)
         if not resolved:
-            usage = estimate_usage(prompt, "")
+            usage = Usage.estimate(prompt, "")
             return InvokeResult(ok=False, output="", latency_ms=0, usage=usage, error="Codex CLI command not found")
 
         args = _build_codex_exec_args(model, config)
@@ -395,24 +395,24 @@ class CodexCLIProvider(BaseProvider):
                     stdout_raw = output
                     cli_error = _extract_cli_error_message(output)
                 if code == 0 and not cli_error:
-                    usage = estimate_usage(prompt, output)
+                    usage = Usage.estimate(prompt, output)
                     return InvokeResult(ok=True, output=output, latency_ms=latency_ms, usage=usage, raw=debug_raw)
                 message = (stderr_raw or cli_error or stdout_raw or "Codex CLI invoke failed").strip()
                 if message and fallback_effort:
                     message = f"{message}\n(auto-fallback reasoning.effort={fallback_effort} failed)"
 
-                usage = estimate_usage(prompt, output)
+                usage = Usage.estimate(prompt, output)
                 return InvokeResult(
                     ok=False, output=output, latency_ms=latency_ms, usage=usage, error=message, raw=debug_raw
                 )
 
-            usage = estimate_usage(prompt, output)
+            usage = Usage.estimate(prompt, output)
             return InvokeResult(ok=True, output=output, latency_ms=latency_ms, usage=usage, raw=debug_raw)
         except subprocess.TimeoutExpired:
-            usage = estimate_usage(prompt, "")
+            usage = Usage.estimate(prompt, "")
             return InvokeResult(ok=False, output="", latency_ms=0, usage=usage, error="timeout", raw=debug_raw)
         except (RuntimeError, ValueError) as exc:
-            usage = estimate_usage(prompt, "")
+            usage = Usage.estimate(prompt, "")
             return InvokeResult(ok=False, output="", latency_ms=0, usage=usage, error=str(exc), raw=debug_raw)
 
     @classmethod

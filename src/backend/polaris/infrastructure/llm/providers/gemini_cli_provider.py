@@ -16,7 +16,7 @@ from polaris.kernelone.llm.providers import (
     ThinkingInfo,
     WorkingDirConfig,
 )
-from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, estimate_usage
+from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 
 
@@ -187,7 +187,7 @@ class GeminiCLIProvider(BaseProvider):
         command = str(config.get("command", "gemini")).strip()
         resolved = self._resolve_command(command)
         if not resolved:
-            usage = estimate_usage(prompt, "")
+            usage = Usage.estimate(prompt, "")
             return InvokeResult(ok=False, output="", latency_ms=0, usage=usage, error="gemini CLI not found")
 
         args = list(map(str, config.get("args", ["chat", "--model", "{model}", "--prompt", "{prompt}"])))
@@ -208,17 +208,17 @@ class GeminiCLIProvider(BaseProvider):
             # Clean up common Gemini CLI artifacts
             output = self._clean_output(output)
 
-            usage = estimate_usage(prompt, output)
+            usage = Usage.estimate(prompt, output)
             if code != 0:
                 message = (stderr or stdout or "gemini invoke failed").strip()
                 return InvokeResult(ok=False, output=output, latency_ms=latency_ms, usage=usage, error=message)
 
             return InvokeResult(ok=True, output=output, latency_ms=latency_ms, usage=usage)
         except subprocess.TimeoutExpired:
-            usage = estimate_usage(prompt, "")
+            usage = Usage.estimate(prompt, "")
             return InvokeResult(ok=False, output="", latency_ms=timeout * 1000, usage=usage, error="timeout")
         except (RuntimeError, ValueError) as exc:
-            usage = estimate_usage(prompt, "")
+            usage = Usage.estimate(prompt, "")
             return InvokeResult(ok=False, output="", latency_ms=0, usage=usage, error=str(exc))
 
     @classmethod

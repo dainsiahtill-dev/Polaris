@@ -14,7 +14,7 @@ from polaris.kernelone.llm.providers import (
 )
 from polaris.kernelone.llm.providers.stream_thinking_parser import StreamThinkingParser
 from polaris.kernelone.llm.response_parser import LLMResponseParser
-from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelListResult, Usage, estimate_usage
+from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelListResult, Usage
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 
 from .http_utils import join_url, merge_headers, normalize_base_url
@@ -736,4 +736,4 @@ def _usage_from_response(prompt: str, output: str, data: dict[str, Any]) -> Usag
             )
     except (RuntimeError, ValueError):
         logger.debug("DEBUG: anthropic_provider.py:{592} {exc} (swallowed)")
-    return estimate_usage(prompt, output)
+    return Usage.estimate(prompt, output)
