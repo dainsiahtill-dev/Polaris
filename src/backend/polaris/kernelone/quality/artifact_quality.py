@@ -373,9 +373,9 @@ def check_source_file_syntax(absolute_path: str) -> dict[str, Any] | None:
 class ArtifactQualityIssue:
     """Typed projection for one artifact-quality finding.
 
-    This is evidence, not a repair authorization. Legacy callers still consume
-    ``ArtifactQualityEvidence.errors`` while newer gates can rely on ``issues``
-    instead of reparsing human-readable strings.
+    This is evidence, not a repair authorization. String-compatible callers
+    still consume ``ArtifactQualityEvidence.errors`` while typed gates can rely
+    on ``issues`` instead of reparsing human-readable strings.
     """
 
     code: str
@@ -742,7 +742,7 @@ def _artifact_quality_issue_from_cross_artifact_issue(
 
 
 def artifact_quality_issues_from_errors(errors: Iterable[Any]) -> tuple[dict[str, Any], ...]:
-    """Project legacy artifact-quality errors into typed issue payloads."""
+    """Project artifact-quality findings into typed issue payloads."""
 
     return tuple(issue.to_dict() for issue in _artifact_quality_issues_from_errors(errors))
 
@@ -762,7 +762,7 @@ def _artifact_quality_evidence(
         for issue in deduped_cross_artifact_issues
         if not issue.code.startswith("contract_")
     }
-    legacy_issues = tuple(
+    string_projected_issues = tuple(
         issue
         for issue in _artifact_quality_issues_from_errors(deduped_errors)
         if str((issue.metadata or {}).get("raw") or issue.message).strip() not in cross_artifact_error_messages
@@ -774,7 +774,7 @@ def _artifact_quality_evidence(
     )
     return ArtifactQualityEvidence(
         errors=deduped_errors,
-        issues=(*legacy_issues, *projected_cross_artifact_issues),
+        issues=(*string_projected_issues, *projected_cross_artifact_issues),
         scanned_relative_paths=tuple(scanned_relative_paths),
         cross_artifact_issues=deduped_cross_artifact_issues,
         cross_artifact_repair_plans=tuple(cross_artifact_repair_plans),
