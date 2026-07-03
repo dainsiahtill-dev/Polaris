@@ -58,6 +58,10 @@ ToolExecutionResult/BatchReceipt → RoleTurnResult → completion/projection
   决策 metadata 不再维护 list-only 的 envelope 过滤规则。
 - `roles.kernel.internal.kernel.tool_dispatch_projection` 已改为消费同一 public
   helper，dropped-dispatch ledger 投影不再维护 lifecycle seed refs 的本地过滤规则。
+- `roles.kernel.internal.kernel.role_result_projection` 已改为在复制 LLM response
+  metadata 后，用 envelope-first helper 重新投影 `native_tool_calls_count` 与
+  `native_tool_call_names`；旧字段只作为 helper 内部 fallback，不能挡住 envelope
+  派生事实。
 - 验证：
   `rtk pytest src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py src/backend/polaris/cells/roles/runtime/tests/test_service_helpers_characterization.py -q -k "tool_lifecycle or native_tool_call_envelope or extract_tool_calls"`；
   `rtk ruff check src/backend/polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py src/backend/polaris/cells/control_plane/run_ledger/public/__init__.py src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py src/backend/polaris/cells/roles/runtime/public/result_mapping.py`；
@@ -74,6 +78,10 @@ ToolExecutionResult/BatchReceipt → RoleTurnResult → completion/projection
   `rtk pytest src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_tool_dispatch_projection.py -q -k "lifecycle_receipt or native_envelopes"`；
   `rtk ruff check src/backend/polaris/cells/roles/kernel/internal/kernel/tool_dispatch_projection.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_tool_dispatch_projection.py`；
   `rtk mypy src/backend/polaris/cells/roles/kernel/internal/kernel/tool_dispatch_projection.py`。
+  RoleResult 投影追加验证：
+  `rtk pytest src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_result_projection.py -q`；
+  `rtk ruff check src/backend/polaris/cells/roles/kernel/internal/kernel/role_result_projection.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_result_projection.py`；
+  `rtk mypy src/backend/polaris/cells/roles/kernel/internal/kernel/role_result_projection.py`。
 
 ## 5. 风险与边界
 

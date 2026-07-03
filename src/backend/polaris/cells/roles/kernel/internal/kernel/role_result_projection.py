@@ -131,10 +131,10 @@ def role_result_metadata_from_profile(
         _project_canonical_tool_lifecycle_receipt(metadata)
         native_count = native_tool_call_count_from_metadata(llm_response_metadata)
         if native_count > 0:
-            metadata.setdefault("native_tool_calls_count", native_count)
+            metadata["native_tool_calls_count"] = native_count
         native_names = native_tool_call_names(llm_response_metadata, ())
         if native_names:
-            metadata.setdefault("native_tool_call_names", native_names)
+            metadata["native_tool_call_names"] = native_names
 
     if isinstance(monitoring, dict) and "context_os_audit" not in metadata:
         context_os_audit = monitoring.get("context_os_audit")

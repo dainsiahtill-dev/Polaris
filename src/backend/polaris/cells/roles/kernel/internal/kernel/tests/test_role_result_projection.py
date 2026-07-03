@@ -139,6 +139,29 @@ def test_role_result_metadata_projects_canonical_lifecycle_from_plural_receipts(
     assert metadata["native_tool_call_names"] == ["write_file"]
 
 
+def test_role_result_metadata_prefers_envelope_facts_over_legacy_native_counts() -> None:
+    profile = SimpleNamespace(provider_id="", model="")
+    lifecycle = {
+        "schema_version": "tool_call_lifecycle_receipt.v1",
+        "native_tool_call_envelope_refs": [
+            {"schema_version": "native_tool_call_envelope.v1", "tool_name": "read_file"},
+            {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
+        ],
+    }
+
+    metadata = role_result_metadata_from_profile(
+        profile=profile,
+        llm_response_metadata={
+            "native_tool_calls_count": 9,
+            "native_tool_call_names": ["stale_tool"],
+            "tool_call_lifecycle_receipt": lifecycle,
+        },
+    )
+
+    assert metadata["native_tool_calls_count"] == 2
+    assert metadata["native_tool_call_names"] == ["read_file", "write_file"]
+
+
 def test_role_result_metadata_uses_monitoring_context_audit_when_not_already_set() -> None:
     profile = SimpleNamespace(provider_id="", model="")
 
