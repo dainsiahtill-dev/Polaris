@@ -257,7 +257,8 @@ class TestLoadBuiltinProfiles:
         assert rp is not None
         assert "repo_read_head" in rp.tool_policy.whitelist
         assert "repo_rg" in rp.tool_policy.whitelist
-        assert "precision_edit" in rp.tool_policy.whitelist
+        assert "precision_edit" not in rp.tool_policy.whitelist
+        assert "edit_blocks" in rp.tool_policy.whitelist
         assert "repo_apply_diff" in rp.tool_policy.whitelist
         assert "read_file" in rp.tool_policy.whitelist
 
@@ -271,7 +272,8 @@ class TestCoreRoleYamlProfiles:
         assert rp is not None
         assert "repo_read_head" in rp.tool_policy.whitelist
         assert "repo_rg" in rp.tool_policy.whitelist
-        assert "precision_edit" in rp.tool_policy.whitelist
+        assert "precision_edit" not in rp.tool_policy.whitelist
+        assert "edit_blocks" in rp.tool_policy.whitelist
         assert "repo_apply_diff" in rp.tool_policy.whitelist
         assert "read_file" in rp.tool_policy.whitelist
 

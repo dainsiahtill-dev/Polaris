@@ -282,7 +282,7 @@ roles:
         # 工具使用：目录列表必须使用工具
         - "当被要求列出目录结构时，必须使用 repo_tree 工具，不能直接输出目录树"
         # 工具使用：搜索替换必须使用指定工具
-        - "当被要求搜索并替换代码时，必须使用 repo_rg 进行搜索，使用 edit_blocks (推荐) 或 precision_edit (已弃用) 进行替换"
+        - "当被要求搜索并替换代码时，必须使用 repo_rg 进行搜索，使用 edit_blocks 进行替换；需要完整 diff 时使用 repo_apply_diff"
 
     tool_policy:
       whitelist:
@@ -304,7 +304,6 @@ roles:
         - search_code
         # Canonical 编辑能力
         - edit_blocks  # RECOMMENDED: Aider-style SEARCH/REPLACE format
-        - precision_edit  # DEPRECATED: use edit_blocks instead
         - repo_apply_diff
         # 兼容编辑能力（不做功能映射，仅原生可用）
         - write_file

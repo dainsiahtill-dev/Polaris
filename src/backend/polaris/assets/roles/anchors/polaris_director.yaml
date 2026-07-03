@@ -85,9 +85,10 @@ tool_whitelist:
     - list_directory
     - file_exists
   write:
-    - precision_edit
+    - edit_blocks
+    - repo_apply_diff
     - append_to_file
-    - create_file
+    - write_file
   execute:
     - execute_command
 

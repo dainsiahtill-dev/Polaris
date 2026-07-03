@@ -370,7 +370,8 @@ class TestProfileSpecificPolicies:
     def test_director_has_edit_tools(self) -> None:
         director = next(p for p in BUILTIN_PROFILES if p["role_id"] == "director")
         whitelist = set(director["tool_policy"]["whitelist"])
-        assert "precision_edit" in whitelist
+        assert "precision_edit" not in whitelist
+        assert "edit_blocks" in whitelist
         assert "repo_apply_diff" in whitelist
         assert "search_replace" in whitelist
         assert "write_file" in whitelist
