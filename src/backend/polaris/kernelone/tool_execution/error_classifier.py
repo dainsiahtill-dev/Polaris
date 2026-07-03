@@ -6,11 +6,11 @@
 Usage:
     >>> from polaris.kernelone.tool_execution.error_classifier import ToolErrorClassifier, ToolErrorPattern
     >>> classifier = ToolErrorClassifier()
-    >>> pattern = classifier.classify("precision_edit", "Search string '  def foo' not found at line 42")
+    >>> pattern = classifier.classify("edit_blocks", "Search string '  def foo' not found at line 42")
     >>> print(pattern.error_type)
     no_match
     >>> print(pattern.error_signature[:50])
-    precision_edit:no_match:search string '  def foo' not
+    edit_blocks:no_match:search string '  def foo' not
 """
 
 from __future__ import annotations

@@ -18,7 +18,7 @@ class TestFailureBudget:
 
     def test_first_failure_is_allowed(self) -> None:
         """Test that first failure returns ALLOW."""
-        pattern = self.classifier.classify("precision_edit", "no matches found")
+        pattern = self.classifier.classify("edit_blocks", "no matches found")
         result = self.budget.record_failure(pattern)
 
         assert isinstance(result, FailureResult)
@@ -26,12 +26,12 @@ class TestFailureBudget:
         assert result.suggestion is None
         assert result.retryable is False  # write-tool no_match is NOT retryable
         assert result.blocked is False
-        assert self.budget.get_tool_failure_count("precision_edit") == 1
+        assert self.budget.get_tool_failure_count("edit_blocks") == 1
 
     def test_second_same_pattern_is_allowed(self) -> None:
         """Test that second same pattern still returns ALLOW (need pattern_count > max_same_pattern = 2)."""
         # Use unique error message to avoid cache interference
-        pattern = self.classifier.classify("precision_edit", f"no matches found #{id(self)}")
+        pattern = self.classifier.classify("edit_blocks", f"no matches found #{id(self)}")
 
         # First failure - ALLOW
         result1 = self.budget.record_failure(pattern)
@@ -45,7 +45,7 @@ class TestFailureBudget:
 
     def test_third_same_pattern_escalates(self) -> None:
         """Test that third same pattern returns ESCALATE (pattern_count = 3 > max_same_pattern = 2)."""
-        pattern = self.classifier.classify("precision_edit", f"no matches found #{id(self)}")
+        pattern = self.classifier.classify("edit_blocks", f"no matches found #{id(self)}")
 
         # Three failures
         self.budget.record_failure(pattern)
@@ -60,7 +60,7 @@ class TestFailureBudget:
     def test_fourth_same_pattern_is_block(self) -> None:
         """Test that fourth same pattern returns BLOCK (tool count > max_failures_per_tool)."""
         # Use unique error message
-        pattern = self.classifier.classify("precision_edit", f"no matches found #{id(self)}")
+        pattern = self.classifier.classify("edit_blocks", f"no matches found #{id(self)}")
 
         # Four failures
         self.budget.record_failure(pattern)
@@ -76,10 +76,10 @@ class TestFailureBudget:
 
     def test_different_tools_independent_counters(self) -> None:
         """Test that different tools have independent failure counters."""
-        p_edit = self.classifier.classify("precision_edit", f"no matches found edit #{id(self)}")
+        p_edit = self.classifier.classify("edit_blocks", f"no matches found edit #{id(self)}")
         p_read = self.classifier.classify("read_file", f"not found #{id(self)}")
 
-        # 3 failures for precision_edit
+        # 3 failures for edit_blocks
         for _ in range(3):
             self.budget.record_failure(p_edit)
 
@@ -89,7 +89,7 @@ class TestFailureBudget:
         result = self.budget.record_failure(p_read)
         assert result.decision == FailureDecision.ALLOW
 
-        assert self.budget.get_tool_failure_count("precision_edit") == 3
+        assert self.budget.get_tool_failure_count("edit_blocks") == 3
         assert self.budget.get_tool_failure_count("read_file") == 2
 
     def test_read_tool_not_found_never_tool_blocks(self) -> None:

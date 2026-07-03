@@ -8,7 +8,7 @@ Usage:
     >>> from polaris.kernelone.tool_execution.failure_budget import FailureBudget
     >>> budget = FailureBudget()
     >>> classifier = ToolErrorClassifier()
-    >>> pattern = classifier.classify("precision_edit", "no matches found")
+    >>> pattern = classifier.classify("edit_blocks", "no matches found")
     >>> result = budget.record_failure(pattern)
     >>> print(result.decision)
     ALLOW

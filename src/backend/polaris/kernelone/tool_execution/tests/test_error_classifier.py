@@ -14,9 +14,9 @@ class TestToolErrorClassifier:
 
     def test_classify_no_match_error(self) -> None:
         """Test classification of 'no matches found' error."""
-        pattern = self.classifier.classify("precision_edit", "no matches found")
+        pattern = self.classifier.classify("edit_blocks", "no matches found")
 
-        assert pattern.tool_name == "precision_edit"
+        assert pattern.tool_name == "edit_blocks"
         assert pattern.error_type == "no_match"
         assert "no matches" in pattern.error_signature.lower()
 
