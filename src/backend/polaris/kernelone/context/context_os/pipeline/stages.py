@@ -376,7 +376,7 @@ class Canonicalizer:
         merger_out: TranscriptMergerOutput,
     ) -> CanonicalizerOutput:
         transcript = merger_out.transcript
-        # Convert legacy dataclass TranscriptEvent -> Pydantic TranscriptEventV2
+        # Convert v1 dataclass TranscriptEvent snapshots to TranscriptEventV2.
         if transcript and not hasattr(transcript[0], "model_copy"):
             import dataclasses
 

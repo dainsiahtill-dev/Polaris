@@ -1,7 +1,7 @@
 """Contract test framework for ContextOS cross-boundary interfaces.
 
 Provides base classes and utilities for testing Protocol implementations
-and ensuring backward compatibility when introducing new strategies.
+and ensuring behavior parity when introducing new strategies.
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ class ContractTestCase(ABC):
     def test_default_behavior_preserved(self, implementation: Any) -> None:
         """Verify default behavior matches baseline (to be overridden)."""
         # Subclasses should override this with domain-specific checks
-        pass
+        ...
 
     def _get_protocol_methods(self) -> list[str]:
         """Get list of method names defined in the protocol."""
@@ -123,33 +123,33 @@ def contract_test(protocol: type[Any]) -> Callable[[type[T]], type[T]]:
     return decorator
 
 
-class BackwardCompatibilityTest(ContractTestCase):
-    """Test that new implementations preserve default behavior.
+class BehaviorParityTest(ContractTestCase):
+    """Test that candidate implementations preserve baseline behavior.
 
     Usage:
-        class TestExplorationPolicyBackwardCompat(BackwardCompatibilityTest):
-            legacy_class = OldExplorationPolicy
-            new_class = NewExplorationPolicy
+        class TestExplorationPolicyParity(BehaviorParityTest):
+            baseline_class = DefaultExplorationPolicy
+            candidate_class = TunedExplorationPolicy
 
             def test_default_output_matches(self):
-                legacy = self.legacy_class()
-                new = self.new_class()
+                baseline = self.baseline_class()
+                candidate = self.candidate_class()
 
-                legacy_result = legacy.select(self.test_context)
-                new_result = new.select(self.test_context)
+                baseline_result = baseline.select(self.test_context)
+                candidate_result = candidate.select(self.test_context)
 
-                assert legacy_result == new_result
+                assert baseline_result == candidate_result
     """
 
-    legacy_class: type[Any]
-    new_class: type[Any]
+    baseline_class: type[Any]
+    candidate_class: type[Any]
 
     def get_implementations(self) -> list[Any]:
-        return [self.legacy_class(), self.new_class()]
+        return [self.baseline_class(), self.candidate_class()]
 
     @abstractmethod
     def test_default_behavior_preserved(self, implementation: Any) -> None:
-        """Must be implemented to verify backward compatibility."""
+        """Must be implemented to verify baseline behavior parity."""
         ...
 
 

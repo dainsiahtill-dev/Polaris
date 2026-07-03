@@ -2,8 +2,7 @@
 
 This module owns prompt-facing summary extraction for ContextOS snapshots.  It
 accepts snapshot-like objects from both the current Pydantic model family and
-older persisted dataclass snapshots without importing the deprecated model
-module.
+v1 persisted dataclass snapshots without importing the retired dataclass model.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ class SnapshotSummaryView:
         """Extract only the fields needed for LLM context injection.
 
         The method intentionally uses structural access because ContextOS may
-        load old dataclass snapshots and current Pydantic V2 snapshots from the
+        load v1 dataclass snapshots and current Pydantic V2 snapshots from the
         same persisted runtime store.
         """
         working_state = getattr(snapshot, "working_state", None)
