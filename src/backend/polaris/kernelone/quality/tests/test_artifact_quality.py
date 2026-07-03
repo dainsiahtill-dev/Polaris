@@ -77,6 +77,15 @@ def test_artifact_quality_issue_projection_classifies_javascript_module_runtime_
     )
 
 
+def test_artifact_quality_issue_projection_extracts_compiler_path() -> None:
+    error = "src/main.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'."
+
+    issues = artifact_quality_issues_from_errors((error,))
+
+    assert issues[0]["path"] == "src/main.ts"
+    assert issues[0]["metadata"] == {"raw": error}
+
+
 def test_typescript_import_scanner_ignores_fixture_string_imports(tmp_path: Path) -> None:
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir(parents=True)

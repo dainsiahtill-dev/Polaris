@@ -5306,6 +5306,15 @@ class OrchestrationStageExecutor:
         return deduped
 
     @staticmethod
+    def _workspace_quality_repair_issue_payloads(artifact_quality_errors: list[str]) -> tuple[dict[str, Any], ...]:
+        try:
+            from polaris.kernelone.quality import artifact_quality_issues_from_errors
+
+            return artifact_quality_issues_from_errors(str(item) for item in artifact_quality_errors or [])
+        except (ImportError, RuntimeError, TypeError, ValueError):
+            return ()
+
+    @staticmethod
     def _workspace_quality_repair_coverage_report(artifact_quality_errors: list[str]) -> dict[str, Any]:
         if not artifact_quality_errors:
             return {}
@@ -5318,6 +5327,9 @@ class OrchestrationStageExecutor:
             return query_director_repair_coverage(
                 QueryDirectorRepairCoverageV1(
                     artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+                    artifact_quality_issues=OrchestrationStageExecutor._workspace_quality_repair_issue_payloads(
+                        artifact_quality_errors
+                    ),
                 )
             ).to_dict()
         except (ImportError, RuntimeError, TypeError, ValueError) as exc:
@@ -5345,6 +5357,7 @@ class OrchestrationStageExecutor:
             return query_director_repair_plan_probe(
                 QueryDirectorRepairPlanProbeV1(
                     artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+                    artifact_quality_issues=self._workspace_quality_repair_issue_payloads(artifact_quality_errors),
                     base_files=self._workspace_quality_repair_plan_probe_base_files(artifact_quality_errors),
                     metadata={
                         "source": "factory_stage_executor.workspace_quality",

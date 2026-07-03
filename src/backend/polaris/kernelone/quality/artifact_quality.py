@@ -439,6 +439,9 @@ _ARTIFACT_QUALITY_PATH_EXTENSIONS = (
 )
 _ARTIFACT_QUALITY_QUOTED_PATH_RE = re.compile(r"['\"](?P<path>[^'\"]+\.[A-Za-z0-9]+)['\"]")
 _ARTIFACT_QUALITY_IN_PATH_RE = re.compile(r"\bin\s+(?P<path>[^\s:]+(?:\.[A-Za-z0-9]+))(?::|$|\s)")
+_ARTIFACT_QUALITY_COMPILER_PATH_RE = re.compile(
+    r"(?m)^(?P<path>[^\s:(]+(?:\.[A-Za-z0-9]+))(?:\(\d+(?:,\d+)?\)|:\d+(?::\d+)?)?(?::|\s)"
+)
 _ARTIFACT_QUALITY_JAVASCRIPT_MODULE_ERROR_RE = re.compile(
     r"(?P<message>The requested module\s+['\"]?[^'\"\s]+['\"]?\s+"
     r"does not provide an export named\s+(?:['\"][^'\"]+['\"]|[A-Za-z_$][\w$]*)|"
@@ -477,7 +480,11 @@ def _artifact_quality_issue_code(message: str) -> str:
 
 
 def _artifact_quality_issue_path(message: str) -> str | None:
-    for regex in (_ARTIFACT_QUALITY_QUOTED_PATH_RE, _ARTIFACT_QUALITY_IN_PATH_RE):
+    for regex in (
+        _ARTIFACT_QUALITY_COMPILER_PATH_RE,
+        _ARTIFACT_QUALITY_QUOTED_PATH_RE,
+        _ARTIFACT_QUALITY_IN_PATH_RE,
+    ):
         match = regex.search(message)
         if not match:
             continue

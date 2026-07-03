@@ -105,6 +105,7 @@ def test_workspace_quality_plan_probe_reads_relevant_base_files(
 
     def fake_query(query: Any) -> SimpleNamespace:
         captured["artifact_quality_errors"] = query.artifact_quality_errors
+        captured["artifact_quality_issues"] = tuple(query.artifact_quality_issues)
         captured["base_files"] = dict(query.base_files)
         captured["metadata"] = dict(query.metadata)
         return SimpleNamespace(
@@ -127,6 +128,14 @@ def test_workspace_quality_plan_probe_reads_relevant_base_files(
     assert result["status"] == "coverage_matched_but_unplannable"
     assert captured["base_files"] == {"src/main.ts": "export const value = 1;\n"}
     assert captured["metadata"]["coverage_is_not_planning"] is True
+    assert captured["artifact_quality_errors"] == (
+        "src/main.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'.",
+    )
+    assert captured["artifact_quality_issues"]
+    typed_issue = captured["artifact_quality_issues"][0]
+    assert typed_issue["code"]
+    assert typed_issue["path"] == "src/main.ts"
+    assert "TS2322" in typed_issue["message"]
 
 
 def test_quality_gate_failure_stage_does_not_add_qa_llm_warning_for_deterministic_blocker(
