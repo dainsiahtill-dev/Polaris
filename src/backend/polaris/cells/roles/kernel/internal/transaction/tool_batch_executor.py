@@ -738,6 +738,18 @@ def _int_value(value: Any) -> int:
         return 0
 
 
+def _metadata_native_tool_call_count(metadata: Mapping[str, Any], fallback: int = 0) -> int:
+    envelopes = metadata.get("native_tool_call_envelopes")
+    if isinstance(envelopes, (list, tuple)):
+        envelope_count = sum(1 for item in envelopes if isinstance(item, Mapping))
+        if envelope_count > 0:
+            return envelope_count
+    metadata_count = _int_value(metadata.get("native_tool_calls_count"))
+    if metadata_count > 0:
+        return metadata_count
+    return max(0, int(fallback or 0))
+
+
 def _normalize_capability_token(value: dict[str, Any]) -> dict[str, Any]:
     token_id = str(value.get("token_id") or "").strip()
     if not token_id:
@@ -1854,11 +1866,14 @@ class ToolBatchExecutor:
                 {
                     "type": "TOOL_DISPATCH_DROPPED",
                     "turn_id": turn_id,
-                    "native_tool_calls_count": _int_value(metadata.get("native_tool_calls_count")) or len(invocations),
+                    "native_tool_calls_count": _metadata_native_tool_call_count(metadata, fallback=len(invocations)),
                     "decoded_tool_calls_count": len(invocations),
                     "dispatched_tool_calls_count": 0,
                     "provider_response_hash": str(metadata.get("provider_response_hash") or ""),
                     "dropped_tool_calls": decoded_tool_calls,
+                    "native_tool_call_envelopes": metadata.get("native_tool_call_envelopes")
+                    if isinstance(metadata.get("native_tool_call_envelopes"), list)
+                    else [],
                     "reason": "decoded_tool_batch_produced_no_authoritative_batch_receipt",
                 }
             )
@@ -1895,7 +1910,7 @@ class ToolBatchExecutor:
             capability_token=_capability_token_from_metadata(metadata),
             execution_envelope_hash=_execution_envelope_hash_from_metadata(metadata),
             provider_response_hash=str(metadata.get("provider_response_hash") or ""),
-            native_tool_calls_count=_int_value(metadata.get("native_tool_calls_count")),
+            native_tool_calls_count=_metadata_native_tool_call_count(metadata),
             native_tool_call_envelopes=native_tool_call_envelopes
             if isinstance(native_tool_call_envelopes, list)
             else (),

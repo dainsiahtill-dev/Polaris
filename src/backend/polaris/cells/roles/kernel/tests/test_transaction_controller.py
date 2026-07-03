@@ -347,9 +347,19 @@ class TestToolBatchExecution:
     ) -> None:
         mock_llm_provider.return_value = {
             "content": "",
-            "tool_calls": [_native_tool_call("read_file", {"path": "main.py"})],
+            "tool_calls": [
+                _native_tool_call("read_file", {"path": "main.py"}, call_id="call_read_main"),
+                _native_tool_call("read_file", {"path": "config.py"}, call_id="call_read_config"),
+            ],
             "model": "claude",
-            "usage": {"prompt_tokens": 100, "completion_tokens": 30},
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 30,
+                "native_tool_call_envelopes": [
+                    {"envelope_id": "env-read-main", "tool_name": "read_file", "call_id": "call_read_main"},
+                    {"envelope_id": "env-read-config", "tool_name": "read_file", "call_id": "call_read_config"},
+                ],
+            },
         }
 
         class EmptyBatchRuntime:
@@ -380,9 +390,10 @@ class TestToolBatchExecution:
             if isinstance(item, dict) and item.get("type") == "TOOL_DISPATCH_DROPPED"
         ]
         assert len(dropped_flags) == 1
-        assert dropped_flags[0]["native_tool_calls_count"] == 1
-        assert dropped_flags[0]["decoded_tool_calls_count"] == 1
+        assert dropped_flags[0]["native_tool_calls_count"] == 2
+        assert dropped_flags[0]["decoded_tool_calls_count"] == 2
         assert dropped_flags[0]["dispatched_tool_calls_count"] == 0
+        assert len(dropped_flags[0]["native_tool_call_envelopes"]) == 2
         assert dropped_flags[0]["dropped_tool_calls"][0]["tool_name"] == "read_file"
 
     @pytest.mark.asyncio
