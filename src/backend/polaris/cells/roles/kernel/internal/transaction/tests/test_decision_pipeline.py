@@ -107,3 +107,57 @@ def test_build_tool_dispatch_dropped_anomaly_derives_lifecycle_from_envelopes() 
     assert lifecycle["run_id"] == "run-1"
     assert lifecycle["task_id"] == "TASK-1"
     assert lifecycle["role"] == "director"
+
+
+def test_build_tool_dispatch_dropped_anomaly_builds_envelopes_from_raw_response() -> None:
+    response = SimpleNamespace(
+        content="",
+        model="gpt-test",
+        native_tool_calls=[
+            {
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "write_file", "arguments": {"file": "src/main.py"}},
+            },
+            {
+                "id": "call-2",
+                "type": "function",
+                "function": {"name": "execute_command", "arguments": {"cmd": "pytest"}},
+            },
+        ],
+    )
+    metadata = {
+        "run_id": "run-1",
+        "task_id": "TASK-1",
+        "role": "director",
+        "tool_call_provider": "openai",
+    }
+
+    anomaly = build_tool_dispatch_dropped_anomaly(
+        response=response,
+        metadata=metadata,
+        turn_id="turn-1",
+    )
+
+    lifecycle = anomaly["tool_call_lifecycle_receipt"]
+    assert anomaly["native_tool_calls_count"] == 2
+    assert [item["tool_name"] for item in anomaly["native_tool_call_envelopes"]] == [
+        "write_file",
+        "execute_command",
+    ]
+    assert [item["call_id"] for item in anomaly["native_tool_call_envelopes"]] == ["call-1", "call-2"]
+    assert lifecycle["native_tool_calls_count"] == 2
+    assert lifecycle["decoded_tool_calls_count"] == 2
+    assert lifecycle["native_tool_call_envelope_refs"] == anomaly["native_tool_call_envelopes"]
+    assert lifecycle["dropped_tool_calls"] == [
+        {
+            "tool_name": "write_file",
+            "envelope_id": anomaly["native_tool_call_envelopes"][0]["envelope_id"],
+            "reason": "tool_dispatch_dropped",
+        },
+        {
+            "tool_name": "execute_command",
+            "envelope_id": anomaly["native_tool_call_envelopes"][1]["envelope_id"],
+            "reason": "tool_dispatch_dropped",
+        },
+    ]
