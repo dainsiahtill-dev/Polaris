@@ -51,6 +51,22 @@ Cell 边界说明：strategy 产生地在 `director.tasking`，解析器落位 `
 - 新增：constants 单源测试（四站点 import 同一符号）、`classify_turn_kind` 全类别表测试、`ResolvedBudgetV1` provenance 测试、reader 合并的逐 key 等价测试。
 - Bench oracle：L2-08 isolated 复跑不得出现新的 `call_cancelled`/timeout 类根因。
 
+## 4.1 2026-07-04 增量落地记录
+
+- 共享预算策略实际落位为 `polaris.kernelone.llm.budget_policy`，不是
+  `roles/kernel/internal/llm_caller/budget_policy.py`。该 placement amendment
+  避免跨 Cell import role-kernel internal，同时允许 `roles.kernel`、
+  `roles.adapters`、`factory.pipeline` 共同消费 KernelOne fact。
+- `resolve_execution_budget()` 已接管 request-preparer 本地
+  `ResolvedBudgetV1` 构造逻辑。`request_preparer` 现在只传入已经解析完成的
+  provider request 数字与检测标记；预算策略模块负责冻结 typed projection、
+  provenance 和 `classify_turn_kind()` 结果。
+- 验证：
+  `rtk pytest src/backend/polaris/kernelone/tests/test_llm_budget_policy.py -q`；
+  `rtk pytest src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_components.py src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py -q -k "budget or execution_budget or request_preparer or call_returns_dict"`；
+  `rtk ruff check src/backend/polaris/kernelone/llm/budget_policy.py src/backend/polaris/kernelone/tests/test_llm_budget_policy.py src/backend/polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py`；
+  `rtk mypy src/backend/polaris/kernelone/llm/budget_policy.py src/backend/polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py`。
+
 ## 5. 风险与边界
 
 - reader key 集合并集可能改变「先读哪个 key」的边缘行为——所有 diverging key 必须逐一枚举、在测试中钉死新优先序，并在 `provenance` 中可见。

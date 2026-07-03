@@ -22,6 +22,7 @@ from polaris.kernelone.llm.budget_policy import (
     forced_write_output_token_ceiling,
     forced_write_retry_timeout_seconds,
     resolve_director_dispatch_timeout_seconds,
+    resolve_execution_budget,
 )
 
 
@@ -139,4 +140,32 @@ def test_resolved_budget_payload_is_json_ready_projection() -> None:
         "request_timeout_seconds": 130.0,
         "turn_kind": TURN_KIND_REQUIRED_TOOL_RETRY,
         "provenance": {"max_output_tokens": "context_override"},
+    }
+
+
+def test_resolve_execution_budget_freezes_actual_request_values() -> None:
+    budget = resolve_execution_budget(
+        role_id="director",
+        context={"required_tool_retry": True},
+        request_options={"tool_choice": "auto"},
+        max_output_tokens=123_456,
+        llm_timeout_seconds=77.0,
+        request_timeout_seconds=88.0,
+        context_max_tokens_present=True,
+        context_timeout_present=True,
+        output_floor_tokens=7_000,
+        output_floor_provenance="transaction_kernel_retry_output_budget_bounded",
+    )
+
+    assert budget.max_output_tokens == 123_456
+    assert budget.output_floor_tokens == 7_000
+    assert budget.llm_timeout_seconds == 77.0
+    assert budget.request_timeout_seconds == 88.0
+    assert budget.turn_kind == TURN_KIND_REQUIRED_TOOL_RETRY
+    assert budget.provenance == {
+        "max_output_tokens": "context_override",
+        "output_floor_tokens": "transaction_kernel_retry_output_budget_bounded",
+        "llm_timeout_seconds": "director_timeout_policy",
+        "request_timeout_seconds": "same_funnel_as_llm_timeout",
+        "turn_kind": "classify_turn_kind",
     }

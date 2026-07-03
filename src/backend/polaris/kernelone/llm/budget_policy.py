@@ -407,6 +407,54 @@ class ResolvedBudgetV1:
         }
 
 
+def resolve_execution_budget(
+    *,
+    role_id: str,
+    context: Mapping[str, Any] | None,
+    request_options: Mapping[str, Any] | None,
+    max_output_tokens: int,
+    llm_timeout_seconds: float,
+    request_timeout_seconds: float | None = None,
+    context_max_tokens_present: bool = False,
+    context_timeout_present: bool = False,
+    output_floor_tokens: int = 0,
+    output_floor_provenance: str = "no_explicit_floor_visible",
+) -> ResolvedBudgetV1:
+    """Freeze the ACTUAL resolved request budget as a typed projection.
+
+    This resolver is intentionally observability-only: callers pass in the
+    already-resolved provider request numbers. The function centralizes
+    provenance, turn-kind classification and JSON-ready budget shape without
+    recalculating or expanding the execution budget.
+    """
+
+    normalized_role = str(role_id or "").strip().lower()
+    resolved_request_timeout = (
+        float(request_timeout_seconds)
+        if request_timeout_seconds is not None
+        else float(llm_timeout_seconds)
+    )
+    provenance: dict[str, Any] = {
+        "max_output_tokens": ("context_override" if context_max_tokens_present else "requested_clamped"),
+        "output_floor_tokens": str(output_floor_provenance or "no_explicit_floor_visible"),
+        "llm_timeout_seconds": (
+            "director_timeout_policy"
+            if normalized_role == "director"
+            else ("context_override" if context_timeout_present else "role_default")
+        ),
+        "request_timeout_seconds": "same_funnel_as_llm_timeout",
+        "turn_kind": "classify_turn_kind",
+    }
+    return ResolvedBudgetV1(
+        max_output_tokens=int(max_output_tokens),
+        output_floor_tokens=max(0, int(output_floor_tokens)),
+        llm_timeout_seconds=float(llm_timeout_seconds),
+        request_timeout_seconds=resolved_request_timeout,
+        turn_kind=classify_turn_kind(context, request_options),
+        provenance=provenance,
+    )
+
+
 __all__ = [
     "BUDGET_CONTEXT_KEYS_CANONICAL",
     "BUDGET_STRATEGY_PAYLOAD_KEYS",
@@ -445,4 +493,5 @@ __all__ = [
     "forced_write_output_token_ceiling",
     "forced_write_retry_timeout_seconds",
     "resolve_director_dispatch_timeout_seconds",
+    "resolve_execution_budget",
 ]

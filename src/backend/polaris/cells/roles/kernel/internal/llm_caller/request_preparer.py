@@ -22,8 +22,7 @@ from polaris.kernelone.llm.budget_policy import (
     REASONING_TRUNCATION_RETRY_OUTPUT_TOKENS,
     REQUIRED_TOOL_RETRY_OUTPUT_TOKEN_CAP,
     REQUIRED_TOOL_RETRY_TIMEOUT_SECONDS,
-    ResolvedBudgetV1,
-    classify_turn_kind,
+    resolve_execution_budget,
 )
 from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
 from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
@@ -340,24 +339,17 @@ def _build_execution_budget_projection(
         output_floor_tokens = request_max_tokens
         floor_provenance = "transaction_kernel_retry_output_budget_bounded"
 
-    provenance: dict[str, Any] = {
-        "max_output_tokens": ("context_override" if context_max_tokens_present else "requested_clamped"),
-        "output_floor_tokens": floor_provenance,
-        "llm_timeout_seconds": (
-            "director_timeout_policy"
-            if role_id == "director"
-            else ("context_override" if context_timeout_present else "role_default")
-        ),
-        "request_timeout_seconds": "same_funnel_as_llm_timeout",
-        "turn_kind": "classify_turn_kind",
-    }
-    return ResolvedBudgetV1(
+    return resolve_execution_budget(
+        role_id=role_id,
+        context=override,
+        request_options=request_options,
         max_output_tokens=int(request_max_tokens),
         output_floor_tokens=int(output_floor_tokens),
+        output_floor_provenance=floor_provenance,
         llm_timeout_seconds=float(request_timeout_seconds),
         request_timeout_seconds=float(request_timeout_seconds),
-        turn_kind=classify_turn_kind(override, request_options),
-        provenance=provenance,
+        context_max_tokens_present=context_max_tokens_present,
+        context_timeout_present=context_timeout_present,
     ).to_payload()
 
 
