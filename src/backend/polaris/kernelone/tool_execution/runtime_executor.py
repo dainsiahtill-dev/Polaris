@@ -1,8 +1,8 @@
 """Shared backend tool runtime for Polaris role and workflow execution.
 
 This runtime exposes a stable tool surface to role/workflow runtimes. It first
-prefers the in-process KernelOne tool executor and only falls back to legacy
-CLI-style handlers when those are still available.
+prefers the in-process KernelOne tool executor and can import optional external
+CLI-style handlers when a development environment provides them.
 """
 
 from __future__ import annotations
@@ -341,7 +341,7 @@ class ToolArgumentNormalizer:
 
 
 class ToolCliBuilder:
-    """Builds CLI arguments for legacy tool handlers."""
+    """Build CLI arguments for optional external tool handlers."""
 
     @staticmethod
     def build_backend_tool_args(tool_name: str, args: dict[str, Any]) -> list[str]:
@@ -547,8 +547,8 @@ class BackendToolRuntime:
     def list_tools(self) -> dict[str, ToolFn]:
         """Return all available backend tool handlers."""
         if self._handlers is None:
-            handlers = self._load_backend_tool_handlers()
-            handlers.update(self._build_direct_tool_placeholders())
+            handlers = self._load_optional_backend_tool_handlers()
+            handlers.update(self._build_native_tool_registry_entries())
             self._handlers = handlers
         return dict(self._handlers)
 
@@ -642,8 +642,8 @@ class BackendToolRuntime:
         result.setdefault("tool", tool)
         return result
 
-    def _load_backend_tool_handlers(self) -> dict[str, ToolFn]:
-        """Load legacy backend tool handlers when the old module still exists."""
+    def _load_optional_backend_tool_handlers(self) -> dict[str, ToolFn]:
+        """Load optional backend tool handlers when an external module exists."""
         try:
             module = importlib.import_module("tools.main")
             raw_handlers = getattr(module, "TOOL_HANDLERS", None)
@@ -660,12 +660,12 @@ class BackendToolRuntime:
 
         return {}
 
-    def _build_direct_tool_placeholders(self) -> dict[str, ToolFn]:
-        """Expose KernelOne-native tools through the legacy registration surface."""
-        return {tool_name: self._make_direct_tool_placeholder(tool_name) for tool_name in _DIRECT_TOOL_NAMES}
+    def _build_native_tool_registry_entries(self) -> dict[str, ToolFn]:
+        """Expose KernelOne-native tools through the list_tools discovery surface."""
+        return {tool_name: self._make_native_tool_registry_entry(tool_name) for tool_name in _DIRECT_TOOL_NAMES}
 
     @staticmethod
-    def _make_direct_tool_placeholder(tool_name: str) -> ToolFn:
+    def _make_native_tool_registry_entry(tool_name: str) -> ToolFn:
         def _handler(_args: list[str], _cwd: str, _timeout: int) -> dict[str, Any]:
             return {
                 "ok": False,
@@ -717,7 +717,7 @@ class BackendToolRuntime:
         cwd: str,
         timeout_sec: int,
     ) -> dict[str, Any]:
-        """Execute a KernelOne-native tool directly without the deleted legacy module.
+        """Execute a KernelOne-native tool directly without an external handler module.
 
         Layer-1 budget guard: intercepts read_file before it reaches
         AgentAccelToolExecutor (Layer 2) to enforce line-count limits.

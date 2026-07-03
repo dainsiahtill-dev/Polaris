@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
+import polaris.kernelone.tool_execution.runtime_executor as runtime_executor_module
 import pytest
 from polaris.kernelone.tool_execution.runtime_executor import (
     BackendToolRuntime,
@@ -188,6 +189,11 @@ class TestToolCliBuilder:
 
 
 class TestBackendToolRuntime:
+    def test_runtime_executor_source_uses_optional_handler_terminology(self) -> None:
+        source = Path(runtime_executor_module.__file__).read_text(encoding="utf-8").lower()
+
+        assert "legacy" not in source
+
     def test_executor_caching(self, tmp_path: Path) -> None:
         runtime = BackendToolRuntime(str(tmp_path))
         # First call creates executor
