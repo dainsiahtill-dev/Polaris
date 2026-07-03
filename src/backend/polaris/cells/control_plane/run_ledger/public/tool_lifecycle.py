@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -56,7 +57,7 @@ def _dropped_tool_call_refs(value: Any) -> list[dict[str, Any]]:
 def _native_tool_call_envelope_refs(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, (list, tuple)):
         return []
-    return [dict(item) for item in value if isinstance(item, dict)]
+    return [dict(item) for item in value if isinstance(item, Mapping)]
 
 
 def _dropped_tool_calls_from_native_envelopes(value: Any) -> list[dict[str, Any]]:
@@ -296,9 +297,9 @@ def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
     payload = _mapping(value)
     if payload:
         payload.setdefault("schema_version", "tool_call_lifecycle_receipt.v1")
-        native_refs = _native_tool_call_envelope_refs(
-            payload.get("native_tool_call_envelope_refs") or payload.get("native_tool_call_envelopes")
-        )
+        native_refs = _native_tool_call_envelope_refs(payload.get("native_tool_call_envelope_refs"))
+        if not native_refs:
+            native_refs = _native_tool_call_envelope_refs(payload.get("native_tool_call_envelopes"))
         native_count = len(native_refs) if native_refs else _int_value(payload.get("native_tool_calls_count"))
         dispatched_count = _int_value(payload.get("dispatched_tool_calls_count"))
         payload["native_tool_call_envelope_refs"] = native_refs

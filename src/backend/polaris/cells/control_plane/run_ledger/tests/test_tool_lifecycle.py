@@ -193,6 +193,40 @@ def test_tool_lifecycle_normalizer_derives_counts_from_native_envelopes() -> Non
     ]
 
 
+def test_tool_lifecycle_normalizer_falls_back_to_valid_legacy_envelopes() -> None:
+    envelope = {
+        "schema_version": "native_tool_call_envelope.v1",
+        "envelope_id": "native_tool_call:openai:0:call-0:abcdef",
+        "provider": "openai",
+        "tool_name": "write_file",
+        "call_id": "call-0",
+    }
+
+    receipt = normalize_tool_call_lifecycle_receipt(
+        {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_calls_count": 9,
+            "dispatched_tool_calls_count": 0,
+            "native_tool_call_envelope_refs": ["bad lifecycle projection"],
+            "native_tool_call_envelopes": [envelope],
+            "dispatch_status": "",
+            "failure_class": "",
+        }
+    )
+
+    assert receipt["native_tool_calls_count"] == 1
+    assert receipt["native_tool_call_envelope_refs"] == [envelope]
+    assert receipt["dispatch_status"] == "dropped"
+    assert receipt["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert receipt["dropped_tool_calls"] == [
+        {
+            "tool_name": "write_file",
+            "envelope_id": "native_tool_call:openai:0:call-0:abcdef",
+            "reason": "tool_dispatch_dropped",
+        }
+    ]
+
+
 def test_tool_lifecycle_receipt_preserves_native_tool_call_envelopes() -> None:
     envelope = {
         "schema_version": "native_tool_call_envelope.v1",
