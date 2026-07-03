@@ -1,4 +1,4 @@
-"""Projection-scoped constants (independent from legacy core package init).
+"""Projection-scoped constants independent from historical package initialization.
 
 此文件从 polaris.domain.director.constants 导入核心常量，
 仅保留 DEFAULT_WORKSPACE 这个需要动态获取 (os.getcwd()) 的特殊常量。
