@@ -1,6 +1,6 @@
 """Test for edit tool failure + read_file cooldown override fix.
 
-BUGFIX: When precision_edit fails (no match), the agent needs read_file to
+BUGFIX: When a targeted edit tool fails (no match), the agent needs read_file to
 diagnose the issue. But read_file may be in cooldown, creating a deadlock:
 edit fails -> need read_file to diagnose -> read_file blocked by cooldown -> loop
 
@@ -23,7 +23,7 @@ class TestEditFailureDiagnosticOverride:
     """Test diagnostic read_file override after edit tool failures."""
 
     def test_edit_failure_allows_diagnostic_read_file(self):
-        """After precision_edit fails, read_file should bypass cooldown."""
+        """After a targeted edit fails, read_file should bypass cooldown."""
         policy = ExplorationToolPolicy(
             cooldown_after_calls=2,  # Low threshold for testing
             max_calls_per_tool=10,
@@ -37,8 +37,12 @@ class TestEditFailureDiagnosticOverride:
         # Verify read_file is now in cooldown
         assert policy.is_in_cooldown("read_file")
 
-        # Simulate precision_edit failure
-        last_tool_failed = {"tool": "precision_edit", "failed": True, "error": "No matches found"}
+        # Simulate targeted edit failure.
+        last_tool_failed = {
+            "tool": "edit_blocks",
+            "failed": True,
+            "error": "No matches found",
+        }
 
         # read_file should now be allowed (diagnostic override)
         approved, blocked, violations = policy.evaluate(
@@ -94,8 +98,12 @@ class TestEditFailureDiagnosticOverride:
         policy.evaluate([grep_call], task_metadata=None)
         assert policy.is_in_cooldown("ripgrep")
 
-        # Simulate precision_edit failure
-        last_tool_failed = {"tool": "precision_edit", "failed": True, "error": "No matches"}
+        # Simulate targeted edit failure.
+        last_tool_failed = {
+            "tool": "edit_blocks",
+            "failed": True,
+            "error": "No matches",
+        }
 
         # ripgrep should NOT be allowed (not a file_read tool)
         approved, blocked, _violations = policy.evaluate(
