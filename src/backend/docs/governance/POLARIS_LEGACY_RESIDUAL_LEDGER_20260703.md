@@ -113,6 +113,20 @@ as the live work queue for new findings.
 No open runtime residual buckets remain in this intake after LR-87. New findings
 must be added with fresh codegraph evidence before edits.
 
+## Remaining Allowed References
+
+The retired exact-edit token may still appear only in the following audited
+categories. These are not active/model-facing recommendations and must not be
+used as a second tool fact source.
+
+| Category | Allowed locations | Reason |
+| --- | --- | --- |
+| Canonical compatibility catalog | `polaris/kernelone/tools/tool_kinds.py`, `polaris/kernelone/tool_execution/tool_spec_registry.py` | Single source of truth for deprecated-tool recognition and explicit compatibility export. |
+| Compatibility argument normalization | `polaris/kernelone/llm/toolkit/tool_normalization/normalizers/_precision_edit.py`, normalizer registry wiring | Historical calls may still be normalized before being rejected, classified, or explicitly exported. |
+| Negative/default-surface tests | Role profile, role integration, llm caller, sequence template, filesystem guidance, chain forensics, and registry tests | Tests assert the retired tool is not advertised, not selected, not executed, or only present under explicit compatibility. |
+| Security/adversarial fixtures | L6 tool-calling matrix cases, security ethics cases, active focus-drift benchmark cases | Fixtures list retired tools only as forbidden tools or adversarial probes. |
+| Historical/governance docs | This ledger, root governance instructions, historical audits, and migration blueprints | Historical records explain why independent editor implementations and active exposure are forbidden. |
+
 | Bucket | Priority | Disposition | Guardrail |
 | --- | --- | --- | --- |
 | CLI compatibility surfaces | Closed by LR-14 through LR-22 | Canonical CLI dispatch is `polaris.delivery.cli.__main__`; retired aliases are fail-closed or removed; retired backend aliases are rejected. | Do not reintroduce second parser/dispatch hosts, silent no-handler success, `test-window`, textual/rich backend aliases, or Director state override inputs. |
