@@ -103,8 +103,16 @@ def append_tool_dispatch_dropped_control_plane_events(
     decoded_count = 0
     dispatched_count = 0
     provider_response_hash = ""
+    native_tool_call_envelopes: list[dict[str, Any]] = []
+    dropped_tool_calls: list[dict[str, Any]] = []
     for flag in error_metadata.get("anomaly_flags", []):
         if isinstance(flag, dict) and str(flag.get("type") or "") == FailureClassV1.TOOL_DISPATCH_DROPPED.value:
+            envelope_refs = flag.get("native_tool_call_envelopes")
+            if isinstance(envelope_refs, list):
+                native_tool_call_envelopes = [dict(item) for item in envelope_refs if isinstance(item, dict)]
+            dropped_refs = flag.get("dropped_tool_calls")
+            if isinstance(dropped_refs, list):
+                dropped_tool_calls = [dict(item) for item in dropped_refs if isinstance(item, dict)]
             native_count = max(1, int(flag.get("native_tool_calls_count") or 1))
             decoded_count = max(0, int(flag.get("decoded_tool_calls_count") or 0))
             dispatched_count = max(0, int(flag.get("dispatched_tool_calls_count") or 0))
@@ -120,6 +128,8 @@ def append_tool_dispatch_dropped_control_plane_events(
         decoded_tool_calls_count=decoded_count,
         dispatched_tool_calls_count=dispatched_count,
         receipts=[],
+        dropped_tool_calls=dropped_tool_calls,
+        native_tool_call_envelopes=native_tool_call_envelopes,
         dispatch_status="dropped",
         failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
         reason=reason,

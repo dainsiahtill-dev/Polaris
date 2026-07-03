@@ -165,11 +165,15 @@ async def run_decision_pipeline(
     decision_metadata.setdefault("native_tool_calls_count", native_tool_call_count)
     decision = _with_decision_metadata(decision, decision_metadata)
     if native_tool_call_count > 0 and tool_definitions and not decision.get("tool_batch"):
+        native_tool_call_envelopes = decision_metadata.get("native_tool_call_envelopes")
         ledger.anomaly_flags.append(
             {
                 "type": "TOOL_DISPATCH_DROPPED",
                 "turn_id": turn_id,
                 "native_tool_calls_count": native_tool_call_count,
+                "native_tool_call_envelopes": native_tool_call_envelopes
+                if isinstance(native_tool_call_envelopes, list)
+                else [],
                 "provider_response_hash": decision_metadata.get("provider_response_hash"),
                 "reason": "provider_emitted_tool_calls_but_no_decoded_tool_batch",
             }
