@@ -280,7 +280,21 @@ def _last_decision_metadata(ledger: Any) -> dict[str, Any]:
     return dict(metadata) if isinstance(metadata, Mapping) else {}
 
 
+def _native_tool_call_envelopes(metadata: Mapping[str, Any], ledger: Any) -> list[dict[str, Any]]:
+    value = metadata.get("native_tool_call_envelopes")
+    if isinstance(value, list):
+        return [dict(item) for item in value if isinstance(item, Mapping)]
+    latest_metadata = _last_decision_metadata(ledger)
+    latest_value = latest_metadata.get("native_tool_call_envelopes")
+    if isinstance(latest_value, list):
+        return [dict(item) for item in latest_value if isinstance(item, Mapping)]
+    return []
+
+
 def _native_tool_calls_count(metadata: Mapping[str, Any], ledger: Any) -> int:
+    envelope_count = len(_native_tool_call_envelopes(metadata, ledger))
+    if envelope_count > 0:
+        return envelope_count
     count = _safe_int(metadata.get("native_tool_calls_count"))
     if count > 0:
         return count
@@ -312,15 +326,17 @@ def _build_missing_dispatch_lifecycle_receipt(
     if not required_write_tools:
         return None
     latest_metadata = _last_decision_metadata(ledger)
+    native_envelopes = _native_tool_call_envelopes(metadata, ledger)
     return build_tool_call_lifecycle_receipt(
         run_id="",
         task_id="",
         turn_id="",
         role="",
-        native_tool_calls_count=_native_tool_calls_count(metadata, ledger),
+        native_tool_calls_count=len(native_envelopes) or _native_tool_calls_count(metadata, ledger),
         decoded_tool_calls_count=_safe_int(latest_metadata.get("tool_count")),
         dispatched_tool_calls_count=0,
         dropped_tool_calls=list(required_write_tools),
+        native_tool_call_envelopes=native_envelopes,
         dispatch_status="dropped",
         failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
         reason="required_write_tool_without_dispatch_evidence",

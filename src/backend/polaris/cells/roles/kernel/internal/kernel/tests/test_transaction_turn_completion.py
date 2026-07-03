@@ -216,9 +216,47 @@ def test_completion_owner_fails_closed_when_required_write_has_no_dispatch_recei
     assert result.metadata["tool_call_lifecycle"]["dispatch_status"] == "dropped"
     assert result.metadata["tool_call_lifecycle"]["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
     assert result.metadata["tool_call_lifecycle"]["native_tool_calls_count"] == 1
-    assert result.metadata["tool_call_lifecycle"]["dropped_tool_calls"] == ["write_file"]
+    assert result.metadata["tool_call_lifecycle"]["dropped_tool_calls"] == [
+        {"tool_name": "write_file", "reason": "tool_dispatch_dropped"}
+    ]
     assert result.metadata["task_boundary_failed"] is True
     context_gateway.record_projection_outcome.assert_called_once_with(success=False, tokens_used=11)
+
+
+def test_missing_dispatch_lifecycle_prefers_native_tool_call_envelopes() -> None:
+    envelopes = [
+        {"envelope_id": "native-1", "tool_name": "write_file"},
+        {"envelope_id": "native-2", "tool_name": "execute_command"},
+    ]
+
+    lifecycle = completion._build_missing_dispatch_lifecycle_receipt(
+        metadata={
+            "native_tool_calls_count": 0,
+            "final_request_context_audit": {
+                "final_request_evidence_coverage": {
+                    "required_tools": ["write_file"],
+                },
+            },
+        },
+        ledger=SimpleNamespace(
+            decisions=[
+                {
+                    "metadata": {
+                        "native_tool_calls_count": 0,
+                        "native_tool_call_envelopes": envelopes,
+                        "tool_count": 0,
+                    }
+                }
+            ]
+        ),
+        tool_results=[],
+        batch_receipt={},
+    )
+
+    assert lifecycle is not None
+    assert lifecycle["native_tool_calls_count"] == 2
+    assert lifecycle["native_tool_call_envelope_refs"] == envelopes
+    assert lifecycle["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
 
 
 def test_completion_owner_preserves_suspension_error_and_records_lifecycle_evidence(
