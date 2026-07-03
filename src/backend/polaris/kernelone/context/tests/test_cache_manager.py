@@ -1,7 +1,6 @@
-"""Tests for KernelOneCacheManager (TieredAssetCacheManager facade).
+"""Tests for TieredAssetCacheManager.
 
-These tests validate the backward-compatible facade that wraps TieredAssetCacheManager
-with legacy TTL semantics and cache path.
+These tests validate the canonical five-tier cache manager and its singleton accessors.
 """
 
 from __future__ import annotations
@@ -18,15 +17,13 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
-from polaris.kernelone.context.cache import (
-    KernelOneCacheManager,
-    clear_cache_manager,
-    get_cache_manager,
-)
 from polaris.kernelone.context.cache_manager import (
     CacheEntry,
     CacheStats,
     CacheTier,
+    TieredAssetCacheManager,
+    clear_cache_manager,
+    get_cache_manager,
 )
 
 if TYPE_CHECKING:
@@ -47,17 +44,18 @@ def temp_workspace() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def cache_manager(temp_workspace: Path) -> Generator[KernelOneCacheManager, None, None]:
-    """Create a KernelOneCacheManager (TieredAssetCacheManager facade) for testing.
+def cache_manager(temp_workspace: Path) -> Generator[TieredAssetCacheManager, None, None]:
+    """Create a TieredAssetCacheManager for testing.
 
     Uses short TTLs for fast testing:
     - hot_slice_ttl: 5 seconds
-    - projection_ttl: 60 seconds (maps to legacy continuity_ttl)
+    - projection_ttl: 60 seconds
     """
-    manager = KernelOneCacheManager(
+    manager = TieredAssetCacheManager(
         workspace=temp_workspace,
+        hot_slice_max_entries=20,
         hot_slice_ttl=5.0,  # 5 seconds for fast testing
-        continuity_ttl=60.0,  # 60 seconds (legacy naming for projection_ttl)
+        projection_ttl=60.0,  # 60 seconds
     )
     yield manager
     # Cleanup in-memory tiers
@@ -123,13 +121,13 @@ class TestCacheEntry:
 
 
 # ---------------------------------------------------------------------------
-# KernelOneCacheManager - Hot Slice Cache tests
+# TieredAssetCacheManager - Hot Slice Cache tests
 # ---------------------------------------------------------------------------
 
 
 class TestHotSliceCache:
     async def _put_and_get(
-        self, manager: KernelOneCacheManager, key: str, value: str
+        self, manager: TieredAssetCacheManager, key: str, value: str
     ) -> tuple[CacheStats, CacheStats, str | None]:
         """Helper to put and get, returning (before_stats, after_stats, result)."""
         stats_before = await manager.get_stats()
@@ -138,13 +136,13 @@ class TestHotSliceCache:
         stats_after = await manager.get_stats()
         return stats_before, stats_after, result
 
-    def test_hot_slice_miss_on_empty(self, cache_manager: KernelOneCacheManager) -> None:
+    def test_hot_slice_miss_on_empty(self, cache_manager: TieredAssetCacheManager) -> None:
         """Hot slice should miss on empty cache."""
         result = cache_manager._hot_slices.get("nonexistent")
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_hot_slice_hit_increments_count(self, cache_manager: KernelOneCacheManager) -> None:
+    async def test_hot_slice_hit_increments_count(self, cache_manager: TieredAssetCacheManager) -> None:
         """Second access to same key should be a hit (access count increases)."""
         key = "test_key"
         value = "test_content"
@@ -163,7 +161,7 @@ class TestHotSliceCache:
         assert second_stats.hits_hot_slice == first_stats.hits_hot_slice + 1
 
     @pytest.mark.asyncio
-    async def test_hot_slice_eviction_on_max_size(self, cache_manager: KernelOneCacheManager) -> None:
+    async def test_hot_slice_eviction_on_max_size(self, cache_manager: TieredAssetCacheManager) -> None:
         """When exceeding max entries, oldest entry should be evicted."""
         # Fill up to max (20 entries)
         for i in range(25):
@@ -176,7 +174,7 @@ class TestHotSliceCache:
         assert await cache_manager.get_hot_slice("key_24") == "value_24"
 
     @pytest.mark.asyncio
-    async def test_hot_slice_ttl_expiry(self, cache_manager: KernelOneCacheManager) -> None:
+    async def test_hot_slice_ttl_expiry(self, cache_manager: TieredAssetCacheManager) -> None:
         """Hot slice should expire after TTL."""
         key = "ttl_test"
         value = "ttl_value"
@@ -199,7 +197,7 @@ class TestHotSliceCache:
 
 class TestRepoMapCache:
     @pytest.mark.asyncio
-    async def test_repo_map_cache_miss(self, cache_manager: KernelOneCacheManager, temp_workspace: Path) -> None:
+    async def test_repo_map_cache_miss(self, cache_manager: TieredAssetCacheManager, temp_workspace: Path) -> None:
         """Repo map should miss when not cached."""
         result = await cache_manager.get_repo_map(temp_workspace, "python")
         assert result is None
@@ -207,7 +205,7 @@ class TestRepoMapCache:
         assert stats.misses_repo_map == 1
 
     @pytest.mark.asyncio
-    async def test_repo_map_cache_hit(self, cache_manager: KernelOneCacheManager, temp_workspace: Path) -> None:
+    async def test_repo_map_cache_hit(self, cache_manager: TieredAssetCacheManager, temp_workspace: Path) -> None:
         """Repo map should hit when cached."""
         snapshot = {"files": ["a.py", "b.py"], "text": "repo map content"}
 
@@ -221,7 +219,7 @@ class TestRepoMapCache:
 
     @pytest.mark.asyncio
     async def test_repo_map_different_languages(
-        self, cache_manager: KernelOneCacheManager, temp_workspace: Path
+        self, cache_manager: TieredAssetCacheManager, temp_workspace: Path
     ) -> None:
         """Different languages should have separate cache entries."""
         await cache_manager.put_repo_map(temp_workspace, "python", {"lang": "python"})
@@ -241,14 +239,14 @@ class TestRepoMapCache:
 
 class TestSymbolIndexCache:
     @pytest.mark.asyncio
-    async def test_symbol_index_cache_miss(self, cache_manager: KernelOneCacheManager, temp_workspace: Path) -> None:
+    async def test_symbol_index_cache_miss(self, cache_manager: TieredAssetCacheManager, temp_workspace: Path) -> None:
         """Symbol index should miss when not cached."""
         file_path = temp_workspace / "test.py"
         result = await cache_manager.get_symbol_index(file_path)
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_symbol_index_cache_hit(self, cache_manager: KernelOneCacheManager, temp_workspace: Path) -> None:
+    async def test_symbol_index_cache_hit(self, cache_manager: TieredAssetCacheManager, temp_workspace: Path) -> None:
         """Symbol index should hit when cached."""
         file_path = temp_workspace / "test.py"
         index = {"symbols": [{"name": "foo", "type": "function"}]}
@@ -268,13 +266,13 @@ class TestSymbolIndexCache:
 
 class TestContinuityCache:
     @pytest.mark.asyncio
-    async def test_continuity_pack_cache_miss(self, cache_manager: KernelOneCacheManager) -> None:
+    async def test_continuity_pack_cache_miss(self, cache_manager: TieredAssetCacheManager) -> None:
         """Continuity pack should miss when not cached."""
         result = await cache_manager.get_continuity_pack("session_123")
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_continuity_pack_cache_hit(self, cache_manager: KernelOneCacheManager) -> None:
+    async def test_continuity_pack_cache_hit(self, cache_manager: TieredAssetCacheManager) -> None:
         """Continuity pack should hit when cached."""
         pack = {"summary": "test summary", "open_loops": ["loop1"]}
 
@@ -295,7 +293,7 @@ class TestSessionContinuityCache:
     """Tests for SESSION_CONTINUITY tier via the public get/set API."""
 
     @pytest.mark.asyncio
-    async def test_session_continuity_put_and_get(self, cache_manager: KernelOneCacheManager) -> None:
+    async def test_session_continuity_put_and_get(self, cache_manager: TieredAssetCacheManager) -> None:
         """Session continuity should store and retrieve values via SESSION_CONTINUITY tier."""
         key = "session_key1"
         value = {"data": "value"}
@@ -304,7 +302,7 @@ class TestSessionContinuityCache:
         assert result == value
 
     @pytest.mark.asyncio
-    async def test_session_continuity_expires(self, cache_manager: KernelOneCacheManager) -> None:
+    async def test_session_continuity_expires(self, cache_manager: TieredAssetCacheManager) -> None:
         """Session continuity should expire after TTL (uses SESSION_CONTINUITY tier TTL)."""
         key = "session_key2"
         value = "value"
@@ -352,7 +350,7 @@ class TestCacheStats:
 
 class TestCacheManagement:
     @pytest.mark.asyncio
-    async def test_clear_tier_hot_slice(self, cache_manager: KernelOneCacheManager) -> None:
+    async def test_clear_tier_hot_slice(self, cache_manager: TieredAssetCacheManager) -> None:
         """Clearing HOT_SLICE tier should clear in-memory hot slice cache."""
         await cache_manager.put_hot_slice("key1", "value1")
         await cache_manager.put_hot_slice("key2", "value2")
@@ -366,7 +364,7 @@ class TestCacheManagement:
         assert await cache_manager.get_hot_slice("key2") is None
 
     @pytest.mark.asyncio
-    async def test_clear_tier_session_continuity(self, cache_manager: KernelOneCacheManager) -> None:
+    async def test_clear_tier_session_continuity(self, cache_manager: TieredAssetCacheManager) -> None:
         """Clearing SESSION_CONTINUITY tier should clear in-memory session cache."""
         key = "session_clear_test"
         await cache_manager.set(f"session:{key}", CacheTier.SESSION_CONTINUITY, {"data": "test"}, ttl=60.0)
@@ -379,7 +377,7 @@ class TestCacheManagement:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_clear_tier_workspace(self, cache_manager: KernelOneCacheManager, temp_workspace: Path) -> None:
+    async def test_clear_tier_workspace(self, cache_manager: TieredAssetCacheManager, temp_workspace: Path) -> None:
         """Clearing REPO_MAP tier should clear persistent repo map cache."""
         await cache_manager.put_repo_map(temp_workspace, "python", {"data": "test"})
 
@@ -394,7 +392,7 @@ class TestCacheManagement:
 
     @pytest.mark.asyncio
     async def test_stats_reflects_all_operations(
-        self, cache_manager: KernelOneCacheManager, temp_workspace: Path
+        self, cache_manager: TieredAssetCacheManager, temp_workspace: Path
     ) -> None:
         """Stats should correctly track all cache operations."""
         # Generate some hits and misses
@@ -467,7 +465,7 @@ class TestSessionContinuityExpiryEviction:
     """Regression: expiring one session-continuity entry must not wipe others."""
 
     @pytest.mark.asyncio
-    async def test_expired_entry_does_not_clear_unrelated_entries(self, cache_manager: KernelOneCacheManager) -> None:
+    async def test_expired_entry_does_not_clear_unrelated_entries(self, cache_manager: TieredAssetCacheManager) -> None:
         """When a single looked-up entry is expired, only that key is evicted.
 
         Before the fix, _get_session_continuity called

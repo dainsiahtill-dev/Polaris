@@ -15,20 +15,17 @@ from .budget_gate import (
     ContextBudgetUsage,
     SectionAllocation,
 )
-from .cache import (
-    CacheEntry,
-    CacheStats,
-    CacheTier,
-    KernelOneCacheManager,
-    clear_cache_manager,
-    get_cache_manager,
-)
 from .cache_manager import (
     AssetCachePort,
+    CacheEntry,
     CacheEntry as TieredCacheEntry,
+    CacheStats,
     CacheStats as TieredCacheStats,
+    CacheTier,
     CacheTier as TieredCacheTier,
     TieredAssetCacheManager,
+    clear_cache_manager,
+    get_cache_manager,
 )
 from .cache_policies import (
     HotSliceCachePolicy,
@@ -259,7 +256,6 @@ __all__ = [
     "HistoryMaterializationStrategy",
     "HistoryMaterializationStrategyPort",
     "HotSliceCachePolicy",
-    "KernelOneCacheManager",
     "LoIRenderer",
     "ProfileDrivenBudgetGate",
     "ProfileMetadata",

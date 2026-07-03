@@ -41,6 +41,10 @@ from polaris.kernelone.context.context_os.bounded_cache import (
     BoundedCache,
     LRUBoundedCache,
 )
+from polaris.kernelone.runtime.instance_state import (
+    InstanceScopedStateStore,
+    normalize_workspace_instance_id,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -503,7 +507,7 @@ class TieredAssetCacheManager:
     def _resolve_cache_root(self) -> Path:
         """Resolve workspace cache root: workspace/<metadata_dir>/cache/
 
-        Note (P1-CTX-004 convergence): Unified path with KernelOneCacheManager facade.
+        Note (P1-CTX-004 convergence): Unified canonical cache path.
         """
         from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 
@@ -612,7 +616,7 @@ class TieredAssetCacheManager:
             path.unlink(missing_ok=True)
 
     # -------------------------------------------------------------------------
-    # Tier-specific named helpers (public, matching KernelOneCacheManager API)
+    # Tier-specific named helpers (public cache API)
     # -------------------------------------------------------------------------
 
     async def get_repo_map(self, workspace: str | Path, lang: str) -> dict[str, Any] | None:
@@ -762,7 +766,34 @@ def _extract_path_from_key(key: str) -> str | None:
     return None
 
 
-# Re-export CacheTier as CacheTier so callers can reference it
+def _dispose_cache_manager(manager: TieredAssetCacheManager) -> None:
+    """Dispose of a cache manager by clearing in-memory tiers."""
+    manager._hot_slices.clear()
+    manager._session_continuity.clear()
+
+
+_cache_managers = InstanceScopedStateStore[TieredAssetCacheManager](
+    normalizer=normalize_workspace_instance_id,
+    on_dispose=_dispose_cache_manager,
+)
+
+
+def get_cache_manager(workspace: str | Path) -> TieredAssetCacheManager:
+    """Get or create the canonical cache manager for a workspace."""
+    workspace_key = normalize_workspace_instance_id(workspace)
+    return _cache_managers.get_or_create(
+        workspace_key,
+        lambda: TieredAssetCacheManager(workspace_key),
+    )
+
+
+def clear_cache_manager(workspace: str | Path) -> None:
+    """Clear the cached manager instance for a workspace."""
+    workspace_key = normalize_workspace_instance_id(workspace)
+    _cache_managers.dispose(workspace_key)
+
+
+# Re-export CacheTier as CacheTierLiteral so callers can use a stable type alias.
 CacheTierLiteral = CacheTier
 
 __all__ = [
@@ -772,4 +803,6 @@ __all__ = [
     "CacheTier",
     "TieredAssetCacheManager",
     "_as_tier",
+    "clear_cache_manager",
+    "get_cache_manager",
 ]

@@ -41,7 +41,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .budget_gate import ContextBudgetGate
-    from .cache import KernelOneCacheManager
     from .cache_manager import TieredAssetCacheManager
 
 _logger = logging.getLogger(__name__)
@@ -215,7 +214,7 @@ class WorkingSetAssembler:
         budget_gate: ContextBudgetGate,
         policy: ExplorationPolicyPort | None = None,
         max_depth: int = 3,
-        cache_manager: KernelOneCacheManager | TieredAssetCacheManager | None = None,
+        cache_manager: TieredAssetCacheManager | None = None,
     ) -> None:
         self.workspace = str(workspace)
         self._gate = budget_gate
@@ -565,7 +564,6 @@ class WorkingSetAssembler:
             if self._cache is not None:
                 slice_key = f"slice:{file_path}:{start_line}:{end_line}"
                 try:
-                    # Both TieredAssetCacheManager and KernelOneCacheManager expose put_hot_slice
                     put_fn = getattr(self._cache, "put_hot_slice", None)
                     if callable(put_fn):
                         import asyncio
@@ -744,7 +742,6 @@ class WorkingSetAssembler:
         """
         result: dict[str, Any] = dict(self._cache_stats)
         if self._cache is not None:
-            # Both KernelOneCacheManager and TieredAssetCacheManager expose get_stats()
             stats = getattr(self._cache, "get_stats", lambda: None)
             if stats is not None:
                 s = stats()
