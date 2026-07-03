@@ -55,6 +55,7 @@ from .error_handling import (
 )
 from .event_emitter import LLMEventEmitter
 from .helpers import (
+    build_native_tool_call_envelope_payloads,
     extract_json_from_text,
     extract_native_tool_calls,
     resolve_tool_call_provider,
@@ -926,6 +927,10 @@ class LLMInvoker:
         native_tool_calls, native_tool_provider = extract_native_tool_calls(
             raw_payload, provider_id=response_provider, model=response_model_name, response_text=response_text
         )
+        native_tool_call_envelopes = build_native_tool_call_envelope_payloads(
+            native_tool_calls,
+            provider=native_tool_provider,
+        )
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         provider_usage = _normalize_provider_usage(getattr(response, "usage", None)) or _normalize_provider_usage(
@@ -966,6 +971,7 @@ class LLMInvoker:
             "compression_applied": prepared.context_result.compression_applied if prepared.context_result else False,
             "turn_round": turn_round,
             "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
+            "native_tool_call_envelopes": native_tool_call_envelopes,
         }
         event_metadata = _with_context_snapshot_diagnostics(event_metadata, active_request)
         if provider_usage is not None:
@@ -1004,6 +1010,7 @@ class LLMInvoker:
             "model": response_model_name,
             "provider": response_provider,
             "native_tool_calls_count": len(native_tool_calls),
+            "native_tool_call_envelopes": native_tool_call_envelopes,
             "elapsed_ms": round(elapsed_ms, 2),
             "run_id": run_id,
             "workspace": self.workspace,

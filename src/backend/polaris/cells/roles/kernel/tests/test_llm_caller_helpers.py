@@ -26,6 +26,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.error_handling import (
     is_retryable_error,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.helpers import (
+    build_native_tool_call_envelope_payloads,
     extract_json_from_text,
     extract_native_tool_calls,
     messages_to_input,
@@ -657,6 +658,14 @@ class TestExtractNativeToolCalls:
         calls, provider = extract_native_tool_calls(raw, provider_id="openai", model="gpt-4")
         assert len(calls) == 1
         assert provider == "openai"
+        envelopes = build_native_tool_call_envelope_payloads(calls, provider=provider)
+        assert envelopes[0]["schema_version"] == "native_tool_call_envelope.v1"
+        assert envelopes[0]["provider"] == "openai"
+        assert envelopes[0]["tool_name"] == "read_file"
+        assert envelopes[0]["call_id"] == "call_abc"
+        assert "path" not in envelopes[0]
+        assert len(envelopes[0]["arguments_hash"]) == 64
+        assert len(envelopes[0]["raw_call_hash"]) == 64
 
     def test_extracts_openai_tool_calls_from_choices(self) -> None:
         raw = {
@@ -694,6 +703,10 @@ class TestExtractNativeToolCalls:
         calls, provider = extract_native_tool_calls(raw, provider_id="anthropic", model="claude-3")
         assert len(calls) == 1
         assert provider == "anthropic"
+        envelopes = build_native_tool_call_envelope_payloads(calls, provider=provider)
+        assert envelopes[0]["provider"] == "anthropic"
+        assert envelopes[0]["tool_name"] == "read_file"
+        assert envelopes[0]["call_id"].startswith("native_tool_call_")
 
     def test_empty_payload_returns_empty(self) -> None:
         calls, provider = extract_native_tool_calls({}, provider_id="openai", model="gpt-4")

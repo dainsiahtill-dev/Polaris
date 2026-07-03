@@ -5,11 +5,13 @@ Provides tool schema building and tool call extraction utilities.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import re
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Mapping
 
 from polaris.kernelone.llm.budget_policy import (
     BUDGET_STRATEGY_PAYLOAD_KEYS,
@@ -92,6 +94,126 @@ def resolve_tool_call_provider(*, provider_id: str, model: str) -> str:
         return "openai"
 
     return "auto"
+
+
+def _stable_json(value: Any) -> str:
+    return json.dumps(value, default=str, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _stable_hash(value: Any) -> str:
+    return hashlib.sha256(_stable_json(value).encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class NativeToolCallEnvelopeV1:
+    """Stable, provider-neutral projection of one native tool call.
+
+    The envelope is observational evidence only. It stores hashes for raw
+    payload / arguments instead of duplicating arguments into metadata; the
+    original ``tool_calls`` payload remains the execution input.
+    """
+
+    envelope_id: str
+    provider: str
+    index: int
+    tool_name: str
+    call_id: str
+    raw_call_hash: str
+    arguments_hash: str
+    source: str = "provider_native_tool_call"
+    schema_version: str = "native_tool_call_envelope.v1"
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "envelope_id": self.envelope_id,
+            "provider": self.provider,
+            "index": self.index,
+            "tool_name": self.tool_name,
+            "call_id": self.call_id,
+            "raw_call_hash": self.raw_call_hash,
+            "arguments_hash": self.arguments_hash,
+            "source": self.source,
+            "metadata": dict(self.metadata),
+        }
+
+
+def _native_tool_call_name(call: Mapping[str, Any]) -> str:
+    function = call.get("function")
+    if isinstance(function, Mapping):
+        name = function.get("name")
+        if name:
+            return str(name).strip()
+    for key in ("name", "tool_name", "toolName"):
+        name = call.get(key)
+        if name:
+            return str(name).strip()
+    return ""
+
+
+def _native_tool_call_arguments(call: Mapping[str, Any]) -> Any:
+    function = call.get("function")
+    if isinstance(function, Mapping) and "arguments" in function:
+        return function.get("arguments")
+    for key in ("arguments", "input", "args", "parameters"):
+        if key in call:
+            return call.get(key)
+    return {}
+
+
+def _native_tool_call_id(call: Mapping[str, Any], *, index: int, raw_call_hash: str) -> str:
+    for key in ("id", "call_id", "tool_call_id", "toolUseId"):
+        value = call.get(key)
+        if value:
+            return str(value).strip()
+    return f"native_tool_call_{index}_{raw_call_hash[:12]}"
+
+
+def build_native_tool_call_envelopes(
+    native_tool_calls: list[dict[str, Any]],
+    *,
+    provider: str,
+) -> tuple[NativeToolCallEnvelopeV1, ...]:
+    """Build stable envelopes for provider-native tool calls.
+
+    WS1 Wave 1 is additive projection only: original call payloads remain the
+    source of truth for execution, while envelopes give request audit and
+    lifecycle receipts a stable typed identity to reference.
+    """
+    provider_label = str(provider or "auto").strip().lower() or "auto"
+    envelopes: list[NativeToolCallEnvelopeV1] = []
+    for index, call in enumerate(native_tool_calls):
+        if not isinstance(call, dict):
+            continue
+        call_payload: Mapping[str, Any] = dict(call)
+        raw_call_hash = _stable_hash(call_payload)
+        arguments_hash = _stable_hash(_native_tool_call_arguments(call_payload))
+        call_id = _native_tool_call_id(call_payload, index=index, raw_call_hash=raw_call_hash)
+        tool_name = _native_tool_call_name(call_payload)
+        envelope_id = f"native_tool_call:{provider_label}:{index}:{call_id}:{raw_call_hash[:16]}"
+        envelopes.append(
+            NativeToolCallEnvelopeV1(
+                envelope_id=envelope_id,
+                provider=provider_label,
+                index=index,
+                tool_name=tool_name,
+                call_id=call_id,
+                raw_call_hash=raw_call_hash,
+                arguments_hash=arguments_hash,
+                metadata={"has_tool_name": bool(tool_name)},
+            )
+        )
+    return tuple(envelopes)
+
+
+def build_native_tool_call_envelope_payloads(
+    native_tool_calls: list[dict[str, Any]],
+    *,
+    provider: str,
+) -> list[dict[str, Any]]:
+    """Return JSON-ready native tool-call envelope payloads."""
+    return [envelope.to_dict() for envelope in build_native_tool_call_envelopes(native_tool_calls, provider=provider)]
 
 
 def _coerce_positive_int(value: Any) -> int | None:
@@ -1244,6 +1366,9 @@ def extract_native_tool_calls(
 
 
 __all__ = [
+    "NativeToolCallEnvelopeV1",
+    "build_native_tool_call_envelope_payloads",
+    "build_native_tool_call_envelopes",
     "build_native_tool_schemas",
     "extract_native_tool_calls",
     "resolve_tool_call_provider",

@@ -22,7 +22,13 @@ from polaris.kernelone.llm.budget_policy import (
     clamp_output_tokens,
 )
 
-from .tool_helpers import build_native_tool_schemas, extract_native_tool_calls, resolve_tool_call_provider
+from .tool_helpers import (
+    build_native_tool_call_envelope_payloads,
+    build_native_tool_call_envelopes,
+    build_native_tool_schemas,
+    extract_native_tool_calls,
+    resolve_tool_call_provider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -412,6 +418,8 @@ def compute_context_summary(input_text: str) -> str:
 
 __all__ = [
     "build_native_response_format",
+    "build_native_tool_call_envelope_payloads",
+    "build_native_tool_call_envelopes",
     "build_native_tool_schemas",
     "compute_context_summary",
     "extract_json_from_text",
