@@ -138,6 +138,11 @@ class TestRestrictToolDefinitionsToWrite:
         names = {d["function"]["name"] for d in kept}
         assert names == {"write_file", "edit_file", "edit_blocks"}
 
+    def test_drops_deprecated_exact_edit_from_active_write_restriction(self) -> None:
+        kept = restrict_tool_definitions_to_write(_tools("read_file", "write_file", "precision_edit"))
+        names = {d["function"]["name"] for d in kept}
+        assert names == {"write_file"}
+
     def test_returns_original_when_no_write_tool_survives(self) -> None:
         original = _tools("read_file", "repo_rg")
         assert restrict_tool_definitions_to_write(original) is original
@@ -334,6 +339,11 @@ class TestRestrictToolDefinitionsToEdit:
         kept = restrict_tool_definitions_to_edit(_tools("write_file", "repo_apply_diff", "treesitter_replace_node"))
         names = {d["function"]["name"] for d in kept}
         assert names == {"repo_apply_diff", "treesitter_replace_node"}
+
+    def test_drops_deprecated_exact_edit_when_active_anchored_edit_exists(self) -> None:
+        kept = restrict_tool_definitions_to_edit(_tools("write_file", "precision_edit", "edit_blocks"))
+        names = {d["function"]["name"] for d in kept}
+        assert names == {"edit_blocks"}
 
     def test_does_not_mutate_input_in_place(self) -> None:
         original = _tools("write_file", "edit_blocks")

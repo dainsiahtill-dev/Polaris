@@ -11,6 +11,8 @@ import os
 import re
 from typing import Any
 
+from polaris.kernelone.tools.tool_kinds import ACTIVE_WRITE_TOOLS, DEPRECATED_WRITE_TOOLS
+
 logger = logging.getLogger(__name__)
 
 # I3-r23 (Prong A): force the write tool on turn 1 for a from-scratch leaf step.
@@ -232,12 +234,11 @@ def should_use_weak_director_slim_tool_schema(
 # Write tools whose canonical file-path parameter is `file` (tool_spec_registry
 # arg_aliases normalize path/filepath/file_path to it). repo_apply_diff is
 # excluded: it has no file argument (paths live inside diff headers).
-_FILE_PARAM_WRITE_TOOLS = frozenset(
+_FILE_PARAM_WRITE_TOOLS = ACTIVE_WRITE_TOOLS & frozenset(
     {
         "write_file",
         "edit_file",
         "append_to_file",
-        "precision_edit",
         "edit_blocks",
     }
 )
@@ -721,13 +722,18 @@ _FULL_REWRITE_TOOLS = frozenset({"write_file", "append_to_file"})
 # anchor (Aider-style SEARCH/REPLACE, line-range, unified diff, AST node), so the
 # model physically cannot elide untouched code. At least one must survive for the
 # repair restriction to engage (else the turn would be left unable to write).
-_ANCHORED_EDIT_TOOLS = frozenset(
+_ANCHORED_EDIT_TOOLS = (
+    ACTIVE_WRITE_TOOLS
+    & frozenset(
+        {
+            "edit_blocks",
+            "edit_file",
+            "repo_apply_diff",
+            "apply_patch",
+        }
+    )
+) | frozenset(
     {
-        "edit_blocks",
-        "edit_file",
-        "precision_edit",
-        "repo_apply_diff",
-        "apply_patch",
         "treesitter_replace_node",
         "treesitter_insert_method",
         "treesitter_rename_symbol",
@@ -792,7 +798,11 @@ def restrict_tool_definitions_to_edit(tool_definitions: list[dict[str, Any]]) ->
     """
     if not any(_tool_name(d) in _ANCHORED_EDIT_TOOLS for d in tool_definitions):
         return tool_definitions
-    return [d for d in tool_definitions if _tool_name(d) not in _FULL_REWRITE_TOOLS]
+    return [
+        d
+        for d in tool_definitions
+        if _tool_name(d) not in _FULL_REWRITE_TOOLS and _tool_name(d) not in DEPRECATED_WRITE_TOOLS
+    ]
 
 
 def pin_write_tool_file_param_to_targets(
