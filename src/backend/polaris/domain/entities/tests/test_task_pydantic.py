@@ -59,9 +59,13 @@ class TestTaskStatus:
         assert TaskStatus.IN_PROGRESS.is_executing is True
         assert TaskStatus.PENDING.is_executing is False
 
-    def test_running_is_alias_for_in_progress(self) -> None:
-        # Arrange & Act & Assert
-        assert TaskStatus.RUNNING.value == "in_progress"
+    def test_running_status_input_normalizes_to_in_progress(self) -> None:
+        # Arrange & Act
+        task = TaskModel(id=1, subject="test", status="running")
+
+        # Assert
+        assert task.status == TaskStatus.IN_PROGRESS.value
+        assert "RUNNING" not in TaskStatus.__members__
 
 
 # =============================================================================

@@ -60,8 +60,6 @@ class TaskStatus(str, Enum):
     READY = "ready"
     CLAIMED = "claimed"
     IN_PROGRESS = "in_progress"
-    # Alias for backward compat (director task_lifecycle_service uses RUNNING)
-    RUNNING = "in_progress"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -394,8 +392,11 @@ class Task:
         if isinstance(raw_status, TaskStatus):
             status = raw_status
         elif isinstance(raw_status, str):
+            status_token = raw_status.strip().lower()
+            if status_token == "running":
+                status_token = TaskStatus.IN_PROGRESS.value
             try:
-                status = TaskStatus(raw_status)
+                status = TaskStatus(status_token)
             except ValueError:
                 status = TaskStatus.PENDING
         else:

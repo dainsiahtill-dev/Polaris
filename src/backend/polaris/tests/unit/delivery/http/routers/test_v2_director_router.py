@@ -2328,7 +2328,7 @@ async def test_director_get_task_found(client: AsyncClient) -> None:
     mock_task.id = "task-123"
     mock_task.subject = "Found task"
     mock_task.description = "Desc"
-    mock_task.status = TaskStatus.RUNNING
+    mock_task.status = TaskStatus.IN_PROGRESS
     mock_task.priority = TaskPriority.LOW
     mock_task.claimed_by = "worker-1"
     mock_task.result = None

@@ -41,7 +41,6 @@ class TaskStatus(str, Enum):
     READY = "ready"
     CLAIMED = "claimed"
     IN_PROGRESS = "in_progress"
-    RUNNING = "in_progress"  # backward compat alias
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -206,7 +205,10 @@ class TaskModel(BaseModel):
     def coerce_status(cls, v: str | TaskStatus) -> str:
         if isinstance(v, TaskStatus):
             return v.value
-        return str(v or "pending").strip().lower()
+        token = str(v or "pending").strip().lower()
+        if token == "running":
+            return TaskStatus.IN_PROGRESS.value
+        return token
 
     @field_validator("priority", mode="before")
     @classmethod

@@ -120,12 +120,13 @@ class TestTaskStatusProperties:
     def test_executing_states(self):
         assert TaskStatus.CLAIMED.is_executing is True
         assert TaskStatus.IN_PROGRESS.is_executing is True
-        assert TaskStatus.RUNNING.is_executing is True
         assert TaskStatus.READY.is_executing is False
 
-    def test_running_alias(self):
-        assert TaskStatus.RUNNING.value == "in_progress"
-        assert TaskStatus.RUNNING == TaskStatus.IN_PROGRESS
+    def test_from_dict_normalizes_running_status_token(self):
+        task = Task.from_dict({"id": 1, "subject": "test", "status": "running"})
+
+        assert task.status == TaskStatus.IN_PROGRESS
+        assert "RUNNING" not in TaskStatus.__members__
 
 
 class TestTaskPriority:
