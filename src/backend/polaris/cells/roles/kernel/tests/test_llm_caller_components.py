@@ -645,6 +645,10 @@ def test_final_request_coverage_passes_for_finalization_request_after_forced_wri
     assert coverage["tool_surface"]["required_tools_exempt_reason"] == "tool_choice_disabled_by_design"
     assert coverage["pass"] is True
     finding_codes = {item["code"] for item in audit["context_quality"]["findings"]}
+    assert audit["context_quality"]["context_needs_review"] is False
+    assert audit["context_quality"]["missing_coverage"] == []
+    assert "missing_context_coverage" not in finding_codes
+    assert "underutilized_with_missing_context" not in finding_codes
     assert "missing_required_final_request_tools" not in finding_codes
 
 
@@ -686,6 +690,9 @@ def test_final_request_context_audit_marks_complete_context_as_reasonable() -> N
     assert audit["context_underutilized"] is True
     assert audit["context_quality"]["missing_coverage"] == []
     assert audit["context_quality"]["context_needs_review"] is False
+    finding_codes = {item["code"] for item in audit["context_quality"]["findings"]}
+    assert "missing_context_coverage" not in finding_codes
+    assert "underutilized_with_missing_context" not in finding_codes
 
 
 def test_final_request_context_audit_skips_resident_agi_coverage_when_disabled() -> None:
