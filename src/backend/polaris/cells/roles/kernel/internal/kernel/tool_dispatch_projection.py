@@ -108,6 +108,7 @@ def append_tool_dispatch_dropped_control_plane_events(
         AppendRunLedgerEventCommandV1,
         append_run_ledger_event,
         build_tool_call_lifecycle_receipt,
+        normalize_tool_call_lifecycle_receipt,
     )
 
     native_count = 1
@@ -117,13 +118,28 @@ def append_tool_dispatch_dropped_control_plane_events(
     dropped_tool_calls: list[dict[str, Any]] = []
     for flag in error_metadata.get("anomaly_flags", []):
         if isinstance(flag, dict) and str(flag.get("type") or "") == FailureClassV1.TOOL_DISPATCH_DROPPED.value:
-            native_tool_call_envelopes = [dict(item) for item in native_tool_call_envelopes_from_metadata(flag)]
-            dropped_refs = flag.get("dropped_tool_calls")
-            if isinstance(dropped_refs, (list, tuple)):
-                dropped_tool_calls = [dict(item) for item in dropped_refs if isinstance(item, dict)]
-            native_count = native_tool_call_count(flag, ()) or 1
-            decoded_count = _nonnegative_int(flag.get("decoded_tool_calls_count"))
-            provider_response_hash = str(flag.get("provider_response_hash") or "").strip()
+            lifecycle_raw = flag.get("tool_call_lifecycle_receipt") or flag.get("tool_call_lifecycle")
+            if isinstance(lifecycle_raw, dict):
+                lifecycle_seed = normalize_tool_call_lifecycle_receipt(lifecycle_raw)
+                native_tool_call_envelopes = [
+                    dict(item)
+                    for item in lifecycle_seed.get("native_tool_call_envelope_refs", [])
+                    if isinstance(item, dict)
+                ]
+                dropped_refs = lifecycle_seed.get("dropped_tool_calls")
+                if isinstance(dropped_refs, (list, tuple)):
+                    dropped_tool_calls = [dict(item) for item in dropped_refs if isinstance(item, dict)]
+                native_count = _nonnegative_int(lifecycle_seed.get("native_tool_calls_count")) or 1
+                decoded_count = _nonnegative_int(lifecycle_seed.get("decoded_tool_calls_count"))
+                provider_response_hash = str(lifecycle_seed.get("provider_response_hash") or "").strip()
+            else:
+                native_tool_call_envelopes = [dict(item) for item in native_tool_call_envelopes_from_metadata(flag)]
+                dropped_refs = flag.get("dropped_tool_calls")
+                if isinstance(dropped_refs, (list, tuple)):
+                    dropped_tool_calls = [dict(item) for item in dropped_refs if isinstance(item, dict)]
+                native_count = native_tool_call_count(flag, ()) or 1
+                decoded_count = _nonnegative_int(flag.get("decoded_tool_calls_count"))
+                provider_response_hash = str(flag.get("provider_response_hash") or "").strip()
             break
     lifecycle = build_tool_call_lifecycle_receipt(
         run_id=str(request.run_id or turn_id),
