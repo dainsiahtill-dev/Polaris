@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-# Keep legacy tokens for backward-compatible config parsing.
+# Accepted configuration tokens for semantic-ranker provider selection.
 _SEMANTIC_PROVIDERS = {"off", "auto", "flagembedding"}
 
 
