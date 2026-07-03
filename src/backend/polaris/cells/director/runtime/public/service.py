@@ -1054,16 +1054,7 @@ def _repair_diagnostics_from_artifact_quality_issues(
 ) -> tuple[RepairDiagnostic, ...]:
     diagnostics: list[RepairDiagnostic] = []
     for public_diagnostic in normalize_director_repair_issue_diagnostics(artifact_quality_issues):
-        diagnostics.append(
-            RepairDiagnostic(
-                source=public_diagnostic.source,
-                code=public_diagnostic.code,
-                message=public_diagnostic.message,
-                path=public_diagnostic.path,
-                raw=str(public_diagnostic.metadata.get("raw") or public_diagnostic.message),
-                metadata=public_diagnostic.metadata,
-            )
-        )
+        diagnostics.append(_to_internal_repair_diagnostic(public_diagnostic))
     return tuple(diagnostics)
 
 

@@ -636,6 +636,8 @@ def test_public_convergence_passes_typed_issues_as_repair_diagnostics(
     assert captured["artifact_quality_errors"] == ()
     assert captured["repair_diagnostics"][0].code == "typescript_ts1005"
     assert captured["repair_diagnostics"][0].path == _RELATIVE_PATH
+    assert captured["repair_diagnostics"][0].line == 6
+    assert captured["repair_diagnostics"][0].column == 47
 
 
 def test_public_convergence_verifier_accepts_typed_residual_issues(tmp_path: Path) -> None:
