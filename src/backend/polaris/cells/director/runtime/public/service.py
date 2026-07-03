@@ -128,6 +128,7 @@ from polaris.cells.director.runtime.public.contracts import (
     RunDirectorRepairConvergenceCommandV1,
     RunDirectorTaskBoundaryQualityLoopCommandV1,
 )
+from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
 WriteFileFn = Callable[[str, str], Mapping[str, Any]]
 EditFileFn = Callable[[Any], Mapping[str, Any]]
@@ -2082,19 +2083,9 @@ def _materialization_aggregate_evidence_status(statuses: Sequence[str]) -> str:
 
 
 def _materialization_facade_has_successful_write_tool(tool_results: Sequence[Mapping[str, Any]]) -> bool:
-    write_tools = {
-        "append_to_file",
-        "delete_file",
-        "edit_blocks",
-        "edit_file",
-        "precision_edit",
-        "repo_apply_diff",
-        "search_replace",
-        "write_file",
-    }
     for item in tool_results:
         tool = str(item.get("tool") or item.get("tool_name") or "").strip()
-        if tool not in write_tools:
+        if tool not in WRITE_TOOLS:
             continue
         if item.get("ok") is False or item.get("success") is False:
             continue

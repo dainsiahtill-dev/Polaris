@@ -171,6 +171,7 @@ from polaris.cells.director.runtime.public import (
     run_director_repair,
     validate_director_repair_advisory,
 )
+from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
 
 
 def _install_delete_file_test_runtime_binding(monkeypatch: pytest.MonkeyPatch, source_tool: str) -> None:
@@ -12419,13 +12420,14 @@ def test_runtime_materialization_quality_facade_runs_schedule_and_projects_evide
         QueryDirectorRepairMaterializationQualityScheduleV1()
     )
     runner_step_ids = tuple(item.step_id for item in schedule.items)
+    deprecated_write_tool_name = sorted(DEPRECATED_WRITE_TOOLS)[0]
 
     def runner(step) -> list[dict[str, object]]:
         if step.step_id != "materialization.hygiene_scaffold":
             return []
         return [
             {
-                "tool": "write_file",
+                "tool": deprecated_write_tool_name,
                 "ok": True,
                 "result": {
                     "ok": True,
