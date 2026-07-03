@@ -40,10 +40,7 @@ from polaris.cells.llm.provider_runtime.public.contracts import (
     QueryRoleRuntimeProviderSupportV1,
     UnsupportedProviderTypeError,
 )
-
-# Re-export BaseProvider, ProviderInfo, and ProviderManager from kernelone for backward compatibility
-# Internal code should use AppLLMRuntimeAdapter.get_provider_instance() instead
-from polaris.kernelone.llm.providers import BaseProvider, ProviderInfo, ProviderManager
+from polaris.kernelone.llm.providers import BaseProvider, ProviderInfo
 
 
 def _to_mapping(value: Any) -> Mapping[str, Any]:
@@ -191,7 +188,6 @@ __all__ = [
     "LlmProviderRuntimeService",
     "ProviderInfo",
     "ProviderInvocationResultV1",
-    "ProviderManager",
     "QueryRoleRuntimeProviderSupportV1",
     "ResponseNormalizer",
     "RuntimeProviderInvokeResult",

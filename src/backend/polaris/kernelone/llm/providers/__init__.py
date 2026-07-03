@@ -14,7 +14,6 @@ from .base_provider import (
     WorkingDirConfig,
 )
 from .registry import (
-    ProviderManager,
     get_provider_manager,
     get_provider_registry,
     register_provider,
@@ -28,7 +27,6 @@ __all__ = [
     "ChunkKind",
     "ProviderConfigValidationResult",
     "ProviderInfo",
-    "ProviderManager",
     "ProviderRegistry",
     "StreamThinkingParser",
     "ThinkingInfo",
