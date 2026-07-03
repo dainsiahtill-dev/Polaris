@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -131,61 +130,13 @@ class TestStateFirstContextOSPolicySubPolicies:
         assert policy.artifact.max_artifact_stubs == 4
 
 
-class TestBackwardCompatibleProperties:
-    """Tests for backward-compatible property accessors."""
+class TestRetiredFlatPolicyAccessors:
+    """Flat StateFirstContextOSPolicy accessors are retired."""
 
-    def test_model_context_window_deprecated(self) -> None:
-        """Accessing policy.model_context_window should emit DeprecationWarning."""
+    def test_flat_accessors_are_not_public(self) -> None:
+        """StateFirstContextOSPolicy exposes grouped sub-policies only."""
         policy = StateFirstContextOSPolicy()
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            value = policy.model_context_window
-            assert value == 128_000
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "model_context_window" in str(w[0].message)
-            assert "context_window" in str(w[0].message)
-
-    def test_max_open_loops_deprecated(self) -> None:
-        """Accessing policy.max_open_loops should emit DeprecationWarning."""
-        policy = StateFirstContextOSPolicy()
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            value = policy.max_open_loops
-            assert value == 6
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "max_open_loops" in str(w[0].message)
-            assert "collection_limits" in str(w[0].message)
-
-    def test_max_artifact_stubs_deprecated(self) -> None:
-        """Accessing policy.max_artifact_stubs should emit DeprecationWarning."""
-        policy = StateFirstContextOSPolicy()
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            value = policy.max_artifact_stubs
-            assert value == 4
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "max_artifact_stubs" in str(w[0].message)
-            assert "artifact" in str(w[0].message)
-
-    def test_enable_dialog_act_deprecated(self) -> None:
-        """Accessing policy.enable_dialog_act should emit DeprecationWarning."""
-        policy = StateFirstContextOSPolicy()
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            value = policy.enable_dialog_act
-            assert value is True
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "enable_dialog_act" in str(w[0].message)
-            assert "attention_runtime" in str(w[0].message)
-
-    def test_all_deprecated_properties_exist(self) -> None:
-        """All original policy fields should have deprecated property accessors."""
-        policy = StateFirstContextOSPolicy()
-        deprecated_fields = [
+        retired_fields = [
             "model_context_window",
             "default_history_window_messages",
             "max_active_window_messages",
@@ -216,11 +167,8 @@ class TestBackwardCompatibleProperties:
             "enable_attention_trace",
             "enable_seal_guard",
         ]
-        for field_name in deprecated_fields:
-            assert hasattr(policy, field_name), f"Missing property: {field_name}"
-            with warnings.catch_warnings(record=True):
-                warnings.simplefilter("always")
-                getattr(policy, field_name)  # Should not raise
+        for field_name in retired_fields:
+            assert not hasattr(policy, field_name), f"retired flat accessor still public: {field_name}"
 
 
 class TestToDictFromDict:
