@@ -693,6 +693,29 @@ def test_resolve_baseline_audit_path_rejects_pull_manifest(tmp_path: Path) -> No
         raise AssertionError("expected ValueError for pull manifest")
 
 
+def test_resolve_baseline_audit_path_rejects_default_marker_pull_manifest(tmp_path: Path) -> None:
+    from polaris.kernelone._runtime_config import (
+        get_workspace_metadata_dir_name,
+        set_workspace_metadata_dir_name,
+    )
+
+    original = get_workspace_metadata_dir_name()
+    try:
+        set_workspace_metadata_dir_name(".custom-meta")
+        pull_dir = tmp_path / ".polaris" / "runtime" / "llm_evaluations" / "baselines" / "token1"
+        pull_dir.mkdir(parents=True, exist_ok=True)
+        (pull_dir / "BASELINE_LIBRARY_PULL.json").write_text("{}", encoding="utf-8")
+
+        try:
+            agentic_eval._resolve_baseline_audit_path(str(tmp_path), "token1")
+        except ValueError as exc:
+            assert "AGENTIC_EVAL_AUDIT.json" in str(exc)
+        else:
+            raise AssertionError("expected ValueError for default marker pull manifest")
+    finally:
+        set_workspace_metadata_dir_name(original)
+
+
 def test_resolve_baseline_audit_path_resolves_explicit_file(tmp_path: Path) -> None:
     audit = tmp_path / "explicit.json"
     _write_audit_json(audit, _fake_audit_payload())
@@ -716,6 +739,26 @@ def test_resolve_rerun_audit_path_resolves_explicit_file(tmp_path: Path) -> None
     resolved, loaded = agentic_eval._resolve_rerun_audit_path(str(tmp_path), str(audit))
     assert resolved == audit.resolve()
     assert loaded["benchmark"]["run_id"] == "run-001"
+
+
+def test_resolve_rerun_audit_path_resolves_default_marker_run(tmp_path: Path) -> None:
+    from polaris.kernelone._runtime_config import (
+        get_workspace_metadata_dir_name,
+        set_workspace_metadata_dir_name,
+    )
+
+    original = get_workspace_metadata_dir_name()
+    try:
+        set_workspace_metadata_dir_name(".custom-meta")
+        audit = tmp_path / ".polaris" / "runtime" / "llm_evaluations" / "run-002" / "AGENTIC_EVAL_AUDIT.json"
+        audit.parent.mkdir(parents=True, exist_ok=True)
+        _write_audit_json(audit, _fake_audit_payload(run_id="run-002"))
+
+        resolved, loaded = agentic_eval._resolve_rerun_audit_path(str(tmp_path), "run-002")
+        assert resolved == audit.resolve()
+        assert loaded["benchmark"]["run_id"] == "run-002"
+    finally:
+        set_workspace_metadata_dir_name(original)
 
 
 # ---------------------------------------------------------------------------

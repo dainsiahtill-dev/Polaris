@@ -25,11 +25,25 @@ __all__ = [
     "_resolve_rerun_audit_path",
 ]
 
+_DEFAULT_METADATA_DIR = ".polaris"
+
 
 def _read_json_file(path: Path) -> dict[str, Any]:
     with open(path, encoding="utf-8") as handle:
         payload = json.load(handle)
     return _as_dict(payload)
+
+
+def _metadata_evaluation_roots(workspace: str) -> tuple[Path, ...]:
+    """Return workspace-local evaluation roots in deterministic lookup order."""
+    from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
+
+    workspace_root = Path(workspace).resolve()
+    metadata_dir = get_workspace_metadata_dir_name()
+    metadata_names = [metadata_dir]
+    if metadata_dir != _DEFAULT_METADATA_DIR:
+        metadata_names.append(_DEFAULT_METADATA_DIR)
+    return tuple(workspace_root / metadata_name / "runtime" / "llm_evaluations" for metadata_name in metadata_names)
 
 
 def _resolve_baseline_audit_path(workspace: str, baseline_ref: str) -> Path:
@@ -51,39 +65,13 @@ def _resolve_baseline_audit_path(workspace: str, baseline_ref: str) -> Path:
     if run_id_candidate.is_file():
         return run_id_candidate.resolve()
 
-    from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
-
-    metadata_dir = get_workspace_metadata_dir_name()
-    baseline_pull_candidate = (
-        Path(workspace).resolve()
-        / metadata_dir
-        / "runtime"
-        / "llm_evaluations"
-        / "baselines"
-        / token
-        / "BASELINE_LIBRARY_PULL.json"
-    )
-    if baseline_pull_candidate.is_file():
-        raise ValueError(
-            "compare-baseline expects AGENTIC_EVAL_AUDIT.json baseline, "
-            "but received baseline pull manifest. Run agentic-eval first to produce a score baseline."
-        )
-
-    # Backward compat: also check legacy .polaris path
-    legacy_baseline = (
-        Path(workspace).resolve()
-        / ".polaris"
-        / "runtime"
-        / "llm_evaluations"
-        / "baselines"
-        / token
-        / "BASELINE_LIBRARY_PULL.json"
-    )
-    if legacy_baseline.is_file():
-        raise ValueError(
-            "compare-baseline expects AGENTIC_EVAL_AUDIT.json baseline, "
-            "but received baseline pull manifest. Run agentic-eval first to produce a score baseline."
-        )
+    for evaluation_root in _metadata_evaluation_roots(workspace):
+        baseline_pull_candidate = evaluation_root / "baselines" / token / "BASELINE_LIBRARY_PULL.json"
+        if baseline_pull_candidate.is_file():
+            raise ValueError(
+                "compare-baseline expects AGENTIC_EVAL_AUDIT.json baseline, "
+                "but received baseline pull manifest. Run agentic-eval first to produce a score baseline."
+            )
 
     raise FileNotFoundError(f"baseline audit not found: {token}")
 
@@ -132,12 +120,14 @@ def _resolve_rerun_audit_path(workspace: str, rerun_ref: str) -> tuple[Path, dic
     if run_id_candidate.is_file():
         return run_id_candidate.resolve(), _read_json_file(run_id_candidate.resolve())
 
-    # Try as run_id under .polaris/runtime/llm_evaluations/
-    legacy_candidate = (
-        Path(workspace).resolve() / ".polaris" / "runtime" / "llm_evaluations" / token / "AGENTIC_EVAL_AUDIT.json"
-    )
-    if legacy_candidate.is_file():
-        return legacy_candidate.resolve(), _read_json_file(legacy_candidate.resolve())
+    metadata_candidates: list[Path] = []
+    for evaluation_root in _metadata_evaluation_roots(workspace):
+        metadata_candidate = evaluation_root / token / "AGENTIC_EVAL_AUDIT.json"
+        metadata_candidates.append(metadata_candidate)
+        if metadata_candidate.is_file():
+            return metadata_candidate.resolve(), _read_json_file(metadata_candidate.resolve())
+
+    metadata_attempts = "\n".join(f"  - Metadata path: {path}" for path in metadata_candidates)
 
     raise FileNotFoundError(
         f"audit file not found for --rerun-failed: {rerun_ref}\n"
@@ -145,7 +135,7 @@ def _resolve_rerun_audit_path(workspace: str, rerun_ref: str) -> tuple[Path, dic
         f"  - Explicit path: {candidate}\n"
         f"  - Workspace-relative: {workspace_candidate}\n"
         f"  - Runtime path: {run_id_candidate}\n"
-        f"  - Legacy path: {legacy_candidate}"
+        f"{metadata_attempts}"
     )
 
 
