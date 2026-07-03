@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from polaris.cells.control_plane.run_ledger.public.task_boundary import (
     evaluate_task_boundary_verdict,
+    normalize_task_boundary_verdict,
 )
 
 
@@ -22,6 +23,21 @@ def test_task_boundary_reports_incomplete_materialization(tmp_path: Path) -> Non
     assert verdict["failure_class"] == "INCOMPLETE_MATERIALIZATION"
     assert verdict["responsible_layer"] == "director"
     assert verdict["missing_target_files"] == ["src/index.js"]
+
+
+def test_normalize_task_boundary_verdict_canonicalizes_failure_class_aliases() -> None:
+    assert (
+        normalize_task_boundary_verdict({"failure_class": "incomplete-materialization"})["failure_class"]
+        == "INCOMPLETE_MATERIALIZATION"
+    )
+    assert (
+        normalize_task_boundary_verdict({"failure_class": "missing entrypoint target"})["failure_class"]
+        == "MISSING_ENTRYPOINT_TARGET"
+    )
+    assert (
+        normalize_task_boundary_verdict({"failure_class": "missing-effect-receipt"})["failure_class"]
+        == "MISSING_EFFECT_RECEIPT"
+    )
 
 
 def test_task_boundary_reports_missing_package_entrypoint_when_not_declared_downstream(

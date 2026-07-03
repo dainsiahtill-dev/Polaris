@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import tomllib
-from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1
+from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1, normalize_failure_class
 
 _LOCAL_ENTRYPOINT_SUFFIXES = (
     ".js",
@@ -44,6 +44,34 @@ _CJS_LOCAL_REQUIRE_RE = re.compile(
     r"(?m)^\s*(?:(?:const|let|var)\s+[^=\n]+=\s*)?require\(\s*['\"]"
     r"(?P<specifier>\.{1,2}/[^'\"\n]+)['\"]\s*\)"
 )
+_TASK_BOUNDARY_FAILURE_CLASS_ALIASES = {
+    "passed": "PASSED",
+    "incomplete_materialization": "INCOMPLETE_MATERIALIZATION",
+    "missing_entrypoint_target": "MISSING_ENTRYPOINT_TARGET",
+    "unresolved_local_import": "UNRESOLVED_LOCAL_IMPORT",
+    "execution_evidence_missing": "EXECUTION_EVIDENCE_MISSING",
+    "implementation_defect": "IMPLEMENTATION_DEFECT",
+    "dependency_not_unlocked": "DEPENDENCY_NOT_UNLOCKED",
+    "deferred_followup_required": "DEFERRED_FOLLOWUP_REQUIRED",
+    "taskboard_deadlock": "TASKBOARD_DEADLOCK",
+    "task_boundary_failed": "TASK_BOUNDARY_FAILED",
+    "task_boundary_unknown": "TASK_BOUNDARY_UNKNOWN",
+}
+
+
+def _task_boundary_failure_class_key(value: Any) -> str:
+    return "_".join(str(value or "").strip().lower().replace("-", "_").split())
+
+
+def _normalize_task_boundary_failure_class(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "TASK_BOUNDARY_UNKNOWN"
+    run_ledger_token = normalize_failure_class(raw)
+    return _TASK_BOUNDARY_FAILURE_CLASS_ALIASES.get(
+        _task_boundary_failure_class_key(run_ledger_token),
+        _TASK_BOUNDARY_FAILURE_CLASS_ALIASES.get(_task_boundary_failure_class_key(raw), run_ledger_token.upper()),
+    )
 
 
 def _clean_path(value: Any) -> str:
@@ -603,6 +631,7 @@ def normalize_task_boundary_verdict(value: Any) -> dict[str, Any]:
         payload.setdefault("status", "unknown")
         payload.setdefault("ok", False)
         payload.setdefault("failure_class", "TASK_BOUNDARY_UNKNOWN")
+        payload["failure_class"] = _normalize_task_boundary_failure_class(payload.get("failure_class"))
         payload.setdefault("responsible_layer", "execution_control_plane")
         payload.setdefault("reason", "Task boundary verdict was incomplete")
         return payload
