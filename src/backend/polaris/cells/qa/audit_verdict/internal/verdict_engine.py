@@ -114,6 +114,35 @@ def _artifact_quality_dict(value: ArtifactQualityEvidence | dict[str, Any] | Non
     return {}
 
 
+def _artifact_quality_issues(value: dict[str, Any]) -> list[dict[str, Any]]:
+    issues = value.get("issues")
+    if not isinstance(issues, list):
+        return []
+    return [dict(item) for item in issues if isinstance(item, dict)]
+
+
+def _artifact_quality_issue_codes(value: dict[str, Any]) -> set[str]:
+    return {
+        code
+        for issue in _artifact_quality_issues(value)
+        if (code := str(issue.get("code") or "").strip())
+    }
+
+
+def _artifact_quality_issue_reason(value: dict[str, Any], *, fallback: str) -> str:
+    issues = _artifact_quality_issues(value)
+    if not issues:
+        return fallback
+    first = issues[0]
+    code = str(first.get("code") or "artifact_quality_issue").strip()
+    path = str(first.get("path") or "").strip()
+    message = str(first.get("message") or "").strip()
+    location = f" in {path}" if path else ""
+    if message:
+        return f"Artifact quality issue {code}{location}: {message}"
+    return f"Artifact quality issue {code}{location}"
+
+
 def _failure_text(*values: Any) -> str:
     return "\n".join(str(value or "") for value in values).lower()
 
@@ -416,7 +445,8 @@ def _route_classification(
             evidence_refs=evidence_refs,
         )
         return "FAIL", False, "pending_exec", "", classification
-    if gate_name or artifact_quality.get("errors") or verdict in {"FAIL", "REJECT", "REJECTED"}:
+    artifact_issue_codes = _artifact_quality_issue_codes(artifact_quality)
+    if gate_name or artifact_quality.get("errors") or artifact_issue_codes or verdict in {"FAIL", "REJECT", "REJECTED"}:
         if "step verify command rejected" in text:
             classification = build_qa_failure_classification_v1(
                 failure_class="BLUEPRINT_VERIFY_INVALID",
@@ -429,6 +459,34 @@ def _route_classification(
                 evidence_refs=evidence_refs,
             )
             return "FAIL", False, "pending_design", "", classification
+        if artifact_issue_codes:
+            if "declared_target_missing" in artifact_issue_codes:
+                classification = build_qa_failure_classification_v1(
+                    failure_class="INCOMPLETE_MATERIALIZATION",
+                    route="pending_exec",
+                    reason=_artifact_quality_issue_reason(
+                        artifact_quality,
+                        fallback=gate_summary or "Artifact quality reported missing declared targets",
+                    ),
+                    repairable_by_director=True,
+                    owner="director",
+                    responsible_layer="director",
+                    evidence_refs=evidence_refs,
+                )
+                return "FAIL", False, "pending_exec", "", classification
+            classification = build_qa_failure_classification_v1(
+                failure_class="IMPLEMENTATION_DEFECT",
+                route="pending_exec",
+                reason=_artifact_quality_issue_reason(
+                    artifact_quality,
+                    fallback=gate_summary or "Artifact quality reported implementation defects",
+                ),
+                repairable_by_director=True,
+                owner="director",
+                responsible_layer="director",
+                evidence_refs=evidence_refs,
+            )
+            return "FAIL", False, "pending_exec", "", classification
         classification = build_qa_failure_classification_v1(
             failure_class="IMPLEMENTATION_DEFECT",
             route="pending_exec",
