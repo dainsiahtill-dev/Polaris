@@ -235,6 +235,28 @@ class TestNativeToolExecutionSource:
         invocations = decision["tool_batch"]["invocations"]
         assert [item["tool_name"] for item in invocations] == ["read_file", "edit_file", "read_file"]
 
+    def test_duplicate_native_call_id_metadata_uses_decoded_invocations(self) -> None:
+        decoder = TurnDecisionDecoder(config=DecodeConfig(domain="document"))
+
+        response = RawLLMResponse(
+            content="provider replayed the same call id",
+            thinking=None,
+            native_tool_calls=[
+                _native_tool("read_file", {"path": "server.py"}, call_id="call_replayed"),
+                _native_tool("read_file", {"path": "server.py"}, call_id="call_replayed"),
+            ],
+            model="gpt-4",
+            usage={},
+        )
+
+        decision = decoder.decode(response, TurnId("turn_duplicate_call_id"))
+
+        assert decision["kind"] == TurnDecisionKind.TOOL_BATCH
+        assert decision["tool_batch"] is not None
+        assert len(decision["tool_batch"]["invocations"]) == 1
+        assert decision["metadata"]["tool_count"] == 1
+        assert decision["metadata"]["native_tools"] == 1
+
 
 class TestFinalizeModeDetermination:
     """验证：finalize_mode 正确确定。"""

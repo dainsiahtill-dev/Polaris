@@ -150,7 +150,7 @@ class TurnDecisionDecoder:
 
             batch_metadata: dict[str, Any] = {
                 "tool_count": len(all_tools),
-                "native_tools": len(self._native_tool_calls(response)),
+                "native_tools": len(all_tools),
                 "model": response.model,
             }
             if decode_failures:
