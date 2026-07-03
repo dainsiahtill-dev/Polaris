@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -33,6 +34,35 @@ class DecisionCaller:
             if name:
                 return name
         return ""
+
+    @staticmethod
+    def _tool_call_envelopes(metadata: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+        envelopes = metadata.get("native_tool_call_envelopes")
+        if not isinstance(envelopes, list):
+            return ()
+        return tuple(item for item in envelopes if isinstance(item, Mapping))
+
+    @classmethod
+    def _native_tool_call_count(cls, metadata: Mapping[str, Any], native_tool_calls: list[Any]) -> int:
+        envelopes = cls._tool_call_envelopes(metadata)
+        if envelopes:
+            return len(envelopes)
+        return len(native_tool_calls)
+
+    @classmethod
+    def _native_tool_call_names(cls, metadata: Mapping[str, Any], native_tool_calls: list[Any]) -> list[str]:
+        envelopes = cls._tool_call_envelopes(metadata)
+        if envelopes:
+            return [
+                name
+                for item in envelopes
+                if (name := str(item.get("tool_name") or "").strip())
+            ]
+        return [
+            name
+            for item in native_tool_calls
+            if isinstance(item, dict) and (name := cls._native_tool_name_hint(item))
+        ]
 
     async def call(
         self,
@@ -64,11 +94,10 @@ class DecisionCaller:
             raise RuntimeError(str(response.error))
         native_tool_calls = getattr(response, "tool_calls", []) or []
         metadata = dict(getattr(response, "metadata", {}) or {})
-        tool_names = [
-            name for item in native_tool_calls if isinstance(item, dict) and (name := self._native_tool_name_hint(item))
-        ]
-        metadata["decision_caller_native_tool_calls_count"] = len(native_tool_calls)
-        metadata["native_tool_calls_count"] = len(native_tool_calls)
+        native_tool_call_count = self._native_tool_call_count(metadata, native_tool_calls)
+        tool_names = self._native_tool_call_names(metadata, native_tool_calls)
+        metadata["decision_caller_native_tool_calls_count"] = native_tool_call_count
+        metadata["native_tool_calls_count"] = native_tool_call_count
         metadata["native_tool_call_names"] = tool_names
         metadata["decision_caller_tool_call_provider"] = str(
             getattr(response, "tool_call_provider", "") or metadata.get("tool_call_provider") or "auto"

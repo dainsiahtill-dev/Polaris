@@ -948,6 +948,51 @@ class TestDecisionCaller:
         assert result["usage"]["tool_call_provider"] == "openai"
         assert result["model"] == "unknown"
 
+    async def test_call_derives_tool_count_and_names_from_envelopes(self) -> None:
+        """DecisionCaller should preserve invoker envelope facts as the count SSOT."""
+        invoker = Mock()
+        invoker.call = AsyncMock(
+            return_value=LLMResponse(
+                content="decision",
+                tool_calls=[{"id": "raw_call", "function": {"name": "read_file", "arguments": "{}"}}],
+                tool_call_provider="openai",
+                metadata={
+                    "native_tool_call_envelopes": [
+                        {
+                            "schema_version": "native_tool_call_envelope.v1",
+                            "tool_name": "repo_rg",
+                            "call_id": "env_call_1",
+                        },
+                        {
+                            "schema_version": "native_tool_call_envelope.v1",
+                            "tool_name": "read_file",
+                            "call_id": "env_call_2",
+                        },
+                    ]
+                },
+            )
+        )
+        caller = DecisionCaller(invoker)
+
+        profile = Mock()
+        profile.role_id = "director"
+        context = Mock()
+        context.message = "inspect files"
+        context.history = ()
+        context.task_id = None
+        context.context_override = None
+
+        result = await caller.call(
+            profile=profile,
+            system_prompt="sys",
+            context=context,
+            tool_definitions=[{"name": "repo_rg"}, {"name": "read_file"}],
+        )
+
+        assert result["usage"]["native_tool_calls_count"] == 2
+        assert result["usage"]["decision_caller_native_tool_calls_count"] == 2
+        assert result["usage"]["native_tool_call_names"] == ["repo_rg", "read_file"]
+
     async def test_call_raises_on_error(self) -> None:
         """LLM 返回 error 时应抛出 RuntimeError."""
         invoker = Mock()

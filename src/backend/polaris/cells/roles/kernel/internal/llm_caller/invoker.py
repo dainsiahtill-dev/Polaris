@@ -931,6 +931,7 @@ class LLMInvoker:
             native_tool_calls,
             provider=native_tool_provider,
         )
+        native_tool_call_count = len(native_tool_call_envelopes)
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         provider_usage = _normalize_provider_usage(getattr(response, "usage", None)) or _normalize_provider_usage(
@@ -1002,14 +1003,14 @@ class LLMInvoker:
             context_tokens_after=final_context_tokens,
             compression_strategy=prepared.context_result.compression_strategy if prepared.context_result else None,
             response_content=response_text,
-            tool_calls_count=len(native_tool_calls),
+            tool_calls_count=native_tool_call_count,
             metadata=_with_context_os_audit(event_metadata, prepared),
         )
 
         response_metadata: dict[str, Any] = {
             "model": response_model_name,
             "provider": response_provider,
-            "native_tool_calls_count": len(native_tool_calls),
+            "native_tool_calls_count": native_tool_call_count,
             "native_tool_call_envelopes": native_tool_call_envelopes,
             "elapsed_ms": round(elapsed_ms, 2),
             "run_id": run_id,
