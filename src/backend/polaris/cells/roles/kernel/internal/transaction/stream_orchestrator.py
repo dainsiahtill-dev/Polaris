@@ -25,6 +25,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import restrict
 from polaris.cells.roles.kernel.internal.speculation.cancel import CancellationCoordinator
 from polaris.cells.roles.kernel.internal.speculation.task_group import TurnScopedTaskGroup
 from polaris.cells.roles.kernel.internal.stream_shadow_engine import StreamShadowEngine
+from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
 from polaris.cells.roles.kernel.internal.transaction.decision_pipeline import (
     _native_tool_call_count,
     _provider_response_hash,
@@ -272,20 +273,6 @@ def _extract_read_tools_from_receipt(batch_receipt: dict[str, Any] | None) -> li
     return reads
 
 
-# FIX-20250422-v4: 检测当前 turn 是否有写工具执行
-_WRITE_TOOL_NAMES = frozenset(
-    {
-        "write_file",
-        "edit_file",
-        "edit_blocks",
-        "precision_edit",
-        "repo_apply_diff",
-        "search_replace",
-        "append_to_file",
-    }
-)
-
-
 def _has_write_tools_in_receipt(batch_receipt: dict[str, Any] | None) -> bool:
     """检测 batch_receipt 中是否包含成功的写工具调用。"""
     if not batch_receipt:
@@ -296,7 +283,7 @@ def _has_write_tools_in_receipt(batch_receipt: dict[str, Any] | None) -> bool:
             continue
         name = str(item.get("tool_name") or "").strip()
         status = str(item.get("status") or "").strip()
-        if name in _WRITE_TOOL_NAMES and status == "success":
+        if name in WRITE_TOOLS and status == "success":
             return True
     return False
 

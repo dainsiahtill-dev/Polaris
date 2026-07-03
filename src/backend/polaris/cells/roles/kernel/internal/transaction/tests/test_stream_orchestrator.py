@@ -8,6 +8,7 @@ from polaris.cells.roles.kernel.internal.transaction.stream_orchestrator import 
     _build_continue_visible_content,
     _detect_truncation_heuristics,
     _extract_read_tools_from_receipt,
+    _has_write_tools_in_receipt,
     _resolve_continuation_delivery_contract,
     _should_use_slice_mode,
 )
@@ -60,6 +61,19 @@ class TestExtractReadToolsFromReceipt:
             ]
         }
         assert _extract_read_tools_from_receipt(receipt) == ["read_file"]
+
+
+class TestHasWriteToolsInReceipt:
+    def test_uses_canonical_write_tool_observation_set(self) -> None:
+        retired_tool_name = "precision" + "_edit"
+        receipt = {"results": [{"tool_name": retired_tool_name, "status": "success"}]}
+
+        assert _has_write_tools_in_receipt(receipt) is True
+
+    def test_failed_write_tool_does_not_count(self) -> None:
+        receipt = {"results": [{"tool_name": "edit_blocks", "status": "failed"}]}
+
+        assert _has_write_tools_in_receipt(receipt) is False
 
 
 class TestBuildContinueVisibleContent:
