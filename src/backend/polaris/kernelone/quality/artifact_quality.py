@@ -452,6 +452,7 @@ _ARTIFACT_QUALITY_COMPILER_PATH_RE = re.compile(
     r"|(?::(?P<line_colon>\d+)(?::(?P<column_colon>\d+))?))?"
     r"(?::|\s)"
 )
+_ARTIFACT_QUALITY_TYPESCRIPT_ERROR_RE = re.compile(r"\berror\s+(?P<code>TS\d+):", re.IGNORECASE)
 _ARTIFACT_QUALITY_JAVASCRIPT_MODULE_ERROR_RE = re.compile(
     r"(?P<message>The requested module\s+['\"]?[^'\"\s]+['\"]?\s+"
     r"does not provide an export named\s+(?:['\"][^'\"]+['\"]|[A-Za-z_$][\w$]*)|"
@@ -490,6 +491,9 @@ def _artifact_quality_issue_code(message: str) -> str:
         return "unresolved_import_symbol"
     if "unresolved relative import" in normalized:
         return "unresolved_relative_import"
+    typescript_match = _ARTIFACT_QUALITY_TYPESCRIPT_ERROR_RE.search(message)
+    if typescript_match:
+        return f"typescript_{str(typescript_match.group('code') or '').lower()}"
     if "typescript project typecheck failed" in normalized:
         return "typescript_project_typecheck_failed"
     if "syntax error" in normalized or "invalid json" in normalized:
@@ -573,6 +577,10 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
                     "importer_path": str(match.group("path") or "").strip(),
                 }
             )
+    elif code.startswith("typescript_ts"):
+        typescript_match = _ARTIFACT_QUALITY_TYPESCRIPT_ERROR_RE.search(message)
+        if typescript_match:
+            metadata["diagnostic_code"] = str(typescript_match.group("code") or "").strip()
     return {key: value for key, value in metadata.items() if value}
 
 

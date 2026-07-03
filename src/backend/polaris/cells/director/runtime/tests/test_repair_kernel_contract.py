@@ -218,9 +218,11 @@ def test_public_repair_diagnostics_preserve_kernelone_issue_locations() -> None:
     diagnostics = normalize_director_repair_issue_diagnostics(issues)
 
     assert len(diagnostics) == 1
+    assert diagnostics[0].code == "typescript_ts2322"
     assert diagnostics[0].path == "src/main.ts"
     assert diagnostics[0].metadata["line"] == 3
     assert diagnostics[0].metadata["column"] == 14
+    assert diagnostics[0].metadata["diagnostic_code"] == "TS2322"
     assert diagnostics[0].metadata["raw"] == (
         "src/main.ts(3,14): error TS2322: Type 'string' is not assignable to type 'number'."
     )

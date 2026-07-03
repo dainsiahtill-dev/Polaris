@@ -82,10 +82,11 @@ def test_artifact_quality_issue_projection_extracts_compiler_path() -> None:
 
     issues = artifact_quality_issues_from_errors((error,))
 
+    assert issues[0]["code"] == "typescript_ts2322"
     assert issues[0]["path"] == "src/main.ts"
     assert issues[0]["line"] == 1
     assert issues[0]["column"] == 1
-    assert issues[0]["metadata"] == {"raw": error}
+    assert issues[0]["metadata"] == {"raw": error, "diagnostic_code": "TS2322"}
 
 
 def test_artifact_quality_issue_projection_extracts_colon_line_column() -> None:
