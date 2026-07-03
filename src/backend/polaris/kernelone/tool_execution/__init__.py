@@ -140,8 +140,8 @@ from polaris.kernelone.tool_execution.validators import (
     BooleanValidator,
     IntegerValidator,
     StringValidator,
+    ToolArgValidationResult,
     ValidationError,
-    ValidationResult,
     get_validator,
 )
 
@@ -179,11 +179,11 @@ __all__ = [
     "CommandWhitelistValidator",
     "IntegerValidator",
     "StringValidator",
+    "ToolArgValidationResult",
     # Models
     "ToolChainResult",
     "ToolChainStep",
     "ValidationError",
-    "ValidationResult",
     # Plan parser
     "_normalize_tool_plan_dict_step",
     "_parse_key_value_token",

@@ -25,8 +25,8 @@ __all__ = [
     "IntegerValidator",
     "StringValidator",
     # Classes
+    "ToolArgValidationResult",
     "ValidationError",
-    "ValidationResult",
     # Functions
     "get_validator",
     "validate_value",
@@ -62,7 +62,7 @@ class ValidationError:
 class ToolArgValidationResult:
     """Validation result for tool argument validation.
 
-    Note: This is distinct from other ValidationResult types:
+    Note: This is distinct from other validation result types:
     - ProviderConfigValidationResult: Provider configuration validation
     - FileOpValidationResult: File operation validation
     - LaunchValidationResult: Bootstrap launch validation
@@ -83,10 +83,6 @@ class ToolArgValidationResult:
         return cls(is_valid=False, error=ValidationError(code=code, message=message))
 
 
-# Backward compatibility alias (deprecated)
-ValidationResult = ToolArgValidationResult
-
-
 class BaseValidator(ABC):
     """参数验证器基类。
 
@@ -95,19 +91,19 @@ class BaseValidator(ABC):
     """
 
     @abstractmethod
-    def _validate_type(self, value: Any) -> ValidationResult | None:
+    def _validate_type(self, value: Any) -> ToolArgValidationResult | None:
         """Validate the type of the value.
 
         Args:
             value: The value to validate.
 
         Returns:
-            ValidationResult.failure if type is invalid, None if valid.
+            ToolArgValidationResult.failure if type is invalid, None if valid.
         """
         ...
 
     @abstractmethod
-    def _validate_constraints(self, value: Any, spec: dict[str, Any]) -> ValidationResult | None:
+    def _validate_constraints(self, value: Any, spec: dict[str, Any]) -> ToolArgValidationResult | None:
         """Validate type-specific constraints (min/max, pattern, etc.).
 
         Args:
@@ -115,11 +111,11 @@ class BaseValidator(ABC):
             spec: The parameter specification.
 
         Returns:
-            ValidationResult.failure if constraint is violated, None if valid.
+            ToolArgValidationResult.failure if constraint is violated, None if valid.
         """
         ...
 
-    def validate(self, value: Any, spec: dict[str, Any]) -> ValidationResult:
+    def validate(self, value: Any, spec: dict[str, Any]) -> ToolArgValidationResult:
         """Validate parameter value using Template Method pattern.
 
         Args:
@@ -134,7 +130,7 @@ class BaseValidator(ABC):
             return required_result
 
         if value is None:
-            return ValidationResult.success()
+            return ToolArgValidationResult.success()
 
         type_result = self._validate_type(value)
         if type_result is not None:
@@ -144,9 +140,9 @@ class BaseValidator(ABC):
         if constraint_result is not None:
             return constraint_result
 
-        return ValidationResult.success()
+        return ToolArgValidationResult.success()
 
-    def _check_required(self, value: Any, spec: dict[str, Any]) -> ValidationResult | None:
+    def _check_required(self, value: Any, spec: dict[str, Any]) -> ToolArgValidationResult | None:
         """检查必需字段。
 
         Args:
@@ -154,11 +150,11 @@ class BaseValidator(ABC):
             spec: 参数规格定义。
 
         Returns:
-            如果验证失败返回 ValidationResult，否则返回 None。
+            如果验证失败返回 ToolArgValidationResult，否则返回 None。
         """
         required = spec.get("required", False)
         if required and value is None:
-            return ValidationResult.failure(ERROR_REQUIRED_MISSING, "Value is required but was None")
+            return ToolArgValidationResult.failure(ERROR_REQUIRED_MISSING, "Value is required but was None")
         return None
 
     def _get_type_name(self, value: Any) -> str:
@@ -185,44 +181,44 @@ class StringValidator(BaseValidator):
     - required: 是否必需
     """
 
-    def _validate_type(self, value: Any) -> ValidationResult | None:
+    def _validate_type(self, value: Any) -> ToolArgValidationResult | None:
         if not isinstance(value, str):
-            return ValidationResult.failure(ERROR_INVALID_TYPE, f"Expected string, got {self._get_type_name(value)}")
+            return ToolArgValidationResult.failure(ERROR_INVALID_TYPE, f"Expected string, got {self._get_type_name(value)}")
         return None
 
-    def _validate_constraints(self, value: Any, spec: dict[str, Any]) -> ValidationResult | None:
+    def _validate_constraints(self, value: Any, spec: dict[str, Any]) -> ToolArgValidationResult | None:
         min_length = spec.get("min_length")
         if min_length is not None:
             try:
                 min_len = int(min_length)
                 if len(value) < min_len:
-                    return ValidationResult.failure(
+                    return ToolArgValidationResult.failure(
                         ERROR_STRING_TOO_SHORT, f"String length {len(value)} is less than minimum {min_len}"
                     )
             except (TypeError, ValueError) as e:
-                return ValidationResult.failure(ERROR_INVALID_TYPE, f"Invalid min_length value: {e}")
+                return ToolArgValidationResult.failure(ERROR_INVALID_TYPE, f"Invalid min_length value: {e}")
 
         max_length = spec.get("max_length")
         if max_length is not None:
             try:
                 max_len = int(max_length)
                 if len(value) > max_len:
-                    return ValidationResult.failure(
+                    return ToolArgValidationResult.failure(
                         ERROR_STRING_TOO_LONG, f"String length {len(value)} exceeds maximum {max_len}"
                     )
             except (TypeError, ValueError) as e:
-                return ValidationResult.failure(ERROR_INVALID_TYPE, f"Invalid max_length value: {e}")
+                return ToolArgValidationResult.failure(ERROR_INVALID_TYPE, f"Invalid max_length value: {e}")
 
         pattern = spec.get("pattern")
         if pattern is not None:
             try:
                 regex: Pattern[str] = re.compile(pattern)
                 if not regex.search(value):
-                    return ValidationResult.failure(
+                    return ToolArgValidationResult.failure(
                         ERROR_STRING_PATTERN_MISMATCH, f"String does not match required pattern: {pattern}"
                     )
             except re.error as e:
-                return ValidationResult.failure(ERROR_INVALID_TYPE, f"Invalid regex pattern: {e}")
+                return ToolArgValidationResult.failure(ERROR_INVALID_TYPE, f"Invalid regex pattern: {e}")
 
         return None
 
@@ -236,16 +232,16 @@ class IntegerValidator(BaseValidator):
     - required: 是否必需
     """
 
-    def _validate_type(self, value: Any) -> ValidationResult | None:
+    def _validate_type(self, value: Any) -> ToolArgValidationResult | None:
         if isinstance(value, bool):
-            return ValidationResult.failure(ERROR_INVALID_TYPE, f"Expected integer, got {self._get_type_name(value)}")
+            return ToolArgValidationResult.failure(ERROR_INVALID_TYPE, f"Expected integer, got {self._get_type_name(value)}")
         if isinstance(value, int):
             return None
         if isinstance(value, float) and value.is_integer():
             return None
-        return ValidationResult.failure(ERROR_INVALID_TYPE, f"Expected integer, got {self._get_type_name(value)}")
+        return ToolArgValidationResult.failure(ERROR_INVALID_TYPE, f"Expected integer, got {self._get_type_name(value)}")
 
-    def _validate_constraints(self, value: Any, spec: dict[str, Any]) -> ValidationResult | None:
+    def _validate_constraints(self, value: Any, spec: dict[str, Any]) -> ToolArgValidationResult | None:
         int_value = int(value) if isinstance(value, float) else value
 
         min_value = spec.get("min")
@@ -253,22 +249,22 @@ class IntegerValidator(BaseValidator):
             try:
                 min_val = int(min_value)
                 if int_value < min_val:
-                    return ValidationResult.failure(
+                    return ToolArgValidationResult.failure(
                         ERROR_INTEGER_TOO_SMALL, f"Value {int_value} is less than minimum {min_val}"
                     )
             except (TypeError, ValueError) as e:
-                return ValidationResult.failure(ERROR_INVALID_TYPE, f"Invalid min value: {e}")
+                return ToolArgValidationResult.failure(ERROR_INVALID_TYPE, f"Invalid min value: {e}")
 
         max_value = spec.get("max")
         if max_value is not None:
             try:
                 max_val = int(max_value)
                 if int_value > max_val:
-                    return ValidationResult.failure(
+                    return ToolArgValidationResult.failure(
                         ERROR_INTEGER_TOO_LARGE, f"Value {int_value} exceeds maximum {max_val}"
                     )
             except (TypeError, ValueError) as e:
-                return ValidationResult.failure(ERROR_INVALID_TYPE, f"Invalid max value: {e}")
+                return ToolArgValidationResult.failure(ERROR_INVALID_TYPE, f"Invalid max value: {e}")
 
         return None
 
@@ -282,14 +278,14 @@ class ArrayValidator(BaseValidator):
     - required: 是否必需
     """
 
-    def _validate_type(self, value: Any) -> ValidationResult | None:
+    def _validate_type(self, value: Any) -> ToolArgValidationResult | None:
         if not isinstance(value, list):
-            return ValidationResult.failure(
+            return ToolArgValidationResult.failure(
                 ERROR_INVALID_TYPE, f"Expected array (list), got {self._get_type_name(value)}"
             )
         return None
 
-    def _validate_constraints(self, value: Any, spec: dict[str, Any]) -> ValidationResult | None:
+    def _validate_constraints(self, value: Any, spec: dict[str, Any]) -> ToolArgValidationResult | None:
         length = len(value)
 
         min_length = spec.get("min_length")
@@ -297,22 +293,22 @@ class ArrayValidator(BaseValidator):
             try:
                 min_len = int(min_length)
                 if length < min_len:
-                    return ValidationResult.failure(
+                    return ToolArgValidationResult.failure(
                         ERROR_ARRAY_TOO_SHORT, f"Array length {length} is less than minimum {min_len}"
                     )
             except (TypeError, ValueError) as e:
-                return ValidationResult.failure(ERROR_INVALID_TYPE, f"Invalid min_length value: {e}")
+                return ToolArgValidationResult.failure(ERROR_INVALID_TYPE, f"Invalid min_length value: {e}")
 
         max_length = spec.get("max_length")
         if max_length is not None:
             try:
                 max_len = int(max_length)
                 if length > max_len:
-                    return ValidationResult.failure(
+                    return ToolArgValidationResult.failure(
                         ERROR_ARRAY_TOO_LONG, f"Array length {length} exceeds maximum {max_len}"
                     )
             except (TypeError, ValueError) as e:
-                return ValidationResult.failure(ERROR_INVALID_TYPE, f"Invalid max_length value: {e}")
+                return ToolArgValidationResult.failure(ERROR_INVALID_TYPE, f"Invalid max_length value: {e}")
 
         return None
 
@@ -324,12 +320,12 @@ class BooleanValidator(BaseValidator):
     - required: 是否必需
     """
 
-    def _validate_type(self, value: Any) -> ValidationResult | None:
+    def _validate_type(self, value: Any) -> ToolArgValidationResult | None:
         if not isinstance(value, bool):
-            return ValidationResult.failure(ERROR_INVALID_TYPE, f"Expected boolean, got {self._get_type_name(value)}")
+            return ToolArgValidationResult.failure(ERROR_INVALID_TYPE, f"Expected boolean, got {self._get_type_name(value)}")
         return None
 
-    def _validate_constraints(self, value: Any, spec: dict[str, Any]) -> ValidationResult | None:
+    def _validate_constraints(self, value: Any, spec: dict[str, Any]) -> ToolArgValidationResult | None:
         return None
 
 
@@ -354,7 +350,7 @@ def get_validator(value_type: str) -> BaseValidator | None:
     return _VALIDATORS.get(value_type)
 
 
-def validate_value(value: Any, value_type: str, spec: dict[str, Any] | None = None) -> ValidationResult:
+def validate_value(value: Any, value_type: str, spec: dict[str, Any] | None = None) -> ToolArgValidationResult:
     """根据类型验证值。
 
     Args:
@@ -368,6 +364,6 @@ def validate_value(value: Any, value_type: str, spec: dict[str, Any] | None = No
     validator = get_validator(value_type)
     if validator is None:
         # If unknown type, pass through without validation
-        return ValidationResult.success()
+        return ToolArgValidationResult.success()
 
     return validator.validate(value, spec or {})

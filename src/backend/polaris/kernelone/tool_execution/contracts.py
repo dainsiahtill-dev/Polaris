@@ -16,7 +16,7 @@ from polaris.kernelone.tool_execution.validators import (
     ERROR_STRING_TOO_LONG,
     ERROR_STRING_TOO_SHORT,
     BaseValidator,
-    ValidationResult,
+    ToolArgValidationResult,
     get_validator,
 )
 

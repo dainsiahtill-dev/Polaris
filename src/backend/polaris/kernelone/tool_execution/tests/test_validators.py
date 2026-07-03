@@ -7,8 +7,8 @@ from polaris.kernelone.tool_execution.validators import (
     BooleanValidator,
     IntegerValidator,
     StringValidator,
+    ToolArgValidationResult,
     ValidationError,
-    ValidationResult,
     get_validator,
     validate_value,
 )
@@ -490,18 +490,18 @@ class TestBooleanValidator:
         assert result.error.code == "REQUIRED_MISSING"
 
 
-class TestValidationResult:
-    """ValidationResult tests."""
+class TestToolArgValidationResult:
+    """ToolArgValidationResult tests."""
 
     def test_success(self) -> None:
         """Test success result creation."""
-        result = ValidationResult.success()
+        result = ToolArgValidationResult.success()
         assert result.is_valid
         assert result.error is None
 
     def test_failure(self) -> None:
         """Test failure result creation."""
-        result = ValidationResult.failure("TEST_ERROR", "Test message")
+        result = ToolArgValidationResult.failure("TEST_ERROR", "Test message")
         assert not result.is_valid
         assert result.error is not None
         assert result.error.code == "TEST_ERROR"
@@ -509,15 +509,15 @@ class TestValidationResult:
 
     def test_failure_error_details(self) -> None:
         """Test failure result contains correct error details."""
-        result = ValidationResult.failure("CODE123", "Error description")
+        result = ToolArgValidationResult.failure("CODE123", "Error description")
         assert result.error is not None
         assert result.error.code == "CODE123"
         assert result.error.message == "Error description"
 
     def test_multiple_success_results(self) -> None:
         """Test creating multiple success results."""
-        result1 = ValidationResult.success()
-        result2 = ValidationResult.success()
+        result1 = ToolArgValidationResult.success()
+        result2 = ToolArgValidationResult.success()
         assert result1.is_valid
         assert result2.is_valid
         assert result1.error is None
@@ -525,8 +525,8 @@ class TestValidationResult:
 
     def test_multiple_failure_results(self) -> None:
         """Test creating multiple failure results."""
-        result1 = ValidationResult.failure("ERROR_A", "Message A")
-        result2 = ValidationResult.failure("ERROR_B", "Message B")
+        result1 = ToolArgValidationResult.failure("ERROR_A", "Message A")
+        result2 = ToolArgValidationResult.failure("ERROR_B", "Message B")
         assert not result1.is_valid
         assert not result2.is_valid
         assert result1.error is not None
