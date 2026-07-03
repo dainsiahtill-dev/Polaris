@@ -20,6 +20,21 @@ def test_native_tool_call_count_prefers_metadata_envelopes() -> None:
     assert _native_tool_call_count(response, metadata) == 2
 
 
+def test_native_tool_call_count_accepts_lifecycle_receipt_envelopes() -> None:
+    response = SimpleNamespace(content="", model="gpt-test", native_tool_calls=[])
+    metadata = {
+        "tool_call_lifecycle_receipt": {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_call_envelope_refs": [
+                {"envelope_id": "tool-envelope-1"},
+                {"envelope_id": "tool-envelope-2"},
+            ],
+        }
+    }
+
+    assert _native_tool_call_count(response, metadata) == 2
+
+
 def test_native_tool_call_count_falls_back_to_raw_calls() -> None:
     response = SimpleNamespace(
         content="",
@@ -37,6 +52,23 @@ def test_provider_response_hash_includes_metadata_envelopes() -> None:
     with_envelope = _provider_response_hash(
         response,
         {"native_tool_call_envelopes": [{"envelope_id": "tool-envelope-1"}]},
+    )
+
+    assert with_envelope != without_envelope
+
+
+def test_provider_response_hash_includes_lifecycle_receipt_envelopes() -> None:
+    response = SimpleNamespace(content="", model="gpt-test", native_tool_calls=[])
+
+    without_envelope = _provider_response_hash(response, {})
+    with_envelope = _provider_response_hash(
+        response,
+        {
+            "tool_call_lifecycle_receipt": {
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "native_tool_call_envelope_refs": [{"envelope_id": "tool-envelope-1"}],
+            }
+        },
     )
 
     assert with_envelope != without_envelope
