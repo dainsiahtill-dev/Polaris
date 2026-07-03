@@ -273,4 +273,4 @@ Multiple scripts import polaris/ internal modules, violating Cell boundary rules
 | fix_model_copy_violations.py | 98 | Archive | docs/archive/migration_scripts/ |
 | fix_ollama_404.py | 70 | Archive | docs/archive/migration_scripts/ |
 | move_configs_to_central.py | 31 | Archive | docs/archive/migration_scripts/ |
-| refactor_config.py | 58 | Archive | docs/archive/migration_scripts/ |
+| refactor_config.py | 58 | Removed | one-shot config shim migration script retired |
