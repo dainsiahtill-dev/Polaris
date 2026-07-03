@@ -117,7 +117,7 @@ def evaluate_quality_gate(
         blueprint: The blueprint payload (or any dict with the same shape).
         risks: Optional iterable of :class:`RiskRecordV1` or risk dicts.
             These are merged with any structured risk records embedded in
-            ``blueprint["risk_register"]``. The legacy flat
+            ``blueprint["risk_register"]``. The retired flat
             ``blueprint["risks"]`` list (free-text strings) is NOT consulted
             here — only structured risk records carry severity/status.
         evaluated_at: Override for the evaluation timestamp. Defaults to
