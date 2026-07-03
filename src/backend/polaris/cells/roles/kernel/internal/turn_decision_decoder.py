@@ -15,6 +15,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from polaris.cells.control_plane.run_ledger.public import (
+    normalize_native_tool_call_envelope_refs,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     build_native_tool_call_envelope_payloads,
 )
@@ -260,10 +263,9 @@ class TurnDecisionDecoder:
             usage = response.get("usage")
         usage_map = usage if isinstance(usage, Mapping) else {}
         envelopes = usage_map.get("native_tool_call_envelopes")
-        if isinstance(envelopes, list):
-            valid_envelopes = [dict(item) for item in envelopes if isinstance(item, Mapping)]
-            if valid_envelopes:
-                return valid_envelopes
+        normalized_envelopes = normalize_native_tool_call_envelope_refs(envelopes)
+        if normalized_envelopes:
+            return list(normalized_envelopes)
         native_calls = TurnDecisionDecoder._native_tool_calls(response)
         if not native_calls:
             return []

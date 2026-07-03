@@ -284,6 +284,33 @@ class TestNativeToolExecutionSource:
         assert decision["kind"] == TurnDecisionKind.TOOL_BATCH
         assert decision["metadata"]["native_tool_call_envelopes"] == [envelope]
 
+    def test_native_tool_call_envelopes_use_run_ledger_ref_normalization(self) -> None:
+        decoder = TurnDecisionDecoder(config=DecodeConfig(domain="document"))
+
+        envelope = {
+            "schema_version": "native_tool_call_envelope.v1",
+            "envelope_id": "native_tool_call:openai:0:call_1:abcdef",
+            "provider": "openai",
+            "tool_name": "read_file",
+            "call_id": "call_1",
+            "raw_call_hash": "a" * 64,
+            "arguments_hash": "b" * 64,
+        }
+        response = RawLLMResponse(
+            content="read server.py",
+            thinking=None,
+            native_tool_calls=[
+                _native_tool("read_file", {"path": "server.py"}, call_id="call_1"),
+            ],
+            model="gpt-4",
+            usage={"native_tool_call_envelopes": (envelope, "not-a-ref", dict(envelope))},
+        )
+
+        decision = decoder.decode(response, TurnId("turn_envelope_ref_normalization"))
+
+        assert decision["kind"] == TurnDecisionKind.TOOL_BATCH
+        assert decision["metadata"]["native_tool_call_envelopes"] == [envelope]
+
     def test_native_tool_call_envelopes_are_built_when_usage_projection_is_missing(self) -> None:
         decoder = TurnDecisionDecoder(config=DecodeConfig(domain="document"))
         response = RawLLMResponse(
