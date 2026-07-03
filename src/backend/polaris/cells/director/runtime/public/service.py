@@ -987,10 +987,10 @@ def _kernel_receipt_hashes(receipts: Sequence[RepairReceiptV1]) -> dict[str, tup
     return hashes
 
 
-def normalize_director_repair_diagnostics(artifact_quality_errors: Sequence[str]) -> tuple[RepairDiagnosticV1, ...]:
-    """Normalize raw artifact-quality text into public repair diagnostics."""
+def normalize_director_repair_diagnostics(artifact_quality_errors: Sequence[Any]) -> tuple[RepairDiagnosticV1, ...]:
+    """Normalize raw or structured artifact-quality input into public repair diagnostics."""
 
-    diagnostics = normalize_artifact_quality_errors([str(item) for item in artifact_quality_errors or ()])
+    diagnostics = normalize_artifact_quality_errors(list(artifact_quality_errors or ()))
     return tuple(_to_public_repair_diagnostic(diagnostic) for diagnostic in diagnostics)
 
 

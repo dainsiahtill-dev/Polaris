@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from .contracts import RepairDiagnostic
 
@@ -103,11 +105,19 @@ _PYTHON_RUNTIME_SMOKE_RE = re.compile(
 )
 
 
-def normalize_artifact_quality_errors(errors: list[str]) -> tuple[RepairDiagnostic, ...]:
-    """Convert raw artifact-quality strings into typed repair diagnostics."""
+def normalize_artifact_quality_errors(errors: Sequence[Any]) -> tuple[RepairDiagnostic, ...]:
+    """Convert raw or structured artifact-quality input into repair diagnostics."""
 
     diagnostics: list[RepairDiagnostic] = []
-    for raw in errors:
+    for raw in errors or ():
+        if isinstance(raw, RepairDiagnostic):
+            diagnostics.append(raw)
+            continue
+        if isinstance(raw, Mapping):
+            diagnostic = _normalize_structured_error(raw)
+            if diagnostic is not None:
+                diagnostics.append(diagnostic)
+            continue
         text = str(raw or "").strip()
         if not text:
             continue
@@ -117,6 +127,66 @@ def normalize_artifact_quality_errors(errors: list[str]) -> tuple[RepairDiagnost
             continue
         diagnostics.append(_normalize_one_error(text))
     return tuple(diagnostics)
+
+
+def _normalize_structured_error(raw: Mapping[str, Any]) -> RepairDiagnostic | None:
+    metadata_raw = raw.get("metadata")
+    metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
+    for key in (
+        "raw",
+        "line",
+        "column",
+        "span_start",
+        "span_end",
+        "symbol",
+        "symbol_kind",
+        "module",
+        "specifier",
+        "importer_path",
+        "target_file",
+        "language",
+        "confidence",
+        "archetype",
+        "diagnostic_archetype",
+    ):
+        if key in raw and key not in metadata:
+            metadata[key] = raw[key]
+
+    code = _structured_text(raw, metadata, "code", "diagnostic_code") or "artifact_quality_issue"
+    message = _structured_text(raw, metadata, "message", "raw") or code
+    if not message:
+        return None
+    return RepairDiagnostic(
+        source=_structured_text(raw, metadata, "source") or "artifact_quality",
+        code=code,
+        message=message,
+        severity=_structured_text(raw, metadata, "severity") or "error",
+        path=_structured_path(raw, metadata),
+        line=_to_int(raw.get("line") if "line" in raw else metadata.get("line")),
+        column=_to_int(raw.get("column") if "column" in raw else metadata.get("column")),
+        span_start=_to_int(raw.get("span_start") if "span_start" in raw else metadata.get("span_start")),
+        span_end=_to_int(raw.get("span_end") if "span_end" in raw else metadata.get("span_end")),
+        diagnostic_id=_structured_text(raw, metadata, "diagnostic_id", "id"),
+        raw=_structured_text(raw, metadata, "raw") or message,
+        metadata=metadata,
+    )
+
+
+def _structured_text(raw: Mapping[str, Any], metadata: Mapping[str, Any], *keys: str) -> str:
+    for key in keys:
+        for container in (raw, metadata):
+            value = container.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+    return ""
+
+
+def _structured_path(raw: Mapping[str, Any], metadata: Mapping[str, Any]) -> str | None:
+    path = _structured_text(raw, metadata, "path", "importer_path", "target_file", "file")
+    return path.replace("\\", "/") if path else None
 
 
 def _normalize_typescript_errors(text: str) -> list[RepairDiagnostic]:

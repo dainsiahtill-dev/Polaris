@@ -175,6 +175,7 @@ from polaris.cells.director.runtime.public import (
     service as runtime_public_service,
     validate_director_repair_advisory,
 )
+from polaris.cells.director.runtime.public.service import normalize_director_repair_diagnostics
 from polaris.kernelone.quality import artifact_quality_issues_from_errors
 from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
 
@@ -405,6 +406,63 @@ def test_normalizer_builds_typed_typescript_diagnostic() -> None:
     assert diagnostic.path == "src/app.ts"
     assert diagnostic.line == 3
     assert diagnostic.column == 14
+
+
+def test_normalizer_preserves_structured_artifact_quality_issue() -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            {
+                "source": "artifact_quality",
+                "code": "typescript_ts1005",
+                "message": "',' expected.",
+                "path": "src/app.ts",
+                "line": 3,
+                "column": 14,
+                "raw": "src/app.ts(3,14): error TS1005: ',' expected.",
+                "metadata": {
+                    "confidence": "parser",
+                    "diagnostic_archetype": "object_literal_syntax",
+                },
+            }
+        ]
+    )
+
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    assert diagnostic.source == "artifact_quality"
+    assert diagnostic.code == "typescript_ts1005"
+    assert diagnostic.message == "',' expected."
+    assert diagnostic.path == "src/app.ts"
+    assert diagnostic.line == 3
+    assert diagnostic.column == 14
+    assert diagnostic.raw == "src/app.ts(3,14): error TS1005: ',' expected."
+    assert diagnostic.metadata["confidence"] == "parser"
+    assert diagnostic.metadata["diagnostic_archetype"] == "object_literal_syntax"
+
+
+def test_public_normalizer_preserves_structured_diagnostic_payload() -> None:
+    diagnostics = normalize_director_repair_diagnostics(
+        [
+            {
+                "source": "artifact_quality",
+                "code": "missing_entrypoint_target",
+                "message": "package.json script points to missing src/index.js",
+                "target_file": "src/index.js",
+                "metadata": {
+                    "confidence": "parser",
+                    "diagnostic_archetype": "manifest_entrypoint_contract",
+                },
+            }
+        ]
+    )
+
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    assert diagnostic.code == "missing_entrypoint_target"
+    assert diagnostic.message == "package.json script points to missing src/index.js"
+    assert diagnostic.path == "src/index.js"
+    assert diagnostic.metadata["confidence"] == "parser"
+    assert diagnostic.metadata["diagnostic_archetype"] == "manifest_entrypoint_contract"
 
 
 def test_normalizer_builds_typed_typescript_return_object_semicolon_diagnostic() -> None:
