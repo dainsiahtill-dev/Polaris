@@ -81,7 +81,7 @@
 polaris/kernelone/llm/toolkit/
 ├── streaming_patch_buffer.py    # 修改: 委托解析逻辑
 ├── parsers.py                   # 可能需要扩展 ProtocolParser
-└── protocol_kernel.py            # 可能需要调整
+└── protocol/                     # 统一协议包，按子模块调整
 ```
 
 **验收条件**:

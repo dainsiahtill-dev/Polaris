@@ -27,7 +27,7 @@ Polaris 近期已将上游 LLM 工具调用契约收敛为 provider-native `tool
    - 可见面清洗
    - 协议违规检测
    - 历史兼容审计
-4. `kernelone/editing/* + protocol_kernel` 继续作为 canonical 编辑协议栈，
+4. `kernelone/editing/* + polaris.kernelone.llm.toolkit.protocol` 继续作为 canonical 编辑协议栈，
    但它属于“工具执行后的编辑内容归一化”，不属于 LLM 工具调用协议本身。
 
 ## 后果

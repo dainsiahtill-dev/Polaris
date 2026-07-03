@@ -30,7 +30,7 @@
 │  ├── definitions.py: 工具定义注册表                          │
 │  ├── executor/: 工具执行器                                  │
 │  ├── parsers/: 协议解析器                                  │
-│  ├── protocol_kernel.py: 统一协议内核                       │
+│  ├── protocol/: 统一协议包                                  │
 │  ├── streaming_patch_buffer.py: 流式 PATCH 缓冲             │
 │  └── tool_normalization/: 参数归一化                         │
 ├─────────────────────────────────────────────────────────────┤
@@ -251,7 +251,7 @@ safe, msg = validate_tool_path_argument(
 
 | 测试文件 | 覆盖范围 |
 |----------|----------|
-| `tests/test_protocol_kernel.py` | ProtocolParser, OperationValidator |
+| `tests/test_protocol_package.py` | ProtocolParser, OperationValidator |
 | `tests/test_director_patch_protocol_guard.py` | PATCH 协议守卫 |
 | `polaris/delivery/cli/director/tests/test_stream_protocol.py` | 流式协议 |
 

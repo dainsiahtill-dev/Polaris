@@ -535,7 +535,7 @@ class StrictOperationApplier:
     @staticmethod
     def _read_workspace_agents_policy_text(workspace: str, rel: str) -> str:
         """Read root and nested AGENTS.md files that apply to a workspace-relative path."""
-        workspace_path = Path(workspace).resolve()
+        fs = StrictOperationApplier._workspace_fs(workspace)
         normalized_rel = str(rel or "").replace("\\", "/").strip("/")
         candidates = ["AGENTS.md"]
         parent_parts = [part for part in normalized_rel.split("/")[:-1] if part]
@@ -548,12 +548,9 @@ class StrictOperationApplier:
             if candidate in seen:
                 continue
             seen.add(candidate)
-            target = (workspace_path / candidate).resolve()
-            if workspace_path not in target.parents and target != workspace_path:
-                continue
             try:
-                if target.is_file():
-                    texts.append(target.read_text(encoding="utf-8"))
-            except (OSError, UnicodeError):
+                if fs.workspace_is_file(candidate):
+                    texts.append(fs.workspace_read_text(candidate, encoding="utf-8"))
+            except (OSError, RuntimeError, UnicodeError, ValueError):
                 continue
         return "\n".join(texts)

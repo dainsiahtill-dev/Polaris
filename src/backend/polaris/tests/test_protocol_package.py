@@ -1,4 +1,4 @@
-"""Protocol Kernel v2.0 - 严格模式测试
+"""Protocol package v2.0 strict-mode tests.
 
 测试覆盖：
 1. 协议解析：所有方言输入正确归一化
@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 # 测试目标
-from polaris.kernelone.llm.toolkit.protocol_kernel import (
+from polaris.kernelone.llm.toolkit.protocol import (
     EditType,
     ErrorCode,
     FileOperation,
@@ -397,7 +397,7 @@ class TestStrictApply:
                 replace="def rewritten():\n    return 2\n",
             )
 
-            from polaris.kernelone.llm.toolkit.protocol_kernel import StrictOperationApplier as _Applier
+            from polaris.kernelone.llm.toolkit.protocol import StrictOperationApplier as _Applier
 
             monkeypatch.setattr(
                 _Applier,

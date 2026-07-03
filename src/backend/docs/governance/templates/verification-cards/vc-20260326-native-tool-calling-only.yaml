@@ -44,7 +44,7 @@ assumptions:
     status: verified_true
     evidence: >
       读 polaris/kernelone/editing/LEGACY_DOWNGRADE_MATRIX.md 与
-      BLUEPRINT_NATIVE_REBUILD.md：editing/* + protocol_kernel 被定义为 canonical
+      BLUEPRINT_NATIVE_REBUILD.md：editing/* + polaris.kernelone.llm.toolkit.protocol 被定义为 canonical
       editing stack，处理 apply_patch / editblock / udiff / whole-file 等编辑协议，
       不等于 LLM native tool calling 协议。
 

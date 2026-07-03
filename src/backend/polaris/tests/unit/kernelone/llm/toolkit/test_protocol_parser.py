@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from polaris.kernelone.llm.toolkit.protocol_kernel import (
+from polaris.kernelone.llm.toolkit.protocol import (
     EditType,
     ProtocolParser,
 )
@@ -132,8 +132,8 @@ class TestProtocolParserEdgeCases:
     def test_no_valid_operations(self):
         """测试无有效操作."""
         text = "Just some plain text without any operations"
-        ops = ProtocolParser.parse(text)
         # 可能解析出 0 或更多操作，取决于是否有路径格式的文本
+        assert isinstance(ProtocolParser.parse(text), list)
 
     def test_whitespace_only_search(self):
         """测试仅空白字符的 SEARCH."""
@@ -144,8 +144,8 @@ class TestProtocolParserEdgeCases:
 new content
 >>>>>>> REPLACE"""
 
-        ops = ProtocolParser.parse(text)
         # 空 SEARCH 应被正确处理
+        assert isinstance(ProtocolParser.parse(text), list)
 
     def test_path_with_spaces(self):
         """测试带空格的路径."""
@@ -156,8 +156,8 @@ old
 new
 >>>>>>> REPLACE"""
 
-        ops = ProtocolParser.parse(text)
         # 路径中的空格应被正确处理
+        assert isinstance(ProtocolParser.parse(text), list)
 
 
 class TestProtocolParserDeduplication:
@@ -181,8 +181,8 @@ END PATCH_FILE"""
 
         ops = ProtocolParser.parse(text)
         # 相同操作应被去重
-        paths = [op.path for op in ops]
         # 允许有重复路径（因为可能是不同的操作），但 compute_hash 应去重相同操作
+        assert len({op.compute_hash() for op in ops}) == len(ops)
 
 
 class TestProtocolParserPathNormalization:
@@ -240,7 +240,7 @@ def run_all_tests():
                     getattr(instance, method_name)()
                     passed += 1
                     print(f"✓ {cls.__name__}.{method_name}")
-                except Exception as e:
+                except (AssertionError, RuntimeError, ValueError) as e:
                     failed.append((cls.__name__, method_name, str(e)))
                     print(f"✗ {cls.__name__}.{method_name}: {e}")
 

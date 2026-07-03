@@ -1,11 +1,11 @@
 # KernelOne Editing Retirement Matrix
 
 Status: active
-Decision: `polaris/kernelone/editing/* + protocol_kernel` is the canonical editing stack.
+Decision: `polaris/kernelone/editing/* + polaris.kernelone.llm.toolkit.protocol` is the canonical editing stack.
 
 ## Canonical Path
 
-1. LLM output -> `polaris.kernelone.llm.toolkit.protocol_kernel`
+1. LLM output -> `polaris.kernelone.llm.toolkit.protocol`
 2. Rich format routing -> `polaris.kernelone.editing.operation_router`
 3. Unified apply -> `StrictOperationApplier` / `apply_protocol_output`
 
@@ -17,7 +17,7 @@ Decision: `polaris/kernelone/editing/* + protocol_kernel` is the canonical editi
 - Any retired regex fallback is deprecation-only and should emit warning.
 
 2. `polaris/cells/director/execution/internal/patch_apply_engine.py`
-- Keep as thin shim to `protocol_kernel`.
+- Keep as thin shim to `polaris.kernelone.llm.toolkit.protocol`.
 - No new parsing/apply logic allowed.
 
 3. `polaris/cells/director/execution/internal/file_apply_service.py`
@@ -38,5 +38,5 @@ Decision: `polaris/kernelone/editing/* + protocol_kernel` is the canonical editi
 
 ## Guardrail
 
-New editing features must land in `polaris/kernelone/editing/*` and be consumed by `protocol_kernel`.
+New editing features must land in `polaris/kernelone/editing/*` and be consumed by `polaris.kernelone.llm.toolkit.protocol`.
 Do not add new primary editing behavior in retired modules above.

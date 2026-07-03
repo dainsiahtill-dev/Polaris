@@ -1,7 +1,6 @@
-"""Protocol module - Split from protocol_kernel.py (1113 lines).
+"""KernelOne file-operation protocol package.
 
 This module provides unified file operation protocol parsing and execution.
-The original protocol_kernel.py has been split into the following structure:
 
 protocol/
     __init__.py       # Unified exports and convenience functions
@@ -65,7 +64,7 @@ __all__ = [
 
 
 # ============================================================================
-# Convenience functions (moved from protocol_kernel.py)
+# Convenience functions
 # ============================================================================
 
 

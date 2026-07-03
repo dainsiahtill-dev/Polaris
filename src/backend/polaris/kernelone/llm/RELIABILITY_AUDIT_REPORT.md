@@ -59,7 +59,7 @@
 │ 文件路径                                    │ except Exception │ 特定异常 │
 ├────────────────────────────────────────────────────────────────────────────┤
 │ toolkit/executor.py                         │ 21               │ 3        │
-│ toolkit/protocol_kernel.py                  │ 8                │ 2        │
+│ toolkit/protocol/                           │ 8                │ 2        │
 │ engine/stream_executor.py                   │ 6                │ 2        │
 │ engine/executor.py                          │ 3                │ 1        │
 │ toolkit/tool_normalization.py               │ 1                │ 0        │
@@ -475,7 +475,7 @@ polaris/kernelone/llm/
 │   └── prompt_budget.py     # 需要添加降级告警
 ├── toolkit/
 │   ├── executor.py          # 需要重构异常处理
-│   ├── protocol_kernel.py   # 需要分类协议错误
+│   ├── protocol/            # 需要分类协议错误
 │   └── tool_normalization.py # 需要处理导入错误
 └── config_store.py          # 需要区分错误类型
 ```

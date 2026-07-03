@@ -1,7 +1,7 @@
 # Aider Editing Parity Audit (KernelOne)
 
 Date: 2026-03-25  
-Scope: `polaris/kernelone/editing/*` + `polaris/kernelone/llm/toolkit/protocol_kernel.py`
+Scope: `polaris/kernelone/editing/*` + `polaris/kernelone/llm/toolkit/protocol`
 Reference source root: `C:/Users/dains/Downloads/aider-main/aider`
 
 ## Source Files Audited
@@ -56,7 +56,7 @@ Implemented in: `unified_diff_engine.py`
 5. `*** Move to`: **DONE**
 6. Update hunks -> normalized search/replace operations: **DONE**
 
-Implemented in: `patch_engine.py` + `protocol_kernel.py`
+Implemented in: `patch_engine.py` + `polaris.kernelone.llm.toolkit.protocol`
 
 ### Whole File Fenced Blocks
 
@@ -73,7 +73,7 @@ Canonical runtime path:
 2. If empty, route rich edit formats via `operation_router`
 3. Execute by `StrictOperationApplier`
 
-This is active in `protocol_kernel.py`.
+This is active in `polaris.kernelone.llm.toolkit.protocol`.
 
 ## Safety / Governance Guards
 

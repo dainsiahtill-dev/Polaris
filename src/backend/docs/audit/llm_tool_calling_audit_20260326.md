@@ -64,7 +64,7 @@
 
 | 文件 | 圈复杂度 | 问题 |
 |------|----------|------|
-| `protocol_kernel.py` | 高 | `_route_rich_edit_operations()` 嵌套层级 > 5 |
+| `protocol/` | 高 | rich edit routing lives in the protocol package |
 | `stream_executor.py` | 中 | `_invoke_text_stream()` 方法过长 (~300行) |
 | `tool_normalization.py` | 中 | 大量 if-else 别名映射 |
 

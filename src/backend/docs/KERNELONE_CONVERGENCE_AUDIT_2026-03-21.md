@@ -44,7 +44,7 @@ Hotspot files by size and likely future refactor pressure:
 1. `polaris/kernelone/llm/toolkit/parsers.py`
 2. `polaris/kernelone/llm/toolkit/executor.py`
 3. `polaris/kernelone/tools/io_utils.py`
-4. `polaris/kernelone/llm/toolkit/protocol_kernel.py`
+4. `polaris/kernelone/llm/toolkit/protocol/`
 5. `polaris/kernelone/task_graph/task_board.py`
 6. `polaris/kernelone/process/background_manager.py`
 

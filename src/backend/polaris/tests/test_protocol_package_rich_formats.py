@@ -4,7 +4,7 @@ import shutil
 import uuid
 from pathlib import Path
 
-from polaris.kernelone.llm.toolkit.protocol_kernel import apply_protocol_output
+from polaris.kernelone.llm.toolkit.protocol import apply_protocol_output
 
 
 def _make_workspace() -> Path:

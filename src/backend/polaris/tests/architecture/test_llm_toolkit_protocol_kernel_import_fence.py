@@ -32,3 +32,9 @@ def test_production_protocol_consumers_do_not_import_protocol_kernel() -> None:
     for path in PRODUCTION_PROTOCOL_CONSUMERS:
         source = path.read_text(encoding="utf-8")
         assert "protocol_kernel" not in source, str(path)
+
+
+def test_protocol_kernel_facade_is_removed() -> None:
+    """The retired protocol_kernel re-export facade must not be restored."""
+    facade = BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "toolkit" / "protocol_kernel.py"
+    assert not facade.exists()
