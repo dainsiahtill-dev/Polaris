@@ -119,10 +119,31 @@ def _native_tool_call_envelope_refs(value: Any) -> list[dict[str, Any]]:
     return refs
 
 
+def _mapping_ref_key(value: Mapping[str, Any]) -> str:
+    for key in ("receipt_hash", "batch_id", "effect_receipt_hash", "id"):
+        token = _clean_string(value.get(key))
+        if token:
+            return f"{key}:{token}"
+    return "stable:" + _stable_hash(dict(value))
+
+
 def _mapping_refs(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, (list, tuple)):
         return []
-    return [dict(item) for item in value if isinstance(item, Mapping)]
+    refs: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        ref = dict(item)
+        if not ref:
+            continue
+        key = _mapping_ref_key(ref)
+        if key in seen:
+            continue
+        seen.add(key)
+        refs.append(ref)
+    return refs
 
 
 def _dropped_tool_calls_from_native_envelopes(value: Any) -> list[dict[str, Any]]:
@@ -209,11 +230,16 @@ def _successful_write_results_without_effect_receipts(receipts: list[dict[str, A
 
 def _batch_receipt_refs(receipts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     refs: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for receipt in receipts:
+        receipt_hash = _stable_hash(receipt)
+        if receipt_hash in seen:
+            continue
+        seen.add(receipt_hash)
         refs.append(
             {
                 "batch_id": _clean_string(receipt.get("batch_id")),
-                "receipt_hash": _stable_hash(receipt),
+                "receipt_hash": receipt_hash,
             }
         )
     return refs

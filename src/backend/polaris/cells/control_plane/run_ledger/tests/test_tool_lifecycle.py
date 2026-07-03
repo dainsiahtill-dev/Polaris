@@ -402,6 +402,33 @@ def test_tool_lifecycle_normalizer_derives_counts_from_lifecycle_refs() -> None:
     assert receipt["ok"] is True
 
 
+def test_tool_lifecycle_normalizer_deduplicates_batch_and_effect_refs() -> None:
+    receipt = normalize_tool_call_lifecycle_receipt(
+        {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_calls_count": 1,
+            "dispatched_tool_calls_count": 1,
+            "tool_result_count": 1,
+            "batch_receipt_refs": [
+                {"batch_id": "batch-1", "receipt_hash": "batch-hash"},
+                {"batch_id": "batch-1", "receipt_hash": "batch-hash"},
+            ],
+            "effect_receipt_refs": [
+                {"receipt_hash": "effect-1", "operation": "write_file:create", "file": "src/index.js"},
+                {"receipt_hash": "effect-1", "operation": "write_file:create", "file": "src/index.js"},
+            ],
+            "dispatch_status": "dispatched",
+            "failure_class": "",
+        }
+    )
+
+    assert receipt["batch_receipt_refs"] == [{"batch_id": "batch-1", "receipt_hash": "batch-hash"}]
+    assert receipt["effect_receipt_refs"] == [
+        {"receipt_hash": "effect-1", "operation": "write_file:create", "file": "src/index.js"}
+    ]
+    assert receipt["effect_receipt_count"] == 1
+
+
 def test_tool_lifecycle_normalizer_projects_raw_dispatched_payload_as_ok() -> None:
     receipt = normalize_tool_call_lifecycle_receipt(
         {
