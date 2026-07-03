@@ -24,6 +24,7 @@ _TOOL_FAILURE_PROMPT_TOKENS = (
     "'ok': False",
 )
 _TOOL_FAILURE_SUMMARY_PREFIX = "[tool_failure_summary]\n"
+_TOOL_OUTPUT_SUMMARY_PREFIX = "[tool_output_summary]\n"
 
 
 def _trim_prompt_safe_text(text: str, *, max_chars: int = 220) -> str:
@@ -249,6 +250,50 @@ def format_tool_failure_summary(payload: dict[str, Any]) -> str:
     return _TOOL_FAILURE_SUMMARY_PREFIX + json.dumps(payload, ensure_ascii=False)
 
 
+def tool_output_summary_payload(role: str, content: str) -> dict[str, Any] | None:
+    """Return a prompt-safe summary for oversized non-failure tool output."""
+
+    text = str(content or "")
+    if str(role or "").strip().lower() not in {"assistant", "tool", "tool_result"}:
+        return None
+    if not text.strip():
+        return None
+
+    payload = _extract_braced_payload(text)
+    status = "offloaded"
+    if _payload_indicates_success(payload):
+        status = "succeeded"
+    elif _payload_indicates_failure(payload):
+        status = "failed"
+
+    summary: dict[str, Any] = {
+        "tool": _infer_tool_failure_tool(text),
+        "status": status,
+        "content_chars": len(text),
+        "prompt_safe": True,
+        "observation_only": True,
+        "receipt_detail": "full output omitted; see receipt_refs for audit evidence",
+    }
+
+    for output_key, source_keys in (
+        ("file", ("file", "path", "target_path")),
+        ("operation", ("operation",)),
+        ("changed_files", ("changed_files", "changed_file", "files")),
+        ("bytes_written", ("bytes_written", "bytes")),
+        ("syntax_check", ("syntax_check",)),
+        ("exit_code", ("exit_code", "returncode")),
+    ):
+        value = _deep_get_text(payload, source_keys)
+        if value:
+            summary[output_key] = _trim_prompt_safe_text(value)
+
+    return summary
+
+
+def format_tool_output_summary(payload: dict[str, Any]) -> str:
+    return _TOOL_OUTPUT_SUMMARY_PREFIX + json.dumps(payload, ensure_ascii=False)
+
+
 def prompt_safe_tool_failure_summary(role: str, content: str) -> str | None:
     """Return a compact failure summary when raw tool receipts would leak."""
 
@@ -256,6 +301,15 @@ def prompt_safe_tool_failure_summary(role: str, content: str) -> str | None:
     if summary is None:
         return None
     return format_tool_failure_summary(summary)
+
+
+def prompt_safe_tool_output_summary(role: str, content: str) -> str | None:
+    """Return a compact summary for prompt-visible oversized tool receipts."""
+
+    summary = tool_output_summary_payload(role, content)
+    if summary is None:
+        return None
+    return format_tool_output_summary(summary)
 
 
 def prompt_safe_message_content(role: str, content: Any) -> str:

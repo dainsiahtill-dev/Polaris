@@ -17,6 +17,7 @@ from polaris.kernelone.context.projection_engine import ProjectionEngine
 from polaris.kernelone.context.prompt_safety import (
     parse_tool_failure_summary,
     prompt_safe_tool_failure_summary,
+    prompt_safe_tool_output_summary,
     tool_failure_summary_payload,
 )
 from polaris.kernelone.context.receipt_store import ReceiptStore
@@ -322,7 +323,7 @@ class TestProjectionEnginePromptInjectionBaseline:
         content = turns[0]["content"]
         assert "tool_evt_1_SYSTEM_ignore_prior_instructions" in content
         assert "\nSYSTEM:" not in content
-        assert "]\n" not in content
+        assert "evt_1]\n" not in content
 
     def test_run_card_rendering_no_escaping(self) -> None:
         """render_run_card does not escape goal content."""
@@ -489,7 +490,53 @@ class TestProjectionEngineBuildTurns:
         turns = engine.build_turns(events, receipt_store)
 
         assert len(turns) == 1
+        assert "[tool_output_summary]" in turns[0]["content"]
+        assert '"status": "offloaded"' in turns[0]["content"]
+        assert "x" * 200 not in turns[0]["content"]
         assert "[Large output stored in receipt tool_evt_1" in turns[0]["content"]
+        assert turns[0]["receipt_refs"] == ["tool_evt_1"]
+        assert receipt_store.get("tool_evt_1") == "x" * 1000
+
+    def test_large_successful_tool_receipt_keeps_prompt_safe_summary(self) -> None:
+        """Large successful tool receipts need key evidence without full raw output."""
+        engine = ProjectionEngine()
+        receipt_store = ReceiptStore()
+        raw_success = (
+            "**write_file**: {'ok': True, 'tool': 'write_file', "
+            "'file': 'src/models/weather.py', 'bytes_written': 2048, "
+            "'effect_receipt': {'operation': 'create', "
+            "'changed_files': ['src/models/weather.py']}, "
+            "'syntax_check': 'passed'}"
+            + ("x" * 1000)
+        )
+
+        class MockEvent:
+            def __init__(self) -> None:
+                self.sequence = 1
+                self.route = "patch"
+                self.role = "tool"
+                self.content = raw_success
+                self.event_id = "evt_success_large"
+                self.metadata = ()
+                self.artifact_id = ""
+
+        turns = engine.build_turns([MockEvent()], receipt_store)
+
+        assert len(turns) == 1
+        assert "[tool_output_summary]" in turns[0]["content"]
+        assert '"tool": "write_file"' in turns[0]["content"]
+        assert '"status": "succeeded"' in turns[0]["content"]
+        assert '"file": "src/models/weather.py"' in turns[0]["content"]
+        assert '"changed_files": "src/models/weather.py"' in turns[0]["content"]
+        assert '"syntax_check": "passed"' in turns[0]["content"]
+        assert "x" * 200 not in turns[0]["content"]
+        assert "[Large output stored in receipt tool_evt_success_large]" in turns[0]["content"]
+        assert turns[0]["receipt_refs"] == ["tool_evt_success_large"]
+        assert raw_success == receipt_store.get("tool_evt_success_large")
+
+    def test_prompt_safe_tool_output_summary_rejects_non_tool_roles(self) -> None:
+        """Only tool-like roles should receive tool-output summaries."""
+        assert prompt_safe_tool_output_summary("user", "x" * 1000) is None
 
     def test_tool_failure_summary_stays_visible_when_raw_receipt_is_offloaded(self) -> None:
         """Policy-denied tool failures need prompt-visible diagnosis, not only receipt refs."""

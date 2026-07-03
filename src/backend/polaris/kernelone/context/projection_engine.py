@@ -16,6 +16,7 @@ from polaris.kernelone.context.control_plane_noise import (
 )
 from polaris.kernelone.context.prompt_safety import (
     prompt_safe_tool_failure_summary,
+    prompt_safe_tool_output_summary,
 )
 
 if TYPE_CHECKING:
@@ -621,11 +622,17 @@ class ProjectionEngine:
                     )
                     content = f"{failure_summary}\n\n{stored_placeholder}"
                 else:
-                    content, receipt_refs = receipt_store.offload_content(
+                    output_summary = prompt_safe_tool_output_summary(role, content)
+                    stored_placeholder, receipt_refs = receipt_store.offload_content(
                         receipt_id,
                         content,
                         threshold=500,
                         placeholder=placeholder,
+                    )
+                    content = (
+                        f"{output_summary}\n\n{stored_placeholder}"
+                        if receipt_refs and output_summary
+                        else stored_placeholder
                     )
             else:
                 content, receipt_refs = receipt_store.offload_content(
