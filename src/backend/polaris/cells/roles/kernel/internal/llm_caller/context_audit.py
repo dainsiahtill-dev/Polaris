@@ -1999,6 +1999,24 @@ def _missing_required_refs_from_evidence_slots(evidence_coverage: dict[str, Any]
     return _unique_strings(missing_refs)
 
 
+def _missing_required_tools_from_tool_slots(evidence_coverage: dict[str, Any]) -> list[str] | None:
+    slots = evidence_coverage.get("tool_evidence_slots")
+    if not isinstance(slots, list):
+        return None
+    missing_tools: list[str] = []
+    for item in slots:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("schema_version") or "") != "polaris.final_request_tool_slot.v1":
+            continue
+        if item.get("required") is not True or item.get("missing") is not True:
+            continue
+        tool_name = str(item.get("tool_name") or "").strip()
+        if tool_name:
+            missing_tools.append(tool_name)
+    return _unique_strings(missing_tools)
+
+
 def final_request_evidence_coverage_violation(
     *,
     ai_request: Any,
@@ -2015,7 +2033,12 @@ def final_request_evidence_coverage_violation(
     missing_refs = _missing_required_refs_from_evidence_slots(evidence_coverage) or [
         str(item) for item in evidence_coverage.get("missing_required_refs") or [] if str(item).strip()
     ]
-    missing_tools = [str(item) for item in evidence_coverage.get("missing_required_tools") or [] if str(item).strip()]
+    slot_missing_tools = _missing_required_tools_from_tool_slots(evidence_coverage)
+    missing_tools = (
+        slot_missing_tools
+        if slot_missing_tools is not None
+        else [str(item) for item in evidence_coverage.get("missing_required_tools") or [] if str(item).strip()]
+    )
     if not missing_refs and not missing_tools and evidence_coverage.get("role_identity_ok", True):
         return None
     message_parts = ["Final provider request evidence coverage failed"]
@@ -2146,6 +2169,32 @@ def _evidence_slots(
         if source.get("hash"):
             slot["hash"] = str(source.get("hash"))
         slots.append(slot)
+    return slots
+
+
+def _tool_evidence_slots(
+    *,
+    required_tools: list[str],
+    available_tools: list[str],
+    missing_required_tools: list[str],
+) -> list[dict[str, Any]]:
+    required = set(required_tools)
+    available = set(available_tools)
+    missing = set(missing_required_tools)
+    slots: list[dict[str, Any]] = []
+    for tool_name in _unique_strings([*required_tools, *available_tools]):
+        slots.append(
+            {
+                "schema_version": "polaris.final_request_tool_slot.v1",
+                "tool_name": tool_name,
+                "required": tool_name in required,
+                "present": tool_name in available,
+                "missing": tool_name in missing,
+                "source": "final_provider_request.tools",
+                "confidence": "tool_schema" if tool_name in available else "absent",
+                "freshness": "current_turn" if tool_name in available else "unknown",
+            }
+        )
     return slots
 
 
@@ -2292,6 +2341,11 @@ def _final_request_evidence_coverage(
         "allowed_tools": allowed_tools,
         "available_tools": available_tools,
         "missing_required_tools": missing_required_tools,
+        "tool_evidence_slots": _tool_evidence_slots(
+            required_tools=required_tools,
+            available_tools=available_tools,
+            missing_required_tools=missing_required_tools,
+        ),
         "removed_allowed_tools": removed_allowed_tools,
         "tool_surface": {
             "required_tools": required_tools,

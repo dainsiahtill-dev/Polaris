@@ -1101,6 +1101,46 @@ def test_final_request_evidence_enforcement_blocks_strict_missing_refs() -> None
         raise AssertionError("strict final request evidence coverage should fail closed")
 
 
+def test_final_request_evidence_enforcement_prefers_tool_slots_for_missing_tools() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={"final_request_evidence_required": True},
+    )
+    audit = {
+        "request_hash": "request-1",
+        "final_request_evidence_coverage": {
+            "schema_version": "polaris.final_request_evidence_coverage.v1",
+            "pass": False,
+            "role_id": "director",
+            "expected_role_id": "director",
+            "role_identity_ok": True,
+            "missing_required_refs": [],
+            "missing_required_tools": ["legacy_wrong_tool"],
+            "tool_evidence_slots": [
+                {
+                    "schema_version": "polaris.final_request_tool_slot.v1",
+                    "tool_name": "write_file",
+                    "required": True,
+                    "present": False,
+                    "missing": True,
+                    "source": "final_provider_request.tools",
+                    "confidence": "absent",
+                    "freshness": "unknown",
+                }
+            ],
+            "request_hash": "request-1",
+        },
+    }
+
+    violation = final_request_evidence_coverage_violation(ai_request=ai_request, audit=audit)
+
+    assert violation is not None
+    assert violation["missing_required_tools"] == ["write_file"]
+
+
 def test_final_request_evidence_ignores_untrusted_user_message_body_for_required_refs() -> None:
     injected_body = (
         "[UNTRUSTED_USER_MESSAGE]\n"
@@ -1638,6 +1678,28 @@ def test_final_request_context_audit_flags_required_tool_pruning() -> None:
     assert evidence_coverage["required_tools"] == ["repo_tree", "read_file"]
     assert evidence_coverage["available_tools"] == []
     assert evidence_coverage["missing_required_tools"] == ["repo_tree", "read_file"]
+    assert evidence_coverage["tool_evidence_slots"] == [
+        {
+            "schema_version": "polaris.final_request_tool_slot.v1",
+            "tool_name": "repo_tree",
+            "required": True,
+            "present": False,
+            "missing": True,
+            "source": "final_provider_request.tools",
+            "confidence": "absent",
+            "freshness": "unknown",
+        },
+        {
+            "schema_version": "polaris.final_request_tool_slot.v1",
+            "tool_name": "read_file",
+            "required": True,
+            "present": False,
+            "missing": True,
+            "source": "final_provider_request.tools",
+            "confidence": "absent",
+            "freshness": "unknown",
+        },
+    ]
     assert evidence_coverage["pass"] is False
     assert "missing_required_final_request_tools" in finding_codes
 
@@ -1722,6 +1784,8 @@ def test_final_request_context_audit_keeps_tool_contract_allowed_and_required_se
     assert coverage["required_tools"] == ["write_file"]
     assert coverage["allowed_tools"] == ["read_file", "repo_tree"]
     assert coverage["missing_required_tools"] == ["write_file"]
+    assert coverage["tool_evidence_slots"][0]["tool_name"] == "write_file"
+    assert coverage["tool_evidence_slots"][0]["missing"] is True
     assert "write_file" not in coverage["removed_allowed_tools"]
 
 
