@@ -2878,6 +2878,7 @@ class QueryDirectorRepairMaterializationPlanProbeV1:
     """Read-only materialization probe that owns source-tool candidate filtering."""
 
     artifact_quality_errors: tuple[str, ...]
+    artifact_quality_issues: tuple[Mapping[str, Any], ...] = ()
     source_tools: tuple[str, ...] = ()
     base_files: Mapping[str, str] = field(default_factory=dict)
     step_id: str | None = None
@@ -2888,6 +2889,7 @@ class QueryDirectorRepairMaterializationPlanProbeV1:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "artifact_quality_errors", _to_tuple_str(list(self.artifact_quality_errors)))
+        object.__setattr__(self, "artifact_quality_issues", _to_tuple_mapping_from_any(self.artifact_quality_issues))
         object.__setattr__(self, "source_tools", _to_tuple_str(list(self.source_tools)))
         object.__setattr__(self, "base_files", dict(self.base_files or {}))
         object.__setattr__(self, "step_id", str(self.step_id or "").strip() or None)

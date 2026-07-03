@@ -101,6 +101,7 @@ def run_director_materialization_quality_repair_schedule(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: tuple[dict[str, Any], ...] = (),
     advisor_notes: tuple[Any, ...] = (),
     convergence_verifier: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -112,6 +113,7 @@ def run_director_materialization_quality_repair_schedule(
             task=task,
             task_id=task_id,
             artifact_quality_errors=tuple(artifact_quality_errors),
+            artifact_quality_issues=tuple(dict(item) for item in artifact_quality_issues),
             advisor_notes=tuple(advisor_notes or ()),
             convergence_verifier=convergence_verifier,
         )
@@ -176,6 +178,7 @@ def run_director_materialization_quality_repair_schedule_result(
 
     task = dict(command.task)
     artifact_quality_errors = tuple(command.artifact_quality_errors)
+    artifact_quality_issues = tuple(dict(item) for item in command.artifact_quality_issues)
     schedule = query_director_repair_materialization_quality_schedule(
         QueryDirectorRepairMaterializationQualityScheduleV1(include_items=True)
     )
@@ -183,9 +186,11 @@ def run_director_materialization_quality_repair_schedule_result(
         task=dict(command.task),
         adapter=command.adapter_port,
         artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=artifact_quality_issues,
     )
     facade_result = run_director_materialization_quality_repair_facade(
         artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=artifact_quality_issues,
         runner_step_ids=tuple(step.step_id for step in schedule.items),
         runner=build_materialization_quality_step_runner(
             command.adapter_port,

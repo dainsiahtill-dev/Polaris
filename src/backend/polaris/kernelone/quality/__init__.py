@@ -5,6 +5,7 @@ from __future__ import annotations
 from polaris.kernelone.quality.artifact_quality import (
     ArtifactQualityEvidence,
     ArtifactQualityIssue,
+    artifact_quality_issues_from_errors,
     check_source_file_syntax,
     scan_workspace_artifact_quality,
     scan_workspace_artifact_quality_evidence,
@@ -44,6 +45,7 @@ __all__ = [
     "PackageScriptsCheckResult",
     "SymbolIndexSnapshot",
     "SyntaxCheckResult",
+    "artifact_quality_issues_from_errors",
     "build_contract_amendment_request",
     "build_symbol_index_snapshot",
     "check_file_syntax",

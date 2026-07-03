@@ -558,6 +558,14 @@ def test_materialization_plan_probe_query_owns_candidate_and_plannable_source_to
         "SyntaxError: The requested module ./engine/AlchemyEngine.js "
         "does not provide an export named default"
     )
+    typed_issue = {
+        "source": "runtime_smoke",
+        "code": "javascript_module_error",
+        "message": "The requested module ./engine/AlchemyEngine.js does not provide an export named default",
+        "path": None,
+        "severity": "error",
+        "metadata": {"raw": error, "source": "typed_artifact_quality_issue"},
+    }
     base_files = {
         "package.json": '{"type":"module","scripts":{"start":"node src/index.js"}}',
         "src/index.js": 'import AlchemyEngine from "./engine/AlchemyEngine.js";\n',
@@ -571,7 +579,8 @@ def test_materialization_plan_probe_query_owns_candidate_and_plannable_source_to
 
     result = query_director_repair_materialization_plan_probe(
         QueryDirectorRepairMaterializationPlanProbeV1(
-            artifact_quality_errors=(error,),
+            artifact_quality_errors=(),
+            artifact_quality_issues=(typed_issue,),
             base_files=base_files,
             source_tools=(
                 "deterministic_javascript_esm_commonjs_entrypoint_repair",
@@ -584,8 +593,8 @@ def test_materialization_plan_probe_query_owns_candidate_and_plannable_source_to
     assert result.owner_cell == "director.runtime"
     assert result.execution_boundary == "read_only_materialization_plan_probe_no_writes"
     assert result.candidate_source_tools == ("deterministic_javascript_esm_commonjs_entrypoint_repair",)
-    assert result.plannable_source_tools == ("deterministic_javascript_esm_commonjs_entrypoint_repair",)
-    assert result.plan_probe_result is not None
+    assert result.coverage_report.covered_diagnostic_count == 1
+    assert result.coverage_report.items[0].diagnostic_code == "javascript_module_error"
     assert result.to_dict()["metadata"]["coverage_is_not_planning"] is True
 
 

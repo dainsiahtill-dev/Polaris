@@ -27,6 +27,7 @@ from typing import Any
 
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.cells.roles.adapters.public.contracts import RunDirectorMaterializationQualityRepairScheduleCommandV1
+from polaris.kernelone.quality import artifact_quality_issues_from_errors
 from polaris.kernelone.quality.file_ownership_ledger import build_file_ownership_handoff_requests
 
 from . import execute_method as _em
@@ -63,6 +64,7 @@ def _run_materialization_quality_public_boundary(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: tuple[dict[str, Any], ...] = (),
     convergence_verifier: Any = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Execute materialization-quality repair via the typed roles public boundary."""
@@ -77,6 +79,8 @@ def _run_materialization_quality_public_boundary(
             task=task,
             task_id=task_id,
             artifact_quality_errors=tuple(artifact_quality_errors),
+            artifact_quality_issues=artifact_quality_issues
+            or artifact_quality_issues_from_errors(artifact_quality_errors),
             convergence_verifier=convergence_verifier,
         )
     )

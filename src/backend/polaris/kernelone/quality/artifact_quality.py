@@ -485,11 +485,18 @@ def _artifact_quality_issue_from_error(error: str) -> ArtifactQualityIssue:
         code=_artifact_quality_issue_code(message),
         message=message,
         path=_artifact_quality_issue_path(message),
+        metadata={"raw": text},
     )
 
 
 def _artifact_quality_issues_from_errors(errors: Iterable[str]) -> tuple[ArtifactQualityIssue, ...]:
     return tuple(_artifact_quality_issue_from_error(error) for error in errors if str(error or "").strip())
+
+
+def artifact_quality_issues_from_errors(errors: Iterable[str]) -> tuple[dict[str, Any], ...]:
+    """Project legacy artifact-quality errors into typed issue payloads."""
+
+    return tuple(issue.to_dict() for issue in _artifact_quality_issues_from_errors(errors))
 
 
 def _artifact_quality_evidence(

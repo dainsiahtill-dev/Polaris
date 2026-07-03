@@ -57,6 +57,7 @@ def project_materialization_quality_plan_probe_preaudit(
     *,
     task: Mapping[str, Any] | None,
     artifact_quality_errors: Sequence[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Project materialization plan-probe evidence for the runtime facade."""
 
@@ -64,6 +65,7 @@ def project_materialization_quality_plan_probe_preaudit(
         adapter,
         task=task,
         artifact_quality_errors=[str(item) for item in artifact_quality_errors],
+        artifact_quality_issues=[dict(item) for item in artifact_quality_issues],
         coverage_preaudit={},
     )
 

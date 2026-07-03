@@ -1041,12 +1041,35 @@ def _repair_diagnostics_from_artifact_quality_issues(
     return tuple(diagnostics)
 
 
+def _repair_diagnostics_from_quality_inputs(
+    artifact_quality_errors: Sequence[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]],
+) -> tuple[RepairDiagnostic, ...]:
+    """Combine legacy precise diagnostics with typed issue evidence.
+
+    During WS4 migration, KernelOne typed artifact issues are an evidence
+    projection while the Director runtime string normalizer still carries some
+    language-specific diagnostic refinement. When both inputs describe the same
+    raw finding, keep the legacy refined diagnostic and use typed issues only as
+    additive evidence. Typed-only callers still work without legacy strings.
+    """
+
+    diagnostics = list(normalize_artifact_quality_errors(list(artifact_quality_errors)))
+    seen_raw = {str(item.raw or item.message or "").strip() for item in diagnostics}
+    for diagnostic in _repair_diagnostics_from_artifact_quality_issues(artifact_quality_issues):
+        raw_key = str(diagnostic.raw or diagnostic.message or "").strip()
+        if raw_key and raw_key in seen_raw:
+            continue
+        diagnostics.append(diagnostic)
+        if raw_key:
+            seen_raw.add(raw_key)
+    return tuple(diagnostics)
+
+
 def query_director_repair_coverage(query: QueryDirectorRepairCoverageV1) -> DirectorRepairCoverageReportV1:
     """Return read-only repair-rule coverage for raw artifact-quality errors."""
 
-    diagnostics = _repair_diagnostics_from_artifact_quality_issues(query.artifact_quality_issues)
-    if not diagnostics:
-        diagnostics = normalize_artifact_quality_errors(list(query.artifact_quality_errors))
+    diagnostics = _repair_diagnostics_from_quality_inputs(query.artifact_quality_errors, query.artifact_quality_issues)
     report = build_repair_coverage_report(diagnostics)
     coverage_gaps_by_id = {
         str(gap.get("diagnostic_id") or ""): dict(gap)
@@ -1206,10 +1229,15 @@ def query_director_repair_materialization_plan_probe(
 ) -> DirectorRepairMaterializationPlanProbeResultV1:
     """Return materialization source tools proven by runtime coverage and planning."""
 
-    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(query.artifact_quality_errors))
+    coverage = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(
+            query.artifact_quality_errors,
+            artifact_quality_issues=query.artifact_quality_issues,
+        )
+    )
     schedule_source_tools = _materialization_plan_probe_source_tools(step_id=query.step_id)
     requested_source_tools = _ordered_unique(query.source_tools) or schedule_source_tools
-    if not query.artifact_quality_errors:
+    if not query.artifact_quality_errors and not query.artifact_quality_issues:
         return DirectorRepairMaterializationPlanProbeResultV1(
             status="already_clean",
             coverage_report=coverage,
@@ -1831,6 +1859,7 @@ def run_director_materialization_quality_repair_facade(
     artifact_quality_errors: Sequence[str],
     runner_step_ids: Sequence[str],
     runner: MaterializationQualityStepRunnerV1,
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     plan_probe_preaudit: Mapping[str, Any] | None = None,
     convergence_verifier_present: bool = False,
     max_rounds: int = DEFAULT_REPAIR_SCHEDULE_MAX_ROUNDS,
@@ -1838,7 +1867,10 @@ def run_director_materialization_quality_repair_facade(
     """Run materialization-quality repairs through the runtime-owned facade."""
 
     coverage_preaudit = query_director_repair_coverage(
-        QueryDirectorRepairCoverageV1(tuple(str(item) for item in artifact_quality_errors))
+        QueryDirectorRepairCoverageV1(
+            tuple(str(item) for item in artifact_quality_errors),
+            artifact_quality_issues=tuple(dict(item) for item in artifact_quality_issues),
+        )
     ).to_dict()
     runtime_schedule = query_director_repair_materialization_quality_schedule(
         QueryDirectorRepairMaterializationQualityScheduleV1(include_items=True)

@@ -98,6 +98,7 @@ class RunDirectorMaterializationQualityRepairScheduleCommandV1:
     task: Mapping[str, Any]
     task_id: str
     artifact_quality_errors: tuple[str, ...] = ()
+    artifact_quality_issues: tuple[dict[str, Any], ...] = ()
     advisor_notes: tuple[Any, ...] = ()
     convergence_verifier: Any = None
 
@@ -109,6 +110,7 @@ class RunDirectorMaterializationQualityRepairScheduleCommandV1:
             "artifact_quality_errors",
             tuple(str(item) for item in self.artifact_quality_errors if str(item or "").strip()),
         )
+        object.__setattr__(self, "artifact_quality_issues", _to_tuple_dict(self.artifact_quality_issues))
         object.__setattr__(self, "advisor_notes", tuple(self.advisor_notes or ()))
 
 

@@ -1063,12 +1063,14 @@ def _project_materialization_plan_probe_preaudit(
     *,
     task: Mapping[str, Any] | None,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     coverage_preaudit: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Project read-only coverage-vs-planning evidence for runtime ports."""
 
     del coverage_preaudit
-    if not artifact_quality_errors:
+    quality_issue_payloads = tuple(dict(item) for item in artifact_quality_issues)
+    if not artifact_quality_errors and not quality_issue_payloads:
         return {
             "schema_version": "director.materialization_quality_plan_probe_preaudit.v1",
             "status": "already_clean",
@@ -1112,6 +1114,7 @@ def _project_materialization_plan_probe_preaudit(
     plan_probe = query_director_repair_materialization_plan_probe(
         QueryDirectorRepairMaterializationPlanProbeV1(
             artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+            artifact_quality_issues=quality_issue_payloads,
             base_files=base_files,
             source_tools=materialization_source_tools,
             mode="shadow",

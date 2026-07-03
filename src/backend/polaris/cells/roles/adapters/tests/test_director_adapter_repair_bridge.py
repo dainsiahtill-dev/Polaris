@@ -2535,11 +2535,20 @@ def test_materialization_public_schedule_entrypoint_forwards_bridge(
     monkeypatch: Any,
 ) -> None:
     calls: list[dict[str, Any]] = []
+    typed_issue = {
+        "source": "artifact_quality",
+        "code": "go_syntax_check_failed",
+        "message": "Go syntax check failed",
+        "path": "main.go",
+        "severity": "error",
+        "metadata": {"source": "typed_artifact_quality_issue"},
+    }
 
     def fake_plan_probe(adapter: Any, **kwargs: Any) -> dict[str, Any]:
         assert adapter is not None
         assert kwargs["task"] == {"target_files": ["main.go"]}
         assert kwargs["artifact_quality_errors"] == ("Go syntax check failed",)
+        assert kwargs["artifact_quality_issues"] == (typed_issue,)
         return {
             "schema_version": "director.materialization_quality_plan_probe_preaudit.v1",
             "status": "already_clean",
@@ -2585,6 +2594,7 @@ def test_materialization_public_schedule_entrypoint_forwards_bridge(
             task={"target_files": ["main.go"]},
             task_id="task-materialization-schedule",
             artifact_quality_errors=("Go syntax check failed",),
+            artifact_quality_issues=(typed_issue,),
         )
     )
     results = [dict(item) for item in typed_result.tool_results]
@@ -2607,6 +2617,7 @@ def test_materialization_public_schedule_entrypoint_forwards_bridge(
         task={"target_files": ["main.go"]},
         task_id="task-materialization-schedule",
         artifact_quality_errors=["Go syntax check failed"],
+        artifact_quality_issues=(typed_issue,),
     )
 
     assert len(calls) == 2

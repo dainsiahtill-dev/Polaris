@@ -33,6 +33,7 @@ from polaris.kernelone.fs.materialization import materialized_file_paths
 # at call time, so the patch still takes effect. ``DirectorToolExecutor`` is kept
 # for the original public surface.
 from polaris.kernelone.quality import (
+    artifact_quality_issues_from_errors,
     scan_workspace_artifact_quality as scan_workspace_artifact_quality,
 )
 from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
@@ -63,6 +64,7 @@ def _run_materialization_quality_public_boundary(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: tuple[dict[str, Any], ...] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Execute materialization-quality repair via the typed roles public boundary."""
@@ -77,6 +79,8 @@ def _run_materialization_quality_public_boundary(
             task=task,
             task_id=task_id,
             artifact_quality_errors=tuple(artifact_quality_errors),
+            artifact_quality_issues=artifact_quality_issues
+            or artifact_quality_issues_from_errors(artifact_quality_errors),
             convergence_verifier=convergence_verifier,
         )
     )
