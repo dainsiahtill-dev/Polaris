@@ -4598,7 +4598,7 @@ class TestDeterministicRepairEvidence:
     """Hard-coded repair evidence must be complete and machine-readable."""
 
     def test_extracts_deterministic_source_tools_from_all_tool_result_shapes(self) -> None:
-        tool_results = [
+        tool_results: list[dict[str, Any]] = [
             {"source_tool": "deterministic_patch_residue_cleanup"},
             {"result": {"source_tool": "deterministic_rust_post_repair"}},
             {"payload": {"source_tool": "deterministic_future_repair"}},
@@ -4812,7 +4812,7 @@ class TestDirectorFailureClosure:
     async def test_role_dialogue_runtime_error_returns_failed_payload(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
 
-        async def _boom_dialogue(message: str, *, context: dict[str, Any] | None) -> dict[str, Any]:
+        async def _boom_dialogue(message: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
             del message, context
             raise RuntimeError("kernel contract retry failed")
 
@@ -9388,9 +9388,20 @@ class TestAcceptanceVerifyExistsExemption:
 
 
 class TestQualityRepairMissingTargetContract:
-    """L2-10 r3 regression: the repair turn rewrote src/main.js (already
+    """Quality-repair target selection contract.
+
+    Original L2-10 r3 regression: the repair turn rewrote src/main.js (already
     present) instead of creating the missing src/styles.css — the repair
-    message itself seeded the wrong target by listing changed files as paths."""
+    message itself seeded the wrong target by listing changed files as paths.
+
+    Current write-scope contract: task ``target_files`` are the write
+    authority. Quality repair may only select repair targets inside the
+    current task write scope; out-of-scope paths (cross-task source files,
+    downstream test files, root manifests owned by other tasks) are DEFERRED
+    with structured evidence (``stage=task_boundary_repair_targets_deferred``
+    plus a ``task_boundary_scope_filter`` record naming the deferred paths)
+    instead of being authorized for writing.
+    """
 
     def test_missing_declared_targets_derived_from_workspace(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
@@ -9431,7 +9442,7 @@ class TestQualityRepairMissingTargetContract:
         assert errors == ["Artifact quality scan failed: unresolved relative import './router' in src/main.tsx"]
 
     @pytest.mark.asyncio
-    async def test_quality_repair_retry_targets_unresolved_relative_import(self, tmp_path) -> None:
+    async def test_quality_repair_retry_defers_out_of_scope_unresolved_relative_import(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
         )
@@ -9477,7 +9488,7 @@ class TestQualityRepairMissingTargetContract:
         task = {"target_files": ["src/main.tsx"]}
         adapter = _Adapter()
 
-        _, summary = await _run_materialization_quality_repair_retry(
+        tool_results, summary = await _run_materialization_quality_repair_retry(
             adapter,
             task=task,
             target_task_id="task-1",
@@ -9491,9 +9502,22 @@ class TestQualityRepairMissingTargetContract:
             changed_files=["src/main.tsx"],
         )
 
-        assert summary["missing_target_files"] == ["src/router.tsx"]
-        assert "MISSING TARGET FILES" in adapter.repair_message
-        assert "src/router.tsx" in adapter.repair_message
+        # src/router.tsx is owned by another task: the unresolved-import
+        # target is deferred with scope evidence, never authorized for writes.
+        assert tool_results == []
+        assert summary["stage"] == "task_boundary_repair_targets_deferred"
+        assert summary["success"] is False
+        assert summary["success_reason"] == "repair_targets_outside_current_task_target_files"
+        assert summary["missing_target_files"] == []
+        assert summary["repair_target_files"] == []
+        assert summary["llm_fallback_blocked"] is True
+        scope_filter = summary["task_boundary_scope_filter"]
+        assert scope_filter["deferred"] is True
+        assert scope_filter["reason"] == "missing_workspace_file_outside_current_task_target_files"
+        assert scope_filter["task_declared_write_targets"] == ["src/main.tsx"]
+        assert scope_filter["out_of_scope_repair_target_files"] == ["src/router.tsx"]
+        assert adapter.repair_message == ""
+        assert not (tmp_path / "src" / "router.tsx").exists()
 
     @pytest.mark.asyncio
     async def test_quality_repair_uses_deterministic_typescript_semantic_repair_before_llm(self, tmp_path) -> None:
@@ -9909,7 +9933,9 @@ class TestQualityRepairMissingTargetContract:
         assert missing == ["requirements.txt"]
 
     @pytest.mark.asyncio
-    async def test_quality_repair_merges_missing_workspace_file_with_runtime_smoke_targets(self, tmp_path) -> None:
+    async def test_quality_repair_defers_out_of_scope_missing_workspace_file_and_runtime_smoke_targets(
+        self, tmp_path
+    ) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
         )
@@ -9993,16 +10019,28 @@ class TestQualityRepairMissingTargetContract:
             changed_files=["README.md", "main.py", "src/__init__.py", "tests/test_scaffold.py"],
         )
 
+        # requirements.txt and tests/test_scaffold.py are owned by other
+        # tasks: both are deferred and no repair LLM turn is spent.
+        assert summary["stage"] == "task_boundary_repair_targets_deferred"
+        assert summary["success"] is False
+        assert summary["success_reason"] == "repair_targets_outside_current_task_target_files"
         assert summary["missing_target_files"] == ["requirements.txt"]
-        assert summary["repair_target_files"][0] == "requirements.txt"
-        assert "tests/test_scaffold.py" in summary["repair_target_files"]
-        assert "requirements.txt" in adapter.repair_context["repair_target_files"]
-        assert "MISSING TARGET FILES" in adapter.repair_message
-        assert adapter._execution.allowed_tool_names == {"edit_file", "execute_command", "write_file"}
-        assert adapter._execution.allow_patch_fallback is True
+        assert summary["runtime_smoke_target_files"] == ["tests/test_scaffold.py"]
+        assert summary["repair_target_files"] == []
+        scope_filter = summary["task_boundary_scope_filter"]
+        assert scope_filter["deferred"] is True
+        assert scope_filter["out_of_scope_repair_target_files"] == [
+            "requirements.txt",
+            "tests/test_scaffold.py",
+        ]
+        assert adapter.repair_message == ""
+        assert adapter.repair_context == {}
+        assert adapter._execution.allowed_tool_names is None
+        assert adapter._execution.allow_patch_fallback is None
+        assert not (tmp_path / "requirements.txt").exists()
 
     @pytest.mark.asyncio
-    async def test_quality_repair_deterministically_creates_single_missing_requirements(self, tmp_path) -> None:
+    async def test_quality_repair_defers_single_missing_requirements_out_of_scope(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
         )
@@ -10066,17 +10104,20 @@ class TestQualityRepairMissingTargetContract:
             repair_attempt=2,
         )
 
-        assert summary["repair_target_files"] == ["requirements.txt"]
-        assert (tmp_path / "requirements.txt").read_text(encoding="utf-8") == "# standard library only\n"
-        assert any(
-            (item.get("result") or {}).get("source_tool")
-            == "director_quality_repair_deterministic_missing_requirements_write_file"
-            for item in tool_results
-            if isinstance(item, dict)
-        )
+        # requirements.txt is not a declared write target of this task: the
+        # deterministic requirements write is deferred, not executed.
+        assert tool_results == []
+        assert summary["stage"] == "task_boundary_repair_targets_deferred"
+        assert summary["success_reason"] == "repair_targets_outside_current_task_target_files"
+        assert summary["missing_target_files"] == ["requirements.txt"]
+        assert summary["repair_target_files"] == []
+        scope_filter = summary["task_boundary_scope_filter"]
+        assert scope_filter["deferred"] is True
+        assert scope_filter["out_of_scope_repair_target_files"] == ["requirements.txt"]
+        assert not (tmp_path / "requirements.txt").exists()
 
     @pytest.mark.asyncio
-    async def test_quality_repair_deterministically_writes_required_requirement(self, tmp_path) -> None:
+    async def test_quality_repair_defers_required_requirement_write_out_of_scope(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
         )
@@ -10133,17 +10174,19 @@ class TestQualityRepairMissingTargetContract:
             repair_attempt=2,
         )
 
-        assert summary["repair_target_files"] == ["requirements.txt"]
-        assert (tmp_path / "requirements.txt").read_text(encoding="utf-8") == "pygame\n"
-        assert any(
-            (item.get("result") or {}).get("source_tool")
-            == "director_quality_repair_deterministic_missing_requirements_write_file"
-            for item in tool_results
-            if isinstance(item, dict)
-        )
+        # The requirements contract belongs to another task: the deterministic
+        # requirement write is deferred and the cross-task file is untouched.
+        assert tool_results == []
+        assert summary["stage"] == "task_boundary_repair_targets_deferred"
+        assert summary["success_reason"] == "repair_targets_outside_current_task_target_files"
+        assert summary["repair_target_files"] == []
+        scope_filter = summary["task_boundary_scope_filter"]
+        assert scope_filter["deferred"] is True
+        assert scope_filter["out_of_scope_repair_target_files"] == ["requirements.txt"]
+        assert (tmp_path / "requirements.txt").read_text(encoding="utf-8") == "# standard library only\n"
 
     @pytest.mark.asyncio
-    async def test_quality_repair_exception_path_still_runs_deterministic_requirement(self, tmp_path) -> None:
+    async def test_quality_repair_defers_out_of_scope_requirement_before_llm_exception_path(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
         )
@@ -10202,15 +10245,17 @@ class TestQualityRepairMissingTargetContract:
             repair_attempt=3,
         )
 
-        assert summary["repair_target_files"] == ["requirements.txt"]
-        assert summary["write_tool_evidence"] is True
-        assert (tmp_path / "requirements.txt").read_text(encoding="utf-8") == "typing-extensions>=4.0\n"
-        assert any(
-            (item.get("result") or {}).get("source_tool")
-            == "director_quality_repair_deterministic_missing_requirements_write_file"
-            for item in tool_results
-            if isinstance(item, dict)
-        )
+        # Deferral happens before any LLM repair turn: the raising dialogue
+        # stub is never reached and no deterministic fallback write occurs.
+        assert tool_results == []
+        assert summary["stage"] == "task_boundary_repair_targets_deferred"
+        assert summary["success_reason"] == "repair_targets_outside_current_task_target_files"
+        assert summary["repair_target_files"] == []
+        assert summary["write_tool_evidence"] is False
+        scope_filter = summary["task_boundary_scope_filter"]
+        assert scope_filter["deferred"] is True
+        assert scope_filter["out_of_scope_repair_target_files"] == ["requirements.txt"]
+        assert not (tmp_path / "requirements.txt").exists()
 
     def test_repair_targets_missing_python_module_alias_from_unittest_error(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
@@ -10240,7 +10285,7 @@ class TestQualityRepairMissingTargetContract:
         assert missing == ["src/weather.py"]
 
     @pytest.mark.asyncio
-    async def test_quality_repair_deterministically_creates_python_module_alias(self, tmp_path) -> None:
+    async def test_quality_repair_defers_python_module_alias_out_of_scope(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
         )
@@ -10303,14 +10348,18 @@ class TestQualityRepairMissingTargetContract:
             repair_attempt=2,
         )
 
-        assert summary["repair_target_files"] == ["src/weather.py"]
-        assert "from src.models.weather import *" in (tmp_path / "src" / "weather.py").read_text(encoding="utf-8")
-        assert any(
-            (item.get("result") or {}).get("source_tool")
-            == "director_quality_repair_deterministic_python_module_alias_write_file"
-            for item in tool_results
-            if isinstance(item, dict)
-        )
+        # src/weather.py is owned by another task: the deterministic module
+        # alias write is deferred and the alias file is never materialized.
+        assert tool_results == []
+        assert summary["stage"] == "task_boundary_repair_targets_deferred"
+        assert summary["success_reason"] == "repair_targets_outside_current_task_target_files"
+        assert summary["missing_target_files"] == ["src/weather.py"]
+        assert summary["repair_target_files"] == []
+        scope_filter = summary["task_boundary_scope_filter"]
+        assert scope_filter["deferred"] is True
+        assert scope_filter["task_declared_write_targets"] == ["tests/test_weather.py"]
+        assert scope_filter["out_of_scope_repair_target_files"] == ["src/weather.py"]
+        assert not (tmp_path / "src" / "weather.py").exists()
 
     def test_repair_targets_unresolved_import_before_unrelated_declared_targets(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
@@ -12065,7 +12114,7 @@ class TestQualityRepairMissingTargetContract:
         assert "edit only the existing failed target" in adapter.repair_message
 
     @pytest.mark.asyncio
-    async def test_python_runtime_smoke_repair_targets_existing_workspace_file_across_tasks(self, tmp_path) -> None:
+    async def test_python_runtime_smoke_repair_defers_cross_task_workspace_file(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
         )
@@ -12146,14 +12195,23 @@ class TestQualityRepairMissingTargetContract:
             changed_files=["README.md"],
         )
 
+        # src/cli.py belongs to another task: the runtime-smoke diagnostic is
+        # still surfaced as evidence, but the repair target is deferred and no
+        # repair LLM turn is spent, even with an interface-discrepancy retry
+        # authorization in the caller context.
+        assert summary["stage"] == "task_boundary_repair_targets_deferred"
+        assert summary["success_reason"] == "repair_targets_outside_current_task_target_files"
         assert summary["missing_target_files"] == []
         assert summary["runtime_smoke_target_files"] == ["src/cli.py"]
-        assert summary["repair_target_files"] == ["src/cli.py"]
-        assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["src/cli.py"]
-        assert adapter._execution.allowed_tool_names == {"edit_file", "execute_command", "write_file"}
-        assert adapter._execution.allow_patch_fallback is True
-        assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
-        assert "src/cli.py" in adapter.repair_message
+        assert summary["repair_target_files"] == []
+        scope_filter = summary["task_boundary_scope_filter"]
+        assert scope_filter["deferred"] is True
+        assert scope_filter["task_declared_write_targets"] == ["README.md"]
+        assert scope_filter["out_of_scope_repair_target_files"] == ["src/cli.py"]
+        assert adapter.repair_message == ""
+        assert adapter.repair_context == {}
+        assert adapter._execution.allowed_tool_names is None
+        assert adapter._execution.allow_patch_fallback is None
 
     def test_python_runtime_smoke_test_failure_prefers_traceback_source_file(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
@@ -13020,7 +13078,7 @@ class TestQualityRepairMissingTargetContract:
         ]
 
     @pytest.mark.asyncio
-    async def test_python_unittest_quality_repair_context_authorizes_imported_source(self, tmp_path) -> None:
+    async def test_python_unittest_quality_repair_defers_cross_task_imported_source(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
         )
@@ -13103,12 +13161,27 @@ class TestQualityRepairMissingTargetContract:
             changed_files=["tests/test_weather.py"],
         )
 
-        expected_targets = ["src/models/weather.py", "tests/test_weather.py"]
-        assert summary["explicit_quality_target_files"] == expected_targets
-        assert summary["repair_target_files"] == expected_targets
-        assert adapter.repair_context["repair_target_files"] == expected_targets
-        assert adapter.repair_context["director_quality_repair"]["repair_target_files"] == expected_targets
-        assert "src/models/weather.py" in adapter.repair_message
+        # Diagnostic evidence still names both files, but only the task-owned
+        # test file is authorized for writing; the cross-task imported source
+        # module is deferred with scope evidence.
+        assert summary["stage"] == "quality_repair"
+        assert summary["explicit_quality_target_files"] == [
+            "src/models/weather.py",
+            "tests/test_weather.py",
+        ]
+        assert summary["repair_target_files"] == ["tests/test_weather.py"]
+        scope_filter = summary["task_boundary_scope_filter"]
+        assert scope_filter["deferred"] is True
+        assert scope_filter["task_declared_write_targets"] == ["tests/test_weather.py"]
+        assert scope_filter["out_of_scope_repair_target_files"] == ["src/models/weather.py"]
+        assert adapter.repair_context["repair_target_files"] == ["tests/test_weather.py"]
+        quality_repair_context = adapter.repair_context["director_quality_repair"]
+        assert quality_repair_context["repair_target_files"] == ["tests/test_weather.py"]
+        assert quality_repair_context["task_boundary_scope_filter"]["out_of_scope_repair_target_files"] == [
+            "src/models/weather.py"
+        ]
+        assert "tests/test_weather.py" in adapter.repair_message
+        assert "src/models/weather.py" not in adapter.repair_message
         assert adapter._execution.allowed_tool_names == {"edit_file", "execute_command", "write_file"}
         assert adapter._execution.allow_patch_fallback is True
 
