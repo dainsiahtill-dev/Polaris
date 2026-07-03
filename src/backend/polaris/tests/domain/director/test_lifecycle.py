@@ -6,7 +6,7 @@ Covers:
 - DirectorLifecycleManager init and path resolution
 - get_state() with missing/corrupt/old-format/new-format files
 - update() with all parameters, event capping, timestamps
-- Module-level update() and read() compatibility functions
+- Module-level update() and read() API wrappers
 """
 
 from __future__ import annotations
@@ -354,7 +354,7 @@ class TestUpdate:
 
 
 # =============================================================================
-# Module-level compatibility functions
+# Module-level API wrappers
 # =============================================================================
 
 

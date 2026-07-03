@@ -8,15 +8,13 @@
 迁移历史:
      - 2026-03-27: 从 polaris.kernelone.runtime.lifecycle 迁移
 
-迁移指南:
-    # 旧用法 (deprecated)
-    from polaris.kernelone.runtime.lifecycle import update_director_lifecycle
-    result = update_director_lifecycle(path, phase="planning", status="running")
-
-    # 新用法
+当前用法:
     from polaris.domain.director import DirectorLifecycleManager
     manager = DirectorLifecycleManager(workspace=".")
     state = manager.update(phase="planning", status="running")
+
+退役来源:
+    polaris.kernelone.runtime.lifecycle 已不再拥有 Director 生命周期语义。
 """
 
 from __future__ import annotations
