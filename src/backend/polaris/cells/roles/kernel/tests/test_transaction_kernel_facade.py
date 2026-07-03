@@ -121,7 +121,7 @@ def test_build_decision_messages_adds_write_verify_contract_hint() -> None:
     ]
     tool_definitions = [
         {"type": "function", "function": {"name": "read_file"}},
-        {"type": "function", "function": {"name": "precision_edit"}},
+        {"type": "function", "function": {"name": "edit_blocks"}},
         {"type": "function", "function": {"name": "execute_command"}},
     ]
     messages = controller._build_decision_messages(context, tool_definitions)
@@ -129,7 +129,7 @@ def test_build_decision_messages_adds_write_verify_contract_hint() -> None:
     system_messages = [str(item.get("content") or "") for item in messages if item.get("role") == "system"]
     assert any("SYSTEM CONSTRAINT (Execution)" in text for text in system_messages)
     assert any("TASK CONTRACT (single-batch planning)" in text for text in system_messages)
-    assert any("precision_edit" in text for text in system_messages)
+    assert any("edit_blocks" in text for text in system_messages)
     assert any("execute_command" in text for text in system_messages)
     assert any("HARD GATE: if your tool batch contains no write tool call" in text for text in system_messages)
     assert any("Mutation target files detected from user request" in text for text in system_messages)
@@ -185,7 +185,7 @@ def test_build_decision_messages_treats_xinzeng_gengxin_as_mutation() -> None:
     ]
     tool_definitions = [
         {"type": "function", "function": {"name": "read_file"}},
-        {"type": "function", "function": {"name": "precision_edit"}},
+        {"type": "function", "function": {"name": "edit_blocks"}},
         {"type": "function", "function": {"name": "write_file"}},
     ]
 
@@ -969,7 +969,7 @@ async def test_retry_tool_batch_after_contract_violation_appends_retry_contract_
     assert "Allowed write tools" in str(retry_context[0]["content"])
     assert "HARD GATE: never return plain-text-only completion" in str(retry_context[0]["content"])
     assert "MANDATORY:" not in str(retry_context[0]["content"])
-    assert "Do not guess precision_edit/search_replace search text" in str(retry_context[0]["content"])
+    assert "Do not guess exact-match edit search text" in str(retry_context[0]["content"])
     assert retry_context[-1]["role"] == "user"
     execute_context = captured["execute_context"]
     assert execute_context == retry_context
@@ -2363,7 +2363,7 @@ def test_build_decision_messages_includes_required_groups_and_min_calls_hint() -
                     "single_batch": True,
                     "required_tool_groups": [
                         ["read_file", "repo_read_head"],
-                        ["search_replace", "precision_edit"],
+                        ["search_replace", "edit_blocks"],
                     ],
                     "min_tool_calls": 2,
                     "allow_mixed_read_write_batch": True,
@@ -2373,7 +2373,7 @@ def test_build_decision_messages_includes_required_groups_and_min_calls_hint() -
     ]
     tool_definitions = [
         {"type": "function", "function": {"name": "read_file"}},
-        {"type": "function", "function": {"name": "precision_edit"}},
+        {"type": "function", "function": {"name": "edit_blocks"}},
     ]
 
     messages = controller._build_decision_messages(context, tool_definitions)
