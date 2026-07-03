@@ -72,7 +72,7 @@ class TestLlmRouter:
                 "polaris.delivery.http.routers.llm.reconcile_llm_test_index",
             ),
             patch(
-                "polaris.delivery.http.routers.llm.sync_settings_from_llm",
+                "polaris.delivery.http.routers.llm.apply_llm_config_updates_to_settings",
             ),
             patch(
                 "polaris.delivery.http.routers.llm.save_persisted_settings",

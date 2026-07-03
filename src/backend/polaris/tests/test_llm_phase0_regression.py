@@ -3140,7 +3140,7 @@ class TestSettingsPersistence:
 
 class TestPmBackendRuntimeResolution:
     def test_sync_settings_sets_pm_backend_auto_for_generic_provider(self):
-        from polaris.cells.llm.provider_config.internal.settings_sync import sync_settings_from_llm
+        from polaris.cells.llm.provider_config.internal.settings_sync import apply_llm_config_updates_to_settings
 
         settings = MagicMock()
         settings.pm_backend = "codex"
@@ -3151,7 +3151,7 @@ class TestPmBackendRuntimeResolution:
             "roles": {"pm": {"provider_id": "openai_compat", "model": "gpt-4.1"}},
         }
 
-        sync_settings_from_llm(settings, payload)
+        apply_llm_config_updates_to_settings(settings, payload)
 
         assert settings.pm_backend == "auto"
         assert settings.pm_model == "gpt-4.1"

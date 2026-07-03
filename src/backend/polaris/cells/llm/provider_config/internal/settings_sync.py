@@ -2,9 +2,9 @@
 
 Architecture: This module has two functions:
 1. ``compute_llm_config_sync_updates``: Pure function returning a delta dict.
-   Preferred for new code. Does not mutate Settings.
-2. ``sync_settings_from_llm``: Applies updates to a Settings object.
-   Kept for backward compatibility; calls compute_llm_config_sync_updates internally.
+   Does not mutate Settings.
+2. ``apply_llm_config_updates_to_settings``: Applies the computed delta to a
+   Settings object at the application boundary.
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ def compute_llm_config_sync_updates(config: Mapping[str, Any]) -> dict[str, Any]
     return updates
 
 
-def sync_settings_from_llm(settings: Settings, config: Mapping[str, Any]) -> None:
+def apply_llm_config_updates_to_settings(settings: Settings, config: Mapping[str, Any]) -> None:
     """Apply relevant LLM config fields back onto process settings.
 
     This keeps runtime settings aligned with the canonical role mapping config
@@ -96,4 +96,4 @@ def sync_settings_from_llm(settings: Settings, config: Mapping[str, Any]) -> Non
         setattr(settings, key, value)
 
 
-__all__ = ["compute_llm_config_sync_updates", "sync_settings_from_llm"]
+__all__ = ["apply_llm_config_updates_to_settings", "compute_llm_config_sync_updates"]

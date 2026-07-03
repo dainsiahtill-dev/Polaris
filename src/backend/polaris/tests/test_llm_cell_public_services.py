@@ -165,10 +165,10 @@ async def test_provider_config_service_facade(monkeypatch: pytest.MonkeyPatch) -
     )
     captured: dict[str, object] = {}
 
-    def _sync(_settings: object, payload: dict[str, object]) -> None:
+    def _apply(_settings: object, payload: dict[str, object]) -> None:
         captured["payload"] = payload
 
-    monkeypatch.setattr(provider_config_public, "sync_settings_from_llm", _sync)
+    monkeypatch.setattr(provider_config_public, "apply_llm_config_updates_to_settings", _apply)
     service = provider_config_public.LlmProviderConfigService(settings=object())
 
     provider_result = await service.resolve_provider_context(

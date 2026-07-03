@@ -1,14 +1,15 @@
 """Tests for llm_config_sync utilities.
 
-Verifies that compute_llm_config_sync_updates returns correct delta dicts
-and that the deprecated sync_settings_from_llm still works with a mock object.
+Verifies that compute_llm_config_sync_updates returns correct delta dicts and
+that apply_llm_config_updates_to_settings mutates a settings object at the
+application boundary.
 """
 
 from __future__ import annotations
 
 from polaris.cells.llm.provider_config.internal.settings_sync import (
+    apply_llm_config_updates_to_settings,
     compute_llm_config_sync_updates,
-    sync_settings_from_llm,
 )
 
 
@@ -139,8 +140,8 @@ class TestComputeLlMConfigSyncUpdates:
         assert updates == {}
 
 
-class TestSyncSettingsFromLlM:
-    """Tests for the backward-compatible sync_settings_from_llm function."""
+class TestApplyLlmConfigUpdatesToSettings:
+    """Tests for applying config update deltas to settings objects."""
 
     def test_sets_attributes_on_mutable_object(self):
         class MockSettings:
@@ -152,7 +153,7 @@ class TestSyncSettingsFromLlM:
                 "pm": {"model": "gpt-5"},
             },
         }
-        sync_settings_from_llm(settings, config)
+        apply_llm_config_updates_to_settings(settings, config)
         assert settings.pm_backend == "auto"
         assert settings.pm_model == "gpt-5"
         assert settings.model == "gpt-5"
@@ -164,4 +165,4 @@ class TestSyncSettingsFromLlM:
         settings = MockSettings()
         config = {"roles": "not_a_dict"}
         # Should not raise
-        sync_settings_from_llm(settings, config)
+        apply_llm_config_updates_to_settings(settings, config)

@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from polaris.cells.llm.evaluation.public.service import reconcile_llm_test_index
-from polaris.cells.llm.provider_config.public.service import sync_settings_from_llm
+from polaris.cells.llm.provider_config.public.service import apply_llm_config_updates_to_settings
 from polaris.cells.llm.provider_runtime.public.service import get_provider_manager
 from polaris.cells.runtime.projection.public.service import build_llm_status
 from polaris.cells.storage.layout.public.service import save_persisted_settings
@@ -156,7 +156,7 @@ def _save_llm_config_payload(request: Request, payload: dict[str, Any]) -> dict[
             message=str(exc),
         ) from exc
     reconcile_llm_test_index(state.settings, config)
-    sync_settings_from_llm(state.settings, config)
+    apply_llm_config_updates_to_settings(state.settings, config)
     save_persisted_settings(state.settings)
     return llm_config.redact_llm_config(config)
 

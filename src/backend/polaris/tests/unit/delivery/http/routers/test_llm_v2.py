@@ -192,7 +192,7 @@ async def test_save_llm_config_prefers_active_workspace_path(
             "polaris.delivery.http.routers.llm.reconcile_llm_test_index",
         ) as mock_reconcile,
         patch(
-            "polaris.delivery.http.routers.llm.sync_settings_from_llm",
+            "polaris.delivery.http.routers.llm.apply_llm_config_updates_to_settings",
         ) as mock_sync,
         patch(
             "polaris.delivery.http.routers.llm.save_persisted_settings",

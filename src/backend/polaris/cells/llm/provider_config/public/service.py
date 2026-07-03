@@ -10,7 +10,9 @@ from polaris.cells.llm.provider_config.internal.provider_context import (
     ProviderRequestContext,
     resolve_provider_request_context,
 )
-from polaris.cells.llm.provider_config.internal.settings_sync import sync_settings_from_llm
+from polaris.cells.llm.provider_config.internal.settings_sync import (
+    apply_llm_config_updates_to_settings,
+)
 from polaris.cells.llm.provider_config.internal.test_context import (
     LlmTestExecutionContext,
     resolve_llm_test_execution_context,
@@ -126,7 +128,7 @@ class LlmProviderConfigService(IProviderConfigService):
         return resolve_test_execution_context_contract(self._settings, command)
 
     def sync_settings(self, command: SyncSettingsFromLlmCommandV1) -> None:
-        sync_settings_from_llm(self._settings, dict(command.llm_config))
+        apply_llm_config_updates_to_settings(self._settings, dict(command.llm_config))
 
 
 __all__ = [
@@ -142,9 +144,9 @@ __all__ = [
     "ResolveProviderContextCommandV1",
     "RoleNotConfiguredError",
     "SyncSettingsFromLlmCommandV1",
+    "apply_llm_config_updates_to_settings",
     "resolve_llm_test_execution_context",
     "resolve_provider_context_contract",
     "resolve_provider_request_context",
     "resolve_test_execution_context_contract",
-    "sync_settings_from_llm",
 ]
