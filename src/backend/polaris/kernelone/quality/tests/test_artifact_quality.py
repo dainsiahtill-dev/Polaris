@@ -94,6 +94,27 @@ def test_artifact_quality_issue_projection_preserves_typed_issue_payload() -> No
     assert issues == (issue,)
 
 
+def test_artifact_quality_issue_projection_preserves_extra_typed_fields() -> None:
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "code": "unresolved_import_symbol",
+                "message": "WeatherKind is imported but not exported",
+                "path": "src/engine/forecast.py",
+                "symbol": "WeatherKind",
+                "importer_path": "src/engine/forecast.py",
+                "owner_path": "src/models/weather.py",
+                "details": {"available_exports": ["WeatherReport"]},
+            },
+        )
+    )
+
+    assert issues[0]["metadata"]["symbol"] == "WeatherKind"
+    assert issues[0]["metadata"]["importer_path"] == "src/engine/forecast.py"
+    assert issues[0]["metadata"]["owner_path"] == "src/models/weather.py"
+    assert issues[0]["metadata"]["details"] == {"available_exports": ["WeatherReport"]}
+
+
 def test_artifact_quality_issue_projection_extracts_compiler_path() -> None:
     error = "src/main.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'."
 

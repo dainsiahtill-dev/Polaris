@@ -685,6 +685,11 @@ def _artifact_quality_issue_from_mapping(payload: Mapping[str, Any]) -> Artifact
         return None
     metadata_raw = payload.get("metadata")
     metadata = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
+    for key, value in payload.items():
+        if key in {"code", "message", "path", "severity", "source", "line", "column", "metadata"}:
+            continue
+        if key not in metadata:
+            metadata[str(key)] = value
     path_raw = payload.get("path")
     path = str(path_raw).strip().replace("\\", "/") if path_raw is not None else None
     return ArtifactQualityIssue(
