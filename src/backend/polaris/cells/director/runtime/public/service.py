@@ -1011,12 +1011,29 @@ def normalize_director_repair_issue_diagnostics(
         message = str(issue.get("message") or "").strip()
         if not code or not message:
             continue
-        path = str(issue.get("path") or "").strip() or None
         severity = str(issue.get("severity") or "error").strip() or "error"
         source = str(issue.get("source") or "artifact_quality").strip() or "artifact_quality"
         metadata = issue.get("metadata")
         metadata_payload = dict(metadata) if isinstance(metadata, Mapping) else {}
-        for key in ("raw", "line", "column", "span_start", "span_end", "symbol", "symbol_kind", "confidence"):
+        path = (
+            str(issue.get("path") or "").strip()
+            or str(issue.get("importer_path") or "").strip()
+            or str(metadata_payload.get("importer_path") or "").strip()
+            or None
+        )
+        for key in (
+            "raw",
+            "line",
+            "column",
+            "span_start",
+            "span_end",
+            "symbol",
+            "symbol_kind",
+            "module",
+            "specifier",
+            "importer_path",
+            "confidence",
+        ):
             if key in issue and key not in metadata_payload:
                 metadata_payload[key] = issue[key]
         diagnostics.append(

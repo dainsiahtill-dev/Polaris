@@ -225,6 +225,47 @@ def test_public_repair_diagnostics_preserve_kernelone_issue_locations() -> None:
     )
 
 
+def test_public_repair_diagnostics_preserve_import_issue_metadata() -> None:
+    issues = artifact_quality_issues_from_errors(
+        (
+            "Artifact quality scan failed: unresolved import symbol 'WeatherKind' "
+            "from 'src.models.weather' in src/engine/forecast.py",
+        )
+    )
+
+    diagnostics = normalize_director_repair_issue_diagnostics(issues)
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].code == "unresolved_import_symbol"
+    assert diagnostics[0].path == "src/engine/forecast.py"
+    assert diagnostics[0].metadata["symbol"] == "WeatherKind"
+    assert diagnostics[0].metadata["module"] == "src.models.weather"
+    assert diagnostics[0].metadata["importer_path"] == "src/engine/forecast.py"
+
+
+def test_public_repair_diagnostics_accept_top_level_import_issue_fields() -> None:
+    diagnostics = normalize_director_repair_issue_diagnostics(
+        (
+            {
+                "source": "artifact_quality",
+                "code": "unresolved_relative_import",
+                "message": "unresolved relative import './engine/runner' in src/index.ts",
+                "metadata": {"raw": "raw diagnostic"},
+                "specifier": "./engine/runner",
+                "importer_path": "src/index.ts",
+            },
+        )
+    )
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].path == "src/index.ts"
+    assert diagnostics[0].metadata == {
+        "raw": "raw diagnostic",
+        "specifier": "./engine/runner",
+        "importer_path": "src/index.ts",
+    }
+
+
 def test_public_repair_planning_projects_typed_diagnostics() -> None:
     diagnostic = RepairDiagnosticV1(
         source="artifact_quality",
