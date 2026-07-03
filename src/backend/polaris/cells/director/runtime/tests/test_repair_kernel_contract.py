@@ -460,6 +460,7 @@ def test_public_repair_planning_preserves_typed_planner_route(monkeypatch: pytes
     result = plan_director_repair(
         PlanDirectorRepairCommandV1(
             source_tool=source_tool,
+            artifact_quality_errors=("legacy string should not override typed diagnostics",),
             diagnostics=(
                 RepairDiagnosticV1(
                     source="artifact_quality",

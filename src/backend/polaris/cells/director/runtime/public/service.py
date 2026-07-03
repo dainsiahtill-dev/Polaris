@@ -42,6 +42,7 @@ from polaris.cells.director.runtime.internal.repair_kernel.runtime_dispatch impo
     plan_runtime_repair,
     run_runtime_repair,
     run_runtime_repair_convergence,
+    runtime_repair_binding_has_typed_planner,
     runtime_repair_bindings,
     runtime_repair_source_tools,
 )
@@ -2302,10 +2303,11 @@ def plan_director_repair(command: PlanDirectorRepairCommandV1) -> DirectorRepair
 
     public_advisor_notes = tuple(command.advisor_notes or ())
     public_diagnostics = _public_repair_diagnostics_from_command(command)
+    runtime_artifact_quality_errors = _runtime_artifact_quality_errors_from_command(command, public_diagnostics)
     planning = plan_runtime_repair(
         source_tool=command.source_tool,
         base_files=command.base_files,
-        artifact_quality_errors=_artifact_quality_errors_from_command(command),
+        artifact_quality_errors=runtime_artifact_quality_errors,
         advisor_notes=_to_internal_advisor_notes(public_advisor_notes),
         mode=command.mode,
         repair_diagnostics=tuple(_to_internal_repair_diagnostic(item) for item in public_diagnostics),
@@ -2329,11 +2331,12 @@ def run_director_repair(
 
     public_advisor_notes = tuple(command.advisor_notes or ())
     public_diagnostics = _public_repair_diagnostics_from_command(command)
+    runtime_artifact_quality_errors = _runtime_artifact_quality_errors_from_command(command, public_diagnostics)
     internal_run = run_runtime_repair(
         source_tool=command.source_tool,
         workspace=command.workspace,
         base_files=command.base_files,
-        artifact_quality_errors=_artifact_quality_errors_from_command(command),
+        artifact_quality_errors=runtime_artifact_quality_errors,
         writer=writer,
         editor=editor,
         deleter=deleter,
@@ -3322,6 +3325,15 @@ def _artifact_quality_errors_from_command(
     command: PlanDirectorRepairCommandV1 | RunDirectorRepairCommandV1,
 ) -> tuple[str, ...]:
     return tuple(str(item) for item in command.artifact_quality_errors if str(item or "").strip())
+
+
+def _runtime_artifact_quality_errors_from_command(
+    command: PlanDirectorRepairCommandV1 | RunDirectorRepairCommandV1,
+    diagnostics: Sequence[RepairDiagnosticV1],
+) -> tuple[str, ...]:
+    if command.diagnostics and diagnostics and runtime_repair_binding_has_typed_planner(command.source_tool):
+        return ()
+    return _artifact_quality_errors_from_command(command)
 
 
 def _public_receipt_to_internal(receipt: RepairReceiptV1) -> RepairReceipt:

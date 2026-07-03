@@ -1023,6 +1023,13 @@ def runtime_repair_bindings() -> tuple[dict[str, str], ...]:
     return tuple(_RUNTIME_REPAIR_BINDINGS[source_tool].to_dict() for source_tool in sorted(_RUNTIME_REPAIR_BINDINGS))
 
 
+def runtime_repair_binding_has_typed_planner(source_tool: str) -> bool:
+    """Return whether *source_tool* has a typed diagnostic planner."""
+
+    binding = _RUNTIME_REPAIR_BINDINGS.get(_normalize_source_tool(source_tool))
+    return binding is not None and binding.typed_planner is not None
+
+
 def runtime_repair_source_tools() -> tuple[str, ...]:
     """Return source tools with executable runtime bindings."""
 
