@@ -94,7 +94,7 @@ print('URL:', ctx.backend_url, '| Source:', ctx.source)
 
 **修复步骤**：
 1. 用探针确认角色 LLM 可用：`python -m tests.agent_stress.probe`
-2. 检查 Polaris 的 Provider 配置：`GET /llm/status`
+2. 检查 Polaris 的 Provider 配置：`GET /v2/llm/status`
 3. 验证 API Key 是否过期
 
 ### LLM_TIMEOUT
@@ -177,7 +177,7 @@ curl -H "Authorization: Bearer <TOKEN>" <BASE>/v2/factory/runs/<run_id>/events
 curl -H "Authorization: Bearer <TOKEN>" <BASE>/v2/director/tasks
 
 # 查询 LLM/Provider 状态
-curl -H "Authorization: Bearer <TOKEN>" <BASE>/llm/status
+curl -H "Authorization: Bearer <TOKEN>" <BASE>/v2/llm/status
 
 # 查询角色 LLM 可用性
 curl -H "Authorization: Bearer <TOKEN>" <BASE>/v2/role/director/chat/status

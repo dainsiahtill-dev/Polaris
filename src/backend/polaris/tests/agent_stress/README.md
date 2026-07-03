@@ -254,7 +254,7 @@ tests/agent_stress/
 | `preflight.py` | `GET /health` | backend 可达性检查（无鉴权） |
 | `preflight.py` | `GET /settings` | settings 可用性 + 鉴权验证 |
 | `probe.py` | `GET /v2/role/{role}/chat/status` | 角色 LLM 可用性探针 |
-| `probe.py` | `GET /llm/status` | Provider 全局健康检查 |
+| `probe.py` | `GET /v2/llm/status` | Provider 全局健康检查 |
 | `engine.py` | `POST /v2/factory/runs` | 创建端到端 Factory 运行 |
 | `engine.py` | `GET /v2/factory/runs/{id}` | 轮询 Factory 运行状态 |
 | `engine.py` | `GET /v2/factory/runs/{id}/events` | 获取运行时事件 |

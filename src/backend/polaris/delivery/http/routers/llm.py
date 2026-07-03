@@ -128,16 +128,14 @@ def _build_role_runtime_status(runtime_dir: str, role_id: str) -> dict[str, Any]
     return status
 
 
-@router.get("/llm/config", dependencies=[Depends(require_auth)], response_model=LLMConfigResponse)
-def get_llm_config(request: Request) -> dict[str, Any]:
+def _get_llm_config_payload(request: Request) -> dict[str, Any]:
     state = get_state(request)
     workspace, cache_root = _workspace_and_cache_root(state.settings)
     config = llm_config.load_llm_config(workspace, cache_root, settings=state.settings)
     return llm_config.redact_llm_config(config)
 
 
-@router.post("/llm/config", dependencies=[Depends(require_auth)], response_model=LLMConfigResponse)
-def save_llm_config(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+def _save_llm_config_payload(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
     state = get_state(request)
     workspace, cache_root = _workspace_and_cache_root(state.settings)
     config_payload = payload.get("config") if isinstance(payload, dict) and "config" in payload else payload
@@ -163,8 +161,7 @@ def save_llm_config(request: Request, payload: dict[str, Any]) -> dict[str, Any]
     return llm_config.redact_llm_config(config)
 
 
-@router.post("/llm/config/migrate", dependencies=[Depends(require_auth)], response_model=LLMMigrateConfigResponse)
-def migrate_config(payload: dict[str, Any]) -> dict[str, Any]:
+def _migrate_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         return _provider_manager.migrate_legacy_config(payload)
     except (RuntimeError, ValueError) as exc:  # pragma: no cover - defensive runtime path
@@ -172,14 +169,12 @@ def migrate_config(payload: dict[str, Any]) -> dict[str, Any]:
         raise StructuredHTTPException(status_code=500, code="INTERNAL_ERROR", message="internal error") from exc
 
 
-@router.get("/llm/status", dependencies=[Depends(require_auth)], response_model=LLMStatusResponse)
-def llm_status(request: Request, workspace: str = "") -> dict[str, Any]:
+def _llm_status_payload(request: Request, workspace: str = "") -> dict[str, Any]:
     state = get_state(request)
     return build_llm_status(settings_with_workspace_override(state.settings, workspace))
 
 
-@router.get("/llm/runtime-status", dependencies=[Depends(require_auth)], response_model=LLMRuntimeStatusResponse)
-def get_runtime_status(request: Request) -> dict[str, Any]:
+def _runtime_status_payload(request: Request) -> dict[str, Any]:
     state = get_state(request)
     workspace, cache_root = _workspace_and_cache_root(state.settings)
     runtime_dir = resolve_artifact_path(workspace, cache_root, "runtime")
@@ -194,10 +189,7 @@ def get_runtime_status(request: Request) -> dict[str, Any]:
     }
 
 
-@router.get(
-    "/llm/runtime-status/{role_id}", dependencies=[Depends(require_auth)], response_model=LLMRoleRuntimeStatusResponse
-)
-def get_role_runtime_status(request: Request, role_id: str) -> dict[str, Any]:
+def _role_runtime_status_payload(request: Request, role_id: str) -> dict[str, Any]:
     normalized_role_id = _normalize_runtime_role_id(role_id)
     if normalized_role_id not in _RUNTIME_ROLE_IDS:
         raise StructuredHTTPException(status_code=400, code="INVALID_ROLE_ID", message="invalid role_id")
@@ -214,31 +206,31 @@ def get_role_runtime_status(request: Request, role_id: str) -> dict[str, Any]:
 @router.get("/v2/llm/config", dependencies=[Depends(require_auth)], response_model=LLMConfigResponse)
 def get_llm_config_v2(request: Request) -> dict[str, Any]:
     """Get the current LLM configuration (redacted)."""
-    return get_llm_config(request)
+    return _get_llm_config_payload(request)
 
 
 @router.post("/v2/llm/config", dependencies=[Depends(require_auth)], response_model=LLMConfigResponse)
 def save_llm_config_v2(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
     """Save and reconcile LLM configuration."""
-    return save_llm_config(request, payload)
+    return _save_llm_config_payload(request, payload)
 
 
 @router.post("/v2/llm/config/migrate", dependencies=[Depends(require_auth)], response_model=LLMMigrateConfigResponse)
 def migrate_config_v2(payload: dict[str, Any]) -> dict[str, Any]:
     """Migrate legacy LLM configuration to the current schema."""
-    return migrate_config(payload)
+    return _migrate_config_payload(payload)
 
 
 @router.get("/v2/llm/status", dependencies=[Depends(require_auth)], response_model=LLMStatusResponse)
 def llm_status_v2(request: Request, workspace: str = "") -> dict[str, Any]:
     """Get overall LLM system status."""
-    return llm_status(request, workspace=workspace)
+    return _llm_status_payload(request, workspace=workspace)
 
 
 @router.get("/v2/llm/runtime-status", dependencies=[Depends(require_auth)], response_model=LLMRuntimeStatusResponse)
 def get_runtime_status_v2(request: Request) -> dict[str, Any]:
     """Get runtime status for all LLM roles."""
-    return get_runtime_status(request)
+    return _runtime_status_payload(request)
 
 
 @router.get(
@@ -248,7 +240,7 @@ def get_runtime_status_v2(request: Request) -> dict[str, Any]:
 )
 def get_role_runtime_status_v2(request: Request, role_id: str) -> dict[str, Any]:
     """Get runtime status for a single LLM role."""
-    return get_role_runtime_status(request, role_id)
+    return _role_runtime_status_payload(request, role_id)
 
 
 @router.get("/v2/llm/health", dependencies=[Depends(require_auth)], response_model=LLMHealthResponse)
@@ -358,13 +350,13 @@ def llm_metrics_v2(request: Request, window_seconds: int = 300) -> dict[str, Any
 
 
 __all__ = [
-    "get_llm_config",
-    "get_role_runtime_status",
-    "get_runtime_status",
+    "get_llm_config_v2",
+    "get_role_runtime_status_v2",
+    "get_runtime_status_v2",
     "llm_health_v2",
     "llm_metrics_v2",
-    "llm_status",
-    "migrate_config",
+    "llm_status_v2",
+    "migrate_config_v2",
     "router",
-    "save_llm_config",
+    "save_llm_config_v2",
 ]

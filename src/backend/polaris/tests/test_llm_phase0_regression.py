@@ -86,7 +86,7 @@ class TestLLMStatusLastUpdated:
     """Test that LLMStatus response includes last_updated field."""
 
     def test_status_response_has_last_updated_field(self):
-        """Verify /llm/status endpoint returns last_updated."""
+        """Verify /v2/llm/status payload includes last_updated."""
         from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
 
         mock_settings = MagicMock()

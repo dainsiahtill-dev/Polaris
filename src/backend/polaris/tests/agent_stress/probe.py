@@ -465,7 +465,7 @@ class RoleAvailabilityProbe:
     async def probe_provider_health(self) -> dict[str, Any]:
         """探测 Provider 层健康状态"""
         try:
-            url = f"{self.backend_url}/llm/status"
+            url = f"{self.backend_url}/v2/llm/status"
             response = await self.client.get(url)
 
             if response.status_code == 200:

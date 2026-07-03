@@ -28,7 +28,7 @@ class TestLlmRouter:
     """Contract tests for the LLM router."""
 
     def test_get_llm_config_happy_path(self) -> None:
-        """GET /llm/config returns 200 with redacted config."""
+        """GET /v2/llm/config returns 200 with redacted config."""
         client = _build_client()
         mock_config: dict[str, Any] = {"providers": {}, "roles": {}}
         with (
@@ -45,14 +45,14 @@ class TestLlmRouter:
                 return_value={"providers": {}, "roles": {}, "redacted": True},
             ),
         ):
-            response = client.get("/llm/config")
+            response = client.get("/v2/llm/config")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
         assert payload["redacted"] is True
 
     def test_save_llm_config_happy_path(self) -> None:
-        """POST /llm/config returns 200 with saved config."""
+        """POST /v2/llm/config returns 200 with saved config."""
         client = _build_client()
         mock_config: dict[str, Any] = {"providers": {}, "roles": {}}
         with (
@@ -78,25 +78,25 @@ class TestLlmRouter:
                 "polaris.delivery.http.routers.llm.save_persisted_settings",
             ),
         ):
-            response = client.post("/llm/config", json={"config": {"provider": "test"}})
+            response = client.post("/v2/llm/config", json={"config": {"provider": "test"}})
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
         assert payload["saved"] is True
 
     def test_save_llm_config_invalid_payload(self) -> None:
-        """POST /llm/config with non-dict payload returns 400."""
+        """POST /v2/llm/config with non-dict payload returns 400."""
         client = _build_client()
         with patch(
             "polaris.delivery.http.routers.llm.build_cache_root",
             return_value="/tmp/cache",
         ):
-            response = client.post("/llm/config", json={"config": "not-a-dict"})
+            response = client.post("/v2/llm/config", json={"config": "not-a-dict"})
         assert response.status_code == 400
         assert response.json()["error"]["message"] == "invalid config payload"
 
     def test_save_llm_config_validation_error_returns_400(self) -> None:
-        """POST /llm/config exposes validation failures as client errors."""
+        """POST /v2/llm/config exposes validation failures as client errors."""
         client = _build_client()
         with (
             patch(
@@ -108,7 +108,7 @@ class TestLlmRouter:
                 side_effect=ValueError("Invalid LLM configuration: provider timeout too high"),
             ),
         ):
-            response = client.post("/llm/config", json={"providers": {}, "roles": {}})
+            response = client.post("/v2/llm/config", json={"providers": {}, "roles": {}})
 
         assert response.status_code == 400
         payload: dict[str, Any] = response.json()
@@ -116,7 +116,7 @@ class TestLlmRouter:
         assert "provider timeout too high" in payload["error"]["message"]
 
     def test_migrate_config_happy_path(self) -> None:
-        """POST /llm/config/migrate returns 200 with migrated config."""
+        """POST /v2/llm/config/migrate returns 200 with migrated config."""
         client = _build_client()
         mock_manager = MagicMock()
         mock_manager.migrate_legacy_config.return_value = {"migrated": True}
@@ -124,7 +124,7 @@ class TestLlmRouter:
             "polaris.delivery.http.routers.llm._provider_manager",
             mock_manager,
         ):
-            response = client.post("/llm/config/migrate", json={"old": "config"})
+            response = client.post("/v2/llm/config/migrate", json={"old": "config"})
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
@@ -132,7 +132,7 @@ class TestLlmRouter:
         mock_manager.migrate_legacy_config.assert_called_once_with({"old": "config"})
 
     def test_migrate_config_runtime_error(self) -> None:
-        """POST /llm/config/migrate handles runtime error with 500."""
+        """POST /v2/llm/config/migrate handles runtime error with 500."""
         client = _build_client()
         mock_manager = MagicMock()
         mock_manager.migrate_legacy_config.side_effect = ValueError("bad config")
@@ -140,26 +140,26 @@ class TestLlmRouter:
             "polaris.delivery.http.routers.llm._provider_manager",
             mock_manager,
         ):
-            response = client.post("/llm/config/migrate", json={})
+            response = client.post("/v2/llm/config/migrate", json={})
 
         assert response.status_code == 500
         assert response.json()["error"]["message"] == "internal error"
 
     def test_llm_status_happy_path(self) -> None:
-        """GET /llm/status returns 200 with status payload."""
+        """GET /v2/llm/status returns 200 with status payload."""
         client = _build_client()
         with patch(
             "polaris.delivery.http.routers.llm.build_llm_status",
             return_value={"ready": True},
         ):
-            response = client.get("/llm/status")
+            response = client.get("/v2/llm/status")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
         assert payload["ready"] is True
 
     def test_get_runtime_status_happy_path(self) -> None:
-        """GET /llm/runtime-status returns 200 with roles status."""
+        """GET /v2/llm/runtime-status returns 200 with roles status."""
         client = _build_client()
         with (
             patch(
@@ -179,7 +179,7 @@ class TestLlmRouter:
                 return_value=None,
             ),
         ):
-            response = client.get("/llm/runtime-status")
+            response = client.get("/v2/llm/runtime-status")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
@@ -189,7 +189,7 @@ class TestLlmRouter:
             assert role in payload["roles"]
 
     def test_get_role_runtime_status_happy_path(self) -> None:
-        """GET /llm/runtime-status/{role_id} returns 200 for valid role."""
+        """GET /v2/llm/runtime-status/{role_id} returns 200 for valid role."""
         client = _build_client()
         with (
             patch(
@@ -209,7 +209,7 @@ class TestLlmRouter:
                 return_value=None,
             ),
         ):
-            response = client.get("/llm/runtime-status/director")
+            response = client.get("/v2/llm/runtime-status/director")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
@@ -217,7 +217,7 @@ class TestLlmRouter:
         assert "running" in payload
 
     def test_get_role_runtime_status_chief_engineer(self) -> None:
-        """GET /llm/runtime-status/{role_id} returns 200 for Chief Engineer."""
+        """GET /v2/llm/runtime-status/{role_id} returns 200 for Chief Engineer."""
         client = _build_client()
         with (
             patch(
@@ -237,21 +237,21 @@ class TestLlmRouter:
                 return_value=None,
             ),
         ):
-            response = client.get("/llm/runtime-status/chief_engineer")
+            response = client.get("/v2/llm/runtime-status/chief_engineer")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
         assert payload["roleId"] == "chief_engineer"
 
     def test_get_role_runtime_status_invalid_role(self) -> None:
-        """GET /llm/runtime-status/{role_id} returns 400 for invalid role."""
+        """GET /v2/llm/runtime-status/{role_id} returns 400 for invalid role."""
         client = _build_client()
-        response = client.get("/llm/runtime-status/invalid_role")
+        response = client.get("/v2/llm/runtime-status/invalid_role")
         assert response.status_code == 400
         assert response.json()["error"]["message"] == "invalid role_id"
 
     def test_get_role_runtime_status_docs_alias(self) -> None:
-        """GET /llm/runtime-status/docs maps to architect role."""
+        """GET /v2/llm/runtime-status/docs maps to architect role."""
         client = _build_client()
         with (
             patch(
@@ -271,8 +271,23 @@ class TestLlmRouter:
                 return_value=None,
             ),
         ):
-            response = client.get("/llm/runtime-status/docs")
+            response = client.get("/v2/llm/runtime-status/docs")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
         assert payload["roleId"] == "architect"
+
+    def test_retired_non_v2_llm_aliases_are_not_registered(self) -> None:
+        """Non-v2 LLM aliases are retired; callers must use /v2/llm/*."""
+        client = _build_client()
+
+        responses = (
+            client.get("/llm/config"),
+            client.post("/llm/config", json={}),
+            client.post("/llm/config/migrate", json={}),
+            client.get("/llm/status"),
+            client.get("/llm/runtime-status"),
+            client.get("/llm/runtime-status/director"),
+        )
+
+        assert all(response.status_code == 404 for response in responses)
