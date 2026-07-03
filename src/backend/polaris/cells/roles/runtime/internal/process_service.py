@@ -463,13 +463,13 @@ def terminate_external_loop_pm_processes(workspace: str, exclude_pid: int | None
     return _kernel_terminate_external_loop_pm_processes(workspace, exclude_pid=exclude_pid)
 
 
-def clear_stop_flag(workspace: str, cache_root: str) -> None:
-    _kernel_clear_stop_flag(workspace, cache_root=cache_root)
+def clear_stop_flag(workspace: str) -> None:
+    _kernel_clear_stop_flag(workspace)
 
 
-def director_stop_flag_path(workspace: str, cache_root: str) -> str:
-    return _kernel_director_stop_flag_path(workspace, cache_root=cache_root)
+def director_stop_flag_path(workspace: str) -> str:
+    return _kernel_director_stop_flag_path(workspace)
 
 
-def clear_director_stop_flag(workspace: str, cache_root: str) -> None:
-    _kernel_clear_director_stop_flag(workspace, cache_root=cache_root)
+def clear_director_stop_flag(workspace: str) -> None:
+    _kernel_clear_director_stop_flag(workspace)

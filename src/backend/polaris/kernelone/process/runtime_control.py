@@ -219,24 +219,18 @@ def terminate_external_loop_pm_processes(workspace: str, exclude_pid: int | None
     return terminated
 
 
-def clear_stop_flag(workspace: str, cache_root: str | None = None) -> None:
-    """Compatibility wrapper for PM stop-flag cleanup.
-
-    ``cache_root`` is accepted for legacy call-site compatibility.
-    """
-    del cache_root
+def clear_stop_flag(workspace: str) -> None:
+    """Clear the PM role stop-signal flag for a workspace."""
     _clear_stop_flag(workspace)
 
 
-def director_stop_flag_path(workspace: str, cache_root: str | None = None) -> str:
-    """Compatibility wrapper for director stop-flag path lookup."""
-    del cache_root
+def director_stop_flag_path(workspace: str) -> str:
+    """Return the Director role stop-signal flag path for a workspace."""
     return _director_stop_flag_path(workspace)
 
 
-def clear_director_stop_flag(workspace: str, cache_root: str | None = None) -> None:
-    """Compatibility wrapper for director stop-flag cleanup."""
-    del cache_root
+def clear_director_stop_flag(workspace: str) -> None:
+    """Clear the Director role stop-signal flag for a workspace."""
     _clear_director_stop_flag(workspace)
 
 

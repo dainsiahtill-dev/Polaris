@@ -503,8 +503,8 @@ async def _runtime_reset_tasks_core(request: Request) -> dict[str, Any]:
             director_external_pid = pid
             director_external_terminated = terminate_pid(pid)
 
-    clear_stop_flag(workspace, cache_root)
-    clear_director_stop_flag(workspace, cache_root)
+    clear_stop_flag(workspace)
+    clear_director_stop_flag(workspace)
 
     if preserve_planning_contracts:
         state_reset_result = {
