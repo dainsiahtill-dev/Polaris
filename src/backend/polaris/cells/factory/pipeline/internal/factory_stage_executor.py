@@ -39,6 +39,7 @@ from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.fs.text_ops import write_json_atomic
+from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
 from . import factory_stage_helpers as helpers
 from .factory_artifact_store import ArtifactStore
@@ -74,6 +75,7 @@ _LANGUAGE_SOURCE_EXTENSIONS: dict[str, frozenset[str]] = {
     "kotlin": frozenset({".kt", ".kts"}),
     "scala": frozenset({".scala"}),
 }
+_WORKSPACE_QUALITY_MUTATION_TOKENS = WRITE_TOOLS | frozenset({"create_file", "text_replace"})
 # Extensions that are language-agnostic and should not trigger a mismatch.
 _LANGUAGE_NEUTRAL_EXTENSIONS: frozenset[str] = frozenset(
     {
@@ -5781,16 +5783,7 @@ class OrchestrationStageExecutor:
             or ""
         ).strip()
         operation = str(result.get("operation") or "").strip()
-        mutation_tokens = {
-            "append_to_file",
-            "create_file",
-            "edit_file",
-            "precision_edit",
-            "repo_apply_diff",
-            "text_replace",
-            "write_file",
-        }
-        if tool_name in mutation_tokens or operation in mutation_tokens:
+        if tool_name in _WORKSPACE_QUALITY_MUTATION_TOKENS or operation in _WORKSPACE_QUALITY_MUTATION_TOKENS:
             return True
         before_hash = str(result.get("before_sha256") or "").strip()
         after_hash = str(result.get("after_sha256") or "").strip()
