@@ -21,7 +21,7 @@ from polaris.cells.director.runtime.public import (
 )
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.quality import step_verify as _step_verify_module
-from polaris.kernelone.quality.artifact_quality import scan_workspace_artifact_quality
+from polaris.kernelone.quality.artifact_quality import scan_workspace_artifact_quality_evidence
 from polaris.kernelone.quality.step_verify import run_step_verify
 from polaris.kernelone.storage.layout import resolve_storage_roots
 
@@ -232,7 +232,7 @@ def build_artifact_quality_convergence_verifier(
             workspace_path=workspace_path,
             verifier_factory="artifact_quality",
             command_kind="in_process_artifact_quality_scan",
-            execution_function="polaris.kernelone.quality.artifact_quality.scan_workspace_artifact_quality",
+            execution_function="polaris.kernelone.quality.artifact_quality.scan_workspace_artifact_quality_evidence",
         )
         metadata["relative_paths"] = list(normalized_paths) if normalized_paths is not None else None
         metadata["dropped_unsafe_relative_paths"] = list(dropped_paths)
@@ -248,6 +248,7 @@ def build_artifact_quality_convergence_verifier(
         metadata["environment_prep_failed"] = bool(environment_prep_residuals)
 
         residuals: tuple[str, ...]
+        residual_issues: tuple[dict[str, Any], ...] = ()
         if environment_prep_residuals:
             metadata["failure_reason"] = "environment_prep_failed_before_revalidation"
             metadata["revalidation_failure_reason"] = "environment_prep_failed"
@@ -255,7 +256,7 @@ def build_artifact_quality_convergence_verifier(
             exit_code = 1
         else:
             try:
-                scan_errors = scan_workspace_artifact_quality(
+                evidence = scan_workspace_artifact_quality_evidence(
                     str(workspace_path),
                     relative_paths=normalized_paths,
                 )
@@ -264,6 +265,12 @@ def build_artifact_quality_convergence_verifier(
                 metadata["verifier_error_type"] = type(exc).__name__
                 metadata["verifier_error"] = str(exc)
                 scan_errors = [f"Artifact quality scan failed: {type(exc).__name__}: {exc}"]
+                residual_issues = ()
+            else:
+                scan_errors = list(evidence.errors)
+                residual_issues = tuple(issue.to_dict() for issue in evidence.issues)
+                metadata["scanned_relative_paths"] = list(evidence.scanned_relative_paths)
+                metadata["typed_artifact_quality_issue_count"] = len(residual_issues)
             residuals = tuple(str(item) for item in scan_errors)
             if dropped_paths:
                 residuals = (
@@ -290,6 +297,7 @@ def build_artifact_quality_convergence_verifier(
                 "relative_paths": list(normalized_paths) if normalized_paths is not None else None,
                 "dropped_unsafe_relative_paths": list(dropped_paths),
                 "residual_artifact_quality_errors": list(residuals),
+                "residual_artifact_quality_issues": [dict(item) for item in residual_issues],
                 "environment_prep_receipts": list(environment_prep_receipts),
                 "metadata": metadata,
             },
@@ -311,6 +319,7 @@ def build_artifact_quality_convergence_verifier(
 
         return DirectorRepairVerifierSnapshotInputV1(
             residual_artifact_quality_errors=residuals,
+            residual_artifact_quality_issues=residual_issues,
             command=command_tuple,
             exit_code=exit_code,
             raw_output_ref=raw_output_ref,
@@ -798,7 +807,7 @@ def _normalize_relative_paths(
 
 def _artifact_quality_command_tuple(workspace_path: Path, relative_paths: tuple[str, ...] | None) -> tuple[str, ...]:
     command = [
-        "polaris.kernelone.quality.artifact_quality.scan_workspace_artifact_quality",
+        "polaris.kernelone.quality.artifact_quality.scan_workspace_artifact_quality_evidence",
         str(workspace_path),
     ]
     if relative_paths is None:

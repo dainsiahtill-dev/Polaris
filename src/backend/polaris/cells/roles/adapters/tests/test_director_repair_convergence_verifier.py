@@ -323,16 +323,23 @@ def test_artifact_quality_convergence_verifier_failure_reports_real_scan_output(
 
     assert snapshot.exit_code != 0
     assert snapshot.residual_artifact_quality_errors
+    assert snapshot.residual_artifact_quality_issues
+    issue = snapshot.residual_artifact_quality_issues[0]
+    assert issue["code"] == "syntax_error"
+    assert issue["path"] == "bad.py"
+    assert issue["metadata"]["raw"] == snapshot.residual_artifact_quality_errors[0]
     assert snapshot.metadata["evidence_source"] == _EVIDENCE_SOURCE
     assert snapshot.metadata["command_kind"] == "in_process_artifact_quality_scan"
     assert snapshot.metadata["raw_output_ref_verified"] is True
     assert snapshot.command[:2] == (
-        "polaris.kernelone.quality.artifact_quality.scan_workspace_artifact_quality",
+        "polaris.kernelone.quality.artifact_quality.scan_workspace_artifact_quality_evidence",
         str(tmp_path.resolve()),
     )
+    assert snapshot.metadata["typed_artifact_quality_issue_count"] == len(snapshot.residual_artifact_quality_issues)
     payload = _raw_output_payload(snapshot)
     assert payload["exit_code"] != 0
     assert payload["residual_artifact_quality_errors"]
+    assert payload["residual_artifact_quality_issues"] == [dict(item) for item in snapshot.residual_artifact_quality_issues]
     assert payload["metadata"]["command_kind"] == "in_process_artifact_quality_scan"
 
 
