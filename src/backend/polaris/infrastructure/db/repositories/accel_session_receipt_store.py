@@ -36,10 +36,6 @@ _RECEIPT_STATUSES = {
 _RECOVERABLE_RECEIPT_STATUSES = {"queued", "running"}
 
 
-# Backward compatibility alias
-_utc_now = utc_now_iso
-
-
 def _parse_utc(value: str) -> datetime | None:
     text = str(value or "").strip()
     if not text:
@@ -255,7 +251,7 @@ class SessionReceiptStore:
         session_id_value = str(session_id).strip() or f"s_{uuid4().hex[:12]}"
         owner_value = str(owner).strip() or "codex"
         ttl_value = _normalize_ttl_seconds(ttl_seconds)
-        now = _utc_now()
+        now = utc_now_iso()
         lease_until = (datetime.now(timezone.utc) + timedelta(seconds=ttl_value)).isoformat()
         lease_id = f"lease_{uuid4().hex[:16]}"
         meta_json = _to_meta_json(meta if isinstance(meta, dict) else {})
@@ -470,7 +466,7 @@ class SessionReceiptStore:
         if not session_id_value:
             raise SessionReceiptError("E_INVALID_STATE", "session_id is required")
         final_status_value = _normalize_session_final_status(final_status)
-        now = _utc_now()
+        now = utc_now_iso()
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
@@ -529,7 +525,7 @@ class SessionReceiptStore:
         result_ref_value = str(result_ref).strip()
         error_code_value = str(error_code).strip()
         error_message_value = str(error_message).strip()
-        now = _utc_now()
+        now = utc_now_iso()
 
         conn = self._connect()
         try:

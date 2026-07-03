@@ -23,10 +23,6 @@ logger = logging.getLogger(__name__)
 _SQL_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
-# Backward compatibility alias
-_utc_now = utc_now
-
-
 def _validate_sql_identifier(name: str, identifier_type: str = "identifier") -> None:
     """验证 SQL 标识符（表名、列名）以防止注入攻击."""
     if not name or not isinstance(name, str):
@@ -223,7 +219,7 @@ class SemanticCacheStore:
 
     def _prune_table(self, conn: sqlite3.Connection, table_name: str, max_entries: int) -> None:
         _validate_sql_identifier(table_name, "table")
-        now_text = _utc_text(_utc_now())
+        now_text = _utc_text(utc_now())
         conn.execute(f"DELETE FROM {table_name} WHERE expires_utc <= ?", (now_text,))
         max_keep = max(1, int(max_entries))
         count_row = conn.execute(f"SELECT COUNT(1) FROM {table_name}").fetchone()
@@ -258,7 +254,7 @@ class SemanticCacheStore:
                 if row is None:
                     return None
                 expires = _parse_utc(str(row[1]))
-                if expires is None or expires <= _utc_now():
+                if expires is None or expires <= utc_now():
                     conn.execute("DELETE FROM context_cache WHERE cache_key = ?", (cache_key,))
                     return None
                 payload = json.loads(str(row[0]))
@@ -304,7 +300,7 @@ class SemanticCacheStore:
                         str(budget_fingerprint),
                         str(config_hash),
                         str(safety_fingerprint or ""),
-                        _utc_text(_utc_now()),
+                        _utc_text(utc_now()),
                         max(1, int(max_candidates)),
                     ),
                 ).fetchall()
@@ -355,7 +351,7 @@ class SemanticCacheStore:
         git_head: str = "",
         changed_files_state: list[dict[str, Any]] | None = None,
     ) -> None:
-        created = _utc_now()
+        created = utc_now()
         expires = created + timedelta(seconds=max(1, int(ttl_seconds)))
         changed_state_payload = changed_files_state if isinstance(changed_files_state, list) else []
         with self._lock:
@@ -452,7 +448,7 @@ class SemanticCacheStore:
         prev_safety_fingerprint = str(row[1] or "")
         prev_git_head = str(row[2] or "")
         expires = _parse_utc(str(row[3]))
-        now = _utc_now()
+        now = utc_now()
         if expires is not None and expires <= now:
             return {"reason": "expired"}
         if prev_safety_fingerprint and prev_safety_fingerprint != str(safety_fingerprint):
@@ -480,7 +476,7 @@ class SemanticCacheStore:
                 if row is None:
                     return None
                 expires = _parse_utc(str(row[1]))
-                if expires is None or expires <= _utc_now():
+                if expires is None or expires <= utc_now():
                     conn.execute("DELETE FROM verify_plan_cache WHERE cache_key = ?", (cache_key,))
                     return None
                 payload = json.loads(str(row[0]))
@@ -501,7 +497,7 @@ class SemanticCacheStore:
         ttl_seconds: int,
         max_entries: int,
     ) -> None:
-        created = _utc_now()
+        created = utc_now()
         expires = created + timedelta(seconds=max(1, int(ttl_seconds)))
         normalized_commands = [str(item) for item in commands if str(item).strip()]
 
