@@ -35,6 +35,7 @@ from polaris.kernelone.fs.materialization import materialized_file_paths
 from polaris.kernelone.quality import (
     scan_workspace_artifact_quality as scan_workspace_artifact_quality,
 )
+from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
 from .contract_verify import resolve_contract_step_verify_command
 from .execution_tools import (
@@ -152,9 +153,7 @@ async def _invoke_role_dialogue_with_transient_provider_retry(
     raise RuntimeError("director_llm_transient_provider_retry_exhausted")
 
 
-_DIAG_WRITE_TOOL_NAMES = frozenset(
-    {"append_to_file", "edit_blocks", "edit_file", "patch_apply", "precision_edit", "repo_apply_diff", "write_file"}
-)
+_DIAG_WRITE_TOOL_NAMES = WRITE_TOOLS
 
 
 def _diag_write_results_summary(tool_results: list[dict[str, Any]]) -> list[tuple[str, int]]:
