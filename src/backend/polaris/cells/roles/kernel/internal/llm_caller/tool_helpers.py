@@ -13,6 +13,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
+from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
+    normalize_tool_call_lifecycle_receipt,
+)
 from polaris.kernelone.llm.budget_policy import (
     BUDGET_STRATEGY_PAYLOAD_KEYS,
     FORCED_WRITE_OUTPUT_TOKEN_FLOOR,
@@ -174,6 +177,18 @@ def _tool_call_lifecycle_receipts_from_metadata(
     return tuple(receipts)
 
 
+def _native_tool_call_count_from_lifecycle_receipts(metadata: Mapping[str, Any]) -> int:
+    for receipt in _tool_call_lifecycle_receipts_from_metadata(metadata):
+        normalized = normalize_tool_call_lifecycle_receipt(receipt)
+        try:
+            count = int(str(normalized.get("native_tool_calls_count") or "").strip())
+        except (TypeError, ValueError):
+            count = 0
+        if count > 0:
+            return count
+    return 0
+
+
 def native_tool_call_envelopes_from_metadata(metadata: Mapping[str, Any] | None) -> tuple[Mapping[str, Any], ...]:
     """Return valid native tool-call envelope payloads from response metadata."""
 
@@ -200,6 +215,10 @@ def native_tool_call_count(
     envelopes = native_tool_call_envelopes_from_metadata(metadata)
     if envelopes:
         return len(envelopes)
+    if isinstance(metadata, Mapping):
+        lifecycle_count = _native_tool_call_count_from_lifecycle_receipts(metadata)
+        if lifecycle_count > 0:
+            return lifecycle_count
     return sum(1 for item in native_tool_calls if isinstance(item, Mapping))
 
 
