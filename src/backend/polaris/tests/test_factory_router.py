@@ -654,6 +654,35 @@ def test_quality_gate_rework_summary_reads_taskboard_requests(temp_workspace: Pa
     assert summary["tasks"][0]["reason"] == "qa_score_below_threshold"
 
 
+def test_quality_gate_rework_summary_keeps_exhausted_requests(temp_workspace: Path) -> None:
+    task_board = TaskRuntimeService(str(temp_workspace))
+    row = task_board.ensure_task_row(
+        external_task_id="TASK-1",
+        subject="Implement behavior with tests",
+        metadata={"external_task_id": "TASK-1"},
+        priority=1,
+    )
+    task_board.update(
+        row["id"],
+        status="failed",
+        metadata={
+            "qa_rework_requested": False,
+            "qa_rework_exhausted": True,
+            "qa_rework_retry_count": 3,
+            "qa_rework_max_retries": 3,
+            "qa_rework_reason": "task_boundary_interface_discrepancy_required",
+        },
+    )
+
+    summary = factory_router_module._read_quality_gate_rework_summary(str(temp_workspace))
+
+    assert summary["requested"] is False
+    assert summary["requested_count"] == 0
+    assert summary["exhausted_count"] == 1
+    assert summary["tasks"][0]["external_task_id"] == "TASK-1"
+    assert summary["tasks"][0]["exhausted"] is True
+
+
 def test_quality_gate_task_boundary_validation_reopens_failed_director_task(temp_workspace: Path) -> None:
     executor = TaskBoundaryQualityReworkStageExecutor(temp_workspace)
     executor._materialize_failed_director_task()

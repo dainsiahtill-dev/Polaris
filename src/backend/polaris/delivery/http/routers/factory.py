@@ -1314,13 +1314,14 @@ def _read_quality_gate_rework_summary(workspace: str) -> dict[str, Any]:
             continue
         metadata_raw = record.get("metadata")
         metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
-        if not bool(metadata.get("qa_rework_requested")):
+        requested = bool(metadata.get("qa_rework_requested"))
+        exhausted = bool(metadata.get("qa_rework_exhausted"))
+        if not requested and not exhausted:
             continue
         status = str(record.get("status") or "").strip().lower()
-        exhausted = bool(metadata.get("qa_rework_exhausted"))
         if exhausted:
             exhausted_count += 1
-        else:
+        elif requested:
             requested_count += 1
         if status in {"pending", "ready"}:
             ready_count += 1
