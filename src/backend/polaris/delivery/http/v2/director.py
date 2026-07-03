@@ -29,11 +29,9 @@ from polaris.cells.roles.kernel.public.service import (
 )
 from polaris.cells.runtime.artifact_store.public.service import resolve_artifact_path
 
-# Backward-compat namespace re-exports. These names were importable as module
-# attributes (``director.<name>``) before the model classes moved to
-# ``director_models``; the model bodies that referenced them now live there.
-# They are re-imported here purely to preserve the module surface for any
-# caller or test that resolved them via this module.
+# Module-level public surface re-exports. Route helpers still resolve these
+# contracts via ``director.<name>`` while model bodies live in dedicated modules.
+# Keep these imports explicit so the frozen route module surface stays stable.
 from polaris.cells.runtime.projection.public.role_contracts import (
     RoleTaskContractV1,
 )
@@ -160,7 +158,7 @@ from polaris.delivery.http.v2.director_models import (
     DirectorIntegrationQaResponse,
     DirectorOrchestrationResponse,
     DirectorRunOrchestrationRequest,
-    DirectorStatusResponse,  # re-exported for backward-compat callers/tests
+    DirectorStatusResponse,  # module-level route surface
     TaskCreateRequest,
     TaskResponse,
 )
