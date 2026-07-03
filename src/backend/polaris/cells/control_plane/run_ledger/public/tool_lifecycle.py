@@ -242,6 +242,8 @@ def build_tool_call_lifecycle_receipt(
         status = status or "dropped"
         failure = failure or FailureClassV1.TOOL_DISPATCH_DROPPED.value
         if not dropped:
+            dropped.extend(_dropped_tool_calls_from_native_envelopes(native_envelope_refs))
+        if not dropped:
             dropped.append({"count": native_count, "reason": "native_tool_calls_without_dispatch"})
     elif decoded_count > 0 and not receipt_rows:
         status = status or "blocked"

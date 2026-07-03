@@ -147,6 +147,18 @@ def test_tool_lifecycle_normalizer_derives_counts_from_native_envelopes() -> Non
             "reason": "tool_dispatch_dropped",
         },
     ]
+    assert receipt["dropped_tool_calls"] == [
+        {
+            "tool_name": "write_file",
+            "envelope_id": "native_tool_call:openai:0:call-0:abcdef",
+            "reason": "tool_dispatch_dropped",
+        },
+        {
+            "tool_name": "write_file",
+            "envelope_id": "native_tool_call:openai:1:call-1:abcdef",
+            "reason": "tool_dispatch_dropped",
+        },
+    ]
 
 
 def test_tool_lifecycle_receipt_preserves_native_tool_call_envelopes() -> None:

@@ -59,22 +59,6 @@ def _extract_tool_calls(result: RoleTurnResult) -> tuple[str, ...]:
     return tuple(names)
 
 
-def _dropped_tool_calls_from_envelopes(native_envelopes: tuple[Mapping[str, Any], ...]) -> tuple[dict[str, Any], ...]:
-    dropped: list[dict[str, Any]] = []
-    for envelope in native_envelopes:
-        tool_name = str(envelope.get("tool_name") or "").strip()
-        envelope_id = str(envelope.get("envelope_id") or "").strip()
-        if not tool_name and not envelope_id:
-            continue
-        item: dict[str, Any] = {"reason": "tool_dispatch_dropped"}
-        if tool_name:
-            item["tool_name"] = tool_name
-        if envelope_id:
-            item["envelope_id"] = envelope_id
-        dropped.append(item)
-    return tuple(dropped)
-
-
 def _has_tool_dispatch_evidence(result: RoleTurnResult) -> bool:
     if result.tool_results:
         return True
@@ -194,8 +178,10 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
         dropped_tool_calls = _extract_tool_calls(result)
         native_envelopes = _native_tool_call_envelopes(result)
         native_tool_calls_count = len(native_envelopes) or len(dropped_tool_calls)
-        dropped_tool_call_refs = _dropped_tool_calls_from_envelopes(native_envelopes) or tuple(
-            {"tool_name": tool_name, "reason": "tool_dispatch_dropped"} for tool_name in dropped_tool_calls
+        dropped_tool_call_refs = (
+            []
+            if native_envelopes
+            else [{"tool_name": tool_name, "reason": "tool_dispatch_dropped"} for tool_name in dropped_tool_calls]
         )
         metadata.setdefault(
             "tool_call_lifecycle",
