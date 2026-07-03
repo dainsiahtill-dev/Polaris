@@ -87,6 +87,46 @@ def _provider_response_hash(response: RawLLMResponse, metadata: Mapping[str, Any
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def build_tool_dispatch_dropped_anomaly(
+    *,
+    response: RawLLMResponse,
+    metadata: Mapping[str, Any],
+    turn_id: str,
+    streaming: bool = False,
+) -> dict[str, Any]:
+    """Build the canonical anomaly + lifecycle receipt for dropped tool calls."""
+
+    native_count = _native_tool_call_count(response, metadata)
+    provider_response_hash = _provider_response_hash(response, metadata)
+    native_envelopes = [dict(item) for item in native_tool_call_envelopes_from_metadata(metadata)]
+    lifecycle = build_tool_call_lifecycle_receipt(
+        run_id=str(metadata.get("run_id") or ""),
+        task_id=str(metadata.get("task_id") or ""),
+        turn_id=turn_id,
+        role=str(metadata.get("role") or ""),
+        provider_response_hash=provider_response_hash,
+        native_tool_calls_count=native_count,
+        dispatched_tool_calls_count=0,
+        native_tool_call_envelopes=native_envelopes,
+        dispatch_status="dropped",
+        failure_class="TOOL_DISPATCH_DROPPED",
+        reason="provider_emitted_tool_calls_but_no_decoded_tool_batch",
+    ).to_dict()
+    anomaly = {
+        "type": "TOOL_DISPATCH_DROPPED",
+        "turn_id": turn_id,
+        "native_tool_calls_count": lifecycle["native_tool_calls_count"],
+        "native_tool_call_envelopes": lifecycle["native_tool_call_envelope_refs"],
+        "provider_response_hash": lifecycle["provider_response_hash"],
+        "reason": lifecycle["reason"],
+        "dropped_tool_calls": lifecycle["dropped_tool_calls"],
+        "tool_call_lifecycle_receipt": lifecycle,
+    }
+    if streaming:
+        anomaly["streaming"] = True
+    return anomaly
+
+
 def _with_decision_metadata(decision: TurnDecision, metadata: dict[str, Any]) -> TurnDecision:
     required_fields = (
         "turn_id",
@@ -170,34 +210,8 @@ async def run_decision_pipeline(
     decision_metadata.setdefault("native_tool_calls_count", native_tool_call_count)
     decision = _with_decision_metadata(decision, decision_metadata)
     if native_tool_call_count > 0 and tool_definitions and not decision.get("tool_batch"):
-        native_tool_call_envelopes = decision_metadata.get("native_tool_call_envelopes")
-        native_tool_call_envelope_refs = (
-            native_tool_call_envelopes if isinstance(native_tool_call_envelopes, list) else []
-        )
-        lifecycle = build_tool_call_lifecycle_receipt(
-            run_id=str(decision_metadata.get("run_id") or ""),
-            task_id=str(decision_metadata.get("task_id") or ""),
-            turn_id=turn_id,
-            role=str(decision_metadata.get("role") or ""),
-            provider_response_hash=str(decision_metadata.get("provider_response_hash") or ""),
-            native_tool_calls_count=native_tool_call_count,
-            dispatched_tool_calls_count=0,
-            native_tool_call_envelopes=native_tool_call_envelope_refs,
-            dispatch_status="dropped",
-            failure_class="TOOL_DISPATCH_DROPPED",
-            reason="provider_emitted_tool_calls_but_no_decoded_tool_batch",
-        ).to_dict()
         ledger.anomaly_flags.append(
-            {
-                "type": "TOOL_DISPATCH_DROPPED",
-                "turn_id": turn_id,
-                "native_tool_calls_count": lifecycle["native_tool_calls_count"],
-                "native_tool_call_envelopes": lifecycle["native_tool_call_envelope_refs"],
-                "provider_response_hash": lifecycle["provider_response_hash"],
-                "reason": lifecycle["reason"],
-                "dropped_tool_calls": lifecycle["dropped_tool_calls"],
-                "tool_call_lifecycle_receipt": lifecycle,
-            }
+            build_tool_dispatch_dropped_anomaly(response=llm_response, metadata=decision_metadata, turn_id=turn_id)
         )
         raise RuntimeError(
             "tool_dispatch_dropped: provider emitted "
