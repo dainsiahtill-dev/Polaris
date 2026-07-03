@@ -671,6 +671,41 @@ def test_materialization_allowed_paths_query_merges_base_and_runtime_changed_pat
     assert result.to_dict()["metadata"]["read_only_allowed_paths_plan"] is True
 
 
+def test_materialization_allowed_paths_query_accepts_typed_artifact_quality_issues() -> None:
+    error = (
+        "Artifact quality scan failed: workspace validation command failed (npm run start): "
+        "file:///tmp/project/src/index.js:1\n"
+        "SyntaxError: The requested module ./engine/AlchemyEngine.js "
+        "does not provide an export named default"
+    )
+    typed_issue = artifact_quality_issues_from_errors((error,))[0]
+    base_files = {
+        "package.json": '{"type":"module","scripts":{"start":"node src/index.js"}}',
+        "src/index.js": 'import AlchemyEngine from "./engine/AlchemyEngine.js";\n',
+        "src/engine/AlchemyEngine.js": (
+            "class AlchemyEngine {}\n"
+            "function buildDefaultEngine() { return {}; }\n"
+            "module.exports = AlchemyEngine;\n"
+            "module.exports.buildDefaultEngine = buildDefaultEngine;\n"
+        ),
+    }
+
+    result = query_director_repair_materialization_allowed_paths(
+        QueryDirectorRepairMaterializationAllowedPathsV1(
+            source_tool="deterministic_javascript_esm_commonjs_entrypoint_repair",
+            base_files=base_files,
+            artifact_quality_errors=(),
+            artifact_quality_issues=(typed_issue,),
+        )
+    )
+
+    assert result.planning_result.ok is True
+    assert result.planning_result.diagnostics[0].code == "javascript_module_error"
+    assert result.planning_result.diagnostics[0].source == "runtime_smoke"
+    assert result.changed_paths
+    assert set(result.changed_paths).issubset(set(result.allowed_paths))
+
+
 def test_materialization_plan_probe_query_owns_candidate_and_plannable_source_tools() -> None:
     error = (
         "Artifact quality scan failed: workspace validation command failed (npm run start): "

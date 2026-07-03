@@ -1205,6 +1205,7 @@ def query_director_repair_materialization_allowed_paths(
             source_tool=query.source_tool,
             base_files=query.base_files,
             artifact_quality_errors=query.artifact_quality_errors,
+            artifact_quality_issues=query.artifact_quality_issues,
             mode=query.mode,
             metadata={
                 **dict(query.metadata),

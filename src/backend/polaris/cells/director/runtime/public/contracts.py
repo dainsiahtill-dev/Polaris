@@ -2836,6 +2836,7 @@ class QueryDirectorRepairMaterializationAllowedPathsV1:
     source_tool: str
     base_files: Mapping[str, str] = field(default_factory=dict)
     artifact_quality_errors: tuple[str, ...] = ()
+    artifact_quality_issues: tuple[Mapping[str, Any], ...] = ()
     mode: str = "shadow"
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
@@ -2843,6 +2844,7 @@ class QueryDirectorRepairMaterializationAllowedPathsV1:
         object.__setattr__(self, "source_tool", _require_non_empty("source_tool", self.source_tool))
         object.__setattr__(self, "base_files", dict(self.base_files or {}))
         object.__setattr__(self, "artifact_quality_errors", _to_tuple_str(list(self.artifact_quality_errors)))
+        object.__setattr__(self, "artifact_quality_issues", _to_tuple_mapping_from_any(self.artifact_quality_issues))
         object.__setattr__(self, "mode", str(self.mode or "shadow").strip() or "shadow")
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
 
