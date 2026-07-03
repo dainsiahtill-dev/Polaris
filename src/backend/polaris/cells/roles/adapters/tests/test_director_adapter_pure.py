@@ -30,11 +30,13 @@ from polaris.cells.roles.adapters.internal.director.adapter import (
     DirectorAdapter,
     _build_director_actual_sibling_exports_payload,
     _build_director_blueprint_handoff_lines,
+    _build_director_workspace_interface_lines,
     _director_actual_interface_injection_enabled,
     _inject_director_actual_sibling_exports,
     _load_ce_blueprint_contract_payload,
     _merge_ce_blueprint_contract_payload,
     _normalize_director_role_response,
+    _prepare_role_dialogue_context,
 )
 from polaris.cells.roles.adapters.internal.director.execute_method import (
     _build_empty_write_content_retry_message,
@@ -115,6 +117,54 @@ def _make_adapter(tmp_path: Any, task_board: Any = None, task_runtime: Any = Non
     else:
         adapter = DirectorAdapter(workspace=str(tmp_path), task_board=task_board, task_runtime=task_runtime)
     return adapter
+
+
+def test_prepare_role_dialogue_context_bounds_forced_write_retry_budget() -> None:
+    context, timeout = _prepare_role_dialogue_context(
+        {
+            "_transaction_kernel_forced_tool_choice": {
+                "type": "function",
+                "function": {"name": "write_file"},
+            },
+            "director_no_write_materialization_retry": {
+                "write_only_declared_targets": {"target_files": ["package.json"]}
+            },
+        },
+        timeout_seconds=660.0,
+        stage_label="no_write_materialization_retry",
+    )
+
+    assert timeout == 120.0
+    assert context["llm_call_timeout_ceiling_seconds"] == 120.0
+    assert context["request_timeout_ceiling_seconds"] == 120.0
+    assert context["llm_max_tokens"] == 7000
+    assert context["director_role_call_timeout_budget"]["stage_label"] == "no_write_materialization_retry"
+    assert context["director_forced_write_output_budget"]["max_tokens"] == 7000
+
+
+def test_prepare_role_dialogue_context_caps_existing_large_forced_write_budget() -> None:
+    context, timeout = _prepare_role_dialogue_context(
+        {
+            "max_tokens": 128_000,
+            "max_output_tokens": 65_536,
+            "director_no_write_materialization_retry": {
+                "write_only_declared_targets": {"target_files": ["package.json"]}
+            },
+        },
+        timeout_seconds=660.0,
+        stage_label="no_write_materialization_retry",
+    )
+
+    assert timeout == 120.0
+    assert context["llm_max_tokens"] == 7000
+    assert context["max_tokens"] == 128_000
+    budget = context["director_forced_write_output_budget"]
+    assert budget["max_tokens"] == 7000
+    assert budget["ceiling_tokens"] == 7000
+    assert budget["previous_budget_values"] == {
+        "max_output_tokens": 65_536,
+        "max_tokens": 128_000,
+    }
 
 
 def test_extract_task_interface_contract_accepts_ce_module_interface_contract_alias() -> None:
@@ -315,6 +365,40 @@ def test_director_actual_sibling_exports_promoted_to_context_metadata(
 
     assert context["actual_sibling_exports"] == payload
     assert context["metadata"]["actual_sibling_exports"] == payload
+
+
+def test_director_workspace_interface_lines_mark_actual_exports_authoritative(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "index.js").write_text("export function createIndex() { return {}; }\n", encoding="utf-8")
+
+    def fake_snapshot(workspace: str) -> SimpleNamespace:
+        assert workspace == str(tmp_path)
+        return SimpleNamespace(
+            physical_exports={
+                "src/index.js": [
+                    SimpleNamespace(
+                        name="createIndex",
+                        symbol_kind="function",
+                        signature="function createIndex(): object",
+                    )
+                ]
+            }
+        )
+
+    monkeypatch.setattr(
+        "polaris.kernelone.quality.cross_artifact_interfaces.build_symbol_index_snapshot",
+        fake_snapshot,
+    )
+
+    text = "\n".join(_build_director_workspace_interface_lines(str(tmp_path)))
+
+    assert "TEST/CONFIG/DOC TASK HARD RULE" in text
+    assert "planned_exports/tentative_exports are advisory" in text
+    assert "src/index.js: createIndex" in text
 
 
 def test_director_blueprint_handoff_projects_module_interface_contract(tmp_path: Any) -> None:
@@ -4972,6 +5056,60 @@ class TestDirectorFailureClosure:
         assert result["error_code"] == "incomplete_materialization"
         assert result["failure_class"] == "INCOMPLETE_MATERIALIZATION"
 
+    def test_no_materialized_changes_preserves_primary_tool_dispatch_failure(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            MaterializationState,
+            _phase_no_materialized_changes,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Bootstrap package manifest",
+            description="Create only package.json.",
+            metadata={"target_files": ["package.json"], "scope_paths": ["package.json"]},
+        )
+        state = MaterializationState(
+            current_files={},
+            new_files=[],
+            modified_files=[],
+            all_affected_files=[],
+            tool_results=[],
+        )
+
+        result = _phase_no_materialized_changes(
+            adapter,
+            baseline_files={},
+            board_claim_applied=False,
+            can_accept_existing_scope=False,
+            context={},
+            direct_fallback_summary=None,
+            empty_write_content_retry_summary=None,
+            no_write_materialization_retry_summary=None,
+            existing_contract_evidence={},
+            primary_llm_summary={
+                "success": False,
+                "error": "tool_dispatch_dropped: required write tool was not dispatched before completion",
+            },
+            requires_fresh_materialization=True,
+            run_id="run-tool-dispatch-dropped",
+            target_task_id=str(task.id),
+            task={"target_files": ["package.json"], "scope_paths": ["package.json"]},
+            task_claim_session_id="",
+            workspace_name=tmp_path.name,
+            write_tool_evidence=False,
+            state=state,
+        )
+
+        assert result is not None
+        assert result["success"] is False
+        assert result["error"] == "tool_dispatch_dropped"
+        assert result["error_code"] == "tool_dispatch_dropped"
+        assert result["failure_class"] == "TOOL_DISPATCH_DROPPED"
+        assert result["responsible_layer"] == "execution_control_plane"
+        assert result["failure_stage"] == "director_tool_lifecycle"
+        assert result["root_cause_hint"] == "required_tool_without_dispatch_receipt"
+        assert result["decision_signals"][0]["detail"].startswith("Director role runtime reported")
+
     @pytest.mark.asyncio
     async def test_execute_fails_when_changed_test_file_keeps_placeholder_arithmetic(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -7667,6 +7805,48 @@ class TestDirectorRuntimeFallback:
         assert command.metadata["cognitive_runtime_required"] is True
 
     @pytest.mark.asyncio
+    async def test_role_dialogue_keeps_observed_tool_calls_out_of_tool_results(
+        self,
+        tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+
+        class FakeRoleRuntimeService:
+            async def execute_role_session(self, command: ExecuteRoleSessionCommandV1) -> RoleExecutionResultV1:
+                return RoleExecutionResultV1(
+                    ok=False,
+                    status="failed",
+                    role="director",
+                    workspace=str(tmp_path),
+                    task_id=command.task_id,
+                    session_id=command.session_id,
+                    run_id=command.run_id,
+                    output="I will call write_file.",
+                    tool_calls=("write_file",),
+                    metadata={"provider_id": "anthropic_compat-test"},
+                    error_code="tool_dispatch_dropped",
+                    error_message="tool_dispatch_dropped",
+                )
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.runtime.public.service.RoleRuntimeService",
+            FakeRoleRuntimeService,
+        )
+
+        result = await adapter._invoke_role_dialogue(
+            "write package.json",
+            context={"run_id": "run-observed-tool", "task_id": "task-observed-tool"},
+        )
+
+        assert result["success"] is False
+        assert result["error"] == "tool_dispatch_dropped"
+        assert result["tool_calls"] == []
+        assert result["tool_results"] == []
+        assert result["metadata"]["observed_tool_calls"] == ["write_file"]
+        assert result["raw_response"]["observed_tool_calls"] == ["write_file"]
+
+    @pytest.mark.asyncio
     async def test_role_dialogue_fails_closed_when_runtime_boundary_unavailable(
         self,
         tmp_path: Any,
@@ -10316,6 +10496,124 @@ class TestQualityRepairMissingTargetContract:
             }
         ]
 
+    def test_unresolved_relative_import_outside_task_scope_is_deferred(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director import quality_gate as director_quality_gate
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _collect_materialization_quality_errors,
+        )
+
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "engine" / "rules.js").write_text(
+            "import { createMeteor } from '../meteor.js';\nexport { createMeteor };\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine" / "runner.js").write_text("export function run() {}\n", encoding="utf-8")
+        error = "Artifact quality scan failed: unresolved relative import '../meteor.js' in src/engine/rules.js"
+        monkeypatch.setattr(
+            director_quality_gate._em,
+            "scan_workspace_artifact_quality",
+            lambda *_args, **_kwargs: [error],
+        )
+        context: dict[str, Any] = {}
+
+        errors = _collect_materialization_quality_errors(
+            SimpleNamespace(workspace=str(tmp_path)),
+            task={"target_files": ["src/engine/rules.js", "src/engine/runner.js"]},
+            all_affected_files=["src/engine/rules.js", "src/engine/runner.js"],
+            workspace_name=tmp_path.name,
+            context=context,
+        )
+
+        assert errors == []
+        assert context["director_task_boundary_deferred_quality_errors"] == [
+            {
+                "schema_version": "director.task_boundary.deferred_quality_errors.v1",
+                "reason": "missing_workspace_file_outside_current_task_target_files",
+                "artifact_quality_errors": [error],
+                "target_files": ["src/meteor.js"],
+            }
+        ]
+
+    def test_step_verify_missing_downstream_file_is_deferred(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from polaris.cells.roles.adapters.internal.director import quality_gate as director_quality_gate
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _collect_step_verify_errors,
+        )
+
+        class _Proc:
+            returncode = 1
+            stdout = ""
+            stderr = "Could not find 'tests/product.test.js'\n"
+
+        monkeypatch.setattr(director_quality_gate.subprocess, "run", lambda *_args, **_kwargs: _Proc())
+        monkeypatch.setattr(director_quality_gate, "_first_failing_verify_clause", lambda *_args, **_kwargs: "")
+        context: dict[str, Any] = {"construction_step": {"verify": "npm test"}}
+
+        errors = _collect_step_verify_errors(
+            SimpleNamespace(workspace=str(tmp_path)),
+            context,
+            task={"target_files": ["src/engine/rules.js", "src/engine/runner.js"]},
+            workspace_name=tmp_path.name,
+        )
+
+        assert errors == []
+        assert context["director_task_boundary_deferred_quality_errors"] == [
+            {
+                "schema_version": "director.task_boundary.deferred_quality_errors.v1",
+                "reason": "missing_workspace_file_outside_current_task_target_files",
+                "artifact_quality_errors": [
+                    "step verify failed (exit 1): npm test :: failure excerpt: Could not find 'tests/product.test.js'"
+                ],
+                "target_files": ["tests/product.test.js"],
+            }
+        ]
+
+    def test_step_verify_package_script_entrypoint_outside_task_scope_is_deferred(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director import quality_gate as director_quality_gate
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _collect_step_verify_errors,
+        )
+
+        class _Proc:
+            returncode = 1
+            stdout = ""
+            stderr = "script 'verify' references missing local entrypoint: ./scripts/verify-package.js\n"
+
+        clause = (
+            "Artifact quality scan failed: npm package manifest script 'verify' references missing local "
+            "entrypoint './scripts/verify-package.js' in package.json"
+        )
+        monkeypatch.setattr(director_quality_gate.subprocess, "run", lambda *_args, **_kwargs: _Proc())
+        monkeypatch.setattr(director_quality_gate, "_first_failing_verify_clause", lambda *_args, **_kwargs: clause)
+        context: dict[str, Any] = {"construction_step": {"verify": "npm run verify"}}
+
+        errors = _collect_step_verify_errors(
+            SimpleNamespace(workspace=str(tmp_path)),
+            context,
+            task={"target_files": ["src/index.js"]},
+            workspace_name=tmp_path.name,
+        )
+
+        assert errors == []
+        assert context["director_task_boundary_deferred_quality_errors"] == [
+            {
+                "schema_version": "director.task_boundary.deferred_quality_errors.v1",
+                "reason": "npm_script_entrypoint_outside_current_task_target_files",
+                "artifact_quality_errors": [
+                    "step verify failed (exit 1) | "
+                    "Artifact quality scan failed: npm package manifest script 'verify' references missing local "
+                    "entrypoint './scripts/verify-package.js' in package.json | "
+                    "failure excerpt: script 'verify' references missing local entrypoint: "
+                    "./scripts/verify-package.js | full: npm run verify"
+                ],
+                "target_files": ["scripts/verify-package.js"],
+            }
+        ]
+
     @pytest.mark.asyncio
     async def test_package_script_entrypoint_retry_blocks_out_of_scope_target(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
@@ -10448,6 +10746,290 @@ class TestQualityRepairMissingTargetContract:
         )
         assert summary["task_boundary_scope_filter"]["out_of_scope_repair_target_files"] == ["src/index.js"]
 
+    @pytest.mark.asyncio
+    async def test_node_test_missing_file_retry_blocks_out_of_scope_target(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                del result
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                raise AssertionError("out-of-scope missing test target must not reach LLM repair")
+
+        (tmp_path / "package.json").write_text(
+            '{"scripts":{"test":"node --test tests/product.test.js"}}\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "engine" / "rules.js").write_text("export const rules = [];\n", encoding="utf-8")
+
+        tool_results, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["src/engine/rules.js", "src/engine/runner.js"]},
+            target_task_id="task-2",
+            run_id="run-1",
+            context={},
+            original_message="Create source engine files.",
+            llm_call_timeout=1.0,
+            artifact_quality_errors=[
+                "step verify failed (exit 1): npm test :: failure excerpt: Could not find 'tests/product.test.js'",
+            ],
+            changed_files=["package.json", "src/engine/rules.js"],
+        )
+
+        assert tool_results == []
+        assert summary["stage"] == "task_boundary_repair_targets_deferred"
+        assert summary["success_reason"] == "repair_targets_outside_current_task_target_files"
+        assert summary["repair_target_files"] == []
+        assert summary["task_boundary_scope_filter"]["reason"] == (
+            "missing_workspace_file_outside_current_task_target_files"
+        )
+        assert summary["task_boundary_scope_filter"]["out_of_scope_repair_target_files"] == ["tests/product.test.js"]
+
+    @pytest.mark.asyncio
+    async def test_node_test_missing_directory_with_reporter_retry_blocks_out_of_scope_target(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                del result
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                raise AssertionError("out-of-scope missing test directory must not reach LLM repair")
+
+        (tmp_path / "package.json").write_text(
+            '{"scripts":{"test":"node --test tests/ --test-reporter=tap"}}\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "engine" / "rules.js").write_text("export const rules = [];\n", encoding="utf-8")
+
+        tool_results, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["src/engine/rules.js", "src/engine/runner.js"]},
+            target_task_id="task-2",
+            run_id="run-1",
+            context={},
+            original_message="Create source engine files.",
+            llm_call_timeout=1.0,
+            artifact_quality_errors=[
+                "step verify failed (exit 1): npm test :: failure excerpt: "
+                "Could not find 'tests/, --test-reporter=tap'",
+            ],
+            changed_files=["package.json", "src/engine/rules.js"],
+        )
+
+        assert tool_results == []
+        assert summary["stage"] == "task_boundary_repair_targets_deferred"
+        assert summary["success_reason"] == "repair_targets_outside_current_task_target_files"
+        assert summary["repair_target_files"] == []
+        assert summary["task_boundary_scope_filter"]["reason"] == (
+            "missing_workspace_file_outside_current_task_target_files"
+        )
+        assert summary["task_boundary_scope_filter"]["out_of_scope_repair_target_files"] == ["tests"]
+
+    @pytest.mark.asyncio
+    async def test_package_manifest_semantic_quality_retry_blocks_out_of_scope_target(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                del result
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                raise AssertionError("out-of-scope package semantic repair must not reach LLM repair")
+
+        (tmp_path / "package.json").write_text(
+            '{"type":"module","scripts":{"test":"node --test tests/product.test.js"}}\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "engine" / "runner.js").write_text("module.exports = { run() {} };\n", encoding="utf-8")
+
+        tool_results, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["src/engine/rules.js", "src/engine/runner.js"]},
+            target_task_id="task-2",
+            run_id="run-1",
+            context={},
+            original_message="Create source engine files.",
+            llm_call_timeout=1.0,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: npm package manifest declares type=module "
+                "but workspace JavaScript uses CommonJS runtime syntax in package.json",
+            ],
+            changed_files=["package.json", "src/engine/runner.js"],
+        )
+
+        assert tool_results == []
+        assert summary["stage"] == "task_boundary_repair_targets_deferred"
+        assert summary["success_reason"] == "repair_targets_outside_current_task_target_files"
+        assert summary["semantic_quality_target_files"] == ["package.json"]
+        assert summary["repair_target_files"] == []
+        assert summary["task_boundary_scope_filter"]["reason"] == (
+            "quality_repair_targets_outside_current_task_target_files"
+        )
+        assert summary["task_boundary_scope_filter"]["out_of_scope_repair_target_files"] == ["package.json"]
+
+    @pytest.mark.asyncio
+    async def test_unresolved_symbol_exporter_out_of_scope_blocks_importer_repair(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                del result
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                raise AssertionError("out-of-scope exporter owner must not fall through to importer LLM repair")
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src" / "index.js").write_text(
+            "export function engineScoreWish(wish) { return wish.length; }\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tests" / "product.test.js").write_text(
+            "import { scoreWish } from '../src/index.js';\nvoid scoreWish;\n",
+            encoding="utf-8",
+        )
+        quality_errors = [
+            "Artifact quality scan failed: unresolved import symbol 'scoreWish' "
+            "from '../src/index.js' in tests/product.test.js (sibling module does not define it)"
+        ]
+
+        tool_results, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"id": "TASK-2", "target_files": ["tests/product.test.js", "tests/test_product.py"]},
+            target_task_id="TASK-2",
+            run_id="run-1",
+            context={},
+            original_message="Create test files.",
+            llm_call_timeout=1.0,
+            artifact_quality_errors=quality_errors,
+            changed_files=["src/index.js", "tests/product.test.js"],
+        )
+
+        assert tool_results == []
+        assert summary["stage"] == "task_boundary_semantic_exporter_scope_conflict"
+        assert summary["success_reason"] == "task_boundary_interface_discrepancy_required"
+        assert summary["semantic_quality_target_files"] == ["src/index.js", "tests/product.test.js"]
+        assert summary["repair_target_files"] == ["src/index.js", "tests/product.test.js"]
+        assert summary["task_boundary_scope_filter"]["out_of_scope_repair_target_files"] == ["src/index.js"]
+        evidence = summary["interface_discrepancy_evidence"]
+        assert evidence["reason"] == "semantic_exporter_owner_outside_current_task_scope"
+        assert evidence["semantic_exporter_owner_targets"] == ["src/index.js"]
+        assert evidence["task_declared_write_targets"] == ["tests/product.test.js", "tests/test_product.py"]
+        assert evidence["director_retry_allowed"] is False
+
     def test_node_test_directory_quality_error_targets_package_json(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
             _semantic_quality_repair_target_files,
@@ -10498,6 +11080,33 @@ class TestQualityRepairMissingTargetContract:
         )
 
         assert targets == ["package.json"]
+
+    def test_type_module_commonjs_quality_error_prefers_offending_source_path(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _semantic_quality_repair_target_files,
+        )
+
+        (tmp_path / "package.json").write_text(
+            '{"type":"module","scripts":{"start":"node src/engine/runner.js"}}\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "engine" / "runner.js").write_text(
+            'const { runQueue } = require("./rules");\nmodule.exports = { runQueue };\n',
+            encoding="utf-8",
+        )
+
+        targets = _semantic_quality_repair_target_files(
+            artifact_quality_errors=[
+                "Artifact quality scan failed: JavaScript source src/engine/runner.js uses CommonJS runtime syntax; "
+                "npm package manifest declares type=module but workspace JavaScript uses CommonJS runtime syntax "
+                "in package.json"
+            ],
+            changed_files=["package.json", "src/engine/runner.js"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets[:2] == ["src/engine/runner.js", "package.json"]
 
     @pytest.mark.asyncio
     async def test_package_manifest_quality_error_preserves_missing_targets(self, tmp_path) -> None:
@@ -13176,6 +13785,93 @@ class TestQualityRepairMissingTargetContract:
         assert summary["missing_target_files"] == missing_targets
         assert summary["repair_target_files"] == missing_targets
 
+    @pytest.mark.asyncio
+    async def test_materialization_quality_repair_promotes_task_contract_context(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result) -> list:
+                del result
+                return []
+
+            @staticmethod
+            async def execute_tools(content, target_task_id, update_task_progress, **_) -> list:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *a, **k: None)
+
+            def __init__(self) -> None:
+                self.promote_calls = 0
+                self.repair_context: dict[str, Any] = {}
+
+            def _promote_task_contract_to_runtime_context(
+                self,
+                *,
+                task: dict[str, Any],
+                context: dict[str, Any],
+                workspace: str,
+            ) -> None:
+                self.promote_calls += 1
+                assert workspace == str(tmp_path)
+                task_metadata = task.get("metadata")
+                assert isinstance(task_metadata, dict)
+                metadata = dict(context.get("metadata") or {})
+                for key in ("module_interface_contract", "delivery_plan_document"):
+                    context[key] = task_metadata[key]
+                    metadata[key] = task_metadata[key]
+                context["metadata"] = metadata
+
+            async def _invoke_role_dialogue_with_timeout(self, message, *, context, timeout_seconds, stage_label):
+                del message, timeout_seconds, stage_label
+                self.repair_context = context
+                return {"content": ""}
+
+        source = tmp_path / "src" / "engine" / "runner.js"
+        source.parent.mkdir(parents=True)
+        source.write_text("module.exports = { broken: true\n", encoding="utf-8")
+        task: dict[str, Any] = {
+            "target_files": ["src/engine/runner.js"],
+            "metadata": {
+                "module_interface_contract": {
+                    "schema_version": "chief_engineer.module_interface_contract.v1",
+                    "modules": [{"path": "src/engine/runner.js", "planned_public_symbols": ["runQueue"]}],
+                },
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "capability_plan": ["core engine implements the queue rules"],
+                    "behavior_plan": ["architecture plan keeps engine and entrypoint separate"],
+                },
+            },
+        }
+        adapter = _Adapter()
+
+        await _run_materialization_quality_repair_retry(
+            adapter,
+            task=task,
+            target_task_id="TASK-1-source-core",
+            run_id="run-quality-contract-context",
+            context={},
+            original_message="Implement the core engine/service modules.",
+            llm_call_timeout=10,
+            artifact_quality_errors=["[error] src/engine/runner.js: SyntaxError: Unexpected end of input. (1:29)"],
+            changed_files=["src/engine/runner.js"],
+        )
+
+        assert adapter.promote_calls == 1
+        assert adapter.repair_context["module_interface_contract"] == task["metadata"]["module_interface_contract"]
+        assert adapter.repair_context["delivery_plan_document"] == task["metadata"]["delivery_plan_document"]
+        assert (
+            adapter.repair_context["metadata"]["module_interface_contract"]
+            == task["metadata"]["module_interface_contract"]
+        )
+
     def test_materialization_quality_repair_retry_after_first_attempt_stays_single_target(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _select_materialization_quality_repair_target_batch,
@@ -13319,6 +14015,34 @@ class TestQualityRepairMissingTargetContract:
         extracted = extract_target_files_from_message(message)
         assert "src/styles.css" in extracted
         assert "src/main.js" not in extracted
+
+    def test_repair_message_existing_target_block_prevents_raw_code_target_fallback(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+        from polaris.cells.roles.kernel.public import (
+            extract_target_files_from_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message=(
+                "[mode:materialize]\n"
+                "Implement the engine modules.\n"
+                "const opts = { json: true };\n"
+                "if (arg.startsWith('--json=')) opts.json = arg.slice('--json='.length);"
+            ),
+            artifact_quality_errors=[
+                "Artifact quality scan failed: JavaScript source src/engine/runner.js uses CommonJS runtime syntax",
+                "Artifact quality scan failed: JavaScript source src/engine/rules.js uses CommonJS runtime syntax",
+            ],
+            changed_files=["src/engine/rules.js", "src/engine/runner.js"],
+            repair_target_files=["src/engine/runner.js", "src/engine/rules.js"],
+        )
+
+        extracted = extract_target_files_from_message(message)
+
+        assert extracted == ["src/engine/runner.js", "src/engine/rules.js"]
+        assert "opts.json" not in extracted
 
     def test_repair_message_missing_targets_do_not_replay_declared_contract_targets(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

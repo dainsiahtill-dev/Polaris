@@ -105,6 +105,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_SYNTAX_EXCERPT_CONTEXT_LINES = 2
+_SYNTAX_EXCERPT_MAX_ERRORS = 3
+_SYNTAX_EXCERPT_MAX_LINE_CHARS = 220
+
 _SOURCE_NARRATION_LEAK_RE = re.compile(
     r"(?is)^\s*(?:"
     r"i(?:'|’)ll\s+|"
@@ -130,6 +134,60 @@ _SOURCE_NARRATION_LEAK_RE = re.compile(
 _JS_TS_BLOCK_COMMENT_EXTENSIONS = {".js", ".jsx", ".ts", ".tsx"}
 _BLOCK_COMMENT_GLOB_CLOSURE_RE = re.compile(r"\*\*/(?=[A-Za-z0-9_*.[{])")
 _BLOCK_COMMENT_GLOB_FOLLOW_RE = re.compile(r"[A-Za-z0-9_*.[{]")
+
+
+def _coerce_syntax_error_line(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        line = int(value)
+    except (TypeError, ValueError):
+        return None
+    return line if line > 0 else None
+
+
+def _syntax_error_excerpt(
+    content: str,
+    errors: list[Any] | tuple[Any, ...] | None,
+    *,
+    context_lines: int = _SYNTAX_EXCERPT_CONTEXT_LINES,
+    max_errors: int = _SYNTAX_EXCERPT_MAX_ERRORS,
+    max_line_chars: int = _SYNTAX_EXCERPT_MAX_LINE_CHARS,
+) -> list[dict[str, Any]]:
+    lines = str(content or "").splitlines()
+    if not lines or not errors:
+        return []
+    excerpts: list[dict[str, Any]] = []
+    seen_lines: set[int] = set()
+    for error in list(errors)[: max(0, int(max_errors))]:
+        line = _coerce_syntax_error_line(getattr(error, "line", None))
+        if line is None or line > len(lines) or line in seen_lines:
+            continue
+        seen_lines.add(line)
+        context = max(0, int(context_lines))
+        start = max(1, line - context)
+        end = min(len(lines), line + context)
+        excerpt_lines: list[dict[str, Any]] = []
+        for line_no in range(start, end + 1):
+            line_text = lines[line_no - 1]
+            if len(line_text) > max_line_chars:
+                line_text = f"{line_text[:max_line_chars]}..."
+            excerpt_lines.append(
+                {
+                    "line": line_no,
+                    "text": line_text,
+                    "is_error_line": line_no == line,
+                }
+            )
+        excerpts.append(
+            {
+                "line": line,
+                "column": _coerce_syntax_error_line(getattr(error, "column", None)) or 0,
+                "message": str(getattr(error, "message", "") or ""),
+                "context": excerpt_lines,
+            }
+        )
+    return excerpts
 
 
 def _find_js_ts_block_comment_close(text: str, start: int = 0) -> int:
@@ -491,6 +549,7 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
                 "validation_errors": [
                     {"line": e.line, "column": e.column, "message": e.message} for e in (validation_result.errors or [])
                 ],
+                "syntax_error_excerpt": _syntax_error_excerpt(text, validation_result.errors),
             }
         # Auto-fix: use fixed code if validation result contains fixes
         if validation_result.fixed_code is not None:

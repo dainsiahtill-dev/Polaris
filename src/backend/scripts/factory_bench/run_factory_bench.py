@@ -42,6 +42,7 @@ sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
 from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
     append_run_ledger_event,
+    build_tool_call_lifecycle_receipt,
     evaluate_task_boundary_verdict,
 )
 from polaris.cells.factory.pipeline.internal.bench_gates import (
@@ -2306,7 +2307,9 @@ def _task_boundary_evidence_from_real_run_gate(real_run_gate: Any) -> dict[str, 
         "declared_source_targets_present",
         "scaffolding_present",
     )
-    code_requirements = [requirements.get(name) for name in code_requirement_names if isinstance(requirements.get(name), Mapping)]
+    code_requirements = [
+        requirements.get(name) for name in code_requirement_names if isinstance(requirements.get(name), Mapping)
+    ]
     if code_requirements:
         present.append("code")
         if not all(bool(cast(Mapping[str, Any], item).get("ok")) for item in code_requirements):
@@ -2319,12 +2322,25 @@ def _task_boundary_evidence_from_real_run_gate(real_run_gate: Any) -> dict[str, 
     entrypoint: Mapping[str, Any] = entrypoint_raw if isinstance(entrypoint_raw, Mapping) else {}
     entrypoint_kind = str(entrypoint.get("kind") or "").strip()
     entrypoint_is_command = bool(entrypoint_kind) and entrypoint_kind not in {"web_static", "web_playwright"}
-    command_present = isinstance(build_requirement, Mapping) or command_count > 0 or isinstance(commands, list) or entrypoint_is_command
+    command_present = (
+        isinstance(build_requirement, Mapping)
+        or command_count > 0
+        or isinstance(commands, list)
+        or entrypoint_is_command
+    )
     if command_present:
         present.append("command")
-        command_ok = bool(cast(Mapping[str, Any], build_requirement).get("ok")) if isinstance(build_requirement, Mapping) else bool(commands)
+        command_ok = (
+            bool(cast(Mapping[str, Any], build_requirement).get("ok"))
+            if isinstance(build_requirement, Mapping)
+            else bool(commands)
+        )
         if entrypoint_is_command:
-            command_ok = bool(command_ok) and bool(entrypoint.get("ok")) if isinstance(build_requirement, Mapping) else bool(entrypoint.get("ok"))
+            command_ok = (
+                bool(command_ok) and bool(entrypoint.get("ok"))
+                if isinstance(build_requirement, Mapping)
+                else bool(entrypoint.get("ok"))
+            )
         if not command_ok:
             failed.append("command")
 
@@ -2354,6 +2370,15 @@ def _append_task_boundary_verdict_to_run_ledger(
         if isinstance(values, list):
             completed_artifacts.extend(str(item) for item in values if str(item).strip())
     evidence_policy = _task_boundary_evidence_from_real_run_gate(record.get("real_run_gate"))
+    tool_dispatch = _tool_dispatch_failure_from_record(record)
+    if tool_dispatch is not None:
+        _append_tool_dispatch_failure_to_run_ledger(
+            workspace=workspace,
+            run_id=run_id,
+            project_id=project_id,
+            task_id=str(record.get("task_id") or project_id),
+            tool_dispatch=tool_dispatch,
+        )
     verdict = evaluate_task_boundary_verdict(
         workspace=workspace,
         task_id=str(record.get("task_id") or project_id),
@@ -2364,6 +2389,7 @@ def _append_task_boundary_verdict_to_run_ledger(
         present_evidence_modalities=evidence_policy.get("present"),
         missing_required_evidence_modalities=evidence_policy.get("missing"),
         failed_required_evidence_modalities=evidence_policy.get("failed"),
+        tool_dispatch=tool_dispatch,
     ).to_dict()
     try:
         append_run_ledger_event(
@@ -2390,6 +2416,96 @@ def _append_task_boundary_verdict_to_run_ledger(
     except (OSError, RuntimeError, TypeError, ValueError):
         _logger.debug("failed to append task boundary verdict", exc_info=True)
     return verdict
+
+
+def _tool_dispatch_failure_from_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Project chain-level tool dispatch failures into TaskBoundary input."""
+
+    reason = _first_text_with_token(
+        (
+            record.get("failure_evidence"),
+            record.get("failure_reasons"),
+            record.get("chain"),
+            record.get("chain_results"),
+            record.get("failure_taxonomy"),
+        ),
+        token="tool_dispatch_dropped",
+    )
+    if not reason:
+        return None
+    return {
+        "status": "dropped",
+        "dropped": True,
+        "reason": reason,
+        "source": "factory_bench_chain_failure_evidence",
+    }
+
+
+def _first_text_with_token(value: Any, *, token: str) -> str:
+    needle = token.lower()
+    stack: list[Any] = [value]
+    while stack:
+        current = stack.pop(0)
+        if isinstance(current, str):
+            if needle in current.lower():
+                return current
+            continue
+        if isinstance(current, Mapping):
+            stack.extend(current.values())
+            continue
+        if isinstance(current, Sequence) and not isinstance(current, str | bytes | bytearray):
+            stack.extend(current)
+    return ""
+
+
+def _append_tool_dispatch_failure_to_run_ledger(
+    *,
+    workspace: Path,
+    run_id: str,
+    project_id: str,
+    task_id: str,
+    tool_dispatch: Mapping[str, Any],
+) -> None:
+    """Append project-level lifecycle evidence for an already observed chain failure."""
+
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id=run_id,
+        task_id=task_id,
+        turn_id=str(tool_dispatch.get("turn_id") or ""),
+        role=str(tool_dispatch.get("role") or "director"),
+        provider_response_hash=str(tool_dispatch.get("provider_response_hash") or ""),
+        native_tool_calls_count=0,
+        decoded_tool_calls_count=0,
+        dispatched_tool_calls_count=0,
+        receipts=[],
+        dispatch_status="dropped",
+        failure_class="TOOL_DISPATCH_DROPPED",
+        reason=str(tool_dispatch.get("reason") or "tool_dispatch_dropped").strip(),
+    )
+    try:
+        append_run_ledger_event(
+            AppendRunLedgerEventCommandV1(
+                workspace=str(workspace),
+                run_id=run_id,
+                event={
+                    "event_type": "tool_call_lifecycle",
+                    "stage": "director_tool_dispatch",
+                    "run_id": run_id,
+                    "task_id": task_id,
+                    "tool_call_lifecycle_receipt": receipt.to_dict(),
+                    "job_token": {
+                        "token_id": f"tool-dispatch-{project_id}",
+                        "run_id": run_id,
+                        "task_id": task_id,
+                        "project_id": project_id,
+                        "capability_audit": {"ok": True, "issues": []},
+                        "gate_policy": {},
+                    },
+                },
+            )
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        _logger.debug("failed to append tool dispatch lifecycle verdict", exc_info=True)
 
 
 def apply_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> None:

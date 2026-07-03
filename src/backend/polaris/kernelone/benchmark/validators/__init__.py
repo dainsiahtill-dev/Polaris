@@ -17,7 +17,7 @@ from polaris.kernelone.benchmark.validators.contextos_validators import (
     ContextOSLongSessionValidator,
     ContextOSLossValidator,
     ContextOSTraceAnalyzer,
-    ContextOSTraceEvent,
+    ContextTraceEvent,
 )
 
 __all__ = [
@@ -28,7 +28,7 @@ __all__ = [
     "ContextOSLossValidator",
     # ContextOS trace models
     "ContextOSTraceAnalyzer",
-    "ContextOSTraceEvent",
+    "ContextTraceEvent",
     "NoHallucinatedPathsValidator",
     "NoPromptLeakageValidator",
     "StructuredStepsValidator",

@@ -4,6 +4,27 @@ from __future__ import annotations
 
 from typing import Any
 
+_DOWNSTREAM_ARTIFACT_PATH_KEYS = (
+    "downstream_pending_artifacts",
+    "downstream_pending_target_files",
+    "downstream_target_files",
+    "pending_artifacts",
+    "pending_target_files",
+    "project_declared_target_files",
+    "project_declared_source_targets",
+    "project_declared_entrypoint_targets",
+    "declared_project_target_files",
+    "all_task_target_files",
+)
+
+_TASK_COLLECTION_KEYS = (
+    "tasks",
+    "plan_tasks",
+    "project_tasks",
+    "pm_tasks",
+    "task_contracts",
+)
+
 
 def clean_relative_paths(values: Any) -> list[str]:
     """Return stable repository-relative paths from a scalar or collection."""
@@ -31,6 +52,28 @@ def _extend_context_paths(paths: list[str], value: Any) -> None:
 
 def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _extend_mapping_path_fields(
+    paths: list[str],
+    value: Any,
+    keys: tuple[str, ...],
+) -> None:
+    if not isinstance(value, dict):
+        return
+    for key in keys:
+        _extend_context_paths(paths, value.get(key))
+
+
+def _extend_task_collection_target_paths(paths: list[str], value: Any) -> None:
+    if not isinstance(value, (list, tuple, set)):
+        return
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        _extend_context_paths(paths, item.get("target_files"))
+        metadata = _mapping(item.get("metadata"))
+        _extend_context_paths(paths, metadata.get("target_files"))
 
 
 def _string_items(value: Any) -> list[str]:
@@ -70,6 +113,44 @@ def director_task_boundary_target_files(context_override: Any) -> list[str]:
         task = context_override.get(key)
         if isinstance(task, dict):
             _extend_context_paths(paths, task.get("target_files"))
+    return paths
+
+
+def director_task_boundary_downstream_pending_artifacts(context_override: Any) -> list[str]:
+    """Extract declared project/downstream artifact paths from role context.
+
+    These paths are not current-task write authority. They only tell the
+    TaskBoundary gate that a missing manifest/script entrypoint has a declared
+    downstream owner instead of being an incomplete current task.
+    """
+
+    if not isinstance(context_override, dict):
+        return []
+    paths: list[str] = []
+    mappings: list[dict[str, Any]] = [context_override]
+    for key in (
+        "context",
+        "task_boundary",
+        "director_execution_profile",
+        "task_execution_profile",
+        "execution_profile",
+        "run_ledger",
+        "run_ledger_projection",
+        "ledger_projection",
+        "task",
+        "current_task",
+        "pm_task",
+        "pm_task_contract",
+    ):
+        nested = _mapping(context_override.get(key))
+        if nested:
+            mappings.append(nested)
+    for mapping in mappings:
+        _extend_mapping_path_fields(paths, mapping, _DOWNSTREAM_ARTIFACT_PATH_KEYS)
+        metadata = _mapping(mapping.get("metadata"))
+        _extend_mapping_path_fields(paths, metadata, _DOWNSTREAM_ARTIFACT_PATH_KEYS)
+        for collection_key in _TASK_COLLECTION_KEYS:
+            _extend_task_collection_target_paths(paths, mapping.get(collection_key))
     return paths
 
 
@@ -174,6 +255,13 @@ def build_director_task_boundary_verdict(
         return None
     target_files = director_task_boundary_target_files(context_override)
     completed_artifacts = completed_artifacts_from_tool_results(tool_results)
+    completed_set = set(completed_artifacts)
+    target_set = set(target_files)
+    downstream_pending_artifacts = [
+        path
+        for path in director_task_boundary_downstream_pending_artifacts(context_override)
+        if path not in target_set and path not in completed_set
+    ]
     dispatch = dict(tool_dispatch or {})
     blocked_dependencies = director_task_boundary_blocked_dependencies(context_override)
     evidence_policy = director_task_boundary_evidence_policy(context_override)
@@ -181,6 +269,7 @@ def build_director_task_boundary_verdict(
     has_boundary_obligation = bool(
         target_files
         or completed_artifacts
+        or downstream_pending_artifacts
         or dispatch.get("dropped")
         or blocked_dependencies
         or evidence_policy
@@ -196,6 +285,7 @@ def build_director_task_boundary_verdict(
         run_id=run_id,
         target_files=target_files,
         completed_artifacts=completed_artifacts,
+        downstream_pending_artifacts=downstream_pending_artifacts,
         blocked_dependencies=blocked_dependencies,
         required_evidence_modalities=evidence_policy.get("required_evidence_modalities")
         or evidence_policy.get("required_modalities"),
@@ -256,7 +346,7 @@ def append_director_task_boundary_verdict(
     tool_results: list[dict[str, Any]],
     tool_dispatch: dict[str, Any] | None = None,
     evidence_refs: list[str] | tuple[str, ...] | None = None,
-) -> None:
+) -> dict[str, Any] | None:
     """Append a Director task-boundary verdict to the Run Ledger when applicable."""
     verdict = build_director_task_boundary_verdict(
         role=role,
@@ -269,13 +359,14 @@ def append_director_task_boundary_verdict(
         evidence_refs=evidence_refs,
     )
     if verdict is None:
-        return
+        return None
     _append_task_boundary_verdict_event(
         workspace=workspace,
         task_id=task_id,
         run_id=run_id,
         verdict=verdict,
     )
+    return verdict
 
 
 def append_deferred_followup_task_boundary_verdict(
@@ -285,7 +376,7 @@ def append_deferred_followup_task_boundary_verdict(
     run_id: str,
     reason: str,
     evidence_refs: list[str] | tuple[str, ...] | None = None,
-) -> None:
+) -> dict[str, Any]:
     """Append the task-boundary verdict for turns deferred to a governed follow-up."""
     from polaris.cells.control_plane.run_ledger.public import build_deferred_followup_task_boundary_verdict
 
@@ -301,6 +392,7 @@ def append_deferred_followup_task_boundary_verdict(
         run_id=run_id,
         verdict=verdict,
     )
+    return verdict
 
 
 def append_role_turn_task_boundary_verdict(
@@ -311,11 +403,12 @@ def append_role_turn_task_boundary_verdict(
     run_id: str,
     context_override: Any,
     tool_results: list[dict[str, Any]],
+    tool_dispatch: dict[str, Any] | None = None,
     needs_followup_workflow: bool,
     workflow_reason: str | None = None,
     error_message: str | None = None,
     evidence_refs: list[str] | tuple[str, ...] | None = None,
-) -> None:
+) -> dict[str, Any] | None:
     """Append the task-boundary verdict implied by a completed role turn.
 
     Normal Director turns are evaluated against target-file completion. Turns
@@ -323,21 +416,21 @@ def append_role_turn_task_boundary_verdict(
     the control plane does not mistake the turn for a successful completion.
     """
     if needs_followup_workflow:
-        append_deferred_followup_task_boundary_verdict(
+        return append_deferred_followup_task_boundary_verdict(
             workspace=workspace,
             task_id=task_id,
             run_id=run_id,
             reason=str(workflow_reason or error_message or "needs_followup_workflow"),
             evidence_refs=evidence_refs,
         )
-        return
 
-    append_director_task_boundary_verdict(
+    return append_director_task_boundary_verdict(
         role=role,
         workspace=workspace,
         task_id=task_id,
         run_id=run_id,
         context_override=context_override,
         tool_results=tool_results,
+        tool_dispatch=tool_dispatch,
         evidence_refs=evidence_refs,
     )

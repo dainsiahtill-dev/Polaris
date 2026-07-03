@@ -18,6 +18,7 @@ ERROR_CATEGORY_AUTH = "auth"
 ERROR_CATEGORY_PROVIDER = "provider"
 ERROR_CATEGORY_VALIDATION = "validation"
 ERROR_CATEGORY_CANCELLED = "cancelled"
+ERROR_CATEGORY_TOOL_REQUIRED = "tool_required"
 ERROR_CATEGORY_UNKNOWN = "unknown"
 
 # Retryable error categories
@@ -26,6 +27,7 @@ RETRYABLE_ERROR_CATEGORIES = frozenset(
         ERROR_CATEGORY_TIMEOUT,
         ERROR_CATEGORY_NETWORK,
         ERROR_CATEGORY_RATE_LIMIT,
+        ERROR_CATEGORY_TOOL_REQUIRED,
     }
 )
 
@@ -46,6 +48,9 @@ def classify_error(error_str: str) -> str:
 
     if "call_cancelled" in error_lower or "cancellederror" in error_lower:
         return ERROR_CATEGORY_CANCELLED
+
+    if "required_tool_not_called" in error_lower:
+        return ERROR_CATEGORY_TOOL_REQUIRED
 
     if (
         "rate limit" in error_lower
@@ -282,6 +287,7 @@ __all__ = [
     "ERROR_CATEGORY_PROVIDER",
     "ERROR_CATEGORY_RATE_LIMIT",
     "ERROR_CATEGORY_TIMEOUT",
+    "ERROR_CATEGORY_TOOL_REQUIRED",
     "ERROR_CATEGORY_UNKNOWN",
     "ERROR_CATEGORY_VALIDATION",
     "RETRYABLE_ERROR_CATEGORIES",

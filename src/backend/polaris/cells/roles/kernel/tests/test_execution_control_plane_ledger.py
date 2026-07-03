@@ -336,7 +336,9 @@ async def test_role_execution_successful_turn_with_missing_target_commits_task_b
         None,
     )
 
-    assert result.is_complete is True
+    assert result.is_complete is False
+    assert result.error is not None
+    assert result.error.startswith("task_boundary_failed:incomplete_materialization")
 
     projection = read_run_ledger_projection(
         ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-missing-target")
@@ -406,7 +408,9 @@ async def test_role_execution_successful_turn_with_missing_entrypoint_commits_ta
         None,
     )
 
-    assert result.is_complete is True
+    assert result.is_complete is False
+    assert result.error is not None
+    assert result.error.startswith("task_boundary_failed:missing_entrypoint_target")
 
     projection = read_run_ledger_projection(
         ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-missing-entrypoint")
@@ -477,7 +481,7 @@ async def test_stream_role_execution_successful_turn_with_missing_target_commits
         )
     ]
 
-    assert any(event.get("type") == "complete" for event in events)
+    assert any(event.get("type") == "error" and event.get("error_type") == "task_boundary_failed" for event in events)
     projection = read_run_ledger_projection(
         ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-stream-missing-target")
     ).projection
@@ -551,7 +555,7 @@ async def test_stream_role_execution_successful_turn_with_missing_entrypoint_com
         )
     ]
 
-    assert any(event.get("type") == "complete" for event in events)
+    assert any(event.get("type") == "error" and event.get("error_type") == "task_boundary_failed" for event in events)
     projection = read_run_ledger_projection(
         ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-stream-missing-entrypoint")
     ).projection

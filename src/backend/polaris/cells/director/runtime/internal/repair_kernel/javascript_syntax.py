@@ -52,6 +52,11 @@ _PLACEHOLDER_NPM_SCRIPT_RE = re.compile(
     r"npm package manifest script '([^']+)' is a placeholder command",
     re.IGNORECASE,
 )
+_PYTHON_COMMAND_NPM_SCRIPT_RE = re.compile(
+    r"npm package manifest contains Python command in script '([^']+)'",
+    re.IGNORECASE,
+)
+_PYTHON_COMMAND_TOKEN_RE = re.compile(r"(?<![\w.-])python(?:3|[0-9]+(?:\.[0-9]+)?)?(?![\w.-])", re.IGNORECASE)
 _UNRESOLVED_IMPORT_SYMBOL_RE = re.compile(
     r"unresolved (?:import )?symbol ['\"](?P<symbol>[^'\"]+)['\"] "
     r"from ['\"](?P<module>[^'\"]+)['\"] in (?P<path>\S+)",
@@ -183,6 +188,16 @@ def build_npm_script_contract_plan(
 
     for script_name in _placeholder_scripts(raw_errors):
         replacement = _fallback_script_for_placeholder_script(
+            script_name,
+            normalized_base,
+            package_payload,
+            has_typescript_context=has_typescript_context,
+        )
+        if replacement:
+            updates[("scripts", script_name)] = replacement
+
+    for script_name in _python_command_scripts(raw_errors, scripts):
+        replacement = _fallback_script_for_python_command_script(
             script_name,
             normalized_base,
             package_payload,
@@ -510,6 +525,13 @@ def build_javascript_missing_export_plan(
                 )
                 if operation is None:
                     operation = _export_class_method_facade_operation(
+                        path=exporter_path,
+                        text=exporter_text,
+                        symbol=symbol,
+                        diagnostic=diagnostic,
+                    )
+                if operation is None:
+                    operation = _append_imported_binding_reexport_operation(
                         path=exporter_path,
                         text=exporter_text,
                         symbol=symbol,
@@ -1023,6 +1045,7 @@ def _is_npm_script_contract_diagnostic(diagnostic: RepairDiagnostic) -> bool:
         "npm default failing test script" in raw
         or "npm placeholder test script" in raw
         or "npm manifest-only test script" in raw
+        or "npm package manifest contains python command in script" in raw
         or "npm package manifest script" in raw
         or "references missing local entrypoint:" in raw
         or "test script must use node --test" in raw
@@ -1182,6 +1205,41 @@ def _placeholder_scripts(errors: Sequence[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(scripts))
 
 
+def _python_command_scripts(errors: Sequence[str], scripts: Mapping[str, Any]) -> tuple[str, ...]:
+    script_names: list[str] = []
+    for error in errors:
+        for match in _PYTHON_COMMAND_NPM_SCRIPT_RE.finditer(str(error or "")):
+            script_name = str(match.group(1) or "").strip()
+            if script_name:
+                script_names.append(script_name)
+    if script_names:
+        for script_name, script_value in scripts.items():
+            if _PYTHON_COMMAND_TOKEN_RE.search(str(script_value or "")):
+                script_names.append(str(script_name))
+    return tuple(dict.fromkeys(script_names))
+
+
+def _fallback_script_for_python_command_script(
+    script_name: str,
+    base_files: Mapping[str, str],
+    package_payload: Mapping[str, Any],
+    *,
+    has_typescript_context: bool,
+) -> str:
+    normalized_script_name = str(script_name or "").strip().lower()
+    if not normalized_script_name:
+        return ""
+    if "test" in normalized_script_name:
+        return _node_test_runner_script(base_files)
+    if normalized_script_name in {"verify", "build"} and has_typescript_context:
+        return _fallback_script_for_recursive_script(normalized_script_name, base_files, package_payload)
+    if normalized_script_name in {"lint", "check", "typecheck"}:
+        if has_typescript_context:
+            return _fallback_script_for_missing_entrypoint(normalized_script_name)
+        return _node_source_syntax_check_script(base_files)
+    return _node_source_syntax_check_script(base_files)
+
+
 def _fallback_script_for_placeholder_script(
     script_name: str,
     base_files: Mapping[str, str],
@@ -1215,11 +1273,7 @@ def _fallback_script_for_placeholder_script(
 
 
 def _node_source_syntax_check_script(base_files: Mapping[str, str]) -> str:
-    source_paths = [
-        path
-        for path in sorted(base_files)
-        if _is_plain_javascript_source_path(path)
-    ]
+    source_paths = [path for path in sorted(base_files) if _is_plain_javascript_source_path(path)]
     if not source_paths:
         return ""
     return " && ".join(f"node --check {shlex.quote(path)}" for path in source_paths)
@@ -1234,10 +1288,7 @@ def _is_plain_javascript_source_path(path: str) -> bool:
         return False
     name = PurePosixPath(normalized).name
     return not (
-        name.startswith(".")
-        or name.endswith(".test.js")
-        or name.endswith(".spec.js")
-        or name.startswith("test_")
+        name.startswith(".") or name.endswith(".test.js") or name.endswith(".spec.js") or name.startswith("test_")
     )
 
 
@@ -1706,6 +1757,19 @@ def _javascript_module_exports_symbol(text: str, symbol: str) -> bool:
     return any(re.search(pattern, text) for pattern in patterns)
 
 
+def _javascript_module_imports_local_binding(text: str, symbol: str) -> bool:
+    for match in _JS_NAMED_IMPORT_RE.finditer(text):
+        for raw_binding in str(match.group("symbols") or "").split(","):
+            binding = raw_binding.split("//", 1)[0].strip()
+            if not binding:
+                continue
+            parts = re.split(r"\s+as\s+", binding, maxsplit=1, flags=re.IGNORECASE)
+            local_name = parts[1].strip() if len(parts) == 2 else parts[0].strip()
+            if local_name == symbol:
+                return True
+    return False
+
+
 def _export_existing_declaration_operation(
     *,
     path: str,
@@ -1721,9 +1785,9 @@ def _export_existing_declaration_operation(
         kind="text_replace",
         path=path,
         span_start=match.start("decl"),
-        span_end=match.start("decl"),
-        expected="",
-        replacement="export ",
+        span_end=match.end("decl"),
+        expected=str(match.group("decl") or ""),
+        replacement=f"export {match.group('decl')}",
         before_hash=sha256_text(text),
         metadata={
             "repair_kind": "javascript_missing_named_export",
@@ -1774,6 +1838,53 @@ def _export_class_method_facade_operation(
             "edit_file_preferred": True,
             "expected_context_before": text[max(0, insert_at - 160) : insert_at],
             "expected_context_after": text[insert_at : min(len(text), insert_at + 160)],
+        },
+    )
+
+
+def _append_imported_binding_reexport_operation(
+    *,
+    path: str,
+    text: str,
+    symbol: str,
+    diagnostic: RepairDiagnostic,
+) -> RepairOperation | None:
+    if not _JS_IDENTIFIER_RE.match(symbol):
+        return None
+    if not _javascript_module_imports_local_binding(text, symbol):
+        return None
+    context = _unique_javascript_eof_context(text)
+    append_text = ("\n" if text and not text.endswith("\n") else "") + f"\nexport {{ {symbol} }};\n"
+    if not context:
+        return RepairOperation(
+            kind="write_file",
+            path=path,
+            content=f"{text}{append_text}",
+            before_hash=sha256_text(text),
+            metadata={
+                "repair_kind": "javascript_missing_named_export_imported_binding_reexport",
+                "symbol": symbol,
+                "diagnostic_id": diagnostic.diagnostic_id,
+                "write_file_allowed_category": "fallback",
+                "write_file_policy_decision": "allowed_fallback",
+                "write_file_reason": "empty_file_imported_binding_reexport",
+            },
+        )
+    return RepairOperation(
+        kind="text_replace",
+        path=path,
+        span_start=len(text),
+        span_end=len(text),
+        expected="",
+        replacement=append_text,
+        before_hash=sha256_text(text),
+        metadata={
+            "repair_kind": "javascript_missing_named_export_imported_binding_reexport",
+            "symbol": symbol,
+            "diagnostic_id": diagnostic.diagnostic_id,
+            "edit_file_preferred": True,
+            "expected_context_before": context,
+            "unique_context": context,
         },
     )
 
@@ -2458,7 +2569,10 @@ def _is_esm_commonjs_diagnostic(diagnostic: RepairDiagnostic) -> bool:
             or "module is not defined" in raw
             or _is_missing_default_export_diagnostic(diagnostic)
         )
-    ) or "commonjs entrypoint in esm package" in raw
+    ) or (
+        "commonjs entrypoint in esm package" in raw
+        or ("uses commonjs runtime syntax" in raw and "package manifest declares type=module" in raw)
+    )
 
 
 def _is_missing_default_export_diagnostic(diagnostic: RepairDiagnostic) -> bool:

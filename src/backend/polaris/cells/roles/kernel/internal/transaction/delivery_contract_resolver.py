@@ -76,6 +76,24 @@ def _structured_no_write_contract() -> DeliveryContract:
     )
 
 
+def _tool_surface_is_write_only(tool_definitions: list[dict[str, Any]]) -> bool:
+    tools = [item for item in tool_definitions if isinstance(item, Mapping)]
+    if not tools:
+        return False
+    return all(has_available_write_tool([dict(item)]) for item in tools)
+
+
+def _materialize_contract_from_control_plane(contract: DeliveryContract) -> DeliveryContract:
+    return DeliveryContract(
+        mode=DeliveryMode.MATERIALIZE_CHANGES,
+        requires_mutation=True,
+        requires_verification=contract.requires_verification,
+        allow_inline_code=False,
+        allow_patch_proposal=False,
+        enrichment=contract.enrichment,
+    )
+
+
 async def resolve_turn_delivery_contract(
     *,
     turn_id: str,
@@ -193,6 +211,28 @@ async def resolve_turn_delivery_contract(
                     "latest_request": latest_user_request,
                 }
             )
+
+    if (
+        delivery_contract.mode != DeliveryMode.MATERIALIZE_CHANGES
+        and role_id.strip().lower().replace("-", "_") == "director"
+        and _tool_surface_is_write_only(tool_definitions)
+    ):
+        logger.warning(
+            "delivery-contract-write-only-tool-surface-overrode: turn_id=%s previous_mode=%s latest_msg=%r",
+            turn_id,
+            delivery_contract.mode.value,
+            latest_user_request[:160],
+        )
+        ledger.anomaly_flags.append(
+            {
+                "type": "DELIVERY_CONTRACT_WRITE_ONLY_TOOL_SURFACE_OVERRIDDEN",
+                "turn_id": turn_id,
+                "previous_mode": delivery_contract.mode.value,
+                "reason": "director_write_only_tool_surface_requires_materialize",
+                "latest_request": latest_user_request,
+            }
+        )
+        delivery_contract = _materialize_contract_from_control_plane(delivery_contract)
 
     if delivery_contract.mode == DeliveryMode.MATERIALIZE_CHANGES and not has_available_write_tool(tool_definitions):
         logger.warning(

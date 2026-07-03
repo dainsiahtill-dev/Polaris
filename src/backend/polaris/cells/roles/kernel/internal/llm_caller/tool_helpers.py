@@ -18,6 +18,14 @@ logger = logging.getLogger(__name__)
 # I3-r23 (Prong A): force the write tool on turn 1 for a from-scratch leaf step.
 _FIRST_TURN_WRITE_ENV = "KERNELONE_FIRST_TURN_WRITE"
 _FIRST_TURN_WRITE_DISABLED = {"off", "none", "disabled", "false", "0"}
+_DIRECTOR_FORCED_WRITE_OUTPUT_BUDGET_ENV = "KERNELONE_DIRECTOR_FORCED_WRITE_OUTPUT_TOKENS"
+_DEFAULT_DIRECTOR_FORCED_WRITE_OUTPUT_TOKENS = 7_000
+_OUTPUT_BUDGET_CONTEXT_KEYS = ("llm_max_tokens", "max_output_tokens", "max_tokens")
+_EXECUTION_STRATEGY_CONTEXT_KEYS = (
+    "task_execution_strategy",
+    "director_execution_strategy",
+    "execution_strategy",
+)
 
 # I3-r28 (R7, repair-preserving edit): on a repair/bounce turn whose target file
 # already exists, force an ANCHORED edit and forbid the whole-file rewrite verb so
@@ -78,6 +86,99 @@ def resolve_tool_call_provider(*, provider_id: str, model: str) -> str:
         return "openai"
 
     return "auto"
+
+
+def _coerce_positive_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _director_forced_write_output_budget_tokens() -> int:
+    parsed = _coerce_positive_int(os.environ.get(_DIRECTOR_FORCED_WRITE_OUTPUT_BUDGET_ENV))
+    value = parsed if parsed is not None else _DEFAULT_DIRECTOR_FORCED_WRITE_OUTPUT_TOKENS
+    return max(512, min(value, 128_000))
+
+
+def _strategy_budget_values(strategy: dict[str, Any]) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for key in ("output_budget_tokens", "llm_max_tokens", "max_output_tokens", "max_tokens"):
+        if key in strategy:
+            values[key] = strategy[key]
+    for nested_key in ("budget_policy", "context_budget", "llm_sampling"):
+        nested = strategy.get(nested_key)
+        if not isinstance(nested, dict):
+            continue
+        for key in ("output_budget_tokens", "llm_max_tokens", "max_output_tokens", "max_tokens"):
+            if key in nested:
+                values[f"{nested_key}.{key}"] = nested[key]
+    return values
+
+
+def _apply_strategy_output_budget(strategy: dict[str, Any], output_tokens: int) -> None:
+    for key in ("output_budget_tokens", "llm_max_tokens", "max_output_tokens"):
+        if key in strategy:
+            strategy[key] = output_tokens
+    for nested_key in ("budget_policy", "context_budget"):
+        nested = strategy.get(nested_key)
+        if isinstance(nested, dict):
+            nested["output_budget_tokens"] = output_tokens
+    sampling = strategy.get("llm_sampling")
+    if isinstance(sampling, dict) and "max_tokens" in sampling:
+        sampling["max_tokens"] = output_tokens
+
+
+def _apply_director_first_call_output_budget(
+    context_override: dict[str, Any],
+    *,
+    targets: list[str],
+) -> None:
+    ceiling = _director_forced_write_output_budget_tokens()
+    previous_values: dict[str, Any] = {
+        key: context_override[key] for key in _OUTPUT_BUDGET_CONTEXT_KEYS if key in context_override
+    }
+    for strategy_key in _EXECUTION_STRATEGY_CONTEXT_KEYS:
+        strategy = context_override.get(strategy_key)
+        if isinstance(strategy, dict):
+            strategy_values = _strategy_budget_values(strategy)
+            if strategy_values:
+                previous_values[strategy_key] = strategy_values
+
+    parsed_values: list[int] = []
+    for key in _OUTPUT_BUDGET_CONTEXT_KEYS:
+        parsed = _coerce_positive_int(context_override.get(key))
+        if parsed is not None:
+            parsed_values.append(parsed)
+    for strategy_key in _EXECUTION_STRATEGY_CONTEXT_KEYS:
+        strategy = context_override.get(strategy_key)
+        if not isinstance(strategy, dict):
+            continue
+        for value in _strategy_budget_values(strategy).values():
+            parsed = _coerce_positive_int(value)
+            if parsed is not None:
+                parsed_values.append(parsed)
+
+    output_tokens = max(512, min(ceiling, *parsed_values)) if parsed_values else ceiling
+    for key in _OUTPUT_BUDGET_CONTEXT_KEYS:
+        if key in context_override or key != "max_tokens":
+            context_override[key] = output_tokens
+    for strategy_key in _EXECUTION_STRATEGY_CONTEXT_KEYS:
+        strategy = context_override.get(strategy_key)
+        if isinstance(strategy, dict):
+            _apply_strategy_output_budget(strategy, output_tokens)
+    context_override["director_first_call_output_budget"] = {
+        "schema_version": "director.first_call_output_budget.v1",
+        "source": "roles.kernel.llm_caller.tool_helpers",
+        "reason": "declared_scope_incomplete_requires_first_turn_write_tool",
+        "max_tokens": output_tokens,
+        "ceiling_tokens": ceiling,
+        "target_files": list(targets),
+        "previous_budget_values": previous_values,
+    }
 
 
 def _coerce_bool_flag(value: Any) -> bool | None:
@@ -336,6 +437,31 @@ def _append_required_tool(required: list[str], tool_name: Any, known_tool_map: d
     canonical = known_tool_map.get(normalized, normalized)
     if canonical not in required:
         required.append(canonical)
+
+
+def _append_context_required_tool(context_override: dict[str, Any], tool_name: str) -> None:
+    """Project a runtime-required tool into final-request evidence metadata."""
+
+    normalized = str(tool_name or "").strip()
+    if not normalized:
+        return
+    required_tools = context_override.get("required_tools")
+    if not isinstance(required_tools, list):
+        required_tools = []
+        context_override["required_tools"] = required_tools
+    if normalized not in [str(item) for item in required_tools]:
+        required_tools.append(normalized)
+
+    tool_contract = context_override.get("tool_contract")
+    if not isinstance(tool_contract, dict):
+        tool_contract = {}
+        context_override["tool_contract"] = tool_contract
+    contract_required = tool_contract.get("required_tools")
+    if not isinstance(contract_required, list):
+        contract_required = []
+        tool_contract["required_tools"] = contract_required
+    if normalized not in [str(item) for item in contract_required]:
+        contract_required.append(normalized)
 
 
 def _append_required_tools_from_value(required: list[str], value: Any, known_tool_map: dict[str, str]) -> None:
@@ -711,6 +837,8 @@ def ensure_director_first_call_materialization_scope(
         "materialize_requested": True,
         "transaction_tools_disabled": False,
     }
+    _apply_director_first_call_output_budget(context_override, targets=targets)
+    _append_context_required_tool(context_override, "write_file")
     return forced_definitions
 
 

@@ -205,6 +205,55 @@ export function toJSON() {
     assert any("semicolon-terminated property" in error and "src/models/firefly.ts" in error for error in errors)
 
 
+def test_scan_does_not_apply_typescript_return_object_semicolon_rule_to_javascript(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "engine" / "runner.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        """
+export function dispatch(result) {
+  return {
+    generatedAt: result.generatedAt,
+    queue: result.queue,
+    dropped: result.dropped,
+  };
+}
+
+export const engineApi = Object.freeze({
+  dispatch,
+});
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/engine/runner.js"])
+
+    assert not any("semicolon-terminated property" in error for error in errors)
+
+
+def test_scan_treats_node_scheme_imports_as_node_builtins_for_javascript(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+    target = tmp_path / "src" / "engine" / "runner.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        """
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+
+export function load(name) {
+  return require(name);
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/engine/runner.js"])
+
+    assert not any("undeclared runtime import 'node:module'" in error for error in errors)
+
+
 def test_scan_detects_structural_verification_scripts(tmp_path: Path) -> None:
     target = tmp_path / "scripts" / "build.mjs"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -532,6 +581,28 @@ def test_scan_detects_test_script_missing_local_entrypoint_after_node_loader(tmp
     assert any("references missing local entrypoint 'src/verify.ts'" in error for error in errors)
 
 
+def test_scan_allows_node_test_runner_glob_patterns(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "meteor-wish-queue",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "test:watch": "node --test --watch tests/*.test.js"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert not any("missing local entrypoint" in error for error in errors)
+
+
 def test_scan_allows_start_script_that_compiles_before_dist_entrypoint(tmp_path: Path) -> None:
     target = tmp_path / "package.json"
     target.write_text(
@@ -672,6 +743,7 @@ def test_scan_detects_type_module_commonjs_runtime_mismatch(tmp_path: Path) -> N
     assert any(
         "declares type=module but workspace JavaScript uses CommonJS runtime syntax" in error for error in errors
     )
+    assert any("src/index.js uses CommonJS runtime syntax" in error for error in errors)
 
 
 def test_scan_allows_type_module_with_esm_source(tmp_path: Path) -> None:
@@ -1499,6 +1571,16 @@ class TestTypescriptCrossFileSymbolCoherence:
         (tmp_path / "index.ts").write_text("import { Missing as M } from './sibling';\n", encoding="utf-8")
         errors = self._errors(tmp_path)
         assert any("Missing" in e for e in errors)
+
+    def test_named_import_clause_comments_are_not_symbols(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.js").write_text("export const Present = 1;\n", encoding="utf-8")
+        (tmp_path / "main.js").write_text(
+            "import {\n  Present, // local facade note\n} from './sibling';\n",
+            encoding="utf-8",
+        )
+
+        assert self._errors(tmp_path) == []
 
     # --- export-form recognition (must NOT flag) -------------------------------
     def test_all_declaration_export_forms_recognized(self, tmp_path: Path, monkeypatch) -> None:

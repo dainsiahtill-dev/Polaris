@@ -1948,6 +1948,128 @@ def test_materialization_target_runtime_allowed_paths_include_runtime_planned_ne
     assert "tests/smoke.test.ts" in allowed_paths
 
 
+def test_materialization_target_runtime_intersects_allowed_paths_with_current_task_scope(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    runtime_calls: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(
+        materialization_quality_callback_ports,
+        "_materialization_runtime_source_tools_for_step",
+        lambda step_id: (
+            ("deterministic_javascript_test_missing_target_repair",)
+            if step_id == "materialization.target_runtime"
+            else ()
+        ),
+    )
+    monkeypatch.setattr(
+        materialization_quality_callback_ports,
+        "_collect_materialization_target_runtime_base_files",
+        lambda *args, **kwargs: {
+            "package.json": '{"scripts":{"test":"node --test tests/product.test.js"}}\n',
+            "src/engine/rules.js": "export const rules = [];\n",
+        },
+    )
+    monkeypatch.setattr(
+        materialization_quality_callback_ports,
+        "_materialization_allowed_paths_from_runtime_public_plan",
+        lambda **kwargs: ("tests/product.test.js", "src/engine/rules.js"),
+    )
+
+    def fake_runtime_bridge(
+        adapter: Any,
+        *,
+        workspace_path: Path,
+        task_id: str,
+        source_tool: str,
+        executor_factory: Any,
+        base_files: dict[str, str],
+        artifact_quality_errors: list[str],
+        allowed_paths: tuple[str, ...],
+        use_editor: bool,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        del adapter, executor_factory, base_files, artifact_quality_errors, kwargs
+        runtime_calls.append(
+            {
+                "workspace_path": workspace_path,
+                "task_id": task_id,
+                "source_tool": source_tool,
+                "allowed_paths": allowed_paths,
+                "use_editor": use_editor,
+            }
+        )
+        return [{"tool": "edit_file", "success": True}]
+
+    monkeypatch.setattr(
+        materialization_quality_callback_ports,
+        "run_runtime_repair_with_director_tools",
+        fake_runtime_bridge,
+    )
+
+    results = materialization_quality_callback_ports._run_materialization_target_runtime(
+        _FakeAdapter(tmp_path),
+        task={"target_files": ["src/engine/rules.js"]},
+        task_id="TASK-1-source-core",
+        artifact_quality_errors=["workspace validation command failed: missing tests/product.test.js"],
+    )
+
+    assert results == [{"tool": "edit_file", "success": True}]
+    assert runtime_calls[0]["allowed_paths"] == ("src/engine/rules.js",)
+
+
+def test_materialization_target_runtime_skips_out_of_scope_runtime_allowed_paths(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    runtime_calls: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(
+        materialization_quality_callback_ports,
+        "_materialization_runtime_source_tools_for_step",
+        lambda step_id: (
+            ("deterministic_javascript_test_missing_target_repair",)
+            if step_id == "materialization.target_runtime"
+            else ()
+        ),
+    )
+    monkeypatch.setattr(
+        materialization_quality_callback_ports,
+        "_collect_materialization_target_runtime_base_files",
+        lambda *args, **kwargs: {
+            "package.json": '{"scripts":{"test":"node --test tests/product.test.js"}}\n',
+            "src/engine/rules.js": "export const rules = [];\n",
+        },
+    )
+    monkeypatch.setattr(
+        materialization_quality_callback_ports,
+        "_materialization_allowed_paths_from_runtime_public_plan",
+        lambda **kwargs: ("tests/product.test.js",),
+    )
+
+    def fake_runtime_bridge(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        del args
+        runtime_calls.append(dict(kwargs))
+        return [{"success": True}]
+
+    monkeypatch.setattr(
+        materialization_quality_callback_ports,
+        "run_runtime_repair_with_director_tools",
+        fake_runtime_bridge,
+    )
+
+    results = materialization_quality_callback_ports._run_materialization_target_runtime(
+        _FakeAdapter(tmp_path),
+        task={"target_files": ["src/engine/rules.js"]},
+        task_id="TASK-1-source-core",
+        artifact_quality_errors=["workspace validation command failed: missing tests/product.test.js"],
+    )
+
+    assert results == []
+    assert runtime_calls == []
+
+
 def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     tmp_path: Path,
     monkeypatch: Any,

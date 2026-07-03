@@ -40,6 +40,7 @@ PORT_RELEASE_TIMEOUT_SECONDS = 8.0
 BACKEND_IDENTITY_TIMEOUT_SECONDS = 75.0
 FRONTEND_IDENTITY_TIMEOUT_SECONDS = 10.0
 PARTIAL_STARTUP_GRACE_SECONDS = 120.0
+BACKEND_WORKSPACE_IDENTITY_ENDPOINTS = ("/v2/settings", "/settings")
 
 logger = logging.getLogger(__name__)
 
@@ -924,19 +925,22 @@ class InstanceSupervisor:
 
     @staticmethod
     def _read_backend_workspace(record: InstanceRecord) -> str | None:
-        request = urllib.request.Request(
-            f"{record.backend_url}/settings",
-            headers={"Authorization": f"Bearer {record.token}"},
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=1.0) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-            return None
-        if not isinstance(payload, dict):
-            return None
-        workspace = payload.get("workspace")
-        return str(workspace) if isinstance(workspace, str) and workspace else None
+        for endpoint in BACKEND_WORKSPACE_IDENTITY_ENDPOINTS:
+            request = urllib.request.Request(
+                f"{record.backend_url}{endpoint}",
+                headers={"Authorization": f"Bearer {record.token}"},
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=1.0) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+            except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            workspace = payload.get("workspace")
+            if isinstance(workspace, str) and workspace:
+                return workspace
+        return None
 
     def _wait_for_backend_identity(
         self,

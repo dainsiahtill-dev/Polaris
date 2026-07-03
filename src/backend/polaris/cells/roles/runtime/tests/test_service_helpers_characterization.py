@@ -132,6 +132,7 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
         result=RoleTurnResult(
             content="out",
             tool_calls=[{"name": "write_file"}],
+            tool_results=[{"tool_name": "write_file", "status": "success"}],
             structured_output={"artifacts": ["f.py"]},
             execution_stats={"k": 1},
         ),
@@ -143,6 +144,55 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
     assert ok.usage == {"k": 1}
     assert ok.metadata["structured_output"] == {"artifacts": ["f.py"]}
     assert ok.error_code is None
+
+    dropped = runtime_service._to_contract_result(
+        role="director",
+        workspace=".",
+        task_id="t",
+        session_id="se",
+        run_id="ru",
+        result=RoleTurnResult(
+            content="I will call write_file.",
+            tool_calls=[{"name": "write_file"}],
+        ),
+    )
+    assert dropped.ok is False
+    assert dropped.status == "failed"
+    assert dropped.error_code == "tool_dispatch_dropped"
+    assert dropped.error_message == (
+        "tool_dispatch_dropped: native tool calls observed but no tool dispatch/effect receipt was committed"
+    )
+    assert dropped.metadata["tool_call_lifecycle"]["dispatch_status"] == "dropped"
+    assert dropped.metadata["tool_call_lifecycle"]["dropped_tool_calls"] == ["write_file"]
+
+    dropped_from_metadata = runtime_service._to_contract_result(
+        role="director",
+        workspace=".",
+        task_id="t",
+        session_id="se",
+        run_id="ru",
+        result=RoleTurnResult(
+            content="I will call write_file.",
+            metadata={
+                "tool_call_lifecycle": {
+                    "schema_version": "tool_call_lifecycle_receipt.v1",
+                    "dispatch_status": "dropped",
+                    "failure_class": "tool_dispatch_dropped",
+                    "native_tool_calls_count": 1,
+                    "decoded_tool_calls_count": 0,
+                    "dispatched_tool_calls_count": 0,
+                    "dropped_tool_calls": ["write_file"],
+                }
+            },
+        ),
+    )
+    assert dropped_from_metadata.ok is False
+    assert dropped_from_metadata.status == "failed"
+    assert dropped_from_metadata.error_code == "tool_dispatch_dropped"
+    assert dropped_from_metadata.error_message == (
+        "tool_dispatch_dropped: required or native tool calls had no dispatch/effect receipt"
+    )
+    assert dropped_from_metadata.metadata["tool_call_lifecycle"]["native_tool_calls_count"] == 1
 
     failed = runtime_service._to_contract_result(
         role="pm",

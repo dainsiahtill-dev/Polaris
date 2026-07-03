@@ -1067,7 +1067,7 @@ def _python_args_signature(args: ast.arguments, *, drop_self: bool = False) -> s
 
 def _parse_ts_import_names(inner: str) -> list[str]:
     names: list[str] = []
-    for raw_part in str(inner or "").split(","):
+    for raw_part in _strip_ts_js_clause_comments(inner).split(","):
         token = raw_part.strip()
         if not token:
             continue
@@ -1079,13 +1079,19 @@ def _parse_ts_import_names(inner: str) -> list[str]:
     return list(dict.fromkeys(names))
 
 
+def _strip_ts_js_clause_comments(inner: str) -> str:
+    clause = str(inner or "")
+    mask = _ts_js_code_mask(clause)
+    return "".join(char if mask[index] else " " for index, char in enumerate(clause))
+
+
 def _ts_symbol_coherence_enabled() -> bool:
     return os.environ.get(_TS_SYMBOL_COHERENCE_FLAG, "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _parse_ts_export_clause(inner: str) -> dict[str, str]:
     names: dict[str, str] = {}
-    for raw_part in str(inner or "").split(","):
+    for raw_part in _strip_ts_js_clause_comments(inner).split(","):
         token = raw_part.strip()
         if not token:
             continue

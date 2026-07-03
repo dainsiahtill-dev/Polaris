@@ -98,10 +98,14 @@ def append_tool_dispatch_dropped_control_plane_events(
     )
 
     native_count = 1
+    decoded_count = 0
+    dispatched_count = 0
     provider_response_hash = ""
     for flag in error_metadata.get("anomaly_flags", []):
         if isinstance(flag, dict) and str(flag.get("type") or "") == "TOOL_DISPATCH_DROPPED":
             native_count = max(1, int(flag.get("native_tool_calls_count") or 1))
+            decoded_count = max(0, int(flag.get("decoded_tool_calls_count") or 0))
+            dispatched_count = max(0, int(flag.get("dispatched_tool_calls_count") or 0))
             provider_response_hash = str(flag.get("provider_response_hash") or "").strip()
             break
     lifecycle = build_tool_call_lifecycle_receipt(
@@ -111,8 +115,8 @@ def append_tool_dispatch_dropped_control_plane_events(
         role=str(getattr(profile, "role_id", "") or role or ""),
         provider_response_hash=provider_response_hash,
         native_tool_calls_count=native_count,
-        decoded_tool_calls_count=0,
-        dispatched_tool_calls_count=0,
+        decoded_tool_calls_count=decoded_count,
+        dispatched_tool_calls_count=dispatched_count,
         receipts=[],
         dispatch_status="dropped",
         failure_class="TOOL_DISPATCH_DROPPED",

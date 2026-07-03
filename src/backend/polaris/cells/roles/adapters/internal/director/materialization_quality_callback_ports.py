@@ -39,6 +39,18 @@ _MATERIALIZATION_QUALITY_REPAIR_RUNNERS = {
     "materialization.go_import": "_run_materialization_go_import",
 }
 
+_MATERIALIZATION_TARGET_RUNTIME_SUFFIXES = (
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".json",
+    ".html",
+    ".htm",
+)
+
 
 def has_materialization_quality_runtime_repair_coverage(artifact_quality_errors: list[str]) -> bool:
     """Return true when runtime coverage maps diagnostics to this port's executable schedule."""
@@ -715,6 +727,23 @@ def _materialization_task_candidate_paths(
     return tuple(dict.fromkeys(paths))
 
 
+def _materialization_allowed_paths_in_current_task_scope(
+    runtime_allowed_paths: Sequence[str],
+    *,
+    task: Mapping[str, Any] | None,
+    allowed_suffixes: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Constrain runtime repair writes to the current task's materialization scope."""
+
+    task_allowed_paths = _materialization_task_candidate_paths(task, allowed_suffixes=allowed_suffixes)
+    runtime_allowed = tuple(dict.fromkeys(str(path or "").strip().replace("\\", "/") for path in runtime_allowed_paths))
+    runtime_allowed = tuple(path for path in runtime_allowed if path)
+    if not task_allowed_paths:
+        return runtime_allowed
+    task_allowed = set(task_allowed_paths)
+    return tuple(path for path in runtime_allowed if path in task_allowed)
+
+
 def _run_materialization_rust_runtime_repair(
     adapter: Any,
     *,
@@ -785,6 +814,18 @@ def _run_materialization_target_runtime(
         )
         if not base_files:
             continue
+        runtime_allowed_paths = _materialization_allowed_paths_from_runtime_public_plan(
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+        allowed_paths = _materialization_allowed_paths_in_current_task_scope(
+            runtime_allowed_paths,
+            task=task,
+            allowed_suffixes=_MATERIALIZATION_TARGET_RUNTIME_SUFFIXES,
+        )
+        if not allowed_paths:
+            continue
         results.extend(
             run_runtime_repair_with_director_tools(
                 adapter,
@@ -794,11 +835,7 @@ def _run_materialization_target_runtime(
                 executor_factory=DirectorToolExecutor,
                 base_files=base_files,
                 artifact_quality_errors=artifact_quality_errors,
-                allowed_paths=_materialization_allowed_paths_from_runtime_public_plan(
-                    source_tool=source_tool,
-                    base_files=base_files,
-                    artifact_quality_errors=artifact_quality_errors,
-                ),
+                allowed_paths=allowed_paths,
                 use_editor=True,
                 convergence_verifier=convergence_verifier,
             )

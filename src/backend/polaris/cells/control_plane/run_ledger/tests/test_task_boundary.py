@@ -61,6 +61,102 @@ def test_task_boundary_allows_package_entrypoint_declared_downstream(tmp_path: P
     assert verdict["status"] == "completed_verified"
 
 
+def test_task_boundary_reports_unresolved_local_import_in_current_source(tmp_path: Path) -> None:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "meteor.js").write_text(
+        'import { simpleHash32 } from "./_util/hash.js";\n'
+        "export function meteorId(seed) { return simpleHash32(seed); }\n",
+        encoding="utf-8",
+    )
+
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-1-source-modules",
+        run_id="run-1",
+        target_files=["src/meteor.js"],
+        completed_artifacts=["src/meteor.js"],
+    ).to_dict()
+
+    assert verdict["ok"] is False
+    assert verdict["status"] == "unresolved_local_import"
+    assert verdict["failure_class"] == "UNRESOLVED_LOCAL_IMPORT"
+    assert verdict["responsible_layer"] == "director"
+    assert verdict["unresolved_local_imports"] == ["src/meteor.js -> ./_util/hash.js (src/_util/hash.js)"]
+
+
+def test_task_boundary_allows_local_import_declared_downstream(tmp_path: Path) -> None:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "meteor.js").write_text(
+        'import { simpleHash32 } from "./_util/hash.js";\n'
+        "export function meteorId(seed) { return simpleHash32(seed); }\n",
+        encoding="utf-8",
+    )
+
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-1-source-modules",
+        run_id="run-1",
+        target_files=["src/meteor.js"],
+        completed_artifacts=["src/meteor.js"],
+        downstream_pending_artifacts=["src/_util/hash.js"],
+    ).to_dict()
+
+    assert verdict["ok"] is True
+    assert verdict["status"] == "completed_verified"
+    assert verdict["unresolved_local_imports"] == []
+
+
+def test_task_boundary_allows_existing_local_import_target(tmp_path: Path) -> None:
+    src_dir = tmp_path / "src"
+    (src_dir / "_util").mkdir(parents=True)
+    (src_dir / "_util" / "hash.js").write_text("export const simpleHash32 = () => 0;\n", encoding="utf-8")
+    (src_dir / "meteor.js").write_text(
+        'import { simpleHash32 } from "./_util/hash.js";\n'
+        "export function meteorId(seed) { return simpleHash32(seed); }\n",
+        encoding="utf-8",
+    )
+
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-1-source-modules",
+        run_id="run-1",
+        target_files=["src/meteor.js"],
+        completed_artifacts=["src/meteor.js"],
+    ).to_dict()
+
+    assert verdict["ok"] is True
+    assert verdict["status"] == "completed_verified"
+    assert verdict["unresolved_local_imports"] == []
+
+
+def test_task_boundary_ignores_package_script_glob_patterns(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "test:python": "python -m unittest discover -s tests -p 'test_*.py' -v",
+                    "test:node": "node --test tests/**/*.test.js",
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-1",
+        run_id="run-1",
+        target_files=["package.json"],
+    ).to_dict()
+
+    assert verdict["ok"] is True
+    assert verdict["status"] == "completed_verified"
+    assert verdict["missing_entrypoint_targets"] == []
+
+
 def test_task_boundary_reports_missing_html_script_entrypoint(tmp_path: Path) -> None:
     (tmp_path / "index.html").write_text(
         '<html><body><script src="src/app.js"></script></body></html>',

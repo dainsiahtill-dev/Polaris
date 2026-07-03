@@ -132,12 +132,16 @@ def plan_transaction_tool_surface(
         _text_requests_materialize_delivery,
     )
 
-    materialize_requested = _context_requests_materialize_delivery(
+    context_or_text_materialize_requested = _context_requests_materialize_delivery(
         context_override
     ) or _text_requests_materialize_delivery(getattr(request, "message", None))
-    missing_materialization_targets = (
-        resolve_missing_materialization_write_targets(context_override, workspace) if materialize_requested else []
+    declared_missing_targets = (
+        resolve_missing_materialization_write_targets(context_override, workspace)
+        if str(role or "").strip().lower() == "director" and not transaction_tools_disabled
+        else []
     )
+    materialize_requested = context_or_text_materialize_requested or bool(declared_missing_targets)
+    missing_materialization_targets = declared_missing_targets if materialize_requested else []
     from_scratch_target = resolve_from_scratch_write_target(context_override, workspace)
     first_turn_write_targets = missing_materialization_targets or ([from_scratch_target] if from_scratch_target else [])
     if first_turn_write_targets:

@@ -26,6 +26,33 @@ def _extract_tool_calls(result: RoleTurnResult) -> tuple[str, ...]:
     return tuple(names)
 
 
+def _has_tool_dispatch_evidence(result: RoleTurnResult) -> bool:
+    if result.tool_results:
+        return True
+    receipt = result.batch_receipt
+    if not isinstance(receipt, Mapping):
+        return False
+    for key in ("results", "raw_results", "effect_receipts"):
+        value = receipt.get(key)
+        if isinstance(value, list) and value:
+            return True
+    return False
+
+
+def _tool_dispatch_dropped_error(result: RoleTurnResult) -> str:
+    metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
+    lifecycle = metadata.get("tool_call_lifecycle")
+    if isinstance(lifecycle, Mapping):
+        dispatch_status = str(lifecycle.get("dispatch_status") or "").strip().lower()
+        failure_class = str(lifecycle.get("failure_class") or "").strip().lower()
+        if dispatch_status == "dropped" or failure_class == "tool_dispatch_dropped":
+            return "tool_dispatch_dropped: required or native tool calls had no dispatch/effect receipt"
+    tool_calls = _extract_tool_calls(result)
+    if not tool_calls or _has_tool_dispatch_evidence(result):
+        return ""
+    return "tool_dispatch_dropped: native tool calls observed but no tool dispatch/effect receipt was committed"
+
+
 def _extract_artifacts(result: RoleTurnResult) -> tuple[str, ...]:
     payload = result.structured_output if isinstance(result.structured_output, dict) else {}
     values = payload.get("artifacts")
@@ -107,6 +134,22 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
     event_metadata = _copy_final_request_metadata_from_turn_events(result.turn_events_metadata)
     for key, value in event_metadata.items():
         metadata.setdefault(key, value)
+    dropped_error = _tool_dispatch_dropped_error(result)
+    if dropped_error:
+        metadata.setdefault(
+            "tool_call_lifecycle",
+            {
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "dispatch_status": "dropped",
+                "failure_class": "tool_dispatch_dropped",
+                "native_tool_calls_count": len(_extract_tool_calls(result)),
+                "decoded_tool_calls_count": len(_extract_tool_calls(result)),
+                "dispatched_tool_calls_count": 0,
+                "tool_result_count": 0,
+                "effect_receipt_count": 0,
+                "dropped_tool_calls": list(_extract_tool_calls(result)),
+            },
+        )
     return metadata
 
 
@@ -162,7 +205,8 @@ def _to_contract_result(
     run_id: str | None,
     result: RoleTurnResult,
 ) -> RoleExecutionResultV1:
-    error_message = str(result.error or result.tool_execution_error or "").strip()
+    dispatch_error = _tool_dispatch_dropped_error(result)
+    error_message = str(result.error or result.tool_execution_error or dispatch_error or "").strip()
     ok = not bool(error_message)
     status = "ok" if ok else "failed"
     if not result.is_complete and ok:
@@ -181,7 +225,7 @@ def _to_contract_result(
         artifacts=_extract_artifacts(result),
         usage=dict(result.execution_stats or {}),
         metadata=_contract_result_metadata(result),
-        error_code=None if ok else "role_runtime_error",
+        error_code=None if ok else ("tool_dispatch_dropped" if dispatch_error else "role_runtime_error"),
         error_message=None if ok else (error_message or "unknown runtime error"),
         turn_history=list(result.turn_history) if result.turn_history else [],
     )

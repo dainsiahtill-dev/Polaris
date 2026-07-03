@@ -331,8 +331,11 @@ def extract_target_files_from_message(message: str) -> list[str]:
         if not match:
             continue
         declared_tokens.extend(_extract_file_tokens_from_text(match.group("value")))
+    quality_repair_targets = _extract_quality_repair_target_block_files(raw)
     if declared_tokens:
-        return _dedupe_normalized_paths([*declared_tokens, *_extract_quality_repair_target_block_files(raw)])
+        return _dedupe_normalized_paths([*declared_tokens, *quality_repair_targets])
+    if quality_repair_targets:
+        return quality_repair_targets
     return _extract_file_tokens_from_text(raw)
 
 

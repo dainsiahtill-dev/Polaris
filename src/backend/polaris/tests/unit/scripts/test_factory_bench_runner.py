@@ -280,6 +280,45 @@ def test_task_boundary_verdict_projects_real_run_gate_evidence(tmp_path: Path) -
     assert verdict["failed_required_evidence_modalities"] == ["command"]
 
 
+def test_task_boundary_verdict_preserves_tool_dispatch_dropped_chain_failure(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    record = {
+        "task_id": "TASK-1",
+        "declared_source_targets": ["package.json"],
+        "source_files": [],
+        "code_files": [],
+        "failure_evidence": [
+            "Director dispatch failed: error=tool_dispatch_dropped; root_cause_hint=required write tool dropped"
+        ],
+        "real_run_gate": {
+            "ok": False,
+            "requirements": {
+                "artifact_landed": {"ok": True},
+                "source_files_present": {"ok": False},
+                "build_test_lint_ran": {"ok": False, "detail": "not run"},
+            },
+            "commands": [],
+            "entrypoint": {"ok": False, "kind": "", "detail": "not run"},
+        },
+    }
+
+    verdict = bench._append_task_boundary_verdict_to_run_ledger(
+        workspace=workspace,
+        run_id="run-tool-dispatch-dropped",
+        project_id="L2-08",
+        record=record,
+    )
+    projection = bench.load_run_ledger_projection(workspace, run_id="run-tool-dispatch-dropped")
+
+    assert verdict["ok"] is False
+    assert verdict["status"] == "tool_dispatch_dropped"
+    assert verdict["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert projection["tool_lifecycle"]["dropped_count"] == 1
+    assert projection["tool_lifecycle"]["events"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert projection["task_boundary"]["latest"]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+
+
 def test_chain_failure_overrides_static_artifact_checks() -> None:
     record = _record(
         chain_state="fail",

@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 _TASK_ID_PATTERN = re.compile(r"^task-(\d+)(?:-|$)", re.IGNORECASE)
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+_TERMINAL_SESSION_STATUSES_TO_TASK_STATUS = {
+    "completed": TaskStatus.COMPLETED,
+    "failed": TaskStatus.FAILED,
+    "cancelled": TaskStatus.CANCELLED,
+}
 
 
 class TaskRuntimeService:
@@ -298,7 +303,7 @@ class TaskRuntimeService:
             session = self._read_session(normalized)
             if session is not None:
                 session.mark_suspended(reason=reason or "task_reopened", resumable=True)
-                self._write_session(session)
+                self._write_session(session, allow_terminal_downgrade=True)
         return task
 
     def list_all(
@@ -486,14 +491,38 @@ class TaskRuntimeService:
         if task is None:
             return {"success": False, "reason": "task_not_found"}
 
-        if task.is_terminal:
-            return {"success": False, "reason": "task_terminal", "task": self._augment_task_row(task.to_dict())}
-        if self._task_has_unresolved_dependencies(task):
-            return {"success": False, "reason": "task_blocked", "task": self._augment_task_row(task.to_dict())}
-
         session_lock = self._get_session_lock(normalized)
         with session_lock:
             existing_session = self._read_session(normalized)
+            if existing_session is not None:
+                terminal_session_status = _TERMINAL_SESSION_STATUSES_TO_TASK_STATUS.get(
+                    str(existing_session.status).strip().lower()
+                )
+                if terminal_session_status is not None:
+                    updated = self._board.update(
+                        normalized,
+                        status=terminal_session_status,
+                        metadata=self._build_runtime_metadata(
+                            session=existing_session,
+                            effective_status=terminal_session_status.value,
+                            resume_state="",
+                            extra_metadata=metadata,
+                        ),
+                    )
+                    row = self._augment_task_row(updated.to_dict() if updated is not None else task.to_dict())
+                    return {
+                        "success": False,
+                        "reason": "task_terminal",
+                        "task": row,
+                        "session": existing_session.to_dict(),
+                        "reconciled_from_terminal_session": True,
+                    }
+
+            if task.is_terminal:
+                return {"success": False, "reason": "task_terminal", "task": self._augment_task_row(task.to_dict())}
+            if self._task_has_unresolved_dependencies(task):
+                return {"success": False, "reason": "task_blocked", "task": self._augment_task_row(task.to_dict())}
+
             if (
                 existing_session is not None
                 and existing_session.status == "active"
@@ -625,7 +654,15 @@ class TaskRuntimeService:
                 lease_ttl_seconds=lease_ttl_seconds,
                 context_summary=context_summary,
             )
-            self._write_session(session)
+            session_written = self._write_session(session)
+            if not session_written:
+                row = self._reconcile_terminal_task_row(normalized, session=session)
+                return {
+                    "success": False,
+                    "reason": "session_terminal_preserved",
+                    "task": row,
+                    "session": session.to_dict(),
+                }
         task = self._board.update(
             normalized,
             metadata=self._build_runtime_metadata(
@@ -764,7 +801,15 @@ class TaskRuntimeService:
                 return {"success": False, "reason": "session_mismatch", "session": session.to_dict()}
 
             session.mark_suspended(reason=reason, resumable=True)
-            self._write_session(session)
+            session_written = self._write_session(session)
+            if not session_written:
+                row = self._reconcile_terminal_task_row(normalized, session=session)
+                return {
+                    "success": False,
+                    "reason": "session_terminal_preserved",
+                    "task": row,
+                    "session": session.to_dict(),
+                }
         updated = self._board.update(
             normalized,
             status=TaskStatus.BLOCKED,
@@ -826,7 +871,10 @@ class TaskRuntimeService:
                     continue
 
                 session.mark_suspended(reason=reason, resumable=True)
-                self._write_session(session)
+                session_written = self._write_session(session)
+                if not session_written:
+                    self._reconcile_terminal_task_row(task_id, session=session)
+                    continue
 
             task_row = task.to_dict()
             existing_metadata = dict(task_row.get("metadata") or {})
@@ -1043,13 +1091,106 @@ class TaskRuntimeService:
             logger.warning("Failed to parse task runtime session %s: %s", logical_path, exc)
             return None
 
-    def _write_session(self, session: TaskExecutionSession) -> None:
+    def _write_session(
+        self,
+        session: TaskExecutionSession,
+        *,
+        allow_terminal_downgrade: bool = False,
+    ) -> bool:
+        if not allow_terminal_downgrade and session.status not in _TERMINAL_SESSION_STATUSES_TO_TASK_STATUS:
+            terminal_session = self._find_terminal_session_snapshot(session)
+            if terminal_session is not None:
+                self._copy_session_state(session, terminal_session)
+                self._kernel_fs.write_json_atomic(
+                    self._session_logical_path(session.task_id),
+                    terminal_session.to_dict(),
+                    indent=2,
+                    ensure_ascii=False,
+                )
+                return False
         self._kernel_fs.write_json_atomic(
             self._session_logical_path(session.task_id),
             session.to_dict(),
             indent=2,
             ensure_ascii=False,
         )
+        return True
+
+    def _find_terminal_session_snapshot(
+        self,
+        incoming: TaskExecutionSession,
+    ) -> TaskExecutionSession | None:
+        disk_session = self._read_session(incoming.task_id)
+        if self._same_terminal_session(disk_session, incoming):
+            return disk_session
+
+        task = self._board.get(incoming.task_id)
+        metadata = task.metadata if task is not None and isinstance(task.metadata, dict) else {}
+        runtime_execution_raw = metadata.get("runtime_execution") if isinstance(metadata, dict) else None
+        if isinstance(runtime_execution_raw, dict):
+            try:
+                metadata_session = TaskExecutionSession.from_dict(runtime_execution_raw)
+            except (TypeError, ValueError):
+                metadata_session = None
+            if self._same_terminal_session(metadata_session, incoming):
+                return metadata_session
+        return None
+
+    @staticmethod
+    def _same_terminal_session(
+        candidate: TaskExecutionSession | None,
+        incoming: TaskExecutionSession,
+    ) -> bool:
+        if candidate is None:
+            return False
+        return (
+            str(candidate.session_id or "").strip() == str(incoming.session_id or "").strip()
+            and candidate.status in _TERMINAL_SESSION_STATUSES_TO_TASK_STATUS
+        )
+
+    @staticmethod
+    def _copy_session_state(target: TaskExecutionSession, source: TaskExecutionSession) -> None:
+        target.status = source.status
+        target.claimed_at = source.claimed_at
+        target.last_heartbeat_at = source.last_heartbeat_at
+        target.lease_expires_at = source.lease_expires_at
+        target.attempt = source.attempt
+        target.resume_count = source.resume_count
+        target.resumable = source.resumable
+        target.origin = source.origin
+        target.selection_source = source.selection_source
+        target.external_task_id = source.external_task_id
+        target.context_summary = source.context_summary
+        target.last_error = source.last_error
+        target.last_result_summary = source.last_result_summary
+        target.released_at = source.released_at
+        target.metadata = dict(source.metadata)
+
+    def _reconcile_terminal_task_row(
+        self,
+        task_id: int,
+        *,
+        session: TaskExecutionSession,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        terminal_status = _TERMINAL_SESSION_STATUSES_TO_TASK_STATUS.get(str(session.status or "").strip().lower())
+        if terminal_status is None:
+            task = self._board.get(task_id)
+            return self._augment_task_row(task.to_dict()) if task is not None else None
+        updated = self._board.update(
+            task_id,
+            status=terminal_status,
+            metadata=self._build_runtime_metadata(
+                session=session,
+                effective_status=terminal_status.value,
+                resume_state="",
+                extra_metadata=metadata,
+            ),
+        )
+        if updated is None:
+            task = self._board.get(task_id)
+            return self._augment_task_row(task.to_dict()) if task is not None else None
+        return self._augment_task_row(updated.to_dict())
 
     def _append_execution_event(
         self,

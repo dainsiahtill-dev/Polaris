@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,41 @@ def test_director_task_boundary_verdict_reports_missing_target(tmp_path: Path) -
     assert verdict["status"] == "incomplete_materialization"
     assert verdict["failure_class"] == "INCOMPLETE_MATERIALIZATION"
     assert verdict["missing_target_files"] == ["src/index.js"]
+
+
+def test_director_task_boundary_verdict_projects_declared_downstream_entrypoints(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps({"scripts": {"start": "node src/index.js"}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    verdict = build_director_task_boundary_verdict(
+        role="director",
+        workspace=str(tmp_path),
+        task_id="TASK-1-foundation",
+        run_id="run-1",
+        context_override={
+            "target_files": ["package.json"],
+            "context": {
+                "project_declared_target_files": [
+                    "package.json",
+                    "src/index.js",
+                ]
+            },
+        },
+        tool_results=[
+            {
+                "tool": "write_file",
+                "success": True,
+                "effect_receipt": {"file": "package.json"},
+            }
+        ],
+    )
+
+    assert verdict is not None
+    assert verdict["status"] == "completed_verified"
+    assert verdict["failure_class"] == "PASSED"
+    assert verdict["downstream_pending_artifacts"] == ["src/index.js"]
 
 
 def test_director_task_boundary_verdict_reports_dropped_dispatch(tmp_path: Path) -> None:
@@ -166,7 +202,7 @@ def test_role_turn_task_boundary_append_uses_director_event_shape(
 
     monkeypatch.setattr(run_ledger_public, "append_run_ledger_event", captured.append)
 
-    append_role_turn_task_boundary_verdict(
+    returned = append_role_turn_task_boundary_verdict(
         role="director",
         workspace=str(tmp_path),
         task_id="TASK-1",
@@ -193,6 +229,7 @@ def test_role_turn_task_boundary_append_uses_director_event_shape(
     assert verdict["failure_class"] == "PASSED"
     assert verdict["target_files"] == ["src/index.py"]
     assert verdict["evidence_refs"] == ["runtime/contexts/abc"]
+    assert returned == verdict
 
 
 def test_role_turn_task_boundary_append_uses_deferred_event_shape(
@@ -205,7 +242,7 @@ def test_role_turn_task_boundary_append_uses_deferred_event_shape(
 
     monkeypatch.setattr(run_ledger_public, "append_run_ledger_event", captured.append)
 
-    append_role_turn_task_boundary_verdict(
+    returned = append_role_turn_task_boundary_verdict(
         role="director",
         workspace=str(tmp_path),
         task_id="TASK-1",
@@ -223,3 +260,4 @@ def test_role_turn_task_boundary_append_uses_deferred_event_shape(
     assert verdict["failure_class"] == "DEFERRED_FOLLOWUP_REQUIRED"
     assert verdict["reason"] == "needs_followup_workflow"
     assert verdict["evidence_refs"] == ["runtime/contexts/abc"]
+    assert returned == verdict

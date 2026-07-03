@@ -1018,6 +1018,14 @@ def test_write_file_plain_js_error_keeps_narrow_edit_suggestion(tmp_path: Path) 
     assert "complete corrected UTF-8 file body" in result.get("suggestion", "")
     assert "edit_blocks" in result.get("suggestion", "")
     assert "append_to_file" not in result.get("suggestion", "")
+    excerpt = result.get("syntax_error_excerpt")
+    assert isinstance(excerpt, list)
+    assert excerpt
+    assert excerpt[0]["line"] == 3
+    assert excerpt[0]["message"].startswith("SyntaxError:")
+    context_lines = excerpt[0]["context"]
+    assert any(line["line"] == 3 and line["is_error_line"] for line in context_lines)
+    assert any(line["text"] == "  y: 2;" for line in context_lines)
 
 
 # ----- EOF (no trailing newline) line-range edits -----

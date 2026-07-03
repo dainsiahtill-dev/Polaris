@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     _extract_instruction_from_continuation_prompt,
+    build_single_batch_task_contract_hint,
     extract_continuation_prompt_metadata,
     extract_latest_user_message,
 )
@@ -109,3 +110,34 @@ class TestExtractContinuationPromptMetadata:
         assert extract_continuation_prompt_metadata("Hello world") == {}
         prompt = "<SESSION_PATCH>{not-json}</SESSION_PATCH>"
         assert extract_continuation_prompt_metadata(prompt) == {}
+
+
+def test_single_batch_contract_adds_actual_exports_rule_for_test_targets() -> None:
+    context = [
+        {
+            "role": "system",
+            "content": "actual_sibling_exports: {'modules': [{'path': 'src/index.js', 'symbols': ['createIndex']}]}",
+            "metadata": {
+                "actual_sibling_exports": {
+                    "schema_version": "polaris.actual_sibling_exports.evidence.v1",
+                    "modules": [{"path": "src/index.js", "symbols": ["createIndex"]}],
+                }
+            },
+        },
+        {
+            "role": "user",
+            "content": (
+                "Create tests/product.test.js and update package.json. "
+                "目标文件: tests/product.test.js, package.json. "
+                "Write behavior tests and package scripts."
+            ),
+        },
+    ]
+    tools = [{"type": "function", "function": {"name": "write_file"}}]
+
+    text, metadata = build_single_batch_task_contract_hint(context, tools)
+
+    assert "expected_read_count" in metadata
+    assert "Package.json scripts must be shell-parseable" in text
+    assert "Existing sibling module exports are authoritative for tests" in text
+    assert "Do not invent ideal API imports" in text

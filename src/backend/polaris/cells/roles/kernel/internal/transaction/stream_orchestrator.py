@@ -222,7 +222,7 @@ _MATERIALIZE_KEYWORDS_RE: re.Pattern[str] = re.compile("|".join(re.escape(kw) fo
 
 def is_refusal_response(response: RawLLMResponse) -> bool:
     """检测 LLM 响应是否为拒绝执行（refusal）."""
-    native_calls = response.get("native_tool_calls") or []
+    native_calls = response.get("native_tool_calls") or response.get("tool_calls") or []
     if native_calls:
         return False
     content = str(response.get("content") or "").strip()

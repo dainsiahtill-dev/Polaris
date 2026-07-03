@@ -1234,7 +1234,13 @@ def _step_verify_failure_excerpt(stdout: str, stderr: str) -> str:
     return excerpt
 
 
-def _collect_step_verify_errors(adapter: Any, context: dict[str, Any] | None) -> list[str]:
+def _collect_step_verify_errors(
+    adapter: Any,
+    context: dict[str, Any] | None,
+    *,
+    task: dict[str, Any] | None = None,
+    workspace_name: str = "",
+) -> list[str]:
     """写后即查（三层裂变 DO 层自查）: run the construction step's machine
     verify inside the execution turn so the repair ladder sees the failure
     while the feedback loop is still seconds long — the exec→QA→bounce→exec
@@ -1285,10 +1291,26 @@ def _collect_step_verify_errors(adapter: Any, context: dict[str, Any] | None) ->
     # (fail_task_stage 600 chars, blueprint step card 240) and a long verify
     # command would push the diagnosis off the visible end.
     if clause_detail:
-        return [
+        errors = [
             f"step verify failed (exit {proc.returncode}) | {clause_detail} | failure excerpt: {output_excerpt} | full: {verify}".strip()
         ]
-    return [f"step verify failed (exit {proc.returncode}): {verify} :: failure excerpt: {output_excerpt}".strip()]
+    else:
+        errors = [f"step verify failed (exit {proc.returncode}): {verify} :: failure excerpt: {output_excerpt}".strip()]
+    if not task:
+        return errors
+    scoped_errors = _filter_npm_script_entrypoint_errors_to_task_write_scope(
+        errors,
+        task=task,
+        workspace_name=workspace_name,
+        context=context,
+    )
+    return _filter_missing_workspace_file_errors_to_task_write_scope(
+        scoped_errors,
+        task=task,
+        workspace_full=workspace,
+        workspace_name=workspace_name,
+        context=context,
+    )
 
 
 _STEP_VERIFY_NODE_ENV_COMMAND_RE = re.compile(
@@ -1501,6 +1523,83 @@ def _task_boundary_scope_filter_evidence(
     }
 
 
+def _semantic_exporter_scope_discrepancy_evidence(
+    *,
+    task: dict[str, Any],
+    semantic_exporter_targets: list[str],
+    repair_target_files: list[str],
+    artifact_quality_errors: list[str],
+    task_scope_filter_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    task_interface_contract = _extract_task_interface_contract(task)
+    declared_write_targets = _task_write_scope_candidates(task)[:12]
+    out_of_scope_targets = _dedupe_preserve_order(semantic_exporter_targets)[:12]
+    interface_delta = {
+        "schema_version": "director.interface_delta.v1",
+        "contract_present": bool(task_interface_contract),
+        "contract_keys": sorted(str(key) for key in task_interface_contract),
+        "diagnostic_paths": repair_target_files[:12],
+        "semantic_exporter_owner_targets": out_of_scope_targets,
+        "task_declared_write_targets": declared_write_targets,
+        "artifact_quality_errors": artifact_quality_errors[:8],
+    }
+    triage_summary = {
+        "schema_version": "director.interface_discrepancy_triage.v1",
+        "recommended_owner": "chief_engineer",
+        "recommended_route": "pending_design_interface_contract",
+        "contract_present": bool(task_interface_contract),
+        "director_retry_allowed": False,
+        "llm_fallback_blocked": True,
+        "macro_blueprint_regeneration_allowed": False,
+        "triage_policy": "owner_task_repair_if_contract_present_else_contract_amendment",
+        "reason": "semantic_exporter_owner_outside_current_task_scope",
+    }
+    receipt = DirectorInterfaceDiscrepancyReceiptV1(
+        task_id=str(task.get("id") or task.get("task_id") or task.get("external_task_id") or "materialization-task"),
+        source="roles.adapters.materialization_quality_scope_gate",
+        plan_probe_status="scope_owner_conflict",
+        diagnostics=(
+            {
+                "kind": "semantic_exporter_owner_outside_current_task_scope",
+                "semantic_exporter_owner_targets": out_of_scope_targets,
+                "task_declared_write_targets": declared_write_targets,
+            },
+        ),
+        source_tools=(),
+        recommended_owner="chief_engineer",
+        recommended_route="pending_design_interface_contract",
+        task_interface_contract_present=bool(task_interface_contract),
+        llm_fallback_blocked=True,
+        director_retry_allowed=False,
+        reason="semantic_exporter_owner_outside_current_task_scope",
+        interface_delta=interface_delta,
+        triage_summary=triage_summary,
+        metadata={
+            "route": "task_boundary_quality_loop",
+            "cross_artifact_route": "contract_amendment_request",
+            "repair_target_files": repair_target_files[:12],
+            "semantic_exporter_owner_targets": out_of_scope_targets,
+            "task_declared_write_targets": declared_write_targets,
+            "task_scope_filter": task_scope_filter_evidence,
+            "artifact_quality_errors": artifact_quality_errors[:8],
+            "task_interface_contract_keys": sorted(str(key) for key in task_interface_contract),
+        },
+    ).to_dict()
+    receipt.update(
+        {
+            "route": "task_boundary_quality_loop",
+            "cross_artifact_route": "contract_amendment_request",
+            "repair_target_files": repair_target_files[:12],
+            "semantic_exporter_owner_targets": out_of_scope_targets,
+            "task_declared_write_targets": declared_write_targets,
+            "task_scope_filter": task_scope_filter_evidence,
+            "artifact_quality_errors": artifact_quality_errors[:8],
+            "task_interface_contract_keys": sorted(str(key) for key in task_interface_contract),
+        }
+    )
+    return receipt
+
+
 def _filter_npm_script_entrypoint_errors_to_task_write_scope(
     errors: list[str],
     *,
@@ -1571,9 +1670,17 @@ def _filter_missing_workspace_file_errors_to_task_write_scope(
     deferred_targets: list[str] = []
     for error in errors:
         text = str(error or "")
-        missing_targets = _missing_workspace_file_quality_repair_target_files(
-            artifact_quality_errors=[text],
-            workspace_full=workspace_full,
+        missing_targets = _dedupe_preserve_order(
+            [
+                *_missing_workspace_file_quality_repair_target_files(
+                    artifact_quality_errors=[text],
+                    workspace_full=workspace_full,
+                ),
+                *_missing_unresolved_relative_import_target_files(
+                    [text],
+                    workspace_full,
+                ),
+            ]
         )
         if not missing_targets:
             retained.append(text)
@@ -1947,6 +2054,14 @@ async def _run_materialization_quality_repair_retry(
         changed_files=changed_files,
         workspace_full=workspace_full,
     )
+    semantic_exporter_owner_targets: list[str] = []
+    if workspace_full:
+        workspace_root = Path(workspace_full).resolve()
+        if workspace_root.is_dir():
+            semantic_exporter_owner_targets, _ = _semantic_quality_exporting_module_targets(
+                repair_quality_errors,
+                workspace_root,
+            )
     explicit_quality_target_files = _explicit_artifact_quality_repair_target_files(
         artifact_quality_errors=repair_quality_errors,
         changed_files=changed_files,
@@ -2001,6 +2116,52 @@ async def _run_materialization_quality_repair_retry(
             repair_target_candidates=repair_target_candidates,
         ),
     )
+    in_scope_repair_target_files, out_of_scope_repair_target_files = _partition_paths_by_task_write_scope(
+        repair_target_files,
+        task=task,
+    )
+    task_boundary_discrepancy_evidence: dict[str, Any] = {}
+    if out_of_scope_repair_target_files:
+        merged_out_of_scope = [
+            *list(task_scope_filter_evidence.get("out_of_scope_repair_target_files", [])),
+            *out_of_scope_repair_target_files,
+        ]
+        task_scope_filter_evidence = _task_boundary_scope_filter_evidence(
+            task,
+            target_files=merged_out_of_scope,
+            reason="quality_repair_targets_outside_current_task_target_files",
+        )
+        semantic_exporter_owner_target_set = set(semantic_exporter_owner_targets)
+        out_of_scope_exporter_owner_targets = [
+            path for path in out_of_scope_repair_target_files if path in semantic_exporter_owner_target_set
+        ]
+        if out_of_scope_exporter_owner_targets:
+            task_boundary_discrepancy_evidence = _semantic_exporter_scope_discrepancy_evidence(
+                task=task,
+                semantic_exporter_targets=out_of_scope_exporter_owner_targets,
+                repair_target_files=repair_target_files,
+                artifact_quality_errors=repair_quality_errors,
+                task_scope_filter_evidence=task_scope_filter_evidence,
+            )
+            return [], {
+                "stage": "task_boundary_semantic_exporter_scope_conflict",
+                "attempted": True,
+                "attempt": repair_attempt,
+                "success": False,
+                "success_reason": "task_boundary_interface_discrepancy_required",
+                "tool_results": 0,
+                "write_tool_evidence": False,
+                "missing_target_files": missing_target_files[:12],
+                "runtime_smoke_target_files": runtime_smoke_target_files[:12],
+                "semantic_quality_target_files": semantic_quality_target_files[:12],
+                "explicit_quality_target_files": explicit_quality_target_files[:12],
+                "repair_target_files": repair_target_files[:12],
+                "rotated_repair_targets": rotate_repair_targets,
+                "task_boundary_scope_filter": task_scope_filter_evidence,
+                "interface_discrepancy_evidence": task_boundary_discrepancy_evidence,
+                "llm_fallback_blocked": True,
+            }
+        repair_target_files = in_scope_repair_target_files
     if task_scope_filter_evidence and not repair_target_files:
         return [], {
             "stage": "task_boundary_repair_targets_deferred",
@@ -2043,7 +2204,6 @@ async def _run_materialization_quality_repair_retry(
         }
     deterministic_quality_tool_results: list[dict[str, Any]] = []
     deterministic_quality_summary: dict[str, Any] = {}
-    task_boundary_discrepancy_evidence: dict[str, Any] = {}
     if not missing_repair_target_files and (
         _has_scaffold_marker_quality_error(repair_quality_errors)
         or has_materialization_quality_runtime_repair_coverage(repair_quality_errors)
@@ -2173,6 +2333,13 @@ async def _run_materialization_quality_repair_retry(
             "repair_target_files": repair_target_files[:12],
         },
     }
+    promote_task_contract = getattr(adapter, "_promote_task_contract_to_runtime_context", None)
+    if callable(promote_task_contract):
+        promote_task_contract(
+            task=task,
+            context=repair_context,
+            workspace=workspace_full,
+        )
     if task_scope_filter_evidence:
         repair_context["director_quality_repair"]["task_boundary_scope_filter"] = task_scope_filter_evidence
     if task_boundary_discrepancy_evidence:
@@ -2829,6 +2996,7 @@ _PYTHON_RUNTIME_SMOKE_TARGET_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 _PYTHON_TRACEBACK_FILE_RE = re.compile(r'File "(?P<path>[^"]+)", line \d+', re.IGNORECASE)
+_MISSING_WORKSPACE_DIRECTORY_ALLOWLIST = frozenset({"test", "tests", "spec", "specs", "__tests__"})
 _MISSING_WORKSPACE_FILE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"No such file or directory:\s*(?P<path>['\"`][^'\"`]+['\"`]|[^;\n]+)",
@@ -2836,6 +3004,14 @@ _MISSING_WORKSPACE_FILE_PATTERNS: tuple[re.Pattern[str], ...] = (
     ),
     re.compile(
         r"Cannot find module ['\"](?P<path>[^'\"]+)['\"]",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"Could not find ['\"](?P<path>[^,'\"\s]+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"Could not find ['\"](?P<path>[^'\"]+)['\"]",
         re.IGNORECASE,
     ),
     re.compile(
@@ -4744,6 +4920,8 @@ def _missing_workspace_file_target_allowed(
         return False
     if rel.startswith(_NPM_SCRIPT_GENERATED_OUTPUT_PREFIXES):
         return False
+    if rel.rstrip("/") in _MISSING_WORKSPACE_DIRECTORY_ALLOWLIST:
+        return True
     suffix = Path(rel).suffix.lower()
     if suffix not in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES and suffix not in {".cfg", ".toml", ".txt"}:
         return False

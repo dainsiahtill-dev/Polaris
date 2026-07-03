@@ -712,12 +712,15 @@ def _scan_file(root_full: Path, full_path: Path, relative_path: str) -> list[str
 
 
 def _scan_typescript_syntax_red_flags(root_full: Path, full_path: Path, text: str, relative_path: str) -> list[str]:
-    if full_path.suffix.lower() not in _TS_JS_SOURCE_EXTS:
+    suffix = full_path.suffix.lower()
+    if suffix not in _TS_JS_SOURCE_EXTS:
         return []
     if _typescript_line_comment_contains_escaped_newline_code(text):
         return [
             f"Artifact quality scan failed: TypeScript escaped newline in line comment before code in {relative_path}"
         ]
+    if suffix not in _TS_SOURCE_EXTS:
+        return []
     collision_name = _typescript_zod_inferred_type_class_collision_name(text)
     if collision_name:
         return [
@@ -1015,6 +1018,13 @@ def _workspace_has_node_test_files(root_full: Path) -> bool:
     )
 
 
+_NPM_SCRIPT_ENTRYPOINT_PATTERN_CHARS = frozenset("*?[]{}")
+
+
+def _is_concrete_npm_script_entrypoint_path(value: str) -> bool:
+    return not any(char in value for char in _NPM_SCRIPT_ENTRYPOINT_PATTERN_CHARS)
+
+
 def _scan_npm_script_missing_local_entrypoints(
     root_full: Path, script_text: str, script_name: str, relative_path: str
 ) -> list[str]:
@@ -1034,6 +1044,8 @@ def _scan_npm_script_missing_local_entrypoints(
             continue
         normalized = entrypoint.replace("\\", "/")
         if normalized.startswith(("/", "http://", "https://")) or ".." in normalized.split("/"):
+            continue
+        if not _is_concrete_npm_script_entrypoint_path(normalized):
             continue
         if Path(normalized).suffix.lower() not in {".js", ".mjs", ".cjs", ".ts", ".tsx"}:
             continue
@@ -1097,6 +1109,7 @@ def _directory_has_node_test_files(directory: Path) -> bool:
 def _scan_package_module_type_mismatch(root_full: Path, payload: dict[str, Any], relative_path: str) -> list[str]:
     if str(payload.get("type") or "").strip().lower() != "module":
         return []
+    errors: list[str] = []
     for candidate in _iter_workspace_relative_files(root_full):
         if Path(candidate).suffix.lower() not in {".js", ".jsx"}:
             continue
@@ -1106,11 +1119,12 @@ def _scan_package_module_type_mismatch(root_full: Path, payload: dict[str, Any],
         except OSError:
             continue
         if _COMMONJS_RUNTIME_TOKEN_RE.search(text):
-            return [
-                "Artifact quality scan failed: npm package manifest declares type=module but workspace "
+            errors.append(
+                "Artifact quality scan failed: JavaScript source "
+                f"{candidate} uses CommonJS runtime syntax; npm package manifest declares type=module but workspace "
                 f"JavaScript uses CommonJS runtime syntax in {relative_path}"
-            ]
-    return []
+            )
+    return errors[:20]
 
 
 def _scan_npm_script_missing_local_configs(
@@ -1403,7 +1417,7 @@ def _scan_typescript_imports(root_full: Path, full_path: Path, text: str, relati
             continue
         root_name = _package_root_name(specifier)
         builtin_name = _node_builtin_root_name(specifier)
-        if builtin_name in _NODE_BUILTIN_IMPORTS:
+        if specifier.startswith("node:") or builtin_name in _NODE_BUILTIN_IMPORTS:
             if (
                 is_typescript
                 and has_package_manifest
@@ -1581,7 +1595,10 @@ def _parse_ts_clause_names(inner: str, *, for_export: bool) -> set[str]:
     runtime and carry ambient/declaration-merging risk we will not adjudicate.
     """
     names: set[str] = set()
-    for raw in str(inner or "").split(","):
+    clause = str(inner or "")
+    mask = _ts_js_code_mask(clause)
+    cleaned_clause = "".join(char if mask[index] else " " for index, char in enumerate(clause))
+    for raw in cleaned_clause.split(","):
         token = raw.strip()
         if not token or token == "type" or token.startswith("type "):
             continue

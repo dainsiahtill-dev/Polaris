@@ -28,7 +28,7 @@ from polaris.kernelone.benchmark.validators.contextos_validators import (
     ContextOSLongSessionValidator,
     ContextOSLossValidator,
     ContextOSTraceAnalyzer,
-    ContextOSTraceEvent,
+    ContextTraceEvent,
 )
 
 
@@ -498,7 +498,7 @@ class TestContextOSTraceAnalyzer:
 
     def test_calculate_token_change(self) -> None:
         """Test token change calculation."""
-        event1 = ContextOSTraceEvent(
+        event1 = ContextTraceEvent(
             event_type="llm_call_start",
             context_tokens_before=5000,
             context_tokens_after=None,
@@ -508,7 +508,7 @@ class TestContextOSTraceAnalyzer:
             completion_tokens=None,
             turn_index=0,
         )
-        event2 = ContextOSTraceEvent(
+        event2 = ContextTraceEvent(
             event_type="llm_call_end",
             context_tokens_before=None,
             context_tokens_after=5800,
@@ -537,7 +537,7 @@ class TestContextOSLossValidator:
             tool_calls=(),
             fingerprint={
                 "event_traces": [
-                    ContextOSTraceEvent(
+                    ContextTraceEvent(
                         event_type="llm_call_start",
                         context_tokens_before=None,  # NULL - ALWAYS FAILS
                         context_tokens_after=5000,
@@ -569,7 +569,7 @@ class TestContextOSLossValidator:
             tool_calls=(),
             fingerprint={
                 "event_traces": [
-                    ContextOSTraceEvent(
+                    ContextTraceEvent(
                         event_type="llm_call_start",
                         context_tokens_before=5000,
                         context_tokens_after=5200,
@@ -599,7 +599,7 @@ class TestContextOSLossValidator:
             tool_calls=(),
             fingerprint={
                 "event_traces": [
-                    ContextOSTraceEvent(
+                    ContextTraceEvent(
                         event_type="llm_call_start",
                         context_tokens_before=5000,
                         context_tokens_after=5200,
@@ -631,7 +631,7 @@ class TestContextOSLongSessionValidator:
         for i in range(60):
             # llm_call_start for turn i
             traces.append(
-                ContextOSTraceEvent(
+                ContextTraceEvent(
                     event_type="llm_call_start",
                     context_tokens_before=5000 + (i * 1000),  # Growing
                     context_tokens_after=None,
@@ -644,7 +644,7 @@ class TestContextOSLongSessionValidator:
             )
             # llm_call_end for turn i
             traces.append(
-                ContextOSTraceEvent(
+                ContextTraceEvent(
                     event_type="llm_call_end",
                     context_tokens_before=None,
                     context_tokens_after=5000 + (i * 1000) + 200,  # start + completion
@@ -677,7 +677,7 @@ class TestContextOSLongSessionValidator:
         traces = []
         for i in range(30):  # Only 30 turns = 60 traces
             traces.append(
-                ContextOSTraceEvent(
+                ContextTraceEvent(
                     event_type="llm_call_start",
                     context_tokens_before=5000,
                     context_tokens_after=5200,
@@ -689,7 +689,7 @@ class TestContextOSLongSessionValidator:
                 )
             )
             traces.append(
-                ContextOSTraceEvent(
+                ContextTraceEvent(
                     event_type="llm_call_end",
                     context_tokens_before=None,
                     context_tokens_after=5200,
@@ -721,7 +721,7 @@ class TestContextOSLongSessionValidator:
         """Test missing start tokens returns pass when session is too short."""
         # Only 1 trace - gets caught by "session too short" check first
         traces = [
-            ContextOSTraceEvent(
+            ContextTraceEvent(
                 event_type="llm_call_start",
                 context_tokens_before=None,
                 context_tokens_after=5200,
@@ -755,7 +755,7 @@ class TestContextOSDesynchronizationValidator:
     def test_token_gap_detected_fails(self) -> None:
         """Test token gap >10% CRITICAL fails."""
         traces = [
-            ContextOSTraceEvent(
+            ContextTraceEvent(
                 event_type="llm_call_end",
                 context_tokens_before=None,
                 context_tokens_after=5300,  # Turn 1 ends at 5300
@@ -765,7 +765,7 @@ class TestContextOSDesynchronizationValidator:
                 completion_tokens=300,
                 turn_index=0,
             ),
-            ContextOSTraceEvent(
+            ContextTraceEvent(
                 event_type="llm_call_start",
                 context_tokens_before=4000,  # Turn 2 starts at 4000 - 1300 gap!
                 context_tokens_after=None,
@@ -775,7 +775,7 @@ class TestContextOSDesynchronizationValidator:
                 completion_tokens=None,
                 turn_index=1,
             ),
-            ContextOSTraceEvent(
+            ContextTraceEvent(
                 event_type="llm_call_end",
                 context_tokens_before=None,
                 context_tokens_after=4200,
@@ -806,7 +806,7 @@ class TestContextOSDesynchronizationValidator:
     def test_within_tolerance_passes(self) -> None:
         """Test small gaps (<10%) pass."""
         traces = [
-            ContextOSTraceEvent(
+            ContextTraceEvent(
                 event_type="llm_call_end",
                 context_tokens_before=None,
                 context_tokens_after=5000,
@@ -816,7 +816,7 @@ class TestContextOSDesynchronizationValidator:
                 completion_tokens=200,
                 turn_index=0,
             ),
-            ContextOSTraceEvent(
+            ContextTraceEvent(
                 event_type="llm_call_start",
                 context_tokens_before=5100,  # Only 100 gap = 2% (<10%)
                 context_tokens_after=None,
@@ -826,7 +826,7 @@ class TestContextOSDesynchronizationValidator:
                 completion_tokens=None,
                 turn_index=1,
             ),
-            ContextOSTraceEvent(
+            ContextTraceEvent(
                 event_type="llm_call_end",
                 context_tokens_before=None,
                 context_tokens_after=5300,
@@ -856,7 +856,7 @@ class TestContextOSDesynchronizationValidator:
     def test_insufficient_traces(self) -> None:
         """Test < 3 traces pass (insufficient data)."""
         traces = [
-            ContextOSTraceEvent(
+            ContextTraceEvent(
                 event_type="llm_call_start",
                 context_tokens_before=5000,
                 context_tokens_after=None,
@@ -890,7 +890,7 @@ class TestContextOSIncorrectTruncationValidator:
     def test_suspicious_drop_without_compression_fails(self) -> None:
         """Test >30% drop without compression CRITICAL fails."""
         traces = [
-            ContextOSTraceEvent(
+            ContextTraceEvent(
                 event_type="llm_call_end",
                 context_tokens_before=None,
                 context_tokens_after=6000,
@@ -900,7 +900,7 @@ class TestContextOSIncorrectTruncationValidator:
                 completion_tokens=200,
                 turn_index=0,
             ),
-            ContextOSTraceEvent(
+            ContextTraceEvent(
                 event_type="llm_call_start",
                 context_tokens_before=4000,  # 2000 drop = 33% (>30%)
                 context_tokens_after=None,
@@ -931,7 +931,7 @@ class TestContextOSIncorrectTruncationValidator:
     def test_drop_with_compression_allowed(self) -> None:
         """Test token drop with compression applied is allowed."""
         traces = [
-            ContextOSTraceEvent(
+            ContextTraceEvent(
                 event_type="llm_call_end",
                 context_tokens_before=None,
                 context_tokens_after=10000,
@@ -941,7 +941,7 @@ class TestContextOSIncorrectTruncationValidator:
                 completion_tokens=200,
                 turn_index=0,
             ),
-            ContextOSTraceEvent(
+            ContextTraceEvent(
                 event_type="llm_call_start",
                 context_tokens_before=3000,  # 70% drop but compression was applied in prev turn
                 context_tokens_after=None,
@@ -971,7 +971,7 @@ class TestContextOSIncorrectTruncationValidator:
     def test_insufficient_traces(self) -> None:
         """Test < 2 traces pass (insufficient data)."""
         traces = [
-            ContextOSTraceEvent(
+            ContextTraceEvent(
                 event_type="llm_call_start",
                 context_tokens_before=5000,
                 context_tokens_after=None,

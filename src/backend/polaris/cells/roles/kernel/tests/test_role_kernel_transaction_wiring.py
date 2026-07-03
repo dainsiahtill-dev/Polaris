@@ -19,8 +19,9 @@ from polaris.cells.roles.kernel.internal.kernel.transaction_turn_executor import
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import _resolve_transaction_turn_id
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.finalization import FinalizationHandler
-from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
+from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
+from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
 from polaris.cells.roles.kernel.public.turn_contracts import FinalizeMode, TurnDecisionKind
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.domain.cognitive_runtime.models import ContextHandoffPack, TurnEnvelope
@@ -617,6 +618,80 @@ class TestTransactionKernelPrebuiltContextPassThrough:
             "type": "function",
             "function": {"name": "write_file"},
         }
+
+    @pytest.mark.asyncio
+    async def test_provider_tool_calls_alias_reaches_transaction_dispatch(self) -> None:
+        profile = _MockProfile(role_id="director", model="base-model")
+        forced_write_tool = {
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                    "required": ["path", "content"],
+                },
+            },
+        }
+        request = _MockRequest(
+            message="[mode:materialize]\nCreate package.json.",
+            run_id="run_123",
+            context_override={
+                "context_os_snapshot": {},
+                "_transaction_kernel_forced_tool_definitions": [forced_write_tool],
+                "_transaction_kernel_forced_tool_choice": {
+                    "type": "function",
+                    "function": {"name": "write_file"},
+                },
+            },
+        )
+
+        async def _fake_call_decision(**_kwargs: Any) -> dict[str, Any]:
+            return {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_write_file",
+                        "type": "function",
+                        "function": {
+                            "name": "write_file",
+                            "arguments": {"path": "package.json", "content": "{}"},
+                        },
+                    }
+                ],
+                "model": "base-model",
+                "usage": {"prompt_tokens": 10, "completion_tokens": 4},
+            }
+
+        kernel = RoleExecutionKernel.create_default(
+            workspace=".",
+            llm_invoker=SimpleNamespace(call_decision=_fake_call_decision),
+        )
+        tk = create_transaction_kernel(kernel, "director", profile, request)
+        tool_runtime = AsyncMock(
+            return_value={
+                "success": True,
+                "result": "written",
+                "effect_receipt": {"file": "package.json", "operation": "create"},
+            }
+        )
+        controller = TurnTransactionController(
+            llm_provider=tk.llm_provider,
+            tool_runtime=tool_runtime,
+            config=TransactionConfig(domain="code"),
+        )
+
+        result = await controller.execute(
+            "turn_write_alias",
+            [{"role": "user", "content": request.message}],
+            [forced_write_tool],
+        )
+
+        assert result["batch_receipt"]
+        assert result["metrics"]["tool_calls"] == 1
+        tool_runtime.assert_awaited_once()
+        assert tool_runtime.await_args is not None
+        assert tool_runtime.await_args.args[0] == "write_file"
 
 
 class TestExecuteTransactionKernelTurn:

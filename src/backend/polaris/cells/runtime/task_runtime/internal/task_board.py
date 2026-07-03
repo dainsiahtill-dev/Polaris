@@ -482,6 +482,26 @@ class TaskBoard:
                 ) as exc:
                     logger.warning("Failed to load task from %s: %s", task_file, exc)
 
+    def _load_task_from_disk(self, task_id: int) -> Task | None:
+        task_path = self.tasks_dir / f"task_{int(task_id)}.json"
+        if not task_path.is_file():
+            return None
+        try:
+            logical = self._logical_path(task_path)
+            data = json.loads(self._kernel_fs.read_text(logical, encoding="utf-8"))
+            task = Task.from_dict(data)
+        except (
+            OSError,
+            ValueError,
+            TypeError,
+            KeyError,
+            json.JSONDecodeError,
+        ) as exc:
+            logger.warning("Failed to load task from %s: %s", task_path, exc)
+            return None
+        self._cache[task.id] = task
+        return task
+
     def _save_task(self, task: Task) -> None:
         """Atomically save a task to disk (write-to-temp + os.replace)."""
         with self.transaction():
@@ -709,7 +729,7 @@ class TaskBoard:
         result_task: Task | None = None
         should_notify_ready = False
         with self.transaction():
-            task = self._cache.get(task_id)
+            task = self._load_task_from_disk(task_id) or self._cache.get(task_id)
             if not task:
                 return None
 
@@ -821,7 +841,7 @@ class TaskBoard:
         import copy
 
         with self.transaction():
-            task = self._cache.get(task_id)
+            task = self._load_task_from_disk(task_id) or self._cache.get(task_id)
             if not task:
                 return None
             if status is not None:

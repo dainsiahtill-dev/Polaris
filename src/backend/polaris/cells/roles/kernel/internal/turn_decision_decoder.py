@@ -11,6 +11,7 @@ Turn Decision Decoder - 执行授权点收口
 import json
 import logging
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -149,7 +150,7 @@ class TurnDecisionDecoder:
 
             batch_metadata: dict[str, Any] = {
                 "tool_count": len(all_tools),
-                "native_tools": len(response.native_tool_calls),
+                "native_tools": len(self._native_tool_calls(response)),
                 "model": response.model,
             }
             if decode_failures:
@@ -202,7 +203,7 @@ class TurnDecisionDecoder:
         seen_call_ids: set[str] = set()
 
         # 解析native tool calls
-        for native in response.native_tool_calls:
+        for native in self._native_tool_calls(response):
             try:
                 tool = self._parse_native_tool(native)
                 call_id = str(tool["call_id"]).strip()
@@ -227,6 +228,22 @@ class TurnDecisionDecoder:
                 continue
 
         return tools, failures
+
+    @staticmethod
+    def _native_tool_calls(response: RawLLMResponse) -> list[dict[str, Any]]:
+        native_calls = getattr(response, "native_tool_calls", None)
+        if isinstance(native_calls, list):
+            return [dict(item) for item in native_calls if isinstance(item, Mapping)]
+        alias_calls = getattr(response, "tool_calls", None)
+        if isinstance(alias_calls, list):
+            return [dict(item) for item in alias_calls if isinstance(item, Mapping)]
+        if isinstance(response, Mapping):
+            raw_calls = response.get("native_tool_calls")
+            if not isinstance(raw_calls, list):
+                raw_calls = response.get("tool_calls")
+            if isinstance(raw_calls, list):
+                return [dict(item) for item in raw_calls if isinstance(item, Mapping)]
+        return []
 
     @staticmethod
     def _native_tool_name_hint(native: dict[str, Any]) -> str:

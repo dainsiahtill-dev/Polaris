@@ -11,6 +11,7 @@ from reading the source, not idealized contracts.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import sys
@@ -719,7 +720,7 @@ class TestChiefEngineerHandoffGuards:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-25T00:00:00+00:00",
         )
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 165.0
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 155.0
 
         result = asyncio.run(
             executor._execute_chief_engineer_review(
@@ -2505,7 +2506,7 @@ class TestQualityGateDeadlineHandling:
             materialization_pending=True,
         )
 
-        assert 145 <= timeout <= 150
+        assert 180 <= timeout <= 185
 
     def test_director_dispatch_timeout_keeps_quality_reserve_after_materialization(self) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 190.0
@@ -4654,6 +4655,7 @@ class TestDirectorDispatchLoop:
         assert result.metadata == {
             "cancel_signal_sent": True,
             "cancel_reason": "factory_stage_timeout",
+            "inflight_run_continues": False,
         }
         assert fake_orchestration.cancelled == [("run-1", True)]
         await asyncio.sleep(0)
@@ -4664,6 +4666,72 @@ class TestDirectorDispatchLoop:
         )
         assert guarded_heartbeat["success"] is False
         assert guarded_heartbeat["reason"] == "session_not_active"
+
+    @pytest.mark.asyncio
+    async def test_run_completion_waiter_soft_timeout_preserves_active_director_session(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        class _FakeOrchestrationService:
+            def __init__(self) -> None:
+                self.active_task = asyncio.create_task(asyncio.sleep(60))
+                self._active_runs = {"run-1": self.active_task}
+                self.cancelled: list[tuple[str, bool]] = []
+
+            async def cancel_run(self, run_id: str, force: bool = False) -> object:
+                self.cancelled.append((run_id, force))
+                self.active_task.cancel()
+                return object()
+
+        class _FakeCommandService:
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                return CommandResult(run_id=run_id, status="running", message="still running")
+
+        fake_orchestration = _FakeOrchestrationService()
+
+        async def _fake_get_orchestration_service() -> _FakeOrchestrationService:
+            return fake_orchestration
+
+        monkeypatch.setattr(
+            "polaris.cells.orchestration.workflow_runtime.public.get_orchestration_service",
+            _fake_get_orchestration_service,
+        )
+        task_runtime = TaskRuntimeService(str(tmp_path))
+        task = task_runtime.create(subject="inflight director task")
+        claim = task_runtime.claim_execution(
+            task.id,
+            worker_id="director",
+            role_id="director",
+            run_id="run-1",
+            selection_source="unit",
+        )
+        assert claim["success"] is True
+
+        result = await RunCompletionWaiter(tmp_path).wait(
+            _FakeCommandService(),
+            CommandResult(run_id="run-1", status="running", message="submitted"),
+            timeout_seconds=0,
+            cancel_on_timeout=False,
+        )
+
+        assert result.status == "timeout"
+        assert result.metadata == {
+            "cancel_signal_sent": False,
+            "cancel_reason": "factory_stage_timeout",
+            "inflight_run_continues": True,
+        }
+        assert fake_orchestration.cancelled == []
+        assert fake_orchestration.active_task.cancelled() is False
+        guarded_heartbeat = task_runtime.heartbeat_execution(
+            task.id,
+            session_id=str(claim["session"]["session_id"]),
+        )
+        assert guarded_heartbeat["success"] is True
+
+        fake_orchestration.active_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await fake_orchestration.active_task
 
     @pytest.mark.asyncio
     async def test_director_timeout_settle_cancel_event_propagates_to_active_orchestration_run(
@@ -4696,6 +4764,53 @@ class TestDirectorDispatchLoop:
         assert fake_waiter.cancelled == [("run-2", "factory_cancelled")]
 
     @pytest.mark.asyncio
+    async def test_director_timeout_settle_grace_expiry_cancels_active_run(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        class _FakeRunCompletionWaiter:
+            def __init__(self) -> None:
+                self.cancelled: list[tuple[str, str]] = []
+
+            async def cancel_active_run(self, run_id: str, *, reason: str) -> None:
+                self.cancelled.append((run_id, reason))
+
+        class _FakeService:
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                return CommandResult(run_id=run_id, status="running", message="still running")
+
+        class _NoTerminalExecutor(OrchestrationStageExecutor):
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                return {
+                    "total": 1,
+                    "pending": 0,
+                    "ready": 0,
+                    "in_progress": 1,
+                    "completed": 0,
+                    "failed": 0,
+                    "blocked": 0,
+                }
+
+        fake_waiter = _FakeRunCompletionWaiter()
+        executor = _NoTerminalExecutor(tmp_path)
+        executor._run_completion_waiter = fake_waiter  # type: ignore[assignment]
+
+        result = await executor._settle_inflight_director_run_after_timeout(
+            service=_FakeService(),  # type: ignore[arg-type]
+            run_id="run-3",
+            grace_seconds=1,
+        )
+
+        assert result is not None
+        assert result.status == "timeout"
+        assert result.metadata == {
+            "cancel_signal_sent": True,
+            "cancel_reason": "factory_stage_timeout",
+            "timeout_settle_grace_seconds": 1,
+        }
+        assert fake_waiter.cancelled == [("run-3", "factory_stage_timeout")]
+
+    @pytest.mark.asyncio
     async def test_director_binding_fanout_waits_submitted_runs_concurrently(self, tmp_path: Path) -> None:
         class _FanoutService:
             def __init__(self) -> None:
@@ -4720,8 +4835,9 @@ class TestDirectorDispatchLoop:
                 *,
                 cancel_event: asyncio.Event | None = None,
                 abort_checker: Any = None,
+                cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, timeout_seconds, cancel_event, abort_checker
+                del service, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
                 self.started_waits.append(initial_result.run_id)
                 if len(self.started_waits) >= 2:
                     self.all_waits_started.set()
@@ -4790,8 +4906,9 @@ class TestDirectorDispatchLoop:
                 *,
                 cancel_event: asyncio.Event | None = None,
                 abort_checker: Any = None,
+                cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, initial_result, timeout_seconds, cancel_event, abort_checker
+                del service, initial_result, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
                 await asyncio.sleep(0.05)
                 return CommandResult(run_id="run-stuck", status="completed", message="actual run completed")
 
@@ -4871,8 +4988,9 @@ class TestDirectorDispatchLoop:
                 *,
                 cancel_event: asyncio.Event | None = None,
                 abort_checker: Any = None,
+                cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, initial_result, timeout_seconds, cancel_event, abort_checker
+                del service, initial_result, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
                 await asyncio.sleep(0.05)
                 return CommandResult(run_id="run-stuck", status="completed", message="actual run completed")
 
@@ -4926,8 +5044,9 @@ class TestDirectorDispatchLoop:
                 *,
                 cancel_event: asyncio.Event | None = None,
                 abort_checker: Any = None,
+                cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, timeout_seconds, cancel_event, abort_checker
+                del service, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
                 return CommandResult(run_id=initial_result.run_id, status="timeout", message="timed out")
 
         service = _FanoutService()
@@ -4959,6 +5078,61 @@ class TestDirectorDispatchLoop:
         assert per_binding[0]["status"] == "timeout"
         assert per_binding[0]["quarantined"] is True
         assert per_binding[0]["timeout_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_director_binding_fanout_soft_timeout_preserves_submitted_run(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        class _FanoutService:
+            async def execute_director_run(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                return CommandResult(run_id="run-soft-timeout", status="running", message="submitted")
+
+        class _SoftTimeoutExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.cancel_on_timeout_values: list[bool] = []
+
+            async def _wait_run_completion(
+                self,
+                service: Any,
+                initial_result: CommandResult,
+                timeout_seconds: int = 300,
+                *,
+                cancel_event: asyncio.Event | None = None,
+                abort_checker: Any = None,
+                cancel_on_timeout: bool = True,
+            ) -> CommandResult:
+                del service, timeout_seconds, cancel_event, abort_checker
+                self.cancel_on_timeout_values.append(cancel_on_timeout)
+                return CommandResult(
+                    run_id=initial_result.run_id,
+                    status="timeout",
+                    message="soft timed out",
+                    metadata={
+                        "cancel_signal_sent": bool(cancel_on_timeout),
+                        "cancel_reason": "factory_stage_timeout",
+                        "inflight_run_continues": not cancel_on_timeout,
+                    },
+                )
+
+        executor = _SoftTimeoutExecutor(tmp_path)
+        result = await executor._execute_director_binding_fanout(
+            service=_FanoutService(),
+            workspace=str(tmp_path),
+            tasks=["TASK-1"],
+            base_options={"execution_mode": "parallel", "max_workers": 1},
+            bindings=[{"provider_id": "p1", "model": "m1", "binding_id": "b1"}],
+            timeout_seconds=10,
+        )
+
+        assert executor.cancel_on_timeout_values == [False]
+        assert result.status == "failed"
+        per_binding = (result.metadata or {})["per_binding"]
+        assert per_binding[0]["status"] == "timeout"
+        assert per_binding[0]["cancel_signal_sent"] is False
+        assert per_binding[0]["inflight_run_continues"] is True
 
     @pytest.mark.asyncio
     async def test_dispatch_passes_pm_plan_task_ids_to_director_fanout(self, tmp_path: Path) -> None:
@@ -5394,8 +5568,9 @@ class TestDirectorDispatchLoop:
                 *,
                 cancel_event: asyncio.Event | None = None,
                 abort_checker: Any = None,
+                cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, timeout_seconds, cancel_event, abort_checker
+                del service, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
                 return CommandResult(
                     run_id=initial_result.run_id,
                     status="failed",
@@ -5558,8 +5733,9 @@ class TestDirectorDispatchLoop:
                 *,
                 cancel_event: asyncio.Event | None = None,
                 abort_checker: Any = None,
+                cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, timeout_seconds, cancel_event, abort_checker
+                del service, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
                 return CommandResult(
                     run_id=initial_result.run_id,
                     status="failed",
@@ -5699,8 +5875,9 @@ class TestDirectorDispatchLoop:
                 *,
                 cancel_event: asyncio.Event | None = None,
                 abort_checker: Any = None,
+                cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, timeout_seconds, cancel_event, abort_checker
+                del service, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
                 return CommandResult(
                     run_id=initial_result.run_id,
                     status="completed",
@@ -6358,8 +6535,9 @@ class TestDirectorDispatchLoop:
                 *,
                 cancel_event: asyncio.Event | None = None,
                 abort_checker: Any = None,
+                cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, initial_result, timeout_seconds, cancel_event, abort_checker
+                del service, initial_result, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
                 (self.workspace / "src").mkdir(parents=True, exist_ok=True)
                 (self.workspace / "src" / "index.ts").write_text("export const value = 1;\n", encoding="utf-8")
                 return CommandResult(run_id="run-1", status="timeout", message="Run timed out after 1 seconds")

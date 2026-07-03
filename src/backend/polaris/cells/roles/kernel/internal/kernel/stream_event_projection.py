@@ -189,6 +189,20 @@ class StreamEventProjector:
             tool_filter_audit=self.tool_filter_audit,
             monitoring=event.monitoring if isinstance(event.monitoring, dict) else None,
         )
+        task_boundary_verdict = self._append_task_boundary_verdict(event.turn_id, tool_results, metadata)
+        task_boundary_error = _task_boundary_error_message(task_boundary_verdict, metadata)
+        if task_boundary_error:
+            self._record_projection_outcome(success=False, reason="stream task boundary failure")
+            return await self._publish_result(
+                {
+                    "type": "error",
+                    "error": task_boundary_error,
+                    "error_type": "task_boundary_failed",
+                    "turn_id": event.turn_id,
+                    "metadata": dict(metadata),
+                },
+                should_stop=True,
+            )
         if "context_os_audit" in metadata:
             event_dict["metadata"] = dict(metadata)
 
@@ -229,7 +243,6 @@ class StreamEventProjector:
             turn_events_metadata=turn_events_metadata,
             metadata=metadata,
         )
-        self._append_task_boundary_verdict(event.turn_id, tool_results, metadata)
         return await self._publish_result(event_dict)
 
     def _record_projection_outcome(self, *, success: bool, reason: str) -> dict[str, float] | None:
@@ -248,9 +261,9 @@ class StreamEventProjector:
         turn_id: str,
         tool_results: list[dict[str, Any]],
         metadata: dict[str, Any],
-    ) -> None:
+    ) -> dict[str, Any] | None:
         try:
-            append_role_turn_task_boundary_verdict(
+            return append_role_turn_task_boundary_verdict(
                 role=self.role,
                 workspace=str(self.request.workspace or self.kernel.workspace or "."),
                 task_id=str(self.request.task_id or ""),
@@ -262,6 +275,7 @@ class StreamEventProjector:
             )
         except (OSError, RuntimeError, TypeError, ValueError):
             logger.debug("failed to append stream director task boundary verdict", exc_info=True)
+            return None
 
     async def _publish_result(
         self,
@@ -277,3 +291,18 @@ class StreamEventProjector:
             payload=event_dict,
         )
         return StreamEventProjectionResult(event=event_dict, should_stop=should_stop)
+
+
+def _task_boundary_error_message(verdict: dict[str, Any] | None, metadata: dict[str, Any]) -> str | None:
+    if not isinstance(verdict, dict):
+        return None
+    metadata["task_boundary_verdict"] = dict(verdict)
+    if bool(verdict.get("ok")):
+        return None
+    status = str(verdict.get("status") or "failed").strip() or "failed"
+    failure_class = str(verdict.get("failure_class") or "TASK_BOUNDARY_FAILED").strip()
+    reason = str(verdict.get("reason") or "Task boundary failed").strip()
+    metadata["task_boundary_failed"] = True
+    metadata["task_boundary_failure_class"] = failure_class
+    metadata["task_boundary_failure_status"] = status
+    return f"task_boundary_failed:{status}: {reason}"

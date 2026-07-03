@@ -147,6 +147,7 @@ from polaris.cells.director.runtime.public import (
     QueryDirectorRepairPostExecutionScheduleV1,
     QueryDirectorRepairStrategyCatalogV1,
     RepairAdvisoryV1,
+    RepairDiagnosticV1,
     RepairReceiptV1,
     RunDirectorRepairCommandV1,
     attach_director_repair_revalidation_evidence,
@@ -637,6 +638,96 @@ def test_javascript_missing_export_without_declaration_is_covered_unplannable() 
     assert probe.covered_unplannable_source_tools == ("deterministic_javascript_missing_export_repair",)
 
 
+def test_javascript_missing_export_reexports_existing_imported_binding() -> None:
+    diagnostics = (
+        "Artifact quality scan failed: unresolved import symbol 'RuleViolationError' "
+        "from './engine/runner.js' in src/index.js (sibling module does not define it)",
+    )
+    base_files = {
+        "src/index.js": (
+            "import {\n"
+            "  runPipeline,\n"
+            "  RuleViolationError as _RunnerRuleViolationError, // local facade note\n"
+            "} from './engine/runner.js';\n"
+            "export { runPipeline };\n"
+        ),
+        "src/engine/runner.js": (
+            "import { RuleViolationError } from './rules.js';\n"
+            "export function runPipeline(state) {\n"
+            "  if (!state) throw new RuleViolationError('RUNNER', 'state required');\n"
+            "  return state;\n"
+            "}\n"
+        ),
+        "src/engine/rules.js": "export class RuleViolationError extends Error {}\n",
+    }
+
+    probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=diagnostics,
+            base_files=base_files,
+            source_tools=(js_syntax.JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL,),
+        )
+    )
+    repaired = _javascript_missing_export_after(
+        base_files=base_files,
+        diagnostics=diagnostics,
+        path="src/engine/runner.js",
+    )
+
+    assert probe.status == "covered_plannable"
+    assert probe.plannable_source_tools == (js_syntax.JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL,)
+    assert "export { RuleViolationError };" in repaired
+    assert "export function RuleViolationError" not in repaired
+
+
+def test_javascript_missing_export_typed_cross_artifact_diagnostic_exports_existing_function() -> None:
+    diagnostic = RepairDiagnosticV1(
+        source="artifact_quality",
+        code="cross_artifact_unresolved_import_symbol",
+        message="Cross-artifact import symbol is not exported by the resolved owner.",
+        path="src/engine/runner.js",
+        metadata={
+            "symbol": "validateWishShape",
+            "module": "./rules.js",
+            "contract_plane": "cross_artifact_interface",
+            "raw": (
+                "Artifact quality scan failed: unresolved import symbol 'validateWishShape' "
+                "from './rules.js' in src/engine/runner.js (sibling module does not define it)"
+            ),
+        },
+    )
+    base_files = {
+        "src/engine/runner.js": (
+            'import { validateWishShape, scoreWish } from "./rules.js";\n'
+            "export function createRunner() { return { validateWishShape, scoreWish }; }\n"
+        ),
+        "src/engine/rules.js": (
+            "function validateWishShape(wish) {\n"
+            "  return wish;\n"
+            "}\n\n"
+            "export function scoreWish(wish) {\n"
+            "  return wish.priority;\n"
+            "}\n"
+        ),
+    }
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=js_syntax.JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL,
+            base_files=base_files,
+            diagnostics=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["composition_summary"]["changed_paths"] == ["src/engine/rules.js"]
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "export function validateWishShape(wish)" in repaired
+    assert "export function scoreWish(wish)" in repaired
+
+
 def test_javascript_missing_run_export_with_entrypoint_contract_is_plannable() -> None:
     diagnostics = (
         "Artifact quality scan failed: unresolved import symbol 'run' from '../src/index.js' in tests/test_basic.js",
@@ -768,6 +859,35 @@ def test_javascript_esm_commonjs_entrypoint_repair_rewrites_multiline_blocks() -
     assert "require.main" not in repaired
     assert "module.exports" not in repaired
     assert ".exports" not in repaired
+
+
+def test_javascript_esm_commonjs_entrypoint_repair_covers_artifact_quality_static_diagnostic() -> None:
+    diagnostic = (
+        "Artifact quality scan failed: JavaScript source src/engine/rules.js uses CommonJS runtime syntax; "
+        "npm package manifest declares type=module but workspace JavaScript uses CommonJS runtime syntax "
+        "in package.json"
+    )
+
+    repaired = _javascript_esm_commonjs_after(
+        path="src/engine/rules.js",
+        base_files={
+            "package.json": '{"type":"module","scripts":{"start":"node src/index.js"}}',
+            "src/index.js": 'import { buildRuleEngine } from "./engine/rules.js";\n',
+            "src/engine/rules.js": (
+                "function buildRuleEngine() {\n"
+                "  return { ready: true };\n"
+                "}\n\n"
+                "module.exports = {\n"
+                "  buildRuleEngine,\n"
+                "};\n"
+            ),
+        },
+        diagnostics=(diagnostic,),
+    )
+
+    assert "export { buildRuleEngine };" in repaired
+    assert "export default { buildRuleEngine };" in repaired
+    assert "module.exports" not in repaired
 
 
 def test_javascript_esm_commonjs_entrypoint_repair_converts_default_imported_module() -> None:
@@ -4829,6 +4949,55 @@ def test_public_npm_script_contract_covers_bench_missing_local_entrypoint_shape(
     content_after = planning["composition_summary"]["patches"][0]["content_after"]
     assert "register-ts.js" not in content_after
     assert '"test": "npm run build"' in content_after
+
+
+def test_public_npm_script_contract_python_command_diagnostic_is_covered_plannable() -> None:
+    source_tool = js_syntax.NPM_SCRIPT_CONTRACT_SOURCE_TOOL
+    diagnostic = (
+        "Artifact quality scan failed: npm package manifest contains Python command in script 'test:py' in package.json"
+    )
+    base_files = {
+        "package.json": (
+            '{"type":"module","scripts":{'
+            '"test":"node --test tests/product.test.js",'
+            '"test:py":"python -m unittest discover -s tests",'
+            '"test:all":"node --test tests/product.test.js && python -m unittest discover -s tests"'
+            "}}\n"
+        ),
+        "tests/product.test.js": "import test from 'node:test';\ntest('ok', () => {});\n",
+    }
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,)))
+    probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(source_tool,),
+            artifact_quality_errors=(diagnostic,),
+            base_files=base_files,
+        )
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    coverage_payload = coverage.to_dict()
+    assert coverage_payload["covered_diagnostic_count"] == 1
+    assert coverage_payload["items"][0]["known_rule_matched"] is True
+    assert coverage_payload["items"][0]["executable_runtime_plan_matched"] is True
+    assert coverage_payload["items"][0]["matched_source_tools"] == [source_tool]
+    assert probe.status == "covered_plannable"
+    assert probe.plannable_source_tools == (source_tool,)
+    assert probe.items[0].status == "covered_plannable"
+    assert probe.items[0].patch_count == 1
+    assert planning["ok"] is True
+    content_after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "python" not in content_after.lower()
+    assert '"test:py": "node --test tests/product.test.js"' in content_after
+    assert '"test:all": "node --test tests/product.test.js"' in content_after
 
 
 def test_public_npm_script_source_require_module_error_is_covered_plannable() -> None:

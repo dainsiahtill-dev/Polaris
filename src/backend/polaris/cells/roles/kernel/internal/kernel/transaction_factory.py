@@ -373,6 +373,7 @@ def create_transaction_kernel(
                     "content": response.content,
                     "thinking": getattr(response, "thinking", None),
                     "tool_calls": getattr(response, "tool_calls", []) or [],
+                    "native_tool_calls": getattr(response, "tool_calls", []) or [],
                     "model": str(getattr(response, "model", "unknown") or "unknown"),
                     "usage": dict(getattr(response, "metadata", {}) or {}),
                 }
@@ -404,6 +405,7 @@ def create_transaction_kernel(
                 "content": response.content,
                 "thinking": getattr(response, "thinking", None),
                 "tool_calls": getattr(response, "tool_calls", []) or [],
+                "native_tool_calls": getattr(response, "tool_calls", []) or [],
                 "model": str(getattr(response, "model", "unknown") or "unknown"),
                 "usage": dict(getattr(response, "metadata", {}) or {}),
             }

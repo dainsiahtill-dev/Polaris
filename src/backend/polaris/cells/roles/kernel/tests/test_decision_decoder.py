@@ -11,6 +11,7 @@ Tests for Turn Decision Decoder.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 from polaris.cells.roles.kernel.internal.turn_decision_decoder import (
     DecodeConfig,
@@ -122,6 +123,24 @@ class TestNativeToolExecutionSource:
         assert decision["tool_batch"] is not None
         assert len(decision["tool_batch"]["invocations"]) == 1
         assert decision["tool_batch"]["invocations"][0]["tool_name"] == "read_file"
+
+    def test_tool_calls_alias_executes_as_native_provider_calls(self) -> None:
+        decoder = TurnDecisionDecoder(config=DecodeConfig(domain="code"))
+        response = SimpleNamespace(
+            content="",
+            thinking=None,
+            tool_calls=[
+                _native_tool("write_file", {"path": "package.json", "content": "{}"}),
+            ],
+            model="compat-provider",
+        )
+
+        decision = decoder.decode(response, TurnId("turn_tool_alias"))  # type: ignore[arg-type]
+
+        assert decision["kind"] == TurnDecisionKind.TOOL_BATCH
+        assert decision["tool_batch"] is not None
+        assert decision["metadata"]["native_tools"] == 1
+        assert decision["tool_batch"]["invocations"][0]["tool_name"] == "write_file"
 
     def test_anthropic_tool_use_blocks_execute(self) -> None:
         decoder = TurnDecisionDecoder(config=DecodeConfig(domain="code"))

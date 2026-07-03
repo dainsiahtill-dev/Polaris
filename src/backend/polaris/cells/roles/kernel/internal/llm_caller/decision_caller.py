@@ -21,6 +21,19 @@ class DecisionCaller:
     def __init__(self, llm_invoker: LLMInvoker) -> None:
         self._invoker = llm_invoker
 
+    @staticmethod
+    def _native_tool_name_hint(native: dict[str, Any]) -> str:
+        function = native.get("function")
+        if isinstance(function, dict):
+            name = str(function.get("name") or "").strip()
+            if name:
+                return name
+        for key in ("name", "tool_name", "toolName", "function_name", "functionName"):
+            name = str(native.get(key) or "").strip()
+            if name:
+                return name
+        return ""
+
     async def call(
         self,
         *,
@@ -49,12 +62,25 @@ class DecisionCaller:
         )
         if getattr(response, "error", None):
             raise RuntimeError(str(response.error))
+        native_tool_calls = getattr(response, "tool_calls", []) or []
+        metadata = dict(getattr(response, "metadata", {}) or {})
+        tool_names = [
+            name for item in native_tool_calls if isinstance(item, dict) and (name := self._native_tool_name_hint(item))
+        ]
+        metadata["decision_caller_native_tool_calls_count"] = len(native_tool_calls)
+        metadata["native_tool_calls_count"] = len(native_tool_calls)
+        metadata["native_tool_call_names"] = tool_names
+        metadata["decision_caller_tool_call_provider"] = str(
+            getattr(response, "tool_call_provider", "") or metadata.get("tool_call_provider") or "auto"
+        )
+        metadata.setdefault("tool_call_provider", metadata["decision_caller_tool_call_provider"])
         return {
             "content": response.content,
             "thinking": getattr(response, "thinking", None),
-            "tool_calls": getattr(response, "tool_calls", []) or [],
+            "tool_calls": native_tool_calls,
+            "native_tool_calls": native_tool_calls,
             "model": str(getattr(response, "model", "unknown") or "unknown"),
-            "usage": dict(getattr(response, "metadata", {}) or {}),
+            "usage": metadata,
         }
 
     async def call_stream(

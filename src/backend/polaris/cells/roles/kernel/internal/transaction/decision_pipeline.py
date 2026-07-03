@@ -26,7 +26,7 @@ import hashlib
 import json
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, cast
 
 from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
@@ -51,15 +51,31 @@ logger = logging.getLogger(__name__)
 
 
 def _native_tool_call_count(response: RawLLMResponse) -> int:
-    native_calls = getattr(response, "native_tool_calls", None)
+    native_calls = _native_tool_calls_from_response(response)
     return len(native_calls) if isinstance(native_calls, list) else 0
+
+
+def _native_tool_calls_from_response(response: Any) -> list[dict[str, Any]]:
+    native_calls = getattr(response, "native_tool_calls", None)
+    if isinstance(native_calls, list):
+        return [dict(item) for item in native_calls if isinstance(item, Mapping)]
+    alias_calls = getattr(response, "tool_calls", None)
+    if isinstance(alias_calls, list):
+        return [dict(item) for item in alias_calls if isinstance(item, Mapping)]
+    if isinstance(response, Mapping):
+        raw_calls = response.get("native_tool_calls")
+        if not isinstance(raw_calls, list):
+            raw_calls = response.get("tool_calls")
+        if isinstance(raw_calls, list):
+            return [dict(item) for item in raw_calls if isinstance(item, Mapping)]
+    return []
 
 
 def _provider_response_hash(response: RawLLMResponse) -> str:
     payload = {
         "content": getattr(response, "content", ""),
         "model": getattr(response, "model", ""),
-        "native_tool_calls": getattr(response, "native_tool_calls", []),
+        "native_tool_calls": _native_tool_calls_from_response(response),
         "thinking": getattr(response, "thinking", None),
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -220,6 +236,9 @@ async def run_decision_pipeline(
                 "finalize_mode": decision.get("finalize_mode").value
                 if hasattr(decision.get("finalize_mode"), "value")
                 else str(decision.get("finalize_mode")),
+                "native_tool_calls_count": native_tool_call_count,
+                "decode_failure_count": len(decision_metadata.get("decode_failures") or []),
+                "provider_response_hash": decision_metadata.get("provider_response_hash", ""),
             },
         )
     )

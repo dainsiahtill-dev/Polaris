@@ -972,6 +972,10 @@ class MultiLanguageCodeValidator:
         # 箭头函数格式
         (r"=>\s*{", r" => {", "Arrow function block syntax"),
     ]
+    JS_TOP_LEVEL_DECLARATION_PATTERN = re.compile(
+        r"^\s*(?:export\s+(?:default\s+)?)?(?:async\s+function|function|class|const|let|var)\s+"
+        r"([A-Za-z_$][A-Za-z0-9_$]*)\b"
+    )
 
     def _js_validator(self, code: str, filepath: str | None) -> SyntaxValidationResult:
         """JavaScript 验证器。
@@ -998,10 +1002,49 @@ class MultiLanguageCodeValidator:
         if errors:
             return SyntaxValidationResult.failure(errors)
 
+        duplicate_errors = self._check_js_duplicate_top_level_declarations(fixed_code)
+        if duplicate_errors:
+            suggestions = [error.message for error in duplicate_errors]
+            return SyntaxValidationResult.failure(duplicate_errors, suggestions)
+
         if fixes:
             return SyntaxValidationResult.success(fixed_code=fixed_code)
 
         return SyntaxValidationResult.success()
+
+    def _check_js_duplicate_top_level_declarations(self, code: str) -> list[CodeSyntaxError]:
+        """Catch duplicate top-level lexical declarations when Node is unavailable."""
+        masked_code = self._mask_js_like_non_code_for_brackets(code)
+        original_lines = code.splitlines()
+        first_decl_by_name: dict[str, int] = {}
+        errors: list[CodeSyntaxError] = []
+        brace_depth = 0
+
+        for line_no, masked_line in enumerate(masked_code.splitlines(), start=1):
+            if brace_depth == 0:
+                match = self.JS_TOP_LEVEL_DECLARATION_PATTERN.match(masked_line)
+                if match:
+                    name = match.group(1)
+                    first_line = first_decl_by_name.get(name)
+                    if first_line is None:
+                        first_decl_by_name[name] = line_no
+                    else:
+                        errors.append(
+                            CodeSyntaxError(
+                                line=line_no,
+                                column=max(0, match.start(1)),
+                                message=(
+                                    f"Duplicate top-level declaration '{name}' (first declared at line {first_line})"
+                                ),
+                                error_type="SyntaxError",
+                                code_snippet=original_lines[line_no - 1] if line_no <= len(original_lines) else None,
+                            )
+                        )
+
+            brace_depth += masked_line.count("{") - masked_line.count("}")
+            brace_depth = max(0, brace_depth)
+
+        return errors
 
     def _mask_js_like_non_code_for_brackets(self, code: str) -> str:
         """Replace JS/TS comments and string literals with spaces before bracket scan."""

@@ -77,6 +77,20 @@ def _resolve_context_timeout_override(context_override: Any) -> int | None:
     return None
 
 
+def _resolve_context_timeout_ceiling(context_override: Any) -> int | None:
+    if not isinstance(context_override, dict):
+        return None
+    for key in (
+        "llm_call_timeout_ceiling_seconds",
+        "request_timeout_ceiling_seconds",
+        "timeout_ceiling_seconds",
+    ):
+        timeout = _coerce_context_timeout_override(context_override.get(key))
+        if timeout is not None:
+            return timeout
+    return None
+
+
 def _coerce_context_max_tokens_override(raw: Any) -> int | None:
     """Parse a per-request max-token override from trusted runtime context."""
     if raw is None:
@@ -148,9 +162,11 @@ def resolve_timeout_seconds(profile: Any, context_override: Any | None = None) -
 
     director_timeout = _get_cached_director_timeout()
     context_timeout = _resolve_context_timeout_override(context_override)
-    if context_timeout is not None:
-        return max(director_timeout, context_timeout)
-    return director_timeout
+    timeout = max(director_timeout, context_timeout) if context_timeout is not None else director_timeout
+    context_ceiling = _resolve_context_timeout_ceiling(context_override)
+    if context_ceiling is not None:
+        return max(1, min(timeout, context_ceiling))
+    return timeout
 
 
 def resolve_max_tokens(requested: Any, context_override: Any | None = None) -> int:

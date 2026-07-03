@@ -15,6 +15,7 @@ import asyncio
 import gc
 import time
 import warnings
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -41,7 +42,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.error_handling import (
 )
 from polaris.cells.roles.kernel.internal.llm_caller.event_emitter import LLMEventEmitter
 from polaris.cells.roles.kernel.internal.llm_caller.finalization_caller import FinalizationCaller
-from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
+from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker, _required_tool_not_called_error
 from polaris.cells.roles.kernel.internal.llm_caller.provider_formatter import (
     AnnotatedProviderFormatter,
     NativeProviderFormatter,
@@ -258,6 +259,182 @@ def test_final_provider_request_snapshot_summarizes_tools_and_choice() -> None:
         "builtin.language.typescript",
         "builtin.task.implement",
     ]
+
+
+def test_required_tool_not_called_error_when_final_request_requires_tool_and_response_is_prose() -> None:
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    profile.role_id = "director"
+    profile.provider_id = "openai"
+    profile.model = "gpt-4.1"
+    tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+            },
+        },
+    }
+    messages = [{"role": "user", "content": "TASK-1 target_files package.json Chief Engineer blueprint"}]
+    ai_request = Mock()
+    ai_request.context = {
+        "chat_messages": messages,
+        "required_tools": ["write_file"],
+        "tool_contract": {"required_tools": ["write_file"]},
+    }
+    ai_request.options = {"tools": [tool_schema], "tool_choice": "auto"}
+    ai_request.input = ""
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={"tools": [tool_schema], "tool_choice": "auto"},
+        ai_request=ai_request,
+        native_tool_schemas=[tool_schema],
+    )
+    response = SimpleNamespace(
+        raw={"model": "gpt-4.1", "provider_id": "openai"},
+        output="I will inspect the workspace first.",
+        model="gpt-4.1",
+        provider_id="openai",
+    )
+
+    error = _required_tool_not_called_error(
+        prepared=prepared,
+        active_request=ai_request,
+        response=response,
+        profile=profile,
+    )
+
+    assert error == "required_tool_not_called: required_tools=write_file"
+
+
+def test_required_tool_not_called_error_allows_native_tool_call() -> None:
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    profile.role_id = "director"
+    profile.provider_id = "openai"
+    profile.model = "gpt-4.1"
+    tool_schema = {"type": "function", "function": {"name": "write_file"}}
+    messages = [{"role": "user", "content": "TASK-1 target_files package.json Chief Engineer blueprint"}]
+    ai_request = Mock()
+    ai_request.context = {
+        "chat_messages": messages,
+        "required_tools": ["write_file"],
+        "tool_contract": {"required_tools": ["write_file"]},
+    }
+    ai_request.options = {"tools": [tool_schema], "tool_choice": "auto"}
+    ai_request.input = ""
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={"tools": [tool_schema], "tool_choice": "auto"},
+        ai_request=ai_request,
+        native_tool_schemas=[tool_schema],
+    )
+    response = SimpleNamespace(
+        raw={
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "call_write",
+                                "type": "function",
+                                "function": {
+                                    "name": "write_file",
+                                    "arguments": '{"path": "package.json", "content": "{}"}',
+                                },
+                            }
+                        ]
+                    }
+                }
+            ],
+            "model": "gpt-4.1",
+            "provider_id": "openai",
+        },
+        output="",
+        model="gpt-4.1",
+        provider_id="openai",
+    )
+
+    error = _required_tool_not_called_error(
+        prepared=prepared,
+        active_request=ai_request,
+        response=response,
+        profile=profile,
+    )
+
+    assert error == ""
+
+
+def test_required_tool_not_called_error_rejects_wrong_native_tool_call() -> None:
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    profile.role_id = "director"
+    profile.provider_id = "openai"
+    profile.model = "gpt-4.1"
+    tool_schema = {"type": "function", "function": {"name": "write_file"}}
+    messages = [{"role": "user", "content": "TASK-1 target_files package.json Chief Engineer blueprint"}]
+    ai_request = Mock()
+    ai_request.context = {
+        "chat_messages": messages,
+        "required_tools": ["write_file"],
+        "tool_contract": {"required_tools": ["write_file"]},
+    }
+    ai_request.options = {"tools": [tool_schema], "tool_choice": "auto"}
+    ai_request.input = ""
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={"tools": [tool_schema], "tool_choice": "auto"},
+        ai_request=ai_request,
+        native_tool_schemas=[tool_schema],
+    )
+    response = SimpleNamespace(
+        raw={
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "call_read",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": '{"path": "package.json"}',
+                                },
+                            }
+                        ]
+                    }
+                }
+            ],
+            "model": "gpt-4.1",
+            "provider_id": "openai",
+        },
+        output="",
+        model="gpt-4.1",
+        provider_id="openai",
+    )
+
+    error = _required_tool_not_called_error(
+        prepared=prepared,
+        active_request=ai_request,
+        response=response,
+        profile=profile,
+    )
+
+    assert error == "required_tool_not_called: required_tools=write_file"
 
 
 def test_final_request_context_audit_marks_complete_context_as_reasonable() -> None:
@@ -607,6 +784,7 @@ class TestDecisionCaller:
             return_value=LLMResponse(
                 content="decision",
                 tool_calls=[{"id": "call_1", "function": {"name": "read_file", "arguments": "{}"}}],
+                tool_call_provider="openai",
                 metadata={"model": "claude"},
             )
         )
@@ -629,6 +807,11 @@ class TestDecisionCaller:
 
         assert result["content"] == "decision"
         assert len(result["tool_calls"]) == 1
+        assert result["native_tool_calls"] == result["tool_calls"]
+        assert result["usage"]["native_tool_calls_count"] == 1
+        assert result["usage"]["decision_caller_native_tool_calls_count"] == 1
+        assert result["usage"]["native_tool_call_names"] == ["read_file"]
+        assert result["usage"]["tool_call_provider"] == "openai"
         assert result["model"] == "unknown"
 
     async def test_call_raises_on_error(self) -> None:

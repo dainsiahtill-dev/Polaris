@@ -226,6 +226,22 @@ def test_node_cli_does_not_infer_express_framework_requirement() -> None:
     assert "framework_best_practices" not in strategy.evidence_requirements
 
 
+def test_javascript_metadata_overrides_python_validation_terms() -> None:
+    profile = resolve_director_execution_profile(
+        subject="Implement JavaScript npm meteor wish queue",
+        description=(
+            "Create package.json, tests/product.test.js, tests/test_product.py, and README.md. "
+            "Verification mentions pytest only as an external acceptance path, while runtime is js_syntax."
+        ),
+        metadata={"project_type": "npm_workspace", "language": "javascript"},
+        target_files=["package.json", "src/engine/rules.js", "src/engine/runner.js"],
+        scope_paths=[],
+    )
+
+    assert profile.language == "javascript"
+    assert profile.signal_evidence["language_source"] == "guidance_selection"
+
+
 def test_execution_strategy_derives_large_budget_from_profile() -> None:
     profile = resolve_director_execution_profile(
         subject="Implement TypeScript dashboard feature",

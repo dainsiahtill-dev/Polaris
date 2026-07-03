@@ -65,6 +65,95 @@ def test_is_port_free_detects_bound_non_listening_socket() -> None:
         assert instance_service.is_port_free(port) is False
 
 
+def test_backend_workspace_identity_probe_uses_v2_settings(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    workspace = str((tmp_path / "workspace").resolve())
+    seen_urls: list[str] = []
+
+    class FakeResponse:
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        @staticmethod
+        def read() -> bytes:
+            return json.dumps({"workspace": workspace}).encode("utf-8")
+
+    def fake_urlopen(request: Any, timeout: float) -> FakeResponse:
+        _ = timeout
+        seen_urls.append(str(request.full_url))
+        return FakeResponse()
+
+    monkeypatch.setattr(instance_service.urllib.request, "urlopen", fake_urlopen)
+    record = InstanceRecord(
+        instance_id="bench-l2-08",
+        name="Bench L2-08",
+        kind="bench_project",
+        polaris_root=str(tmp_path),
+        workspace=workspace,
+        runtime_root=str((tmp_path / "runtime").resolve()),
+        backend_port=50066,
+        frontend_port=5414,
+        backend_url="http://127.0.0.1:50066",
+        frontend_url="http://127.0.0.1:5414",
+        token="token",
+    )
+
+    assert InstanceSupervisor._read_backend_workspace(record) == workspace
+    assert seen_urls == ["http://127.0.0.1:50066/v2/settings"]
+
+
+def test_backend_workspace_identity_probe_falls_back_to_legacy_settings(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    workspace = str((tmp_path / "workspace").resolve())
+    seen_urls: list[str] = []
+
+    class FakeResponse:
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        @staticmethod
+        def read() -> bytes:
+            return json.dumps({"workspace": workspace}).encode("utf-8")
+
+    def fake_urlopen(request: Any, timeout: float) -> FakeResponse:
+        _ = timeout
+        seen_urls.append(str(request.full_url))
+        if str(request.full_url).endswith("/v2/settings"):
+            raise OSError("not found")
+        return FakeResponse()
+
+    monkeypatch.setattr(instance_service.urllib.request, "urlopen", fake_urlopen)
+    record = InstanceRecord(
+        instance_id="bench-l2-08",
+        name="Bench L2-08",
+        kind="bench_project",
+        polaris_root=str(tmp_path),
+        workspace=workspace,
+        runtime_root=str((tmp_path / "runtime").resolve()),
+        backend_port=50066,
+        frontend_port=5414,
+        backend_url="http://127.0.0.1:50066",
+        frontend_url="http://127.0.0.1:5414",
+        token="token",
+    )
+
+    assert InstanceSupervisor._read_backend_workspace(record) == workspace
+    assert seen_urls == [
+        "http://127.0.0.1:50066/v2/settings",
+        "http://127.0.0.1:50066/settings",
+    ]
+
+
 def test_current_backend_instance_cannot_stop_restart_or_delete_itself(
     tmp_path: Path,
     monkeypatch: Any,
@@ -187,6 +276,11 @@ def test_health_does_not_accept_foreign_frontend_process(
         )
     )
     http_probes: list[str] = []
+
+    def fake_http_ok(url: str, _token: str) -> bool:
+        http_probes.append(str(url))
+        return True
+
     monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: bool(pid))
     monkeypatch.setattr(
         InstanceSupervisor,
@@ -196,7 +290,7 @@ def test_health_does_not_accept_foreign_frontend_process(
     monkeypatch.setattr(
         InstanceSupervisor,
         "_http_ok",
-        staticmethod(lambda url, _token: http_probes.append(str(url)) or True),
+        staticmethod(fake_http_ok),
     )
 
     health = InstanceSupervisor(registry).health(record.instance_id)

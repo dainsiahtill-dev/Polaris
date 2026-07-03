@@ -728,6 +728,56 @@ def test_npm_script_contract_repairs_plain_javascript_placeholder_lint() -> None
     assert repaired["scripts"]["lint"] == plan.operations[0].value
 
 
+def test_npm_script_contract_repairs_python_commands_with_structured_json() -> None:
+    package_text = json.dumps(
+        {
+            "name": "sample",
+            "version": "1.0.0",
+            "type": "module",
+            "scripts": {
+                "test": "node --test tests/product.test.js",
+                "test:py": "python -m unittest discover -s tests -p 'test_*.py' -v",
+                "test:all": "node --test tests/product.test.js && python -m unittest discover -s tests",
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            (
+                "Artifact quality scan failed: npm package manifest contains Python command "
+                "in script 'test:py' in package.json"
+            )
+        ]
+    )
+    base_files = {
+        "package.json": package_text,
+        "tests/product.test.js": "import test from 'node:test';\ntest('ok', () => {});\n",
+    }
+
+    plan = build_npm_script_contract_plan(
+        base_files=base_files,
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.source_tool == "deterministic_npm_script_contract_repair"
+    assert [(operation.kind, operation.path, operation.json_path) for operation in plan.operations] == [
+        ("json_set", "package.json", ("scripts", "test:all")),
+        ("json_set", "package.json", ("scripts", "test:py")),
+    ]
+    assert {operation.value for operation in plan.operations} == {"node --test tests/product.test.js"}
+    composition = PatchComposer().compose(base_files, plan.operations)
+    assert composition.ok
+    repaired = json.loads(composition.patches[0].content_after)
+    assert repaired["scripts"]["test"] == "node --test tests/product.test.js"
+    assert repaired["scripts"]["test:py"] == "node --test tests/product.test.js"
+    assert repaired["scripts"]["test:all"] == "node --test tests/product.test.js"
+    assert "python" not in composition.patches[0].content_after.lower()
+
+
 def test_npm_script_contract_declines_plain_javascript_placeholder_without_source() -> None:
     package_text = json.dumps(
         {

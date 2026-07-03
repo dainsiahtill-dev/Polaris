@@ -20,6 +20,7 @@ _SCRIPT_PATH_EXTENSIONS = {".cjs", ".js", ".mjs", ".py", ".sh", ".ts", ".tsx"}
 _SHELL_OPERATORS = {"&&", "||", ";", "|"}
 _BUILD_OUTPUT_DIR_NAMES = {"dist", "build", "out", "bin"}
 _PLACEHOLDER_SCRIPT_COMMANDS = {"echo", "printf"}
+_SCRIPT_PATH_PATTERN_CHARS = frozenset("*?[]{}")
 _NPM_SCRIPT_ALIAS_COMMANDS = {
     "install": "install",
     "restart": "restart",
@@ -49,6 +50,8 @@ def _is_local_script_reference(token: str) -> bool:
     if not token or token.startswith("-"):
         return False
     normalized = token.replace("\\", "/")
+    if any(char in normalized for char in _SCRIPT_PATH_PATTERN_CHARS):
+        return False
     if "://" in normalized:
         return False
     _, ext = os.path.splitext(normalized)
@@ -57,6 +60,8 @@ def _is_local_script_reference(token: str) -> bool:
 
 def _is_local_script_option_reference(token: str) -> bool:
     normalized = token.replace("\\", "/")
+    if any(char in normalized for char in _SCRIPT_PATH_PATTERN_CHARS):
+        return False
     _, ext = os.path.splitext(normalized)
     return normalized.startswith(("./", "../", "/")) or ext.lower() in _SCRIPT_PATH_EXTENSIONS
 

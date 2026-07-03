@@ -452,3 +452,54 @@ class TestJsNodeCheckGate:
     def test_rejection_reports_a_line(self) -> None:
         result = validate_code_syntax(self.L210_BROKEN, "app.js")
         assert result.errors and any(e.line > 0 for e in result.errors)
+
+
+class TestJsFallbackSyntaxGate:
+    """Fallback JS validation must still reject obvious module-level syntax defects."""
+
+    def test_duplicate_top_level_export_is_rejected_without_node(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def _prettier_missing(*_args: object, **_kwargs: object) -> object:
+            raise FileNotFoundError
+
+        monkeypatch.setattr("subprocess.run", _prettier_missing)
+        monkeypatch.setattr("polaris.kernelone.tool_execution.code_validator._NODE_EXECUTABLE", None)
+        monkeypatch.setattr("polaris.kernelone.tool_execution.code_validator._NODE_RESOLVED", True)
+
+        code = (
+            'export const RULE_VERSION = "meteor-queue/rules@1.0.0";\n'
+            "export function evaluateRule() {\n"
+            "  return RULE_VERSION;\n"
+            "}\n"
+            'export const RULE_VERSION = "1.0.0";\n'
+        )
+
+        result = validate_code_syntax(code, "src/engine/rules.js")
+
+        assert result.is_valid is False
+        assert result.errors
+        assert result.errors[0].line == 5
+        assert "Duplicate top-level declaration 'RULE_VERSION'" in result.errors[0].message
+
+    def test_duplicate_names_inside_comments_strings_or_inner_scope_are_ignored_without_node(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _prettier_missing(*_args: object, **_kwargs: object) -> object:
+            raise FileNotFoundError
+
+        monkeypatch.setattr("subprocess.run", _prettier_missing)
+        monkeypatch.setattr("polaris.kernelone.tool_execution.code_validator._NODE_EXECUTABLE", None)
+        monkeypatch.setattr("polaris.kernelone.tool_execution.code_validator._NODE_RESOLVED", True)
+
+        code = (
+            "// export const RULE_VERSION = 'comment';\n"
+            'export const RULE_VERSION = "meteor-queue/rules@1.0.0";\n'
+            "export function evaluateRule() {\n"
+            "  const RULE_VERSION = 'local shadow';\n"
+            "  return RULE_VERSION;\n"
+            "}\n"
+            "const text = `export const RULE_VERSION = 'template text';`;\n"
+        )
+
+        result = validate_code_syntax(code, "src/engine/rules.js")
+
+        assert result.is_valid is True, format_validation_error(result, "src/engine/rules.js")

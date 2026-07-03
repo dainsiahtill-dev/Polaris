@@ -1026,7 +1026,13 @@ def _language_from_text(text: str) -> str:
 
 
 def _contract_language_from_text(text: str) -> str:
-    """Return a language only from explicit contract fields or hard checks."""
+    """Return a language from explicit contract fields or hard checks."""
+
+    return _explicit_contract_language_from_text(text) or _hard_check_language_from_text(text)
+
+
+def _explicit_contract_language_from_text(text: str) -> str:
+    """Return a language only from explicit contract language fields."""
 
     normalized = str(text or "").lower()
     explicit_patterns = (
@@ -1037,10 +1043,16 @@ def _contract_language_from_text(text: str) -> str:
         match = re.search(pattern, normalized, re.IGNORECASE)
         if not match:
             continue
-        language = _normalize_language(match.group(1))
+        language = _normalize_language(str(match.group(1) or "").strip(".,;:，。；：）)]}"))
         if language in _LANGUAGE_PROFILES:
             return language
+    return ""
 
+
+def _hard_check_language_from_text(text: str) -> str:
+    """Return a language inferred from deterministic check names only."""
+
+    normalized = str(text or "").lower()
     checks: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("go", (r"\bgo_compile\b", r"source_target_coverage:[^\n]*\.go\b", r"\*\*/\*\.go\b")),
         ("cpp", (r"\bcpp_compile\b", r"source_target_coverage:[^\n]*\.(?:cpp|hpp|cc|hh|cxx|hxx)\b")),
@@ -1289,11 +1301,26 @@ def select_guidance(context: LanguagePromptContext) -> GuidanceSelection:
         subject=str(context.subject or ""),
         description=str(context.description or ""),
     )
-    contract_language = _contract_language_from_text(_combined_text(normalized_context))
-    language = contract_language or detect_primary_language(
-        list(normalized_context.target_files),
-        "",
-        metadata=normalized_context.metadata,
+    combined_text = _combined_text(normalized_context)
+    metadata_language = _metadata_language(normalized_context.metadata)
+    explicit_contract_language = _explicit_contract_language_from_text(combined_text)
+    path_language = _language_from_paths(normalized_context.target_files)
+    hard_check_language = _hard_check_language_from_text(combined_text)
+    workspace_language = _language_from_workspace(normalized_context.workspace) if normalized_context.workspace else ""
+    language = next(
+        (
+            candidate
+            for candidate in (
+                metadata_language,
+                explicit_contract_language,
+                path_language,
+                hard_check_language,
+                workspace_language,
+                metadata_language,
+            )
+            if candidate in _LANGUAGE_PROFILES
+        ),
+        "generic",
     )
     if language == "generic":
         language = _language_from_text(_combined_text(normalized_context)) or language

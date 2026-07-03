@@ -72,10 +72,33 @@ _RESIDENT_AGI_PARTICIPATION_FLAGS = (
     "capability_surface",
     "decision_boundary",
 )
+_FINAL_REQUEST_EVIDENCE_CONTEXT_KEYS = (
+    "pm_contract",
+    "ce_blueprint",
+    "chief_engineer_blueprint",
+    "task_contract",
+    "module_interface_contract",
+    "actual_sibling_exports",
+    "interface_discrepancy_context",
+    "architecture_or_file_plan",
+    "architecture_plan",
+    "file_plan",
+    "construction_plan",
+    "delivery_plan_document",
+    "delivery_depth_contract",
+    "behavior_contract",
+    "acceptance_contract",
+    "manifest_entrypoint_contract",
+    "execution_contract",
+    "task_metadata",
+    "metadata",
+)
 
 
 # 5th floor (2026-06-15): reserved output budget for the reasoning-truncation re-ask.
 _REASONING_TRUNCATION_RETRY_MAX_TOKENS = 8000
+_REQUIRED_TOOL_RETRY_MAX_TOKENS = 7000
+_REQUIRED_TOOL_RETRY_TIMEOUT_SECONDS = 120.0
 
 
 def is_reasoning_truncation_error(error: str) -> bool:
@@ -123,6 +146,67 @@ def _ensure_current_user_message_final(
 
     normalized_messages.append({"role": "user", "content": current_user_token})
     return normalized_messages
+
+
+def _copy_final_request_evidence_context_fields(context_override: Any) -> dict[str, Any]:
+    if not isinstance(context_override, dict):
+        return {}
+    result: dict[str, Any] = {}
+    for key in _FINAL_REQUEST_EVIDENCE_CONTEXT_KEYS:
+        value = context_override.get(key)
+        if value in (None, "", []):
+            continue
+        if isinstance(value, dict):
+            if value:
+                result[key] = dict(value)
+            continue
+        if isinstance(value, (list, tuple, set)):
+            copied = [item for item in value if item not in (None, "")]
+            if copied:
+                result[key] = copied
+            continue
+        result[key] = value
+    return result
+
+
+def _tool_contract_context_fields(override: Any) -> dict[str, Any]:
+    """Project runtime tool obligations into AIRequest.context for final-request audit."""
+
+    if not isinstance(override, dict):
+        return {}
+    required_tools: list[str] = []
+    for key in ("required_tools", "task_required_tools"):
+        for tool_name in _string_list(override.get(key)):
+            if tool_name not in required_tools:
+                required_tools.append(tool_name)
+
+    tool_contract: dict[str, Any] = {}
+    raw_tool_contract = override.get("tool_contract")
+    if isinstance(raw_tool_contract, dict):
+        tool_contract = dict(raw_tool_contract)
+        for tool_name in _string_list(raw_tool_contract.get("required_tools")):
+            if tool_name not in required_tools:
+                required_tools.append(tool_name)
+
+    materialization_scope = override.get("director_first_call_materialization_scope")
+    if isinstance(materialization_scope, dict) and materialization_scope.get("injected") is True:
+        tool_name = str(materialization_scope.get("tool") or "").strip()
+        if tool_name and tool_name not in required_tools:
+            required_tools.append(tool_name)
+
+    if required_tools:
+        contract_required = _string_list(tool_contract.get("required_tools"))
+        for tool_name in required_tools:
+            if tool_name not in contract_required:
+                contract_required.append(tool_name)
+        tool_contract["required_tools"] = contract_required
+
+    fields: dict[str, Any] = {}
+    if required_tools:
+        fields["required_tools"] = required_tools
+    if tool_contract:
+        fields["tool_contract"] = tool_contract
+    return fields
 
 
 def _copy_provider_policy_options(*, override: Any, request_options: dict[str, Any]) -> None:
@@ -174,6 +258,26 @@ def _string_list(value: Any) -> list[str]:
         if token and token not in result:
             result.append(token)
     return result
+
+
+def _bounded_required_tool_retry_max_tokens(value: Any) -> int:
+    try:
+        current = int(value)
+    except (TypeError, ValueError):
+        current = 0
+    if current <= 0:
+        return _REQUIRED_TOOL_RETRY_MAX_TOKENS
+    return min(current, _REQUIRED_TOOL_RETRY_MAX_TOKENS)
+
+
+def _bounded_required_tool_retry_timeout(value: Any) -> float:
+    try:
+        current = float(value)
+    except (TypeError, ValueError):
+        current = 0.0
+    if current <= 0:
+        return _REQUIRED_TOOL_RETRY_TIMEOUT_SECONDS
+    return min(current, _REQUIRED_TOOL_RETRY_TIMEOUT_SECONDS)
 
 
 def _resident_agi_participation_scope_key(value: Any) -> str:
@@ -809,6 +913,8 @@ class LLMRequestPreparer:
                 "resident_agi_audit_context": resident_agi_audit_context,
                 "prompt_profile_audit": prompt_profile_audit,
                 "selected_prompt_profile_ids": selected_prompt_profile_ids,
+                **_copy_final_request_evidence_context_fields(prompt_profile_context_override),
+                **_tool_contract_context_fields(prompt_profile_context_override),
                 # ADR-0090 W1.5: carry the STRUCTURED message array alongside the
                 # flattened input so OpenAI-compatible providers can preserve real
                 # chat-template role anchoring (weak local models lose system/user
@@ -895,6 +1001,56 @@ class LLMRequestPreparer:
         fallback_context = dict(prepared.ai_request.context if isinstance(prepared.ai_request.context, dict) else {})
         fallback_context["workspace"] = self.workspace
         fallback_context["reasoning_truncation_retry"] = True
+        self._append_fallback_instruction_to_chat_messages(fallback_context, fallback_instruction)
+        return AIRequest(
+            task_type=prepared.ai_request.task_type,
+            role=profile.role_id,
+            input=fallback_input,
+            options=fallback_options,
+            context=fallback_context,
+        )
+
+    def _build_required_tool_retry_request(
+        self,
+        *,
+        prepared: PreparedLLMRequest,
+        profile: RoleProfile,
+        error_message: str,
+    ) -> AIRequest:
+        """Re-ask when a provider returned prose despite final-request required tools."""
+
+        fallback_options = dict(prepared.request_options)
+        try:
+            current_temperature = float(fallback_options.get("temperature") or 0.2)
+        except (TypeError, ValueError):
+            current_temperature = 0.2
+        fallback_options["temperature"] = min(current_temperature, 0.2)
+        retry_max_tokens = _bounded_required_tool_retry_max_tokens(fallback_options.get("max_tokens"))
+        retry_timeout = _bounded_required_tool_retry_timeout(fallback_options.get("timeout"))
+        fallback_options["max_tokens"] = retry_max_tokens
+        fallback_options["timeout"] = retry_timeout
+        fallback_context = dict(prepared.ai_request.context if isinstance(prepared.ai_request.context, dict) else {})
+        tool_contract = _mapping(fallback_context.get("tool_contract"))
+        required_tools = _string_list(fallback_context.get("required_tools")) or _string_list(
+            tool_contract.get("required_tools")
+        )
+        tool_text = ", ".join(required_tools) if required_tools else "the required tool"
+        fallback_instruction = (
+            "【必需工具未调用回退】\n"
+            f"上一次响应没有调用 final request 要求的工具: {tool_text}。\n"
+            "这次必须立即发出真实工具调用；不要解释、不要先检查工作区、不要用自然语言替代工具调用。"
+            "如果 write_file 是必需工具,请把目标文件的完整内容放入 write_file 参数。"
+            f"\n上次错误: {str(error_message or '').strip()}"
+        ).strip()
+        fallback_input = append_runtime_fallback_instruction(str(prepared.input_text or ""), fallback_instruction)
+        fallback_context["workspace"] = self.workspace
+        fallback_context["required_tool_retry"] = True
+        fallback_context["required_tool_retry_budget"] = {
+            "schema_version": "llm.required_tool_retry_budget.v1",
+            "max_tokens": retry_max_tokens,
+            "timeout_seconds": retry_timeout,
+            "reason": "required_tool_retry_must_emit_native_tool_call",
+        }
         self._append_fallback_instruction_to_chat_messages(fallback_context, fallback_instruction)
         return AIRequest(
             task_type=prepared.ai_request.task_type,

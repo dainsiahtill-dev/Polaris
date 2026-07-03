@@ -50,10 +50,6 @@ class ContextTraceEvent:
     tool_calls_count: int = 0
 
 
-# Alias for backward compatibility
-ContextOSTraceEvent = ContextTraceEvent
-
-
 class ContextOSTraceAnalyzer:
     """Context trace analyzer for ContextOS validators"""
 

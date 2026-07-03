@@ -150,7 +150,7 @@ _QUALITY_GATE_MIN_PASS_SCORE = 70
 _QUALITY_GATE_MIN_START_BUDGET_SECONDS = 15.0
 _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS = 15.0
 _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS = 5.0
-_CHIEF_ENGINEER_MIN_LLM_START_BUDGET_SECONDS = 45.0
+_CHIEF_ENGINEER_MIN_LLM_START_BUDGET_SECONDS = 40.0
 _PRE_DIRECTOR_SNAPSHOT_RELATIVE_DIR = ".polaris/factory_snapshots/pre_director"
 _PRE_DIRECTOR_SNAPSHOT_KIND = "pre_director_workspace"
 _PRE_DIRECTOR_PLATFORM_PREFIXES = (
@@ -2039,17 +2039,7 @@ class OrchestrationStageExecutor:
                 else _DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS
             )
             if materialization_pending:
-                min_materialization_budget = (
-                    OrchestrationStageExecutor._director_first_materialization_min_budget_seconds(context)
-                )
-                if remaining_seconds > min_materialization_budget + _DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS:
-                    max_reserve_before_first_materialization = max(
-                        float(_DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS),
-                        remaining_seconds - min_materialization_budget,
-                    )
-                    safety_budget = min(safety_budget, max_reserve_before_first_materialization)
-                else:
-                    safety_budget = float(_DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS)
+                safety_budget = float(_DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS)
             deadline_timeout = int(max(1.0, remaining_seconds - safety_budget))
             return max(1, min(resolved_timeout, deadline_timeout))
 
@@ -2574,6 +2564,7 @@ class OrchestrationStageExecutor:
                     timeout_seconds=timeout_seconds,
                     cancel_event=cancel_event,
                     abort_checker=abort_checker,
+                    cancel_on_timeout=False,
                 )
             )
             try:
@@ -2699,6 +2690,7 @@ class OrchestrationStageExecutor:
                 entry["assigned_task_count"] = len(entry_assigned_tasks)
             for evidence_key in (
                 "cancel_signal_sent",
+                "inflight_run_continues",
                 "terminal_source",
                 "queried_status",
                 "task_status_counts",
@@ -4417,6 +4409,7 @@ class OrchestrationStageExecutor:
                         timeout_seconds=director_timeout_seconds,
                         cancel_event=self._resolve_cancel_event(context),
                         abort_checker=abort_checker,
+                        cancel_on_timeout=False,
                     )
                 final_result = director_result
                 if str(director_result.status or "").strip().lower() == "cancelled":
@@ -6948,6 +6941,7 @@ class OrchestrationStageExecutor:
         *,
         cancel_event: asyncio.Event | None = None,
         abort_checker: Callable[[], Awaitable[str | None]] | None = None,
+        cancel_on_timeout: bool = True,
     ) -> CommandResult:
         return await self._run_completion_waiter.wait(
             service,
@@ -6955,6 +6949,7 @@ class OrchestrationStageExecutor:
             timeout_seconds,
             cancel_event=cancel_event,
             abort_checker=abort_checker,
+            cancel_on_timeout=cancel_on_timeout,
         )
 
     async def _settle_inflight_director_run_after_timeout(
@@ -6967,8 +6962,23 @@ class OrchestrationStageExecutor:
         abort_checker: Callable[[], Awaitable[str | None]] | None = None,
     ) -> CommandResult | None:
         normalized_run_id = str(run_id or "").strip()
-        if not normalized_run_id or grace_seconds <= 0:
+        if not normalized_run_id:
             return None
+        if grace_seconds <= 0:
+            await self._run_completion_waiter.cancel_active_run(
+                normalized_run_id,
+                reason="factory_stage_timeout",
+            )
+            return CommandResult(
+                run_id=normalized_run_id,
+                status="timeout",
+                message="Director run timed out before timeout settle grace",
+                metadata={
+                    "cancel_signal_sent": True,
+                    "cancel_reason": "factory_stage_timeout",
+                    "timeout_settle_grace_seconds": 0,
+                },
+            )
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max(0.0, float(grace_seconds))
         terminal_statuses = {"completed", "success", "failed", "cancelled", "blocked"}
@@ -7040,7 +7050,20 @@ class OrchestrationStageExecutor:
 
             remaining = deadline - loop.time()
             if remaining <= 0:
-                return None
+                await self._run_completion_waiter.cancel_active_run(
+                    normalized_run_id,
+                    reason="factory_stage_timeout",
+                )
+                return CommandResult(
+                    run_id=normalized_run_id,
+                    status="timeout",
+                    message="Director run timed out after timeout settle grace",
+                    metadata={
+                        "cancel_signal_sent": True,
+                        "cancel_reason": "factory_stage_timeout",
+                        "timeout_settle_grace_seconds": grace_seconds,
+                    },
+                )
             await asyncio.sleep(min(2.0, remaining))
 
     @staticmethod

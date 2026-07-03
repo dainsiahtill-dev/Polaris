@@ -3132,7 +3132,12 @@ async def _phase_quality_repair_loop(
         workspace_name=workspace_name,
         context=context,
     )
-    artifact_quality_errors += _collect_step_verify_errors(adapter, context)
+    artifact_quality_errors += _collect_step_verify_errors(
+        adapter,
+        context,
+        task=task,
+        workspace_name=workspace_name,
+    )
     # Live factory-bench L1-01 (2026-06-17, after the symbol-coherence fix):
     # py_compile + scan_workspace_artifact_quality pass for a calculator.py
     # whose __main__ block raises at call time. The deterministic ladder
@@ -3221,7 +3226,12 @@ async def _phase_quality_repair_loop(
                 workspace_name=workspace_name,
                 context=context,
             )
-            artifact_quality_errors += _collect_step_verify_errors(adapter, context)
+            artifact_quality_errors += _collect_step_verify_errors(
+                adapter,
+                context,
+                task=task,
+                workspace_name=workspace_name,
+            )
             artifact_quality_errors += run_python_static_smoke(
                 adapter,
                 all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
@@ -3274,7 +3284,12 @@ async def _phase_quality_repair_loop(
                 workspace_name=workspace_name,
                 context=context,
             )
-            artifact_quality_errors += _collect_step_verify_errors(adapter, context)
+            artifact_quality_errors += _collect_step_verify_errors(
+                adapter,
+                context,
+                task=task,
+                workspace_name=workspace_name,
+            )
             artifact_quality_errors += run_python_static_smoke(
                 adapter,
                 all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
@@ -3334,7 +3349,12 @@ async def _phase_quality_repair_loop(
                         workspace_name=workspace_name,
                         context=context,
                     )
-                    artifact_quality_errors += _collect_step_verify_errors(adapter, context)
+                    artifact_quality_errors += _collect_step_verify_errors(
+                        adapter,
+                        context,
+                        task=task,
+                        workspace_name=workspace_name,
+                    )
                     artifact_quality_errors += run_python_static_smoke(
                         adapter,
                         all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
@@ -3513,7 +3533,12 @@ async def _phase_semantic_quality_repair_loop(
             workspace_name=workspace_name,
             context=context,
         )
-        artifact_quality_errors += _collect_step_verify_errors(adapter, context)
+        artifact_quality_errors += _collect_step_verify_errors(
+            adapter,
+            context,
+            task=task,
+            workspace_name=workspace_name,
+        )
         artifact_quality_errors += run_python_static_smoke(
             adapter,
             all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
@@ -3546,6 +3571,26 @@ async def _phase_semantic_quality_repair_loop(
         semantic_quality_repair_summary,
         semantic_quality_repair_attempts,
     )
+
+
+def _primary_llm_tool_dispatch_failure(primary_llm_summary: dict[str, Any] | None) -> dict[str, str] | None:
+    if not isinstance(primary_llm_summary, dict):
+        return None
+    error_text = " ".join(
+        str(primary_llm_summary.get(key) or "") for key in ("error", "error_code", "failure_class")
+    ).lower()
+    if "tool_dispatch_dropped" not in error_text:
+        return None
+    return {
+        "error": "tool_dispatch_dropped",
+        "error_code": "tool_dispatch_dropped",
+        "failure_class": "TOOL_DISPATCH_DROPPED",
+        "responsible_layer": "execution_control_plane",
+        "materialization_mode": "tool_dispatch_dropped",
+        "failure_stage": "director_tool_lifecycle",
+        "root_cause_hint": "required_tool_without_dispatch_receipt",
+        "detail": "Director role runtime reported required/native tool calls without dispatch/effect receipt.",
+    }
 
 
 def _phase_no_materialized_changes(
@@ -3590,18 +3635,39 @@ def _phase_no_materialized_changes(
         out_of_scope_files = list(out_of_scope_diff.get("affected_files") or [])
         primary_llm_claimed_success = bool(primary_llm_summary.get("success")) if primary_llm_summary else False
         direct_side_effect_success = primary_llm_claimed_success and not tool_results
-        if out_of_scope_files and (write_tool_evidence or direct_side_effect_success):
+        lifecycle_failure = _primary_llm_tool_dispatch_failure(primary_llm_summary)
+        if lifecycle_failure is not None:
+            error = lifecycle_failure["error"]
+            materialization_mode = lifecycle_failure["materialization_mode"]
+            public_error_code = lifecycle_failure["error_code"]
+            failure_class = lifecycle_failure["failure_class"]
+            responsible_layer = lifecycle_failure["responsible_layer"]
+            failure_stage = lifecycle_failure["failure_stage"]
+            root_cause_hint = lifecycle_failure["root_cause_hint"]
+            failure_detail = lifecycle_failure["detail"]
+        elif out_of_scope_files and (write_tool_evidence or direct_side_effect_success):
             error = "director_materialized_out_of_scope"
             materialization_mode = "materialized_out_of_scope"
             public_error_code = error
             failure_class = "BLUEPRINT_SCOPE_MISMATCH"
             responsible_layer = "director_scope_guard"
+            failure_stage = "director_materialization"
+            root_cause_hint = "no_changed_files"
+            failure_detail = "Director returned no workspace file changes."
         else:
             error = "director_no_materialized_changes"
             materialization_mode = "no_materialized_changes"
             public_error_code = "incomplete_materialization"
             failure_class = "INCOMPLETE_MATERIALIZATION"
             responsible_layer = "director"
+            failure_stage = "director_materialization"
+            root_cause_hint = "no_changed_files"
+            failure_detail = (
+                "Director returned no workspace file changes; "
+                "fresh materialization is required for repair/update tasks."
+                if requires_fresh_materialization
+                else "Director returned no workspace file changes."
+            )
         # Wall 2 diagnostic (F16 follow-up): the forced write emitted but the
         # workspace diff is empty. Surface the discriminating signals so a single
         # solo rerun reveals whether the write content ARG was empty (prose lands
@@ -3691,8 +3757,8 @@ def _phase_no_materialized_changes(
             "error_code": public_error_code,
             "failure_class": failure_class,
             "responsible_layer": responsible_layer,
-            "failure_stage": "director_materialization",
-            "root_cause_hint": "no_changed_files",
+            "failure_stage": failure_stage,
+            "root_cause_hint": root_cause_hint,
             "cognitive_runtime_receipt": cognitive_receipt,
             "decision_signals": [
                 {
@@ -3700,12 +3766,7 @@ def _phase_no_materialized_changes(
                     "severity": "error",
                     "failure_class": failure_class,
                     "responsible_layer": responsible_layer,
-                    "detail": (
-                        "Director returned no workspace file changes; "
-                        "fresh materialization is required for repair/update tasks."
-                        if requires_fresh_materialization
-                        else "Director returned no workspace file changes."
-                    ),
+                    "detail": failure_detail,
                 }
             ],
             "qa_required_for_final_verdict": True,
@@ -4004,7 +4065,12 @@ async def _phase_cross_artifact_unplannable_llm_escalation(
             workspace_name=workspace_name,
             context=context,
         )
-        artifact_quality_errors += _collect_step_verify_errors(adapter, context)
+        artifact_quality_errors += _collect_step_verify_errors(
+            adapter,
+            context,
+            task=task,
+            workspace_name=workspace_name,
+        )
         artifact_quality_errors += run_python_static_smoke(adapter, all_affected_files=scan_paths)
         artifact_quality_errors += run_python_runtime_smoke(
             adapter,

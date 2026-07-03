@@ -1691,6 +1691,22 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(
+                rule_id="javascript.commonjs_esm_entrypoint.artifact_quality",
+                source_tool=JAVASCRIPT_ESM_COMMONJS_ENTRYPOINT_SOURCE_TOOL,
+                language="javascript",
+                phase="quality_repair",
+                archetype=RepairArchetype.WRONG_IMPORT_PATH,
+                priority=1,
+                diagnostic_codes=("artifact_quality_error",),
+                message_terms=("uses commonjs runtime syntax", "package manifest declares type=module"),
+                risk_level="medium",
+                description=(
+                    "Covers artifact-quality static diagnostics for JavaScript files that retain CommonJS "
+                    "runtime syntax under an ESM package manifest."
+                ),
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
                 rule_id="typescript.local_js_import_extension",
                 source_tool=TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL,
                 language="javascript",
@@ -1729,6 +1745,19 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 raw_terms=("npm package manifest script",),
                 risk_level="low",
                 description="Repairs package.json script contracts through structured JSON operations.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="javascript.npm_script_contract.python_command",
+                source_tool=NPM_SCRIPT_CONTRACT_SOURCE_TOOL,
+                language="javascript",
+                phase="test_contract",
+                archetype=RepairArchetype.RUNTIME_CONTRACT,
+                priority=1,
+                diagnostic_codes=("artifact_quality_error",),
+                raw_terms=("npm package manifest contains python command in script",),
+                risk_level="low",
+                description="Replaces Python npm script commands in JavaScript package manifests with Node verifier scripts.",
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(

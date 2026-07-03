@@ -136,7 +136,7 @@ def test_plan_transaction_tool_surface_forces_write_for_multi_missing_materializ
     monkeypatch.setattr(tool_surface, "resolve_repair_edit_target", lambda _context, _workspace: "")
     monkeypatch.setattr(tool_surface, "should_use_weak_director_slim_tool_schema", lambda **_kwargs: False)
 
-    context_override = {
+    context_override: dict[str, Any] = {
         "delivery_mode": "materialize_changes",
         "target_files": ["src/engine/rules.js", "src/engine/runner.js"],
     }
@@ -161,6 +161,19 @@ def test_plan_transaction_tool_surface_forces_write_for_multi_missing_materializ
     scope = context_override["director_first_call_materialization_scope"]
     assert scope["reason"] == "declared_scope_incomplete_requires_first_turn_write_tool"
     assert scope["target_files"] == ["src/engine/rules.js", "src/engine/runner.js"]
+    assert context_override["required_tools"] == ["write_file"]
+    assert context_override["tool_contract"]["required_tools"] == ["write_file"]
+    assert context_override["llm_max_tokens"] == 7000
+    assert context_override["max_output_tokens"] == 7000
+    assert context_override["director_first_call_output_budget"] == {
+        "schema_version": "director.first_call_output_budget.v1",
+        "source": "roles.kernel.llm_caller.tool_helpers",
+        "reason": "declared_scope_incomplete_requires_first_turn_write_tool",
+        "max_tokens": 7000,
+        "ceiling_tokens": 7000,
+        "target_files": ["src/engine/rules.js", "src/engine/runner.js"],
+        "previous_budget_values": {},
+    }
     assert set(scope["target_file_variants"]) == {
         "src/engine/rules.js",
         "./src/engine/rules.js",
@@ -171,11 +184,11 @@ def test_plan_transaction_tool_surface_forces_write_for_multi_missing_materializ
     assert plan.tool_filter_audit["filter_reason"] == "declared_scope_missing_write_targets"
 
 
-def test_plan_transaction_tool_surface_keeps_tools_for_non_materialize_missing_targets(
+def test_plan_transaction_tool_surface_forces_write_for_declared_missing_targets_without_mode_marker(
     monkeypatch: Any,
     tmp_path: Any,
 ) -> None:
-    """Declared target metadata alone must not become a first-turn write authority."""
+    """Director target_files are write obligations even when the prompt lacks a materialize marker."""
 
     native_write = {
         "type": "function",
@@ -198,7 +211,7 @@ def test_plan_transaction_tool_surface_keeps_tools_for_non_materialize_missing_t
     monkeypatch.setattr(tool_surface, "resolve_repair_edit_target", lambda _context, _workspace: "")
     monkeypatch.setattr(tool_surface, "should_use_weak_director_slim_tool_schema", lambda **_kwargs: False)
 
-    context_override = {
+    context_override: dict[str, Any] = {
         "target_files": ["src/engine/rules.js", "src/engine/runner.js"],
     }
     request = RoleTurnRequest(
@@ -209,6 +222,126 @@ def test_plan_transaction_tool_surface_keeps_tools_for_non_materialize_missing_t
 
     plan = tool_surface.plan_transaction_tool_surface(
         role="director",
+        profile=_profile(),
+        request=request,
+        context_result=_context_result(),
+        messages=[],
+        workspace=str(tmp_path),
+        mode="turn",
+    )
+
+    assert [item["function"]["name"] for item in plan.tool_definitions] == ["write_file"]
+    assert plan.tool_choice_override == {"type": "function", "function": {"name": "write_file"}}
+    assert context_override["required_tools"] == ["write_file"]
+    assert context_override["tool_contract"]["required_tools"] == ["write_file"]
+    scope = context_override["director_first_call_materialization_scope"]
+    assert scope["reason"] == "declared_scope_incomplete_requires_first_turn_write_tool"
+    assert scope["target_files"] == ["src/engine/rules.js", "src/engine/runner.js"]
+    assert plan.tool_filter_audit is not None
+    assert plan.tool_filter_audit["filter_reason"] == "declared_scope_missing_write_targets"
+
+
+def test_plan_transaction_tool_surface_caps_first_turn_write_output_budget(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    native_write = {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "parameters": {
+                "type": "object",
+                "properties": {"file": {"type": "string"}, "content": {"type": "string"}},
+            },
+        },
+    }
+    native_tree = {"type": "function", "function": {"name": "repo_tree", "parameters": {}}}
+
+    monkeypatch.setattr(tool_surface, "build_native_tool_schemas", lambda _profile: [native_write, native_tree])
+    monkeypatch.setattr(
+        tool_surface,
+        "_apply_runtime_tool_policy",
+        lambda **kwargs: (kwargs["tool_definitions"], {"runtime_tool_policy_applied": True}),
+    )
+    monkeypatch.setattr(tool_surface, "resolve_repair_edit_target", lambda _context, _workspace: "")
+    monkeypatch.setattr(tool_surface, "should_use_weak_director_slim_tool_schema", lambda **_kwargs: False)
+
+    context_override: dict[str, Any] = {
+        "delivery_mode": "materialize_changes",
+        "target_files": ["src/index.js"],
+        "llm_max_tokens": 128_000,
+        "max_output_tokens": 128_000,
+        "task_execution_strategy": {
+            "schema_version": "task.execution_strategy.v1",
+            "budget_policy": {"output_budget_tokens": 128_000},
+            "llm_sampling": {"max_tokens": 128_000},
+        },
+    }
+    request = RoleTurnRequest(
+        workspace=str(tmp_path),
+        message="[mode:materialize] create entrypoint",
+        context_override=context_override,
+    )
+
+    plan = tool_surface.plan_transaction_tool_surface(
+        role="director",
+        profile=_profile(),
+        request=request,
+        context_result=_context_result(),
+        messages=[],
+        workspace=str(tmp_path),
+        mode="turn",
+    )
+
+    assert [item["function"]["name"] for item in plan.tool_definitions] == ["write_file"]
+    assert context_override["llm_max_tokens"] == 7000
+    assert context_override["max_output_tokens"] == 7000
+    assert context_override["task_execution_strategy"]["budget_policy"]["output_budget_tokens"] == 7000
+    assert context_override["task_execution_strategy"]["llm_sampling"]["max_tokens"] == 7000
+    output_budget = context_override["director_first_call_output_budget"]
+    assert output_budget["max_tokens"] == 7000
+    assert output_budget["previous_budget_values"]["llm_max_tokens"] == 128_000
+    assert output_budget["previous_budget_values"]["max_output_tokens"] == 128_000
+    assert output_budget["previous_budget_values"]["task_execution_strategy"] == {
+        "budget_policy.output_budget_tokens": 128_000,
+        "llm_sampling.max_tokens": 128_000,
+    }
+
+
+def test_plan_transaction_tool_surface_does_not_force_declared_missing_targets_for_non_director(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    native_write = {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "parameters": {
+                "type": "object",
+                "properties": {"file": {"type": "string"}, "content": {"type": "string"}},
+            },
+        },
+    }
+    native_tree = {"type": "function", "function": {"name": "repo_tree", "parameters": {}}}
+
+    monkeypatch.setattr(tool_surface, "build_native_tool_schemas", lambda _profile: [native_write, native_tree])
+    monkeypatch.setattr(
+        tool_surface,
+        "_apply_runtime_tool_policy",
+        lambda **kwargs: (kwargs["tool_definitions"], {"runtime_tool_policy_applied": True}),
+    )
+    monkeypatch.setattr(tool_surface, "resolve_repair_edit_target", lambda _context, _workspace: "")
+    monkeypatch.setattr(tool_surface, "should_use_weak_director_slim_tool_schema", lambda **_kwargs: False)
+
+    context_override = {"target_files": ["src/engine/rules.js"]}
+    request = RoleTurnRequest(
+        workspace=str(tmp_path),
+        message="review the current plan",
+        context_override=context_override,
+    )
+
+    plan = tool_surface.plan_transaction_tool_surface(
+        role="chief_engineer",
         profile=_profile(),
         request=request,
         context_result=_context_result(),

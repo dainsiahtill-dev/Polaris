@@ -123,6 +123,26 @@ export function boot(): void { render(); }`;
         assert snapshot.imports == ()
         assert issues == []
 
+    def test_named_import_clause_comments_are_not_physical_symbols(self, tmp_path: Path) -> None:
+        _write(tmp_path / "src/engine/runner.js", "export const runPipeline = () => true;\n")
+        _write(
+            tmp_path / "src/index.js",
+            """
+import {
+  runPipeline, // re-exported below
+} from "./engine/runner.js";
+
+export { runPipeline };
+""".lstrip(),
+        )
+
+        snapshot = build_symbol_index_snapshot(tmp_path)
+        issues = scan_cross_artifact_consistency(tmp_path)
+
+        assert issues == []
+        assert len(snapshot.imports) == 1
+        assert snapshot.imports[0].symbols == ("runPipeline",)
+
 
 class TestSnapshotSignatures:
     def test_python_signature_digest_is_stable_contract_evidence(self, tmp_path: Path) -> None:

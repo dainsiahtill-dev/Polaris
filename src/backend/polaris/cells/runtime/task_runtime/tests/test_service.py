@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 from pathlib import Path
 
@@ -134,6 +135,128 @@ def test_task_runtime_service_wakes_ready_waiters_when_dependency_unblocks(tmp_p
     child_row = service.get_task(child.id)
     assert child_row is not None
     assert child_row["status"] == "pending"
+
+
+def test_task_runtime_service_reconciles_terminal_session_before_reclaim(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create(subject="completed task with stale row")
+    claimed = service.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-terminal-session",
+        selection_source="task_id_lookup",
+    )
+    assert claimed["success"] is True
+
+    completed = service.complete_execution(
+        created.id,
+        session_id=str(claimed["session"]["session_id"]),
+        result_summary="done",
+    )
+    assert completed["success"] is True
+
+    task_path = service.board.tasks_dir / f"task_{created.id}.json"
+    stale_payload = json.loads(task_path.read_text(encoding="utf-8"))
+    stale_payload["status"] = "pending"
+    stale_payload["completed_at"] = None
+    task_path.write_text(json.dumps(stale_payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    reloaded = TaskRuntimeService(str(workspace))
+    reclaimed = reloaded.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-should-not-reclaim",
+        selection_source="task_id_lookup",
+    )
+
+    assert reclaimed["success"] is False
+    assert reclaimed["reason"] == "task_terminal"
+    assert reclaimed["reconciled_from_terminal_session"] is True
+    assert reclaimed["task"]["status"] == "completed"
+    persisted = json.loads(task_path.read_text(encoding="utf-8"))
+    assert persisted["status"] == "completed"
+
+
+def test_task_runtime_service_preserves_terminal_session_during_run_cancellation(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create(subject="completed task with stale active session")
+    claimed = service.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-terminal-race",
+        selection_source="task_id_lookup",
+    )
+    assert claimed["success"] is True
+
+    completed = service.complete_execution(
+        created.id,
+        session_id=str(claimed["session"]["session_id"]),
+        result_summary="done",
+    )
+    assert completed["success"] is True
+
+    session_path = service.board.tasks_dir / f"task_{created.id}.session.json"
+    stale_session = json.loads(session_path.read_text(encoding="utf-8"))
+    stale_session["status"] = "active"
+    stale_session["resumable"] = True
+    stale_session["last_error"] = ""
+    session_path.write_text(json.dumps(stale_session, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    reloaded = TaskRuntimeService(str(workspace))
+    suspended = reloaded.suspend_active_executions_for_run(
+        "run-terminal-race",
+        reason="factory_stage_timeout",
+    )
+
+    assert suspended["success"] is True
+    assert suspended["suspended_count"] == 0
+    persisted_session = json.loads(session_path.read_text(encoding="utf-8"))
+    assert persisted_session["status"] == "completed"
+    persisted_task = json.loads((service.board.tasks_dir / f"task_{created.id}.json").read_text(encoding="utf-8"))
+    assert persisted_task["status"] == "completed"
+
+
+def test_task_runtime_stale_metadata_update_does_not_downgrade_completed_row(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    writer = TaskRuntimeService(str(workspace))
+
+    created = writer.create(subject="completed task")
+    stale_reader = TaskRuntimeService(str(workspace))
+    stale_reader.get_task(created.id)
+
+    claimed = writer.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-complete",
+        selection_source="task_id_lookup",
+    )
+    assert claimed["success"] is True
+    completed = writer.complete_execution(
+        created.id,
+        session_id=str(claimed["session"]["session_id"]),
+        result_summary="done",
+    )
+    assert completed["success"] is True
+
+    updated = stale_reader.update_task(created.id, metadata={"late_projection": "workspace_quality_gate_failed"})
+
+    assert updated is not None
+    assert updated.status.value == "completed"
+    task_path = writer.board.tasks_dir / f"task_{created.id}.json"
+    persisted = json.loads(task_path.read_text(encoding="utf-8"))
+    assert persisted["status"] == "completed"
+    assert persisted["metadata"]["late_projection"] == "workspace_quality_gate_failed"
 
 
 def test_task_runtime_service_refreshes_stale_blocked_row_with_completed_dependencies(tmp_path: Path) -> None:

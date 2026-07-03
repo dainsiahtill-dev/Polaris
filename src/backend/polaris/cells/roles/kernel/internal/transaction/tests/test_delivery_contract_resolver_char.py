@@ -221,6 +221,52 @@ async def test_no_downgrade_when_write_tool_present() -> None:
 
 
 @pytest.mark.asyncio
+async def test_director_write_only_tool_surface_forces_materialize() -> None:
+    ledger = TurnLedger(turn_id="t_write_only_surface")
+    context: list[dict[str, Any]] = [{"role": "user", "content": "Prepare package manifest contract."}]
+
+    contract = await resolve_turn_delivery_contract(
+        turn_id="t_write_only_surface",
+        context=context,
+        tool_definitions=[{"type": "function", "function": {"name": "write_file"}}],
+        ledger=ledger,
+        resolve_delivery_mode_hybrid=_resolve_analyze,
+        inherit_materialize_from_history=_no_inherit,
+        role_id="director",
+    )
+
+    assert contract.mode == DeliveryMode.MATERIALIZE_CHANGES
+    assert contract.requires_mutation is True
+    assert any(
+        flag.get("type") == "DELIVERY_CONTRACT_WRITE_ONLY_TOOL_SURFACE_OVERRIDDEN" for flag in ledger.anomaly_flags
+    )
+
+
+@pytest.mark.asyncio
+async def test_director_mixed_tool_surface_does_not_force_materialize() -> None:
+    ledger = TurnLedger(turn_id="t_mixed_surface")
+    context: list[dict[str, Any]] = [{"role": "user", "content": "Analyze the package manifest contract."}]
+
+    contract = await resolve_turn_delivery_contract(
+        turn_id="t_mixed_surface",
+        context=context,
+        tool_definitions=[
+            {"type": "function", "function": {"name": "read_file"}},
+            {"type": "function", "function": {"name": "write_file"}},
+        ],
+        ledger=ledger,
+        resolve_delivery_mode_hybrid=_resolve_analyze,
+        inherit_materialize_from_history=_no_inherit,
+        role_id="director",
+    )
+
+    assert contract.mode == DeliveryMode.ANALYZE_ONLY
+    assert not any(
+        flag.get("type") == "DELIVERY_CONTRACT_WRITE_ONLY_TOOL_SURFACE_OVERRIDDEN" for flag in ledger.anomaly_flags
+    )
+
+
+@pytest.mark.asyncio
 async def test_inherit_materialize_from_history_callable_penetrates() -> None:
     ledger = TurnLedger(turn_id="t_inherit")
     context: list[dict[str, Any]] = [{"role": "user", "content": "继续"}]

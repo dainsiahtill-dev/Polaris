@@ -23,6 +23,7 @@ import pytest
 from polaris.cells.roles.kernel.internal.llm_caller.error_handling import (
     classify_error,
     is_native_tool_calling_unsupported,
+    is_retryable_error,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.helpers import (
     extract_json_from_text,
@@ -34,6 +35,11 @@ from polaris.cells.roles.kernel.internal.llm_caller.helpers import (
     resolve_timeout_seconds,
     resolve_tool_call_provider,
 )
+from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import (
+    LLMRequestPreparer,
+    _tool_contract_context_fields,
+)
+from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import build_native_tool_schemas
 from polaris.cells.roles.profile.public.service import load_core_roles
 from polaris.kernelone.context.contracts import TurnEngineContextResult
@@ -52,6 +58,64 @@ class MockProfile:
         self.model = model
         self.provider_id = provider_id
         self.tool_policy = SimpleNamespace(allowed_tools=[], denied_tools=[])
+
+
+def test_tool_contract_context_fields_project_materialization_write_requirement() -> None:
+    fields = _tool_contract_context_fields(
+        {
+            "director_first_call_materialization_scope": {
+                "schema_version": "director.first_call_materialization_scope.v1",
+                "injected": True,
+                "tool": "write_file",
+            }
+        }
+    )
+
+    assert fields["required_tools"] == ["write_file"]
+    assert fields["tool_contract"]["required_tools"] == ["write_file"]
+
+
+def test_required_tool_retry_request_handles_non_numeric_temperature_and_tool_contract() -> None:
+    messages = [{"role": "user", "content": "TASK-1 target_files package.json"}]
+    ai_request = SimpleNamespace(
+        task_type="dialogue",
+        context={
+            "workspace": "/tmp/example",
+            "tool_contract": {"required_tools": ["write_file"]},
+            "chat_messages": messages,
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="TASK-1 target_files package.json",
+        context_result=_turn_context_result("TASK-1 target_files package.json"),
+        context_summary="summary",
+        request_options={
+            "temperature": "not-a-float",
+            "max_tokens": 128000,
+            "timeout": 660,
+            "tools": [{"type": "function", "function": {"name": "write_file"}}],
+            "tool_choice": "auto",
+        },
+        ai_request=ai_request,
+        native_tool_schemas=[],
+    )
+
+    retry_request = LLMRequestPreparer(workspace="/tmp/example")._build_required_tool_retry_request(
+        prepared=prepared,
+        profile=cast("RoleProfile", MockProfile(role_id="director")),
+        error_message="required_tool_not_called: required_tools=write_file",
+    )
+
+    assert retry_request.options["temperature"] == 0.2
+    assert retry_request.options["max_tokens"] == 7000
+    assert retry_request.options["timeout"] == 120.0
+    assert retry_request.options["tool_choice"] == "auto"
+    assert retry_request.context["required_tool_retry"] is True
+    assert retry_request.context["required_tool_retry_budget"]["max_tokens"] == 7000
+    assert retry_request.context["required_tool_retry_budget"]["timeout_seconds"] == 120.0
+    assert "write_file" in retry_request.input
+    assert "必须立即发出真实工具调用" in retry_request.input
 
 
 def _turn_context_result(content: str, token_estimate: int = 12) -> TurnEngineContextResult:
@@ -81,6 +145,14 @@ class TestResolveTimeoutSeconds:
             {"llm_call_timeout_seconds": 45},
         )
         assert timeout == 660
+
+    def test_director_context_timeout_ceiling_can_reduce_role_default(self) -> None:
+        profile = MockProfile(role_id="director")
+        timeout = resolve_timeout_seconds(
+            cast("RoleProfile", profile),
+            {"llm_call_timeout_ceiling_seconds": 45},
+        )
+        assert timeout == 45
 
     def test_non_director_context_timeout_override_wins(self) -> None:
         profile = MockProfile(role_id="pm")
@@ -677,6 +749,11 @@ class TestClassifyError:
     def test_unknown_classification(self) -> None:
         assert classify_error("Something unexpected happened") == "unknown"
         assert classify_error("") == "unknown"
+
+    def test_required_tool_not_called_is_retryable_control_plane_error(self) -> None:
+        category = classify_error("required_tool_not_called: required_tools=write_file")
+        assert category == "tool_required"
+        assert is_retryable_error(category) is True
 
 
 class TestMessagesToInput:

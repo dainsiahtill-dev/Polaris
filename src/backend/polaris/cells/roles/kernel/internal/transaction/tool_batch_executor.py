@@ -272,6 +272,73 @@ def fill_single_target_line_range_edit_blocks(
     return filled
 
 
+def _safe_contract_target_files(target_files: tuple[str, ...] | list[str]) -> list[str]:
+    normalized: dict[str, str] = {}
+    for raw in target_files:
+        token = str(raw or "").strip().replace("\\", "/")
+        if not token:
+            continue
+        while token.startswith("./"):
+            token = token[2:]
+        if (
+            not token
+            or token.startswith("/")
+            or token.startswith("~")
+            or any(part == ".." for part in token.split("/"))
+            or any(ch in token for ch in ("*", "?", "[", "]", ",", "\t", "\n"))
+        ):
+            continue
+        normalized.setdefault(token.lower(), token)
+    return list(normalized.values())
+
+
+def fill_content_only_write_file_from_remaining_targets(
+    invocations: list[Any],
+    *,
+    target_files: tuple[str, ...] | list[str],
+) -> list[Any]:
+    """Fill omitted ``file`` for unambiguous content-only ``write_file`` calls.
+
+    This is deliberately narrower than schema normalization: it needs the full
+    batch order plus the structured task target list. If earlier calls in the
+    same batch already claim all but one target and a later write_file has a
+    complete body but no path, assign the sole remaining target. Multi-target
+    ambiguity stays fail-closed.
+    """
+
+    contract_targets = _safe_contract_target_files(target_files)
+    if not contract_targets:
+        return invocations
+    claimed: set[str] = set()
+    filled: list[Any] = []
+    for invocation in invocations:
+        tool_name = extract_invocation_tool_name(invocation)
+        arguments = _invocation_arguments(invocation)
+        if tool_name != "write_file" or arguments is None:
+            filled.append(invocation)
+            continue
+        existing_file = extract_target_file_from_invocation_args(invocation)
+        if existing_file:
+            normalized_existing = existing_file.strip().replace("\\", "/")
+            while normalized_existing.startswith("./"):
+                normalized_existing = normalized_existing[2:]
+            claimed.add(normalized_existing.lower())
+            filled.append(invocation)
+            continue
+        if "content" not in arguments or not isinstance(arguments.get("content"), str):
+            filled.append(invocation)
+            continue
+        remaining = [target for target in contract_targets if target.lower() not in claimed]
+        if len(remaining) != 1:
+            filled.append(invocation)
+            continue
+        new_arguments = dict(arguments)
+        new_arguments["file"] = remaining[0]
+        claimed.add(remaining[0].lower())
+        filled.append(_with_invocation_arguments(invocation, new_arguments))
+    return filled
+
+
 def _normalize_file_reference_path(raw_path: str) -> str:
     """规范化工具调用中的文件路径字符串。
 
@@ -424,6 +491,15 @@ def _effect_receipts_from_batch_receipts(receipts: list[Any]) -> list[dict[str, 
     return effect_receipts
 
 
+def _batch_result_count(receipts: list[Any]) -> int:
+    count = 0
+    for receipt in normalize_batch_receipts(receipts):
+        results = receipt.get("results")
+        if isinstance(results, list):
+            count += sum(1 for item in results if isinstance(item, dict))
+    return count
+
+
 def _job_token_from_capability_token(token: dict[str, Any], *, run_id: str, stage: str) -> dict[str, Any]:
     audit_ok = token.get("capability_audit_ok")
     return {
@@ -531,8 +607,10 @@ def _append_tool_batch_receipts_to_run_ledger(
     native_tool_calls_count: int = 0,
 ) -> None:
     decoded_count = len(invocations or [])
-    dispatched_count = decoded_count
     merged_receipt = _merge_batch_receipts(receipts)
+    result_count = _batch_result_count(receipts)
+    has_authoritative_receipt = bool(merged_receipt and result_count > 0)
+    dispatched_count = result_count if has_authoritative_receipt else 0
     effect_receipts = _effect_receipts_from_batch_receipts(receipts) if merged_receipt else []
     token = next(
         (
@@ -558,9 +636,9 @@ def _append_tool_batch_receipts_to_run_ledger(
         decoded_tool_calls_count=decoded_count,
         dispatched_tool_calls_count=dispatched_count,
         receipts=receipts,
-        dispatch_status="" if merged_receipt else "blocked",
-        failure_class="" if merged_receipt else "MISSING_BATCH_RECEIPT",
-        reason="" if merged_receipt else "Decoded tool batch produced no authoritative batch receipt",
+        dispatch_status="" if has_authoritative_receipt else "dropped",
+        failure_class="" if has_authoritative_receipt else "TOOL_DISPATCH_DROPPED",
+        reason="" if has_authoritative_receipt else "Decoded tool batch produced no authoritative batch receipt",
     )
     resolved_lifecycle_run_id = str(run_id or lifecycle.run_id or turn_id or "").strip()
     if resolved_lifecycle_run_id:
@@ -943,14 +1021,19 @@ class ToolBatchExecutor:
         latest_user_request = extract_latest_user_message(context)
         single_target_candidates = extract_target_files_from_message(latest_user_request)
         single_scope_candidates = extract_allowed_scope_paths_from_message(latest_user_request)
-        single_target_candidates.extend(extract_platform_tool_contract_target_files(context))
+        structured_target_candidates: list[str] = list(extract_platform_tool_contract_target_files(context))
+        single_target_candidates.extend(structured_target_candidates)
         single_scope_candidates.extend(extract_platform_tool_contract_scope_paths(context))
         modification_contract = getattr(ledger, "modification_contract", None)
         if modification_contract is not None:
             contract_targets = getattr(modification_contract, "target_files", None)
             if isinstance(contract_targets, (list, tuple)):
+                structured_target_candidates.extend(str(item) for item in contract_targets)
                 single_target_candidates.extend(str(item) for item in contract_targets)
         single_target_candidates = list(dict.fromkeys(str(item) for item in single_target_candidates if str(item)))
+        structured_target_candidates = list(
+            dict.fromkeys(str(item) for item in structured_target_candidates if str(item))
+        )
         single_scope_candidates = list(dict.fromkeys(str(item) for item in single_scope_candidates if str(item)))
         single_scope_candidates = filter_scope_paths_for_explicit_targets(
             single_scope_candidates,
@@ -959,6 +1042,10 @@ class ToolBatchExecutor:
         invocations = fill_single_target_line_range_edit_blocks(
             invocations,
             target_files=tuple(single_target_candidates),
+        )
+        invocations = fill_content_only_write_file_from_remaining_targets(
+            invocations,
+            target_files=tuple(structured_target_candidates or single_target_candidates),
         )
         invocations, dropped_out_of_scope_writes = filter_out_of_scope_write_invocations(
             latest_user_request,
@@ -1535,6 +1622,29 @@ class ToolBatchExecutor:
                 TurnId(turn_id),
             )
             receipts_as_dicts.extend(normalize_batch_receipts(receipts))
+
+        if invocations and _batch_result_count(receipts_as_dicts) <= 0:
+            decoded_tool_calls = [
+                {
+                    "tool_name": extract_invocation_tool_name(invocation),
+                    "call_id": str(invocation.get("call_id", "") or ""),
+                    "reason": "decoded_tool_batch_without_authoritative_receipt",
+                }
+                for invocation in invocations
+            ]
+            ledger.anomaly_flags.append(
+                {
+                    "type": "TOOL_DISPATCH_DROPPED",
+                    "turn_id": turn_id,
+                    "native_tool_calls_count": _int_value(metadata.get("native_tool_calls_count")) or len(invocations),
+                    "decoded_tool_calls_count": len(invocations),
+                    "dispatched_tool_calls_count": 0,
+                    "provider_response_hash": str(metadata.get("provider_response_hash") or ""),
+                    "dropped_tool_calls": decoded_tool_calls,
+                    "reason": "decoded_tool_batch_produced_no_authoritative_batch_receipt",
+                }
+            )
+            raise RuntimeError("tool_dispatch_dropped: decoded tool batch produced no authoritative batch receipt")
 
         record_receipts_to_ledger(receipts_as_dicts, ledger)
         _append_tool_batch_receipts_to_run_ledger(

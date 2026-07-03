@@ -113,6 +113,7 @@ class RunCompletionWaiter:
         *,
         cancel_event: asyncio.Event | None = None,
         abort_checker: Callable[[], Awaitable[str | None]] | None = None,
+        cancel_on_timeout: bool = True,
     ) -> CommandResult:
         terminal_statuses = {"completed", "failed", "cancelled", "timeout", "blocked"}
         run_id = str(initial_result.run_id or "").strip()
@@ -173,14 +174,16 @@ class RunCompletionWaiter:
                 )
 
             if completed_reason == "timeout":
-                await self.cancel_active_run(run_id, reason="factory_stage_timeout")
+                if cancel_on_timeout:
+                    await self.cancel_active_run(run_id, reason="factory_stage_timeout")
                 return CommandResult(
                     run_id=run_id,
                     status="timeout",
                     message=f"Run timed out after {timeout_seconds} seconds",
                     metadata={
-                        "cancel_signal_sent": True,
+                        "cancel_signal_sent": bool(cancel_on_timeout),
                         "cancel_reason": "factory_stage_timeout",
+                        "inflight_run_continues": not cancel_on_timeout,
                     },
                 )
 

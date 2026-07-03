@@ -14,6 +14,7 @@ Tests for Turn Transaction Controller
 import json
 import shutil
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -325,6 +326,55 @@ class TestToolBatchExecution:
         assert result["batch_receipt"] is not None
         # 验证工具结果在visible_content中（LLM_ONCE收口后的摘要）
         assert "hello" in result["visible_content"]
+
+    @pytest.mark.asyncio
+    async def test_decoded_tool_batch_without_receipt_fails_closed(
+        self,
+        controller,
+        mock_llm_provider,
+        monkeypatch,
+        basic_context,
+        basic_tool_definitions,
+    ) -> None:
+        mock_llm_provider.return_value = {
+            "content": "",
+            "tool_calls": [_native_tool_call("read_file", {"path": "main.py"})],
+            "model": "claude",
+            "usage": {"prompt_tokens": 100, "completion_tokens": 30},
+        }
+
+        class EmptyBatchRuntime:
+            async def execute_batch(self, *_args: Any, **_kwargs: Any) -> list[Any]:
+                return []
+
+        monkeypatch.setattr(
+            controller._tool_batch_executor,
+            "_build_tool_batch_runtime",
+            lambda *_args, **_kwargs: EmptyBatchRuntime(),
+        )
+        state_machine = TurnStateMachine(turn_id="turn_missing_batch_receipt")
+        ledger = TurnLedger(turn_id="turn_missing_batch_receipt")
+
+        with pytest.raises(RuntimeError, match="tool_dispatch_dropped"):
+            await controller._execute_turn(
+                turn_id="turn_missing_batch_receipt",
+                context=basic_context,
+                tool_definitions=basic_tool_definitions,
+                state_machine=state_machine,
+                ledger=ledger,
+                stream=False,
+            )
+
+        dropped_flags = [
+            item
+            for item in ledger.anomaly_flags
+            if isinstance(item, dict) and item.get("type") == "TOOL_DISPATCH_DROPPED"
+        ]
+        assert len(dropped_flags) == 1
+        assert dropped_flags[0]["native_tool_calls_count"] == 1
+        assert dropped_flags[0]["decoded_tool_calls_count"] == 1
+        assert dropped_flags[0]["dispatched_tool_calls_count"] == 0
+        assert dropped_flags[0]["dropped_tool_calls"][0]["tool_name"] == "read_file"
 
     @pytest.mark.asyncio
     async def test_multiple_readonly_parallel(

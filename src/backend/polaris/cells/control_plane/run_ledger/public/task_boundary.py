@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import shlex
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import tomllib
@@ -23,6 +24,16 @@ _LOCAL_ENTRYPOINT_SUFFIXES = (
     ".rs",
     ".html",
 )
+_ENTRYPOINT_PATTERN_CHARS = frozenset("*?[]{}")
+_LOCAL_SOURCE_IMPORT_SUFFIXES = (".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx")
+_ESM_LOCAL_IMPORT_RE = re.compile(
+    r"(?m)^\s*(?:import\s+(?:[^'\"\n]+?\s+from\s*)?|export\s+[^'\"\n]+?\s+from\s*)"
+    r"['\"](?P<specifier>\.{1,2}/[^'\"\n]+)['\"]"
+)
+_CJS_LOCAL_REQUIRE_RE = re.compile(
+    r"(?m)^\s*(?:(?:const|let|var)\s+[^=\n]+=\s*)?require\(\s*['\"]"
+    r"(?P<specifier>\.{1,2}/[^'\"\n]+)['\"]\s*\)"
+)
 
 
 def _clean_path(value: Any) -> str:
@@ -30,6 +41,13 @@ def _clean_path(value: Any) -> str:
     while token.startswith("./"):
         token = token[2:]
     return token.strip("/")
+
+
+def _is_concrete_local_entrypoint_target(value: Any) -> bool:
+    token = _clean_path(value)
+    if not token or token.startswith("node_modules/"):
+        return False
+    return not any(char in token for char in _ENTRYPOINT_PATTERN_CHARS)
 
 
 def _string_list(value: Any) -> list[str]:
@@ -181,12 +199,71 @@ def _dedupe_paths(values: list[str]) -> list[str]:
 def _workspace_entrypoint_targets(workspace: Path) -> list[str]:
     return _dedupe_paths(
         [
-            *_package_json_entrypoints(workspace),
-            *_html_script_entrypoints(workspace),
-            *_go_entrypoints(workspace),
-            *_pyproject_entrypoints(workspace),
+            entrypoint
+            for entrypoint in (
+                *_package_json_entrypoints(workspace),
+                *_html_script_entrypoints(workspace),
+                *_go_entrypoints(workspace),
+                *_pyproject_entrypoints(workspace),
+            )
+            if _is_concrete_local_entrypoint_target(entrypoint)
         ]
     )
+
+
+def _is_local_source_file(path: str) -> bool:
+    return _clean_path(path).endswith(_LOCAL_SOURCE_IMPORT_SUFFIXES)
+
+
+def _local_import_specifiers(text: str) -> list[str]:
+    specifiers: list[str] = []
+    for pattern in (_ESM_LOCAL_IMPORT_RE, _CJS_LOCAL_REQUIRE_RE):
+        for match in pattern.finditer(text):
+            specifier = str(match.group("specifier") or "").strip()
+            if specifier and specifier not in specifiers:
+                specifiers.append(specifier)
+    return specifiers
+
+
+def _local_import_target_candidates(importer_path: str, specifier: str) -> list[str]:
+    importer_parent = PurePosixPath(_clean_path(importer_path)).parent
+    target = posixpath.normpath((importer_parent / specifier).as_posix()).lstrip("./")
+    if not target or target.startswith("../") or "/../" in target:
+        return []
+    suffix = PurePosixPath(target).suffix
+    if suffix:
+        return [_clean_path(target)]
+    candidates = [f"{target}{ext}" for ext in _LOCAL_SOURCE_IMPORT_SUFFIXES]
+    candidates.extend(f"{target}/index{ext}" for ext in _LOCAL_SOURCE_IMPORT_SUFFIXES)
+    return _dedupe_paths(candidates)
+
+
+def _unresolved_local_imports(
+    *,
+    workspace: Path,
+    source_paths: tuple[str, ...],
+    known_artifacts: set[str],
+) -> tuple[str, ...]:
+    unresolved: list[str] = []
+    for source_path in source_paths:
+        normalized_source = _clean_path(source_path)
+        if not _is_local_source_file(normalized_source) or not _path_exists(workspace, normalized_source):
+            continue
+        try:
+            text = (workspace / normalized_source).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for specifier in _local_import_specifiers(text):
+            candidates = _local_import_target_candidates(normalized_source, specifier)
+            if not candidates:
+                continue
+            if any(_path_exists(workspace, candidate) or candidate in known_artifacts for candidate in candidates):
+                continue
+            preferred = candidates[0]
+            finding = f"{normalized_source} -> {specifier} ({preferred})"
+            if finding not in unresolved:
+                unresolved.append(finding)
+    return tuple(unresolved)
 
 
 def _required_items_not_satisfied(
@@ -225,6 +302,7 @@ class TaskBoundaryVerdictV1:
     target_files: tuple[str, ...] = field(default_factory=tuple)
     missing_target_files: tuple[str, ...] = field(default_factory=tuple)
     missing_entrypoint_targets: tuple[str, ...] = field(default_factory=tuple)
+    unresolved_local_imports: tuple[str, ...] = field(default_factory=tuple)
     downstream_pending_artifacts: tuple[str, ...] = field(default_factory=tuple)
     completed_artifacts: tuple[str, ...] = field(default_factory=tuple)
     blocked_dependencies: tuple[str, ...] = field(default_factory=tuple)
@@ -253,6 +331,7 @@ class TaskBoundaryVerdictV1:
             "target_files": list(self.target_files),
             "missing_target_files": list(self.missing_target_files),
             "missing_entrypoint_targets": list(self.missing_entrypoint_targets),
+            "unresolved_local_imports": list(self.unresolved_local_imports),
             "downstream_pending_artifacts": list(self.downstream_pending_artifacts),
             "completed_artifacts": list(self.completed_artifacts),
             "blocked_dependencies": list(self.blocked_dependencies),
@@ -425,6 +504,22 @@ def evaluate_task_boundary_verdict(
             responsible_layer="task_boundary",
             reason="Manifest references local entrypoint files that are neither complete nor declared downstream",
             missing_entrypoint_targets=missing_entrypoints,
+            **base_kwargs,
+        )
+
+    unresolved_imports = _unresolved_local_imports(
+        workspace=workspace_path,
+        source_paths=tuple(_dedupe_paths([*targets, *completed])),
+        known_artifacts=known_artifacts,
+    )
+    if unresolved_imports:
+        return TaskBoundaryVerdictV1(
+            status="unresolved_local_import",
+            ok=False,
+            failure_class="UNRESOLVED_LOCAL_IMPORT",
+            responsible_layer="director",
+            reason="Source files import local files that are neither materialized nor declared downstream",
+            unresolved_local_imports=unresolved_imports,
             **base_kwargs,
         )
 

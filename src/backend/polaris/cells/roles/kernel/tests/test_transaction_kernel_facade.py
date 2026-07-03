@@ -36,6 +36,7 @@ from polaris.cells.roles.kernel.internal.transaction.task_contract_builder impor
     extract_allowed_tool_names_from_definitions,
 )
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import (
+    fill_content_only_write_file_from_remaining_targets,
     fill_single_target_line_range_edit_blocks,
     rewrite_existing_file_paths_in_invocations,
 )
@@ -195,6 +196,56 @@ def test_build_decision_messages_treats_xinzeng_gengxin_as_mutation() -> None:
     assert any("This request requires mutation." in text for text in system_messages)
     assert any("HARD GATE: if your tool batch contains no write tool call" in text for text in system_messages)
     assert any("README.md" in text for text in system_messages)
+
+
+def test_fill_content_only_write_file_uses_remaining_structured_target() -> None:
+    invocations = [
+        {
+            "call_id": "write_pkg",
+            "tool_name": "write_file",
+            "arguments": {"file": "package.json", "content": "{}"},
+        },
+        {
+            "call_id": "write_test",
+            "tool_name": "write_file",
+            "arguments": {"file": "tests/product.test.js", "content": "import test from 'node:test';\n"},
+        },
+        {
+            "call_id": "write_pytest",
+            "tool_name": "write_file",
+            "arguments": {"file": "tests/test_product.py", "content": "import unittest\n"},
+        },
+        {
+            "call_id": "write_readme",
+            "tool_name": "write_file",
+            "arguments": {"content": "# Project\n"},
+        },
+    ]
+
+    filled = fill_content_only_write_file_from_remaining_targets(
+        invocations,
+        target_files=("package.json", "tests/product.test.js", "tests/test_product.py", "README.md"),
+    )
+
+    assert filled[3]["arguments"]["file"] == "README.md"
+    assert filled[3]["arguments"]["content"] == "# Project\n"
+
+
+def test_fill_content_only_write_file_stays_fail_closed_when_ambiguous() -> None:
+    invocations = [
+        {
+            "call_id": "write_unknown",
+            "tool_name": "write_file",
+            "arguments": {"content": "# Project\n"},
+        }
+    ]
+
+    filled = fill_content_only_write_file_from_remaining_targets(
+        invocations,
+        target_files=("README.md", "CHANGELOG.md"),
+    )
+
+    assert "file" not in filled[0]["arguments"]
 
 
 def test_requires_mutation_intent_detects_cn_execute_verbs() -> None:
@@ -608,6 +659,39 @@ def test_single_batch_task_contract_hint_detects_go_target_files() -> None:
     assert "src/models/pet.go" in contract_text
     assert "src/engine/spell_engine.go" in contract_text
     assert "main.go" in contract_text
+
+
+def test_single_batch_task_contract_hint_uses_quality_repair_targets_not_evidence_refs() -> None:
+    context = [
+        {
+            "role": "user",
+            "content": (
+                "[mode:materialize]\n"
+                "- Chief Engineer blueprint evidence:\n"
+                "- artifact: runtime/state/blueprints/factory_abc.review.json\n"
+                '- "blueprint_path": "runtime/blueprints/ce_TASK-1-foundation.json"\n\n'
+                "MISSING TARGET FILES — create these exact paths NOW, one write_file call per path:\n"
+                "- src/meteor.js\n"
+                "- src/wish.js\n"
+                "EXISTING FAILED TARGET FILES — repair these exact paths NOW:\n"
+                "- package.json\n"
+                "- src/engine/rules.js\n"
+                "Quality errors:\n"
+                "- Artifact quality scan failed: unresolved relative import in src/engine/rules.js; "
+                "create missing module target src/meteor.js and export the imported symbols.\n"
+            ),
+        }
+    ]
+    tool_definitions = [{"type": "function", "function": {"name": "write_file"}}]
+
+    contract_text, _metadata = build_single_batch_task_contract_hint(context, tool_definitions)
+
+    assert "src/meteor.js" in contract_text
+    assert "src/wish.js" in contract_text
+    assert "package.json" in contract_text
+    assert "src/engine/rules.js" in contract_text
+    assert "runtime/state/blueprints" not in contract_text
+    assert "runtime/blueprints" not in contract_text
 
 
 def test_resolve_mutation_target_guard_violation_rejects_extra_out_of_scope_write_target() -> None:
@@ -2279,7 +2363,10 @@ def test_single_batch_required_groups_prioritize_active_edit_blocks() -> None:
 
     hint, _metadata = build_single_batch_task_contract_hint(context, tool_definitions)
 
-    assert "Use available tools to satisfy each group in order: [edit_blocks, repo_apply_diff, edit_file, write_file]." in hint
+    assert (
+        "Use available tools to satisfy each group in order: [edit_blocks, repo_apply_diff, edit_file, write_file]."
+        in hint
+    )
 
 
 def test_build_decision_messages_includes_benchmark_required_tools_hint() -> None:

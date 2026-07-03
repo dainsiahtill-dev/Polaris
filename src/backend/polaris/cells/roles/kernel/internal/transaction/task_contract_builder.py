@@ -19,11 +19,11 @@ from typing import Any
 
 from polaris.cells.roles.kernel.internal.transaction.constants import (
     ACTIVE_WRITE_TOOLS,
-    FILE_TOKEN_EXTENSION_PATTERN,
     REQUIRED_TOOL_EQUIVALENTS,
     TOOL_ALIASES,
     VERIFICATION_TOOLS,
 )
+from polaris.cells.roles.kernel.internal.transaction.contract_guards import extract_target_files_from_message
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
     requires_mutation_intent,
     requires_verification_intent,
@@ -239,6 +239,36 @@ def platform_tool_contract_disables_phase_manager(context: list[dict]) -> bool:
     return bool(contract.get("disable_phase_manager") or contract.get("external_batch_rules"))
 
 
+def _context_has_actual_sibling_exports(context: list[dict]) -> bool:
+    for message in context:
+        if not isinstance(message, Mapping):
+            continue
+        metadata = _mapping(message.get("metadata"))
+        for candidate in (message.get("actual_sibling_exports"), metadata.get("actual_sibling_exports")):
+            if isinstance(candidate, Mapping) and candidate:
+                return True
+        content = str(message.get("content") or "")
+        if "actual_sibling_exports" in content or "Actual exported interface" in content:
+            return True
+    return False
+
+
+def _targets_include_test_file(paths: list[str]) -> bool:
+    for path in paths:
+        normalized = str(path or "").replace("\\", "/").lower()
+        base = normalized.rsplit("/", 1)[-1]
+        if (
+            "/tests/" in f"/{normalized}"
+            or base.startswith("test_")
+            or base.endswith("_test.py")
+            or base.endswith("_test.go")
+            or ".test." in base
+            or ".spec." in base
+        ):
+            return True
+    return False
+
+
 def _outer_explicit_delivery_mode_marker(content: str) -> str | None:
     goal_start = content.lower().find("<goal>")
     prefix = content if goal_start < 0 else content[:goal_start]
@@ -377,13 +407,7 @@ def build_single_batch_task_contract_hint(
     mixed_read_write_batch_allowed = platform_tool_contract_bypasses_read_write_barrier(context)
     single_quality_repair_target = _extract_single_target_quality_repair_path(latest_user)
 
-    target_file_tokens = [
-        token.strip()
-        for token in re.findall(
-            r"\b[\w./\\-]+\.(?:" + FILE_TOKEN_EXTENSION_PATTERN + r")\b", latest_user, flags=re.IGNORECASE
-        )
-        if token.strip()
-    ]
+    target_file_tokens = extract_target_files_from_message(latest_user)
     dedup_target_files: list[str] = []
     seen_targets: set[str] = set()
     for token in [*target_file_tokens, *extract_platform_tool_contract_target_files(context)]:
@@ -675,6 +699,17 @@ def build_single_batch_task_contract_hint(
                 "for multi-file create tasks, emit one write/edit call per target file instead of stopping "
                 "after the first successful write."
             )
+            if "package.json" in {path.lower() for path in dedup_target_files}:
+                lines.append(
+                    "Package.json scripts must be shell-parseable. Avoid nested `node -e` quote chains; "
+                    "prefer direct node file commands or simple npm script composition."
+                )
+            if _targets_include_test_file(dedup_target_files) and _context_has_actual_sibling_exports(context):
+                lines.append(
+                    "Existing sibling module exports are authoritative for tests. Import only symbols listed "
+                    "under actual_sibling_exports / actual_exports from existing source files; planned_exports "
+                    "or tentative_exports are advisory and not importable. Do not invent ideal API imports."
+                )
     if _requires_verify and not single_quality_repair_target:
         if selected_verify:
             lines.append(

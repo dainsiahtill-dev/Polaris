@@ -1042,10 +1042,20 @@ class TurnTransactionController:
                 "contextTokens",
                 "usage",
                 "usage_source",
+                "native_tool_calls_count",
+                "decision_caller_native_tool_calls_count",
+                "native_tool_call_names",
+                "tool_call_provider",
+                "decision_caller_tool_call_provider",
             ):
                 if key in response_usage:
                     value = response_usage.get(key)
-                    response_llm_metadata[key] = dict(value) if isinstance(value, dict) else value
+                    if isinstance(value, dict):
+                        response_llm_metadata[key] = dict(value)
+                    elif isinstance(value, list):
+                        response_llm_metadata[key] = list(value)
+                    else:
+                        response_llm_metadata[key] = value
 
         # Phase 3.3: Track usage
         raw_provider_usage = response_usage.get("usage")
@@ -1086,7 +1096,7 @@ class TurnTransactionController:
         return RawLLMResponse(
             content=response.get("content", ""),
             thinking=thinking,
-            native_tool_calls=response.get("tool_calls", []),
+            native_tool_calls=response.get("native_tool_calls") or response.get("tool_calls", []),
             model=response.get("model", "unknown"),
             usage=response_usage,
         )

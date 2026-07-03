@@ -236,7 +236,7 @@ class FinalizationHandler:
             RawLLMResponse(
                 content=response.get("content", ""),
                 thinking=finalize_thinking,
-                native_tool_calls=response.get("tool_calls", []),
+                native_tool_calls=response.get("native_tool_calls") or response.get("tool_calls", []),
                 model=response.get("model", "unknown"),
                 usage=response_usage,
             ),

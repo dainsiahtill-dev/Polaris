@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from polaris.cells.roles.kernel.internal import context_gateway as context_gateway_module
 from polaris.cells.roles.kernel.internal.llm_caller import request_preparer as request_preparer_module
+from polaris.cells.roles.kernel.internal.llm_caller.context_audit import build_final_request_context_audit_for_request
 from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import LLMRequestPreparer
 from polaris.kernelone.context.contracts import TurnEngineContextResult
 from polaris.kernelone.llm.engine.contracts import ModelSpec
@@ -117,6 +118,84 @@ async def test_prepare_request_includes_resolved_actor_capability_profile(tmp_pa
         "kernelone.llm.model_catalog",
         "roles.kernel.llm_caller.request_options",
     )
+
+
+@pytest.mark.asyncio
+async def test_prepare_request_preserves_final_request_evidence_context(tmp_path: Path) -> None:
+    request_preparer = LLMRequestPreparer(workspace=str(tmp_path), formatter=None, model_catalog=None)
+    request_preparer._model_catalog = _ModelCatalog()
+    module_interface_contract = {
+        "schema_version": "chief_engineer.module_interface_contract.v1",
+        "source": "test",
+        "modules": [
+            {
+                "path": "src/engine/rules.js",
+                "planned_public_symbols": ["scoreWish"],
+            }
+        ],
+    }
+    ce_blueprint = {
+        "schema_version": "chief_engineer.blueprint.v1",
+        "target_files": ["src/engine/rules.js"],
+        "execution_checklist": ["Materialize only the listed target files."],
+        "module_interface_contract": module_interface_contract,
+    }
+    pm_contract = {
+        "schema_version": "pm.task_contract.v1",
+        "task_id": "TASK-1-source-core",
+        "target_files": ["src/engine/rules.js"],
+        "acceptance_criteria": ["module exports scoreWish"],
+    }
+    profile = SimpleNamespace(
+        role_id="director",
+        provider_id="provider-a",
+        model="qwen-16k",
+        tool_policy=SimpleNamespace(whitelist=("write_file",)),
+    )
+    context = SimpleNamespace(
+        message="[mode:materialize] repair src/engine/rules.js",
+        domain="code",
+        context_override={
+            request_preparer_module._TRANSACTION_KERNEL_PREBUILT_MESSAGES_KEY: [
+                {"role": "system", "content": "system prompt"},
+                {"role": "user", "content": "repair src/engine/rules.js"},
+            ],
+            "pm_contract": pm_contract,
+            "ce_blueprint": ce_blueprint,
+            "module_interface_contract": module_interface_contract,
+            "final_request_evidence_required": True,
+            "required_evidence": [
+                "ce_blueprint",
+                "architecture_or_file_plan",
+                "module_interface_contract",
+            ],
+        },
+    )
+
+    prepared = await request_preparer._prepare_llm_request(
+        profile=profile,
+        system_prompt="system prompt",
+        context=context,
+        temperature=0.2,
+        max_tokens=1024,
+        stream=False,
+    )
+
+    request_context = prepared.ai_request.context
+    assert request_context["pm_contract"] == pm_contract
+    assert request_context["ce_blueprint"] == ce_blueprint
+    assert request_context["module_interface_contract"] == module_interface_contract
+    audit = build_final_request_context_audit_for_request(
+        ai_request=prepared.ai_request,
+        prepared=prepared,
+        profile=profile,
+    )
+    evidence = audit["final_request_evidence_coverage"]
+    assert evidence["pass"] is True
+    assert "pm_contract" in evidence["included_refs"]
+    assert "ce_blueprint" in evidence["included_refs"]
+    assert "architecture_or_file_plan" in evidence["included_refs"]
+    assert "module_interface_contract" in evidence["included_refs"]
 
 
 @pytest.mark.asyncio

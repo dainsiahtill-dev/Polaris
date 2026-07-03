@@ -31,6 +31,17 @@ def test_check_package_scripts_rejects_missing_local_entrypoint(tmp_path: Path) 
     assert "missing local entrypoint" in result.detail
 
 
+def test_check_package_scripts_accepts_node_test_glob_patterns(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"node --test tests/*.test.js","test:watch":"node --test --watch tests/*.test.js"}}\n',
+        encoding="utf-8",
+    )
+
+    result = check_package_scripts(str(tmp_path))
+
+    assert result.ok is True
+
+
 def test_check_package_scripts_rejects_missing_local_node_dependency(tmp_path: Path) -> None:
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "build.js").write_text(

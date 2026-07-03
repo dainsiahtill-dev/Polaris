@@ -93,6 +93,161 @@ def _string_list_payload(value: Any, *, limit: int = 8) -> list[str]:
     return values[: max(int(limit), 0)]
 
 
+_ROLE_CALL_TIMEOUT_CEILING_KEYS = (
+    "llm_call_timeout_ceiling_seconds",
+    "request_timeout_ceiling_seconds",
+    "timeout_ceiling_seconds",
+)
+_ROLE_CALL_TIMEOUT_KEYS = (
+    *_ROLE_CALL_TIMEOUT_CEILING_KEYS,
+    "llm_call_timeout_seconds",
+    "request_timeout_seconds",
+    "timeout_seconds",
+)
+_RETRY_STAGE_TIMEOUT_ENV = "KERNELONE_DIRECTOR_RETRY_LLM_TIMEOUT_SECONDS"
+_DEFAULT_RETRY_STAGE_TIMEOUT_SECONDS = 120.0
+_FORCED_WRITE_OUTPUT_BUDGET_ENV = "KERNELONE_DIRECTOR_FORCED_WRITE_OUTPUT_TOKENS"
+_DEFAULT_FORCED_WRITE_OUTPUT_TOKENS = 7000
+_FORCED_WRITE_STAGE_MARKERS = (
+    "no_write_materialization_retry",
+    "empty_write_content_retry",
+    "contract_violation_retry",
+)
+_FORCED_WRITE_CONTEXT_KEYS = (
+    "director_no_write_materialization_retry",
+    "director_empty_write_retry",
+)
+_OUTPUT_BUDGET_CONTEXT_KEYS = ("llm_max_tokens", "max_output_tokens", "max_tokens")
+
+
+def _coerce_positive_float(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _coerce_positive_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _bounded_env_float(name: str, *, default: float, lower: float, upper: float) -> float:
+    parsed = _coerce_positive_float(os.environ.get(name))
+    value = default if parsed is None else parsed
+    return max(lower, min(value, upper))
+
+
+def _role_call_timeout_from_context(context: dict[str, Any]) -> float | None:
+    for key in _ROLE_CALL_TIMEOUT_KEYS:
+        parsed = _coerce_positive_float(context.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _resolve_role_call_timeout(
+    *,
+    context: dict[str, Any],
+    stage_label: str,
+    requested_timeout_seconds: float,
+) -> float:
+    timeout = max(0.1, float(requested_timeout_seconds or _DEFAULT_LLM_CALL_TIMEOUT_SECONDS))
+    context_timeout = _role_call_timeout_from_context(context)
+    if context_timeout is not None:
+        timeout = min(timeout, context_timeout)
+    normalized_stage = str(stage_label or "").strip().lower()
+    if any(marker in normalized_stage for marker in _FORCED_WRITE_STAGE_MARKERS):
+        retry_timeout = _bounded_env_float(
+            _RETRY_STAGE_TIMEOUT_ENV,
+            default=_DEFAULT_RETRY_STAGE_TIMEOUT_SECONDS,
+            lower=10.0,
+            upper=timeout,
+        )
+        timeout = min(timeout, retry_timeout)
+    return max(0.1, timeout)
+
+
+def _context_has_forced_write_retry(context: dict[str, Any], *, stage_label: str) -> bool:
+    normalized_stage = str(stage_label or "").strip().lower()
+    if any(marker in normalized_stage for marker in _FORCED_WRITE_STAGE_MARKERS):
+        return True
+    return any(key in context for key in _FORCED_WRITE_CONTEXT_KEYS)
+
+
+def _forced_write_output_budget_tokens() -> int:
+    raw = os.environ.get(_FORCED_WRITE_OUTPUT_BUDGET_ENV)
+    try:
+        value = int(str(raw).strip()) if raw is not None and str(raw).strip() else _DEFAULT_FORCED_WRITE_OUTPUT_TOKENS
+    except (TypeError, ValueError):
+        value = _DEFAULT_FORCED_WRITE_OUTPUT_TOKENS
+    return max(512, min(value, 128_000))
+
+
+def _forced_write_effective_output_budget(context: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    ceiling = _forced_write_output_budget_tokens()
+    existing_values: dict[str, Any] = {key: context[key] for key in _OUTPUT_BUDGET_CONTEXT_KEYS if key in context}
+    parsed_existing = [
+        parsed for value in existing_values.values() if (parsed := _coerce_positive_int(value)) is not None
+    ]
+    if parsed_existing:
+        return max(512, min(ceiling, *parsed_existing)), existing_values
+    return ceiling, existing_values
+
+
+def _prepare_role_dialogue_context(
+    context: dict[str, Any] | None,
+    *,
+    timeout_seconds: float,
+    stage_label: str,
+) -> tuple[dict[str, Any], float]:
+    context_payload = dict(context) if isinstance(context, dict) else {}
+    timeout = _resolve_role_call_timeout(
+        context=context_payload,
+        stage_label=stage_label,
+        requested_timeout_seconds=timeout_seconds,
+    )
+    for key in _ROLE_CALL_TIMEOUT_CEILING_KEYS:
+        context_payload[key] = timeout
+    context_payload["director_role_call_timeout_budget"] = {
+        "schema_version": "director.role_call_timeout_budget.v1",
+        "stage_label": str(stage_label or ""),
+        "timeout_seconds": timeout,
+        "source": "director_adapter_role_dialogue_boundary",
+    }
+    if _context_has_forced_write_retry(context_payload, stage_label=stage_label):
+        output_tokens, previous_budget_values = _forced_write_effective_output_budget(context_payload)
+        context_payload["llm_max_tokens"] = output_tokens
+        context_payload["director_forced_write_output_budget"] = {
+            "schema_version": "director.forced_write_output_budget.v1",
+            "stage_label": str(stage_label or ""),
+            "max_tokens": output_tokens,
+            "ceiling_tokens": _forced_write_output_budget_tokens(),
+            "previous_budget_values": previous_budget_values,
+            "source": "director_adapter_forced_write_retry",
+        }
+    return context_payload, timeout
+
+
+def _context_timeout_seconds_for_runtime_command(context: dict[str, Any]) -> int | None:
+    timeout = _role_call_timeout_from_context(context)
+    if timeout is None:
+        return None
+    return max(1, int(timeout))
+
+
 def _join_limited_values(label: str, values: list[str]) -> str:
     return f"- {label}: {', '.join(values)}" if values else ""
 
@@ -459,6 +614,7 @@ def _build_director_workspace_interface_lines(workspace: str) -> list[str]:
     lines: list[str] = [
         "已生成文件的实际导出接口 / Actual exported interface of already-generated sibling files:",
         "(消费或引用这些文件时必须使用下列真实符号名与签名，禁止臆造；这些即真实接口，无需先 read_file 探索)",
+        "TEST/CONFIG/DOC TASK HARD RULE: imports from existing source files may use only the actual symbols listed here; planned_exports/tentative_exports are advisory and must not be imported as if they already exist.",
     ]
     file_count = 0
     for path in sorted(exports):
@@ -1166,6 +1322,7 @@ class DirectorAdapter(BaseRoleAdapter):
             run_id=run_id,
             message=message,
         )
+        timeout_seconds = _context_timeout_seconds_for_runtime_command(context_payload)
         command = ExecuteRoleSessionCommandV1(
             role=self.role_id,
             session_id=session_id,
@@ -1179,6 +1336,7 @@ class DirectorAdapter(BaseRoleAdapter):
             metadata=metadata,
             stream=False,
             host_kind="director_adapter",
+            timeout_seconds=timeout_seconds,
         )
         runtime = RoleRuntimeService()
         result = await runtime.execute_role_session(command)
@@ -1196,11 +1354,12 @@ class DirectorAdapter(BaseRoleAdapter):
             result_usage.get("tool_results"),
             getattr(result, "tool_results", None),
         )
-        tool_calls = [
-            {"tool": str(name), "tool_name": str(name), "status": "observed", "success": False}
-            for name in tuple(getattr(result, "tool_calls", ()) or ())
-            if str(name).strip()
+        observed_tool_calls = [
+            str(name).strip() for name in tuple(getattr(result, "tool_calls", ()) or ()) if str(name).strip()
         ]
+        if observed_tool_calls:
+            result_metadata.setdefault("observed_tool_calls", list(observed_tool_calls))
+            result_metadata.setdefault("observed_tool_call_count", len(observed_tool_calls))
         return {
             "content": output,
             "response": output,
@@ -1219,7 +1378,8 @@ class DirectorAdapter(BaseRoleAdapter):
             },
             "batch_receipt": batch_receipt,
             "tool_results": tool_results,
-            "tool_calls": tool_calls,
+            "tool_calls": [],
+            "observed_tool_calls": list(observed_tool_calls),
             "artifacts": list(getattr(result, "artifacts", ()) or ()),
             "raw_response": {
                 "ok": bool(getattr(result, "ok", False)),
@@ -1231,7 +1391,7 @@ class DirectorAdapter(BaseRoleAdapter):
                 "usage": result_usage,
                 "batch_receipt": batch_receipt,
                 "tool_results": tool_results,
-                "tool_calls": list(getattr(result, "tool_calls", ()) or ()),
+                "observed_tool_calls": list(observed_tool_calls),
                 "artifacts": list(getattr(result, "artifacts", ()) or ()),
                 "error_code": str(getattr(result, "error_code", "") or ""),
                 "error_message": str(getattr(result, "error_message", "") or ""),
@@ -1524,10 +1684,14 @@ class DirectorAdapter(BaseRoleAdapter):
         stage_label: str,
     ) -> dict[str, Any]:
         """Call role LLM with timeout."""
-        timeout = max(0.1, float(timeout_seconds or _DEFAULT_LLM_CALL_TIMEOUT_SECONDS))
+        context_payload, timeout = _prepare_role_dialogue_context(
+            context,
+            timeout_seconds=timeout_seconds,
+            stage_label=stage_label,
+        )
         try:
             response = await asyncio.wait_for(
-                self._invoke_role_dialogue(message, context=context),
+                self._invoke_role_dialogue(message, context=context_payload),
                 timeout=timeout,
             )
             if isinstance(response, dict):

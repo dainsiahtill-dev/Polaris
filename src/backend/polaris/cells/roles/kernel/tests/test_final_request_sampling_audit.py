@@ -164,9 +164,7 @@ def test_final_provider_request_snapshot_preserves_alias_expanded_forced_tool_sc
 
     assert snapshot["tool_schema_count"] == 1
     assert snapshot["tools"][0]["name"] == "write_file"
-    assert {"file", "path", "targetPath", "content", "body", "newText"} <= set(
-        snapshot["tools"][0]["argument_keys"]
-    )
+    assert {"file", "path", "targetPath", "content", "body", "newText"} <= set(snapshot["tools"][0]["argument_keys"])
     assert snapshot["final_request_evidence_coverage"]["missing_required_tools"] == []
 
 
@@ -522,9 +520,7 @@ def test_final_request_evidence_tracks_module_interface_contract() -> None:
                             "planned_public_symbols": ["ForecastEngine"],
                         },
                     ],
-                    "rules": [
-                        "Every symbol imported from a sibling target module must be defined by that module."
-                    ],
+                    "rules": ["Every symbol imported from a sibling target module must be defined by that module."],
                 },
             },
         },
@@ -1333,6 +1329,88 @@ def test_final_request_evidence_coverage_tracks_delivery_plan_and_depth_contract
     assert "delivery_depth_contract" in evidence_coverage["required_refs"]
     assert "delivery_plan_document" in evidence_coverage["included_refs"]
     assert "delivery_depth_contract" in evidence_coverage["included_refs"]
+    assert evidence_coverage["missing_required_refs"] == []
+    assert evidence_coverage["pass"] is True
+    enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)
+
+
+def test_delivery_contracts_satisfy_architecture_file_plan_requirement_for_retry_context() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "director_execution_strategy": {
+                "schema_version": "director.execution_strategy.v1",
+                "evidence_requirements": ["architecture_or_file_plan"],
+            },
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "retry-envelope-hash",
+            },
+            "delivery_plan_document": {
+                "schema_version": "polaris.delivery_plan_document.v1",
+                "title": "Meteor Wish Queue",
+                "capability_plan": ["domain engine owns meteor, wish, queue, and priority behavior"],
+                "behavior_plan": ["entrypoint wires existing source modules without redefining owners"],
+                "verification_plan": ["node --check src/index.js", "node --test tests/product.test.js"],
+            },
+            "delivery_depth_contract": {
+                "schema_version": "polaris.delivery_depth_contract.v1",
+                "behavior_contract": {
+                    "rule_matrix": ["priority rules are observable from the entrypoint"],
+                    "required_behavior_tests": ["normal", "boundary", "invalid"],
+                },
+            },
+            "target_files": ["src/index.js"],
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {
+                    "role": "user",
+                    "content": (
+                        "[mode:materialize]\n"
+                        "RETRY: previous Director turn completed without any write/edit receipt.\n"
+                        "Allowed target files: src/index.js."
+                    ),
+                },
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {
+                "role": "user",
+                "content": (
+                    "[mode:materialize]\n"
+                    "RETRY: previous Director turn completed without any write/edit receipt.\n"
+                    "Allowed target files: src/index.js."
+                ),
+            },
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    metadata_summary = audit["request_metadata_summary"]
+    assert metadata_summary["has_delivery_plan_document"] is True
+    assert metadata_summary["has_delivery_depth_contract"] is True
+    assert metadata_summary["has_architecture_or_file_plan"] is True
+    assert metadata_summary["architecture_or_file_plan_summary"]["source"] == "delivery_contracts"
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert "architecture_or_file_plan" in evidence_coverage["required_refs"]
+    assert "architecture_or_file_plan" in evidence_coverage["included_refs"]
+    assert evidence_coverage["structured_evidence"]["architecture_or_file_plan"] is True
     assert evidence_coverage["missing_required_refs"] == []
     assert evidence_coverage["pass"] is True
     enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)

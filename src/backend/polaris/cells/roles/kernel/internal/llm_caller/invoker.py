@@ -38,6 +38,7 @@ from polaris.kernelone.llm.runtime_config import (
     set_role_provider_override,
 )
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
+from polaris.kernelone.tool_execution.contracts import canonicalize_tool_name
 
 from ..llm_cache import get_global_llm_cache
 from .context_audit import (
@@ -121,6 +122,69 @@ def _final_request_context_tokens(metadata: dict[str, Any], fallback: int | None
         return max(0, int(raw))
     except (TypeError, ValueError):
         return fallback
+
+
+def _required_tools_from_final_request_audit(audit: dict[str, Any]) -> list[str]:
+    coverage = audit.get("final_request_evidence_coverage")
+    if not isinstance(coverage, dict):
+        return []
+    rows: list[str] = []
+    for item in coverage.get("required_tools") or []:
+        token = str(item or "").strip()
+        if token and token not in rows:
+            rows.append(token)
+    return rows
+
+
+def _native_tool_call_name(call: dict[str, Any]) -> str:
+    direct = str(call.get("name") or "").strip()
+    if direct:
+        return direct
+    function = call.get("function")
+    if isinstance(function, dict):
+        return str(function.get("name") or "").strip()
+    return ""
+
+
+def _called_required_native_tool(native_tool_calls: list[dict[str, Any]], required_tools: list[str]) -> bool:
+    required = {canonicalize_tool_name(name) for name in required_tools if str(name or "").strip()}
+    if not required:
+        return True
+    called = {canonicalize_tool_name(name) for call in native_tool_calls if (name := _native_tool_call_name(call))}
+    return bool(required & called)
+
+
+def _required_tool_not_called_error(
+    *,
+    prepared: PreparedLLMRequest,
+    active_request: Any,
+    response: Any,
+    profile: Any,
+) -> str:
+    audit = build_final_request_context_audit_for_request(
+        ai_request=active_request,
+        prepared=prepared,
+        profile=profile,
+    )
+    required_tools = _required_tools_from_final_request_audit(audit)
+    if not required_tools:
+        return ""
+    raw_payload = response.raw if isinstance(getattr(response, "raw", None), dict) else {}
+    response_text = str(getattr(response, "output", "") or "")
+    response_model_name = str((getattr(response, "model", None) or raw_payload.get("model") or "") or "")
+    response_provider = str(
+        (getattr(response, "provider_id", None) or raw_payload.get("provider_id") or raw_payload.get("provider") or "")
+        or ""
+    )
+    native_tool_calls, _provider = extract_native_tool_calls(
+        raw_payload,
+        provider_id=response_provider,
+        model=response_model_name,
+        response_text=response_text,
+    )
+    if _called_required_native_tool(native_tool_calls, required_tools):
+        return ""
+    return "required_tool_not_called: required_tools=" + ",".join(required_tools)
 
 
 def _with_optional_final_request_context_audit(
@@ -1040,6 +1104,26 @@ class LLMInvoker:
             )
             is_response_ok, response_error = read_response_status(response)
 
+        if not is_response_ok and "required_tool_not_called" in response_error.lower():
+            active_request = request_preparer._build_required_tool_retry_request(
+                prepared=prepared,
+                profile=profile,
+                error_message=response_error,
+            )
+            emit_fallback_request_audit("required_tool_not_called_retry", active_request, profile)
+            response = await executor.invoke(active_request)
+            logger.warning("[invoker] required-tool re-ask: provider returned prose without required tool call")
+            is_response_ok, response_error = read_response_status(response)
+            if is_response_ok:
+                response_error = _required_tool_not_called_error(
+                    prepared=prepared,
+                    active_request=active_request,
+                    response=response,
+                    profile=profile,
+                )
+                if response_error:
+                    is_response_ok = False
+
         if not is_response_ok:
             classified = classify_error(response_error)
             if is_retryable_error(classified):
@@ -1068,6 +1152,15 @@ class LLMInvoker:
                     native_tool_fallback = False
                     native_response_fallback = False
                     is_response_ok, response_error = read_response_status(response)
+                    if is_response_ok:
+                        response_error = _required_tool_not_called_error(
+                            prepared=prepared,
+                            active_request=active_request,
+                            response=response,
+                            profile=profile,
+                        )
+                        if response_error:
+                            is_response_ok = False
 
         return FallbackLadderResult(
             response=response,
@@ -1424,6 +1517,15 @@ class LLMInvoker:
             native_response_fallback = False
 
             is_response_ok, response_error = read_response_status(response)
+            if is_response_ok:
+                response_error = _required_tool_not_called_error(
+                    prepared=prepared,
+                    active_request=active_request,
+                    response=response,
+                    profile=profile,
+                )
+                if response_error:
+                    is_response_ok = False
 
             ladder = await self._run_fallback_ladder(
                 request_preparer=request_preparer,
@@ -1460,6 +1562,15 @@ class LLMInvoker:
             native_response_fallback = ladder.native_response_fallback
             is_response_ok = ladder.is_response_ok
             response_error = ladder.response_error
+            if is_response_ok:
+                response_error = _required_tool_not_called_error(
+                    prepared=prepared,
+                    active_request=active_request,
+                    response=response,
+                    profile=profile,
+                )
+                if response_error:
+                    is_response_ok = False
 
             if not is_response_ok:
                 return self._build_call_error_response(

@@ -388,6 +388,8 @@ def _resident_agi_coverage_flags(text: str, ai_request: Any | None) -> dict[str,
 
 def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bool]:
     lowered = _trusted_coverage_text(text).lower()
+    pm_contract = _pm_contract_payload(ai_request) if ai_request is not None else {}
+    ce_blueprint = _ce_blueprint_payload(ai_request) if ai_request is not None else {}
     module_interface_contract = _module_interface_contract_payload(ai_request) if ai_request is not None else {}
     actual_sibling_exports = (
         _actual_sibling_exports_payload(ai_request, module_interface_contract) if ai_request is not None else {}
@@ -418,9 +420,10 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
             "蓝图交接",
         )
     )
-    has_chief_engineer_blueprint = bool(strong_blueprint_evidence and not blueprint_absent)
+    has_chief_engineer_blueprint = bool(ce_blueprint or (strong_blueprint_evidence and not blueprint_absent))
     coverage = {
-        "has_pm_contract": any(
+        "has_pm_contract": bool(pm_contract)
+        or any(
             needle in lowered
             for needle in (
                 "task-",
@@ -924,6 +927,21 @@ _ARCHITECTURE_OR_FILE_PLAN_KEYS = (
     "scope_for_apply_advisory",
 )
 
+_PM_CONTRACT_CONTEXT_KEYS = (
+    "pm_contract",
+    "pm_task_contract",
+    "task_contract",
+    "execution_task_contract",
+)
+
+_CE_BLUEPRINT_CONTEXT_KEYS = (
+    "ce_blueprint",
+    "chief_engineer_blueprint",
+    "blueprint",
+    "blueprint_payload",
+    "task_blueprint",
+)
+
 _INTERFACE_DISCREPANCY_CONTEXT_KEYS = (
     "interface_discrepancy_context",
     "interface_discrepancy_evidence",
@@ -989,6 +1007,91 @@ def _find_module_interface_contract(value: Any, *, depth: int = 0) -> dict[str, 
             if found:
                 return found
     return {}
+
+
+def _looks_like_ce_blueprint(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    schema_version = str(value.get("schema_version") or "").strip().lower()
+    if "chief_engineer" in schema_version or "ce_blueprint" in schema_version or "blueprint" in schema_version:
+        return True
+    return any(
+        key in value
+        for key in (
+            "module_interface_contract",
+            "construction_plan",
+            "execution_checklist",
+            "architecture_decisions",
+            "generated_blueprints",
+        )
+    )
+
+
+def _pm_contract_payload(ai_request: Any | None) -> dict[str, Any]:
+    if ai_request is None:
+        return {}
+    context_payload = _request_context(ai_request)
+    task_payload = _mapping(context_payload.get("task"))
+    for container in (
+        context_payload,
+        _mapping(context_payload.get("metadata")),
+        task_payload,
+        _mapping(task_payload.get("metadata")),
+        _execution_contract(ai_request),
+        _task_metadata(ai_request),
+    ):
+        for key in _PM_CONTRACT_CONTEXT_KEYS:
+            candidate = container.get(key)
+            if isinstance(candidate, dict):
+                return dict(candidate)
+    return {}
+
+
+def _ce_blueprint_payload(ai_request: Any | None) -> dict[str, Any]:
+    if ai_request is None:
+        return {}
+    context_payload = _request_context(ai_request)
+    task_payload = _mapping(context_payload.get("task"))
+    for container in (
+        context_payload,
+        _mapping(context_payload.get("metadata")),
+        task_payload,
+        _mapping(task_payload.get("metadata")),
+        _task_metadata(ai_request),
+        _execution_contract(ai_request),
+    ):
+        for key in _CE_BLUEPRINT_CONTEXT_KEYS:
+            candidate = container.get(key)
+            if not isinstance(candidate, dict):
+                continue
+            if key in {"ce_blueprint", "chief_engineer_blueprint"} or _looks_like_ce_blueprint(candidate):
+                return dict(candidate)
+    return {}
+
+
+def _pm_contract_summary(contract: dict[str, Any]) -> dict[str, Any]:
+    if not contract:
+        return {}
+    task_id = str(contract.get("task_id") or contract.get("id") or "").strip()
+    return {
+        "schema_version": str(contract.get("schema_version") or ""),
+        "task_id": task_id,
+        "target_file_count": len(_string_list(contract.get("target_files") or contract.get("targets"))),
+        "acceptance_count": len(_string_list(contract.get("acceptance") or contract.get("acceptance_criteria"))),
+        "dependency_count": len(_string_list(contract.get("depends_on") or contract.get("dependencies"))),
+    }
+
+
+def _ce_blueprint_summary(blueprint: dict[str, Any]) -> dict[str, Any]:
+    if not blueprint:
+        return {}
+    return {
+        "schema_version": str(blueprint.get("schema_version") or ""),
+        "target_file_count": len(_string_list(blueprint.get("target_files") or blueprint.get("scope_for_apply"))),
+        "execution_checklist_count": len(_string_list(blueprint.get("execution_checklist"))),
+        "has_module_interface_contract": bool(_find_module_interface_contract(blueprint)),
+        "has_construction_plan": bool(blueprint.get("construction_plan")),
+    }
 
 
 def _module_interface_contract_payload(ai_request: Any | None) -> dict[str, Any]:
@@ -1295,6 +1398,41 @@ def _architecture_payload_from_blueprint(value: Any) -> dict[str, Any]:
     return payload
 
 
+def _architecture_payload_from_delivery_contracts(ai_request: Any) -> dict[str, Any]:
+    delivery_plan = _delivery_contract_payload(ai_request, "delivery_plan_document")
+    delivery_depth = _delivery_contract_payload(ai_request, "delivery_depth_contract")
+    payload: dict[str, Any] = {}
+    if delivery_plan:
+        payload["delivery_plan_document"] = {
+            key: delivery_plan.get(key)
+            for key in (
+                "title",
+                "language",
+                "project_type",
+                "product_summary",
+                "user_journey",
+                "capability_plan",
+                "behavior_plan",
+                "verification_plan",
+                "evolution_notes",
+            )
+            if delivery_plan.get(key) not in (None, "", [])
+        }
+    if delivery_depth:
+        payload["delivery_depth_contract"] = {
+            key: delivery_depth.get(key)
+            for key in (
+                "product_intent",
+                "behavior_contract",
+                "acceptance_contract",
+                "level_contract",
+                "required_evidence",
+            )
+            if delivery_depth.get(key) not in (None, "", [])
+        }
+    return payload
+
+
 def _architecture_or_file_plan_payload(ai_request: Any | None) -> dict[str, Any]:
     if ai_request is None:
         return {}
@@ -1307,6 +1445,9 @@ def _architecture_or_file_plan_payload(ai_request: Any | None) -> dict[str, Any]
         payload = _architecture_payload_from_blueprint(context_payload.get(key))
         if payload:
             return {"source": f"context.{key}", "payload": payload}
+    delivery_contract_payload = _architecture_payload_from_delivery_contracts(ai_request)
+    if delivery_contract_payload:
+        return {"source": "delivery_contracts", "payload": delivery_contract_payload}
     task_metadata = _task_metadata(ai_request)
     for key in ("architecture_decisions", "execution_checklist", "implementation_plan", "file_plan"):
         raw = task_metadata.get(key)
@@ -1369,6 +1510,8 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
     delivery_plan_document = _delivery_contract_payload(ai_request, "delivery_plan_document")
     delivery_depth_contract = _delivery_contract_payload(ai_request, "delivery_depth_contract")
     task_metadata = _task_metadata(ai_request)
+    pm_contract = _pm_contract_payload(ai_request)
+    ce_blueprint = _ce_blueprint_payload(ai_request)
     module_interface_contract = _module_interface_contract_payload(ai_request)
     actual_sibling_exports = _actual_sibling_exports_payload(ai_request, module_interface_contract)
     interface_discrepancy_context = _interface_discrepancy_context_payload(ai_request)
@@ -1415,6 +1558,12 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
         "delivery_plan_document_hash": _stable_digest(delivery_plan_document) if delivery_plan_document else "",
         "has_delivery_depth_contract": bool(delivery_depth_contract),
         "delivery_depth_contract_hash": _stable_digest(delivery_depth_contract) if delivery_depth_contract else "",
+        "has_pm_contract": bool(pm_contract),
+        "pm_contract_summary": _pm_contract_summary(pm_contract),
+        "pm_contract_hash": _stable_digest(pm_contract) if pm_contract else "",
+        "has_chief_engineer_blueprint": bool(ce_blueprint),
+        "chief_engineer_blueprint_summary": _ce_blueprint_summary(ce_blueprint),
+        "chief_engineer_blueprint_hash": _stable_digest(ce_blueprint) if ce_blueprint else "",
         "has_task_metadata": bool(task_metadata),
         "task_metadata_keys": sorted(str(key) for key in task_metadata),
         "task_metadata_hash": _stable_digest(task_metadata) if task_metadata else "",
@@ -1747,6 +1896,10 @@ def _included_evidence_refs(
         refs.append("delivery_plan_document")
     if request_metadata_summary.get("has_delivery_depth_contract"):
         refs.append("delivery_depth_contract")
+    if request_metadata_summary.get("has_pm_contract"):
+        refs.append("pm_contract")
+    if request_metadata_summary.get("has_chief_engineer_blueprint"):
+        refs.append("ce_blueprint")
     if request_metadata_summary.get("has_language_guidance"):
         refs.append("language_guidance")
     if request_metadata_summary.get("has_output_contract"):
@@ -1849,8 +2002,12 @@ def _coverage_source(
     request_metadata_summary: dict[str, Any],
 ) -> dict[str, Any]:
     hash_by_ref = {
-        "pm_contract": workflow_chain.get("pm_contract_hash", ""),
-        "ce_blueprint": workflow_chain.get("ce_blueprint_hash", ""),
+        "pm_contract": str(
+            request_metadata_summary.get("pm_contract_hash") or workflow_chain.get("pm_contract_hash", "")
+        ),
+        "ce_blueprint": str(
+            request_metadata_summary.get("chief_engineer_blueprint_hash") or workflow_chain.get("ce_blueprint_hash", "")
+        ),
         "handoff_decision": workflow_chain.get("handoff_decision_hash", ""),
         "module_interface_contract": str(request_metadata_summary.get("module_interface_contract_hash") or ""),
         "actual_sibling_exports": str(request_metadata_summary.get("actual_sibling_exports_hash") or ""),
@@ -1873,6 +2030,8 @@ def _coverage_source(
     source = "final_provider_request"
     confidence = "absent"
     structured_metadata_flags = {
+        "pm_contract": "has_pm_contract",
+        "ce_blueprint": "has_chief_engineer_blueprint",
         "module_interface_contract": "has_module_interface_contract",
         "actual_sibling_exports": "has_actual_sibling_exports",
         "interface_discrepancy_context": "has_interface_discrepancy_context",
