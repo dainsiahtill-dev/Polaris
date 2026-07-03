@@ -25,6 +25,7 @@ from polaris.cells.director.tasking.public.contracts import (
     TaskStatusQueryV1,
     TaskStatusResultV1,
 )
+from polaris.kernelone.constants import DEFAULT_MAX_WORKERS
 
 
 class TestCreateTaskCommandV1HappyPath:
@@ -192,6 +193,10 @@ class TestWorkerPoolConfigDefaults:
     def test_default_auto_scaling_is_enabled(self) -> None:
         cfg = WorkerPoolConfig()
         assert cfg.enable_auto_scaling is True
+
+    def test_default_max_workers_uses_kernelone_constant(self) -> None:
+        cfg = WorkerPoolConfig()
+        assert cfg.max_workers == DEFAULT_MAX_WORKERS
 
     def test_custom_values_accepted(self) -> None:
         cfg = WorkerPoolConfig(min_workers=2, max_workers=8, enable_auto_scaling=False)

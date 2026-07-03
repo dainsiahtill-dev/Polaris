@@ -323,7 +323,6 @@ BROADCAST_MAX_SIZE_BYTES: int = 1024 * 1024
 
 #: Default max workers for worker pools (4-32, scaled by CPU cores)
 #: Canonical definition for all worker pool default sizes.
-#: Replaces duplicated _DEFAULT_MAX_WORKERS in director/tasking, director/execution, pm_dispatch
 DEFAULT_MAX_WORKERS: int = min(32, max(4, (os.cpu_count() or 4) * 2))
 
 #: Default director parallelism (number of parallel director workers)

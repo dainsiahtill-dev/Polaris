@@ -34,9 +34,6 @@ from polaris.kernelone.runtime import ExecutionSnapshot
 
 logger = logging.getLogger(__name__)
 
-# Re-export for backwards compatibility - import from polaris.kernelone.constants
-_DEFAULT_MAX_WORKERS = DEFAULT_MAX_WORKERS
-
 # Module-level cache for backwards compatibility with test patches.
 # Tests patch this variable to inject mock executors into worker loops.
 _WorkerExecutor = WorkerExecutor
@@ -133,7 +130,7 @@ class WorkerPoolConfig:
     """Configuration for worker pool."""
 
     min_workers: int = 1
-    max_workers: int = field(default_factory=lambda: _DEFAULT_MAX_WORKERS)
+    max_workers: int = field(default_factory=lambda: DEFAULT_MAX_WORKERS)
     max_consecutive_failures: int = 3
     heartbeat_timeout_seconds: int = 60
     enable_auto_scaling: bool = True

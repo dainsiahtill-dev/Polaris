@@ -776,10 +776,11 @@ class TestOrchestrationCommandServiceRunOptions:
         from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import (
             DirectorRunOptions,
         )
+        from polaris.kernelone.constants import DEFAULT_MAX_WORKERS
 
         opts = DirectorRunOptions()
         assert opts.task_filter is None
-        assert opts.max_workers >= 4  # based on cpu_count formula
+        assert opts.max_workers == DEFAULT_MAX_WORKERS
         assert opts.execution_mode == "parallel"
 
     def test_factory_run_options_defaults(self) -> None:

@@ -81,16 +81,12 @@ AUTO_IDLE_GRACE_SECONDS = 1.5
 PENDING_STALL_TIMEOUT_SECONDS = 120.0
 EMPTY_QUEUE_STALL_TIMEOUT_SECONDS = 45.0
 
-# Re-export for backwards compatibility - import from polaris.kernelone.constants
-_DEFAULT_MAX_WORKERS = DEFAULT_MAX_WORKERS
-
-
 @dataclass
 class DirectorConfig:
     """Director configuration."""
 
     workspace: str
-    max_workers: int = field(default_factory=lambda: _DEFAULT_MAX_WORKERS)
+    max_workers: int = field(default_factory=lambda: DEFAULT_MAX_WORKERS)
     enable_nag: bool = True
     enable_auto_compact: bool = True
     token_budget: int | None = None

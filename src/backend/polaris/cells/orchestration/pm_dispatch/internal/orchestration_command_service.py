@@ -37,9 +37,6 @@ from polaris.cells.roles.adapters.public.service import register_all_adapters
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM, DEFAULT_MAX_WORKERS
 from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path
 
-# Re-export for backwards compatibility - import from polaris.kernelone.constants
-_DEFAULT_MAX_WORKERS = DEFAULT_MAX_WORKERS
-
 logger = logging.getLogger(__name__)
 
 _CANONICAL_FACTORY_TASK_CHAIN = (
@@ -541,7 +538,7 @@ class DirectorRunOptions:
     """
 
     task_filter: str | None = None
-    max_workers: int = field(default_factory=lambda: _DEFAULT_MAX_WORKERS)
+    max_workers: int = field(default_factory=lambda: DEFAULT_MAX_WORKERS)
     execution_mode: str = "parallel"
 
 

@@ -14,6 +14,7 @@ from polaris.cells.director.execution.service import (
     DirectorState,
 )
 from polaris.domain.entities import Task, TaskPriority
+from polaris.kernelone.constants import DEFAULT_MAX_WORKERS
 
 
 class TestDirectorService:
@@ -21,6 +22,7 @@ class TestDirectorService:
         config = DirectorConfig(workspace="/workspace")
         service = DirectorService(config=config)
         assert service.config.workspace == "/workspace"
+        assert service.config.max_workers == DEFAULT_MAX_WORKERS
         assert service.state == DirectorState.IDLE
 
     def test_init_with_security(self):
