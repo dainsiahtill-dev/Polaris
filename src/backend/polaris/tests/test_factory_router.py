@@ -864,6 +864,26 @@ def test_ownership_handoff_requests_accept_flat_scope_authority_payload() -> Non
     assert from_direct_requests == [handoff_request]
 
 
+def test_owner_handoff_matching_prefers_projected_identifier_tokens() -> None:
+    owner_row = {
+        "id": "row-1",
+        "external_task_id": "TASK-4",
+        "metadata": {"external_task_id": "TASK-4"},
+    }
+    request = {
+        "schema_version": "file-ownership-handoff-request/1",
+        "target_file": "src/index.js",
+        "owner_step_id": "unmatched-owner-step",
+        "owner_parent": "unmatched-parent",
+        "owner_task_identifier_tokens": ["4", "TASK-04", "TASK-4"],
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+    }
+
+    assert factory_router_module._matching_owner_handoff_request(owner_row, [request]) == request
+    assert factory_router_module._owner_handoff_identifier_tokens(request) == {"4", "TASK-04", "TASK-4"}
+
+
 def test_quality_gate_task_boundary_validation_reports_unmatched_owner_handoff(temp_workspace: Path) -> None:
     task_board = TaskRuntimeService(str(temp_workspace))
     current_row = task_board.ensure_task_row(

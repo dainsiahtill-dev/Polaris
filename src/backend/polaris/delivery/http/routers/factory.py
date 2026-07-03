@@ -68,6 +68,7 @@ from polaris.kernelone.llm.budget_policy import resolve_director_dispatch_timeou
 from polaris.kernelone.quality import (
     owner_task_retry_handoff_requests_from_scope_payload,
     ownership_handoff_requests_from_scope_payload,
+    task_identifier_token_aliases,
     unresolved_owner_handoff_requests_from_scope_payload,
 )
 from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path, resolve_storage_roots
@@ -1024,19 +1025,7 @@ def _task_record_external_tokens(record: dict[str, Any]) -> set[str]:
 
 
 def _task_identifier_token_aliases(value: Any) -> set[str]:
-    token = str(value or "").strip()
-    if not token:
-        return set()
-    aliases = {token}
-    task_match = re.fullmatch(r"TASK-(?P<number>\d+)", token, flags=re.IGNORECASE)
-    if task_match:
-        number = task_match.group("number")
-        aliases.add(str(int(number)))
-        aliases.add(f"TASK-{int(number)}")
-        return aliases
-    if token.isdigit():
-        aliases.add(f"TASK-{int(token)}")
-    return aliases
+    return set(task_identifier_token_aliases(value))
 
 
 def _matching_owner_handoff_request(
@@ -1056,6 +1045,14 @@ def _matching_owner_handoff_request(
 
 def _owner_handoff_identifier_tokens(request: dict[str, Any]) -> set[str]:
     tokens: set[str] = set()
+    raw_tokens = request.get("owner_task_identifier_tokens")
+    if isinstance(raw_tokens, list):
+        for value in raw_tokens:
+            token = str(value or "").strip()
+            if token:
+                tokens.add(token)
+    if tokens:
+        return tokens
     for value in (request.get("owner_step_id"), request.get("owner_parent")):
         token = str(value or "").strip()
         if token:

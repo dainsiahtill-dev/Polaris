@@ -24,6 +24,7 @@ from polaris.kernelone.quality.cross_artifact_interfaces import (
     scan_cross_artifact_consistency,
     scan_cross_artifact_consistency_errors,
 )
+from polaris.kernelone.quality.file_ownership_ledger import task_identifier_token_aliases
 from polaris.kernelone.quality.package_scripts import PackageScriptsCheckResult, check_package_scripts
 from polaris.kernelone.quality.role_output_markers import DEBT_MARKERS
 from polaris.kernelone.quality.scope_authority import (
@@ -76,5 +77,6 @@ __all__ = [
     "scan_cross_artifact_consistency_errors",
     "scan_workspace_artifact_quality",
     "scan_workspace_artifact_quality_evidence",
+    "task_identifier_token_aliases",
     "unresolved_owner_handoff_requests_from_scope_payload",
 ]

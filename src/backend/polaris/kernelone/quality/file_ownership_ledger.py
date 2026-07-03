@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -49,6 +50,41 @@ _HANDOFF_REQUEST_SCHEMA_VERSION = "file-ownership-handoff-request/1"
 # is therefore required in addition, to serialize the concurrent CEConsumer fission
 # threads (KERNELONE_TASK_MARKET_ROLE_POOLS includes chief_engineer + concurrency>1).
 _PROCESS_LOCK = threading.Lock()
+
+
+def task_identifier_token_aliases(value: Any) -> tuple[str, ...]:
+    """Return stable aliases for PM/task identifiers used by owner routing.
+
+    The ownership ledger produces owner handoff facts, so identifier
+    normalization belongs here rather than in every consumer. Numeric task ids
+    and ``TASK-N`` ids are equivalent routing tokens; non-standard identifiers
+    are preserved as-is.
+    """
+
+    token = str(value or "").strip()
+    if not token:
+        return ()
+    aliases = {token}
+    task_match = re.fullmatch(r"TASK-(?P<number>\d+)", token, flags=re.IGNORECASE)
+    if task_match:
+        number = str(int(task_match.group("number")))
+        aliases.add(number)
+        aliases.add(f"TASK-{number}")
+    elif token.isdigit():
+        aliases.add(f"TASK-{int(token)}")
+    return tuple(sorted(aliases))
+
+
+def _task_identifier_tokens(*values: Any) -> list[str]:
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for token in task_identifier_token_aliases(value):
+            if token in seen:
+                continue
+            seen.add(token)
+            tokens.append(token)
+    return tokens
 
 
 @dataclass(frozen=True)
@@ -75,6 +111,8 @@ class FileOwnershipHandoffRequest:
             "reason": self.reason,
             "owner_step_id": self.owner_step_id,
             "owner_parent": self.owner_parent,
+            "owner_task_identifier_tokens": _task_identifier_tokens(self.owner_step_id, self.owner_parent),
+            "requesting_task_identifier_tokens": _task_identifier_tokens(self.requesting_task_id),
             "owner_found": owner_found,
             "recommended_route": "owner_task_retry" if owner_found else "scope_authority_resolution",
             "status": "owner_found" if owner_found else "owner_unknown",
@@ -277,4 +315,5 @@ __all__ = [
     "read_file_owners",
     "record_file_owners",
     "render_edit_contract",
+    "task_identifier_token_aliases",
 ]
