@@ -33,6 +33,31 @@ LOCAL_FAILURE_CLASS_NAMES = {
     "SequentialFailureClass",
 }
 
+LOCAL_FAILURE_CLASS_BOUNDARY_DECISIONS = {
+    "AuditFailureClass": {
+        "decision": "retain_local_enum",
+        "boundary": "kernelone.audit.error_correlator",
+        "allowed_imports": (),
+    },
+    "TurnFailureClass": {
+        "decision": "retain_local_enum",
+        "boundary": "roles.kernel.turn_continuation",
+        "allowed_imports": (
+            "polaris/cells/roles/kernel/internal/transaction/ledger.py",
+            "polaris/cells/roles/runtime/internal/continuation_policy.py",
+            "polaris/cells/roles/runtime/internal/session_orchestrator.py",
+        ),
+    },
+    "SequentialFailureClass": {
+        "decision": "retain_local_enum",
+        "boundary": "roles.runtime.sequential_engine",
+        "allowed_imports": (
+            "polaris/cells/roles/adapters/internal/director/adapter_sequential.py",
+            "polaris/cells/roles/runtime/public/service.py",
+        ),
+    },
+}
+
 
 @dataclass(frozen=True)
 class ClassDefinition:
@@ -89,6 +114,17 @@ def _imported_names(path: Path) -> set[str]:
     return names
 
 
+def _local_failure_class_imports(root: Path) -> dict[str, tuple[str, ...]]:
+    imports: dict[str, list[str]] = {name: [] for name in LOCAL_FAILURE_CLASS_NAMES}
+    for path in _production_python_files(root):
+        imported = _imported_names(path)
+        relative = path.relative_to(BACKEND_ROOT).as_posix()
+        for name in LOCAL_FAILURE_CLASS_NAMES:
+            if name in imported:
+                imports[name].append(relative)
+    return {name: tuple(sorted(paths)) for name, paths in imports.items()}
+
+
 def test_failure_class_definitions_are_explicitly_owned() -> None:
     """Any production failure-class enum must be either canonical or boundary-owned."""
 
@@ -99,6 +135,28 @@ def test_failure_class_definitions_are_explicitly_owned() -> None:
     }
 
     assert actual == OWNED_FAILURE_CLASS_DEFINITIONS
+
+
+def test_local_failure_class_boundary_decisions_are_complete() -> None:
+    """Each local enum has an explicit retain/rename decision and boundary."""
+
+    assert set(LOCAL_FAILURE_CLASS_BOUNDARY_DECISIONS) == LOCAL_FAILURE_CLASS_NAMES
+    for name, decision in LOCAL_FAILURE_CLASS_BOUNDARY_DECISIONS.items():
+        assert name in LOCAL_FAILURE_CLASS_NAMES
+        assert decision["decision"] == "retain_local_enum"
+        assert str(decision["boundary"]).strip()
+
+
+def test_local_failure_class_imports_stay_inside_boundary_decisions() -> None:
+    """Local failure enums may only be imported by their declared owners."""
+
+    actual = _local_failure_class_imports(POLARIS_ROOT)
+    expected = {
+        name: tuple(sorted(str(path) for path in decision["allowed_imports"]))
+        for name, decision in LOCAL_FAILURE_CLASS_BOUNDARY_DECISIONS.items()
+    }
+
+    assert actual == expected
 
 
 def test_canonical_failure_taxonomy_remains_run_ledger_owned() -> None:
