@@ -289,6 +289,57 @@ def test_task_boundary_quality_loop_runs_convergence_only_after_plan_probe(tmp_p
     assert result.metadata["task_interface_contract_present"] is True
 
 
+def test_task_boundary_quality_loop_accepts_typed_artifact_quality_issues(tmp_path: Path) -> None:
+    target = _write_initial_file(tmp_path)
+    requests: list[DirectorRepairConvergenceVerifierRequestV1] = []
+
+    def verifier(request: DirectorRepairConvergenceVerifierRequestV1) -> DirectorRepairVerifierSnapshotInputV1:
+        requests.append(request)
+        current = target.read_text(encoding="utf-8")
+        residual_errors = () if "flightTime, landed:" in current else (_QUALITY_ERROR,)
+        return DirectorRepairVerifierSnapshotInputV1(
+            residual_artifact_quality_errors=residual_errors,
+            command=("rtk", "tsc", "--noEmit"),
+            exit_code=0 if not residual_errors else 1,
+            raw_output_ref=f"runtime/verifier/task-boundary-typed-round-{request.round_number}.log",
+            metadata=_valid_verifier_metadata(),
+        )
+
+    result = run_director_task_boundary_quality_loop(
+        RunDirectorTaskBoundaryQualityLoopCommandV1(
+            task_id="task-boundary-typed-issues",
+            workspace=str(tmp_path),
+            artifact_quality_errors=(),
+            artifact_quality_issues=(
+                {
+                    "source": "artifact_quality",
+                    "code": "typescript_ts1005",
+                    "message": "',' expected.",
+                    "path": _RELATIVE_PATH,
+                    "metadata": {"raw": _QUALITY_ERROR, "line": 6, "column": 47},
+                },
+            ),
+            base_files={_RELATIVE_PATH: _BROKEN_CONTENT},
+            allowed_paths=(_RELATIVE_PATH,),
+            task_interface_contract={
+                "target_files": [_RELATIVE_PATH],
+                "exports": {"src/models/Flight.ts": ["runFlight"]},
+            },
+        ),
+        writer=_writer(tmp_path),
+        verifier=verifier,
+    )
+
+    assert result.ok is True
+    assert result.status == "task_boundary_converged"
+    assert result.plan_probe.status == "covered_plannable"
+    assert result.plan_probe.items[0].planning_result.diagnostics[0].code == "typescript_ts1005"
+    assert result.plan_probe.items[0].planning_result.diagnostics[0].path == _RELATIVE_PATH
+    assert result.convergence_result is not None
+    assert result.convergence_result.ok is True
+    assert [request.round_number for request in requests] == [0, 1]
+
+
 def test_task_boundary_quality_loop_emits_interface_discrepancy_for_unplannable() -> None:
     verifier_called = False
 

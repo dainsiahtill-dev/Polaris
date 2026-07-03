@@ -2577,6 +2577,7 @@ def run_director_task_boundary_quality_loop(
     plan_probe = query_director_repair_plan_probe(
         QueryDirectorRepairPlanProbeV1(
             artifact_quality_errors=command.artifact_quality_errors,
+            artifact_quality_issues=command.artifact_quality_issues,
             base_files=command.base_files,
             source_tools=command.source_tools,
             mode="shadow",
@@ -2624,6 +2625,7 @@ def run_director_task_boundary_quality_loop(
             workspace=command.workspace,
             source_tools=plan_probe.plannable_source_tools,
             artifact_quality_errors=command.artifact_quality_errors,
+            artifact_quality_issues=command.artifact_quality_issues,
             base_files=command.base_files,
             allowed_paths=command.allowed_paths,
             advisor_notes=command.advisor_notes,
