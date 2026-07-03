@@ -91,7 +91,7 @@ class ToolSchemaValidationResult:
         tool_name: The tool that was validated.
         schema: The validated schema (if valid).
 
-    Note: This is distinct from SchemaValidationResult in context_os/schemas.py
+    Note: This is distinct from the ContextOS suite/report validation result,
     which validates suite YAML/JSON files.
     """
 
@@ -99,10 +99,6 @@ class ToolSchemaValidationResult:
     errors: tuple[str, ...]
     tool_name: str
     schema: SchemaDict | None
-
-
-# Backward compatibility alias (deprecated)
-SchemaValidationResult = ToolSchemaValidationResult
 
 
 def export_tool_to_json_schema(
@@ -308,7 +304,7 @@ def _validate_schema_structure(
     return errors
 
 
-def validate_tool_schema(schema: SchemaDict, tool_name: str) -> SchemaValidationResult:
+def validate_tool_schema(schema: SchemaDict, tool_name: str) -> ToolSchemaValidationResult:
     """Validate a single tool schema.
 
     Args:
@@ -316,11 +312,11 @@ def validate_tool_schema(schema: SchemaDict, tool_name: str) -> SchemaValidation
         tool_name: Name of the tool for error messages.
 
     Returns:
-        SchemaValidationResult with validation outcome.
+        ToolSchemaValidationResult with validation outcome.
     """
     errors = _validate_schema_structure(schema, tool_name, strict=False)
 
-    return SchemaValidationResult(
+    return ToolSchemaValidationResult(
         valid=len(errors) == 0,
         errors=tuple(errors),
         tool_name=tool_name,
@@ -332,7 +328,7 @@ def validate_all_tool_schemas(
     tools: Sequence[Any],
     *,
     strict: bool = False,
-) -> tuple[bool, list[SchemaValidationResult]]:
+) -> tuple[bool, list[ToolSchemaValidationResult]]:
     """Validate all tool schemas.
 
     Args:
@@ -342,7 +338,7 @@ def validate_all_tool_schemas(
     Returns:
         Tuple of (all_valid, list of validation results).
     """
-    results: list[SchemaValidationResult] = []
+    results: list[ToolSchemaValidationResult] = []
     all_valid = True
 
     for tool_def in tools:
@@ -351,7 +347,7 @@ def validate_all_tool_schemas(
             if tool_schema.validation_errors:
                 all_valid = False
             results.append(
-                SchemaValidationResult(
+                ToolSchemaValidationResult(
                     valid=len(tool_schema.validation_errors) == 0,
                     errors=tool_schema.validation_errors,
                     tool_name=tool_schema.name,
@@ -362,7 +358,7 @@ def validate_all_tool_schemas(
             all_valid = False
             tool_name = getattr(tool_def, "name", "unknown")
             results.append(
-                SchemaValidationResult(
+                ToolSchemaValidationResult(
                     valid=False,
                     errors=(str(e),),
                     tool_name=str(tool_name),
@@ -429,13 +425,13 @@ class SchemaValidator:
             strict: Apply stricter validation rules.
         """
         self._strict = strict
-        self._cache: dict[str, SchemaValidationResult] = {}
+        self._cache: dict[str, ToolSchemaValidationResult] = {}
 
     def validate(
         self,
         schema: SchemaDict,
         tool_name: str,
-    ) -> SchemaValidationResult:
+    ) -> ToolSchemaValidationResult:
         """Validate a schema, using cache if available.
 
         Args:
@@ -443,7 +439,7 @@ class SchemaValidator:
             tool_name: Name of the tool.
 
         Returns:
-            SchemaValidationResult with validation outcome.
+            ToolSchemaValidationResult with validation outcome.
         """
         cache_key = f"{tool_name}:{json.dumps(schema, sort_keys=True)}"
 
@@ -457,7 +453,7 @@ class SchemaValidator:
     def validate_batch(
         self,
         schemas: Mapping[str, SchemaDict],
-    ) -> dict[str, SchemaValidationResult]:
+    ) -> dict[str, ToolSchemaValidationResult]:
         """Validate multiple schemas.
 
         Args:
@@ -466,7 +462,7 @@ class SchemaValidator:
         Returns:
             Dict of tool names to validation results.
         """
-        results: dict[str, SchemaValidationResult] = {}
+        results: dict[str, ToolSchemaValidationResult] = {}
         for tool_name, schema in schemas.items():
             results[tool_name] = self.validate(schema, tool_name)
         return results
@@ -477,9 +473,9 @@ class SchemaValidator:
 
 
 __all__ = [
-    "SchemaValidationResult",
     "SchemaValidator",
     "ToolSchema",
+    "ToolSchemaValidationResult",
     "export_all_tools_to_json_schema",
     "export_tool_to_json_schema",
     "validate_all_tool_schemas",
