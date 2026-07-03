@@ -6,8 +6,19 @@ from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.roles.kernel.internal.kernel.task_boundary import append_director_task_boundary_verdict
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+    native_tool_call_count,
+    native_tool_call_envelopes_from_metadata,
+)
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest
 from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
+
+
+def _nonnegative_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def tool_schema_names_for_error_audit(tool_definitions: list[dict[str, Any]]) -> list[str]:
@@ -106,14 +117,12 @@ def append_tool_dispatch_dropped_control_plane_events(
     dropped_tool_calls: list[dict[str, Any]] = []
     for flag in error_metadata.get("anomaly_flags", []):
         if isinstance(flag, dict) and str(flag.get("type") or "") == FailureClassV1.TOOL_DISPATCH_DROPPED.value:
-            envelope_refs = flag.get("native_tool_call_envelopes")
-            if isinstance(envelope_refs, list):
-                native_tool_call_envelopes = [dict(item) for item in envelope_refs if isinstance(item, dict)]
+            native_tool_call_envelopes = [dict(item) for item in native_tool_call_envelopes_from_metadata(flag)]
             dropped_refs = flag.get("dropped_tool_calls")
-            if isinstance(dropped_refs, list):
+            if isinstance(dropped_refs, (list, tuple)):
                 dropped_tool_calls = [dict(item) for item in dropped_refs if isinstance(item, dict)]
-            native_count = len(native_tool_call_envelopes) or max(1, int(flag.get("native_tool_calls_count") or 1))
-            decoded_count = max(0, int(flag.get("decoded_tool_calls_count") or 0))
+            native_count = native_tool_call_count(flag, ()) or 1
+            decoded_count = _nonnegative_int(flag.get("decoded_tool_calls_count"))
             provider_response_hash = str(flag.get("provider_response_hash") or "").strip()
             break
     lifecycle = build_tool_call_lifecycle_receipt(

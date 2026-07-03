@@ -120,3 +120,56 @@ def test_append_tool_dispatch_dropped_events_preserves_native_envelopes(
         {"tool_name": "write_file", "envelope_id": "native-write", "reason": "tool_dispatch_dropped"},
     ]
     assert captured["task_boundary"]["tool_dispatch"]["native_tool_calls_count"] == 2
+
+
+def test_append_tool_dispatch_dropped_events_accepts_lifecycle_envelope_refs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_append_run_ledger_event(command: Any) -> None:
+        captured["event"] = command.event
+
+    monkeypatch.setattr(
+        "polaris.cells.control_plane.run_ledger.public.append_run_ledger_event",
+        fake_append_run_ledger_event,
+    )
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.kernel.tool_dispatch_projection.append_director_task_boundary_verdict",
+        lambda **kwargs: captured.setdefault("task_boundary", kwargs),
+    )
+
+    envelopes = [
+        {"envelope_id": "native-ref-read", "tool_name": "read_file"},
+        {"envelope_id": "native-ref-write", "tool_name": "write_file"},
+    ]
+    append_tool_dispatch_dropped_control_plane_events(
+        role="director",
+        profile=SimpleNamespace(role_id="director"),
+        request=SimpleNamespace(run_id="run-1", task_id="TASK-1", context_override={}),
+        workspace=str(tmp_path),
+        turn_id="turn-1",
+        error_metadata={
+            "anomaly_flags": [
+                {
+                    "type": "TOOL_DISPATCH_DROPPED",
+                    "native_tool_calls_count": 0,
+                    "native_tool_call_envelope_refs": envelopes,
+                    "decoded_tool_calls_count": "not-a-number",
+                    "provider_response_hash": "hash-1",
+                }
+            ]
+        },
+        reason="tool dispatch dropped",
+    )
+
+    lifecycle = captured["event"]["tool_call_lifecycle_receipt"]
+    assert lifecycle["native_tool_calls_count"] == 2
+    assert lifecycle["decoded_tool_calls_count"] == 0
+    assert lifecycle["native_tool_call_envelope_refs"] == envelopes
+    assert lifecycle["dropped_tool_calls"] == [
+        {"tool_name": "read_file", "envelope_id": "native-ref-read", "reason": "tool_dispatch_dropped"},
+        {"tool_name": "write_file", "envelope_id": "native-ref-write", "reason": "tool_dispatch_dropped"},
+    ]
+    assert captured["task_boundary"]["tool_dispatch"]["native_tool_calls_count"] == 2
