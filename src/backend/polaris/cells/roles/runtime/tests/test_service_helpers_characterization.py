@@ -277,6 +277,42 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
         }
     ]
 
+    dropped_from_canonical_receipt = runtime_service._to_contract_result(
+        role="director",
+        workspace=".",
+        task_id="t",
+        session_id="se",
+        run_id="ru",
+        result=RoleTurnResult(
+            content="I will call write_file.",
+            metadata={
+                "tool_call_lifecycle_receipt": {
+                    "schema_version": "tool_call_lifecycle_receipt.v1",
+                    "dispatch_status": "dropped",
+                    "failure_class": "tool_dispatch_dropped",
+                    "native_tool_calls_count": 1,
+                    "decoded_tool_calls_count": 1,
+                    "dispatched_tool_calls_count": 0,
+                    "dropped_tool_calls": ["write_file"],
+                }
+            },
+        ),
+    )
+    assert dropped_from_canonical_receipt.ok is False
+    assert dropped_from_canonical_receipt.status == "failed"
+    assert dropped_from_canonical_receipt.error_code == "tool_dispatch_dropped"
+    assert dropped_from_canonical_receipt.error_message == (
+        "tool_dispatch_dropped: required or native tool calls had no dispatch/effect receipt"
+    )
+    assert dropped_from_canonical_receipt.metadata["tool_call_lifecycle_receipt"]["native_tool_calls_count"] == 1
+    assert dropped_from_canonical_receipt.metadata["tool_call_lifecycle"]["native_tool_calls_count"] == 1
+    assert dropped_from_canonical_receipt.metadata["tool_call_lifecycle_receipt"]["dropped_tool_calls"] == [
+        {
+            "tool_name": "write_file",
+            "reason": "tool_dispatch_dropped",
+        }
+    ]
+
     dropped_from_envelope_metadata = runtime_service._to_contract_result(
         role="director",
         workspace=".",

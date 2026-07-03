@@ -66,6 +66,19 @@ def _native_tool_call_envelopes(result: RoleTurnResult) -> tuple[Mapping[str, An
     return ()
 
 
+def _lifecycle_receipt_from_metadata(metadata: Mapping[str, Any]) -> dict[str, Any] | None:
+    for key in ("tool_call_lifecycle_receipt", "tool_call_lifecycle"):
+        raw = metadata.get(key)
+        if isinstance(raw, Mapping):
+            return normalize_tool_call_lifecycle_receipt(raw)
+    receipt_rows = metadata.get("tool_call_lifecycle_receipts")
+    if isinstance(receipt_rows, (list, tuple)):
+        for raw in receipt_rows:
+            if isinstance(raw, Mapping):
+                return normalize_tool_call_lifecycle_receipt(raw)
+    return None
+
+
 def _extract_tool_calls(result: RoleTurnResult) -> tuple[str, ...]:
     names: list[str] = []
     for item in list(result.tool_calls or []):
@@ -98,8 +111,8 @@ def _has_tool_dispatch_evidence(result: RoleTurnResult) -> bool:
 
 def _tool_dispatch_dropped_error(result: RoleTurnResult) -> str:
     metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
-    lifecycle = metadata.get("tool_call_lifecycle")
-    if isinstance(lifecycle, Mapping):
+    lifecycle = _lifecycle_receipt_from_metadata(metadata)
+    if lifecycle is not None:
         dispatch_status = str(lifecycle.get("dispatch_status") or "").strip().lower()
         failure_class = str(lifecycle.get("failure_class") or "").strip()
         if dispatch_status == "dropped" or is_failure_class(
@@ -195,8 +208,10 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
     event_metadata = _copy_final_request_metadata_from_turn_events(result.turn_events_metadata)
     for key, value in event_metadata.items():
         metadata.setdefault(key, value)
-    if isinstance(metadata.get("tool_call_lifecycle"), Mapping):
-        metadata["tool_call_lifecycle"] = normalize_tool_call_lifecycle_receipt(metadata.get("tool_call_lifecycle"))
+    lifecycle = _lifecycle_receipt_from_metadata(metadata)
+    if lifecycle is not None:
+        metadata["tool_call_lifecycle_receipt"] = lifecycle
+        metadata["tool_call_lifecycle"] = lifecycle
     dropped_error = _tool_dispatch_dropped_error(result)
     if dropped_error:
         dropped_tool_calls = _extract_tool_calls(result)
