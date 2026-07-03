@@ -225,6 +225,7 @@ used as a second tool fact source.
 | Runtime WebSocket role-token alias | Closed by LR-108 | Runtime WebSocket role filtering exposes `RUNTIME_OBSERVABLE_ROLE_TOKENS`; it is broader than TaskMarket consumers and must not be published as `CONSUMER_ROLE_TOKENS`. | Do not restore `CONSUMER_ROLE_TOKENS`; use `RUNTIME_OBSERVABLE_ROLE_TOKENS` for runtime observability filters. |
 | NATS event-kind aliases | Closed by LR-109 | NATS `JetStreamConstants` owns stream, subject, and consumer configuration only; event kind constants remain owned by `polaris.kernelone.events.constants` and runtime payloads. | Do not restore `JetStreamConstants.EVENT_KIND_*`; import canonical event constants from KernelOne when needed. |
 | Workflow-engine handler registry alias | Closed by LR-110 | `workflow_engine` exports the concrete `CellHandlerRegistry` and DI protocol `HandlerRegistryPort`; the generic `HandlerRegistry` alias is removed. | Do not restore `workflow_engine.HandlerRegistry`; import `CellHandlerRegistry` for the Cell implementation or `HandlerRegistryPort` for the KernelOne DI protocol. |
+| Tool-execution short error aliases | Closed by LR-111 | Tool execution exports descriptive validator error constants such as `ERROR_STRING_TOO_LONG` and `ERROR_INTEGER_TOO_SMALL`; short aliases are removed. | Do not restore `ERROR_MIN_LENGTH`, `ERROR_MAX_LENGTH`, `ERROR_PATTERN`, `ERROR_MINIMUM`, or `ERROR_MAXIMUM`; use descriptive validator constants. |
 | Arsenal route aliases | Closed by LR-27 | Arsenal product calls use `/arsenal/v2/*`; non-v2 Arsenal aliases are no longer registered. | Keep Arsenal endpoints under the router's canonical `/arsenal/v2/*` namespace; do not add parallel non-v2 aliases. |
 | Factory run route aliases | Closed by LR-28 | Factory run operations use `/v2/factory/runs*`; old `/factory/runs*` aliases are no longer registered. | Factory run control-plane APIs must remain under `/v2/factory/runs*`; do not restore non-v2 aliases. |
 | Logs route aliases | Closed by LR-29 | Logs APIs use `/logs/v2/*`; old `/logs/*` aliases are no longer registered, and frontend `logsV2Service` targets the actual backend namespace. | Keep logs endpoints under `/logs/v2/*` unless the router itself is intentionally migrated; do not add parallel `/logs/*` aliases or `/v2/logs/*` callers. |
@@ -240,4 +241,4 @@ used as a second tool fact source.
 
 ## Next Closure Order
 
-Current intake is closed after LR-110. Reopen only with a new evidence-backed ledger item.
+Current intake is closed after LR-111. Reopen only with a new evidence-backed ledger item.

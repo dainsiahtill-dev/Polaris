@@ -39,14 +39,6 @@ TS_DEPENDENT_TOOLS: frozenset[str] = frozenset(
 )
 
 
-# Backward-compatible aliases for external code that may use short names
-# These map to the descriptive names from validators.py
-ERROR_MIN_LENGTH = ERROR_STRING_TOO_SHORT
-ERROR_MAX_LENGTH = ERROR_STRING_TOO_LONG
-ERROR_PATTERN = ERROR_STRING_PATTERN_MISMATCH
-ERROR_MINIMUM = ERROR_INTEGER_TOO_SMALL
-ERROR_MAXIMUM = ERROR_INTEGER_TOO_LARGE
-
 # Public API: error codes exported from this module
 __all__ = [
     "ERROR_ARRAY_TOO_LONG",
@@ -56,12 +48,6 @@ __all__ = [
     "ERROR_INVALID_TOOL_ARGS",
     # Validation error codes (re-exported from validators)
     "ERROR_INVALID_TYPE",
-    "ERROR_MAXIMUM",
-    "ERROR_MAX_LENGTH",
-    "ERROR_MINIMUM",
-    # Short-name aliases (backward compatibility)
-    "ERROR_MIN_LENGTH",
-    "ERROR_PATTERN",
     "ERROR_REQUIRED_MISSING",
     "ERROR_STRING_PATTERN_MISMATCH",
     "ERROR_STRING_TOO_LONG",

@@ -62,11 +62,6 @@ from polaris.kernelone.tool_execution.constants import (
 # ---------------------------------------------------------------------------
 from polaris.kernelone.tool_execution.contracts import (
     ERROR_INVALID_TOOL_ARGS,
-    ERROR_MAX_LENGTH,
-    ERROR_MAXIMUM,
-    ERROR_MIN_LENGTH,
-    ERROR_MINIMUM,
-    ERROR_PATTERN,
     # Error codes (re-exported from contracts)
     ERROR_UNKNOWN_TOOL,
     canonicalize_tool_name,
@@ -164,11 +159,6 @@ __all__ = [
     "ERROR_INVALID_TOOL_ARGS",
     # Validator error codes
     "ERROR_INVALID_TYPE",
-    "ERROR_MAXIMUM",
-    "ERROR_MAX_LENGTH",
-    "ERROR_MINIMUM",
-    "ERROR_MIN_LENGTH",
-    "ERROR_PATTERN",
     "ERROR_REQUIRED_MISSING",
     "ERROR_STRING_PATTERN_MISMATCH",
     "ERROR_STRING_TOO_LONG",

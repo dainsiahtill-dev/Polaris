@@ -7,8 +7,8 @@ work correctly together.
 
 from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments
 from polaris.kernelone.tool_execution.contracts import (
-    ERROR_MAX_LENGTH,
     ERROR_REQUIRED_MISSING,
+    ERROR_STRING_TOO_LONG,
     ERROR_UNKNOWN_TOOL,
     canonicalize_tool_name,
     validate_tool_step,
@@ -148,7 +148,7 @@ class TestContractsValidationIntegration:
         long_pattern = "a" * 1001
         is_valid, error_code, _error_msg = validate_tool_step("repo_rg", {"pattern": long_pattern})
         assert not is_valid
-        assert error_code == ERROR_MAX_LENGTH
+        assert error_code == ERROR_STRING_TOO_LONG
 
     def test_validate_tool_step_with_range(self) -> None:
         """validate_tool_step 范围验证测试。
