@@ -77,7 +77,7 @@ class RoleOverlay:
         )
     """
 
-    role: RoleId | str  # RoleId preferred; str allowed for backward compatibility
+    role: RoleId | str  # RoleId preferred; str accepted for external payload tokens.
     parent_profile_id: str
     overlay_id: str
     exploration_overrides: dict[str, Any] = field(default_factory=dict)
