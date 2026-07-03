@@ -66,6 +66,29 @@ def reset_llm_event_dedup() -> None:
     set_global_llm_dedup(LLMEventDeduplicator())
 
 
+def _minimal_director_evidence_context() -> dict[str, object]:
+    target_files = ["src/index.ts"]
+    return {
+        "pm_contract": {
+            "schema_version": "pm.task_contract.v1",
+            "task_id": "TASK-1",
+            "goal": "Implement the product entrypoint.",
+            "target_files": target_files,
+            "acceptance": ["npm run build succeeds"],
+        },
+        "chief_engineer_blueprint": {
+            "schema_version": "chief_engineer.blueprint.v1",
+            "blueprint_id": "ce_TASK-1",
+            "target_files": target_files,
+            "construction_plan": {"implement": ["src/index.ts"]},
+            "scope_for_apply": target_files,
+        },
+        "target_files": target_files,
+        "scope_paths": target_files,
+        "file_plan": [{"path": "src/index.ts", "purpose": "application entrypoint"}],
+    }
+
+
 def test_final_request_context_audit_counts_tools_and_coverage() -> None:
     profile = Mock()
     profile.max_context_tokens = 32768
@@ -590,6 +613,7 @@ def test_final_request_coverage_passes_for_finalization_request_after_forced_wri
     ai_request.role = "director"
     # Stale turn-context contamination: required_tools survived into this call.
     ai_request.context = {
+        **_minimal_director_evidence_context(),
         "chat_messages": messages,
         "required_tools": ["write_file"],
         "tool_contract": {"required_tools": ["write_file"]},
@@ -644,7 +668,7 @@ def test_final_request_context_audit_marks_complete_context_as_reasonable() -> N
         },
     ]
     ai_request = Mock()
-    ai_request.context = {"chat_messages": messages}
+    ai_request.context = {**_minimal_director_evidence_context(), "chat_messages": messages}
     ai_request.options = {"tools": []}
     ai_request.input = ""
     prepared = PreparedLLMRequest(
