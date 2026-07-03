@@ -1,7 +1,7 @@
 """FastAPI application factory for Polaris backend.
 
 Canonical delivery-layer API gateway implementation.
-Legacy `api.main` delegates to this module.
+Retired compatibility wrapper `api.main` delegates to this module.
 """
 
 from __future__ import annotations
@@ -225,8 +225,8 @@ def _register_routers(app: FastAPI) -> None:
     """Register all API routers.
 
     Transitional note:
-    Router module locations still include legacy paths while behavior is
-    incrementally migrated into Polaris.
+    Some router module names reflect historical package layout, but route
+    registration and behavior are owned by this canonical gateway.
     """
 
     from polaris.delivery.http.middleware.metrics import metrics_router
