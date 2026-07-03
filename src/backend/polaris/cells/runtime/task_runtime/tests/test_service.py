@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
+from polaris.cells.events.fact_stream.public.service import QueryFactEventsV1, query_fact_events
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService, reset_runtime_task_records
 from polaris.kernelone.storage import resolve_runtime_path
 
@@ -874,6 +875,15 @@ def test_task_runtime_service_emits_execution_events_via_fact_stream(tmp_path: P
     assert '"stream":"task_runtime.execution"' in content
     assert '"event_type":"completed"' in content
 
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    completed_event = next(event for event in events if event.get("event_type") == "completed")
+    payload = completed_event["payload"]
+    assert payload["execution_state"] == "completed"
+    assert payload["attempt"] == 1
+    assert payload["resume_count"] == 0
+    assert payload["last_result_summary"] == "done"
+    assert payload["lease_expires_at"]
+
 
 def test_task_runtime_factory_event_projects_fact_stream_receipt(
     tmp_path: Path,
@@ -919,6 +929,10 @@ def test_task_runtime_factory_event_projects_fact_stream_receipt(
     payload = envelope["payload"]
     assert isinstance(payload, dict)
     assert payload["event_type"] == "claimed"
+    assert payload["execution_state"] == "in_progress"
+    assert payload["attempt"] == 1
+    assert payload["resume_count"] == 0
+    assert payload["lease_expires_at"]
     assert payload["fact_event_id"]
     assert payload["fact_stream"] == "task_runtime.execution"
     assert payload["fact_storage_path"] == "runtime/events/task_runtime.execution.jsonl"
