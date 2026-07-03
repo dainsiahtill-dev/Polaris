@@ -1873,23 +1873,40 @@ def _artifact_quality_issues_for_errors(
 ) -> tuple[dict[str, Any], ...]:
     allowed_raw = {str(error or "").strip() for error in errors if str(error or "").strip()}
     merged: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, ...]] = set()
     seen_raw: set[str] = set()
 
     for issue in issue_payloads:
         raw = _artifact_quality_issue_raw(issue)
-        if not raw or raw not in allowed_raw or raw in seen_raw:
+        key = _artifact_quality_issue_key(issue)
+        if not raw or raw not in allowed_raw or key in seen_keys:
             continue
         merged.append(dict(issue))
+        seen_keys.add(key)
         seen_raw.add(raw)
 
     for issue in artifact_quality_issues_from_errors(errors):
         raw = _artifact_quality_issue_raw(issue)
-        if raw and raw in seen_raw:
+        key = _artifact_quality_issue_key(issue)
+        if key in seen_keys or (raw and raw in seen_raw):
             continue
         merged.append(dict(issue))
+        seen_keys.add(key)
         if raw:
             seen_raw.add(raw)
     return tuple(merged)
+
+
+def _artifact_quality_issue_key(issue: dict[str, Any]) -> tuple[str, ...]:
+    code = str(issue.get("code") or "").strip()
+    path = str(issue.get("path") or "").strip().replace("\\", "/")
+    line = str(issue.get("line") or "").strip()
+    column = str(issue.get("column") or "").strip()
+    message = str(issue.get("message") or "").strip()
+    if code or path or line or column:
+        return ("structured", code, path, line, column, message)
+    raw = _artifact_quality_issue_raw(issue)
+    return ("legacy_raw", raw or message)
 
 
 def _artifact_quality_issue_raw(issue: dict[str, Any]) -> str:

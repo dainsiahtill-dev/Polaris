@@ -19,6 +19,47 @@ def _successful_write_result(path: str) -> dict[str, Any]:
     }
 
 
+def test_artifact_quality_issues_for_errors_preserves_typed_issue_without_fallback_duplicate() -> None:
+    diagnostic = "Artifact quality scan failed: declared target file missing 'src/main.py'"
+    typed_issue = {
+        "code": "declared_target_missing",
+        "message": "declared target file missing 'src/main.py'",
+        "path": "src/main.py",
+        "severity": "error",
+        "source": "artifact_quality",
+        "metadata": {"raw": diagnostic},
+    }
+
+    issues = quality_gate._artifact_quality_issues_for_errors([diagnostic], (typed_issue,))
+
+    assert issues == (typed_issue,)
+
+
+def test_artifact_quality_issues_for_errors_dedupes_scanner_issues_by_structured_key() -> None:
+    diagnostic = "shared raw diagnostic"
+    first_issue = {
+        "code": "first_issue",
+        "message": diagnostic,
+        "path": "src/first.py",
+        "severity": "error",
+        "metadata": {"raw": diagnostic},
+    }
+    second_issue = {
+        "code": "second_issue",
+        "message": diagnostic,
+        "path": "src/second.py",
+        "severity": "error",
+        "metadata": {"raw": diagnostic},
+    }
+
+    issues = quality_gate._artifact_quality_issues_for_errors(
+        [diagnostic],
+        (first_issue, second_issue),
+    )
+
+    assert issues == (first_issue, second_issue)
+
+
 def test_post_llm_materialization_guard_routes_runtime_covered_errors(monkeypatch: Any, tmp_path: Any) -> None:
     captured: dict[str, Any] = {}
     diagnostic = "npm package manifest script 'build' recursively invokes itself via build -> build"
