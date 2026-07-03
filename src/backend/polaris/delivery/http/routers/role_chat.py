@@ -409,7 +409,7 @@ async def role_chat_jetstream(
 ) -> dict[str, Any]:
     """Start a role chat turn and stream chunks via NAT JetStream WebSocket.
 
-    Replaces the removed legacy HTTP streaming route. The HTTP
+    Replaces the removed HTTP streaming route. The HTTP
     response returns immediately with a ``session_id``; the LLM runs
     in the background and publishes every chunk (thinking_chunk /
     content_chunk / tool_call / tool_result / complete / error) to the
@@ -425,7 +425,7 @@ async def role_chat_jetstream(
     SECURITY:
     - Server-generated session id; clients cannot guess other users' ids.
     - Subject validated against the platform's SUBJECT_PATTERN.
-    - Authorisation is unchanged from the legacy role chat path.
+    - Authorisation follows the same role-chat policy contract.
     """
     state = get_state(request)
     workspace = _workspace_for_role_request(state.settings, workspace, payload)

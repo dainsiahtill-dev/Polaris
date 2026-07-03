@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from polaris.delivery.http.routers import role_runtime_chat
+from polaris.delivery.http.routers import role_chat_jetstream, role_runtime_chat
 
 
 @pytest.mark.asyncio
@@ -56,8 +55,9 @@ async def test_execute_role_chat_nonstreaming_uses_role_runtime(monkeypatch, tmp
 
 
 @pytest.mark.asyncio
-async def test_execute_role_chat_streaming_uses_role_runtime(monkeypatch, tmp_path) -> None:
+async def test_execute_role_chat_jetstream_uses_role_runtime(monkeypatch, tmp_path) -> None:
     captured: dict[str, Any] = {}
+    published_chunks: list[dict[str, Any]] = []
 
     class FakeResult:
         content = "runtime final"
@@ -82,43 +82,52 @@ async def test_execute_role_chat_streaming_uses_role_runtime(monkeypatch, tmp_pa
             yield {"type": "content_chunk", "content": "hello"}
             yield {"type": "complete", "result": FakeResult()}
 
-    monkeypatch.setattr(role_runtime_chat, "RoleRuntimeService", FakeRoleRuntimeService)
-    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    async def fake_publish_chat_chunk(*, session_id: str, chunk: dict[str, Any], seq: int) -> bool:
+        published_chunks.append({"session_id": session_id, "seq": seq, **chunk})
+        return True
 
-    await role_runtime_chat.execute_role_chat_streaming(
+    monkeypatch.setattr(role_chat_jetstream, "RoleRuntimeService", FakeRoleRuntimeService)
+    monkeypatch.setattr(role_chat_jetstream, "_publish_chat_chunk", fake_publish_chat_chunk)
+
+    chunks: list[dict[str, Any]] = []
+
+    async def collect_chunk(chunk: dict[str, Any]) -> None:
+        chunks.append(chunk)
+
+    session_id = await role_chat_jetstream.execute_role_chat_jetstream(
         role="director",
         workspace=str(tmp_path),
         message="build it",
-        output_queue=queue,
         payload={"context": {"session_id": "s2"}, "task_id": "t1"},
         default_domain="code",
-        host_kind="role_chat_http_stream",
+        host_kind="role_chat_jetstream",
+        session_id="chat-director-test",
+        on_chunk=collect_chunk,
     )
 
-    events: list[dict[str, Any]] = []
-    while not queue.empty():
-        events.append(queue.get_nowait())
-
-    assert [event["type"] for event in events] == [
+    assert session_id == "chat-director-test"
+    assert [event["type"] for event in chunks] == [
         "fingerprint",
         "thinking_chunk",
         "content_chunk",
         "complete",
     ]
-    assert events[0]["data"]["fingerprint"] == "hash-1"
-    assert events[1]["data"]["content"] == "think"
-    assert events[2]["data"]["content"] == "hello"
-    assert events[3]["data"]["content"] == "runtime final"
-    assert events[3]["data"]["thinking"] == "runtime thinking"
-    assert events[3]["data"]["metadata"]["role_runtime_entrypoint"] == "roles.runtime.stream_chat_turn"
+    assert [event["seq"] for event in published_chunks] == [0, 1, 2, 3]
+    assert {event["session_id"] for event in published_chunks} == {"chat-director-test"}
+    assert chunks[0]["data"]["fingerprint"] == "hash-1"
+    assert chunks[1]["data"]["content"] == "think"
+    assert chunks[2]["data"]["content"] == "hello"
+    assert chunks[3]["data"]["content"] == "runtime final"
+    assert chunks[3]["data"]["thinking"] == "runtime thinking"
+    assert chunks[3]["data"]["metadata"]["role_runtime_entrypoint"] == "roles.runtime.stream_chat_turn"
     command = captured["command"]
     assert command.role == "director"
     assert command.workspace == str(tmp_path)
-    assert command.session_id == "s2"
+    assert command.session_id == "chat-director-test"
     assert command.task_id == "t1"
     assert command.domain == "code"
     assert command.stream is True
-    assert command.host_kind == "role_chat_http_stream"
+    assert command.host_kind == "role_chat_jetstream"
     assert command.metadata["role_runtime_required"] is True
     assert command.metadata["cognitive_runtime_required"] is True
     assert command.metadata["context_os_expected"] is True
