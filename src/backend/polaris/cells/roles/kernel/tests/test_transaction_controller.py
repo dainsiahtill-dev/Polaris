@@ -275,6 +275,10 @@ class TestFinalAnswerPath:
         ]
         assert len(dropped_flags) == 1
         assert dropped_flags[0]["provider_response_hash"]
+        lifecycle = dropped_flags[0]["tool_call_lifecycle_receipt"]
+        assert lifecycle["native_tool_calls_count"] == dropped_flags[0]["native_tool_calls_count"]
+        assert lifecycle["provider_response_hash"] == dropped_flags[0]["provider_response_hash"]
+        assert lifecycle["dispatch_status"] == "dropped"
 
     @pytest.mark.asyncio
     async def test_final_answer_no_llm_continuation(
