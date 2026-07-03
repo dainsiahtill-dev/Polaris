@@ -25,8 +25,9 @@ Architecture notes
 - ``to_standard_event`` handles any upstream event format (kernel dict,
   StandardStreamEvent, raw dict, etc.).
 - ``from_kernel_event`` handles only ``RoleExecutionKernel`` raw dict events.
-- For backward compatibility, kernel event type strings (``thinking_chunk``,
-  ``content_chunk``) are mapped to canonical enum values.
+- Public kernel event tokens (``thinking_chunk``, ``content_chunk``) are
+  accepted directly; provider-specific aliases are mapped to the same canonical
+  enum values.
 """
 
 from __future__ import annotations
@@ -46,7 +47,7 @@ class StreamEventType(str, Enum):
     """Canonical stream event types for the console protocol boundary.
 
     Note:
-        This enum intentionally keeps the legacy CLI-facing names
+        This enum intentionally keeps the CLI-facing stream token names
         (``content_chunk``/``thinking_chunk``/``done``) as public contract.
         Newer upstream provider/kernel names are normalized in ``from_string``.
     """
@@ -92,8 +93,7 @@ class StreamEventType(str, Enum):
 def _from_string(value: str) -> StreamEventType:
     """Convert a string to a StreamEventType.
 
-    Handles both canonical values and legacy kernel event type strings
-    (``thinking_chunk``, ``content_chunk``) for backward compatibility.
+    Handles canonical CLI protocol values and upstream provider/kernel aliases.
     Unknown values are mapped to ``ERROR``.
     """
     return StreamEventType.from_string(value)
