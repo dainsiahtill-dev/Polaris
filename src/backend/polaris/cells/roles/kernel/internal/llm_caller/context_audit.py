@@ -1981,6 +1981,24 @@ def _final_request_evidence_enforcement_source(ai_request: Any) -> str:
     return ""
 
 
+def _missing_required_refs_from_evidence_slots(evidence_coverage: dict[str, Any]) -> list[str]:
+    slots = evidence_coverage.get("evidence_slots")
+    if not isinstance(slots, list):
+        return []
+    missing_refs: list[str] = []
+    for item in slots:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("schema_version") or "") != "polaris.final_request_evidence_slot.v1":
+            continue
+        if item.get("required") is not True or item.get("missing") is not True:
+            continue
+        ref_type = str(item.get("ref_type") or "").strip()
+        if ref_type:
+            missing_refs.append(ref_type)
+    return _unique_strings(missing_refs)
+
+
 def final_request_evidence_coverage_violation(
     *,
     ai_request: Any,
@@ -1994,7 +2012,9 @@ def final_request_evidence_coverage_violation(
     evidence_coverage = audit.get("final_request_evidence_coverage")
     if not isinstance(evidence_coverage, dict) or evidence_coverage.get("pass") is True:
         return None
-    missing_refs = [str(item) for item in evidence_coverage.get("missing_required_refs") or [] if str(item).strip()]
+    missing_refs = _missing_required_refs_from_evidence_slots(evidence_coverage) or [
+        str(item) for item in evidence_coverage.get("missing_required_refs") or [] if str(item).strip()
+    ]
     missing_tools = [str(item) for item in evidence_coverage.get("missing_required_tools") or [] if str(item).strip()]
     if not missing_refs and not missing_tools and evidence_coverage.get("role_identity_ok", True):
         return None

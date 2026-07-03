@@ -1578,6 +1578,16 @@ def test_final_request_evidence_coverage_blocks_missing_required_interface_discr
     violation = final_request_evidence_coverage_violation(ai_request=ai_request, audit=audit)
     assert violation is not None
     assert violation["missing_required_refs"] == ["interface_discrepancy_context"]
+    slot_only_audit = {
+        **audit,
+        "final_request_evidence_coverage": {
+            **evidence_coverage,
+            "missing_required_refs": [],
+        },
+    }
+    slot_only_violation = final_request_evidence_coverage_violation(ai_request=ai_request, audit=slot_only_audit)
+    assert slot_only_violation is not None
+    assert slot_only_violation["missing_required_refs"] == ["interface_discrepancy_context"]
 
     try:
         enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)
