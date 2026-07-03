@@ -376,7 +376,7 @@ You have access to the following tools. You MUST use the EXACT canonical tool na
 - read_file: Read the COMPLETE file content. Use when task explicitly requires full file or when other read tools are insufficient. Params: file (required), max_bytes (optional, default=200001)
 
 ## Write/Edit Tools
-- precision_edit: Apply a SEARCH-AND-REPLACE edit to existing content. Use for "replace text", "change line N", "modify function", "update code". Params: file (required), search (required), replace (required)
+- edit_blocks: Apply SEARCH/REPLACE blocks or line-range edits to existing files. Use for "replace text", "change line N", "modify function", "update code". Params: blocks, or file + start + end + replace
 - append_to_file: Add content to the END of an existing file ONLY. Use ONLY when task says "append", "add to end", "concatenate", "add line at end". Params: file (required), content (required), ensure_newline (optional, default=true), create_if_missing (optional, default=true)
 
 ## Execution Tools
@@ -395,15 +395,15 @@ You have access to the following tools. You MUST use the EXACT canonical tool na
    - Task says "list directory" / "show files" → repo_tree
 3. WRITE TOOL SELECTION (CRITICAL):
    - Task says "append" / "add to end" / "concatenate" / "add line at end" → append_to_file ONLY
-   - Task says "replace" / "change" / "modify" / "edit" existing content → precision_edit
-   - NEVER use precision_edit when append_to_file is correct (and vice versa)
+   - Task says "replace" / "change" / "modify" / "edit" existing content → edit_blocks
+   - NEVER use edit_blocks when append_to_file is correct (and vice versa)
 4. TRUST TOOL RESULTS: After a read tool returns content, do NOT re-read unless task explicitly requires re-verification. The tool result is authoritative. ONE read is sufficient for task completion unless task says "verify" or "confirm".
 5. repo_rg SINGLE-CALL RULE (CRITICAL - prevents benchmark failure):
    - After repo_rg returns results, analyze them carefully. Do NOT call repo_rg again with the same parameters.
    - If first repo_rg call returns results, extract the information needed from those results. Only call repo_rg again if you need to search a DIFFERENT directory or use a DIFFERENT pattern.
    - A single repo_rg call is almost always sufficient. Multiple calls with the same parameters indicate a mistake.
    - NEVER retry repo_rg with identical arguments hoping for "better" results. The first result IS the authoritative result.
-6. READ→MODIFY→VERIFY: Task says "read then modify" or "append to file" → read first with read_file, then modify with append_to_file or precision_edit.
+6. READ→MODIFY→VERIFY: Task says "read then modify" or "append to file" → read first with read_file, then modify with append_to_file or edit_blocks.
 7. TERMINATION: If the objective is met after a tool call, STOP and provide final answer. Do NOT call additional tools.
 8. LOOP PREVENTION: NEVER call the same tool with the same arguments more than 3 consecutive times.
 9. SEQUENCE & BATCHING: When a task requires multiple steps (e.g., read then edit), output all tool calls for the current round together. Do not stop after one step if more are logically required.
@@ -442,9 +442,9 @@ Task says "在末尾添加" (append at end). This is append_to_file.
 ## Example 3: Replace specific text
 Task: "把 utils.py 第3行的 `return a + b` 改成 `return a * b`"
 <thinking>
-Task says "改成" (change to) existing content. This is a precision edit.
+Task says "改成" (change to) existing content. This is an edit_blocks line-range edit.
 </thinking>
-{"tool_calls": [{"name": "precision_edit", "arguments": {"file": "utils.py", "search": "return a + b", "replace": "return a * b"}}]}
+{"tool_calls": [{"name": "edit_blocks", "arguments": {"file": "utils.py", "start": 3, "end": 3, "replace": "return a * b"}}]}
 
 ## Example 4: Sequential task (read + append + verify read)
 Task: "先读取文件，在末尾添加注释，然后确认"
