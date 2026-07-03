@@ -20,7 +20,10 @@ from polaris.cells.control_plane.run_ledger.public import (
     append_run_ledger_event,
     build_tool_call_lifecycle_receipt,
 )
-from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_call_count_from_metadata
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+    native_tool_call_count_from_metadata,
+    native_tool_call_envelopes_from_metadata,
+)
 from polaris.cells.roles.kernel.internal.speculation.models import CancelToken
 from polaris.cells.roles.kernel.internal.speculation.write_phases import WriteToolPhases
 from polaris.cells.roles.kernel.internal.speculative_flags import is_adoption_audit_enabled
@@ -734,6 +737,10 @@ def _mapping_value(value: Any) -> dict[str, Any]:
 
 def _metadata_native_tool_call_count(metadata: Mapping[str, Any], fallback: int = 0) -> int:
     return native_tool_call_count_from_metadata(metadata, fallback=fallback)
+
+
+def _metadata_native_tool_call_envelopes(metadata: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    return native_tool_call_envelopes_from_metadata(metadata)
 
 
 def _normalize_capability_token(value: dict[str, Any]) -> dict[str, Any]:
@@ -1845,11 +1852,7 @@ class ToolBatchExecutor:
                 }
                 for invocation in invocations
             ]
-            native_tool_call_envelopes = (
-                metadata.get("native_tool_call_envelopes")
-                if isinstance(metadata.get("native_tool_call_envelopes"), list)
-                else []
-            )
+            native_tool_call_envelopes = _metadata_native_tool_call_envelopes(metadata)
             lifecycle = build_tool_call_lifecycle_receipt(
                 run_id=str(metadata.get("run_id") or ""),
                 task_id=str(metadata.get("task_id") or ""),
@@ -1899,7 +1902,6 @@ class ToolBatchExecutor:
                 }
             )
         record_receipts_to_ledger(receipts_as_dicts, ledger)
-        native_tool_call_envelopes = metadata.get("native_tool_call_envelopes")
         _append_tool_batch_receipts_to_run_ledger(
             workspace=workspace,
             run_id=str(metadata.get("run_id") or ""),
@@ -1912,9 +1914,7 @@ class ToolBatchExecutor:
             execution_envelope_hash=_execution_envelope_hash_from_metadata(metadata),
             provider_response_hash=str(metadata.get("provider_response_hash") or ""),
             native_tool_calls_count=_metadata_native_tool_call_count(metadata),
-            native_tool_call_envelopes=native_tool_call_envelopes
-            if isinstance(native_tool_call_envelopes, list)
-            else (),
+            native_tool_call_envelopes=_metadata_native_tool_call_envelopes(metadata),
         )
 
         # 本 turn 的工具批裁决已完成（adopt/join/replay 全部计入 metrics）；在此
