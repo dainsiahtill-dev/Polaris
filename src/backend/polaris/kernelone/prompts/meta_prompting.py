@@ -37,10 +37,10 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Backward Compatibility (Re-export from adapter)
+# Role normalization port binding
 # =============================================================================
-# We need to import at module level for backward compatibility
-# This is acceptable as it's a stable public API (cells/adapters is part of ACGA 2.0)
+# Keep the module-level callable as the stable prompt-building API while routing
+# the Polaris-specific role mapping through the ACGA 2.0 Cells adapter boundary.
 from polaris.cells.adapters.kernelone import RoleProviderAdapter  # noqa: E402
 
 normalize_role_alias = RoleProviderAdapter().normalize_role_alias
@@ -224,5 +224,5 @@ __all__ = [
     "append_meta_prompt_hint",
     "build_meta_prompting_appendix",
     "load_meta_prompt_hints",
-    "normalize_role_alias",  # Re-exported from role_alias for backward compatibility
+    "normalize_role_alias",
 ]

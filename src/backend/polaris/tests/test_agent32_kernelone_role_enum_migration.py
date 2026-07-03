@@ -11,6 +11,7 @@ Validates that:
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -94,7 +95,7 @@ class _InMemoryAuditStore:
 
 
 @pytest.fixture(autouse=True)
-def _reset_audit_singletons() -> None:
+def _reset_audit_singletons() -> Generator[None, None, None]:
     KernelAuditRuntime.shutdown_all()
     yield
     KernelAuditRuntime.shutdown_all()
@@ -333,16 +334,18 @@ class TestMetaPromptingRoleNormalization:
         assert ROLE_ALIASES.get("auditor") == "qa"
 
     def test_meta_prompting_imports_from_roles_cell(self) -> None:
-        """meta_prompting re-exports normalize_role_alias from roles Cell."""
+        """meta_prompting delegates role normalization through the Cells adapter."""
         from polaris.kernelone.prompts import meta_prompting
 
         assert hasattr(meta_prompting, "normalize_role_alias")
-        # Verify it is the same function from roles Cell
+        # Verify behavior reaches the same roles Cell mapping through the adapter
+        # boundary instead of depending on function-object identity.
         from polaris.cells.roles.kernel.public.role_alias import (
             normalize_role_alias as cell_alias,
         )
 
-        assert meta_prompting.normalize_role_alias is cell_alias
+        assert meta_prompting.normalize_role_alias("docs") == cell_alias("docs")
+        assert meta_prompting.normalize_role_alias("auditor") == cell_alias("auditor")
 
     def test_meta_prompting_resolves_docs_alias(self) -> None:
         """meta_prompting resolves 'docs' to 'architect' via roles Cell."""
