@@ -216,6 +216,7 @@ def test_completion_owner_fails_closed_when_required_write_has_no_dispatch_recei
     assert result.metadata["tool_call_lifecycle"]["dispatch_status"] == "dropped"
     assert result.metadata["tool_call_lifecycle"]["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
     assert result.metadata["tool_call_lifecycle"]["native_tool_calls_count"] == 1
+    assert result.metadata["tool_call_lifecycle_receipt"] == result.metadata["tool_call_lifecycle"]
     assert result.metadata["tool_call_lifecycle"]["dropped_tool_calls"] == [
         {"tool_name": "write_file", "reason": "tool_dispatch_dropped"}
     ]
@@ -432,6 +433,7 @@ def test_completion_owner_preserves_suspension_error_and_records_lifecycle_evide
     assert result.error == "finalization_tool_calls_blocked"
     assert result.metadata["tool_call_lifecycle"]["dispatch_status"] == "dropped"
     assert result.metadata["tool_call_lifecycle"]["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert result.metadata["tool_call_lifecycle_receipt"] == result.metadata["tool_call_lifecycle"]
     assert projection["tool_lifecycle"]["dropped_count"] == 1
     assert projection["tool_lifecycle"]["events"][0]["status"] == "dropped"
 

@@ -424,6 +424,7 @@ def record_missing_dispatch_lifecycle_receipt(
     )
     if lifecycle_receipt is None:
         return None
+    metadata["tool_call_lifecycle_receipt"] = lifecycle_receipt
     metadata["tool_call_lifecycle"] = lifecycle_receipt
     _append_tool_call_lifecycle_event(
         role=role,
