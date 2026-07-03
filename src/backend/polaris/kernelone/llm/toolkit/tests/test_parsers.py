@@ -1,7 +1,6 @@
 """Tests for tool call parsers.
 
 P0-002: All parse methods now return list[ToolCall] (canonical type).
-ParsedToolCall is now an alias to ToolCall from contracts.tool.
 """
 
 from typing import Any
@@ -11,7 +10,6 @@ from polaris.kernelone.llm.toolkit.parsers import (
     CANONICAL_ARGUMENT_KEYS,
     CanonicalToolCallParser,
     NativeFunctionCallingParser,
-    ParsedToolCall,  # Alias to ToolCall
     extract_arguments,
     extract_tool_calls_and_remainder,
     has_tool_calls,
@@ -105,11 +103,6 @@ class TestCanonicalToolCallParser:
 
 class TestToolCallUnified:
     """Test unified ToolCall type from contracts.tool."""
-
-    def test_parsed_tool_call_is_tool_call(self) -> None:
-        """Test that ParsedToolCall is now an alias to ToolCall."""
-        # P0-002: ParsedToolCall = ToolCall
-        assert ParsedToolCall is ToolCall
 
     def test_tool_call_fields(self) -> None:
         """Test ToolCall has canonical fields."""

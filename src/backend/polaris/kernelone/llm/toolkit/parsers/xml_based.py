@@ -11,8 +11,8 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.llm.contracts.tool import ToolCall
 from polaris.kernelone.llm.toolkit.parsers.utils import (
-    ParsedToolCall,
     _normalize_allowed_tool_names,
     parse_value,
 )
@@ -39,13 +39,13 @@ def _tool_name_allowed(tool_name: str, allowed: set[str]) -> bool:
     return bool(raw and raw in allowed) or bool(canonical and canonical in allowed)
 
 
-def _normalize_parsed_tool_call(call: ParsedToolCall) -> ParsedToolCall:
+def _normalize_tool_call(call: ToolCall) -> ToolCall:
     canonical_tool_name = _canonical_tool_name(call.name)
     raw_tool_name = str(call.name or "").strip().lower()
     arguments = call.arguments if isinstance(call.arguments, dict) else {}
     if canonical_tool_name != raw_tool_name:
         arguments = normalize_tool_arguments(canonical_tool_name, arguments)
-    return ParsedToolCall(
+    return ToolCall(
         id=call.id,
         name=canonical_tool_name,
         arguments=arguments,
@@ -171,7 +171,7 @@ class XMLToolParser:
         text: str,
         *,
         allowed_tool_names: Iterable[str] | None = None,
-    ) -> list[ParsedToolCall]:
+    ) -> list[ToolCall]:
         """Parse XML format tool calls.
 
         Args:
@@ -181,7 +181,7 @@ class XMLToolParser:
         Returns:
             List of parsed tool calls
         """
-        tools: list[ParsedToolCall] = []
+        tools: list[ToolCall] = []
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
         counter = 0
 
@@ -215,7 +215,7 @@ class XMLToolParser:
             arguments = cls._parse_xml_params(content)
             counter += 1
             tools.append(
-                ParsedToolCall(
+                ToolCall(
                     id=f"xml_tool_{counter}",
                     name=tool_name,
                     arguments=arguments,
@@ -232,7 +232,7 @@ class XMLToolParser:
             arguments = cls._parse_xml_params(content)
             counter += 1
             tools.append(
-                ParsedToolCall(
+                ToolCall(
                     id=f"xml_func_{counter}",
                     name=tool_name,
                     arguments=arguments,
@@ -257,7 +257,7 @@ class XMLToolParser:
 
                     counter += 1
                     tools.append(
-                        ParsedToolCall(
+                        ToolCall(
                             id=f"xml_qwen_{counter}",
                             name=tool_name,
                             arguments=arguments if isinstance(arguments, dict) else {},
@@ -274,7 +274,7 @@ class XMLToolParser:
             arguments = cls._parse_xml_params(content)
             counter += 1
             tools.append(
-                ParsedToolCall(
+                ToolCall(
                     id=f"xml_chatglm_{counter}",
                     name=tool_name,
                     arguments=arguments,
@@ -295,7 +295,7 @@ class XMLToolParser:
                 arguments[key] = value
             counter += 1
             tools.append(
-                ParsedToolCall(
+                ToolCall(
                     id=f"xml_baichuan_{counter}",
                     name=tool_name,
                     arguments=arguments,
@@ -335,7 +335,7 @@ class XMLToolParser:
                 continue
             counter += 1
             tools.append(
-                ParsedToolCall(
+                ToolCall(
                     id=f"xml_qwen3coder_{counter}",
                     name=tool_name,
                     arguments=arguments,
@@ -343,7 +343,7 @@ class XMLToolParser:
                 )
             )
 
-        return [_normalize_parsed_tool_call(tool) for tool in tools]
+        return [_normalize_tool_call(tool) for tool in tools]
 
     @classmethod
     def _parse_minimax_content(
@@ -351,7 +351,7 @@ class XMLToolParser:
         content: str,
         raw: str,
         allowed: set[str],
-    ) -> ParsedToolCall | None:
+    ) -> ToolCall | None:
         """Parse MiniMax tool call content."""
         # Try JSON parsing
         try:
@@ -372,7 +372,7 @@ class XMLToolParser:
                         if k not in ("tool", "name", "tool_name"):
                             args[k] = v
 
-                return ParsedToolCall(
+                return ToolCall(
                     id="",
                     name=tool_name,
                     arguments=args,
@@ -389,7 +389,7 @@ class XMLToolParser:
                 return None
             func_content = func_match.group(2)
             arguments = cls._parse_xml_params(func_content)
-            return ParsedToolCall(
+            return ToolCall(
                 id="",
                 name=tool_name,
                 arguments=arguments,
@@ -404,7 +404,7 @@ class XMLToolParser:
         content: str,
         raw: str,
         allowed: set[str],
-    ) -> ParsedToolCall | None:
+    ) -> ToolCall | None:
         """Parse <invoke> block content."""
         # Find tool_name
         tool_name_match = re.search(r"<tool_name[^>]*>(.*?)</tool_name>", content, re.DOTALL | re.IGNORECASE)
@@ -438,7 +438,7 @@ class XMLToolParser:
         else:
             arguments = cls._parse_xml_params(content)
 
-        return ParsedToolCall(
+        return ToolCall(
             id="",
             name=tool_name,
             arguments=arguments,
@@ -473,11 +473,11 @@ class XMLToolParser:
         return arguments
 
     @staticmethod
-    def _with_id(call: ParsedToolCall | None, id_prefix: str) -> ParsedToolCall | None:
+    def _with_id(call: ToolCall | None, id_prefix: str) -> ToolCall | None:
         """Add ID to a tool call."""
         if call is None:
             return None
-        return ParsedToolCall(
+        return ToolCall(
             id=id_prefix,
             name=call.name,
             arguments=call.arguments,

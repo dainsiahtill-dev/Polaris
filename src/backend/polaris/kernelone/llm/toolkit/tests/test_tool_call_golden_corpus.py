@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from polaris.kernelone.llm.toolkit.parsers import NativeFunctionCallingParser, ParsedToolCall, parse_tool_calls
+from polaris.kernelone.llm.contracts.tool import ToolCall
+from polaris.kernelone.llm.toolkit.parsers import NativeFunctionCallingParser, parse_tool_calls
 from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments
 
 _CORPUS_PATH = Path(__file__).with_name("golden_tool_call_inputs.json")
@@ -21,7 +22,7 @@ def _load_cases() -> list[dict[str, Any]]:
     return [case for case in cases if isinstance(case, dict)]
 
 
-def _parse_case(case: dict[str, Any]) -> list[ParsedToolCall]:
+def _parse_case(case: dict[str, Any]) -> list[ToolCall]:
     provider = str(case["provider"])
     payload = case["payload"]
     if provider == "openai":

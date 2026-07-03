@@ -7,12 +7,11 @@ parsers/
     __init__.py           # Public parser package exports
     canonical.py          # Unified CanonicalToolCallParser entry point (returns list[ToolCall])
     core.py               # Legacy unified parsing entry point
-    utils.py              # Shared utilities (ParsedToolCall = ToolCall alias, helpers)
+    utils.py              # Shared parser utilities
     native_function.py    # OpenAI/Anthropic/Gemini/Ollama/DeepSeek parser
     xml_based.py         # XML format parsers (MiniMax/Claude/Llama)
 
 P0-002: All parse methods now return list[ToolCall] (canonical type).
-ParsedToolCall is now an alias to ToolCall from contracts.tool.
 
 Deprecated (DELETED):
     prompt_based.py       # [DELETED 2026-03-28] TOOL_NAME format parser
@@ -44,16 +43,12 @@ from polaris.kernelone.llm.toolkit.parsers.native_function import (
     NativeFunctionCallingParser,
 )
 
-# Re-export from utils module (ParsedToolCall = ToolCall alias)
+# Re-export from utils module
 from polaris.kernelone.llm.toolkit.parsers.utils import (
     deduplicate_tool_calls,
     parse_value,
 )
-
-# Backward compatibility: ParsedToolCall is now an alias to ToolCall
-ParsedToolCall = ToolCall
-
-from polaris.kernelone.llm.toolkit.parsers.xml_based import (  # noqa: E402
+from polaris.kernelone.llm.toolkit.parsers.xml_based import (
     XMLToolParser,
 )
 
@@ -63,8 +58,6 @@ __all__ = [
     "CanonicalToolCallParser",
     # Parser classes
     "NativeFunctionCallingParser",
-    # Backward compatibility aliases
-    "ParsedToolCall",  # Alias to ToolCall
     # Unified types (P0-001 + P0-002)
     "ToolCall",
     "XMLToolParser",

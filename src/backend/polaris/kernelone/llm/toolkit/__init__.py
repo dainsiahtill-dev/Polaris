@@ -79,7 +79,6 @@ from .parsers import (
     CANONICAL_ARGUMENT_KEYS,
     CanonicalToolCallParser,  # 统一解析器 (returns list[ToolCall])
     NativeFunctionCallingParser,
-    ParsedToolCall,  # Alias to ToolCall
     XMLToolParser,  # XML 格式解析器 (MiniMax/Claude/Llama)
     deduplicate_tool_calls,
     extract_arguments,
@@ -171,10 +170,6 @@ __all__ = [
     "OperationAuditTrail",
     "OperationResult",
     "OperationValidator",
-    # ═══════════════════════════════════════════════════════════════
-    # 解析器 - 统一解析入口
-    # ═══════════════════════════════════════════════════════════════
-    "ParsedToolCall",
     # 工具类
     "ProtocolParser",
     "ProviderPort",

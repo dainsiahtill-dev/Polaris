@@ -10,8 +10,8 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.llm.contracts.tool import ToolCall
 from polaris.kernelone.llm.toolkit.parsers.utils import (
-    ParsedToolCall,
     _normalize_allowed_tool_names,
 )
 
@@ -92,7 +92,7 @@ class NativeFunctionCallingParser:
         tool_calls: list[dict[str, Any]],
         *,
         allowed_tool_names: Iterable[str] | None = None,
-    ) -> list[ParsedToolCall]:
+    ) -> list[ToolCall]:
         """Parse OpenAI format tool calls.
 
         Args:
@@ -102,7 +102,7 @@ class NativeFunctionCallingParser:
         Returns:
             List of parsed tool calls
         """
-        results: list[ParsedToolCall] = []
+        results: list[ToolCall] = []
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
 
         for call in tool_calls:
@@ -118,7 +118,7 @@ class NativeFunctionCallingParser:
                 arguments, parse_error = cls._parse_json_arguments(args_str)
 
                 results.append(
-                    ParsedToolCall(
+                    ToolCall(
                         id=str(call.get("id") or f"openai_{len(results)}"),
                         name=name,
                         arguments=arguments,
@@ -135,7 +135,7 @@ class NativeFunctionCallingParser:
         tool_calls: list[dict[str, Any]],
         *,
         allowed_tool_names: Iterable[str] | None = None,
-    ) -> list[ParsedToolCall]:
+    ) -> list[ToolCall]:
         """Parse Anthropic format tool calls.
 
         Args:
@@ -145,7 +145,7 @@ class NativeFunctionCallingParser:
         Returns:
             List of parsed tool calls
         """
-        results: list[ParsedToolCall] = []
+        results: list[ToolCall] = []
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
 
         for block in tool_calls:
@@ -159,7 +159,7 @@ class NativeFunctionCallingParser:
                 arguments, parse_error = cls._parse_json_arguments(block.get("input", {}))
 
                 results.append(
-                    ParsedToolCall(
+                    ToolCall(
                         id=str(block.get("id") or f"anthropic_{len(results)}"),
                         name=name,
                         arguments=arguments,
@@ -176,7 +176,7 @@ class NativeFunctionCallingParser:
         response: dict[str, Any],
         *,
         allowed_tool_names: Iterable[str] | None = None,
-    ) -> list[ParsedToolCall]:
+    ) -> list[ToolCall]:
         """Parse Gemini format tool calls.
 
         Args:
@@ -186,7 +186,7 @@ class NativeFunctionCallingParser:
         Returns:
             List of parsed tool calls
         """
-        results: list[ParsedToolCall] = []
+        results: list[ToolCall] = []
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
 
         # Gemini 1.5 format: function_call in candidates
@@ -213,7 +213,7 @@ class NativeFunctionCallingParser:
                 arguments, parse_error = cls._parse_json_arguments(_function_arguments_payload(fc))
 
                 results.append(
-                    ParsedToolCall(
+                    ToolCall(
                         id=f"gemini_{len(results)}",
                         name=name,
                         arguments=arguments,
@@ -230,7 +230,7 @@ class NativeFunctionCallingParser:
         response: dict[str, Any],
         *,
         allowed_tool_names: Iterable[str] | None = None,
-    ) -> list[ParsedToolCall]:
+    ) -> list[ToolCall]:
         """Parse Ollama format tool calls.
 
         Args:
@@ -240,7 +240,7 @@ class NativeFunctionCallingParser:
         Returns:
             List of parsed tool calls
         """
-        results: list[ParsedToolCall] = []
+        results: list[ToolCall] = []
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
 
         # Ollama format: tool_calls array
@@ -258,7 +258,7 @@ class NativeFunctionCallingParser:
             arguments, parse_error = cls._parse_json_arguments(function_payload)
 
             results.append(
-                ParsedToolCall(
+                ToolCall(
                     id=str(call.get("id") or f"ollama_{len(results)}"),
                     name=name,
                     arguments=arguments,
@@ -275,7 +275,7 @@ class NativeFunctionCallingParser:
         response: dict[str, Any],
         *,
         allowed_tool_names: Iterable[str] | None = None,
-    ) -> list[ParsedToolCall]:
+    ) -> list[ToolCall]:
         """Parse DeepSeek format tool calls.
 
         Args:
@@ -285,7 +285,7 @@ class NativeFunctionCallingParser:
         Returns:
             List of parsed tool calls
         """
-        results: list[ParsedToolCall] = []
+        results: list[ToolCall] = []
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
 
         # DeepSeek format: choices with tool_calls
@@ -306,7 +306,7 @@ class NativeFunctionCallingParser:
                 arguments, parse_error = cls._parse_json_arguments(args_str)
 
                 results.append(
-                    ParsedToolCall(
+                    ToolCall(
                         id=str(call.get("id") or f"deepseek_{len(results)}"),
                         name=name,
                         arguments=arguments,
@@ -323,7 +323,7 @@ class NativeFunctionCallingParser:
         response: dict[str, Any],
         *,
         allowed_tool_names: Iterable[str] | None = None,
-    ) -> list[ParsedToolCall]:
+    ) -> list[ToolCall]:
         """Parse Azure OpenAI format tool calls.
 
         Azure OpenAI uses the same tool_calls format as OpenAI but wraps
@@ -336,7 +336,7 @@ class NativeFunctionCallingParser:
         Returns:
             List of parsed tool calls
         """
-        results: list[ParsedToolCall] = []
+        results: list[ToolCall] = []
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
 
         # Azure wraps in .choices[].message.tool_calls or .choices[].delta.tool_calls
@@ -362,7 +362,7 @@ class NativeFunctionCallingParser:
                 arguments, parse_error = cls._parse_json_arguments(_function_arguments_payload(function))
 
                 results.append(
-                    ParsedToolCall(
+                    ToolCall(
                         id=str(call.get("id") or f"azure_{len(results)}"),
                         name=name,
                         arguments=arguments,
@@ -379,7 +379,7 @@ class NativeFunctionCallingParser:
         response: dict[str, Any],
         *,
         allowed_tool_names: Iterable[str] | None = None,
-    ) -> list[ParsedToolCall]:
+    ) -> list[ToolCall]:
         """Parse Mistral AI format tool calls.
 
         Mistral uses tool_calls array in choices[].message.tool_calls.
@@ -391,7 +391,7 @@ class NativeFunctionCallingParser:
         Returns:
             List of parsed tool calls
         """
-        results: list[ParsedToolCall] = []
+        results: list[ToolCall] = []
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
 
         choices = response.get("choices", [])
@@ -410,7 +410,7 @@ class NativeFunctionCallingParser:
                 arguments, parse_error = cls._parse_json_arguments(_function_arguments_payload(function))
 
                 results.append(
-                    ParsedToolCall(
+                    ToolCall(
                         id=str(call.get("id") or f"mistral_{len(results)}"),
                         name=name,
                         arguments=arguments,
@@ -427,7 +427,7 @@ class NativeFunctionCallingParser:
         response: dict[str, Any],
         *,
         allowed_tool_names: Iterable[str] | None = None,
-    ) -> list[ParsedToolCall]:
+    ) -> list[ToolCall]:
         """Parse Groq API format tool calls.
 
         Groq uses OpenAI-compatible tool_calls format.
@@ -439,7 +439,7 @@ class NativeFunctionCallingParser:
         Returns:
             List of parsed tool calls
         """
-        results: list[ParsedToolCall] = []
+        results: list[ToolCall] = []
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
 
         choices = response.get("choices", [])
@@ -458,7 +458,7 @@ class NativeFunctionCallingParser:
                 arguments, parse_error = cls._parse_json_arguments(_function_arguments_payload(function))
 
                 results.append(
-                    ParsedToolCall(
+                    ToolCall(
                         id=str(call.get("id") or f"groq_{len(results)}"),
                         name=name,
                         arguments=arguments,
@@ -475,7 +475,7 @@ class NativeFunctionCallingParser:
         response: dict[str, Any],
         *,
         allowed_tool_names: Iterable[str] | None = None,
-    ) -> list[ParsedToolCall]:
+    ) -> list[ToolCall]:
         """Parse Cohere API format tool calls.
 
         Cohere uses a distinct format with tool_calls at response root level.
@@ -487,7 +487,7 @@ class NativeFunctionCallingParser:
         Returns:
             List of parsed tool calls
         """
-        results: list[ParsedToolCall] = []
+        results: list[ToolCall] = []
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
 
         # Cohere format: response.tool_calls = [{name: "...", parameters: {...}}]
@@ -505,7 +505,7 @@ class NativeFunctionCallingParser:
             arguments, parse_error = cls._parse_json_arguments(_function_arguments_payload(call))
 
             results.append(
-                ParsedToolCall(
+                ToolCall(
                     id=str(call.get("id") or f"cohere_{i}"),
                     name=name,
                     arguments=arguments,
@@ -522,7 +522,7 @@ class NativeFunctionCallingParser:
         response: dict[str, Any],
         *,
         allowed_tool_names: Iterable[str] | None = None,
-    ) -> list[ParsedToolCall]:
+    ) -> list[ToolCall]:
         """Parse Vertex AI (Google Cloud) format tool calls.
 
         Vertex AI uses Gemini format with additional wrapper. Content may be
@@ -535,7 +535,7 @@ class NativeFunctionCallingParser:
         Returns:
             List of parsed tool calls
         """
-        results: list[ParsedToolCall] = []
+        results: list[ToolCall] = []
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
 
         # Vertex AI wraps Gemini-style responses
@@ -564,7 +564,7 @@ class NativeFunctionCallingParser:
                 arguments, parse_error = cls._parse_json_arguments(_function_arguments_payload(fc))
 
                 results.append(
-                    ParsedToolCall(
+                    ToolCall(
                         id=f"vertex_{len(results)}",
                         name=name,
                         arguments=arguments,
@@ -581,7 +581,7 @@ class NativeFunctionCallingParser:
         response: dict[str, Any],
         *,
         allowed_tool_names: Iterable[str] | None = None,
-    ) -> list[ParsedToolCall]:
+    ) -> list[ToolCall]:
         """Parse AWS Bedrock Claude (via Converse API) format tool calls.
 
         Bedrock Claude uses stop_reason="tool_use" with content blocks.
@@ -593,7 +593,7 @@ class NativeFunctionCallingParser:
         Returns:
             List of parsed tool calls
         """
-        results: list[ParsedToolCall] = []
+        results: list[ToolCall] = []
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
 
         # Bedrock Converse API structure
@@ -631,7 +631,7 @@ class NativeFunctionCallingParser:
             # toolUseId may be None or empty string
             tool_id = tool_use.get("toolUseId") or tool_use.get("tool_use_id")
             results.append(
-                ParsedToolCall(
+                ToolCall(
                     id=str(tool_id) if tool_id else f"bedrock_{i}",
                     name=name,
                     arguments=arguments,

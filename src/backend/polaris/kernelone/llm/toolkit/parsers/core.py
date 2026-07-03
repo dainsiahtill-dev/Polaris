@@ -10,8 +10,8 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.llm.contracts.tool import ToolCall
 from polaris.kernelone.llm.toolkit.parsers.utils import (
-    ParsedToolCall,
     deduplicate_tool_calls,
 )
 
@@ -40,15 +40,15 @@ def _normalize_allowed_tool_names(
 
 
 def _normalize_textual_calls(
-    calls: list[ParsedToolCall],
+    calls: list[ToolCall],
     *,
     allowed_tool_names: Iterable[str] | None,
-) -> list[ParsedToolCall]:
+) -> list[ToolCall]:
     from polaris.kernelone.llm.contracts.tool import ToolCall
     from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments, normalize_tool_name
 
     allowed = _normalize_allowed_tool_names(allowed_tool_names)
-    normalized: list[ParsedToolCall] = []
+    normalized: list[ToolCall] = []
     for index, call in enumerate(calls):
         name = normalize_tool_name(str(call.name or ""))
         if not name:
@@ -73,7 +73,7 @@ def _parse_text_fallback_calls(
     text: str | None,
     *,
     allowed_tool_names: Iterable[str] | None,
-) -> list[ParsedToolCall]:
+) -> list[ToolCall]:
     token = str(text or "")
     if not token.strip():
         return []
@@ -115,7 +115,7 @@ def parse_tool_calls(
     response: dict[str, Any] | None = None,
     provider: str = "auto",
     allowed_tool_names: Iterable[str] | None = None,
-) -> list[ParsedToolCall]:
+) -> list[ToolCall]:
     """Unified tool call parsing entry point.
 
     Note: Runtime canonical protocol is provider-native tool_calls / function_call.
@@ -132,7 +132,7 @@ def parse_tool_calls(
     Returns:
         List of parsed tool calls (deduplicated)
     """
-    results: list[ParsedToolCall] = []
+    results: list[ToolCall] = []
 
     # Import parsers lazily
     from polaris.kernelone.llm.toolkit.parsers.native_function import (
@@ -231,7 +231,7 @@ def extract_tool_calls_and_remainder(
     text: str,
     *,
     allowed_tool_names: Iterable[str] | None = None,
-) -> tuple[list[ParsedToolCall], str]:
+) -> tuple[list[ToolCall], str]:
     """Extract tool calls and return remaining text.
 
     Args:

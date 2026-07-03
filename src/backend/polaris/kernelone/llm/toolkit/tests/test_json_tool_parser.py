@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import json
 
+from polaris.kernelone.llm.contracts.tool import ToolCall
 from polaris.kernelone.llm.toolkit.parsers.json_based import (
     JSONToolParser,
     is_json_tool_call,
     parse_json_tool_calls,
 )
-from polaris.kernelone.llm.toolkit.parsers.utils import ParsedToolCall
 
 
 class TestJSONToolParserNormal:
@@ -404,7 +404,7 @@ class TestParseJsonToolCallsConvenience:
         result = parse_json_tool_calls('{"name": "read", "args": {"path": "f.txt"}}')
 
         assert len(result) == 1
-        assert isinstance(result[0], ParsedToolCall)
+        assert isinstance(result[0], ToolCall)
 
     def test_with_allowed_names(self) -> None:
         """Normal: Convenience function with allowed names."""

@@ -33,7 +33,7 @@ from polaris.kernelone.llm.toolkit.parsers.json_based import (
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from polaris.kernelone.llm.toolkit.parsers.utils import ParsedToolCall
+    from polaris.kernelone.llm.contracts.tool import ToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ class StreamThinkingParser:
         self._chunks: list[Chunk] = []
 
         # Tool calls extracted from JSON
-        self._extracted_json_calls: list[ParsedToolCall] = []
+        self._extracted_json_calls: list[ToolCall] = []
 
     @property
     def chunks(self) -> list[Chunk]:
@@ -561,7 +561,7 @@ class StreamThinkingParser:
         self._add_chunk(ChunkKind.DONE, "")
         self._state = "content"
 
-    def get_json_tool_calls(self) -> list[ParsedToolCall]:
+    def get_json_tool_calls(self) -> list[ToolCall]:
         """Get all JSON tool calls parsed from the stream.
 
         Returns:

@@ -1,27 +1,16 @@
-"""Shared parsing utilities for the parsers module.
-
-Contains helper functions and common utilities used by all parsers.
-
-NOTE: ParsedToolCall is now a type alias to the canonical ToolCall from
-polaris.kernelone.llm.contracts.tool. All new code should import ToolCall directly.
-"""
+"""Shared parsing utilities for the parsers module."""
 
 from __future__ import annotations
 
 import json
 import logging
 import os
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-# Import canonical ToolCall and create backward-compatible alias
 from polaris.kernelone.llm.contracts.tool import ToolCall
-
-# Backward compatibility: ParsedToolCall is now an alias to canonical ToolCall
-# The fields are identical: id, name, arguments, raw, source, parse_error
-ParsedToolCall: TypeAlias = ToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +129,7 @@ def stable_json(value: Any) -> Any:
     return str(value)
 
 
-def tool_signature(call: ParsedToolCall) -> tuple[str, str]:
+def tool_signature(call: ToolCall) -> tuple[str, str]:
     """Generate a stable signature for a tool call.
 
     Args:
@@ -155,7 +144,7 @@ def tool_signature(call: ParsedToolCall) -> tuple[str, str]:
     return name, args_json
 
 
-def deduplicate_tool_calls(calls: list[ParsedToolCall]) -> list[ParsedToolCall]:
+def deduplicate_tool_calls(calls: list[ToolCall]) -> list[ToolCall]:
     """Deduplicate tool calls based on name and arguments.
 
     Args:
@@ -165,7 +154,7 @@ def deduplicate_tool_calls(calls: list[ParsedToolCall]) -> list[ParsedToolCall]:
         Deduplicated list of tool calls
     """
     seen: set[tuple[str, str]] = set()
-    deduped: list[ParsedToolCall] = []
+    deduped: list[ToolCall] = []
     for call in calls:
         signature = tool_signature(call)
         if signature in seen:

@@ -27,9 +27,7 @@ import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from polaris.kernelone.llm.toolkit.parsers.utils import (
-    ParsedToolCall,
-)
+from polaris.kernelone.llm.contracts.tool import ToolCall
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -203,7 +201,7 @@ class JSONToolParser:
         text: str,
         *,
         allowed_tool_names: Iterable[str] | None = None,
-    ) -> list[ParsedToolCall]:
+    ) -> list[ToolCall]:
         """Parse JSON tool calls from text.
 
         Args:
@@ -222,7 +220,7 @@ class JSONToolParser:
         parser = cls(allowed_tool_names=allowed_tool_names)
         return parser._parse_text(text)
 
-    def _parse_text(self, text: str) -> list[ParsedToolCall]:
+    def _parse_text(self, text: str) -> list[ToolCall]:
         """Internal text parsing method.
 
         Args:
@@ -231,7 +229,7 @@ class JSONToolParser:
         Returns:
             List of parsed tool calls.
         """
-        results: list[ParsedToolCall] = []
+        results: list[ToolCall] = []
 
         # Strategy 1: Try to parse the entire text as JSON
         try:
@@ -261,7 +259,7 @@ class JSONToolParser:
 
         return self._deduplicate_and_filter(results)
 
-    def _extract_calls_from_dict(self, data: dict[str, Any]) -> list[ParsedToolCall]:
+    def _extract_calls_from_dict(self, data: dict[str, Any]) -> list[ToolCall]:
         """Extract tool calls from a dictionary.
 
         Args:
@@ -311,7 +309,7 @@ class JSONToolParser:
             output_tool_name = raw_tool_name
 
         return [
-            ParsedToolCall(
+            ToolCall(
                 id=str(uuid.uuid4()),
                 name=output_tool_name,
                 arguments=arguments,
@@ -401,8 +399,8 @@ class JSONToolParser:
 
     def _deduplicate_and_filter(
         self,
-        calls: list[ParsedToolCall],
-    ) -> list[ParsedToolCall]:
+        calls: list[ToolCall],
+    ) -> list[ToolCall]:
         """Remove duplicate tool calls.
 
         Args:
@@ -412,7 +410,7 @@ class JSONToolParser:
             Deduplicated list with allowed tools only.
         """
         seen: set[str] = set()
-        results: list[ParsedToolCall] = []
+        results: list[ToolCall] = []
 
         for call in calls:
             # Deduplicate by name + arguments hash. Allow-list filtering happens
@@ -430,7 +428,7 @@ def parse_json_tool_calls(
     text: str,
     *,
     allowed_tool_names: Iterable[str] | None = None,
-) -> list[ParsedToolCall]:
+) -> list[ToolCall]:
     """Convenience function to parse JSON tool calls from text.
 
     Args:
