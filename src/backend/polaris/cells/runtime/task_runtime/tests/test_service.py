@@ -875,6 +875,55 @@ def test_task_runtime_service_emits_execution_events_via_fact_stream(tmp_path: P
     assert '"event_type":"completed"' in content
 
 
+def test_task_runtime_factory_event_projects_fact_stream_receipt(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    published: dict[str, object] = {}
+
+    class Publisher:
+        def publish(self, *, subject: str, payload: dict[str, object]) -> bool:
+            published["subject"] = subject
+            published["payload"] = payload
+            return True
+
+    import polaris.infrastructure.log_pipeline.jetstream_publisher as publisher_module
+
+    monkeypatch.setattr(
+        publisher_module,
+        "get_log_jetstream_publisher",
+        lambda: Publisher(),
+    )
+
+    created = service.create(
+        subject="project fact receipt",
+        description="factory execution event should point at the fact stream event",
+        metadata={"factory_run_id": "factory_123456789abc"},
+    )
+    published.clear()
+
+    claimed = service.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="director-123456789abc",
+        selection_source="task_id_lookup",
+    )
+
+    assert claimed["success"] is True
+    envelope = published["payload"]
+    assert isinstance(envelope, dict)
+    payload = envelope["payload"]
+    assert isinstance(payload, dict)
+    assert payload["event_type"] == "claimed"
+    assert payload["fact_event_id"]
+    assert payload["fact_stream"] == "task_runtime.execution"
+    assert payload["fact_storage_path"] == "runtime/events/task_runtime.execution.jsonl"
+
+
 def test_task_runtime_factory_event_preserves_payload_director_run_id(
     tmp_path: Path,
     monkeypatch,

@@ -1368,7 +1368,10 @@ class TaskRuntimeService:
                 task_id=str(payload.get("task_id") or "").strip() or None,
                 correlation_id=str(payload.get("session_id") or "").strip() or None,
             )
-            append_fact_event(command)
+            appended = append_fact_event(command)
+            payload["fact_event_id"] = appended.event_id
+            payload["fact_stream"] = appended.stream
+            payload["fact_storage_path"] = appended.storage_path
             self._publish_factory_execution_event(payload)
         except (RuntimeError, ValueError) as exc:
             logger.debug("Failed to append task runtime execution event: %s", exc)
