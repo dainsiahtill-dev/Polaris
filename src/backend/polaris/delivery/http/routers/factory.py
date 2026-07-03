@@ -1013,14 +1013,20 @@ def _task_record_needs_task_boundary_rework(record: dict[str, Any]) -> bool:
 def _ownership_handoff_requests_from_repair_payload(repair: dict[str, Any]) -> list[dict[str, Any]]:
     scope_filter_raw = repair.get("task_boundary_scope_filter")
     scope_filter: dict[str, Any] = scope_filter_raw if isinstance(scope_filter_raw, dict) else {}
-    requests_raw = scope_filter.get("ownership_handoff_requests")
-    if not isinstance(requests_raw, list):
-        scope_authority_raw = scope_filter.get("scope_authority")
-        scope_authority: dict[str, Any] = scope_authority_raw if isinstance(scope_authority_raw, dict) else {}
-        requests_raw = scope_authority.get("ownership_handoff_requests")
-    if not isinstance(requests_raw, list):
-        return []
-    return [dict(item) for item in requests_raw if isinstance(item, dict) and item]
+    candidates = (
+        scope_filter.get("ownership_handoff_requests"),
+        (scope_filter.get("scope_authority") or {}).get("ownership_handoff_requests")
+        if isinstance(scope_filter.get("scope_authority"), dict)
+        else None,
+        repair.get("ownership_handoff_requests"),
+        (repair.get("scope_authority") or {}).get("ownership_handoff_requests")
+        if isinstance(repair.get("scope_authority"), dict)
+        else None,
+    )
+    for requests_raw in candidates:
+        if isinstance(requests_raw, list):
+            return [dict(item) for item in requests_raw if isinstance(item, dict) and item]
+    return []
 
 
 def _owned_handoff_requests_from_repair_payload(repair: dict[str, Any]) -> list[dict[str, Any]]:

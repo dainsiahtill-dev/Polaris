@@ -844,6 +844,26 @@ def test_quality_gate_task_boundary_validation_routes_scope_authority_nested_han
     assert bridge_summary["tasks"][0]["external_task_id"] == "PM-0001-1-S4"
 
 
+def test_ownership_handoff_requests_accept_flat_scope_authority_payload() -> None:
+    handoff_request = {
+        "schema_version": "file-ownership-handoff-request/1",
+        "target_file": "src/index.js",
+        "owner_step_id": "PM-0001-1-S4",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+    }
+
+    from_scope_authority = factory_router_module._ownership_handoff_requests_from_repair_payload(
+        {"scope_authority": {"ownership_handoff_requests": [handoff_request]}}
+    )
+    from_direct_requests = factory_router_module._ownership_handoff_requests_from_repair_payload(
+        {"ownership_handoff_requests": [handoff_request]}
+    )
+
+    assert from_scope_authority == [handoff_request]
+    assert from_direct_requests == [handoff_request]
+
+
 def test_quality_gate_task_boundary_validation_reports_unmatched_owner_handoff(temp_workspace: Path) -> None:
     task_board = TaskRuntimeService(str(temp_workspace))
     current_row = task_board.ensure_task_row(
