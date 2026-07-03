@@ -439,7 +439,7 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
                 f"Edit-fragment write: write_file for {rel} received an edit fragment "
                 "(a line-anchored insertion directive such as '在第 N 行之后添加'), not the "
                 "complete file. write_file REPLACES the whole file, so its `content` must be the "
-                "ENTIRE file body. To change part of an existing file use edit_file/precision_edit; "
+                "ENTIRE file body. To change part of an existing file use edit_blocks/edit_file; "
                 "to (re)write the file, emit write_file with the full, self-contained content."
             ),
         }
