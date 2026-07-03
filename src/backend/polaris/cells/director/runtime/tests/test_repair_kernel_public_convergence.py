@@ -445,6 +445,48 @@ def test_public_convergence_success_uses_typed_receipts_and_revalidation_evidenc
     assert "flightTime, landed:" in target.read_text(encoding="utf-8")
 
 
+def test_public_convergence_accepts_typed_artifact_quality_issues(tmp_path: Path) -> None:
+    target = _write_initial_file(tmp_path)
+
+    def verifier(_: DirectorRepairConvergenceVerifierRequestV1) -> DirectorRepairVerifierSnapshotInputV1:
+        return DirectorRepairVerifierSnapshotInputV1(
+            command=(),
+            exit_code=1,
+            raw_output_ref="runtime/verifier/public-convergence-invalid.log",
+            metadata=_valid_verifier_metadata(),
+        )
+
+    result = run_director_repair_convergence(
+        RunDirectorRepairConvergenceCommandV1(
+            task_id="task-public-convergence",
+            workspace=str(tmp_path),
+            source_tools=(_SOURCE_TOOL,),
+            artifact_quality_errors=(),
+            artifact_quality_issues=(
+                {
+                    "source": "artifact_quality",
+                    "code": "typescript_ts1005",
+                    "message": "',' expected.",
+                    "path": _RELATIVE_PATH,
+                    "metadata": {"raw": _QUALITY_ERROR, "line": 6, "column": 47},
+                },
+            ),
+            base_files={_RELATIVE_PATH: _BROKEN_CONTENT},
+            allowed_paths=(_RELATIVE_PATH,),
+            metadata={"caller": "typed_issue_convergence_test"},
+        ),
+        writer=_writer(tmp_path),
+        verifier=verifier,
+    )
+
+    assert result.ok is False
+    assert result.status == "verifier_evidence_invalid"
+    assert result.final_diagnostics[0].code == "typescript_ts1005"
+    assert result.final_diagnostics[0].path == _RELATIVE_PATH
+    assert result.final_diagnostics[0].metadata["line"] == 6
+    assert target.read_text(encoding="utf-8") == _BROKEN_CONTENT
+
+
 def test_public_convergence_projects_environment_prep_plan_before_revalidation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

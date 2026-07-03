@@ -2433,7 +2433,10 @@ def run_director_repair_convergence(
     """
 
     public_advisor_notes = tuple(command.advisor_notes or ())
-    initial_diagnostics = tuple(normalize_artifact_quality_errors(list(command.artifact_quality_errors)))
+    initial_diagnostics = _repair_diagnostics_from_quality_inputs(
+        command.artifact_quality_errors,
+        command.artifact_quality_issues,
+    )
 
     def _verifier(round_number: int, receipts: tuple[RepairReceipt, ...]) -> RepairVerifierSnapshot:
         public_receipts = tuple(_to_public_repair_receipt(receipt) for receipt in receipts)
@@ -2520,7 +2523,7 @@ def run_director_repair_convergence(
             source_tools=command.source_tools,
             workspace=command.workspace,
             base_files=command.base_files,
-            artifact_quality_errors=command.artifact_quality_errors,
+            artifact_quality_errors=_artifact_quality_errors_from_convergence_command(command),
             verifier=_verifier,
             writer=writer,
             editor=editor,
@@ -3261,6 +3264,16 @@ def _artifact_quality_errors_from_command(
         return artifact_errors
     if command.diagnostics:
         return tuple(_artifact_quality_error_from_diagnostic(diagnostic) for diagnostic in command.diagnostics)
+    return tuple(
+        _artifact_quality_error_from_diagnostic(diagnostic)
+        for diagnostic in normalize_director_repair_issue_diagnostics(command.artifact_quality_issues)
+    )
+
+
+def _artifact_quality_errors_from_convergence_command(command: RunDirectorRepairConvergenceCommandV1) -> tuple[str, ...]:
+    artifact_errors = tuple(str(item) for item in command.artifact_quality_errors if str(item or "").strip())
+    if artifact_errors:
+        return artifact_errors
     return tuple(
         _artifact_quality_error_from_diagnostic(diagnostic)
         for diagnostic in normalize_director_repair_issue_diagnostics(command.artifact_quality_issues)

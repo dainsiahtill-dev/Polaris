@@ -703,6 +703,7 @@ class RunDirectorRepairConvergenceCommandV1:
     source_tools: tuple[str, ...]
     artifact_quality_errors: tuple[str, ...]
     base_files: Mapping[str, str]
+    artifact_quality_issues: tuple[Mapping[str, Any], ...] = ()
     allowed_paths: tuple[str, ...] = ()
     advisor_notes: tuple[RepairAdvisoryV1, ...] = ()
     mode: str = "commit"
@@ -718,6 +719,7 @@ class RunDirectorRepairConvergenceCommandV1:
         object.__setattr__(self, "source_tools", source_tools)
         object.__setattr__(self, "artifact_quality_errors", _to_tuple_str(list(self.artifact_quality_errors)))
         object.__setattr__(self, "base_files", dict(self.base_files or {}))
+        object.__setattr__(self, "artifact_quality_issues", _to_tuple_mapping_from_any(self.artifact_quality_issues))
         object.__setattr__(self, "allowed_paths", tuple(str(item) for item in self.allowed_paths))
         object.__setattr__(self, "advisor_notes", tuple(self.advisor_notes or ()))
         object.__setattr__(self, "mode", str(self.mode or "commit").strip() or "commit")
@@ -892,7 +894,7 @@ class DirectorRepairConvergenceResultV1:
             "round_count": len(self.rounds),
             "receipt_count": len(self.receipts),
             "final_error_count": len(self.final_diagnostics),
-            "final_diagnostics": [diagnostic.__dict__ for diagnostic in self.final_diagnostics],
+            "final_diagnostics": [_repair_diagnostic_v1_to_dict(diagnostic) for diagnostic in self.final_diagnostics],
             "receipts": [receipt.to_dict() for receipt in self.receipts],
             "rounds": [round_result.to_dict() for round_result in self.rounds],
             "error_code": self.error_code,
