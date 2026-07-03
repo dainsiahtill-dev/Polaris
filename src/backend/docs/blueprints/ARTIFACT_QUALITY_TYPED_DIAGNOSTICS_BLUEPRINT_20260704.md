@@ -52,6 +52,11 @@ Typed issues are evidence, not repair authorization. Repair still flows through
   `ArtifactQualityIssue(code="syntax_error", source="source_syntax_checker")`
   at file-scan time, while preserving the legacy error string for existing
   callers.
+- `_scan_typescript_import_evidence()` now owns TypeScript/JavaScript import
+  direct typed issues with `source="typescript_import_scanner"` for unresolved
+  relative imports, undeclared runtime imports, and missing `@types/node`
+  obligations. The legacy `_scan_typescript_imports()` API remains a string
+  projection.
 
 ## 4. Verification
 

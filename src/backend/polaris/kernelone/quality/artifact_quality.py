@@ -1160,7 +1160,9 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
         manifest_evidence = _scan_package_manifest_evidence(root_full, text, relative_path)
         errors.extend(manifest_evidence.errors)
         issues.extend(manifest_evidence.issues)
-    errors.extend(_scan_typescript_imports(root_full, full_path, text, relative_path))
+    typescript_import_evidence = _scan_typescript_import_evidence(root_full, full_path, text, relative_path)
+    errors.extend(typescript_import_evidence.errors)
+    issues.extend(typescript_import_evidence.issues)
     errors.extend(_scan_python_imports(root_full, full_path, text, relative_path))
     errors.extend(_scan_typescript_syntax_red_flags(root_full, full_path, text, relative_path))
     errors.extend(_scan_html_typescript_module_scripts(full_path, text, relative_path))
@@ -1911,10 +1913,47 @@ def _scan_python_imports(root_full: Path, full_path: Path, text: str, relative_p
 
 
 def _scan_typescript_imports(root_full: Path, full_path: Path, text: str, relative_path: str) -> list[str]:
+    """Return legacy TypeScript/JavaScript import string findings."""
+
+    return list(_scan_typescript_import_evidence(root_full, full_path, text, relative_path).errors)
+
+
+def _typescript_import_quality_issue(
+    *,
+    error: str,
+    code: str,
+    relative_path: str,
+    metadata: Mapping[str, Any],
+) -> ArtifactQualityIssue:
+    message = str(error or "").strip()
+    if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
+        message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    return ArtifactQualityIssue(
+        code=code,
+        message=message,
+        path=relative_path,
+        source="typescript_import_scanner",
+        metadata={
+            "raw": str(error or "").strip(),
+            "importer_path": relative_path,
+            **dict(metadata),
+        },
+    )
+
+
+def _scan_typescript_import_evidence(
+    root_full: Path,
+    full_path: Path,
+    text: str,
+    relative_path: str,
+) -> _FileArtifactQualityEvidence:
+    """Return TypeScript/JavaScript import findings as strings and typed issues."""
+
     if full_path.suffix.lower() not in _TS_JS_SOURCE_EXTS:
-        return []
+        return _FileArtifactQualityEvidence()
     declared_dependencies = _declared_package_dependencies(root_full)
     errors: list[str] = []
+    issues: list[ArtifactQualityIssue] = []
     code_mask = _ts_js_code_mask(text)
     is_typescript = full_path.suffix.lower() in _TS_SOURCE_EXTS
     has_package_manifest = (root_full / "package.json").is_file()
@@ -1927,8 +1966,15 @@ def _scan_typescript_imports(root_full: Path, full_path: Path, text: str, relati
             continue
         if specifier.startswith((".", "/")):
             if not _relative_import_exists(root_full, full_path, specifier):
-                errors.append(
-                    f"Artifact quality scan failed: unresolved relative import {specifier!r} in {relative_path}"
+                error = f"Artifact quality scan failed: unresolved relative import {specifier!r} in {relative_path}"
+                errors.append(error)
+                issues.append(
+                    _typescript_import_quality_issue(
+                        error=error,
+                        code="unresolved_relative_import",
+                        relative_path=relative_path,
+                        metadata={"specifier": specifier},
+                    )
                 )
             continue
         if _is_test_like_artifact_path(relative_path) and _package_root_name(specifier) in _TEST_FRAMEWORK_IMPORTS:
@@ -1942,19 +1988,37 @@ def _scan_typescript_imports(root_full: Path, full_path: Path, text: str, relati
                 and not node_types_error_added
                 and not _node_types_declared(declared_dependencies)
             ):
-                errors.append(
+                error = (
                     "Artifact quality scan failed: TypeScript node builtin import "
                     f"{specifier!r} requires '@types/node' in {relative_path}"
+                )
+                errors.append(error)
+                issues.append(
+                    _typescript_import_quality_issue(
+                        error=error,
+                        code="typescript_node_types_missing",
+                        relative_path=relative_path,
+                        metadata={"specifier": specifier, "required_dependency": "@types/node"},
+                    )
                 )
                 node_types_error_added = True
             continue
         if root_name in declared_dependencies:
             continue
         if not _is_test_like_artifact_path(relative_path):
-            errors.append(f"Artifact quality scan failed: undeclared runtime import {specifier!r} in {relative_path}")
+            error = f"Artifact quality scan failed: undeclared runtime import {specifier!r} in {relative_path}"
+            errors.append(error)
+            issues.append(
+                _typescript_import_quality_issue(
+                    error=error,
+                    code="undeclared_runtime_import",
+                    relative_path=relative_path,
+                    metadata={"specifier": specifier, "package_root": root_name},
+                )
+            )
     if _ts_symbol_coherence_enabled():
         errors.extend(_scan_typescript_symbol_coherence(root_full, full_path, text, relative_path, code_mask=code_mask))
-    return errors
+    return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
 
 
 def _declared_package_dependencies(root_full: Path) -> set[str]:

@@ -319,6 +319,27 @@ def test_artifact_quality_issue_projection_extracts_unresolved_relative_import_m
     }
 
 
+def test_artifact_quality_evidence_uses_direct_typescript_import_issue(tmp_path: Path) -> None:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "index.ts").write_text('import { run } from "./engine/runner";\nrun();\n', encoding="utf-8")
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["src/index.ts"])
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: unresolved relative import './engine/runner' in src/index.ts",
+    )
+    assert len(evidence.issues) == 1
+    assert evidence.issues[0].code == "unresolved_relative_import"
+    assert evidence.issues[0].source == "typescript_import_scanner"
+    assert evidence.issues[0].path == "src/index.ts"
+    assert evidence.issues[0].metadata == {
+        "raw": evidence.errors[0],
+        "importer_path": "src/index.ts",
+        "specifier": "./engine/runner",
+    }
+
+
 def test_typescript_import_scanner_ignores_fixture_string_imports(tmp_path: Path) -> None:
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir(parents=True)
