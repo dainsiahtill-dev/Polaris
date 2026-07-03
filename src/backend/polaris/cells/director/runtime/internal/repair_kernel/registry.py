@@ -3635,6 +3635,9 @@ def _tuple_str(value: Sequence[str] | None) -> tuple[str, ...]:
 
 
 def _suggest_rule_family(diagnostic: RepairDiagnostic) -> str:
+    metadata_archetype = _diagnostic_metadata_archetype(diagnostic)
+    if metadata_archetype:
+        return metadata_archetype
     code = diagnostic.code.lower()
     message = f"{diagnostic.message}\n{diagnostic.raw}".lower()
     language = _infer_diagnostic_language(diagnostic)
@@ -3659,6 +3662,22 @@ def _suggest_rule_family(diagnostic: RepairDiagnostic) -> str:
     if code.startswith("typescript_ts") or (language == "typescript" and "expected" in message):
         return RepairArchetype.OBJECT_LITERAL_SYNTAX.value
     return "unknown"
+
+
+def _diagnostic_metadata_archetype(diagnostic: RepairDiagnostic) -> str:
+    for key in (
+        "diagnostic_archetype",
+        "archetype",
+        "archetype_suggestion",
+        "suggested_rule_family",
+    ):
+        value = str(diagnostic.metadata.get(key) or "").strip()
+        if not value:
+            continue
+        normalized = value.lower()
+        if normalized in RepairArchetype._value2member_map_:
+            return normalized
+    return ""
 
 
 def _looks_like_rust_missing_method_self(message: str) -> bool:

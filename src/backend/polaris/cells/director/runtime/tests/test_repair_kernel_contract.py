@@ -508,6 +508,26 @@ def test_repair_rule_registry_reports_known_and_unknown_diagnostic_coverage() ->
     assert payload["coverage_gaps"][0]["missing_capability"] == "deterministic_repair_rule"
 
 
+def test_repair_coverage_uses_typed_metadata_archetype_before_message_guessing() -> None:
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="custom_quality_gate",
+        message="opaque quality issue without dependency import syntax terms",
+        path="src/widget.custom",
+        metadata={
+            "language": "typescript",
+            "diagnostic_archetype": "missing_dependency",
+        },
+    )
+
+    payload = build_repair_coverage_report((diagnostic,)).to_dict()
+
+    assert payload["items"][0]["known_rule_matched"] is False
+    assert payload["items"][0]["diagnostic_archetype"] == "missing_dependency"
+    assert payload["items"][0]["archetype_suggestion"] == "missing_dependency"
+    assert payload["items"][0]["diagnostic_phase"] == "dependency_resolution"
+
+
 def test_repair_rule_registry_matches_language_specific_go_and_rust_rules() -> None:
     diagnostics = normalize_artifact_quality_errors(
         [
