@@ -100,7 +100,8 @@ def _tool_dispatch_dropped_error(result: RoleTurnResult) -> str:
         ):
             return "tool_dispatch_dropped: required or native tool calls had no dispatch/effect receipt"
     tool_calls = _extract_tool_calls(result)
-    if not tool_calls or _has_tool_dispatch_evidence(result):
+    native_envelopes = _native_tool_call_envelopes(result)
+    if (not tool_calls and not native_envelopes) or _has_tool_dispatch_evidence(result):
         return ""
     return "tool_dispatch_dropped: native tool calls observed but no tool dispatch/effect receipt was committed"
 
@@ -192,6 +193,7 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
     if dropped_error:
         dropped_tool_calls = _extract_tool_calls(result)
         native_envelopes = _native_tool_call_envelopes(result)
+        native_tool_calls_count = len(native_envelopes) or len(dropped_tool_calls)
         dropped_tool_call_refs = _dropped_tool_calls_from_envelopes(native_envelopes) or tuple(
             {"tool_name": tool_name, "reason": "tool_dispatch_dropped"} for tool_name in dropped_tool_calls
         )
@@ -202,8 +204,8 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
                 task_id="",
                 turn_id="",
                 role="",
-                native_tool_calls_count=len(dropped_tool_calls),
-                decoded_tool_calls_count=len(dropped_tool_calls),
+                native_tool_calls_count=native_tool_calls_count,
+                decoded_tool_calls_count=native_tool_calls_count,
                 dispatched_tool_calls_count=0,
                 dropped_tool_calls=list(dropped_tool_call_refs),
                 native_tool_call_envelopes=list(native_envelopes),

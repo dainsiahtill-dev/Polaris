@@ -279,6 +279,41 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
         }
     ]
 
+    dropped_from_unnamed_envelope_metadata = runtime_service._to_contract_result(
+        role="director",
+        workspace=".",
+        task_id="t",
+        session_id="se",
+        run_id="ru",
+        result=RoleTurnResult(
+            content="I emitted a native tool call.",
+            metadata={
+                "native_tool_call_envelopes": [
+                    {
+                        "schema_version": "native_tool_call_envelope.v1",
+                        "envelope_id": "native_tool_call:openai:0:call-unnamed:abcdef",
+                        "provider": "openai",
+                        "call_id": "call-unnamed",
+                        "raw_call_hash": "c" * 64,
+                        "arguments_hash": "d" * 64,
+                    }
+                ]
+            },
+        ),
+    )
+    assert dropped_from_unnamed_envelope_metadata.ok is False
+    assert dropped_from_unnamed_envelope_metadata.error_code == "tool_dispatch_dropped"
+    assert dropped_from_unnamed_envelope_metadata.tool_calls == ()
+    unnamed_lifecycle = dropped_from_unnamed_envelope_metadata.metadata["tool_call_lifecycle"]
+    assert unnamed_lifecycle["native_tool_calls_count"] == 1
+    assert unnamed_lifecycle["decoded_tool_calls_count"] == 1
+    assert unnamed_lifecycle["dropped_tool_calls"] == [
+        {
+            "envelope_id": "native_tool_call:openai:0:call-unnamed:abcdef",
+            "reason": "tool_dispatch_dropped",
+        }
+    ]
+
     failed = runtime_service._to_contract_result(
         role="pm",
         workspace=".",
