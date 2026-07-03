@@ -355,12 +355,14 @@ def _normalize_one_error(text: str) -> RepairDiagnostic:
 
     match = _DECLARED_TARGET_MISSING_RE.search(text)
     if match:
+        target_file = str(match.group("path") or "").strip()
         return RepairDiagnostic(
             source="artifact_quality",
             code="declared_target_missing",
             message="Declared target file is missing.",
-            path=str(match.group("path") or "").strip(),
+            path=target_file,
             raw=text,
+            metadata={"target_file": target_file},
         )
 
     match = _UNRESOLVED_RELATIVE_IMPORT_RE.search(text)

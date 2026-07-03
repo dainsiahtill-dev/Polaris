@@ -79,6 +79,7 @@ def test_public_coverage_projects_top_level_gap_report_for_audit_consumers() -> 
     assert payload["coverage_gap_recommended_routes"] == ["runtime_rule"]
     assert payload["coverage_gap_slot_statuses"] == ["reserved_slot_available"]
     assert payload["uncovered_diagnostics"][0]["code"] == "declared_target_missing"
+    assert payload["uncovered_diagnostics"][0]["metadata"]["target_file"] == "app/models/widget.rb"
     gap = payload["coverage_gaps"][0]
     assert gap["known_rule_matched"] is False
     assert gap["audit_reason"] == "known_rule_matched=false"
