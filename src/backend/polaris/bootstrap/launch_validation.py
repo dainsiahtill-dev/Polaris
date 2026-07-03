@@ -170,8 +170,8 @@ def bootstrap_validation(request: Any) -> LaunchValidationResult:
     )
 
 
-# BootstrapError is defined in polaris.kernelone.errors for consistency
-# Import here for backwards compatibility
+# BootstrapError is defined in polaris.kernelone.errors for consistency.
+# Re-export it here as part of the bootstrap validation public surface.
 from polaris.kernelone.errors import BootstrapError  # noqa: E402, F401
 
 
