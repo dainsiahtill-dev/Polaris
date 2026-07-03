@@ -77,6 +77,23 @@ def test_artifact_quality_issue_projection_classifies_javascript_module_runtime_
     )
 
 
+def test_artifact_quality_issue_projection_preserves_typed_issue_payload() -> None:
+    issue = {
+        "code": "typescript_ts2307",
+        "message": "Cannot find module './missing.js'",
+        "path": "src/main.ts",
+        "severity": "error",
+        "source": "typescript_compiler",
+        "line": 2,
+        "column": 8,
+        "metadata": {"raw": "typed diagnostic", "diagnostic_code": "TS2307"},
+    }
+
+    issues = artifact_quality_issues_from_errors((issue,))
+
+    assert issues == (issue,)
+
+
 def test_artifact_quality_issue_projection_extracts_compiler_path() -> None:
     error = "src/main.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'."
 

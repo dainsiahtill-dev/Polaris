@@ -678,8 +678,40 @@ def _artifact_quality_issue_from_error(error: str) -> ArtifactQualityIssue:
     )
 
 
-def _artifact_quality_issues_from_errors(errors: Iterable[str]) -> tuple[ArtifactQualityIssue, ...]:
-    return tuple(_artifact_quality_issue_from_error(error) for error in errors if str(error or "").strip())
+def _artifact_quality_issue_from_mapping(payload: Mapping[str, Any]) -> ArtifactQualityIssue | None:
+    code = str(payload.get("code") or "").strip()
+    message = str(payload.get("message") or "").strip()
+    if not code and not message:
+        return None
+    metadata_raw = payload.get("metadata")
+    metadata = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
+    path_raw = payload.get("path")
+    path = str(path_raw).strip().replace("\\", "/") if path_raw is not None else None
+    return ArtifactQualityIssue(
+        code=code or _artifact_quality_issue_code(message),
+        message=message or code,
+        path=path or None,
+        severity=str(payload.get("severity") or "error").strip() or "error",
+        source=str(payload.get("source") or "artifact_quality").strip() or "artifact_quality",
+        line=_artifact_quality_optional_int(payload.get("line")),
+        column=_artifact_quality_optional_int(payload.get("column")),
+        metadata=metadata,
+    )
+
+
+def _artifact_quality_issue_from_value(value: Any) -> ArtifactQualityIssue | None:
+    if isinstance(value, ArtifactQualityIssue):
+        return value
+    if isinstance(value, Mapping):
+        return _artifact_quality_issue_from_mapping(value)
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return _artifact_quality_issue_from_error(text)
+
+
+def _artifact_quality_issues_from_errors(errors: Iterable[Any]) -> tuple[ArtifactQualityIssue, ...]:
+    return tuple(issue for value in errors if (issue := _artifact_quality_issue_from_value(value)) is not None)
 
 
 def _artifact_quality_issue_from_cross_artifact_issue(
@@ -704,7 +736,7 @@ def _artifact_quality_issue_from_cross_artifact_issue(
     )
 
 
-def artifact_quality_issues_from_errors(errors: Iterable[str]) -> tuple[dict[str, Any], ...]:
+def artifact_quality_issues_from_errors(errors: Iterable[Any]) -> tuple[dict[str, Any], ...]:
     """Project legacy artifact-quality errors into typed issue payloads."""
 
     return tuple(issue.to_dict() for issue in _artifact_quality_issues_from_errors(errors))
