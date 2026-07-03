@@ -727,6 +727,34 @@ class TestExtractNativeToolCalls:
         assert native_tool_call_count(metadata, raw_calls) == 2
         assert native_tool_call_names(metadata, raw_calls) == ["repo_rg", "read_file"]
 
+    def test_native_tool_call_envelopes_deduplicate_by_envelope_identity(self) -> None:
+        metadata = {
+            "native_tool_call_envelopes": [
+                {
+                    "schema_version": "native_tool_call_envelope.v1",
+                    "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+                    "tool_name": "write_file",
+                },
+                {
+                    "schema_version": "native_tool_call_envelope.v1",
+                    "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+                    "tool_name": "write_file",
+                },
+                {
+                    "schema_version": "native_tool_call_envelope.v1",
+                    "envelope_id": "native_tool_call:openai:1:call-2:abcdef",
+                    "tool_name": "execute_command",
+                },
+            ]
+        }
+        raw_calls = [{"function": {"name": "read_file"}}]
+
+        envelopes = native_tool_call_envelopes_from_metadata(metadata)
+
+        assert [envelope["tool_name"] for envelope in envelopes] == ["write_file", "execute_command"]
+        assert native_tool_call_count(metadata, raw_calls) == 2
+        assert native_tool_call_names(metadata, raw_calls) == ["write_file", "execute_command"]
+
     def test_native_tool_call_count_from_metadata_keeps_legacy_numeric_as_fallback(self) -> None:
         metadata = {
             "native_tool_call_envelope_refs": [
@@ -874,6 +902,36 @@ class TestExtractNativeToolCalls:
         assert [envelope["tool_name"] for envelope in envelopes] == ["write_file", "execute_command"]
         assert native_tool_call_count(metadata, raw_calls) == 2
         assert native_tool_call_names(metadata, raw_calls) == ["write_file", "execute_command"]
+
+    def test_native_tool_call_envelopes_deduplicate_lifecycle_receipt_refs(self) -> None:
+        metadata = {
+            "tool_call_lifecycle_receipt": {
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "native_tool_call_envelope_refs": [
+                    {
+                        "schema_version": "native_tool_call_envelope.v1",
+                        "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+                        "tool_name": "write_file",
+                    },
+                    {
+                        "schema_version": "native_tool_call_envelope.v1",
+                        "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+                        "tool_name": "write_file",
+                    },
+                    {
+                        "schema_version": "native_tool_call_envelope.v1",
+                        "envelope_id": "native_tool_call:openai:1:call-2:abcdef",
+                        "tool_name": "execute_command",
+                    },
+                ],
+            },
+        }
+
+        envelopes = native_tool_call_envelopes_from_metadata(metadata)
+
+        assert [envelope["tool_name"] for envelope in envelopes] == ["write_file", "execute_command"]
+        assert native_tool_call_count(metadata, ()) == 2
+        assert native_tool_call_names(metadata, ()) == ["write_file", "execute_command"]
 
     def test_native_tool_call_envelope_refs_fall_back_to_plural_lifecycle_receipts(self) -> None:
         metadata = {

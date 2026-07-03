@@ -161,7 +161,20 @@ _native_tool_call_name = native_tool_call_name
 def _valid_native_tool_call_envelopes(value: Any) -> tuple[Mapping[str, Any], ...]:
     if not isinstance(value, (list, tuple)):
         return ()
-    return tuple(item for item in value if isinstance(item, Mapping))
+    envelopes: list[Mapping[str, Any]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        envelope = dict(item)
+        key = str(envelope.get("envelope_id") or "").strip()
+        if not key:
+            key = _stable_hash(envelope)
+        if key in seen:
+            continue
+        seen.add(key)
+        envelopes.append(envelope)
+    return tuple(envelopes)
 
 
 def _tool_call_lifecycle_receipts_from_metadata(
