@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from polaris.kernelone.llm.toolkit import executor as executor_module
+from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
 
 
 @pytest.fixture(autouse=True)
@@ -40,9 +41,10 @@ def test_deprecated_exact_edit_tool_has_no_executor_handler(monkeypatch, tmp_pat
     executor = executor_module.AgentAccelToolExecutor(str(tmp_path))
     target = tmp_path / "example.py"
     target.write_text("value = 1\n", encoding="utf-8")
+    deprecated_exact_edit = next(iter(DEPRECATED_WRITE_TOOLS))
 
     result = executor.execute(
-        "precision_edit",
+        deprecated_exact_edit,
         {
             "file": "example.py",
             "search": "value = 1",
