@@ -352,30 +352,8 @@ class TestExecutorManagerGlobals:
         assert replaced is not original
 
 
-class TestAIExecutorDeprecations:
-    """Tests for deprecated methods."""
-
-    @pytest.mark.asyncio
-    async def test_execute_deprecated(self) -> None:
-        """execute() must emit DeprecationWarning."""
-        executor = AIExecutor()
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-
-            request = AIRequest(
-                task_type=TaskType.DIALOGUE,
-                role="test",
-                input="test",
-            )
-            # Mock to prevent actual invocation
-            with patch.object(executor, "invoke", return_value=AIResponse.success("ok")):
-                await executor.execute(request)
-
-        # Check for deprecation warning
-        deprecation_warnings = [warning for warning in w if issubclass(warning.category, DeprecationWarning)]
-        assert len(deprecation_warnings) >= 1
-        assert "deprecated" in str(deprecation_warnings[0].message).lower()
+class TestAIExecutorExperimentalInterfaces:
+    """Tests for experimental executor interfaces."""
 
     @pytest.mark.asyncio
     async def test_invoke_stream_deprecated(self) -> None:

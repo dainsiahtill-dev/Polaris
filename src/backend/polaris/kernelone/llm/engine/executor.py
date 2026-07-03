@@ -531,30 +531,6 @@ class AIExecutor:
             logger.exception("[executor] invoke_stream error: %s", exc)
             yield AIStreamEvent.error_event(f"internal_error: {exc}")
 
-    # 兼容别名 (deprecated)
-    async def execute(self, request: AIRequest) -> AIResponse:
-        """DEPRECATED: 使用 invoke() 代替"""
-        import warnings
-
-        warnings.warn(
-            "AIExecutor.execute is deprecated. Use invoke() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return await self.invoke(request)
-
-    async def execute_stream(self, request: AIRequest) -> AsyncIterator[AIStreamEvent]:
-        """DEPRECATED: 使用 invoke_stream() 代替"""
-        import warnings
-
-        warnings.warn(
-            "AIExecutor.execute_stream is deprecated. Use invoke_stream() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        async for chunk in self.invoke_stream(request):
-            yield chunk
-
     async def _invoke_with_resilience(
         self,
         request: AIRequest,
