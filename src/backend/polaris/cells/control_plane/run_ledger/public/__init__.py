@@ -30,6 +30,7 @@ from .service import (
     read_run_provenance_bundle,
 )
 from .task_boundary import (
+    TaskBoundaryFailureClassV1,
     TaskBoundaryVerdictV1,
     build_completed_task_boundary_verdict,
     build_deferred_followup_task_boundary_verdict,
@@ -57,6 +58,7 @@ __all__ = [
     "RunLedgerProjectionBarrierResultV1",
     "RunLedgerProjectionResultV1",
     "RunProvenanceBundleResultV1",
+    "TaskBoundaryFailureClassV1",
     "TaskBoundaryVerdictV1",
     "ToolCallLifecycleReceiptV1",
     "append_run_ledger_event",

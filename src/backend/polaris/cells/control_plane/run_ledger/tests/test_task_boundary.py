@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 
 import pytest
+from polaris.cells.control_plane.run_ledger.public import TaskBoundaryFailureClassV1 as PublicTaskBoundaryFailureClassV1
 from polaris.cells.control_plane.run_ledger.public.task_boundary import (
+    TaskBoundaryFailureClassV1,
     evaluate_task_boundary_verdict,
     normalize_task_boundary_verdict,
 )
@@ -25,14 +27,20 @@ def test_task_boundary_reports_incomplete_materialization(tmp_path: Path) -> Non
     assert verdict["missing_target_files"] == ["src/index.js"]
 
 
+def test_task_boundary_failure_class_is_public_contract_export() -> None:
+    assert PublicTaskBoundaryFailureClassV1.MISSING_ENTRYPOINT_TARGET is (
+        TaskBoundaryFailureClassV1.MISSING_ENTRYPOINT_TARGET
+    )
+
+
 def test_normalize_task_boundary_verdict_canonicalizes_failure_class_aliases() -> None:
     assert (
         normalize_task_boundary_verdict({"failure_class": "incomplete-materialization"})["failure_class"]
-        == "INCOMPLETE_MATERIALIZATION"
+        == TaskBoundaryFailureClassV1.INCOMPLETE_MATERIALIZATION.value
     )
     assert (
         normalize_task_boundary_verdict({"failure_class": "missing entrypoint target"})["failure_class"]
-        == "MISSING_ENTRYPOINT_TARGET"
+        == TaskBoundaryFailureClassV1.MISSING_ENTRYPOINT_TARGET.value
     )
     assert (
         normalize_task_boundary_verdict({"failure_class": "missing-effect-receipt"})["failure_class"]

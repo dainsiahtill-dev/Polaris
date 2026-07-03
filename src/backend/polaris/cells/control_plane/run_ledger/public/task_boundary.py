@@ -7,6 +7,7 @@ import posixpath
 import re
 import shlex
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -36,6 +37,22 @@ _TYPESCRIPT_SOURCE_SIBLINGS_BY_EMITTED_SUFFIX: dict[str, tuple[str, ...]] = {
     ".mjs": (".mts",),
     ".cjs": (".cts",),
 }
+class TaskBoundaryFailureClassV1(str, Enum):
+    """Task-boundary failure classes owned by the run-ledger public contract."""
+
+    PASSED = "PASSED"
+    INCOMPLETE_MATERIALIZATION = "INCOMPLETE_MATERIALIZATION"
+    MISSING_ENTRYPOINT_TARGET = "MISSING_ENTRYPOINT_TARGET"
+    UNRESOLVED_LOCAL_IMPORT = "UNRESOLVED_LOCAL_IMPORT"
+    EXECUTION_EVIDENCE_MISSING = "EXECUTION_EVIDENCE_MISSING"
+    IMPLEMENTATION_DEFECT = "IMPLEMENTATION_DEFECT"
+    DEPENDENCY_NOT_UNLOCKED = "DEPENDENCY_NOT_UNLOCKED"
+    DEFERRED_FOLLOWUP_REQUIRED = "DEFERRED_FOLLOWUP_REQUIRED"
+    TASKBOARD_DEADLOCK = "TASKBOARD_DEADLOCK"
+    TASK_BOUNDARY_FAILED = "TASK_BOUNDARY_FAILED"
+    TASK_BOUNDARY_UNKNOWN = "TASK_BOUNDARY_UNKNOWN"
+
+
 _ESM_LOCAL_IMPORT_RE = re.compile(
     r"(?m)^\s*(?:import\s+(?:[^'\"\n]+?\s+from\s*)?|export\s+[^'\"\n]+?\s+from\s*)"
     r"['\"](?P<specifier>\.{1,2}/[^'\"\n]+)['\"]"
@@ -45,17 +62,18 @@ _CJS_LOCAL_REQUIRE_RE = re.compile(
     r"(?P<specifier>\.{1,2}/[^'\"\n]+)['\"]\s*\)"
 )
 _TASK_BOUNDARY_FAILURE_CLASS_ALIASES = {
-    "passed": "PASSED",
-    "incomplete_materialization": "INCOMPLETE_MATERIALIZATION",
-    "missing_entrypoint_target": "MISSING_ENTRYPOINT_TARGET",
-    "unresolved_local_import": "UNRESOLVED_LOCAL_IMPORT",
-    "execution_evidence_missing": "EXECUTION_EVIDENCE_MISSING",
-    "implementation_defect": "IMPLEMENTATION_DEFECT",
-    "dependency_not_unlocked": "DEPENDENCY_NOT_UNLOCKED",
-    "deferred_followup_required": "DEFERRED_FOLLOWUP_REQUIRED",
-    "taskboard_deadlock": "TASKBOARD_DEADLOCK",
-    "task_boundary_failed": "TASK_BOUNDARY_FAILED",
-    "task_boundary_unknown": "TASK_BOUNDARY_UNKNOWN",
+    "passed": TaskBoundaryFailureClassV1.PASSED.value,
+    "incomplete_materialization": TaskBoundaryFailureClassV1.INCOMPLETE_MATERIALIZATION.value,
+    "missing_entrypoint_target": TaskBoundaryFailureClassV1.MISSING_ENTRYPOINT_TARGET.value,
+    "unresolved_local_import": TaskBoundaryFailureClassV1.UNRESOLVED_LOCAL_IMPORT.value,
+    "execution_evidence_missing": TaskBoundaryFailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
+    "implementation_defect": TaskBoundaryFailureClassV1.IMPLEMENTATION_DEFECT.value,
+    "dependency_not_unlocked": TaskBoundaryFailureClassV1.DEPENDENCY_NOT_UNLOCKED.value,
+    "deferred_followup_required": TaskBoundaryFailureClassV1.DEFERRED_FOLLOWUP_REQUIRED.value,
+    "taskboard_deadlock": TaskBoundaryFailureClassV1.TASKBOARD_DEADLOCK.value,
+    "task_boundary_failed": TaskBoundaryFailureClassV1.TASK_BOUNDARY_FAILED.value,
+    "task_boundary_unknown": TaskBoundaryFailureClassV1.TASK_BOUNDARY_UNKNOWN.value,
+    FailureClassV1.TOOL_DISPATCH_DROPPED.value.casefold(): FailureClassV1.TOOL_DISPATCH_DROPPED.value,
 }
 
 
@@ -66,7 +84,7 @@ def _task_boundary_failure_class_key(value: Any) -> str:
 def _normalize_task_boundary_failure_class(value: Any) -> str:
     raw = str(value or "").strip()
     if not raw:
-        return "TASK_BOUNDARY_UNKNOWN"
+        return TaskBoundaryFailureClassV1.TASK_BOUNDARY_UNKNOWN.value
     run_ledger_token = normalize_failure_class(raw)
     return _TASK_BOUNDARY_FAILURE_CLASS_ALIASES.get(
         _task_boundary_failure_class_key(run_ledger_token),
@@ -410,7 +428,7 @@ def build_completed_task_boundary_verdict(
         run_id=str(run_id or "").strip(),
         status="completed_verified",
         ok=True,
-        failure_class="PASSED",
+        failure_class=TaskBoundaryFailureClassV1.PASSED.value,
         responsible_layer="execution_control_plane",
         reason="Task boundary materialization and entrypoint obligations are satisfied",
         target_files=targets,
@@ -432,7 +450,7 @@ def build_deferred_followup_task_boundary_verdict(
         run_id=str(run_id or "").strip(),
         status="deferred_followup_required",
         ok=False,
-        failure_class="DEFERRED_FOLLOWUP_REQUIRED",
+        failure_class=TaskBoundaryFailureClassV1.DEFERRED_FOLLOWUP_REQUIRED.value,
         responsible_layer="execution_control_plane",
         reason=str(reason or "Execution requires a governed follow-up workflow before completion").strip(),
         evidence_refs=tuple(_string_list(evidence_refs)),
@@ -519,7 +537,7 @@ def evaluate_task_boundary_verdict(
         return TaskBoundaryVerdictV1(
             status="dependency_not_unlocked",
             ok=False,
-            failure_class="DEPENDENCY_NOT_UNLOCKED",
+            failure_class=TaskBoundaryFailureClassV1.DEPENDENCY_NOT_UNLOCKED.value,
             responsible_layer="execution_control_plane",
             reason="Task dependencies are not unlocked for completion",
             **base_kwargs,
@@ -530,7 +548,7 @@ def evaluate_task_boundary_verdict(
         return TaskBoundaryVerdictV1(
             status="incomplete_materialization",
             ok=False,
-            failure_class="INCOMPLETE_MATERIALIZATION",
+            failure_class=TaskBoundaryFailureClassV1.INCOMPLETE_MATERIALIZATION.value,
             responsible_layer="director",
             reason="Required target files were not materialized",
             missing_target_files=missing_targets,
@@ -547,7 +565,7 @@ def evaluate_task_boundary_verdict(
         return TaskBoundaryVerdictV1(
             status="missing_entrypoint_target",
             ok=False,
-            failure_class="MISSING_ENTRYPOINT_TARGET",
+            failure_class=TaskBoundaryFailureClassV1.MISSING_ENTRYPOINT_TARGET.value,
             responsible_layer="task_boundary",
             reason="Manifest references local entrypoint files that are neither complete nor declared downstream",
             missing_entrypoint_targets=missing_entrypoints,
@@ -563,7 +581,7 @@ def evaluate_task_boundary_verdict(
         return TaskBoundaryVerdictV1(
             status="unresolved_local_import",
             ok=False,
-            failure_class="UNRESOLVED_LOCAL_IMPORT",
+            failure_class=TaskBoundaryFailureClassV1.UNRESOLVED_LOCAL_IMPORT.value,
             responsible_layer="director",
             reason="Source files import local files that are neither materialized nor declared downstream",
             unresolved_local_imports=unresolved_imports,
@@ -574,7 +592,7 @@ def evaluate_task_boundary_verdict(
         return TaskBoundaryVerdictV1(
             status="execution_evidence_missing",
             ok=False,
-            failure_class="EXECUTION_EVIDENCE_MISSING",
+            failure_class=TaskBoundaryFailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
             responsible_layer="director",
             reason="Required execution evidence was not committed",
             **base_kwargs,
@@ -584,7 +602,7 @@ def evaluate_task_boundary_verdict(
         return TaskBoundaryVerdictV1(
             status="required_evidence_failed",
             ok=False,
-            failure_class="IMPLEMENTATION_DEFECT",
+            failure_class=TaskBoundaryFailureClassV1.IMPLEMENTATION_DEFECT.value,
             responsible_layer="director",
             reason="Required execution evidence was committed but failed",
             **base_kwargs,
@@ -594,7 +612,7 @@ def evaluate_task_boundary_verdict(
         return TaskBoundaryVerdictV1(
             status="required_verifier_missing",
             ok=False,
-            failure_class="EXECUTION_EVIDENCE_MISSING",
+            failure_class=TaskBoundaryFailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
             responsible_layer="director",
             reason="Required verifier execution was not committed",
             **base_kwargs,
@@ -604,7 +622,7 @@ def evaluate_task_boundary_verdict(
         return TaskBoundaryVerdictV1(
             status="required_verifier_failed",
             ok=False,
-            failure_class="IMPLEMENTATION_DEFECT",
+            failure_class=TaskBoundaryFailureClassV1.IMPLEMENTATION_DEFECT.value,
             responsible_layer="director",
             reason="Required verifier execution failed",
             **base_kwargs,
@@ -613,7 +631,7 @@ def evaluate_task_boundary_verdict(
     return TaskBoundaryVerdictV1(
         status="completed_verified",
         ok=True,
-        failure_class="PASSED",
+        failure_class=TaskBoundaryFailureClassV1.PASSED.value,
         responsible_layer="execution_control_plane",
         reason="Task boundary materialization, entrypoint, evidence, and verifier obligations are satisfied",
         **base_kwargs,
@@ -639,13 +657,14 @@ def normalize_task_boundary_verdict(value: Any) -> dict[str, Any]:
         "schema_version": "polaris.task_boundary_verdict.v1",
         "status": "unknown",
         "ok": False,
-        "failure_class": "TASK_BOUNDARY_UNKNOWN",
+        "failure_class": TaskBoundaryFailureClassV1.TASK_BOUNDARY_UNKNOWN.value,
         "responsible_layer": "execution_control_plane",
         "reason": "Task boundary verdict was missing",
     }
 
 
 __all__ = [
+    "TaskBoundaryFailureClassV1",
     "TaskBoundaryVerdictV1",
     "build_completed_task_boundary_verdict",
     "build_deferred_followup_task_boundary_verdict",

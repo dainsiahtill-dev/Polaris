@@ -23,6 +23,7 @@ QA_VERDICT_ENGINE = POLARIS_ROOT / "cells" / "qa" / "audit_verdict" / "internal"
 
 OWNED_FAILURE_CLASS_DEFINITIONS = {
     "FailureClassV1": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py",
+    "TaskBoundaryFailureClassV1": "polaris/cells/control_plane/run_ledger/public/task_boundary.py",
     "AuditFailureClass": "polaris/kernelone/audit/error_correlator.py",
     "TurnFailureClass": "polaris/cells/roles/kernel/public/turn_contracts.py",
     "SequentialFailureClass": "polaris/cells/roles/runtime/internal/sequential_engine.py",
@@ -117,7 +118,7 @@ def _failure_class_definitions(root: Path) -> list[ClassDefinition]:
         for node in ast.walk(tree):
             if not isinstance(node, ast.ClassDef):
                 continue
-            if node.name == "FailureClassV1" or node.name.endswith("FailureClass"):
+            if node.name == "FailureClassV1" or node.name.endswith(("FailureClass", "FailureClassV1")):
                 definitions.append(
                     ClassDefinition(
                         name=node.name,

@@ -42,6 +42,22 @@ Phase 2b（后续）：factory/bench 子串嗅探全量替换为 ledger 投影�
 - 全链回归：completion/result_mapping/adapter/factory char/bench_gates/run_ledger 套件全绿。
 - 新增：enum 完备性（18 字面量全部有成员且值相等——用 grep 清单钉）、透传测试（每类 error_code 端到端）、llm_timeout 零补丁直达测试、substring_fallback 兼容测试。
 
+## 4.1 2026-07-04 增量落地记录
+
+- `control_plane.run_ledger.public.task_boundary` 已新增
+  `TaskBoundaryFailureClassV1`，将 TaskBoundary 专属 failure class 从本地裸字符串
+  表升级为 public typed enum；外部 `TaskBoundaryVerdictV1.failure_class` 输出值保持
+  兼容。
+- `evaluate_task_boundary_verdict()` 与 task-boundary normalizer 已改为消费
+  `TaskBoundaryFailureClassV1`，`FailureClassV1.TOOL_DISPATCH_DROPPED` 继续由
+  tool lifecycle canonical enum 负责，避免重复定义同一工具生命周期失败类。
+- `test_failure_taxonomy_boundary_fence.py` 已扩展到扫描 `*FailureClassV1`，并登记
+  `TaskBoundaryFailureClassV1` 的 owner，防止新增 V1 后缀枚举绕过 taxonomy fence。
+- 验证：
+  `rtk pytest src/backend/polaris/cells/control_plane/run_ledger/tests/test_task_boundary.py src/backend/polaris/tests/architecture/test_failure_taxonomy_boundary_fence.py -q`；
+  `rtk ruff check src/backend/polaris/cells/control_plane/run_ledger/public/task_boundary.py src/backend/polaris/cells/control_plane/run_ledger/public/__init__.py src/backend/polaris/cells/control_plane/run_ledger/tests/test_task_boundary.py src/backend/polaris/tests/architecture/test_failure_taxonomy_boundary_fence.py`；
+  `rtk mypy src/backend/polaris/cells/control_plane/run_ledger/public/task_boundary.py src/backend/polaris/cells/control_plane/run_ledger/public/__init__.py`。
+
 ## 5. 风险与边界
 
 - `turn_contracts.FailureClass` 是 roles.kernel 公共契约，本阶段仅映射不合并，避免跨 cell 破坏性变更。
