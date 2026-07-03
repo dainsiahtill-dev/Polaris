@@ -45,7 +45,6 @@ VALID_TOOLS: set[str] = {
     "repo_read_around",
     "search_replace",
     "append_to_file",
-    "precision_edit",
     "repo_apply_diff",
     "execute_command",
     "read_file",
