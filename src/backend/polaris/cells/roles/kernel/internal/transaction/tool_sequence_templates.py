@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from polaris.cells.roles.kernel.internal.transaction.constants import ACTIVE_WRITE_TOOLS
+
 # 搜索/定位类工具
 _SEARCH_DISCOVERY_TOOLS: frozenset[str] = frozenset(
     {
@@ -35,21 +37,6 @@ _READ_TOOLS: frozenset[str] = frozenset(
         "repo_read_around",
     }
 )
-
-# 编辑/写类工具
-_EDIT_WRITE_TOOLS: frozenset[str] = frozenset(
-    {
-        "edit_blocks",
-        "precision_edit",
-        "search_replace",
-        "edit_file",
-        "repo_apply_diff",
-        "append_to_file",
-        "write_file",
-        "create_file",
-    }
-)
-
 
 def _group_has_any(group: list[str], candidates: frozenset[str]) -> bool:
     """Check if any tool in group is in candidates."""
@@ -94,7 +81,7 @@ def build_sequence_template(
         if len(ordered_tool_groups) == 2 and requires_write:
             first_group = ordered_tool_groups[0]
             second_group = ordered_tool_groups[1]
-            if _group_has_any(first_group, _EDIT_WRITE_TOOLS) and _group_has_any(second_group, _READ_TOOLS):
+            if _group_has_any(first_group, ACTIVE_WRITE_TOOLS) and _group_has_any(second_group, _READ_TOOLS):
                 lines.append(
                     "TEMPLATE [Edit-Then-Verify]: "
                     "Step 1: read_file the target file to confirm exact content. "
@@ -163,8 +150,8 @@ def build_recovery_protocol(
     lines: list[str] = ["\nTOOL FAILURE RECOVERY PROTOCOL:"]
 
     # Edit 工具失败恢复
-    has_edit = any(t in _EDIT_WRITE_TOOLS for t in required_tools) or any(
-        any(t in _EDIT_WRITE_TOOLS for t in group) for group in required_any_groups
+    has_edit = any(t in ACTIVE_WRITE_TOOLS for t in required_tools) or any(
+        any(t in ACTIVE_WRITE_TOOLS for t in group) for group in required_any_groups
     )
 
     if has_edit:

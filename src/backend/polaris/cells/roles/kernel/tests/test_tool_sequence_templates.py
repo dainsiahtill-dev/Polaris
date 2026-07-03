@@ -52,6 +52,17 @@ def test_edit_recovery_protocol_keeps_append_as_last_resort() -> None:
     assert "append_to_file is only valid for explicit append-at-end tasks" in protocol
 
 
+def test_recovery_protocol_does_not_treat_deprecated_exact_edit_as_active_edit() -> None:
+    protocol = build_recovery_protocol(
+        required_tools=["precision_edit"],
+        required_any_groups=[],
+        available_write_tools=["edit_blocks", "edit_file"],
+    )
+
+    assert "EDIT FAILURE" not in protocol
+    assert "ANY TOOL FAILURE" in protocol
+
+
 def test_retry_forced_write_prefers_robust_targeted_edit_over_precision_edit() -> None:
     tool_definitions = [
         _tool_definition("append_to_file"),
