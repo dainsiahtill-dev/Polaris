@@ -278,6 +278,10 @@ def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
         payload.setdefault("ok", False)
         payload.setdefault("dispatch_status", "unknown")
         payload.setdefault("failure_class", FailureClassV1.TOOL_LIFECYCLE_UNKNOWN.value)
+        payload["dropped_tool_calls"] = _dropped_tool_call_refs(payload.get("dropped_tool_calls"))
+        payload["native_tool_call_envelope_refs"] = _native_tool_call_envelope_refs(
+            payload.get("native_tool_call_envelope_refs")
+        )
         return payload
     return {
         "schema_version": "tool_call_lifecycle_receipt.v1",

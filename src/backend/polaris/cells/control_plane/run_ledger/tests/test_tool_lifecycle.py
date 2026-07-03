@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_tool_call_lifecycle_receipt,
+    normalize_tool_call_lifecycle_receipt,
 )
 
 
@@ -80,6 +81,24 @@ def test_tool_lifecycle_receipt_preserves_dropped_tool_details() -> None:
     assert receipt["ok"] is False
     assert receipt["dispatch_status"] == "dropped"
     assert receipt["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert receipt["dropped_tool_calls"] == [
+        {
+            "tool_name": "write_file",
+            "reason": "tool_dispatch_dropped",
+        }
+    ]
+
+
+def test_tool_lifecycle_normalizer_canonicalizes_legacy_dropped_tool_names() -> None:
+    receipt = normalize_tool_call_lifecycle_receipt(
+        {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "dispatch_status": "dropped",
+            "failure_class": "TOOL_DISPATCH_DROPPED",
+            "dropped_tool_calls": ["write_file"],
+        }
+    )
+
     assert receipt["dropped_tool_calls"] == [
         {
             "tool_name": "write_file",

@@ -15,6 +15,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
     build_tool_call_lifecycle_receipt,
     is_failure_class,
+    normalize_tool_call_lifecycle_receipt,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
@@ -142,6 +143,8 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
     event_metadata = _copy_final_request_metadata_from_turn_events(result.turn_events_metadata)
     for key, value in event_metadata.items():
         metadata.setdefault(key, value)
+    if isinstance(metadata.get("tool_call_lifecycle"), Mapping):
+        metadata["tool_call_lifecycle"] = normalize_tool_call_lifecycle_receipt(metadata.get("tool_call_lifecycle"))
     dropped_error = _tool_dispatch_dropped_error(result)
     if dropped_error:
         dropped_tool_calls = _extract_tool_calls(result)
