@@ -46,7 +46,18 @@ logger = logging.getLogger(__name__)
 class WorkspaceGuard:
     """Validates and normalizes the workspace path."""
 
-    _KERNELONE_MARKER = ".polaris"
+    _DEFAULT_METADATA_MARKER = ".polaris"
+
+    @staticmethod
+    def _workspace_marker_names() -> tuple[str, ...]:
+        """Return configured workspace marker names in lookup order."""
+        from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
+
+        metadata_dir = get_workspace_metadata_dir_name()
+        markers = [metadata_dir]
+        if metadata_dir != WorkspaceGuard._DEFAULT_METADATA_MARKER:
+            markers.append(WorkspaceGuard._DEFAULT_METADATA_MARKER)
+        return tuple(markers)
 
     @staticmethod
     def _initialize_workspace(resolved: Path) -> None:
@@ -97,21 +108,19 @@ class WorkspaceGuard:
     def detect_workspace(start: Path | None = None) -> Path | None:
         """Walk up from *start* (or cwd) looking for a workspace marker.
 
-        Checks for both .polaris (current) and .polaris (legacy).
+        Checks the configured metadata directory first.  When the configured
+        marker is customized, the default ``.polaris`` marker remains accepted
+        so existing workspaces can still be discovered.
 
         Returns the first directory that contains a marker, or None.
         """
-        from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
-
-        metadata_dir = get_workspace_metadata_dir_name()
+        marker_names = WorkspaceGuard._workspace_marker_names()
         cursor = start or Path.cwd()
         seen: list[Path] = []
         while True:
-            if (cursor / metadata_dir).is_dir():
-                return cursor
-            # Backward compat: check legacy .polaris too
-            if (cursor / ".polaris").is_dir():
-                return cursor
+            for marker_name in marker_names:
+                if (cursor / marker_name).is_dir():
+                    return cursor
             seen.append(cursor)
             parent = cursor.parent
             if parent == cursor:
@@ -126,10 +135,7 @@ class WorkspaceGuard:
     @staticmethod
     def has_polaris_marker(workspace: Path) -> bool:
         """Return True when workspace contains a valid metadata marker."""
-        from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
-
-        metadata_dir = get_workspace_metadata_dir_name()
-        return (workspace / metadata_dir).is_dir() or (workspace / ".polaris").is_dir()
+        return any((workspace / marker_name).is_dir() for marker_name in WorkspaceGuard._workspace_marker_names())
 
 
 # ---------------------------------------------------------------------------
@@ -870,9 +876,10 @@ class CliRouter:
         if cmd == "sync":
             return _route_sync(args)
 
-        # Retired command names. Keep parser compatibility, but do not dispatch
-        # through the retired polaris_cli host because that preserves a second
-        # executable route surface outside the canonical CLI/router contract.
+        # Retired command names. Keep parser-level migration responses, but do
+        # not dispatch through the retired polaris_cli host because that
+        # preserves a second executable route surface outside the canonical
+        # CLI/router contract.
         if cmd in {"chat", "status", "workflow", "test-window"}:
             return self._route_retired_command(args)
 

@@ -744,3 +744,21 @@ class TestRouterDispatch:
         marker.mkdir()
         assert WorkspaceGuard.has_polaris_marker(tmp_path) is True
         assert WorkspaceGuard.has_polaris_marker(tmp_path / "nonexistent") is False
+
+    def test_workspace_guard_accepts_default_marker_when_configured_marker_differs(self, tmp_path: Path) -> None:
+        """A customized metadata marker must not orphan existing .polaris workspaces."""
+        from polaris.delivery.cli.router import WorkspaceGuard
+        from polaris.kernelone._runtime_config import (
+            get_workspace_metadata_dir_name,
+            set_workspace_metadata_dir_name,
+        )
+
+        original = get_workspace_metadata_dir_name()
+        try:
+            set_workspace_metadata_dir_name(".custom-meta")
+            (tmp_path / ".polaris").mkdir()
+
+            assert WorkspaceGuard.detect_workspace(tmp_path) == tmp_path
+            assert WorkspaceGuard.has_polaris_marker(tmp_path) is True
+        finally:
+            set_workspace_metadata_dir_name(original)
