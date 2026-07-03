@@ -1003,50 +1003,8 @@ def normalize_director_repair_issue_diagnostics(
     importing KernelOne quality types into the Director runtime public surface.
     """
 
-    diagnostics: list[RepairDiagnosticV1] = []
-    for issue in artifact_quality_issues or ():
-        if not isinstance(issue, Mapping):
-            continue
-        code = str(issue.get("code") or "artifact_quality_issue").strip()
-        message = str(issue.get("message") or "").strip()
-        if not code or not message:
-            continue
-        severity = str(issue.get("severity") or "error").strip() or "error"
-        source = str(issue.get("source") or "artifact_quality").strip() or "artifact_quality"
-        metadata = issue.get("metadata")
-        metadata_payload = dict(metadata) if isinstance(metadata, Mapping) else {}
-        path = (
-            str(issue.get("path") or "").strip()
-            or str(issue.get("importer_path") or "").strip()
-            or str(metadata_payload.get("importer_path") or "").strip()
-            or None
-        )
-        for key in (
-            "raw",
-            "line",
-            "column",
-            "span_start",
-            "span_end",
-            "symbol",
-            "symbol_kind",
-            "module",
-            "specifier",
-            "importer_path",
-            "confidence",
-        ):
-            if key in issue and key not in metadata_payload:
-                metadata_payload[key] = issue[key]
-        diagnostics.append(
-            RepairDiagnosticV1(
-                source=source,
-                code=code,
-                message=message,
-                path=path,
-                severity=severity,
-                metadata=metadata_payload,
-            )
-        )
-    return tuple(diagnostics)
+    diagnostics = normalize_artifact_quality_errors(list(artifact_quality_issues or ()))
+    return tuple(_to_public_repair_diagnostic(diagnostic) for diagnostic in diagnostics)
 
 
 def _repair_diagnostics_from_artifact_quality_issues(
