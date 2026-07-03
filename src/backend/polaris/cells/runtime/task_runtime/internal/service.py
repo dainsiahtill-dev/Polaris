@@ -1466,11 +1466,19 @@ class TaskRuntimeService:
         last_claimed_by = str(metadata.get("last_claimed_by") or claimed_by).strip()
         workflow_run_id = str(metadata.get("workflow_run_id") or "").strip()
 
+        terminal_session_superseded = False
         if session is not None:
             workflow_run_id = workflow_run_id or str(session.run_id or "").strip()
             last_claimed_by = str(session.worker_id or "").strip() or last_claimed_by
             session_expired = session.status == "active" and session.is_expired(now=utc_now())
-            if session.status == "completed":
+            terminal_session_superseded = (
+                session.status in _TERMINAL_SESSION_STATUSES_TO_TASK_STATUS
+                and self._row_authorizes_retry_over_terminal_session(task, session)
+            )
+            if terminal_session_superseded:
+                claimed_by = ""
+                resume_state = ""
+            elif session.status == "completed":
                 effective_status = "completed"
                 claimed_by = str(session.worker_id or "").strip()
             elif session.status == "failed":
@@ -1496,6 +1504,9 @@ class TaskRuntimeService:
         runtime_execution = dict(metadata.get("runtime_execution") or {})
         if session is not None:
             runtime_execution.update(session.to_dict())
+        if terminal_session_superseded and session is not None:
+            runtime_execution["superseded_terminal_session_status"] = str(session.status or "")
+            runtime_execution["session_projection_authority"] = "row_reset_after_terminal_session"
         runtime_execution["effective_status"] = effective_status
         runtime_execution["resume_state"] = resume_state
         runtime_execution["resume_available"] = resume_state == "resumable"

@@ -280,6 +280,53 @@ def test_task_runtime_deliberate_pending_retry_is_claimable_and_not_flipped_to_f
     assert completed["task"]["status"] == "completed"
 
 
+def test_task_runtime_claim_next_honors_deliberate_retry_projection(tmp_path: Path) -> None:
+    """Queue projection must not hide a deliberate retry behind stale session evidence."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create(subject="retry should be visible to queue")
+    claimed = service.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-queue-retry",
+        selection_source="task_id_lookup",
+    )
+    assert claimed["success"] is True
+    failed = service.fail_execution(
+        created.id,
+        session_id=str(claimed["session"]["session_id"]),
+        error="temporary platform failure",
+    )
+    assert failed["success"] is True
+
+    time.sleep(0.02)
+    reset = service.update_task(created.id, status="pending")
+    assert reset is not None
+    assert reset.status.value == "pending"
+
+    queued_rows = service.list_task_rows(include_terminal=False)
+    assert [row["id"] for row in queued_rows] == [created.id]
+    assert queued_rows[0]["status"] == "pending"
+    assert (
+        queued_rows[0]["metadata"]["runtime_execution"]["session_projection_authority"]
+        == "row_reset_after_terminal_session"
+    )
+
+    reclaimed = service.claim_next_execution(
+        worker_id="director",
+        role_id="director",
+        run_id="run-queue-retry-2",
+        selection_source="queue",
+    )
+
+    assert reclaimed["success"] is True
+    assert reclaimed["task"]["id"] == created.id
+    assert reclaimed["task"]["status"] == "in_progress"
+
+
 def test_task_runtime_stale_pending_row_with_newer_terminal_session_still_rejects_reclaim(tmp_path: Path) -> None:
     """A stale row carrying an OLD reset marker must not beat a NEWER terminal session."""
     workspace = tmp_path / "workspace"
