@@ -216,20 +216,19 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
             if native_envelopes
             else [{"tool_name": tool_name, "reason": "tool_dispatch_dropped"} for tool_name in dropped_tool_calls]
         )
-        metadata.setdefault(
-            "tool_call_lifecycle",
-            build_tool_call_lifecycle_receipt(
-                run_id="",
-                task_id="",
-                turn_id="",
-                role="",
-                dispatched_tool_calls_count=0,
-                dropped_tool_calls=list(dropped_tool_call_refs),
-                native_tool_call_envelopes=list(native_envelopes),
-                dispatch_status="dropped",
-                failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
-            ).to_dict(),
-        )
+        dropped_lifecycle = build_tool_call_lifecycle_receipt(
+            run_id="",
+            task_id="",
+            turn_id="",
+            role="",
+            dispatched_tool_calls_count=0,
+            dropped_tool_calls=list(dropped_tool_call_refs),
+            native_tool_call_envelopes=list(native_envelopes),
+            dispatch_status="dropped",
+            failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        ).to_dict()
+        metadata.setdefault("tool_call_lifecycle_receipt", dropped_lifecycle)
+        metadata.setdefault("tool_call_lifecycle", metadata["tool_call_lifecycle_receipt"])
     return metadata
 
 

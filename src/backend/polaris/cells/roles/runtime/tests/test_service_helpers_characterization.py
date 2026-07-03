@@ -234,6 +234,7 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
     assert dropped.error_message == (
         "tool_dispatch_dropped: native tool calls observed but no tool dispatch/effect receipt was committed"
     )
+    assert dropped.metadata["tool_call_lifecycle_receipt"] == dropped.metadata["tool_call_lifecycle"]
     assert dropped.metadata["tool_call_lifecycle"]["dispatch_status"] == "dropped"
     assert dropped.metadata["tool_call_lifecycle"]["dropped_tool_calls"] == [
         {
@@ -339,6 +340,10 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
     assert dropped_from_envelope_metadata.ok is False
     assert dropped_from_envelope_metadata.error_code == "tool_dispatch_dropped"
     assert dropped_from_envelope_metadata.tool_calls == ("write_file",)
+    assert (
+        dropped_from_envelope_metadata.metadata["tool_call_lifecycle_receipt"]
+        == dropped_from_envelope_metadata.metadata["tool_call_lifecycle"]
+    )
     lifecycle = dropped_from_envelope_metadata.metadata["tool_call_lifecycle"]
     assert lifecycle["native_tool_calls_count"] == 1
     assert lifecycle["native_tool_call_envelope_refs"] == [

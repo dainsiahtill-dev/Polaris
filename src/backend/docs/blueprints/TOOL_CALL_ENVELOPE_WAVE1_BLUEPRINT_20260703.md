@@ -62,6 +62,9 @@ ToolExecutionResult/BatchReceipt → RoleTurnResult → completion/projection
   metadata 后，用 envelope-first helper 重新投影 `native_tool_calls_count` 与
   `native_tool_call_names`；旧字段只作为 helper 内部 fallback，不能挡住 envelope
   派生事实。
+- `roles.runtime.public.result_mapping` 的 dropped-dispatch fallback 已改为一次构造
+  canonical lifecycle receipt，并同时投影 `tool_call_lifecycle_receipt` 与兼容别名
+  `tool_call_lifecycle`；禁止出现只有旧别名、没有 canonical key 的 contract result。
 - 验证：
   `rtk pytest src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py src/backend/polaris/cells/roles/runtime/tests/test_service_helpers_characterization.py -q -k "tool_lifecycle or native_tool_call_envelope or extract_tool_calls"`；
   `rtk ruff check src/backend/polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py src/backend/polaris/cells/control_plane/run_ledger/public/__init__.py src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py src/backend/polaris/cells/roles/runtime/public/result_mapping.py`；
@@ -82,6 +85,10 @@ ToolExecutionResult/BatchReceipt → RoleTurnResult → completion/projection
   `rtk pytest src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_result_projection.py -q`；
   `rtk ruff check src/backend/polaris/cells/roles/kernel/internal/kernel/role_result_projection.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_role_result_projection.py`；
   `rtk mypy src/backend/polaris/cells/roles/kernel/internal/kernel/role_result_projection.py`。
+  runtime result mapping 追加验证：
+  `rtk pytest src/backend/polaris/cells/roles/runtime/tests/test_service_helpers_characterization.py -q -k "tool_dispatch_dropped or lifecycle"`；
+  `rtk ruff check src/backend/polaris/cells/roles/runtime/public/result_mapping.py src/backend/polaris/cells/roles/runtime/tests/test_service_helpers_characterization.py`；
+  `rtk mypy src/backend/polaris/cells/roles/runtime/public/result_mapping.py`。
 
 ## 5. 风险与边界
 
