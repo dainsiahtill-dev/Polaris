@@ -370,10 +370,38 @@ def check_source_file_syntax(absolute_path: str) -> dict[str, Any] | None:
 
 
 @dataclass(frozen=True, slots=True)
+class ArtifactQualityIssue:
+    """Typed projection for one artifact-quality finding.
+
+    This is evidence, not a repair authorization. Legacy callers still consume
+    ``ArtifactQualityEvidence.errors`` while newer gates can rely on ``issues``
+    instead of reparsing human-readable strings.
+    """
+
+    code: str
+    message: str
+    path: str | None = None
+    severity: str = "error"
+    source: str = "artifact_quality"
+    metadata: Mapping[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "message": self.message,
+            "path": self.path,
+            "severity": self.severity,
+            "source": self.source,
+            "metadata": dict(self.metadata or {}),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ArtifactQualityEvidence:
     """Structured quality evidence used by audit, AGI, and repair planning."""
 
     errors: tuple[str, ...] = ()
+    issues: tuple[ArtifactQualityIssue, ...] = ()
     scanned_relative_paths: tuple[str, ...] = ()
     cross_artifact_issues: tuple[CrossArtifactConsistencyIssue, ...] = ()
     cross_artifact_repair_plans: tuple[CrossArtifactRepairPlan, ...] = ()
@@ -382,6 +410,7 @@ class ArtifactQualityEvidence:
     def to_dict(self) -> dict[str, Any]:
         return {
             "errors": list(self.errors),
+            "issues": [issue.to_dict() for issue in self.issues],
             "scanned_relative_paths": list(self.scanned_relative_paths),
             "cross_artifact_issues": [issue.to_dict() for issue in self.cross_artifact_issues],
             "cross_artifact_repair_plans": [plan.to_dict() for plan in self.cross_artifact_repair_plans],
@@ -389,6 +418,97 @@ class ArtifactQualityEvidence:
             if self.contract_amendment_request is not None
             else None,
         }
+
+
+_ARTIFACT_QUALITY_ERROR_PREFIX = "Artifact quality scan failed:"
+_ARTIFACT_QUALITY_PATH_EXTENSIONS = (
+    ".cjs",
+    ".css",
+    ".go",
+    ".html",
+    ".htm",
+    ".java",
+    ".js",
+    ".jsx",
+    ".json",
+    ".mjs",
+    ".py",
+    ".rs",
+    ".ts",
+    ".tsx",
+)
+_ARTIFACT_QUALITY_QUOTED_PATH_RE = re.compile(r"['\"](?P<path>[^'\"]+\.[A-Za-z0-9]+)['\"]")
+_ARTIFACT_QUALITY_IN_PATH_RE = re.compile(r"\bin\s+(?P<path>[^\s:]+(?:\.[A-Za-z0-9]+))(?::|$|\s)")
+
+
+def _artifact_quality_issue_code(message: str) -> str:
+    normalized = message.lower()
+    if "declared target file" in normalized and "missing" in normalized:
+        return "declared_target_missing"
+    if "unresolved import symbol" in normalized:
+        return "unresolved_import_symbol"
+    if "unresolved relative import" in normalized:
+        return "unresolved_relative_import"
+    if "typescript project typecheck failed" in normalized:
+        return "typescript_project_typecheck_failed"
+    if "syntax error" in normalized or "invalid json" in normalized:
+        return "syntax_error"
+    if "npm package manifest" in normalized:
+        return "npm_manifest_invalid"
+    if "patch residue" in normalized:
+        return "patch_residue"
+    if "tool execution receipt contamination" in normalized:
+        return "tool_receipt_contamination"
+    if "source narration contamination" in normalized:
+        return "source_narration_contamination"
+    slug = re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
+    return slug[:80] or "artifact_quality_error"
+
+
+def _artifact_quality_issue_path(message: str) -> str | None:
+    for regex in (_ARTIFACT_QUALITY_QUOTED_PATH_RE, _ARTIFACT_QUALITY_IN_PATH_RE):
+        match = regex.search(message)
+        if not match:
+            continue
+        path = str(match.group("path") or "").strip().replace("\\", "/")
+        if path.endswith(_ARTIFACT_QUALITY_PATH_EXTENSIONS):
+            return path
+    return None
+
+
+def _artifact_quality_issue_from_error(error: str) -> ArtifactQualityIssue:
+    text = str(error or "").strip()
+    message = text
+    if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
+        message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    return ArtifactQualityIssue(
+        code=_artifact_quality_issue_code(message),
+        message=message,
+        path=_artifact_quality_issue_path(message),
+    )
+
+
+def _artifact_quality_issues_from_errors(errors: Iterable[str]) -> tuple[ArtifactQualityIssue, ...]:
+    return tuple(_artifact_quality_issue_from_error(error) for error in errors if str(error or "").strip())
+
+
+def _artifact_quality_evidence(
+    *,
+    errors: Iterable[str] = (),
+    scanned_relative_paths: Iterable[str] = (),
+    cross_artifact_issues: Iterable[CrossArtifactConsistencyIssue] = (),
+    cross_artifact_repair_plans: Iterable[CrossArtifactRepairPlan] = (),
+    contract_amendment_request: ContractAmendmentRequest | None = None,
+) -> ArtifactQualityEvidence:
+    deduped_errors = tuple(dict.fromkeys(str(error).strip() for error in errors if str(error or "").strip()))
+    return ArtifactQualityEvidence(
+        errors=deduped_errors,
+        issues=_artifact_quality_issues_from_errors(deduped_errors),
+        scanned_relative_paths=tuple(scanned_relative_paths),
+        cross_artifact_issues=tuple(cross_artifact_issues),
+        cross_artifact_repair_plans=tuple(cross_artifact_repair_plans),
+        contract_amendment_request=contract_amendment_request,
+    )
 
 
 def scan_workspace_artifact_quality(
@@ -419,9 +539,9 @@ def scan_workspace_artifact_quality_evidence(
     try:
         root_full = Path(workspace_full).resolve()
     except (OSError, RuntimeError, ValueError):
-        return ArtifactQualityEvidence(errors=("Artifact quality scan failed: workspace path cannot be resolved",))
+        return _artifact_quality_evidence(errors=("Artifact quality scan failed: workspace path cannot be resolved",))
     if not root_full.exists() or not root_full.is_dir():
-        return ArtifactQualityEvidence(errors=("Artifact quality scan failed: workspace path does not exist",))
+        return _artifact_quality_evidence(errors=("Artifact quality scan failed: workspace path does not exist",))
 
     errors: list[str] = []
     scanned_relative_paths: list[str] = []
@@ -439,8 +559,8 @@ def scan_workspace_artifact_quality_evidence(
         )
         for full_path in paths:
             if len(errors) >= 50:
-                return ArtifactQualityEvidence(
-                    errors=tuple(dict.fromkeys(errors)),
+                return _artifact_quality_evidence(
+                    errors=errors,
                     scanned_relative_paths=tuple(scanned_relative_paths),
                 )
             relative_path = full_path.relative_to(root_full).as_posix()
@@ -467,12 +587,12 @@ def scan_workspace_artifact_quality_evidence(
                 )
             )
     except (OSError, RuntimeError, ValueError) as exc:
-        return ArtifactQualityEvidence(errors=(f"Artifact quality scan failed: {exc}",))
-    return ArtifactQualityEvidence(
-        errors=tuple(dict.fromkeys(errors)),
-        scanned_relative_paths=tuple(scanned_relative_paths),
+        return _artifact_quality_evidence(errors=(f"Artifact quality scan failed: {exc}",))
+    return _artifact_quality_evidence(
+        errors=errors,
+        scanned_relative_paths=scanned_relative_paths,
         cross_artifact_issues=cross_artifact_issues,
-        cross_artifact_repair_plans=tuple(plan_cross_artifact_repairs(cross_artifact_issues)),
+        cross_artifact_repair_plans=plan_cross_artifact_repairs(cross_artifact_issues),
         contract_amendment_request=build_contract_amendment_request(
             task_id=_artifact_quality_task_id(task_id=task_id, interface_contract=interface_contract),
             issues=cross_artifact_issues,
