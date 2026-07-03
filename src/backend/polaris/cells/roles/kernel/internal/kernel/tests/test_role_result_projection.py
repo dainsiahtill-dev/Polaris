@@ -117,6 +117,28 @@ def test_role_result_metadata_projects_tool_lifecycle_and_derived_tool_facts() -
     assert metadata["native_tool_call_names"] == ["write_file", "execute_command"]
 
 
+def test_role_result_metadata_projects_canonical_lifecycle_from_plural_receipts() -> None:
+    profile = SimpleNamespace(provider_id="", model="")
+    lifecycle = {
+        "schema_version": "tool_call_lifecycle_receipt.v1",
+        "native_tool_call_envelope_refs": [
+            {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
+        ],
+    }
+
+    metadata = role_result_metadata_from_profile(
+        profile=profile,
+        llm_response_metadata={"tool_call_lifecycle_receipts": [lifecycle]},
+    )
+
+    assert metadata["tool_call_lifecycle_receipts"] == [lifecycle]
+    assert metadata["tool_call_lifecycle_receipt"]["schema_version"] == "tool_call_lifecycle_receipt.v1"
+    assert metadata["tool_call_lifecycle_receipt"]["native_tool_calls_count"] == 1
+    assert metadata["tool_call_lifecycle_receipt"]["dispatch_status"] == "dropped"
+    assert metadata["native_tool_calls_count"] == 1
+    assert metadata["native_tool_call_names"] == ["write_file"]
+
+
 def test_role_result_metadata_uses_monitoring_context_audit_when_not_already_set() -> None:
     profile = SimpleNamespace(provider_id="", model="")
 

@@ -152,6 +152,12 @@ def _project_canonical_tool_lifecycle_receipt(metadata: dict[str, Any]) -> None:
         if isinstance(raw, dict):
             metadata["tool_call_lifecycle_receipt"] = normalize_tool_call_lifecycle_receipt(raw)
             return
+    receipt_rows = metadata.get("tool_call_lifecycle_receipts")
+    if isinstance(receipt_rows, (list, tuple)):
+        for raw in receipt_rows:
+            if isinstance(raw, dict):
+                metadata["tool_call_lifecycle_receipt"] = normalize_tool_call_lifecycle_receipt(raw)
+                return
 
 
 def role_turn_error_result(
