@@ -11975,6 +11975,69 @@ def test_receipt_summary_accepts_typed_artifact_quality_issues() -> None:
     assert summary["coverage_report"]["items"][0]["diagnostic_code"] == "typescript_ts2304"
 
 
+def test_public_summary_passes_typed_issues_as_repair_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    typed_issue = {
+        "source": "artifact_quality",
+        "code": "typescript_ts2304",
+        "message": "Cannot find name 'Widget'.",
+        "path": "src/app.ts",
+        "metadata": {
+            "raw": "src/app.ts(1,14): error TS2304: Cannot find name 'Widget'.",
+            "line": 1,
+            "column": 14,
+        },
+    }
+    captured: dict[str, object] = {}
+
+    def fake_build_repair_kernel_result_summary(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        raw_diagnostics = kwargs.get("repair_diagnostics")
+        assert isinstance(raw_diagnostics, tuple)
+        return {
+            "version": 1,
+            "stage": kwargs.get("stage"),
+            "mode": kwargs.get("mode"),
+            "authoritative": False,
+            "requires_revalidation": False,
+            "pending_revalidation_count": 0,
+            "receipts_with_revalidation": 0,
+            "revalidation_coverage": {},
+            "receipt_count": 0,
+            "receipts": [],
+            "receipt_context": {},
+            "coverage_report": {
+                "total_diagnostics": len(raw_diagnostics),
+            },
+            "dark_launch_comparison": {},
+        }
+
+    monkeypatch.setattr(
+        runtime_public_service,
+        "_build_repair_kernel_result_summary",
+        fake_build_repair_kernel_result_summary,
+    )
+
+    result = project_director_repair_kernel_summary(
+        ProjectDirectorRepairKernelSummaryV1(
+            stage="quality",
+            mode="commit",
+            artifact_quality_errors=(),
+            artifact_quality_issues=(typed_issue,),
+            tool_results=(),
+        )
+    )
+
+    assert result.summary["coverage_report"]["total_diagnostics"] == 1
+    assert captured["artifact_quality_errors"] == []
+    repair_diagnostics = captured["repair_diagnostics"]
+    assert isinstance(repair_diagnostics, tuple)
+    assert repair_diagnostics[0].code == "typescript_ts2304"
+    assert repair_diagnostics[0].path == "src/app.ts"
+    assert repair_diagnostics[0].metadata["line"] == 1
+
+
 def test_receipt_summary_preserves_embedded_runtime_kernel_receipt_identity() -> None:
     summary = build_director_repair_kernel_summary(
         stage="quality",
