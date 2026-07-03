@@ -96,7 +96,7 @@ class TestGetAvailableTools:
     def test_non_ts_dependent_preserved(self) -> None:
         """Non-TS-dependent tools are preserved when unavailable."""
         ts_unavailable = TreeSitterAvailability(available=False, reason="import_error")
-        non_ts_dependent = ["glob", "repo_tree", "repo_read_slice", "precision_edit"]
+        non_ts_dependent = ["glob", "repo_tree", "repo_read_slice", "edit_blocks"]
         result = get_available_tools(non_ts_dependent, ts_unavailable)
         assert result == non_ts_dependent
 
