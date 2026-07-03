@@ -1807,7 +1807,9 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
             monkeypatch.setattr(module, helper_name, fail_if_legacy_called)
 
     runtime_calls: list[dict[str, Any]] = []
-    sentinel_verifier = object()
+
+    def sentinel_verifier(request: Any) -> Any:
+        raise AssertionError("sentinel verifier must not be invoked")
 
     def fake_runtime_bridge(
         adapter: Any,
@@ -2068,6 +2070,116 @@ def test_materialization_target_runtime_skips_out_of_scope_runtime_allowed_paths
 
     assert results == []
     assert runtime_calls == []
+
+
+def test_materialization_target_runtime_workspace_level_invocation_keeps_multi_file_plan(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """Factory workspace-quality invocations keep the full runtime-planned multi-file repair."""
+
+    runtime_calls: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(
+        materialization_quality_callback_ports,
+        "_materialization_runtime_source_tools_for_step",
+        lambda step_id: (
+            ("deterministic_javascript_esm_commonjs_entrypoint_repair",)
+            if step_id == "materialization.target_runtime"
+            else ()
+        ),
+    )
+    monkeypatch.setattr(
+        materialization_quality_callback_ports,
+        "_collect_materialization_target_runtime_base_files",
+        lambda *args, **kwargs: {
+            "package.json": '{"type":"module","main":"src/index.js"}\n',
+            "src/index.js": 'const Note = require("./models/Note");\n',
+            "src/models/Note.js": "export class Note {}\n",
+        },
+    )
+    monkeypatch.setattr(
+        materialization_quality_callback_ports,
+        "_materialization_allowed_paths_from_runtime_public_plan",
+        lambda **kwargs: ("package.json", "src/index.js", "src/models/Note.js"),
+    )
+
+    def fake_runtime_bridge(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        del args
+        runtime_calls.append(dict(kwargs))
+        return [{"tool": "edit_file", "success": True}]
+
+    monkeypatch.setattr(
+        materialization_quality_callback_ports,
+        "run_runtime_repair_with_director_tools",
+        fake_runtime_bridge,
+    )
+
+    results = materialization_quality_callback_ports._run_materialization_target_runtime(
+        _FakeAdapter(tmp_path),
+        task={
+            "target_files": ["src/index.js"],
+            "metadata": {"target_files": ["src/index.js"], "delivery_mode": "materialize_changes"},
+        },
+        task_id="factory-quality-gate:run-esm-cjs",
+        artifact_quality_errors=["ReferenceError: require is not defined in ES module scope"],
+    )
+
+    assert results == [{"tool": "edit_file", "success": True}]
+    assert runtime_calls[0]["allowed_paths"] == ("package.json", "src/index.js", "src/models/Note.js")
+
+
+def test_materialization_target_runtime_scope_intersection_normalizes_path_forms(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """``./`` prefixes and backslash separators must not defeat the task-scope intersection."""
+
+    runtime_calls: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(
+        materialization_quality_callback_ports,
+        "_materialization_runtime_source_tools_for_step",
+        lambda step_id: (
+            ("deterministic_javascript_test_missing_target_repair",)
+            if step_id == "materialization.target_runtime"
+            else ()
+        ),
+    )
+    monkeypatch.setattr(
+        materialization_quality_callback_ports,
+        "_collect_materialization_target_runtime_base_files",
+        lambda *args, **kwargs: {
+            "package.json": '{"scripts":{"test":"node --test tests/product.test.js"}}\n',
+            "src/engine/rules.js": "export const rules = [];\n",
+        },
+    )
+    monkeypatch.setattr(
+        materialization_quality_callback_ports,
+        "_materialization_allowed_paths_from_runtime_public_plan",
+        lambda **kwargs: ("./src/engine/rules.js", "tests\\product.test.js"),
+    )
+
+    def fake_runtime_bridge(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        del args
+        runtime_calls.append(dict(kwargs))
+        return [{"tool": "edit_file", "success": True}]
+
+    monkeypatch.setattr(
+        materialization_quality_callback_ports,
+        "run_runtime_repair_with_director_tools",
+        fake_runtime_bridge,
+    )
+
+    results = materialization_quality_callback_ports._run_materialization_target_runtime(
+        _FakeAdapter(tmp_path),
+        task={"target_files": ["src\\engine\\rules.js"]},
+        task_id="TASK-1-source-core",
+        artifact_quality_errors=["workspace validation command failed: missing tests/product.test.js"],
+    )
+
+    assert results == [{"tool": "edit_file", "success": True}]
+    assert runtime_calls[0]["allowed_paths"] == ("src/engine/rules.js",)
 
 
 def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(

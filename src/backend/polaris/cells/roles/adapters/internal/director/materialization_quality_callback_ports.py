@@ -727,20 +727,82 @@ def _materialization_task_candidate_paths(
     return tuple(dict.fromkeys(paths))
 
 
+_FACTORY_WORKSPACE_QUALITY_TASK_ID_PREFIX = "factory-quality-gate:"
+
+
+def _normalize_materialization_scope_path(path: Any) -> str:
+    """Normalize one repair path for scope comparison (separators, ``./`` prefix)."""
+
+    token = str(path or "").strip().replace("\\", "/")
+    while token.startswith("./"):
+        token = token[2:]
+    while "//" in token:
+        token = token.replace("//", "/")
+    return token
+
+
+def _materialization_write_scope_is_workspace_level(
+    task: Mapping[str, Any] | None,
+    *,
+    task_id: str,
+) -> bool:
+    """Return true for workspace-level quality invocations without a current-task write scope.
+
+    The factory workspace quality boundary repairs with project/workspace
+    authority: its ``task`` payload aggregates declared project delivery
+    targets (or diagnostic-derived paths), not one Director task's write
+    scope. Constraining a runtime repair plan to that aggregate strangles
+    legitimate multi-file repairs (e.g. an ESM/CommonJS entrypoint repair
+    spanning ``package.json`` plus entry and module files). Workspace-level
+    invocations are identified by the factory quality-gate task-id namespace
+    or the factory workspace-quality metadata payload; the runtime plan
+    projection, workspace containment, and the Director policy gate remain
+    the write authority on that path.
+    """
+
+    if str(task_id or "").startswith(_FACTORY_WORKSPACE_QUALITY_TASK_ID_PREFIX):
+        return True
+    if not isinstance(task, Mapping):
+        return False
+    metadata = task.get("metadata")
+    return isinstance(metadata, Mapping) and isinstance(metadata.get("factory_workspace_quality_repair"), Mapping)
+
+
 def _materialization_allowed_paths_in_current_task_scope(
     runtime_allowed_paths: Sequence[str],
     *,
     task: Mapping[str, Any] | None,
     allowed_suffixes: tuple[str, ...],
+    task_id: str = "",
 ) -> tuple[str, ...]:
-    """Constrain runtime repair writes to the current task's materialization scope."""
+    """Constrain runtime repair writes to the current task's materialization scope.
 
-    task_allowed_paths = _materialization_task_candidate_paths(task, allowed_suffixes=allowed_suffixes)
-    runtime_allowed = tuple(dict.fromkeys(str(path or "").strip().replace("\\", "/") for path in runtime_allowed_paths))
-    runtime_allowed = tuple(path for path in runtime_allowed if path)
-    if not task_allowed_paths:
+    Task-scoped invocations (a current Director task with declared target
+    files) keep the write-scope protection: runtime plan paths outside the
+    task's declared targets are deferred, and an empty intersection skips the
+    repair. Workspace-level invocations (factory workspace quality boundary)
+    and tasks without declared targets keep the full runtime-planned path set.
+    """
+
+    runtime_allowed = tuple(
+        dict.fromkeys(
+            normalized
+            for normalized in (_normalize_materialization_scope_path(path) for path in runtime_allowed_paths)
+            if normalized
+        )
+    )
+    if _materialization_write_scope_is_workspace_level(task, task_id=task_id):
         return runtime_allowed
-    task_allowed = set(task_allowed_paths)
+    task_allowed = {
+        normalized
+        for normalized in (
+            _normalize_materialization_scope_path(path)
+            for path in _materialization_task_candidate_paths(task, allowed_suffixes=allowed_suffixes)
+        )
+        if normalized
+    }
+    if not task_allowed:
+        return runtime_allowed
     return tuple(path for path in runtime_allowed if path in task_allowed)
 
 
@@ -823,6 +885,7 @@ def _run_materialization_target_runtime(
             runtime_allowed_paths,
             task=task,
             allowed_suffixes=_MATERIALIZATION_TARGET_RUNTIME_SUFFIXES,
+            task_id=task_id,
         )
         if not allowed_paths:
             continue
