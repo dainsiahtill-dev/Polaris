@@ -1015,6 +1015,10 @@ def _ownership_handoff_requests_from_repair_payload(repair: dict[str, Any]) -> l
     scope_filter: dict[str, Any] = scope_filter_raw if isinstance(scope_filter_raw, dict) else {}
     requests_raw = scope_filter.get("ownership_handoff_requests")
     if not isinstance(requests_raw, list):
+        scope_authority_raw = scope_filter.get("scope_authority")
+        scope_authority: dict[str, Any] = scope_authority_raw if isinstance(scope_authority_raw, dict) else {}
+        requests_raw = scope_authority.get("ownership_handoff_requests")
+    if not isinstance(requests_raw, list):
         return []
     return [dict(item) for item in requests_raw if isinstance(item, dict) and item]
 
@@ -1033,7 +1037,13 @@ def _owned_handoff_requests_from_repair_payload(repair: dict[str, Any]) -> list[
 
 def _task_record_external_tokens(record: dict[str, Any]) -> set[str]:
     tokens: set[str] = set()
-    for value in (record.get("id"), record.get("task_id")):
+    for value in (
+        record.get("id"),
+        record.get("task_id"),
+        record.get("external_task_id"),
+        record.get("pm_task_id"),
+        record.get("source_task_id"),
+    ):
         token = str(value or "").strip()
         if token:
             tokens.add(token)

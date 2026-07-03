@@ -789,6 +789,61 @@ def test_quality_gate_task_boundary_validation_routes_owner_handoff_to_owner_tas
     assert rows["PM-0001-2-step-3"]["status"] == "failed"
 
 
+def test_quality_gate_task_boundary_validation_routes_scope_authority_nested_handoff(
+    temp_workspace: Path,
+) -> None:
+    task_board = TaskRuntimeService(str(temp_workspace))
+    owner_row = task_board.ensure_task_row(
+        external_task_id="PM-0001-1-S4",
+        subject="Owner creates src/index.js",
+        metadata={"external_task_id": "PM-0001-1-S4"},
+        priority=1,
+    )
+    task_board.update(owner_row["id"], status="completed", assignee="director")
+
+    handoff_request = {
+        "schema_version": "file-ownership-handoff-request/1",
+        "target_file": "src/index.js",
+        "requesting_task_id": "PM-0001-2-step-3",
+        "reason": "quality_repair_targets_outside_current_task_target_files",
+        "owner_step_id": "PM-0001-1-S4",
+        "owner_parent": "PM-0001-1",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+        "status": "owner_found",
+    }
+    target = Path(resolve_logical_path(str(temp_workspace), "workspace/qa/latest.workspace-validation.json"))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(
+            {
+                "passed": False,
+                "repair": {
+                    "success_reason": "repair_targets_outside_current_task_target_files",
+                    "task_boundary_scope_filter": {
+                        "schema_version": "director.task_boundary.repair_scope_filter.v1",
+                        "reason": "quality_repair_targets_outside_current_task_target_files",
+                        "scope_authority": {
+                            "schema_version": "scope-authority-decision/1",
+                            "ownership_handoff_requests": [handoff_request],
+                        },
+                    },
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    bridge_summary = factory_router_module._apply_quality_gate_task_boundary_rework_requests(str(temp_workspace))
+
+    assert bridge_summary["requested"] is True
+    assert bridge_summary["reopened_count"] == 1
+    assert bridge_summary["tasks"][0]["external_task_id"] == "PM-0001-1-S4"
+
+
 def test_quality_gate_task_boundary_validation_reports_unmatched_owner_handoff(temp_workspace: Path) -> None:
     task_board = TaskRuntimeService(str(temp_workspace))
     current_row = task_board.ensure_task_row(
@@ -849,6 +904,19 @@ def test_quality_gate_task_boundary_validation_reports_unmatched_owner_handoff(t
         for row in TaskRuntimeService(str(temp_workspace)).list_task_rows()
     }
     assert rows["PM-0001-2-step-3"]["status"] == "failed"
+
+
+def test_task_record_external_tokens_include_top_level_projection_fields() -> None:
+    tokens = factory_router_module._task_record_external_tokens(
+        {
+            "id": 12,
+            "external_task_id": "PM-0001-1-S4",
+            "source_task_id": "source-step",
+            "metadata": {"pm_task_id": "PM-0001"},
+        }
+    )
+
+    assert {"12", "PM-0001-1-S4", "source-step", "PM-0001"} <= tokens
 
 
 def test_quality_gate_task_boundary_validation_reports_unknown_owner_handoff(temp_workspace: Path) -> None:
