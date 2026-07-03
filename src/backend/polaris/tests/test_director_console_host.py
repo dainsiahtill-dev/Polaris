@@ -499,10 +499,11 @@ def test_director_console_host_degrades_when_task_runtime_unavailable() -> None:
 
 def test_director_console_package_exports_canonical_host() -> None:
     from polaris.delivery.cli import director as director_package
-    from polaris.delivery.cli.terminal import PolarisLazyClaude as _NewPolarisLazyClaude
+    from polaris.delivery.cli.terminal import PolarisRoleConsole
 
     assert director_package.DirectorConsoleHost is DirectorConsoleHost
-    assert director_package.PolarisLazyClaude is _NewPolarisLazyClaude
+    assert hasattr(PolarisRoleConsole, "run")
+    assert not hasattr(director_package, "PolarisLazyClaude")
 
 
 def test_director_console_host_constructor_exposes_runtime_service_only() -> None:

@@ -1074,10 +1074,6 @@ class PolarisRoleConsole:
         )
 
 
-class PolarisLazyClaude(PolarisRoleConsole):
-    """Legacy class name kept for backward compatibility."""
-
-
 def _run_batch_mode(
     host: RoleConsoleHost,
     *,
@@ -1438,7 +1434,6 @@ def run_director_console(
 
 
 __all__ = [
-    "PolarisLazyClaude",
     "PolarisRoleConsole",
     "_acknowledge_super_claims",
     "_claim_super_tasks_from_market",

@@ -67,7 +67,6 @@ from polaris.delivery.cli.terminal.commands import (
 # Console / entry points / SUPER mode
 from polaris.delivery.cli.terminal.console import (
     SUPER_ROLE as SUPER_ROLE,
-    PolarisLazyClaude as PolarisLazyClaude,
     PolarisRoleConsole as PolarisRoleConsole,
     _acknowledge_super_claims as _acknowledge_super_claims,
     _claim_super_tasks_from_market as _claim_super_tasks_from_market,
@@ -160,7 +159,6 @@ __all__ = [
     "_OUTPUT_FORMAT_MODES",
     "_PROMPT_STYLES",
     "_SPINNER_FRAMES",
-    "PolarisLazyClaude",
     "PolarisRoleConsole",
     "_ConsoleRenderState",
     "_PromptRenderer",
