@@ -1,4 +1,4 @@
-"""State-First Context OS runtime package.
+"""State-First Context OS runtime package root.
 
 This package splits the monolithic runtime into focused modules:
 - engine: Main runtime execution engine (StateFirstContextOS)
@@ -6,29 +6,14 @@ This package splits the monolithic runtime into focused modules:
 - ports: Text-to-structure port helpers
 - scheduler: Task scheduling and queue management
 
-All public symbols are re-exported here for backward compatibility.
+The package root exposes only the public runtime engine. Internal helper
+constants and parsing functions stay in their owning submodules.
 """
 
 from __future__ import annotations
 
 from .engine import StateFirstContextOS
-from .ports import (
-    MAX_INLINE_CHARS,
-    MAX_STUB_CHARS,
-    _decision_kind,
-    _extract_assistant_followup_action,
-    _extract_hard_constraints,
-    _is_affirmative_response,
-    _is_negative_response,
-)
 
 __all__ = [
-    "MAX_INLINE_CHARS",
-    "MAX_STUB_CHARS",
     "StateFirstContextOS",
-    "_decision_kind",
-    "_extract_assistant_followup_action",
-    "_extract_hard_constraints",
-    "_is_affirmative_response",
-    "_is_negative_response",
 ]
