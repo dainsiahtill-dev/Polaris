@@ -65,6 +65,11 @@ Typed issues are evidence, not repair authorization. Repair still flows through
   issues for HTML module scripts that point at TypeScript source files with
   `source="html_module_script_scanner"`, while the legacy
   `_scan_html_typescript_module_scripts()` API remains a string projection.
+- `_scan_package_module_type_mismatch_evidence()` now owns direct typed issues
+  for `package.json` declaring `type=module` while workspace JavaScript uses
+  CommonJS runtime syntax, with `source="package_module_type_scanner"`. The
+  legacy `_scan_package_module_type_mismatch()` API remains a string
+  projection.
 
 ## 4. Verification
 

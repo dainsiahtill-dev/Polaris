@@ -1432,6 +1432,24 @@ def _package_manifest_quality_issue(error: str, relative_path: str) -> ArtifactQ
     )
 
 
+def _package_manifest_evidence_from_errors(
+    errors: list[str],
+    relative_path: str,
+    direct_issues: list[ArtifactQualityIssue] | None = None,
+) -> _FileArtifactQualityEvidence:
+    issues = list(direct_issues or [])
+    direct_issue_messages = {
+        str((issue.metadata or {}).get("raw") or issue.message).strip()
+        for issue in issues
+    }
+    issues.extend(
+        _package_manifest_quality_issue(error, relative_path)
+        for error in errors
+        if str(error or "").strip() not in direct_issue_messages
+    )
+    return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
+
+
 def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: str) -> _FileArtifactQualityEvidence:
     """Return package-manifest findings as legacy strings and direct typed issues."""
 
@@ -1442,6 +1460,7 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
     if not isinstance(payload, dict):
         return _FileArtifactQualityEvidence()
     errors: list[str] = []
+    issues: list[ArtifactQualityIssue] = []
     scripts = payload.get("scripts")
     if isinstance(scripts, dict):
         for reason in package_script_cycle_reasons(scripts):
@@ -1518,7 +1537,9 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
         errors.append(
             f"Artifact quality scan failed: npm package manifest contains Python runtime entrypoint in {relative_path}"
         )
-    errors.extend(_scan_package_module_type_mismatch(root_full, payload, relative_path))
+    module_type_evidence = _scan_package_module_type_mismatch_evidence(root_full, payload, relative_path)
+    errors.extend(module_type_evidence.errors)
+    issues.extend(module_type_evidence.issues)
     for section_name in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
         section = payload.get(section_name)
         if not isinstance(section, dict):
@@ -1530,14 +1551,8 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
                     "Artifact quality scan failed: npm package manifest declares "
                     f"Python package dependency {package_name!r} in {relative_path}"
                 )
-                return _FileArtifactQualityEvidence(
-                    errors=tuple(errors),
-                    issues=tuple(_package_manifest_quality_issue(error, relative_path) for error in errors),
-                )
-    return _FileArtifactQualityEvidence(
-        errors=tuple(errors),
-        issues=tuple(_package_manifest_quality_issue(error, relative_path) for error in errors),
-    )
+                return _package_manifest_evidence_from_errors(errors, relative_path, issues)
+    return _package_manifest_evidence_from_errors(errors, relative_path, issues)
 
 
 def _scan_npm_script_node_eval_syntax(tokens: list[str], script_name: str, relative_path: str) -> str:
@@ -1739,9 +1754,41 @@ def _directory_has_node_test_files(directory: Path) -> bool:
 
 
 def _scan_package_module_type_mismatch(root_full: Path, payload: dict[str, Any], relative_path: str) -> list[str]:
+    """Return legacy package module-type mismatch string findings."""
+
+    return list(_scan_package_module_type_mismatch_evidence(root_full, payload, relative_path).errors)
+
+
+def _package_module_type_mismatch_issue(error: str, relative_path: str, *, source_path: str) -> ArtifactQualityIssue:
+    message = str(error or "").strip()
+    if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
+        message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    return ArtifactQualityIssue(
+        code="package_module_type_commonjs_mismatch",
+        message=message,
+        path=relative_path,
+        source="package_module_type_scanner",
+        metadata={
+            "raw": str(error or "").strip(),
+            "manifest_path": relative_path,
+            "source_path": source_path,
+            "declared_type": "module",
+            "runtime_syntax": "commonjs",
+        },
+    )
+
+
+def _scan_package_module_type_mismatch_evidence(
+    root_full: Path,
+    payload: dict[str, Any],
+    relative_path: str,
+) -> _FileArtifactQualityEvidence:
+    """Return package module-type mismatch findings as strings and direct typed issues."""
+
     if str(payload.get("type") or "").strip().lower() != "module":
-        return []
+        return _FileArtifactQualityEvidence()
     errors: list[str] = []
+    issues: list[ArtifactQualityIssue] = []
     for candidate in _iter_workspace_relative_files(root_full):
         if Path(candidate).suffix.lower() not in {".js", ".jsx"}:
             continue
@@ -1751,12 +1798,14 @@ def _scan_package_module_type_mismatch(root_full: Path, payload: dict[str, Any],
         except OSError:
             continue
         if _COMMONJS_RUNTIME_TOKEN_RE.search(text):
-            errors.append(
+            error = (
                 "Artifact quality scan failed: JavaScript source "
                 f"{candidate} uses CommonJS runtime syntax; npm package manifest declares type=module but workspace "
                 f"JavaScript uses CommonJS runtime syntax in {relative_path}"
             )
-    return errors[:20]
+            errors.append(error)
+            issues.append(_package_module_type_mismatch_issue(error, relative_path, source_path=candidate))
+    return _FileArtifactQualityEvidence(errors=tuple(errors[:20]), issues=tuple(issues[:20]))
 
 
 def _scan_npm_script_missing_local_configs(

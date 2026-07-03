@@ -393,6 +393,32 @@ def test_artifact_quality_evidence_uses_direct_html_module_script_issue(tmp_path
     }
 
 
+def test_artifact_quality_evidence_uses_direct_package_module_type_issue(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "index.js").write_text("module.exports = { start: true };\n", encoding="utf-8")
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["package.json"])
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: JavaScript source src/index.js uses CommonJS runtime syntax; "
+        "npm package manifest declares type=module but workspace JavaScript uses CommonJS runtime syntax "
+        "in package.json",
+    )
+    assert len(evidence.issues) == 1
+    assert evidence.issues[0].code == "package_module_type_commonjs_mismatch"
+    assert evidence.issues[0].source == "package_module_type_scanner"
+    assert evidence.issues[0].path == "package.json"
+    assert evidence.issues[0].metadata == {
+        "raw": evidence.errors[0],
+        "manifest_path": "package.json",
+        "source_path": "src/index.js",
+        "declared_type": "module",
+        "runtime_syntax": "commonjs",
+    }
+
+
 def test_typescript_import_scanner_ignores_fixture_string_imports(tmp_path: Path) -> None:
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir(parents=True)
