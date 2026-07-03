@@ -32,7 +32,6 @@ from polaris.kernelone.shared.terminal import (
 )
 from polaris.kernelone.shared.text_utils import (
     FILE_BLOCK_RE,
-    FILE_BLOCK_REGEX,
     IGNORABLE_ERROR_PATTERNS,
     PATCH_FILE_BLOCK_RE,
     PATCH_FILE_SEARCH_REPLACE_RE,
@@ -66,7 +65,6 @@ __all__ = [
     "ANSI_ENABLED",
     "ANSI_RESET",
     "FILE_BLOCK_RE",
-    "FILE_BLOCK_REGEX",
     "IGNORABLE_ERROR_PATTERNS",
     "PATCH_FILE_BLOCK_RE",
     "PATCH_FILE_SEARCH_REPLACE_RE",

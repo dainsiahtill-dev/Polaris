@@ -12,7 +12,6 @@ from polaris.kernelone.shared import (
     ANSI_COLORS,
     ANSI_RESET,
     FILE_BLOCK_RE,
-    FILE_BLOCK_REGEX,
     RATE_LIMIT_SECONDS_RE,
     append_log,
     colorize,
@@ -149,10 +148,6 @@ class TestTextUtils:
         assert match is not None
         assert match.group(1) == "hello.py"
         assert 'print("ok")' in match.group(2)
-
-    def test_file_block_regex_alias(self) -> None:
-        """验证 FILE_BLOCK_REGEX 别名。"""
-        assert FILE_BLOCK_REGEX is FILE_BLOCK_RE
 
     def test_rate_limit_seconds_re(self) -> None:
         """验证速率限制正则。

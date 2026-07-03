@@ -23,8 +23,6 @@ RATE_LIMIT_EPOCH_RE: Final[re.Pattern[str]] = re.compile(r'resets_at\\":(\d+)', 
 
 FILE_BLOCK_RE: Final[re.Pattern[str]] = re.compile(r'<file path="([^"]+)">\n(.*?)\n</file>', re.DOTALL)
 
-FILE_BLOCK_REGEX: Final[re.Pattern[str]] = FILE_BLOCK_RE  # 向后兼容别名
-
 PATCH_FILE_SEARCH_REPLACE_RE: Final[re.Pattern[str]] = re.compile(
     r"PATCH_FILE\s+([^<\n]+)\s*\n<SEARCH>.*?</SEARCH>\s*\n<REPLACE>(.*?)</REPLACE>",
     re.DOTALL,
