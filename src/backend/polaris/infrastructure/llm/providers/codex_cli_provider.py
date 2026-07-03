@@ -17,7 +17,7 @@ from polaris.kernelone.llm.providers import (
     WorkingDirConfig,
 )
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, estimate_usage
-from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds
+from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 
 from .codex_cli_args import (
     _build_codex_exec_args,

@@ -5,21 +5,14 @@ import os
 import shutil
 import subprocess
 
+from polaris.kernelone.shared.text_utils import normalize_timeout_seconds, timeout_seconds_or_none
+
 logger = logging.getLogger(__name__)
 
 try:
     from polaris.kernelone.fs.encoding import build_utf8_env
 except ImportError:  # pragma: no cover - script-mode fallback
     from polaris.kernelone.fs.encoding import build_utf8_env  # type: ignore
-
-try:
-    from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds, timeout_seconds_or_none
-except ImportError:  # pragma: no cover - script-mode fallback
-    from polaris.kernelone.runtime.shared_types import (  # type: ignore
-        normalize_timeout_seconds,
-        timeout_seconds_or_none,
-    )
-
 
 def resolve_codex_path() -> str | None:
     def _prefer_windows_launcher(raw_path: str) -> str:

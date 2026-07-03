@@ -23,12 +23,12 @@ from polaris.kernelone.memory.integration import (
 )
 from polaris.kernelone.prompts.loader import current_profile, get_template, render_template
 from polaris.kernelone.prompts.meta_prompting import build_meta_prompting_appendix
-from polaris.kernelone.runtime.shared_types import strip_ansi
 from polaris.kernelone.runtime.usage_metrics import (
     TokenUsage,
     UsageContext,
     track_usage,
 )
+from polaris.kernelone.shared.text_utils import strip_ansi
 from polaris.kernelone.tool_execution.io_tools import (
     ensure_codex_available,
     ensure_ollama_available,

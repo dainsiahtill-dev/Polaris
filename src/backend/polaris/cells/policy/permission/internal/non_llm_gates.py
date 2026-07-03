@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from polaris.kernelone.runtime.shared_types import (
+from polaris.kernelone.shared.text_utils import (
     normalize_policy_decision,
     normalize_str_list as _normalize_list,
 )

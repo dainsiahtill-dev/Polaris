@@ -572,8 +572,8 @@ def run_pm_planning_iteration(
     context: dict[str, Any],
 ) -> tuple[int, dict[str, Any]]:
     from polaris.kernelone.events import emit_event, emit_llm_event
-    from polaris.kernelone.runtime.shared_types import strip_ansi
     from polaris.kernelone.runtime.usage_metrics import UsageContext
+    from polaris.kernelone.shared.text_utils import strip_ansi
     from polaris.kernelone.traceability.internal.safety import (
         safe_link,
         safe_register_node,
@@ -663,7 +663,7 @@ def run_pm_planning_iteration(
         if hasattr(state, "ollama_full"):
             state.ollama_full = pm_last_full
         if hasattr(state, "timeout"):
-            from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds
+            from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 
             state.timeout = normalize_timeout_seconds(
                 getattr(args, "timeout", None),

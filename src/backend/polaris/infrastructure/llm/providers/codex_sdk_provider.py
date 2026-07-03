@@ -13,7 +13,7 @@ from polaris.kernelone.llm.providers import (
     ValidationResult,
 )
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage, estimate_usage
-from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds
+from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 
 logger = logging.getLogger(__name__)
 

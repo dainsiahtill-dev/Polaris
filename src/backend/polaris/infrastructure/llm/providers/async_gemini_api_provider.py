@@ -30,7 +30,7 @@ from polaris.kernelone.llm.types import (
     Usage,
     estimate_usage,
 )
-from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds
+from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 
 from .async_base_provider import AsyncBaseProvider
 from .async_http_client import AsyncProviderHttpClient

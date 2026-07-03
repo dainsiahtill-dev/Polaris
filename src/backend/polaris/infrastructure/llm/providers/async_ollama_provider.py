@@ -31,7 +31,7 @@ from polaris.kernelone.llm.types import (
     Usage,
     estimate_usage,
 )
-from polaris.kernelone.runtime.shared_types import (
+from polaris.kernelone.shared.text_utils import (
     normalize_timeout_seconds,
 )
 

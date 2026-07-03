@@ -18,20 +18,20 @@ logger = logging.getLogger(__name__)
 
 def _truncate_text(text: str, max_chars: int) -> str:
     try:
-        from polaris.kernelone.runtime.shared_types import truncate_text as _impl
+        from polaris.kernelone.shared.text_utils import truncate_text as _impl
     except (RuntimeError, ValueError) as exc:
         logger.debug("Failed to import truncate_text, using fallback: %s", exc)
-        from polaris.kernelone.runtime.shared_types import truncate_text as _impl
+        from polaris.kernelone.shared.text_utils import truncate_text as _impl
 
     return _impl(text, max_chars or 800)
 
 
 def _compact_str(value: Any, max_chars: int) -> str:
     try:
-        from polaris.kernelone.runtime.shared_types import compact_str as _impl
+        from polaris.kernelone.shared.text_utils import compact_str as _impl
     except (RuntimeError, ValueError) as exc:
         logger.debug("Failed to import compact_str, using fallback: %s", exc)
-        from polaris.kernelone.runtime.shared_types import compact_str as _impl
+        from polaris.kernelone.shared.text_utils import compact_str as _impl
 
     return _impl(value, max_chars)
 

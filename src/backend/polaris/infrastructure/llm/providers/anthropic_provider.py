@@ -15,7 +15,7 @@ from polaris.kernelone.llm.providers import (
 from polaris.kernelone.llm.providers.stream_thinking_parser import StreamThinkingParser
 from polaris.kernelone.llm.response_parser import LLMResponseParser
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelListResult, Usage, estimate_usage
-from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds
+from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 
 from .http_utils import join_url, merge_headers, normalize_base_url
 from .provider_helpers import (

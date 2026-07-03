@@ -15,7 +15,7 @@ from polaris.kernelone.llm.providers import (
     ValidationResult,
 )
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage, estimate_usage
-from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds, timeout_seconds_or_none
+from polaris.kernelone.shared.text_utils import normalize_timeout_seconds, timeout_seconds_or_none
 
 from .http_utils import join_url, normalize_base_url
 from .provider_helpers import build_chat_messages_payload, get_stream_session, iter_data_line_payloads

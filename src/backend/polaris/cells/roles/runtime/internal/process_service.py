@@ -27,7 +27,7 @@ from polaris.kernelone.process import (
     terminate_pid as _kernel_terminate_pid,
 )
 from polaris.kernelone.runtime.defaults import DEFAULT_MODEL, DEFAULT_PM_LOG, DEFAULT_WORKSPACE
-from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds
+from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 from polaris.kernelone.storage import resolve_storage_roots
 from polaris.kernelone.storage.io_paths import normalize_artifact_rel_path
 

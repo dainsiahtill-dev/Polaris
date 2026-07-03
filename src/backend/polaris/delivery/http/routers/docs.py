@@ -41,7 +41,7 @@ from polaris.delivery.http.schemas import (
 from polaris.infrastructure.messaging.nats.nats_types import create_runtime_event
 from polaris.kernelone.events import emit_event
 from polaris.kernelone.llm import config_store as llm_config
-from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds
+from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
 from .jetstream_utils import publish_to_jetstream

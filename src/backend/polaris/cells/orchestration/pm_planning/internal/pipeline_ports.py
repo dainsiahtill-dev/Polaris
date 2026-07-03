@@ -1148,7 +1148,7 @@ def normalize_pm_payload(
             if scope_mode == "exact_files" and not target_files:
                 scope_mode = "module"
 
-            from polaris.kernelone.runtime.shared_types import normalize_str_list
+            from polaris.kernelone.shared.text_utils import normalize_str_list
 
             acceptance = normalize_str_list(item.get("acceptance_criteria") or item.get("acceptance"))
             acceptance = _normalize_acceptance_items(acceptance)
@@ -1264,7 +1264,7 @@ def normalize_path_list(value: Any) -> list[str]:
     Mirrors ``polaris.delivery.cli.pm.utils.normalize_path_list``.
     Delegated to KernelOne shared_types for consistency.
     """
-    from polaris.kernelone.runtime.shared_types import normalize_path_list as _impl
+    from polaris.kernelone.shared.path_utils import normalize_path_list as _impl
 
     return _impl(value)
 
@@ -1300,7 +1300,7 @@ def _extract_json_from_llm_output(raw_output: str) -> dict[str, Any] | None:
     if not raw_output:
         return None
     try:
-        from polaris.kernelone.runtime.shared_types import strip_ansi
+        from polaris.kernelone.shared.text_utils import strip_ansi
     except ImportError:
         # Fallback implementation with matching signature
         def strip_ansi(text: str) -> str:

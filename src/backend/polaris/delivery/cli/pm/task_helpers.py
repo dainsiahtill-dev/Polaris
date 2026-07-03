@@ -5,7 +5,7 @@ from typing import Any
 
 from polaris.delivery.cli.pm.config import SUPPORTED_ASSIGNEES
 from polaris.delivery.cli.pm.utils import _normalize_scope_list, normalize_path_list, normalize_str_list
-from polaris.kernelone.runtime.shared_types import normalize_path
+from polaris.kernelone.shared.path_utils import normalize_path
 
 
 def normalize_priority(value: Any, fallback: int) -> int:

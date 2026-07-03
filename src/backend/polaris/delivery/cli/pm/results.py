@@ -14,7 +14,7 @@ from polaris.delivery.cli.director_result_matcher import (
 )
 from polaris.delivery.cli.pm.utils import compact_text, read_json_file
 from polaris.domain.director.lifecycle import read as read_director_lifecycle
-from polaris.kernelone.runtime.shared_types import normalize_path_list
+from polaris.kernelone.shared.path_utils import normalize_path_list
 
 DIRECTOR_LIFECYCLE_FILE = "DIRECTOR_LIFECYCLE.json"
 

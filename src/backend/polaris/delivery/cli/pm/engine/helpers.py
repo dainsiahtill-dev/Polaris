@@ -14,7 +14,7 @@ from typing import Any
 from polaris.delivery.cli.pm.task_helpers import normalize_priority
 from polaris.delivery.cli.pm.tasks import normalize_task_status
 from polaris.delivery.cli.pm.utils import normalize_path_list, normalize_str_list
-from polaris.kernelone.runtime.shared_types import normalize_path
+from polaris.kernelone.shared.path_utils import normalize_path
 
 logger = logging.getLogger(__name__)
 

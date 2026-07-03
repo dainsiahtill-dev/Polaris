@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from polaris.kernelone.runtime.shared_types import normalize_path_list
+from polaris.kernelone.shared.path_utils import normalize_path_list
 
 
 @dataclass

@@ -4,10 +4,12 @@ import json
 import os
 from typing import Any
 
-from polaris.kernelone.runtime.shared_types import (
+from polaris.kernelone.shared.path_utils import (
     is_docs_path as _is_docs_path_impl,
     normalize_path as _normalize_path_impl,
     normalize_path_list as _normalize_path_list_impl,
+)
+from polaris.kernelone.shared.text_utils import (
     normalize_policy_decision as _normalize_policy_decision_impl,
     normalize_str_list as _normalize_str_list_impl,
 )

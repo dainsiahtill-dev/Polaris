@@ -29,7 +29,7 @@ def _emit_audit_internal_failure(error_type: str, error_details: dict) -> None:
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
-    from polaris.kernelone.runtime.shared_types import safe_int as _impl
+    from polaris.kernelone.shared.text_utils import safe_int as _impl
 
     return _impl(value, default)
 
@@ -235,9 +235,8 @@ def build_failure_hops(
 
     failure_event = failed_events[-1]
     failure_seq = _safe_int(failure_event.get("seq"), 0)
-    refs = failure_event.get("refs")
-    if not _is_dict(refs):
-        refs = {}
+    raw_refs = failure_event.get("refs")
+    refs: dict[str, Any] = raw_refs if isinstance(raw_refs, dict) else {}
 
     related_action_seq: int | None = None
     related_action_phase = ""
@@ -253,16 +252,16 @@ def build_failure_hops(
             continue
         related_action_seq = seq
         action_refs = event.get("refs")
-        if _is_dict(action_refs):
+        if isinstance(action_refs, dict):
             related_action_phase = str(action_refs.get("phase") or "")
         break
 
     payload["has_failure"] = True
     payload["failure_event_seq"] = failure_seq
     payload["failure_code"] = _derive_failure_code(failure_event, fallback_failure_code)
-    phase = refs.get("phase") or related_action_phase or "unknown" if refs else related_action_phase or "unknown"
+    phase = refs.get("phase") or related_action_phase or "unknown"
     payload["hop1_phase"] = {
-        "phase": phase,  # type: ignore[union-attr]
+        "phase": phase,
         "seq": failure_seq,
         "actor": _get_str(failure_event, "actor", ""),
         "name": failure_name,

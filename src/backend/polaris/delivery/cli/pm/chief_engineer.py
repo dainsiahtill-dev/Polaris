@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from polaris.delivery.cli.pm.utils import normalize_path_list
 from polaris.kernelone.fs.text_ops import write_json_atomic
-from polaris.kernelone.runtime.shared_types import normalize_path
+from polaris.kernelone.shared.path_utils import normalize_path
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
 from polaris.kernelone.utils.time_utils import utc_now_str
 

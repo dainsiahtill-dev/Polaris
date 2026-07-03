@@ -15,7 +15,7 @@ from polaris.kernelone.memory.integration import (
     get_memory_store,
     init_anthropomorphic_modules,
 )
-from polaris.kernelone.runtime.shared_types import FILE_BLOCK_RE
+from polaris.kernelone.shared.text_utils import FILE_BLOCK_RE
 from polaris.kernelone.storage.layout import StorageLayout
 from polaris.kernelone.workflow.contracts import WorkflowContract
 
@@ -26,7 +26,7 @@ def test_storage_layout_rejects_artifact_path_traversal(tmp_path: Path) -> None:
         layout.resolve_artifact_path("workspace/../../etc/passwd")
 
 
-def test_shared_types_file_block_regex_matches_real_newline_blocks() -> None:
+def test_text_utils_file_block_regex_matches_real_newline_blocks() -> None:
     content = '<file path="hello.py">\nprint("ok")\n</file>'
     match = FILE_BLOCK_RE.search(content)
     assert match is not None

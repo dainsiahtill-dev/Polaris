@@ -49,7 +49,7 @@ from polaris.delivery.cli.pm.orchestration.workflow_timeout import (
 )
 from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
 from polaris.kernelone.fs.text_ops import write_json_atomic
-from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds
+from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
 __all__ = ["run_dispatch_pipeline_with_workflow"]

@@ -13,7 +13,7 @@ from typing import Any
 
 from polaris.delivery.cli.pm.utils import normalize_path_list, normalize_str_list
 from polaris.kernelone.process.command_executor import CommandExecutionService
-from polaris.kernelone.runtime.shared_types import normalize_path
+from polaris.kernelone.shared.path_utils import normalize_path
 
 _ALLOWED_QA_MODES = {"off", "shadow", "blocking"}
 _DEFAULT_QA_MODE = "blocking"

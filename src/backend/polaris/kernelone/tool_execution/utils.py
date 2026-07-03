@@ -7,7 +7,7 @@ import re
 import shlex
 from typing import Any
 
-from polaris.kernelone.runtime.shared_types import append_log as _append_log_impl, safe_int as _safe_int_impl
+from polaris.kernelone.shared.text_utils import append_log as _append_log_impl, safe_int as _safe_int_impl
 
 logger = logging.getLogger(__name__)
 

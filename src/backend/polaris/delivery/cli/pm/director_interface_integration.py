@@ -16,7 +16,8 @@ from polaris.delivery.cli.pm.config import PROJECT_ROOT
 from polaris.delivery.cli.pm.director_mgmt import (
     append_director_log,
 )
-from polaris.kernelone.runtime.shared_types import normalize_path_list, timeout_seconds_or_none
+from polaris.kernelone.shared.path_utils import normalize_path_list
+from polaris.kernelone.shared.text_utils import timeout_seconds_or_none
 
 logger = logging.getLogger(__name__)
 

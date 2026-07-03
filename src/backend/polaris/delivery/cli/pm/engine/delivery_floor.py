@@ -18,7 +18,7 @@ from polaris.delivery.cli.pm.engine.helpers import (
     _safe_int,
 )
 from polaris.delivery.cli.pm.utils import normalize_path_list
-from polaris.kernelone.runtime.shared_types import normalize_path
+from polaris.kernelone.shared.path_utils import normalize_path
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

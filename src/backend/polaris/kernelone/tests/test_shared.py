@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 from polaris.kernelone.shared import (
     # terminal
@@ -42,9 +42,6 @@ from polaris.kernelone.shared import (
     truncate_text,
     unique_preserve,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class TestTerminal:
@@ -394,6 +391,21 @@ class TestPathUtils:
 
 class TestBackwardCompatibility:
     """测试向后兼容性。"""
+
+    def test_production_code_imports_canonical_shared_modules(self) -> None:
+        """Active source must not depend on the deprecated runtime facade."""
+        polaris_root = Path(__file__).resolve().parents[2]
+        needle = "polaris.kernelone.runtime.shared_types"
+        offenders: list[str] = []
+
+        for path in polaris_root.rglob("*.py"):
+            relative = path.relative_to(polaris_root).as_posix()
+            if "/tests/" in f"/{relative}" or "/generated/" in f"/{relative}":
+                continue
+            if needle in path.read_text(encoding="utf-8"):
+                offenders.append(relative)
+
+        assert offenders == []
 
     def test_shared_types_import(self) -> None:
         """验证从 runtime.shared_types 导入仍然有效。"""
