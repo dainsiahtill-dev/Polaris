@@ -57,6 +57,10 @@ Typed issues are evidence, not repair authorization. Repair still flows through
   relative imports, undeclared runtime imports, and missing `@types/node`
   obligations. The legacy `_scan_typescript_imports()` API remains a string
   projection.
+- `_scan_typescript_syntax_red_flag_evidence()` now owns direct typed issues
+  for TypeScript syntax red flags with
+  `source="typescript_syntax_red_flag_scanner"`, while the legacy
+  `_scan_typescript_syntax_red_flags()` API remains a string projection.
 
 ## 4. Verification
 

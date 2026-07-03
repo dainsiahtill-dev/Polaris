@@ -1164,7 +1164,9 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
     errors.extend(typescript_import_evidence.errors)
     issues.extend(typescript_import_evidence.issues)
     errors.extend(_scan_python_imports(root_full, full_path, text, relative_path))
-    errors.extend(_scan_typescript_syntax_red_flags(root_full, full_path, text, relative_path))
+    typescript_red_flag_evidence = _scan_typescript_syntax_red_flag_evidence(root_full, full_path, text, relative_path)
+    errors.extend(typescript_red_flag_evidence.errors)
+    issues.extend(typescript_red_flag_evidence.issues)
     errors.extend(_scan_html_typescript_module_scripts(full_path, text, relative_path))
     for marker in _DETERMINISTIC_SCAFFOLD_MARKERS:
         if marker in text:
@@ -1202,34 +1204,110 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
 
 
 def _scan_typescript_syntax_red_flags(root_full: Path, full_path: Path, text: str, relative_path: str) -> list[str]:
+    """Return legacy TypeScript syntax red-flag string findings."""
+
+    return list(_scan_typescript_syntax_red_flag_evidence(root_full, full_path, text, relative_path).errors)
+
+
+def _typescript_syntax_red_flag_issue(
+    *,
+    error: str,
+    code: str,
+    relative_path: str,
+    metadata: Mapping[str, Any] | None = None,
+) -> ArtifactQualityIssue:
+    message = str(error or "").strip()
+    if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
+        message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    return ArtifactQualityIssue(
+        code=code,
+        message=message,
+        path=relative_path,
+        source="typescript_syntax_red_flag_scanner",
+        metadata={
+            "raw": str(error or "").strip(),
+            "path": relative_path,
+            **dict(metadata or {}),
+        },
+    )
+
+
+def _scan_typescript_syntax_red_flag_evidence(
+    root_full: Path,
+    full_path: Path,
+    text: str,
+    relative_path: str,
+) -> _FileArtifactQualityEvidence:
+    """Return TypeScript syntax red flags as strings and direct typed issues."""
+
     suffix = full_path.suffix.lower()
     if suffix not in _TS_JS_SOURCE_EXTS:
-        return []
+        return _FileArtifactQualityEvidence()
     if _typescript_line_comment_contains_escaped_newline_code(text):
-        return [
-            f"Artifact quality scan failed: TypeScript escaped newline in line comment before code in {relative_path}"
-        ]
+        error = f"Artifact quality scan failed: TypeScript escaped newline in line comment before code in {relative_path}"
+        return _FileArtifactQualityEvidence(
+            errors=(error,),
+            issues=(
+                _typescript_syntax_red_flag_issue(
+                    error=error,
+                    code="typescript_escaped_newline_line_comment",
+                    relative_path=relative_path,
+                ),
+            ),
+        )
     if suffix not in _TS_SOURCE_EXTS:
-        return []
+        return _FileArtifactQualityEvidence()
     collision_name = _typescript_zod_inferred_type_class_collision_name(text)
     if collision_name:
-        return [
+        error = (
             "Artifact quality scan failed: TypeScript zod inferred type collides "
             f"with class {collision_name} in {relative_path}"
-        ]
+        )
+        return _FileArtifactQualityEvidence(
+            errors=(error,),
+            issues=(
+                _typescript_syntax_red_flag_issue(
+                    error=error,
+                    code="typescript_zod_type_class_collision",
+                    relative_path=relative_path,
+                    metadata={"collision_name": collision_name},
+                ),
+            ),
+        )
     for match in _TS_RETURN_OBJECT_BLOCK_RE.finditer(text):
         if _TS_OBJECT_PROPERTY_SEMICOLON_RE.search(match.group("body")):
-            return [
+            error = (
                 "Artifact quality scan failed: TypeScript return object contains "
                 f"semicolon-terminated property in {relative_path}"
-            ]
+            )
+            return _FileArtifactQualityEvidence(
+                errors=(error,),
+                issues=(
+                    _typescript_syntax_red_flag_issue(
+                        error=error,
+                        code="typescript_return_object_semicolon_property",
+                        relative_path=relative_path,
+                    ),
+                ),
+            )
     type_export_error = _typescript_isolated_modules_type_reexport_error(root_full, text)
     if type_export_error:
-        return [
+        error = (
             "Artifact quality scan failed: TypeScript isolatedModules requires "
             f"`export type` for {type_export_error} in {relative_path}"
-        ]
-    return []
+        )
+        return _FileArtifactQualityEvidence(
+            errors=(error,),
+            issues=(
+                _typescript_syntax_red_flag_issue(
+                    error=error,
+                    code="typescript_isolated_modules_type_reexport",
+                    relative_path=relative_path,
+                    metadata={"export_name": type_export_error},
+                ),
+            ),
+        )
+    return _FileArtifactQualityEvidence()
 
 
 def _scan_html_typescript_module_scripts(full_path: Path, text: str, relative_path: str) -> list[str]:

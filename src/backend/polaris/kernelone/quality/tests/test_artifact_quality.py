@@ -340,6 +340,36 @@ def test_artifact_quality_evidence_uses_direct_typescript_import_issue(tmp_path:
     }
 
 
+def test_artifact_quality_evidence_uses_direct_typescript_red_flag_issue(tmp_path: Path) -> None:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "factory.ts").write_text(
+        """
+export function build() {
+  return {
+    name: "demo";
+  };
+}
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["src/factory.ts"])
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: TypeScript return object contains "
+        "semicolon-terminated property in src/factory.ts",
+    )
+    assert len(evidence.issues) == 1
+    assert evidence.issues[0].code == "typescript_return_object_semicolon_property"
+    assert evidence.issues[0].source == "typescript_syntax_red_flag_scanner"
+    assert evidence.issues[0].path == "src/factory.ts"
+    assert evidence.issues[0].metadata == {
+        "raw": evidence.errors[0],
+        "path": "src/factory.ts",
+    }
+
+
 def test_typescript_import_scanner_ignores_fixture_string_imports(tmp_path: Path) -> None:
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir(parents=True)
