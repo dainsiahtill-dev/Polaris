@@ -953,7 +953,7 @@ def _workspace_validation_requests_task_boundary_rework(payload: dict[str, Any])
         return True
     if str(repair.get("success_reason") or "").strip() == _TASK_BOUNDARY_REWORK_REASON:
         return True
-    if _owned_handoff_requests_from_repair_payload(repair):
+    if _ownership_handoff_requests_from_repair_payload(repair):
         return True
     warnings = payload.get("warnings")
     return isinstance(warnings, list) and _TASK_BOUNDARY_REWORK_REASON in {str(item).strip() for item in warnings}
@@ -1010,15 +1010,19 @@ def _task_record_needs_task_boundary_rework(record: dict[str, Any]) -> bool:
     )
 
 
-def _owned_handoff_requests_from_repair_payload(repair: dict[str, Any]) -> list[dict[str, Any]]:
+def _ownership_handoff_requests_from_repair_payload(repair: dict[str, Any]) -> list[dict[str, Any]]:
     scope_filter_raw = repair.get("task_boundary_scope_filter")
     scope_filter: dict[str, Any] = scope_filter_raw if isinstance(scope_filter_raw, dict) else {}
     requests_raw = scope_filter.get("ownership_handoff_requests")
     if not isinstance(requests_raw, list):
         return []
+    return [dict(item) for item in requests_raw if isinstance(item, dict) and item]
+
+
+def _owned_handoff_requests_from_repair_payload(repair: dict[str, Any]) -> list[dict[str, Any]]:
+    requests_raw = _ownership_handoff_requests_from_repair_payload(repair)
     requests: list[dict[str, Any]] = []
-    for item in requests_raw:
-        request: dict[str, Any] = item if isinstance(item, dict) else {}
+    for request in requests_raw:
         if not bool(request.get("owner_found")):
             continue
         if str(request.get("recommended_route") or "").strip() != "owner_task_retry":
@@ -1105,6 +1109,8 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
         "skipped_count": 0,
         "unmatched_owner_handoff_count": 0,
         "unmatched_owner_handoff_requests": [],
+        "unknown_owner_handoff_count": 0,
+        "unknown_owner_handoff_requests": [],
         "tasks": [],
         "reason": _TASK_BOUNDARY_REWORK_REASON,
         "artifact": artifact,
@@ -1124,14 +1130,21 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
     evidence = _task_boundary_rework_evidence(payload, artifact=artifact)
     repair_raw = payload.get("repair")
     repair: dict[str, Any] = repair_raw if isinstance(repair_raw, dict) else {}
+    all_handoff_requests = _ownership_handoff_requests_from_repair_payload(repair)
     owner_handoff_requests = _owned_handoff_requests_from_repair_payload(repair)
+    unknown_owner_handoff_requests = [
+        dict(request)
+        for request in all_handoff_requests
+        if not bool(request.get("owner_found"))
+        or str(request.get("recommended_route") or "").strip() == "scope_authority_resolution"
+    ]
     matched_owner_handoff_ids: set[int] = set()
     for entry in entries:
         record = entry.to_dict() if hasattr(entry, "to_dict") else entry
         if not isinstance(record, dict):
             continue
         owner_handoff_request = _matching_owner_handoff_request(record, owner_handoff_requests)
-        if owner_handoff_requests:
+        if all_handoff_requests:
             if not owner_handoff_request:
                 continue
             rework_reason = _TASK_BOUNDARY_OWNER_REWORK_REASON
@@ -1223,6 +1236,11 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
         summary["skipped_count"] += len(unmatched_owner_handoff_requests)
         summary["unmatched_owner_handoff_count"] = len(unmatched_owner_handoff_requests)
         summary["unmatched_owner_handoff_requests"] = unmatched_owner_handoff_requests
+
+    if unknown_owner_handoff_requests:
+        summary["skipped_count"] += len(unknown_owner_handoff_requests)
+        summary["unknown_owner_handoff_count"] = len(unknown_owner_handoff_requests)
+        summary["unknown_owner_handoff_requests"] = unknown_owner_handoff_requests
 
     return summary
 
