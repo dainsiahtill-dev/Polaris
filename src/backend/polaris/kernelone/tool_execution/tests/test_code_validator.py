@@ -457,6 +457,17 @@ class TestJsNodeCheckGate:
 class TestJsFallbackSyntaxGate:
     """Fallback JS validation must still reject obvious module-level syntax defects."""
 
+    @staticmethod
+    def _force_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+        """Disable prettier and node so the heuristic fallback gate is exercised."""
+
+        def _prettier_missing(*_args: object, **_kwargs: object) -> object:
+            raise FileNotFoundError
+
+        monkeypatch.setattr("subprocess.run", _prettier_missing)
+        monkeypatch.setattr("polaris.kernelone.tool_execution.code_validator._NODE_EXECUTABLE", None)
+        monkeypatch.setattr("polaris.kernelone.tool_execution.code_validator._NODE_RESOLVED", True)
+
     def test_duplicate_top_level_export_is_rejected_without_node(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def _prettier_missing(*_args: object, **_kwargs: object) -> object:
             raise FileNotFoundError
@@ -503,3 +514,87 @@ class TestJsFallbackSyntaxGate:
         result = validate_code_syntax(code, "src/engine/rules.js")
 
         assert result.is_valid is True, format_validation_error(result, "src/engine/rules.js")
+
+    def test_legal_var_redeclaration_passes_for_js_and_jsx(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """r48 FP fix: repeated top-level `var` is LEGAL JavaScript (node --check passes it).
+
+        `var` bindings are never lexical — duplicate `var` declarations are allowed in
+        both script and module goals, so the fallback gate must not block the write.
+        """
+        self._force_fallback(monkeypatch)
+
+        script_code = "var counter = 1;\nvar counter = 2;\n"
+        for name in ("src/app.js", "src/App.jsx"):
+            result = validate_code_syntax(script_code, name)
+            assert result.is_valid is True, format_validation_error(result, name)
+
+        # Empirically confirmed FP shape: a .jsx ES module with a var redeclaration.
+        module_code = "import React from 'react';\nvar mode = 'a';\nvar mode = 'b';\nexport default mode;\n"
+        result = validate_code_syntax(module_code, "src/Widget.jsx")
+        assert result.is_valid is True, format_validation_error(result, "src/Widget.jsx")
+
+    def test_legal_function_redeclaration_passes_for_script_js_and_jsx(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Classic-script top level allows function re-declaration (later wins)."""
+        self._force_fallback(monkeypatch)
+
+        code = "function render() {\n  return 1;\n}\nfunction render() {\n  return 2;\n}\n"
+        for name in ("src/app.js", "src/App.jsx"):
+            result = validate_code_syntax(code, name)
+            assert result.is_valid is True, format_validation_error(result, name)
+
+    def test_legal_var_plus_function_co_declaration_passes_for_script_js(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`var x` + `function x(){}` at classic-script top level is legal JS."""
+        self._force_fallback(monkeypatch)
+
+        code = "var handler = null;\nfunction handler() {\n  return 1;\n}\n"
+        result = validate_code_syntax(code, "src/app.js")
+        assert result.is_valid is True, format_validation_error(result, "src/app.js")
+
+    def test_duplicate_const_is_still_rejected_without_node(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """True-positive protection (r47): duplicate `const` stays a blocked SyntaxError."""
+        self._force_fallback(monkeypatch)
+
+        code = "const limit = 1;\nconst limit = 2;\n"
+        result = validate_code_syntax(code, "src/app.js")
+        assert result.is_valid is False
+        assert result.errors
+        assert "Duplicate top-level declaration 'limit'" in result.errors[0].message
+
+    def test_let_colliding_with_var_is_rejected_without_node(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A lexical `let` colliding with any other declaration of the same name is a SyntaxError."""
+        self._force_fallback(monkeypatch)
+
+        for code in ("let mode = 1;\nvar mode = 2;\n", "var mode = 1;\nlet mode = 2;\n"):
+            result = validate_code_syntax(code, "src/app.js")
+            assert result.is_valid is False
+            assert result.errors
+            assert "Duplicate top-level declaration 'mode'" in result.errors[0].message
+
+    def test_duplicate_class_is_rejected_without_node(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._force_fallback(monkeypatch)
+
+        code = "class Store {}\nclass Store {}\n"
+        result = validate_code_syntax(code, "src/app.js")
+        assert result.is_valid is False
+        assert result.errors
+        assert "Duplicate top-level declaration 'Store'" in result.errors[0].message
+
+    def test_module_goal_keeps_duplicate_function_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """ESM nuance: module top-level `function` bindings are lexical (node --check rejects).
+
+        Applies to `.mjs` by extension, and to `.js`/`.jsx` with a static top-level
+        import/export — the same module-goal detection `_node_check_js_syntax` uses.
+        """
+        self._force_fallback(monkeypatch)
+
+        mjs_code = "function init() {}\nfunction init() {}\n"
+        result = validate_code_syntax(mjs_code, "src/app.mjs")
+        assert result.is_valid is False
+        assert result.errors
+        assert "Duplicate top-level declaration 'init'" in result.errors[0].message
+
+        esm_js_code = "import { x } from './x.js';\nfunction init() {}\nfunction init() {}\n"
+        result = validate_code_syntax(esm_js_code, "src/app.js")
+        assert result.is_valid is False
+        assert result.errors
+        assert "Duplicate top-level declaration 'init'" in result.errors[0].message

@@ -65,6 +65,14 @@ def _parse_node_check_error(stderr: str) -> tuple[int, str]:
     return line_no, message
 
 
+_ES_MODULE_SYNTAX_PATTERN = re.compile(r"^\s*(?:export\b|import\s+[\w{*'\"])", re.MULTILINE)
+
+
+def _looks_like_es_module(code: str) -> bool:
+    """True when the source uses static top-level ``import``/``export`` (ESM parse goal)."""
+    return _ES_MODULE_SYNTAX_PATTERN.search(code) is not None
+
+
 def _node_check_js_syntax(code: str) -> SyntaxValidationResult | None:
     """Authoritative JavaScript syntax check via ``node --check``.
 
@@ -79,8 +87,7 @@ def _node_check_js_syntax(code: str) -> SyntaxValidationResult | None:
         return None
     # Module goal: a static top-level import/export needs ESM parsing. Pick the temp
     # extension so node uses the correct goal and never false-rejects valid ESM or CJS.
-    is_module = re.search(r"^\s*(?:export\b|import\s+[\w{*'\"])", code, re.MULTILINE) is not None
-    suffix = ".mjs" if is_module else ".cjs"
+    suffix = ".mjs" if _looks_like_es_module(code) else ".cjs"
     tmp_path = ""
     try:
         with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False, encoding="utf-8") as fh:
@@ -883,6 +890,8 @@ class MultiLanguageCodeValidator:
             ".py": lambda c, f: self.python_validator.validate(c, f),
             ".pyw": lambda c, f: self.python_validator.validate(c, f),
             ".js": lambda c, f: self._js_validator(c, f),
+            ".mjs": lambda c, f: self._js_validator(c, f),
+            ".cjs": lambda c, f: self._js_validator(c, f),
             ".ts": lambda c, f: self._ts_validator(c, f),
             ".jsx": lambda c, f: self._jsx_validator(c, f),
             ".tsx": lambda c, f: self._tsx_validator(c, f),
@@ -973,9 +982,11 @@ class MultiLanguageCodeValidator:
         (r"=>\s*{", r" => {", "Arrow function block syntax"),
     ]
     JS_TOP_LEVEL_DECLARATION_PATTERN = re.compile(
-        r"^\s*(?:export\s+(?:default\s+)?)?(?:async\s+function|function|class|const|let|var)\s+"
-        r"([A-Za-z_$][A-Za-z0-9_$]*)\b"
+        r"^\s*(?:export\s+(?:default\s+)?)?(?P<kind>async\s+function|function|class|const|let|var)\s+"
+        r"(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\b"
     )
+    # Bindings that are ALWAYS lexical at top level (duplicate/colliding => SyntaxError).
+    _JS_LEXICAL_KINDS = frozenset({"let", "const", "class"})
 
     def _js_validator(self, code: str, filepath: str | None) -> SyntaxValidationResult:
         """JavaScript 验证器。
@@ -1002,7 +1013,7 @@ class MultiLanguageCodeValidator:
         if errors:
             return SyntaxValidationResult.failure(errors)
 
-        duplicate_errors = self._check_js_duplicate_top_level_declarations(fixed_code)
+        duplicate_errors = self._check_js_duplicate_top_level_declarations(fixed_code, filepath)
         if duplicate_errors:
             suggestions = [error.message for error in duplicate_errors]
             return SyntaxValidationResult.failure(duplicate_errors, suggestions)
@@ -1012,11 +1023,34 @@ class MultiLanguageCodeValidator:
 
         return SyntaxValidationResult.success()
 
-    def _check_js_duplicate_top_level_declarations(self, code: str) -> list[CodeSyntaxError]:
-        """Catch duplicate top-level lexical declarations when Node is unavailable."""
+    def _check_js_duplicate_top_level_declarations(
+        self, code: str, filepath: str | None = None
+    ) -> list[CodeSyntaxError]:
+        """Flag only duplicate top-level bindings that are real JS SyntaxErrors.
+
+        Aligned with ``node --check`` semantics (fallback when node is unavailable, and
+        for ``.jsx`` which node cannot parse). Classic-script top level legally allows
+        ``var``/``var``, ``function``/``function`` (later wins) and ``var``+``function``
+        redeclarations of the same name; only ``let``/``const``/``class`` bindings are
+        lexical, and a lexical binding colliding with ANY other top-level declaration of
+        the same name is a SyntaxError. Module goal (``.mjs``, or ``.js``/``.jsx`` with a
+        static top-level import/export — the same goal detection ``_node_check_js_syntax``
+        uses to pick its temp extension) additionally treats ``function`` declarations as
+        lexical, so duplicate functions are errors there; ``var``/``var`` stays legal in
+        both goals (empirically verified against ``node --check``, 2026-07-03).
+        """
+        ext = self._get_extension(filepath or "")
+        if ext == ".mjs":
+            module_goal = True
+        elif ext == ".cjs":
+            module_goal = False
+        else:
+            module_goal = _looks_like_es_module(code)
+
         masked_code = self._mask_js_like_non_code_for_brackets(code)
         original_lines = code.splitlines()
-        first_decl_by_name: dict[str, int] = {}
+        # name -> (first declaration line, any lexical declaration of that name seen so far)
+        seen: dict[str, tuple[int, bool]] = {}
         errors: list[CodeSyntaxError] = []
         brace_depth = 0
 
@@ -1024,22 +1058,30 @@ class MultiLanguageCodeValidator:
             if brace_depth == 0:
                 match = self.JS_TOP_LEVEL_DECLARATION_PATTERN.match(masked_line)
                 if match:
-                    name = match.group(1)
-                    first_line = first_decl_by_name.get(name)
-                    if first_line is None:
-                        first_decl_by_name[name] = line_no
+                    kind = match.group("kind")
+                    name = match.group("name")
+                    is_function = kind.endswith("function")
+                    lexical = module_goal if is_function else kind in self._JS_LEXICAL_KINDS
+                    prior = seen.get(name)
+                    if prior is None:
+                        seen[name] = (line_no, lexical)
                     else:
-                        errors.append(
-                            CodeSyntaxError(
-                                line=line_no,
-                                column=max(0, match.start(1)),
-                                message=(
-                                    f"Duplicate top-level declaration '{name}' (first declared at line {first_line})"
-                                ),
-                                error_type="SyntaxError",
-                                code_snippet=original_lines[line_no - 1] if line_no <= len(original_lines) else None,
+                        first_line, prior_lexical = prior
+                        if lexical or prior_lexical:
+                            errors.append(
+                                CodeSyntaxError(
+                                    line=line_no,
+                                    column=max(0, match.start("name")),
+                                    message=(
+                                        f"Duplicate top-level declaration '{name}' (first declared at line {first_line})"
+                                    ),
+                                    error_type="SyntaxError",
+                                    code_snippet=original_lines[line_no - 1]
+                                    if line_no <= len(original_lines)
+                                    else None,
+                                )
                             )
-                        )
+                        seen[name] = (first_line, prior_lexical or lexical)
 
             brace_depth += masked_line.count("{") - masked_line.count("}")
             brace_depth = max(0, brace_depth)
