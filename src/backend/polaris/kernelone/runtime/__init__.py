@@ -49,7 +49,7 @@ from polaris.kernelone.runtime.execution_runtime import (
     reset_shared_execution_runtime,
 )
 
-# Backward compatibility aliases
+# Instance-scoped runtime state helpers.
 from polaris.kernelone.runtime.instance_state import (
     InstanceScopedStateStore,
     get_current_instance_id,
