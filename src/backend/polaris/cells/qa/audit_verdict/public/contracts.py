@@ -366,12 +366,16 @@ QA_PLATFORM_FAILURE_CLASSES = frozenset(
 )
 
 
+def _qa_failure_class_key(value: str) -> str:
+    return "_".join(str(value or "").strip().lower().replace("-", "_").split())
+
+
 def _normalize_qa_failure_class(value: str) -> str:
     token = _require_non_empty("failure_class", value)
     run_ledger_token = normalize_run_ledger_failure_class(token)
     return _QA_FAILURE_CLASS_ALIASES.get(
-        run_ledger_token.lower(),
-        _QA_FAILURE_CLASS_ALIASES.get(token.lower(), run_ledger_token.upper()),
+        _qa_failure_class_key(run_ledger_token),
+        _QA_FAILURE_CLASS_ALIASES.get(_qa_failure_class_key(token), run_ledger_token.upper()),
     )
 
 

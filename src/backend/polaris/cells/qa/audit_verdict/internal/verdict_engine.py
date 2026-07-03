@@ -30,6 +30,7 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     QaVerdictEnvelopeV1,
     QaVerdictLineageV1,
     build_qa_failure_classification_v1,
+    normalize_qa_failure_class,
 )
 from polaris.kernelone.quality.artifact_quality import (
     ArtifactQualityEvidence,
@@ -211,7 +212,9 @@ def _route_classification(
     task_boundary = _mapping(ledger.get("task_boundary"))
     latest_boundary = _mapping(task_boundary.get("latest"))
     if latest_boundary and not bool(latest_boundary.get("ok", True)):
-        boundary_failure_class = str(latest_boundary.get("failure_class") or "TASK_BOUNDARY_FAILED").strip()
+        boundary_failure_class = normalize_qa_failure_class(
+            str(latest_boundary.get("failure_class") or "TASK_BOUNDARY_FAILED").strip()
+        )
         boundary_reason = str(latest_boundary.get("reason") or "Task boundary verdict failed").strip()
         responsible_layer = str(latest_boundary.get("responsible_layer") or "execution_control_plane").strip()
         if boundary_failure_class == "INCOMPLETE_MATERIALIZATION":

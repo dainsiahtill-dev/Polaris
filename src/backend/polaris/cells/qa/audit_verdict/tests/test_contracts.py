@@ -127,6 +127,8 @@ class TestQaFailureClassificationBuilder:
     def test_overlapping_platform_failures_use_run_ledger_normalization(self) -> None:
         assert normalize_qa_failure_class("tool dispatch dropped") == FailureClassV1.TOOL_DISPATCH_DROPPED.value
         assert normalize_qa_failure_class("missing-effect-receipt") == FailureClassV1.MISSING_EFFECT_RECEIPT.value
+        assert normalize_qa_failure_class("incomplete-materialization") == "INCOMPLETE_MATERIALIZATION"
+        assert normalize_qa_failure_class("missing entrypoint target") == "MISSING_ENTRYPOINT_TARGET"
 
 
 class TestQaVerdictIssuedEventV1:

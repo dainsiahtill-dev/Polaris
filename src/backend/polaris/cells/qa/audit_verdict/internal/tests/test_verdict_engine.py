@@ -195,6 +195,34 @@ def test_incomplete_materialization_routes_to_director_retry(tmp_path: Path) -> 
     assert payload["classification"]["repairable_by_director"] is True
 
 
+def test_task_boundary_failure_class_alias_routes_to_director_retry(tmp_path: Path) -> None:
+    envelope = QAVerdictEngine(str(tmp_path)).build_envelope(
+        task_id="task-qa",
+        payload=_payload(),
+        ledger_projection={
+            "audit_path": "runtime/control_plane/ledger",
+            "evidence_policy": {},
+            "task_boundary": {
+                "ok": False,
+                "latest": {
+                    "status": "incomplete_materialization",
+                    "ok": False,
+                    "failure_class": "incomplete-materialization",
+                    "responsible_layer": "director",
+                    "reason": "Required target files were not materialized",
+                },
+            },
+        },
+        artifact_quality={"errors": []},
+    )
+    payload = envelope.to_dict()
+
+    assert payload["verdict"] == "FAIL"
+    assert payload["next_stage"] == "pending_exec"
+    assert payload["classification"]["failure_class"] == "INCOMPLETE_MATERIALIZATION"
+    assert payload["classification"]["repairable_by_director"] is True
+
+
 def test_deferred_followup_routes_to_director_retry(tmp_path: Path) -> None:
     envelope = QAVerdictEngine(str(tmp_path)).build_envelope(
         task_id="task-qa",
