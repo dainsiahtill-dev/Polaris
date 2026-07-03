@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_tool_call_lifecycle_receipt,
     normalize_tool_call_lifecycle_receipt,
@@ -148,6 +149,36 @@ def test_tool_lifecycle_receipt_preserves_native_tool_call_envelopes() -> None:
 
     assert receipt["ok"] is True
     assert receipt["native_tool_call_envelope_refs"] == [envelope]
+
+
+def test_tool_lifecycle_receipt_derives_native_count_from_envelopes() -> None:
+    envelopes = [
+        {
+            "schema_version": "native_tool_call_envelope.v1",
+            "envelope_id": f"native_tool_call:openai:{index}:call-{index}:abcdef",
+            "provider": "openai",
+            "tool_name": "write_file",
+            "call_id": f"call-{index}",
+            "raw_call_hash": "a" * 64,
+            "arguments_hash": "b" * 64,
+        }
+        for index in range(2)
+    ]
+
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=7,
+        decoded_tool_calls_count=2,
+        dispatched_tool_calls_count=0,
+        native_tool_call_envelopes=envelopes,
+    ).to_dict()
+
+    assert receipt["native_tool_calls_count"] == 2
+    assert receipt["dispatch_status"] == "dropped"
+    assert receipt["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
 
 
 def test_tool_lifecycle_receipt_blocks_successful_write_without_effect_receipt() -> None:

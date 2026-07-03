@@ -210,11 +210,12 @@ def build_tool_call_lifecycle_receipt(
     reason: str = "",
 ) -> ToolCallLifecycleReceiptV1:
     receipt_rows = [dict(item) for item in receipts or [] if isinstance(item, dict)]
+    native_envelope_refs = _native_tool_call_envelope_refs(native_tool_call_envelopes)
     batch_refs = _batch_receipt_refs(receipt_rows)
     effect_refs = _effect_receipt_refs(receipt_rows)
     missing_write_effects = _successful_write_results_without_effect_receipts(receipt_rows)
     result_count = len(_result_items(receipt_rows))
-    native_count = _int_value(native_tool_calls_count)
+    native_count = len(native_envelope_refs) if native_envelope_refs else _int_value(native_tool_calls_count)
     decoded_count = _int_value(decoded_tool_calls_count)
     dispatched_count = _int_value(dispatched_tool_calls_count)
     status = _clean_string(dispatch_status)
@@ -259,7 +260,7 @@ def build_tool_call_lifecycle_receipt(
         failure_class=failure,
         ok=ok,
         batch_receipt_hash=_stable_hash(receipt_rows) if receipt_rows else "",
-        native_tool_call_envelope_refs=tuple(_native_tool_call_envelope_refs(native_tool_call_envelopes)),
+        native_tool_call_envelope_refs=tuple(native_envelope_refs),
         batch_receipt_refs=tuple(batch_refs),
         effect_receipt_refs=tuple(effect_refs),
         dropped_tool_calls=tuple(dropped),
