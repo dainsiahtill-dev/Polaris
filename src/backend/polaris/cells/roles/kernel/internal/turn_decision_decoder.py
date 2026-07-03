@@ -115,10 +115,13 @@ class TurnDecisionDecoder:
         # Step 1: 提取所有 native 工具调用
         # 关键：thinking/content 文本都不参与执行性工具解析
         all_tools, decode_failures = self._extract_tool_calls(response)
+        native_tool_call_envelopes = self._native_tool_call_envelopes(response)
 
         # Step 2: 判断是否直接回答
         if self._is_final_answer(response, all_tools):
             direct_metadata: dict[str, Any] = {"source": "direct_answer", "model": response.model}
+            if native_tool_call_envelopes:
+                direct_metadata["native_tool_call_envelopes"] = native_tool_call_envelopes
             if decode_failures:
                 # ADR-0090 I3.1: the model TRIED to call tools but every call failed to
                 # parse — keep the prose answer, but surface the failures so the
@@ -153,6 +156,8 @@ class TurnDecisionDecoder:
                 "native_tools": len(all_tools),
                 "model": response.model,
             }
+            if native_tool_call_envelopes:
+                batch_metadata["native_tool_call_envelopes"] = native_tool_call_envelopes
             if decode_failures:
                 batch_metadata["decode_failures"] = decode_failures
             return TurnDecision(
@@ -244,6 +249,18 @@ class TurnDecisionDecoder:
             if isinstance(raw_calls, list):
                 return [dict(item) for item in raw_calls if isinstance(item, Mapping)]
         return []
+
+    @staticmethod
+    def _native_tool_call_envelopes(response: RawLLMResponse) -> list[dict[str, Any]]:
+        usage = getattr(response, "usage", None)
+        if not isinstance(usage, Mapping) and isinstance(response, Mapping):
+            usage = response.get("usage")
+        if not isinstance(usage, Mapping):
+            return []
+        envelopes = usage.get("native_tool_call_envelopes")
+        if not isinstance(envelopes, list):
+            return []
+        return [dict(item) for item in envelopes if isinstance(item, Mapping)]
 
     @staticmethod
     def _native_tool_name_hint(native: dict[str, Any]) -> str:

@@ -800,6 +800,7 @@ def _append_tool_batch_receipts_to_run_ledger(
     execution_envelope_hash: str = "",
     provider_response_hash: str = "",
     native_tool_calls_count: int = 0,
+    native_tool_call_envelopes: list[Any] | tuple[Any, ...] | None = None,
 ) -> None:
     decoded_count = len(invocations or [])
     merged_receipt = _merge_batch_receipts(receipts)
@@ -834,6 +835,7 @@ def _append_tool_batch_receipts_to_run_ledger(
         dispatch_status="" if has_authoritative_receipt else "dropped",
         failure_class="" if has_authoritative_receipt else "TOOL_DISPATCH_DROPPED",
         reason="" if has_authoritative_receipt else "Decoded tool batch produced no authoritative batch receipt",
+        native_tool_call_envelopes=native_tool_call_envelopes,
     )
     resolved_lifecycle_run_id = str(run_id or lifecycle.run_id or turn_id or "").strip()
     if resolved_lifecycle_run_id:
@@ -1881,6 +1883,7 @@ class ToolBatchExecutor:
                 }
             )
         record_receipts_to_ledger(receipts_as_dicts, ledger)
+        native_tool_call_envelopes = metadata.get("native_tool_call_envelopes")
         _append_tool_batch_receipts_to_run_ledger(
             workspace=workspace,
             run_id=str(metadata.get("run_id") or ""),
@@ -1893,6 +1896,9 @@ class ToolBatchExecutor:
             execution_envelope_hash=_execution_envelope_hash_from_metadata(metadata),
             provider_response_hash=str(metadata.get("provider_response_hash") or ""),
             native_tool_calls_count=_int_value(metadata.get("native_tool_calls_count")),
+            native_tool_call_envelopes=native_tool_call_envelopes
+            if isinstance(native_tool_call_envelopes, list)
+            else (),
         )
 
         # 本 turn 的工具批裁决已完成（adopt/join/replay 全部计入 metrics）；在此

@@ -88,6 +88,49 @@ def test_tool_lifecycle_receipt_preserves_dropped_tool_details() -> None:
     ]
 
 
+def test_tool_lifecycle_receipt_preserves_native_tool_call_envelopes() -> None:
+    envelope = {
+        "schema_version": "native_tool_call_envelope.v1",
+        "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+        "provider": "openai",
+        "tool_name": "write_file",
+        "call_id": "call-1",
+        "raw_call_hash": "a" * 64,
+        "arguments_hash": "b" * 64,
+    }
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        native_tool_call_envelopes=[envelope],
+        receipts=[
+            {
+                "batch_id": "batch-1",
+                "results": [
+                    {
+                        "call_id": "call-1",
+                        "tool_name": "write_file",
+                        "status": "success",
+                        "effect_receipt": {
+                            "operation": "write_file:create",
+                            "file": "src/index.js",
+                        },
+                    }
+                ],
+                "success_count": 1,
+                "failure_count": 0,
+            }
+        ],
+    ).to_dict()
+
+    assert receipt["ok"] is True
+    assert receipt["native_tool_call_envelope_refs"] == [envelope]
+
+
 def test_tool_lifecycle_receipt_blocks_successful_write_without_effect_receipt() -> None:
     receipt = build_tool_call_lifecycle_receipt(
         run_id="run-1",

@@ -53,6 +53,12 @@ def _dropped_tool_call_refs(value: Any) -> list[dict[str, Any]]:
     return refs
 
 
+def _native_tool_call_envelope_refs(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
 def _result_items(receipts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for receipt in receipts:
@@ -154,6 +160,7 @@ class ToolCallLifecycleReceiptV1:
     failure_class: str
     ok: bool
     batch_receipt_hash: str = ""
+    native_tool_call_envelope_refs: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     batch_receipt_refs: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     effect_receipt_refs: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     dropped_tool_calls: tuple[dict[str, Any], ...] = field(default_factory=tuple)
@@ -177,6 +184,7 @@ class ToolCallLifecycleReceiptV1:
             "failure_class": self.failure_class,
             "ok": bool(self.ok),
             "batch_receipt_hash": self.batch_receipt_hash,
+            "native_tool_call_envelope_refs": list(self.native_tool_call_envelope_refs),
             "batch_receipt_refs": list(self.batch_receipt_refs),
             "effect_receipt_refs": list(self.effect_receipt_refs),
             "dropped_tool_calls": list(self.dropped_tool_calls),
@@ -196,6 +204,7 @@ def build_tool_call_lifecycle_receipt(
     dispatched_tool_calls_count: int = 0,
     receipts: list[dict[str, Any]] | None = None,
     dropped_tool_calls: list[Any] | tuple[Any, ...] | None = None,
+    native_tool_call_envelopes: list[Any] | tuple[Any, ...] | None = None,
     dispatch_status: str = "",
     failure_class: str = "",
     reason: str = "",
@@ -250,6 +259,7 @@ def build_tool_call_lifecycle_receipt(
         failure_class=failure,
         ok=ok,
         batch_receipt_hash=_stable_hash(receipt_rows) if receipt_rows else "",
+        native_tool_call_envelope_refs=tuple(_native_tool_call_envelope_refs(native_tool_call_envelopes)),
         batch_receipt_refs=tuple(batch_refs),
         effect_receipt_refs=tuple(effect_refs),
         dropped_tool_calls=tuple(dropped),
