@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 POLICY_URI = "policy://polaris/agent-spec/v3.0"
-LEGACY_POLICY_URI = "policy://polaris/agent-spec/v2.11"
 ACTIVE_RULES_URI = "polaris://policy/active_rules"
 
 
@@ -19,7 +18,6 @@ def normalize_project_root(project_dir: Path | str | None = None) -> Path:
 class PolarisPaths:
     project_root: Path
     policy_path: Path
-    legacy_policy_path: Path
     hp_root: Path
     blueprints_dir: Path
     logs_dir: Path
@@ -44,7 +42,6 @@ def resolve_polaris_paths(
     return PolarisPaths(
         project_root=project_root,
         policy_path=project_root / "policy" / "polaris-agent-spec-v3.0.md",
-        legacy_policy_path=project_root / "policy" / "polaris-agent-spec-v2.11.md",
         hp_root=hp_root,
         blueprints_dir=hp_root / "docs" / "blueprints",
         logs_dir=hp_root / "logs",
