@@ -1013,14 +1013,30 @@ def _task_record_external_tokens(record: dict[str, Any]) -> set[str]:
     ):
         token = str(value or "").strip()
         if token:
-            tokens.add(token)
+            tokens.update(_task_identifier_token_aliases(token))
     metadata_raw = record.get("metadata")
     metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
     for key in ("external_task_id", "pm_task_id", "source_task_id", "task_id"):
         token = str(metadata.get(key) or "").strip()
         if token:
-            tokens.add(token)
+            tokens.update(_task_identifier_token_aliases(token))
     return tokens
+
+
+def _task_identifier_token_aliases(value: Any) -> set[str]:
+    token = str(value or "").strip()
+    if not token:
+        return set()
+    aliases = {token}
+    task_match = re.fullmatch(r"TASK-(?P<number>\d+)", token, flags=re.IGNORECASE)
+    if task_match:
+        number = task_match.group("number")
+        aliases.add(str(int(number)))
+        aliases.add(f"TASK-{int(number)}")
+        return aliases
+    if token.isdigit():
+        aliases.add(f"TASK-{int(token)}")
+    return aliases
 
 
 def _matching_owner_handoff_request(

@@ -937,6 +937,23 @@ def test_task_record_external_tokens_include_top_level_projection_fields() -> No
     )
 
     assert {"12", "PM-0001-1-S4", "source-step", "PM-0001"} <= tokens
+    assert "TASK-12" in tokens
+
+
+def test_matching_owner_handoff_accepts_task_prefix_numeric_alias() -> None:
+    request = {
+        "target_file": "src/index.js",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+        "owner_step_id": "TASK-12",
+    }
+
+    matched = factory_router_module._matching_owner_handoff_request(
+        {"id": 12, "metadata": {}},
+        [request],
+    )
+
+    assert matched == request
 
 
 def test_quality_gate_task_boundary_validation_reports_unknown_owner_handoff(temp_workspace: Path) -> None:
