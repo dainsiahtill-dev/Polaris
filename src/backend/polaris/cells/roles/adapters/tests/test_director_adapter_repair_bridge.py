@@ -139,6 +139,7 @@ def _patch_materialization_facade_from_schedule(monkeypatch: Any, fake_schedule_
     def fake_facade(
         *,
         artifact_quality_errors: tuple[str, ...] | list[str],
+        artifact_quality_issues: tuple[dict[str, Any], ...] | list[dict[str, Any]] = (),
         runner_step_ids: tuple[str, ...],
         runner: Any,
         plan_probe_preaudit: dict[str, Any] | None = None,
@@ -182,7 +183,7 @@ def _patch_materialization_facade_from_schedule(monkeypatch: Any, fake_schedule_
             receipt_projections=tuple(dict(item) for item in schedule_result.receipt_projections),
             coverage_preaudit={
                 "schema_version": "director.repair_coverage_report.v1",
-                "total_diagnostics": len(tuple(artifact_quality_errors)),
+                "total_diagnostics": len(tuple(artifact_quality_errors)) + len(tuple(artifact_quality_issues)),
                 "items": [],
             },
             plan_probe_preaudit=dict(plan_probe_preaudit or {}),
@@ -550,6 +551,83 @@ def test_runtime_bridge_skips_covered_unplannable_before_executor(tmp_path: Path
 
     assert executor_created is False
     assert results == []
+
+
+def test_runtime_bridge_forwards_typed_artifact_issues_without_string_errors(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    typed_issue = {
+        "source": "artifact_quality",
+        "code": "typescript_syntax_check_failed",
+        "message": _QUALITY_ERROR,
+        "path": _RELATIVE_PATH,
+        "severity": "error",
+        "metadata": {"source": "typed_artifact_quality_issue"},
+    }
+    plan_probe_commands: list[Any] = []
+    run_commands: list[Any] = []
+
+    def fake_query_director_repair_plan_probe(command: Any) -> SimpleNamespace:
+        plan_probe_commands.append(command)
+        return SimpleNamespace(
+            items=(
+                SimpleNamespace(
+                    source_tool=_SOURCE_TOOL,
+                    status="covered_plannable",
+                    planning_result=SimpleNamespace(
+                        to_dict=lambda: {
+                            "ok": True,
+                            "planned": True,
+                            "source_tool": _SOURCE_TOOL,
+                        }
+                    ),
+                ),
+            ),
+            to_dict=lambda: {
+                "schema_version": "director.repair_plan_probe.v1",
+                "items": [{"source_tool": _SOURCE_TOOL, "status": "covered_plannable"}],
+            },
+        )
+
+    def fake_run_director_repair(
+        command: Any,
+        *,
+        writer: Any,
+        editor: Any = None,
+        deleter: Any = None,
+        revalidator: Any = None,
+    ) -> DirectorRepairResultV1:
+        del writer, editor, deleter, revalidator
+        run_commands.append(command)
+        return DirectorRepairResultV1(ok=True, receipts=(), metadata={"planning": {"ok": True}})
+
+    monkeypatch.setattr(
+        runtime_bridge_module,
+        "query_director_repair_plan_probe",
+        fake_query_director_repair_plan_probe,
+    )
+    monkeypatch.setattr(runtime_bridge_module, "run_director_repair", fake_run_director_repair)
+
+    results = run_runtime_repair_with_director_tools(
+        _FakeAdapter(tmp_path),
+        workspace_path=tmp_path,
+        task_id="task-typed-issues-only",
+        source_tool=_SOURCE_TOOL,
+        executor_factory=_FakeDirectorToolExecutor,
+        base_files={_RELATIVE_PATH: _BROKEN_CONTENT},
+        artifact_quality_errors=(),
+        artifact_quality_issues=(typed_issue,),
+        allowed_paths=(_RELATIVE_PATH,),
+    )
+
+    assert results == []
+    assert len(plan_probe_commands) == 1
+    assert len(run_commands) == 1
+    assert plan_probe_commands[0].artifact_quality_errors == ()
+    assert plan_probe_commands[0].artifact_quality_issues == (typed_issue,)
+    assert run_commands[0].artifact_quality_errors == ()
+    assert run_commands[0].artifact_quality_issues == (typed_issue,)
 
 
 def test_runtime_bridge_fails_closed_when_planned_composition_preflight_is_not_ok(
@@ -2356,6 +2434,7 @@ def test_materialization_rust_compiler_executes_only_plan_probe_plannable_tools(
     assert probe_calls == [
         {
             "artifact_quality_errors": artifact_quality_errors,
+            "artifact_quality_issues": (),
             "materialization_step_id": "materialization.rust_compiler",
             "base_files": {
                 "Cargo.toml": '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2021"\n',

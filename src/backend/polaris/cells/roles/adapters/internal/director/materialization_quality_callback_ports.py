@@ -118,6 +118,7 @@ def _run_materialization_quality_repair_step(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     advisor_notes: tuple[Any, ...] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
@@ -127,6 +128,7 @@ def _run_materialization_quality_repair_step(
             task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
             convergence_verifier=convergence_verifier,
         )
     if step_id == "materialization.typescript_scaffold":
@@ -135,6 +137,7 @@ def _run_materialization_quality_repair_step(
             task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
             convergence_verifier=convergence_verifier,
         )
     if step_id == "materialization.typescript_compiler":
@@ -143,6 +146,7 @@ def _run_materialization_quality_repair_step(
             task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
             convergence_verifier=convergence_verifier,
         )
     if step_id == "materialization.html_entrypoint":
@@ -151,6 +155,7 @@ def _run_materialization_quality_repair_step(
             task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
             convergence_verifier=convergence_verifier,
         )
     if step_id == "materialization.node_manifest":
@@ -159,6 +164,7 @@ def _run_materialization_quality_repair_step(
             task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
             convergence_verifier=convergence_verifier,
         )
     if step_id == "materialization.rust_compiler":
@@ -167,6 +173,7 @@ def _run_materialization_quality_repair_step(
             task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
             convergence_verifier=convergence_verifier,
         )
     if step_id == "materialization.target_runtime":
@@ -175,6 +182,7 @@ def _run_materialization_quality_repair_step(
             task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
             convergence_verifier=convergence_verifier,
         )
     if step_id == "materialization.python_import":
@@ -183,6 +191,7 @@ def _run_materialization_quality_repair_step(
             task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
             convergence_verifier=convergence_verifier,
         )
     if step_id == "materialization.go_import":
@@ -191,6 +200,7 @@ def _run_materialization_quality_repair_step(
             task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
             advisor_notes=advisor_notes,
             convergence_verifier=convergence_verifier,
         )
@@ -203,6 +213,7 @@ def _run_materialization_hygiene_scaffold(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
@@ -212,6 +223,7 @@ def _run_materialization_hygiene_scaffold(
             workspace_path,
             task=task,
             artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
             source_tool=source_tool,
         )
         if not base_files:
@@ -225,6 +237,7 @@ def _run_materialization_hygiene_scaffold(
                 executor_factory=DirectorToolExecutor,
                 base_files=base_files,
                 artifact_quality_errors=artifact_quality_errors,
+                artifact_quality_issues=artifact_quality_issues,
                 allowed_paths=tuple(base_files.keys()),
                 use_editor=True,
                 convergence_verifier=convergence_verifier,
@@ -239,6 +252,7 @@ def _run_materialization_typescript_scaffold(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
@@ -247,6 +261,7 @@ def _run_materialization_typescript_scaffold(
         base_files = _collect_materialization_runtime_base_files(
             workspace_path,
             artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
             source_tool=source_tool,
             allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"),
             collect_unmatched_diagnostic_paths=True,
@@ -263,6 +278,7 @@ def _run_materialization_typescript_scaffold(
                 executor_factory=DirectorToolExecutor,
                 base_files=base_files,
                 artifact_quality_errors=artifact_quality_errors,
+                artifact_quality_issues=artifact_quality_issues,
                 allowed_paths=tuple(base_files.keys()),
                 use_editor=True,
                 convergence_verifier=convergence_verifier,
@@ -277,6 +293,7 @@ def _run_materialization_typescript_compiler(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
@@ -284,6 +301,7 @@ def _run_materialization_typescript_compiler(
         adapter,
         task=task,
         artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=artifact_quality_issues,
         materialization_step_id="materialization.typescript_compiler",
         allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".html", ".json"),
         caller="materialization_typescript_compiler",
@@ -295,6 +313,7 @@ def _run_materialization_typescript_compiler(
                 task=task,
                 task_id=task_id,
                 artifact_quality_errors=artifact_quality_errors,
+                artifact_quality_issues=artifact_quality_issues,
                 source_tool=source_tool,
                 convergence_verifier=convergence_verifier,
             )
@@ -307,6 +326,7 @@ def _materialization_plannable_runtime_source_tools(
     *,
     task: Mapping[str, Any] | None,
     artifact_quality_errors: Sequence[str] | None,
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     candidate_source_tools: Sequence[str] = (),
     materialization_step_id: str | None = None,
     allowed_suffixes: Sequence[str],
@@ -323,6 +343,7 @@ def _materialization_plannable_runtime_source_tools(
     base_files = _collect_materialization_runtime_base_files(
         workspace_path,
         artifact_quality_errors=[str(item) for item in artifact_quality_errors],
+        artifact_quality_issues=artifact_quality_issues,
         source_tool=str(runtime_source_tools[0]),
         allowed_suffixes=tuple(allowed_suffixes),
         collect_unmatched_diagnostic_paths=True,
@@ -332,6 +353,7 @@ def _materialization_plannable_runtime_source_tools(
         return ()
     return _materialization_plannable_runtime_source_tools_from_base_files(
         artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=artifact_quality_issues,
         candidate_source_tools=tuple(candidate_source_tools),
         materialization_step_id=materialization_step_id,
         base_files=base_files,
@@ -342,6 +364,7 @@ def _materialization_plannable_runtime_source_tools(
 def _materialization_plannable_runtime_source_tools_from_base_files(
     *,
     artifact_quality_errors: Sequence[str] | None,
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     candidate_source_tools: Sequence[str] = (),
     materialization_step_id: str | None = None,
     base_files: Mapping[str, str],
@@ -354,7 +377,8 @@ def _materialization_plannable_runtime_source_tools_from_base_files(
     if not base_files:
         return ()
     errors = tuple(str(item) for item in artifact_quality_errors or () if str(item or "").strip())
-    if not errors:
+    quality_issues = tuple(dict(item) for item in artifact_quality_issues)
+    if not errors and not quality_issues:
         return tuple(str(item) for item in candidate_source_tools) or _materialization_runtime_source_tools_for_step(
             str(materialization_step_id or "")
         )
@@ -363,6 +387,7 @@ def _materialization_plannable_runtime_source_tools_from_base_files(
             artifact_quality_errors=errors,
             base_files=dict(base_files),
             source_tools=tuple(str(item) for item in candidate_source_tools),
+            artifact_quality_issues=quality_issues,
             step_id=materialization_step_id,
             fallback_to_step_source_tools=materialization_step_id is not None,
             mode="shadow",
@@ -382,6 +407,7 @@ def _run_materialization_html_entrypoint(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
@@ -392,6 +418,7 @@ def _run_materialization_html_entrypoint(
                 task=task,
                 task_id=task_id,
                 artifact_quality_errors=artifact_quality_errors,
+                artifact_quality_issues=artifact_quality_issues,
                 source_tool=source_tool,
                 convergence_verifier=convergence_verifier,
             )
@@ -405,6 +432,7 @@ def _run_materialization_typescript_runtime_repair(
     task: Mapping[str, Any] | None = None,
     task_id: str,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     source_tool: str,
     collect_unmatched_diagnostic_paths: bool = False,
     convergence_verifier: Callable[[Any], Any] | None = None,
@@ -413,12 +441,14 @@ def _run_materialization_typescript_runtime_repair(
     base_files = _collect_materialization_runtime_base_files(
         workspace_path,
         artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=artifact_quality_issues,
         source_tool=source_tool,
         allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".html", ".json"),
         collect_unmatched_diagnostic_paths=collect_unmatched_diagnostic_paths,
         task=task,
     )
-    if not base_files or not artifact_quality_errors:
+    quality_issues = tuple(dict(item) for item in artifact_quality_issues)
+    if not base_files or (not artifact_quality_errors and not quality_issues):
         return []
     return run_runtime_repair_with_director_tools(
         adapter,
@@ -428,6 +458,7 @@ def _run_materialization_typescript_runtime_repair(
         executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=quality_issues,
         allowed_paths=tuple(base_files.keys()),
         use_editor=True,
         convergence_verifier=convergence_verifier,
@@ -440,6 +471,7 @@ def _run_materialization_node_manifest(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
@@ -449,6 +481,7 @@ def _run_materialization_node_manifest(
             workspace_path,
             task=task,
             artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
             source_tool=source_tool,
         )
         if not base_files:
@@ -462,6 +495,7 @@ def _run_materialization_node_manifest(
                 executor_factory=DirectorToolExecutor,
                 base_files=base_files,
                 artifact_quality_errors=artifact_quality_errors,
+                artifact_quality_issues=artifact_quality_issues,
                 allowed_paths=tuple(base_files.keys()),
                 use_editor=True,
                 convergence_verifier=convergence_verifier,
@@ -476,6 +510,7 @@ def _run_materialization_rust_compiler(
     task: Mapping[str, Any] | None = None,
     task_id: str,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
@@ -484,6 +519,7 @@ def _run_materialization_rust_compiler(
     base_files = _collect_materialization_rust_base_files(workspace_path)
     source_tools = _materialization_plannable_runtime_source_tools_from_base_files(
         artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=artifact_quality_issues,
         materialization_step_id="materialization.rust_compiler",
         base_files=base_files,
         caller="materialization_rust_compiler",
@@ -494,6 +530,7 @@ def _run_materialization_rust_compiler(
                 adapter,
                 task_id=task_id,
                 artifact_quality_errors=artifact_quality_errors,
+                artifact_quality_issues=artifact_quality_issues,
                 source_tool=source_tool,
                 convergence_verifier=convergence_verifier,
             )
@@ -505,6 +542,7 @@ def _collect_materialization_runtime_base_files(
     workspace_path: Path,
     *,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     source_tool: str,
     allowed_suffixes: tuple[str, ...],
     collect_unmatched_diagnostic_paths: bool = False,
@@ -515,7 +553,10 @@ def _collect_materialization_runtime_base_files(
     paths: list[str] = []
     source_tool_matched = False
     with suppress(RuntimeError, TypeError, ValueError):
-        coverage = _project_coverage_preaudit(artifact_quality_errors)
+        coverage = _project_coverage_preaudit(
+            artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
+        )
         for item in coverage.get("items") or ():
             if not isinstance(item, Mapping):
                 continue
@@ -561,6 +602,7 @@ def _collect_materialization_hygiene_base_files(
     *,
     task: Mapping[str, Any] | None,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     source_tool: str,
 ) -> dict[str, str]:
     if not workspace_path.is_dir():
@@ -572,6 +614,7 @@ def _collect_materialization_hygiene_base_files(
     return _collect_materialization_runtime_base_files(
         workspace_path,
         artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=artifact_quality_issues,
         source_tool=source_tool,
         allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".html", ".css", ".json"),
         collect_unmatched_diagnostic_paths=True,
@@ -584,11 +627,13 @@ def _collect_materialization_node_manifest_base_files(
     *,
     task: Mapping[str, Any] | None,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     source_tool: str,
 ) -> dict[str, str]:
     base_files = _collect_materialization_runtime_base_files(
         workspace_path,
         artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=artifact_quality_issues,
         source_tool=source_tool,
         allowed_suffixes=(".json", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"),
         collect_unmatched_diagnostic_paths=True,
@@ -604,11 +649,13 @@ def _collect_materialization_target_runtime_base_files(
     *,
     task: Mapping[str, Any] | None,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     source_tool: str,
 ) -> dict[str, str]:
     base_files = _collect_materialization_runtime_base_files(
         workspace_path,
         artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=artifact_quality_issues,
         source_tool=source_tool,
         allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".html", ".htm"),
         collect_unmatched_diagnostic_paths=True,
@@ -629,12 +676,14 @@ def _materialization_allowed_paths_from_runtime_public_plan(
     source_tool: str,
     base_files: Mapping[str, str],
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
 ) -> tuple[str, ...]:
     result = query_director_repair_materialization_allowed_paths(
         QueryDirectorRepairMaterializationAllowedPathsV1(
             source_tool=source_tool,
             base_files=base_files,
             artifact_quality_errors=tuple(artifact_quality_errors),
+            artifact_quality_issues=tuple(dict(item) for item in artifact_quality_issues),
             mode="shadow",
             metadata={"adapter_bridge": "materialization_quality_runtime_ports"},
         )
@@ -818,6 +867,7 @@ def _run_materialization_rust_runtime_repair(
     *,
     task_id: str,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     source_tool: str,
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
@@ -826,7 +876,8 @@ def _run_materialization_rust_runtime_repair(
 
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
     base_files = _collect_materialization_rust_base_files(workspace_path)
-    if not base_files or not artifact_quality_errors:
+    quality_issues = tuple(dict(item) for item in artifact_quality_issues)
+    if not base_files or (not artifact_quality_errors and not quality_issues):
         return []
     return run_runtime_repair_with_director_tools(
         adapter,
@@ -836,6 +887,7 @@ def _run_materialization_rust_runtime_repair(
         executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=quality_issues,
         allowed_paths=tuple(base_files.keys()),
         use_editor=True,
         convergence_verifier=convergence_verifier,
@@ -870,6 +922,7 @@ def _run_materialization_target_runtime(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
@@ -879,6 +932,7 @@ def _run_materialization_target_runtime(
             workspace_path,
             task=task,
             artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
             source_tool=source_tool,
         )
         if not base_files:
@@ -887,6 +941,7 @@ def _run_materialization_target_runtime(
             source_tool=source_tool,
             base_files=base_files,
             artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
         )
         allowed_paths = _materialization_allowed_paths_in_current_task_scope(
             runtime_allowed_paths,
@@ -905,6 +960,7 @@ def _run_materialization_target_runtime(
                 executor_factory=DirectorToolExecutor,
                 base_files=base_files,
                 artifact_quality_errors=artifact_quality_errors,
+                artifact_quality_issues=artifact_quality_issues,
                 allowed_paths=allowed_paths,
                 use_editor=True,
                 convergence_verifier=convergence_verifier,
@@ -919,10 +975,12 @@ def _run_materialization_python_import(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     workspace = Path(getattr(adapter, "workspace", "") or "")
-    if not workspace.is_dir() or not artifact_quality_errors:
+    quality_issues = tuple(dict(item) for item in artifact_quality_issues)
+    if not workspace.is_dir() or (not artifact_quality_errors and not quality_issues):
         return []
     workspace_path = workspace.resolve()
     if not any(workspace_path.rglob("*.py")):
@@ -931,6 +989,7 @@ def _run_materialization_python_import(
     base_files = _collect_materialization_python_base_files(workspace_path)
     source_tools = _materialization_plannable_runtime_source_tools_from_base_files(
         artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=quality_issues,
         materialization_step_id="materialization.python_import",
         base_files=base_files,
         caller="materialization_python_import",
@@ -945,6 +1004,7 @@ def _run_materialization_python_import(
             executor_factory=DirectorToolExecutor,
             base_files=base_files,
             artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=quality_issues,
             allowed_paths=tuple(base_files.keys()),
             use_editor=True,
             convergence_verifier=convergence_verifier,
@@ -976,6 +1036,7 @@ def _run_materialization_go_import(
     task: Mapping[str, Any] | None = None,
     task_id: str,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     advisor_notes: tuple[Any, ...] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
@@ -984,6 +1045,7 @@ def _run_materialization_go_import(
         task=task,
         task_id=task_id,
         artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=artifact_quality_issues,
         advisor_notes=advisor_notes,
         convergence_verifier=convergence_verifier,
     )
@@ -995,6 +1057,7 @@ def _run_materialization_go_import_repairs(
     task: Mapping[str, Any] | None = None,
     task_id: str,
     artifact_quality_errors: list[str] | tuple[str, ...] = (),
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     advisor_notes: tuple[Any, ...] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
@@ -1013,6 +1076,7 @@ def _run_materialization_go_import_repairs(
         return results
     source_tools = _materialization_plannable_runtime_source_tools_from_base_files(
         artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=artifact_quality_issues,
         materialization_step_id="materialization.go_import",
         base_files=base_files,
         caller="materialization_go_import",
@@ -1028,6 +1092,7 @@ def _run_materialization_go_import_repairs(
             base_files=base_files,
             allowed_paths=tuple(base_files.keys()),
             artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
             advisor_notes=advisor_notes,
             use_editor=True,
             convergence_verifier=convergence_verifier,

@@ -31,6 +31,7 @@ def run_runtime_repair_with_director_tools(
     executor_factory: Callable[..., Any],
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str] = (),
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     allowed_paths: Sequence[str] | None = None,
     advisor_notes: Sequence[RepairAdvisoryV1] = (),
     use_editor: bool = True,
@@ -43,10 +44,12 @@ def run_runtime_repair_with_director_tools(
     if not base_files:
         return []
 
+    quality_issues = tuple(dict(item) for item in artifact_quality_issues)
     planning_preflight_payload = _runtime_repair_planning_preflight(
         source_tool=source_tool,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=quality_issues,
         advisor_notes=advisor_notes,
         convergence_verifier_present=convergence_verifier is not None,
     )
@@ -136,6 +139,7 @@ def run_runtime_repair_with_director_tools(
                 workspace=str(workspace_path),
                 source_tools=(source_tool,),
                 artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+                artifact_quality_issues=quality_issues,
                 base_files=dict(base_files),
                 allowed_paths=tuple(allowed_paths or base_files.keys()),
                 advisor_notes=tuple(advisor_notes),
@@ -173,6 +177,7 @@ def run_runtime_repair_with_director_tools(
             workspace=str(workspace_path),
             source_tool=source_tool,
             artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+            artifact_quality_issues=quality_issues,
             base_files=dict(base_files),
             allowed_paths=tuple(allowed_paths or base_files.keys()),
             advisor_notes=tuple(advisor_notes),
@@ -211,15 +216,18 @@ def _runtime_repair_planning_preflight(
     source_tool: str,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]],
     advisor_notes: Sequence[RepairAdvisoryV1],
     convergence_verifier_present: bool,
 ) -> dict[str, Any] | None:
     errors = tuple(str(item) for item in artifact_quality_errors if str(item or "").strip())
-    if not errors:
+    issues = tuple(dict(item) for item in artifact_quality_issues)
+    if not errors and not issues:
         return _direct_runtime_repair_planning_preflight(
             source_tool=source_tool,
             base_files=base_files,
             artifact_quality_errors=(),
+            artifact_quality_issues=(),
             advisor_notes=advisor_notes,
         )
 
@@ -227,6 +235,7 @@ def _runtime_repair_planning_preflight(
         QueryDirectorRepairPlanProbeV1(
             source_tools=(source_tool,),
             artifact_quality_errors=errors,
+            artifact_quality_issues=issues,
             base_files=dict(base_files),
             advisor_notes=tuple(advisor_notes),
         )
@@ -272,12 +281,14 @@ def _direct_runtime_repair_planning_preflight(
     source_tool: str,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]],
     advisor_notes: Sequence[RepairAdvisoryV1],
 ) -> dict[str, Any] | None:
     planning = plan_director_repair(
         PlanDirectorRepairCommandV1(
             source_tool=source_tool,
             artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+            artifact_quality_issues=tuple(dict(item) for item in artifact_quality_issues),
             base_files=dict(base_files),
             advisor_notes=tuple(advisor_notes),
         )

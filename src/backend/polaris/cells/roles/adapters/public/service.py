@@ -197,6 +197,7 @@ def run_director_materialization_quality_repair_schedule_result(
             task=task,
             task_id=command.task_id,
             artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
             advisor_notes=command.advisor_notes,
             convergence_verifier=command.convergence_verifier,
         ),
