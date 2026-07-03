@@ -463,6 +463,15 @@ _ARTIFACT_QUALITY_JAVASCRIPT_MODULE_ERROR_RE = re.compile(
     r"[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\s+is not a function)",
     re.IGNORECASE,
 )
+_ARTIFACT_QUALITY_UNRESOLVED_IMPORT_SYMBOL_RE = re.compile(
+    r"unresolved (?:import )?symbol ['\"](?P<symbol>[^'\"]+)['\"] "
+    r"from ['\"](?P<module>[^'\"]+)['\"] in (?P<path>\S+)",
+    re.IGNORECASE,
+)
+_ARTIFACT_QUALITY_UNRESOLVED_RELATIVE_IMPORT_RE = re.compile(
+    r"unresolved relative import ['\"](?P<specifier>[^'\"]+)['\"] in (?P<path>\S+)",
+    re.IGNORECASE,
+)
 
 
 def _artifact_quality_issue_code(message: str) -> str:
@@ -521,6 +530,30 @@ def _artifact_quality_issue_location(message: str) -> tuple[int | None, int | No
     return line, column
 
 
+def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict[str, Any]:
+    metadata: dict[str, Any] = {"raw": text}
+    if code == "unresolved_import_symbol":
+        match = _ARTIFACT_QUALITY_UNRESOLVED_IMPORT_SYMBOL_RE.search(message)
+        if match:
+            metadata.update(
+                {
+                    "symbol": str(match.group("symbol") or "").strip(),
+                    "module": str(match.group("module") or "").strip(),
+                    "importer_path": str(match.group("path") or "").strip(),
+                }
+            )
+    elif code == "unresolved_relative_import":
+        match = _ARTIFACT_QUALITY_UNRESOLVED_RELATIVE_IMPORT_RE.search(message)
+        if match:
+            metadata.update(
+                {
+                    "specifier": str(match.group("specifier") or "").strip(),
+                    "importer_path": str(match.group("path") or "").strip(),
+                }
+            )
+    return {key: value for key, value in metadata.items() if value}
+
+
 def _artifact_quality_issue_from_error(error: str) -> ArtifactQualityIssue:
     text = str(error or "").strip()
     message = text
@@ -538,13 +571,14 @@ def _artifact_quality_issue_from_error(error: str) -> ArtifactQualityIssue:
             column=column,
             metadata={"raw": text},
         )
+    code = _artifact_quality_issue_code(message)
     return ArtifactQualityIssue(
-        code=_artifact_quality_issue_code(message),
+        code=code,
         message=message,
         path=_artifact_quality_issue_path(message),
         line=line,
         column=column,
-        metadata={"raw": text},
+        metadata=_artifact_quality_issue_metadata(text, message, code),
     )
 
 

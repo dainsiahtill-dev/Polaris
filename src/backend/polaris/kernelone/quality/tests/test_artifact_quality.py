@@ -99,6 +99,38 @@ def test_artifact_quality_issue_projection_extracts_colon_line_column() -> None:
     assert issues[0]["metadata"] == {"raw": error}
 
 
+def test_artifact_quality_issue_projection_extracts_unresolved_import_symbol_metadata() -> None:
+    error = (
+        "Artifact quality scan failed: unresolved import symbol 'WeatherKind' "
+        "from 'src.models.weather' in src/engine/forecast.py"
+    )
+
+    issues = artifact_quality_issues_from_errors((error,))
+
+    assert issues[0]["code"] == "unresolved_import_symbol"
+    assert issues[0]["path"] == "src/engine/forecast.py"
+    assert issues[0]["metadata"] == {
+        "raw": error,
+        "symbol": "WeatherKind",
+        "module": "src.models.weather",
+        "importer_path": "src/engine/forecast.py",
+    }
+
+
+def test_artifact_quality_issue_projection_extracts_unresolved_relative_import_metadata() -> None:
+    error = "Artifact quality scan failed: unresolved relative import './engine/runner' in src/index.ts"
+
+    issues = artifact_quality_issues_from_errors((error,))
+
+    assert issues[0]["code"] == "unresolved_relative_import"
+    assert issues[0]["path"] == "src/index.ts"
+    assert issues[0]["metadata"] == {
+        "raw": error,
+        "specifier": "./engine/runner",
+        "importer_path": "src/index.ts",
+    }
+
+
 def test_typescript_import_scanner_ignores_fixture_string_imports(tmp_path: Path) -> None:
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir(parents=True)
