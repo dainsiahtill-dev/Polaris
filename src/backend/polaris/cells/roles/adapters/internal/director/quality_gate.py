@@ -27,6 +27,7 @@ from typing import Any
 
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.cells.roles.adapters.public.contracts import RunDirectorMaterializationQualityRepairScheduleCommandV1
+from polaris.kernelone.quality.file_ownership_ledger import build_file_ownership_handoff_requests
 
 from . import execute_method as _em
 from .artifact_quality_diagnostics import (
@@ -1508,17 +1509,62 @@ def _record_deferred_task_boundary_quality_errors(
         context["director_task_boundary_deferred_quality_errors"] = [record]
 
 
+def _quality_repair_cache_root(task: dict[str, Any], context: dict[str, Any]) -> str:
+    """Resolve the cache root used by CE/runtime ledgers from local task context."""
+    candidates: list[Any] = []
+    for source in (context, task):
+        if not isinstance(source, dict):
+            continue
+        candidates.extend(
+            [
+                source.get("cache_root"),
+                source.get("cache_root_full"),
+                source.get("runtime_cache_root"),
+            ]
+        )
+        metadata = source.get("metadata")
+        if isinstance(metadata, dict):
+            candidates.extend(
+                [
+                    metadata.get("cache_root"),
+                    metadata.get("cache_root_full"),
+                    metadata.get("runtime_cache_root"),
+                ]
+            )
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _task_boundary_requesting_task_id(task: dict[str, Any]) -> str:
+    return str(task.get("id") or task.get("task_id") or task.get("external_task_id") or "").strip()
+
+
 def _task_boundary_scope_filter_evidence(
     task: dict[str, Any],
     *,
     target_files: list[str],
     reason: str,
+    workspace: str = "",
+    cache_root: str = "",
 ) -> dict[str, Any]:
+    ownership_handoff_requests: tuple[dict[str, Any], ...] = ()
+    if str(workspace or "").strip():
+        ownership_handoff_requests = build_file_ownership_handoff_requests(
+            str(workspace or "").strip(),
+            str(cache_root or "").strip(),
+            target_files,
+            requesting_task_id=_task_boundary_requesting_task_id(task),
+            reason=reason,
+        )
     return {
         "schema_version": "director.task_boundary.repair_scope_filter.v1",
         "reason": reason,
         "task_declared_write_targets": _task_write_scope_candidates(task)[:12],
         "out_of_scope_repair_target_files": _dedupe_preserve_order(target_files)[:12],
+        "ownership_handoff_requests": list(ownership_handoff_requests)[:12],
         "deferred": True,
     }
 
@@ -1960,6 +2006,7 @@ async def _run_materialization_quality_repair_retry(
         return [], {"attempted": False, "reason": "no_artifact_quality_errors"}
 
     workspace_full = str(getattr(adapter, "workspace", "") or "")
+    cache_root_full = _quality_repair_cache_root(task, context)
     repair_quality_errors = _tool_receipt_safe_quality_errors(artifact_quality_errors)
     deferred_scope_context: dict[str, Any] = {}
     repair_quality_errors = _filter_npm_script_entrypoint_errors_to_task_write_scope(
@@ -1997,6 +2044,8 @@ async def _run_materialization_quality_repair_retry(
             task,
             target_files=deferred_scope_targets,
             reason=scope_filter_reason,
+            workspace=workspace_full,
+            cache_root=cache_root_full,
         )
     if not repair_quality_errors and task_scope_filter_evidence:
         return [], {
@@ -2091,6 +2140,8 @@ async def _run_materialization_quality_repair_retry(
             task,
             target_files=merged_out_of_scope,
             reason="npm_script_entrypoint_outside_current_task_target_files",
+            workspace=workspace_full,
+            cache_root=cache_root_full,
         )
     should_merge_missing_targets = bool(explicit_missing_quality_targets) or not (
         runtime_smoke_target_files or semantic_quality_target_files or explicit_quality_target_files
@@ -2130,6 +2181,8 @@ async def _run_materialization_quality_repair_retry(
             task,
             target_files=merged_out_of_scope,
             reason="quality_repair_targets_outside_current_task_target_files",
+            workspace=workspace_full,
+            cache_root=cache_root_full,
         )
         semantic_exporter_owner_target_set = set(semantic_exporter_owner_targets)
         out_of_scope_exporter_owner_targets = [

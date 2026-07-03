@@ -29,6 +29,7 @@ import logging
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any
 
 from polaris.kernelone.fs.jsonl.locking import file_lock
@@ -39,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 _LEDGER_REL_PATH = "runtime/contracts/file_ownership_ledger.json"
 _SCHEMA_VERSION = "file-ownership-ledger/1"
+_HANDOFF_REQUEST_SCHEMA_VERSION = "file-ownership-handoff-request/1"
 
 # In-process serialization. The cross-process file lock below is keyed by a lock
 # FILE created with O_CREAT|O_EXCL, which serializes other PROCESSES but does not
@@ -47,6 +49,36 @@ _SCHEMA_VERSION = "file-ownership-ledger/1"
 # is therefore required in addition, to serialize the concurrent CEConsumer fission
 # threads (KERNELONE_TASK_MARKET_ROLE_POOLS includes chief_engineer + concurrency>1).
 _PROCESS_LOCK = threading.Lock()
+
+
+@dataclass(frozen=True)
+class FileOwnershipHandoffRequest:
+    """Read-only routing projection for an out-of-scope file repair target.
+
+    The file ownership ledger remains the single source of truth. This object is
+    only a machine-readable request for the orchestration layer to route a
+    deferred repair target back to its owning task or CE planning layer.
+    """
+
+    target_file: str
+    requesting_task_id: str
+    reason: str
+    owner_step_id: str = ""
+    owner_parent: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        owner_found = bool(self.owner_step_id or self.owner_parent)
+        return {
+            "schema_version": _HANDOFF_REQUEST_SCHEMA_VERSION,
+            "target_file": self.target_file,
+            "requesting_task_id": self.requesting_task_id,
+            "reason": self.reason,
+            "owner_step_id": self.owner_step_id,
+            "owner_parent": self.owner_parent,
+            "owner_found": owner_found,
+            "recommended_route": "owner_task_retry" if owner_found else "scope_authority_resolution",
+            "status": "owner_found" if owner_found else "owner_unknown",
+        }
 
 
 @contextmanager
@@ -167,6 +199,50 @@ def read_file_owners(
     return owners
 
 
+def build_file_ownership_handoff_requests(
+    workspace: str,
+    cache_root: str,
+    target_files: list[str],
+    *,
+    requesting_task_id: str,
+    reason: str,
+) -> tuple[dict[str, Any], ...]:
+    """Build ordered, JSON-safe handoff requests for deferred repair targets.
+
+    The function never mutates the ledger. It normalizes and deduplicates target
+    paths, reads the existing owner facts, and emits one request per target. An
+    unknown owner is still represented explicitly so downstream projections can
+    distinguish "needs owner routing" from "scope evidence was never produced".
+    """
+    normalized_targets: list[str] = []
+    seen: set[str] = set()
+    for raw_target in target_files:
+        target = _normalize_target(raw_target)
+        if not target or target in seen:
+            continue
+        seen.add(target)
+        normalized_targets.append(target)
+    if not normalized_targets:
+        return ()
+
+    owners = read_file_owners(workspace, cache_root, normalized_targets)
+    task_id = str(requesting_task_id or "").strip()
+    request_reason = str(reason or "").strip()
+    requests: list[dict[str, Any]] = []
+    for target in normalized_targets:
+        owner = owners.get(target, {})
+        requests.append(
+            FileOwnershipHandoffRequest(
+                target_file=target,
+                requesting_task_id=task_id,
+                reason=request_reason,
+                owner_step_id=str(owner.get("owner_step_id") or "").strip(),
+                owner_parent=str(owner.get("owner_parent") or "").strip(),
+            ).to_dict()
+        )
+    return tuple(requests)
+
+
 def render_edit_contract(owned_by_other: dict[str, dict[str, str]]) -> str:
     """Render the EDIT-on-prior contract for the fission prompt.
 
@@ -196,6 +272,8 @@ def render_edit_contract(owned_by_other: dict[str, dict[str, str]]) -> str:
 
 
 __all__ = [
+    "FileOwnershipHandoffRequest",
+    "build_file_ownership_handoff_requests",
     "read_file_owners",
     "record_file_owners",
     "render_edit_contract",

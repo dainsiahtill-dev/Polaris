@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from polaris.kernelone.quality.file_ownership_ledger import (
+    build_file_ownership_handoff_requests,
     read_file_owners,
     record_file_owners,
     render_edit_contract,
@@ -144,3 +145,45 @@ class TestRenderEditContract:
 
     def test_empty_when_nothing_owned_elsewhere(self) -> None:
         assert render_edit_contract({}) == ""
+
+
+class TestBuildFileOwnershipHandoffRequests:
+    def test_routes_owned_targets_and_preserves_unknown_targets(self, tmp_path: Path) -> None:
+        ws = str(tmp_path)
+        record_file_owners(ws, ws, _steps(("S4", "src/index.js")), "PM-0001-1")
+
+        requests = build_file_ownership_handoff_requests(
+            ws,
+            ws,
+            ["./src/index.js", "src/missing.js", "src/index.js"],
+            requesting_task_id="PM-0001-2-step-3",
+            reason="quality_repair_targets_outside_current_task_target_files",
+        )
+
+        assert len(requests) == 2
+        assert requests[0] == {
+            "schema_version": "file-ownership-handoff-request/1",
+            "target_file": "src/index.js",
+            "requesting_task_id": "PM-0001-2-step-3",
+            "reason": "quality_repair_targets_outside_current_task_target_files",
+            "owner_step_id": "S4",
+            "owner_parent": "PM-0001-1",
+            "owner_found": True,
+            "recommended_route": "owner_task_retry",
+            "status": "owner_found",
+        }
+        assert requests[1]["target_file"] == "src/missing.js"
+        assert requests[1]["owner_found"] is False
+        assert requests[1]["recommended_route"] == "scope_authority_resolution"
+
+    def test_empty_targets_return_empty_tuple(self, tmp_path: Path) -> None:
+        assert (
+            build_file_ownership_handoff_requests(
+                str(tmp_path),
+                str(tmp_path),
+                ["", "./"],
+                requesting_task_id="TASK-1",
+                reason="scope_filter",
+            )
+            == ()
+        )
