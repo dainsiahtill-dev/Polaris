@@ -960,6 +960,22 @@ def test_matching_owner_handoff_accepts_task_prefix_numeric_alias() -> None:
     assert matched == request
 
 
+def test_matching_owner_handoff_aliases_request_owner_tokens() -> None:
+    request = {
+        "target_file": "src/index.js",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+        "owner_step_id": "TASK-012",
+    }
+
+    matched = factory_router_module._matching_owner_handoff_request(
+        {"id": 12, "metadata": {}},
+        [request],
+    )
+
+    assert matched == request
+
+
 def test_quality_gate_task_boundary_validation_reports_unknown_owner_handoff(temp_workspace: Path) -> None:
     task_board = TaskRuntimeService(str(temp_workspace))
     current_row = task_board.ensure_task_row(

@@ -1049,13 +1049,18 @@ def _matching_owner_handoff_request(
     if not tokens:
         return {}
     for request in handoff_requests:
-        owner_tokens = {
-            str(request.get("owner_step_id") or "").strip(),
-            str(request.get("owner_parent") or "").strip(),
-        }
-        if tokens & {token for token in owner_tokens if token}:
+        if tokens & _owner_handoff_identifier_tokens(request):
             return request
     return {}
+
+
+def _owner_handoff_identifier_tokens(request: dict[str, Any]) -> set[str]:
+    tokens: set[str] = set()
+    for value in (request.get("owner_step_id"), request.get("owner_parent")):
+        token = str(value or "").strip()
+        if token:
+            tokens.update(_task_identifier_token_aliases(token))
+    return tokens
 
 
 def _safe_rework_int(value: Any, *, default: int = 0) -> int:
