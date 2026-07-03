@@ -468,9 +468,9 @@ class ExplorationPolicy:
     This class wraps a SelectorPolicy implementation and provides
     the full ExplorationPolicyPort interface.
 
-    Backward compatibility:
-        - If no selector_policy is provided, uses DefaultSelectorPolicy
-        - Maintains same behavior as the original DefaultExplorationPolicy
+    Default behavior:
+        - If no selector_policy is provided, uses DefaultSelectorPolicy.
+        - Keeps selector wiring explicit so custom policies can be injected.
     """
 
     def __init__(
@@ -572,14 +572,14 @@ class ExplorationPolicy:
 
 
 # ------------------------------------------------------------------
-# Default implementation (backward compatibility alias)
+# Default implementation
 # ------------------------------------------------------------------
 
 
 class DefaultExplorationPolicy(ExplorationPolicy):
     """Sane default exploration policy.
 
-    This is a backward-compatible alias that uses DefaultSelectorPolicy.
+    This is the canonical default policy wired to DefaultSelectorPolicy.
 
     Phase flow:
         MAP -> SEARCH -> SLICE -> EXPAND -> READ_FULL
