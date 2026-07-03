@@ -18,8 +18,8 @@ Current ownership notes (2026-03-22):
   - domain/entities/task_pydantic.py provides validated DTO-style parsing, while
     this module remains the mutable runtime task aggregate consumed by TaskBoard.
   - The Polaris TaskBoard implementation (file-backed CRUD + DAG) lives in
-    polaris/cells/runtime/task_runtime/internal/task_board.py. kernelone/task_board
-    is a compatibility facade only; this module owns task lifecycle semantics.
+    polaris/cells/runtime/task_runtime/internal/task_board.py. Do not restore
+    retired KernelOne task-board facades; this module owns task lifecycle semantics.
 """
 
 from __future__ import annotations
