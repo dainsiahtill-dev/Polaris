@@ -235,7 +235,7 @@ def _get_ts_parser(language: str) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# tree-sitter binding compatibility shim
+# tree-sitter binding ABI adapter
 #
 # Two incompatible tree-sitter Python ABIs exist in the wild and ship through the
 # different language-pack distributions:
@@ -246,7 +246,7 @@ def _get_ts_parser(language: str) -> Any:
 #     node.start_position().row / node.start_byte()); tree.root_node() is a METHOD.
 # Writing the traversal against only one ABI made the *other* raise AttributeError, which
 # get_tags() caught and silently degraded to the regex fallback — so the repo map ran
-# blind to methods/structure on every install with the "wrong" binding. These helpers
+# blind to methods/structure on every install with the alternate binding. These helpers
 # resolve each accessor regardless of ABI so tree-sitter extraction actually fires.
 # ---------------------------------------------------------------------------
 

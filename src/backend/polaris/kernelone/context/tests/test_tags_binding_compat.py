@@ -4,7 +4,7 @@ The traversal in ``repo_intelligence/tags.py`` was written against the py-tree-s
 (``node.type`` / ``node.children`` / ``tree.root_node`` properties). The Rust-style binding
 shipped by recent ``tree_sitter_language_pack`` exposes those as zero-arg methods, so every
 file silently degraded to the regex fallback (the repo map ran blind to methods/structure).
-These tests pin the ABI-agnostic shim so extraction never silently degrades again.
+These tests pin the ABI-agnostic adapter so extraction never silently degrades again.
 """
 
 from __future__ import annotations
@@ -48,4 +48,4 @@ def test_method_line_numbers_are_resolved(tmp_path: Path) -> None:
     tags = get_tags_for_file(str(tmp_path), str(src), languages=["python"])
     by_name = {t.name: t for t in tags}
     assert by_name["A"].line == 0
-    assert by_name["first"].line == 1  # 0-based start row via the ABI shim
+    assert by_name["first"].line == 1  # 0-based start row via the ABI adapter
