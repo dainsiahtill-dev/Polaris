@@ -97,31 +97,32 @@ class BackendLaunchRequest:
             ConfigValidationResult with validation status and any errors
         """
         # Import here to avoid circular dependency
+        validation_result_type: Any
         try:
-            from polaris.domain.models.config_snapshot import (
-                ConfigValidationResult as ValidationResult,
-            )
+            from polaris.domain.models.config_snapshot import ConfigValidationResult as ImportedConfigValidationResult
         except ImportError:
             # Simple fallback when polaris.domain.models is unavailable
             # (e.g., standalone usage or circular import during testing)
-            class SimpleValidationResult:  # type: ignore[misc,assignment]
+            class FallbackConfigValidationResult:
                 def __init__(self) -> None:
                     self.is_valid: bool = True
                     self.errors: list[str] = []
                     self.warnings: list[str] = []
 
-                def add_error(self, msg: str) -> SimpleValidationResult:
+                def add_error(self, msg: str) -> FallbackConfigValidationResult:
                     self.is_valid = False
                     self.errors.append(msg)
                     return self
 
-                def add_warning(self, msg: str) -> SimpleValidationResult:
+                def add_warning(self, msg: str) -> FallbackConfigValidationResult:
                     self.warnings.append(msg)
                     return self
 
-            ValidationResult = SimpleValidationResult  # type: ignore[misc,assignment]  # noqa: N806
+            validation_result_type = FallbackConfigValidationResult
+        else:
+            validation_result_type = ImportedConfigValidationResult
 
-        result = ValidationResult()
+        result = validation_result_type()
 
         # Check port range
         if self.port < 0 or self.port > 65535:

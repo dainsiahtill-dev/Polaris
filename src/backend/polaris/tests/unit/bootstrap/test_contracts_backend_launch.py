@@ -74,9 +74,9 @@ class TestBackendLaunchRequest:
 
     def test_validate_port_out_of_range(self) -> None:
         req = BackendLaunchRequest(port=70000)
-        # validate() has a bug when ConfigValidationResult import fails
-        # We test the __post_init__ port normalization instead
-        assert req.port == 70000
+        result = req.validate()
+        assert result.is_valid is False
+        assert "Invalid port: 70000" in result.errors
 
 
 class TestBackendLaunchResult:
