@@ -407,7 +407,7 @@ async def _update_settings_internal(request: Request, payload: SettingsUpdate) -
                 except (RuntimeError, ValueError) as typed_err:
                     logger.debug(f"Failed to emit typed settings event: {typed_err}")
 
-            # Emit compatibility message for older in-process consumers.
+            # Emit the in-process MessageBus projection for local observers.
             if message_bus:
                 await message_bus.broadcast(
                     MessageType.SETTINGS_CHANGED,

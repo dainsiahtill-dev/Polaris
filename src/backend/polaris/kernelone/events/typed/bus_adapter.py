@@ -215,8 +215,8 @@ class TypedEventBusAdapter:
     ) -> EmitResult:
         """Emit a TypedEvent to both MessageBus and EventRegistry.
 
-        This is the recommended method during migration as it maintains
-        backward compatibility while enabling the new system.
+        This is the current bridge for publishing one event to typed
+        registry observers and in-process MessageBus subscribers.
 
         Args:
             event: The TypedEvent to emit
