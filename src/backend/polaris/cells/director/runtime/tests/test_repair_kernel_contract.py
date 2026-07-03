@@ -317,6 +317,78 @@ def test_public_repair_planning_accepts_typed_artifact_quality_issues() -> None:
     assert payload["diagnostics"][0]["metadata"]["confidence"] == "parser"
 
 
+def test_public_repair_planning_preserves_typed_planner_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    source_tool = "test.public_typed_planner_route"
+    captured: dict[str, object] = {}
+
+    def legacy_planner(
+        base_files: dict[str, str],
+        artifact_quality_errors: tuple[str, ...],
+        advisor_notes: tuple[RepairAdvisorNote, ...] | None,
+        mode: str,
+    ) -> runtime_dispatch_module.RuntimeRepairPlanning:
+        del base_files, artifact_quality_errors, advisor_notes, mode
+        raise AssertionError("public service should not force typed diagnostics through the legacy planner")
+
+    def typed_planner(
+        base_files: dict[str, str],
+        diagnostics: tuple[RepairDiagnostic, ...],
+        artifact_quality_errors: tuple[str, ...],
+        advisor_notes: tuple[RepairAdvisorNote, ...] | None,
+        mode: str,
+    ) -> runtime_dispatch_module.RuntimeRepairPlanning:
+        del base_files, advisor_notes
+        captured["diagnostics"] = diagnostics
+        captured["artifact_quality_errors"] = artifact_quality_errors
+        captured["mode"] = mode
+        return runtime_dispatch_module.RuntimeRepairPlanning(
+            source_tool=source_tool,
+            diagnostics=diagnostics,
+            plan=None,
+            composition=None,
+            error_code="typed_planner_seen",
+        )
+
+    def runner(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("runner should not be called by planning")
+
+    bindings = dict(runtime_dispatch_module._RUNTIME_REPAIR_BINDINGS)
+    bindings[source_tool] = runtime_dispatch_module.RuntimeRepairBinding(
+        source_tool=source_tool,
+        language="test",
+        rule_id="test.public_typed_planner_route",
+        planner=legacy_planner,  # type: ignore[arg-type]
+        runner=runner,  # type: ignore[arg-type]
+        typed_planner=typed_planner,  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(runtime_dispatch_module, "_RUNTIME_REPAIR_BINDINGS", bindings)
+
+    result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            diagnostics=(
+                RepairDiagnosticV1(
+                    source="artifact_quality",
+                    code="typescript_ts9999",
+                    message="Unknown future compiler error.",
+                    path="src/app.ts",
+                    metadata={"raw": "src/app.ts(1,1): error TS9999: Unknown future compiler error."},
+                ),
+            ),
+        )
+    )
+
+    assert result.error_code == "typed_planner_seen"
+    assert captured["mode"] == "commit"
+    assert captured["artifact_quality_errors"] == (
+        "src/app.ts(1,1): error TS9999: Unknown future compiler error.",
+    )
+    diagnostics = captured["diagnostics"]
+    assert isinstance(diagnostics, tuple)
+    assert diagnostics[0].code == "typescript_ts9999"
+    assert diagnostics[0].path == "src/app.ts"
+
+
 def _install_delete_file_test_runtime_binding(monkeypatch: pytest.MonkeyPatch, source_tool: str) -> None:
     def planner(
         base_files: dict[str, str],

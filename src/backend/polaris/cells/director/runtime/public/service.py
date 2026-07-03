@@ -3321,29 +3321,7 @@ def _public_repair_diagnostics_from_command(
 def _artifact_quality_errors_from_command(
     command: PlanDirectorRepairCommandV1 | RunDirectorRepairCommandV1,
 ) -> tuple[str, ...]:
-    artifact_errors = tuple(str(item) for item in command.artifact_quality_errors if str(item or "").strip())
-    if artifact_errors:
-        return artifact_errors
-    if command.diagnostics:
-        return tuple(_artifact_quality_error_from_diagnostic(diagnostic) for diagnostic in command.diagnostics)
-    return tuple(
-        _artifact_quality_error_from_diagnostic(diagnostic)
-        for diagnostic in normalize_director_repair_issue_diagnostics(command.artifact_quality_issues)
-    )
-
-
-def _artifact_quality_error_from_diagnostic(diagnostic: Any) -> str:
-    raw = str(getattr(diagnostic, "metadata", {}).get("raw") or "").strip()
-    if raw:
-        return raw
-    path = str(getattr(diagnostic, "path", "") or "").strip()
-    code = str(getattr(diagnostic, "code", "") or "").strip()
-    message = str(getattr(diagnostic, "message", "") or "").strip()
-    if path and code:
-        return f"{path}: error {code}: {message}"
-    if code:
-        return f"error {code}: {message}"
-    return message
+    return tuple(str(item) for item in command.artifact_quality_errors if str(item or "").strip())
 
 
 def _public_receipt_to_internal(receipt: RepairReceiptV1) -> RepairReceipt:
