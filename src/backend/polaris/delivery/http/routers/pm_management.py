@@ -163,7 +163,7 @@ def _with_desktop_collection_aliases(
     *,
     normalize_item: bool = False,
 ) -> dict[str, Any]:
-    """Add desktop `items`/`total` aliases while preserving legacy keys."""
+    """Add desktop `items`/`total` aliases while retaining collection keys."""
     response = dict(result)
     raw_items = response.get(collection_key)
     items = list(raw_items) if isinstance(raw_items, list) else []
@@ -179,7 +179,7 @@ def _with_desktop_collection_aliases(
 
 
 def _with_document_collection_aliases(result: dict[str, Any]) -> dict[str, Any]:
-    """Normalize document list responses while preserving legacy fields."""
+    """Normalize document list responses for both collection and item views."""
     response = dict(result)
     raw_documents = response.get("documents")
     documents = [_document_to_response(item) for item in raw_documents] if isinstance(raw_documents, list) else []
