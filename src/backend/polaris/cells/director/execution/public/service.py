@@ -1,6 +1,6 @@
 """Public service exports for `director.execution` cell.
 
-Backward-compatible facade. Implementation migrated to sub-Cells:
+Public contract boundary for Director execution. Implementation migrated to sub-Cells:
 - director.planning  → already migrated (Phase 2)
 - director.tasking   → TaskQueueConfig, TaskService, WorkerPoolConfig, WorkerService (Phase 3)
 - director.runtime   → PatchApplyEngine, FileApplyService, ExistenceGate (Phase 4, pending)
@@ -143,27 +143,6 @@ def _optional_bool(value: Any) -> bool | None:
     return None
 
 
-def _truthy(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return value != 0
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "y", "on", "strict", "required"}
-    return False
-
-
-def _execution_contract_refs_required(metadata: Mapping[str, Any]) -> bool:
-    return any(
-        _truthy(metadata.get(key))
-        for key in (
-            "require_execution_contract_refs",
-            "execution_contract_refs_required",
-            "execution_envelope_strict",
-        )
-    )
-
-
 def _build_execution_contract_audit(metadata: Mapping[str, Any]) -> dict[str, Any]:
     envelope = _mapping_value(metadata, "director_execution_envelope", "task_execution_envelope", "execution_envelope")
     handoff = _mapping_value(metadata, "ce_handoff_decision", "handoff_decision")
@@ -221,8 +200,35 @@ def _build_execution_contract_audit(metadata: Mapping[str, Any]) -> dict[str, An
         "ce_blueprint_hash": ce_blueprint_hash,
         "execution_profile_hash": execution_profile_hash,
         "missing_required_refs": missing_required_refs,
-        "enforcement": "strict" if _execution_contract_refs_required(metadata) else "audit_only",
+        "enforcement": "strict",
     }
+
+
+def _director_execution_contract_error(
+    audit: Mapping[str, Any],
+) -> tuple[str, str, dict[str, Any]] | None:
+    missing_required_refs = [
+        str(item) for item in audit.get("missing_required_refs") or [] if str(item).strip()
+    ]
+    if missing_required_refs:
+        return (
+            "director_execution_contract_refs_missing",
+            "Director execution contract is missing required refs: "
+            + ", ".join(missing_required_refs),
+            {"missing_required_refs": missing_required_refs},
+        )
+
+    if audit.get("ce_handoff_allowed") is not True:
+        return (
+            "director_execution_handoff_not_allowed",
+            "Director execution requires an allowed CE handoff decision.",
+            {
+                "has_ce_handoff_decision": bool(audit.get("has_ce_handoff_decision")),
+                "ce_handoff_allowed": audit.get("ce_handoff_allowed"),
+            },
+        )
+
+    return None
 
 
 def _has_execution_envelope(metadata: Mapping[str, Any]) -> bool:
@@ -298,20 +304,21 @@ def execute_director_task(
     try:
         task = _build_director_task(command)
         execution_contract_audit = dict(task.metadata.get("execution_contract_audit") or {})
-        missing_required_refs = [
-            str(item) for item in execution_contract_audit.get("missing_required_refs") or [] if str(item).strip()
-        ]
-        if execution_contract_audit.get("enforcement") == "strict" and missing_required_refs:
+        contract_error = _director_execution_contract_error(execution_contract_audit)
+        if contract_error is not None:
+            error_code, error_message, error_details = contract_error
             return DirectorExecutionResultV1(
                 ok=False,
                 task_id=command.task_id,
                 workspace=command.workspace,
                 status="failed",
                 run_id=command.run_id,
-                error_code="director_execution_contract_refs_missing",
-                error_message="Director execution contract is missing required refs: "
-                + ", ".join(missing_required_refs),
-                metadata={"execution_contract_audit": execution_contract_audit},
+                error_code=error_code,
+                error_message=error_message,
+                metadata={
+                    "execution_contract_audit": execution_contract_audit,
+                    "execution_contract_error": error_details,
+                },
             )
         service = director_service or DirectorService(DirectorConfig(workspace=command.workspace))
         maybe_result = service._execute_task_work(task)

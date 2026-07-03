@@ -119,17 +119,33 @@ class TestExecuteDirectorTaskCommandV1:
 
 
 class TestExecuteDirectorTaskPublicService:
+    @staticmethod
+    def _complete_envelope(suffix: str = "1", *, allowed: bool = True) -> dict[str, object]:
+        return {
+            "schema_version": "polaris.execution_envelope.v1",
+            "envelope_hash": f"env-hash-{suffix}",
+            "pm_contract": {"ref": "runtime/contracts/task.json", "hash": f"pm-hash-{suffix}"},
+            "ce_blueprint": {"ref": "runtime/contracts/ce.json", "hash": f"ce-hash-{suffix}"},
+            "handoff_decision": {
+                "ref": "runtime/contracts/handoff.json",
+                "hash": f"handoff-hash-{suffix}",
+                "allowed": allowed,
+            },
+            "execution_profile": {"ref": "runtime/contracts/profile.json", "hash": f"profile-hash-{suffix}"},
+        }
+
     def test_execute_director_task_maps_public_command_to_typed_result(self) -> None:
         from polaris.cells.director.execution.public.service import execute_director_task
 
         service = FakeDirectorExecutionService()
+        envelope = self._complete_envelope("map")
         result = execute_director_task(
             ExecuteDirectorTaskCommandV1(
                 task_id="task-123",
                 workspace="/repo",
                 instruction="Apply approved diff",
                 run_id="run-1",
-                metadata={"command": "python -m pytest"},
+                metadata={"command": "python -m pytest", "director_execution_envelope": envelope},
             ),
             director_service=service,
         )
@@ -152,29 +168,15 @@ class TestExecuteDirectorTaskPublicService:
         audit = result.metadata["execution_contract_audit"]
         assert audit["schema_version"] == "director.execution_contract_audit.v1"
         assert audit["has_execution_envelope"] is True
-        assert audit["execution_envelope_hash"]
-        assert audit["has_ce_handoff_decision"] is False
-        assert audit["missing_required_refs"] == [
-            "handoff_decision_hash",
-            "pm_contract_hash",
-            "ce_blueprint_hash",
-        ]
+        assert audit["execution_envelope_hash"] == "env-hash-map"
+        assert audit["has_ce_handoff_decision"] is True
+        assert audit["ce_handoff_allowed"] is True
+        assert audit["missing_required_refs"] == []
 
     def test_execute_director_task_projects_execution_envelope_audit(self) -> None:
         from polaris.cells.director.execution.public.service import execute_director_task
 
-        envelope = {
-            "schema_version": "polaris.execution_envelope.v1",
-            "envelope_hash": "env-hash-1",
-            "pm_contract": {"ref": "runtime/contracts/task.json", "hash": "pm-hash-1"},
-            "ce_blueprint": {"ref": "runtime/contracts/ce.json", "hash": "ce-hash-1"},
-            "handoff_decision": {
-                "ref": "runtime/contracts/handoff.json",
-                "hash": "handoff-hash-1",
-                "allowed": True,
-            },
-            "execution_profile": {"ref": "runtime/contracts/profile.json", "hash": "profile-hash-1"},
-        }
+        envelope = self._complete_envelope("1")
         service = FakeDirectorExecutionService()
         result = execute_director_task(
             ExecuteDirectorTaskCommandV1(
@@ -198,7 +200,7 @@ class TestExecuteDirectorTaskPublicService:
         assert audit["missing_required_refs"] == []
         assert service.executed_tasks[0].metadata["execution_contract_audit"] == audit
 
-    def test_execute_director_task_strict_contract_refs_block_missing_refs(self) -> None:
+    def test_execute_director_task_blocks_missing_contract_refs_by_default(self) -> None:
         from polaris.cells.director.execution.public.service import execute_director_task
 
         service = FakeDirectorExecutionService()
@@ -207,7 +209,7 @@ class TestExecuteDirectorTaskPublicService:
                 task_id="task-strict",
                 workspace="/repo",
                 instruction="Execute approved task",
-                metadata={"require_execution_contract_refs": True},
+                metadata={},
             ),
             director_service=service,
         )
@@ -220,21 +222,33 @@ class TestExecuteDirectorTaskPublicService:
         assert audit["enforcement"] == "strict"
         assert audit["has_execution_envelope"] is True
 
+    def test_execute_director_task_blocks_denied_handoff(self) -> None:
+        from polaris.cells.director.execution.public.service import execute_director_task
+
+        service = FakeDirectorExecutionService()
+        result = execute_director_task(
+            ExecuteDirectorTaskCommandV1(
+                task_id="task-denied-handoff",
+                workspace="/repo",
+                instruction="Execute approved task",
+                metadata={"director_execution_envelope": self._complete_envelope("denied", allowed=False)},
+            ),
+            director_service=service,
+        )
+
+        assert result.ok is False
+        assert result.error_code == "director_execution_handoff_not_allowed"
+        assert service.executed_tasks == []
+        audit = result.metadata["execution_contract_audit"]
+        assert audit["enforcement"] == "strict"
+        assert audit["missing_required_refs"] == []
+        assert audit["has_ce_handoff_decision"] is True
+        assert audit["ce_handoff_allowed"] is False
+
     def test_execute_director_task_strict_contract_refs_allow_complete_envelope(self) -> None:
         from polaris.cells.director.execution.public.service import execute_director_task
 
-        envelope = {
-            "schema_version": "polaris.execution_envelope.v1",
-            "envelope_hash": "env-hash-2",
-            "pm_contract": {"ref": "runtime/contracts/task.json", "hash": "pm-hash-2"},
-            "ce_blueprint": {"ref": "runtime/contracts/ce.json", "hash": "ce-hash-2"},
-            "handoff_decision": {
-                "ref": "runtime/contracts/handoff.json",
-                "hash": "handoff-hash-2",
-                "allowed": True,
-            },
-            "execution_profile": {"ref": "runtime/contracts/profile.json", "hash": "profile-hash-2"},
-        }
+        envelope = self._complete_envelope("2")
         service = FakeDirectorExecutionService()
         result = execute_director_task(
             ExecuteDirectorTaskCommandV1(
@@ -243,7 +257,6 @@ class TestExecuteDirectorTaskPublicService:
                 instruction="Execute approved task",
                 metadata={
                     "director_execution_envelope": envelope,
-                    "require_execution_contract_refs": True,
                 },
             ),
             director_service=service,
