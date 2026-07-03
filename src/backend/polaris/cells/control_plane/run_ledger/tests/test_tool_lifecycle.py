@@ -122,6 +122,24 @@ def test_tool_lifecycle_receipt_preserves_dropped_tool_details() -> None:
     ]
 
 
+def test_tool_lifecycle_receipt_derives_dropped_status_from_native_without_dispatch() -> None:
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=0,
+        dispatch_status="success",
+        receipts=[],
+    ).to_dict()
+
+    assert receipt["ok"] is False
+    assert receipt["dispatch_status"] == "dropped"
+    assert receipt["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+
+
 def test_tool_lifecycle_receipt_derives_counts_from_dropped_tool_details() -> None:
     receipt = build_tool_call_lifecycle_receipt(
         run_id="run-1",
@@ -196,6 +214,20 @@ def test_tool_lifecycle_normalizer_canonicalizes_failure_class_alias() -> None:
     )
 
     assert receipt["failure_class"] == FailureClassV1.MISSING_EFFECT_RECEIPT.value
+
+
+def test_tool_lifecycle_normalizer_canonicalizes_dispatch_status_alias() -> None:
+    receipt = normalize_tool_call_lifecycle_receipt(
+        {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "dispatch_status": "tool-dispatch-dropped",
+            "failure_class": "tool_dispatch_dropped",
+            "dropped_tool_calls": ["write_file"],
+        }
+    )
+
+    assert receipt["dispatch_status"] == "dropped"
+    assert receipt["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
 
 
 def test_tool_lifecycle_normalizer_derives_counts_from_native_envelopes() -> None:

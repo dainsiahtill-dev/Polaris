@@ -27,6 +27,32 @@ def _clean_string(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _dispatch_status_key(value: Any) -> str:
+    return "_".join(_clean_string(value).lower().replace("-", "_").split())
+
+
+def _normalize_dispatch_status(value: Any) -> str:
+    key = _dispatch_status_key(value)
+    if not key:
+        return ""
+    aliases = {
+        "ok": "dispatched",
+        "success": "dispatched",
+        "succeeded": "dispatched",
+        "dispatched": "dispatched",
+        "dropped": "dropped",
+        "tool_dispatch_dropped": "dropped",
+        "blocked": "blocked",
+        "failed": "blocked",
+        "failure": "blocked",
+        "error": "blocked",
+        "decode_failed": "decode_failed",
+        "decode_error": "decode_failed",
+        "unknown": "unknown",
+    }
+    return aliases.get(key, key)
+
+
 def _int_value(value: Any) -> int:
     try:
         return max(0, int(value or 0))
@@ -252,7 +278,7 @@ def build_tool_call_lifecycle_receipt(
     dispatched_count = _int_value(dispatched_tool_calls_count)
     if dispatched_count <= 0 and result_count > 0:
         dispatched_count = result_count
-    status = _clean_string(dispatch_status)
+    status = _normalize_dispatch_status(dispatch_status)
     failure = normalize_failure_class(failure_class)
     dropped: list[dict[str, Any]] = _dropped_tool_call_refs(dropped_tool_calls)
     native_count = len(native_envelope_refs) if native_envelope_refs else _int_value(native_tool_calls_count)
@@ -263,7 +289,7 @@ def build_tool_call_lifecycle_receipt(
         decoded_count = native_count
 
     if native_count > 0 and dispatched_count <= 0:
-        status = status or "dropped"
+        status = "dropped"
         failure = failure or FailureClassV1.TOOL_DISPATCH_DROPPED.value
         if not dropped:
             dropped.extend(_dropped_tool_calls_from_native_envelopes(native_envelope_refs))
@@ -347,14 +373,17 @@ def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
         payload["dropped_tool_calls"] = dropped_tool_calls
         payload["native_tool_calls_count"] = native_count
         payload["decoded_tool_calls_count"] = decoded_count
+        status = _normalize_dispatch_status(payload.get("dispatch_status"))
+        if status:
+            payload["dispatch_status"] = status
         if native_count > 0 and dispatched_count <= 0:
-            if not _clean_string(payload.get("dispatch_status")):
-                payload["dispatch_status"] = "dropped"
+            payload["dispatch_status"] = "dropped"
             if not normalize_failure_class(payload.get("failure_class")):
                 payload["failure_class"] = FailureClassV1.TOOL_DISPATCH_DROPPED.value
         elif result_count > 0 and not _clean_string(payload.get("dispatch_status")):
             payload["dispatch_status"] = "dispatched"
-        payload.setdefault("dispatch_status", "unknown")
+        if not _clean_string(payload.get("dispatch_status")):
+            payload["dispatch_status"] = "unknown"
         if "failure_class" not in payload or payload.get("failure_class") is None:
             payload["failure_class"] = (
                 "" if payload["dispatch_status"] == "dispatched" else FailureClassV1.TOOL_LIFECYCLE_UNKNOWN.value
