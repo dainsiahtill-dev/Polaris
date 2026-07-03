@@ -161,30 +161,26 @@ class SchemaValidationResult:
                 print(f"    - {warning}")
 
 
-# Backward compatibility alias (deprecated)
-ValidationResult = SchemaValidationResult
-
-
 # =============================================================================
 # Validation Functions
 # =============================================================================
 
 
-def validate_suite_file(path: str | Path) -> ValidationResult:
+def validate_suite_file(path: str | Path) -> SchemaValidationResult:
     """Validate a suite JSON/YAML file against schema.
 
     Args:
         path: Path to the suite file
 
     Returns:
-        ValidationResult with errors and warnings
+        SchemaValidationResult with errors and warnings
     """
     errors: list[str] = []
     warnings: list[str] = []
     path = Path(path)
 
     if not path.exists():
-        return ValidationResult(
+        return SchemaValidationResult(
             is_valid=False,
             file_path=str(path),
             errors=(f"File not found: {path}",),
@@ -201,26 +197,26 @@ def validate_suite_file(path: str | Path) -> ValidationResult:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
     except json.JSONDecodeError as e:
-        return ValidationResult(
+        return SchemaValidationResult(
             is_valid=False,
             file_path=str(path),
             errors=(f"Invalid JSON: {e}",),
         )
     except yaml.YAMLError as e:
-        return ValidationResult(
+        return SchemaValidationResult(
             is_valid=False,
             file_path=str(path),
             errors=(f"Invalid YAML: {e}",),
         )
     except (RuntimeError, ValueError) as e:
-        return ValidationResult(
+        return SchemaValidationResult(
             is_valid=False,
             file_path=str(path),
             errors=(f"Failed to load file: {e}",),
         )
 
     if not isinstance(data, dict):
-        return ValidationResult(
+        return SchemaValidationResult(
             is_valid=False,
             file_path=str(path),
             errors=("Root element must be an object",),
@@ -278,7 +274,7 @@ def validate_suite_file(path: str | Path) -> ValidationResult:
     if "description" not in data:
         warnings.append("Missing optional field: description")
 
-    return ValidationResult(
+    return SchemaValidationResult(
         is_valid=len(errors) == 0,
         file_path=str(path),
         errors=tuple(errors),
@@ -286,21 +282,21 @@ def validate_suite_file(path: str | Path) -> ValidationResult:
     )
 
 
-def validate_report_file(path: str | Path) -> ValidationResult:
+def validate_report_file(path: str | Path) -> SchemaValidationResult:
     """Validate a report JSON file against schema.
 
     Args:
         path: Path to the report file
 
     Returns:
-        ValidationResult with errors and warnings
+        SchemaValidationResult with errors and warnings
     """
     errors: list[str] = []
     warnings: list[str] = []
     path = Path(path)
 
     if not path.exists():
-        return ValidationResult(
+        return SchemaValidationResult(
             is_valid=False,
             file_path=str(path),
             errors=(f"File not found: {path}",),
@@ -311,20 +307,20 @@ def validate_report_file(path: str | Path) -> ValidationResult:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except json.JSONDecodeError as e:
-        return ValidationResult(
+        return SchemaValidationResult(
             is_valid=False,
             file_path=str(path),
             errors=(f"Invalid JSON: {e}",),
         )
     except (RuntimeError, ValueError) as e:
-        return ValidationResult(
+        return SchemaValidationResult(
             is_valid=False,
             file_path=str(path),
             errors=(f"Failed to load file: {e}",),
         )
 
     if not isinstance(data, dict):
-        return ValidationResult(
+        return SchemaValidationResult(
             is_valid=False,
             file_path=str(path),
             errors=("Root element must be an object",),
@@ -449,7 +445,7 @@ def validate_report_file(path: str | Path) -> ValidationResult:
     if passed + failed != total:
         errors.append(f"passed_cases ({passed}) + failed_cases ({failed}) != total_cases ({total})")
 
-    return ValidationResult(
+    return SchemaValidationResult(
         is_valid=len(errors) == 0,
         file_path=str(path),
         errors=tuple(errors),

@@ -116,7 +116,7 @@ from .runtime import StateFirstContextOS
 from .schemas import (
     REPORT_SCHEMA,
     SUITE_SCHEMA,
-    ValidationResult,
+    SchemaValidationResult,
     validate_report_file,
     validate_suite_file,
 )
@@ -231,6 +231,7 @@ __all__ = [
     "ResolutionLevel",
     "RoutingClass",
     "RunCard",
+    "SchemaValidationResult",
     "StateEntry",
     "StateFirstContextOS",
     "StateFirstContextOSPolicy",
@@ -239,7 +240,6 @@ __all__ = [
     "TaskStateView",
     "TranscriptEvent",
     "UserProfileState",
-    "ValidationResult",
     "WorkingState",
     "collect_cognitive_runtime_metrics",
     # Decision log factory

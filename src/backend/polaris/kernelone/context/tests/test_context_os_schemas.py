@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+import polaris.kernelone.context.context_os as context_os
+from polaris.kernelone.context.context_os import schemas
 from polaris.kernelone.context.context_os.schemas import (
     REPORT_SCHEMA,
     SUITE_SCHEMA,
-    ValidationResult,
+    SchemaValidationResult,
     validate_report_file,
     validate_suite_file,
 )
@@ -17,12 +19,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-class TestValidationResult:
-    """Tests for ValidationResult dataclass."""
+class TestSchemaValidationResult:
+    """Tests for SchemaValidationResult dataclass."""
 
     def test_valid_result(self) -> None:
-        """Test valid ValidationResult."""
-        result = ValidationResult(
+        """Test valid SchemaValidationResult."""
+        result = SchemaValidationResult(
             is_valid=True,
             file_path="/path/to/file.json",
             errors=(),
@@ -34,8 +36,8 @@ class TestValidationResult:
         assert result.warnings == ("warning1",)
 
     def test_invalid_result(self) -> None:
-        """Test invalid ValidationResult."""
-        result = ValidationResult(
+        """Test invalid SchemaValidationResult."""
+        result = SchemaValidationResult(
             is_valid=False,
             file_path="/path/to/file.json",
             errors=("error1", "error2"),
@@ -44,6 +46,13 @@ class TestValidationResult:
         assert result.is_valid is False
         assert len(result.errors) == 2
         assert result.warnings == ()
+
+    def test_old_validation_result_alias_is_not_public(self) -> None:
+        """The schema module exposes the explicit ContextOS result type only."""
+        assert not hasattr(schemas, "ValidationResult")
+        assert not hasattr(context_os, "ValidationResult")
+        assert schemas.SchemaValidationResult is SchemaValidationResult
+        assert context_os.SchemaValidationResult is SchemaValidationResult
 
 
 class TestValidateSuiteFile:
