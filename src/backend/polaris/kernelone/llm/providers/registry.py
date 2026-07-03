@@ -12,7 +12,7 @@ Architecture (Post-P1-022 fix):
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from .base_provider import BaseProvider, ProviderRegistry
 
@@ -67,34 +67,6 @@ def get_provider_manager() -> InfrastructureProviderManager:
     return _provider_manager
 
 
-# Lazy proxy singleton - defers to get_provider_manager() to avoid circular import
-# Use __getattr__ at module level for lazy initialization
-class _LazyProviderManager:
-    """Lazy proxy that defers to get_provider_manager() on first access."""
-
-    __slots__ = ()
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(get_provider_manager(), name)
-
-    def __repr__(self) -> str:
-        return f"<LazyProviderManager wrapping {get_provider_manager()!r}>"
-
-
-_provider_manager_proxy: Any = _LazyProviderManager()
-
-
-def __getattr__(name: str) -> Any:
-    """Module-level lazy access for provider_manager to avoid circular import."""
-    if name == "provider_manager":
-        return _provider_manager_proxy
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-# Module-level alias for ruff static analysis (actual lazy loading via __getattr__)
-provider_manager: Any = _LazyProviderManager()
-
-
 def register_provider(
     provider_type: str,
     provider_class: type[BaseProvider],
@@ -117,7 +89,6 @@ def reset_provider_runtime() -> None:
 __all__ = [
     "get_provider_manager",
     "get_provider_registry",
-    "provider_manager",
     "register_provider",
     "reset_provider_runtime",
 ]

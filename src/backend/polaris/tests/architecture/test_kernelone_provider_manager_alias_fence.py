@@ -18,9 +18,13 @@ CELL_PROVIDER_RUNTIME_ROOT = BACKEND_ROOT / "polaris" / "cells" / "llm" / "provi
 def test_kernelone_provider_manager_class_is_not_exported() -> None:
     """Provider management is owned by infrastructure and reached through get_provider_manager()."""
     assert not hasattr(registry, "ProviderManager")
+    assert not hasattr(registry, "provider_manager")
     assert not hasattr(providers, "ProviderManager")
+    assert not hasattr(providers, "provider_manager")
     assert "ProviderManager" not in registry.__all__
+    assert "provider_manager" not in registry.__all__
     assert "ProviderManager" not in providers.__all__
+    assert "provider_manager" not in providers.__all__
     assert hasattr(registry, "get_provider_manager")
     assert hasattr(providers, "get_provider_manager")
 
@@ -44,6 +48,9 @@ def test_sources_do_not_reintroduce_kernelone_provider_manager() -> None:
             lines = {line.strip() for line in source.splitlines()}
             if (
                 "class ProviderManager:" in lines
+                or "class _LazyProviderManager:" in lines
+                or "provider_manager: Any" in source
+                or '"provider_manager",' in lines
                 or "ProviderManager," in lines
                 or '"ProviderManager",' in lines
                 or "from polaris.kernelone.llm.providers import BaseProvider, ProviderInfo, ProviderManager" in source
