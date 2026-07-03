@@ -750,22 +750,29 @@ def artifact_quality_issues_from_errors(errors: Iterable[Any]) -> tuple[dict[str
 def _artifact_quality_evidence(
     *,
     errors: Iterable[str] = (),
+    issues: Iterable[Any] = (),
     scanned_relative_paths: Iterable[str] = (),
     cross_artifact_issues: Iterable[CrossArtifactConsistencyIssue] = (),
     cross_artifact_repair_plans: Iterable[CrossArtifactRepairPlan] = (),
     contract_amendment_request: ContractAmendmentRequest | None = None,
 ) -> ArtifactQualityEvidence:
     deduped_errors = tuple(dict.fromkeys(str(error).strip() for error in errors if str(error or "").strip()))
+    direct_issues = _artifact_quality_issues_from_errors(issues)
     deduped_cross_artifact_issues = tuple(cross_artifact_issues)
     cross_artifact_error_messages = {
         issue.to_error_message()
         for issue in deduped_cross_artifact_issues
         if not issue.code.startswith("contract_")
     }
+    direct_issue_messages = {
+        str((issue.metadata or {}).get("raw") or issue.message).strip()
+        for issue in direct_issues
+    }
     string_projected_issues = tuple(
         issue
         for issue in _artifact_quality_issues_from_errors(deduped_errors)
-        if str((issue.metadata or {}).get("raw") or issue.message).strip() not in cross_artifact_error_messages
+        if str((issue.metadata or {}).get("raw") or issue.message).strip()
+        not in (*cross_artifact_error_messages, *direct_issue_messages)
     )
     projected_cross_artifact_issues = tuple(
         _artifact_quality_issue_from_cross_artifact_issue(issue)
@@ -774,7 +781,7 @@ def _artifact_quality_evidence(
     )
     return ArtifactQualityEvidence(
         errors=deduped_errors,
-        issues=(*string_projected_issues, *projected_cross_artifact_issues),
+        issues=(*direct_issues, *string_projected_issues, *projected_cross_artifact_issues),
         scanned_relative_paths=tuple(scanned_relative_paths),
         cross_artifact_issues=deduped_cross_artifact_issues,
         cross_artifact_repair_plans=tuple(cross_artifact_repair_plans),
@@ -810,9 +817,29 @@ def scan_workspace_artifact_quality_evidence(
     try:
         root_full = Path(workspace_full).resolve()
     except (OSError, RuntimeError, ValueError):
-        return _artifact_quality_evidence(errors=("Artifact quality scan failed: workspace path cannot be resolved",))
+        message = "Artifact quality scan failed: workspace path cannot be resolved"
+        return _artifact_quality_evidence(
+            errors=(message,),
+            issues=(
+                ArtifactQualityIssue(
+                    code="workspace_path_unresolved",
+                    message=message,
+                    source="artifact_quality_scanner",
+                ),
+            ),
+        )
     if not root_full.exists() or not root_full.is_dir():
-        return _artifact_quality_evidence(errors=("Artifact quality scan failed: workspace path does not exist",))
+        message = "Artifact quality scan failed: workspace path does not exist"
+        return _artifact_quality_evidence(
+            errors=(message,),
+            issues=(
+                ArtifactQualityIssue(
+                    code="workspace_path_missing",
+                    message=message,
+                    source="artifact_quality_scanner",
+                ),
+            ),
+        )
 
     errors: list[str] = []
     scanned_relative_paths: list[str] = []

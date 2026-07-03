@@ -55,6 +55,18 @@ def test_artifact_quality_evidence_projects_typed_issues(tmp_path: Path) -> None
     assert evidence.to_dict()["issues"][0]["code"] == "npm_manifest_invalid"
 
 
+def test_artifact_quality_evidence_uses_direct_typed_issue_for_missing_workspace(
+    tmp_path: Path,
+) -> None:
+    evidence = scan_workspace_artifact_quality_evidence(
+        str(tmp_path / "missing-workspace"),
+    )
+
+    assert evidence.errors == ("Artifact quality scan failed: workspace path does not exist",)
+    assert [issue.code for issue in evidence.issues] == ["workspace_path_missing"]
+    assert evidence.issues[0].source == "artifact_quality_scanner"
+
+
 def test_artifact_quality_issue_projection_classifies_javascript_module_runtime_error() -> None:
     error = (
         "Artifact quality scan failed: workspace validation command failed (npm run start): "
