@@ -203,6 +203,26 @@ def native_tool_call_count(
     return sum(1 for item in native_tool_calls if isinstance(item, Mapping))
 
 
+def native_tool_call_count_from_metadata(metadata: Mapping[str, Any] | None, *, fallback: int = 0) -> int:
+    """Derive native tool-call count from metadata envelope facts.
+
+    Numeric ``native_tool_calls_count`` remains a compatibility fallback, but
+    all envelope-derived metadata paths are resolved before consulting it.
+    """
+
+    envelope_count = native_tool_call_count(metadata, ())
+    if envelope_count > 0:
+        return envelope_count
+    if isinstance(metadata, Mapping):
+        try:
+            metadata_count = int(str(metadata.get("native_tool_calls_count") or "").strip())
+        except (TypeError, ValueError):
+            metadata_count = 0
+        if metadata_count > 0:
+            return metadata_count
+    return max(0, int(fallback or 0))
+
+
 def native_tool_call_names(
     metadata: Mapping[str, Any] | None,
     native_tool_calls: Sequence[Any],
@@ -1443,6 +1463,7 @@ __all__ = [
     "build_native_tool_schemas",
     "extract_native_tool_calls",
     "native_tool_call_count",
+    "native_tool_call_count_from_metadata",
     "native_tool_call_envelopes_from_metadata",
     "native_tool_call_name",
     "native_tool_call_names",

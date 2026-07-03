@@ -31,6 +31,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.helpers import (
     extract_native_tool_calls,
     messages_to_input,
     native_tool_call_count,
+    native_tool_call_count_from_metadata,
     resolve_max_tokens,
     resolve_platform_retry_max,
     resolve_temperature,
@@ -724,6 +725,19 @@ class TestExtractNativeToolCalls:
 
         assert native_tool_call_count(metadata, raw_calls) == 2
         assert native_tool_call_names(metadata, raw_calls) == ["repo_rg", "read_file"]
+
+    def test_native_tool_call_count_from_metadata_keeps_legacy_numeric_as_fallback(self) -> None:
+        metadata = {
+            "native_tool_call_envelope_refs": [
+                {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
+                {"schema_version": "native_tool_call_envelope.v1", "tool_name": "execute_command"},
+            ],
+            "native_tool_calls_count": 1,
+        }
+
+        assert native_tool_call_count_from_metadata(metadata, fallback=0) == 2
+        assert native_tool_call_count_from_metadata({"native_tool_calls_count": 3}, fallback=1) == 3
+        assert native_tool_call_count_from_metadata({}, fallback=2) == 2
 
     def test_native_tool_call_count_and_names_accept_lifecycle_envelope_refs(self) -> None:
         metadata = {

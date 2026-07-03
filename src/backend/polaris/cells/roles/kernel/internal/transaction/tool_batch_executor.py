@@ -20,7 +20,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     append_run_ledger_event,
     build_tool_call_lifecycle_receipt,
 )
-from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_call_envelopes_from_metadata
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_call_count_from_metadata
 from polaris.cells.roles.kernel.internal.speculation.models import CancelToken
 from polaris.cells.roles.kernel.internal.speculation.write_phases import WriteToolPhases
 from polaris.cells.roles.kernel.internal.speculative_flags import is_adoption_audit_enabled
@@ -732,21 +732,8 @@ def _mapping_value(value: Any) -> dict[str, Any]:
     return {}
 
 
-def _int_value(value: Any) -> int:
-    try:
-        return max(0, int(value or 0))
-    except (TypeError, ValueError):
-        return 0
-
-
 def _metadata_native_tool_call_count(metadata: Mapping[str, Any], fallback: int = 0) -> int:
-    envelope_count = len(native_tool_call_envelopes_from_metadata(metadata))
-    if envelope_count > 0:
-        return envelope_count
-    metadata_count = _int_value(metadata.get("native_tool_calls_count"))
-    if metadata_count > 0:
-        return metadata_count
-    return max(0, int(fallback or 0))
+    return native_tool_call_count_from_metadata(metadata, fallback=fallback)
 
 
 def _normalize_capability_token(value: dict[str, Any]) -> dict[str, Any]:
