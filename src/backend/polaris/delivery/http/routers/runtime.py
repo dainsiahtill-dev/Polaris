@@ -478,7 +478,7 @@ async def _runtime_reset_tasks_core(request: Request) -> dict[str, Any]:
     except (RuntimeError, ValueError) as e:
         logger.debug("PM stop failed: %s", e)
 
-    # Clean up external PM processes emitted by legacy loop wrappers.
+    # Clean up external PM loop-wrapper processes for this workspace.
     pm_external_terminated_pids = terminate_external_loop_pm_processes(workspace)
 
     # Use DirectorService to stop Director (authoritative source).
