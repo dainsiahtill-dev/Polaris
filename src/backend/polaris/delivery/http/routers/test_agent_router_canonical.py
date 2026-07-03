@@ -147,6 +147,12 @@ class TestAgentRouterCanonicalSessions:
         engine, session_factory, conv_mod = _install_temp_session_db(db_path)
         try:
             created = agent_router._get_or_create_session("/ws", "pm", None)
+            projection = SimpleNamespace(
+                changed=False,
+                recent_messages=[],
+                persisted_context_config={},
+                prompt_context={},
+            )
 
             async def run() -> None:
                 with patch.object(
@@ -162,6 +168,10 @@ class TestAgentRouterCanonicalSessions:
                             error_message=None,
                         )
                     ),
+                ), patch.object(
+                    agent_router._AGENT_CONTINUITY_ENGINE,
+                    "project",
+                    new=lambda *_args, **_kwargs: projection,
                 ):
                     result = await agent_router._execute_agent_message(
                         session_id=created["session_id"],

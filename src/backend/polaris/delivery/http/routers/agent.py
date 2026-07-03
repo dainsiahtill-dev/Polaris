@@ -26,17 +26,6 @@ from polaris.cells.roles.session.public.contracts import (
     ReadRoleSessionEpisodeQueryV1,
     SearchRoleSessionMemoryQueryV1,
 )
-from polaris.delivery.http.schemas.common import (
-    AgentArtifactResponse,
-    AgentEpisodeResponse,
-    AgentMemorySearchResponse,
-    AgentMemoryStateResponse,
-    AgentMessageResponse,
-    AgentSessionListResponse,
-    AgentSessionResponse,
-    AgentTurnResponse,
-    SessionDeleteResponse,
-)
 from polaris.kernelone.context.session_continuity import (
     SessionContinuityEngine,
     SessionContinuityRequest,
@@ -480,15 +469,6 @@ async def list_agent_sessions(
     }
 
 
-@router.get("/v2/sessions", dependencies=[Depends(require_auth)], response_model=AgentSessionListResponse)
-async def list_agent_sessions_v2(
-    request: Request,
-    limit: int = 20,
-) -> dict[str, Any]:
-    """List active agent sessions."""
-    return await list_agent_sessions(request, limit)
-
-
 @router.get("/sessions/{session_id}", dependencies=[Depends(require_auth)])
 async def get_agent_session(
     request: Request,
@@ -503,15 +483,6 @@ async def get_agent_session(
             message="Session not found",
         )
     return session
-
-
-@router.get("/v2/sessions/{session_id}", dependencies=[Depends(require_auth)], response_model=AgentSessionResponse)
-async def get_agent_session_v2(
-    request: Request,
-    session_id: str,
-) -> dict[str, Any]:
-    """Get a single agent session by ID."""
-    return await get_agent_session(request, session_id)
 
 
 @router.get("/sessions/{session_id}/memory/search", dependencies=[Depends(require_auth)])
@@ -567,23 +538,6 @@ async def search_agent_session_memory(
     }
 
 
-@router.get(
-    "/v2/sessions/{session_id}/memory/search",
-    dependencies=[Depends(require_auth)],
-    response_model=AgentMemorySearchResponse,
-)
-async def search_agent_session_memory_v2(
-    request: Request,
-    session_id: str,
-    q: str,
-    kind: str | None = None,
-    entity: str | None = None,
-    limit: int = 6,
-) -> dict[str, Any]:
-    """Search Context OS memory within an agent session."""
-    return await search_agent_session_memory(request, session_id, q, kind, entity, limit)
-
-
 @router.get("/sessions/{session_id}/memory/artifacts/{artifact_id}", dependencies=[Depends(require_auth)])
 async def read_agent_session_memory_artifact(
     request: Request,
@@ -630,22 +584,6 @@ async def read_agent_session_memory_artifact(
     }
 
 
-@router.get(
-    "/v2/sessions/{session_id}/memory/artifacts/{artifact_id}",
-    dependencies=[Depends(require_auth)],
-    response_model=AgentArtifactResponse,
-)
-async def read_agent_session_memory_artifact_v2(
-    request: Request,
-    session_id: str,
-    artifact_id: str,
-    start_line: int | None = None,
-    end_line: int | None = None,
-) -> dict[str, Any]:
-    """Read a persisted Context OS artifact for an agent session."""
-    return await read_agent_session_memory_artifact(request, session_id, artifact_id, start_line, end_line)
-
-
 @router.get("/sessions/{session_id}/memory/episodes/{episode_id}", dependencies=[Depends(require_auth)])
 async def read_agent_session_memory_episode(
     request: Request,
@@ -686,20 +624,6 @@ async def read_agent_session_memory_episode(
         "session_id": session_id,
         "episode": dict(result.payload or {}),
     }
-
-
-@router.get(
-    "/v2/sessions/{session_id}/memory/episodes/{episode_id}",
-    dependencies=[Depends(require_auth)],
-    response_model=AgentEpisodeResponse,
-)
-async def read_agent_session_memory_episode_v2(
-    request: Request,
-    session_id: str,
-    episode_id: str,
-) -> dict[str, Any]:
-    """Read a persisted Context OS episode for an agent session."""
-    return await read_agent_session_memory_episode(request, session_id, episode_id)
 
 
 @router.get("/sessions/{session_id}/memory/state", dependencies=[Depends(require_auth)])
@@ -745,20 +669,6 @@ async def read_agent_session_memory_state(
     }
 
 
-@router.get(
-    "/v2/sessions/{session_id}/memory/state",
-    dependencies=[Depends(require_auth)],
-    response_model=AgentMemoryStateResponse,
-)
-async def read_agent_session_memory_state_v2(
-    request: Request,
-    session_id: str,
-    path: str,
-) -> dict[str, Any]:
-    """Read a persisted Context OS state entry for an agent session."""
-    return await read_agent_session_memory_state(request, session_id, path)
-
-
 @router.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
 async def send_agent_message(
     request: Request,
@@ -773,18 +683,6 @@ async def send_agent_message(
         workspace=str(state.settings.workspace),
     )
     return result
-
-
-@router.post(
-    "/v2/sessions/{session_id}/messages", dependencies=[Depends(require_auth)], response_model=AgentMessageResponse
-)
-async def send_agent_message_v2(
-    request: Request,
-    session_id: str,
-    payload: SessionMessageRequest,
-) -> dict[str, Any]:
-    """Send a message to an agent session (non-streaming)."""
-    return await send_agent_message(request, session_id, payload)
 
 
 @router.delete("/sessions/{session_id}", dependencies=[Depends(require_auth)])
@@ -809,15 +707,6 @@ async def delete_agent_session(
         code="SESSION_NOT_FOUND",
         message="Session not found",
     )
-
-
-@router.delete("/v2/sessions/{session_id}", dependencies=[Depends(require_auth)], response_model=SessionDeleteResponse)
-async def delete_agent_session_v2(
-    request: Request,
-    session_id: str,
-) -> dict[str, Any]:
-    """Delete an agent session."""
-    return await delete_agent_session(request, session_id)
 
 
 @router.post("/turn", dependencies=[Depends(require_auth)])
@@ -856,12 +745,3 @@ async def agent_turn(
         "phase": RunPhase.PENDING.value,
         "error": response.get("error"),
     }
-
-
-@router.post("/v2/turn", dependencies=[Depends(require_auth)], response_model=AgentTurnResponse)
-async def agent_turn_v2(
-    request: Request,
-    payload: AgentTurnPayload,
-) -> dict[str, Any]:
-    """Execute a single agent turn, creating a session if needed."""
-    return await agent_turn(request, payload)

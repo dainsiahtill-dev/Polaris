@@ -441,6 +441,23 @@ async def test_v2_send_agent_message_stream_route_is_not_registered(client: Asyn
     assert "text/event-stream" not in response.headers.get("content-type", "")
 
 
+@pytest.mark.asyncio
+async def test_nested_v2_agent_aliases_are_not_registered(client: AsyncClient) -> None:
+    """Agent routes are mounted once under /v2 and must not expose /v2/agent/v2 aliases."""
+    cases = [
+        ("GET", "/v2/agent/v2/sessions"),
+        ("GET", "/v2/agent/v2/sessions/sess-123"),
+        ("GET", "/v2/agent/v2/sessions/sess-123/memory/search?q=test"),
+        ("POST", "/v2/agent/v2/sessions/sess-123/messages"),
+        ("DELETE", "/v2/agent/v2/sessions/sess-123"),
+        ("POST", "/v2/agent/v2/turn"),
+    ]
+
+    for method, path in cases:
+        response = await client.request(method, path, json={"message": "hello", "role": "assistant"})
+        assert response.status_code == 404, path
+
+
 # ---------------------------------------------------------------------------
 # DELETE /v2/agent/sessions/{session_id}
 # ---------------------------------------------------------------------------
