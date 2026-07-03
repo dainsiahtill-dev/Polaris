@@ -1025,6 +1025,19 @@ def _owner_handoff_identifier_tokens(request: dict[str, Any]) -> set[str]:
     return set(kernelone_owner_handoff_identifier_tokens(request))
 
 
+def _owner_handoff_match_key(request: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
+    """Return a stable key for one owner handoff request.
+
+    ``matching_owner_handoff_request`` intentionally returns a JSON-safe copy of
+    the matching request. Object identity therefore cannot prove that a request
+    was consumed; the stable routing identifiers are the target file and owner
+    task aliases.
+    """
+
+    target_file = str(request.get("target_file") or "").strip().replace("\\", "/")
+    return target_file, tuple(sorted(_owner_handoff_identifier_tokens(request)))
+
+
 def _safe_rework_int(value: Any, *, default: int = 0) -> int:
     try:
         return int(value)
@@ -1093,7 +1106,7 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
     all_handoff_requests = _ownership_handoff_requests_from_repair_payload(repair)
     owner_handoff_requests = _owned_handoff_requests_from_repair_payload(repair)
     unknown_owner_handoff_requests = list(unresolved_owner_handoff_requests_from_scope_payload(repair))
-    matched_owner_handoff_ids: set[int] = set()
+    matched_owner_handoff_keys: set[tuple[str, tuple[str, ...]]] = set()
     for entry in entries:
         record = entry.to_dict() if hasattr(entry, "to_dict") else entry
         if not isinstance(record, dict):
@@ -1108,7 +1121,7 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
                 "reason": rework_reason,
                 "ownership_handoff_request": owner_handoff_request,
             }
-            matched_owner_handoff_ids.add(id(owner_handoff_request))
+            matched_owner_handoff_keys.add(_owner_handoff_match_key(owner_handoff_request))
         elif _task_record_needs_task_boundary_rework(record):
             rework_reason = _TASK_BOUNDARY_REWORK_REASON
             task_evidence = evidence
@@ -1185,7 +1198,7 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
     unmatched_owner_handoff_requests = [
         dict(request)
         for request in owner_handoff_requests
-        if id(request) not in matched_owner_handoff_ids
+        if _owner_handoff_match_key(request) not in matched_owner_handoff_keys
     ]
     if unmatched_owner_handoff_requests:
         summary["skipped_count"] += len(unmatched_owner_handoff_requests)
@@ -1272,19 +1285,19 @@ def _quality_gate_handoff_summary_from_payload(
     owner_handoff_requests = _owned_handoff_requests_from_repair_payload(repair)
     unknown_owner_handoff_requests = list(unresolved_owner_handoff_requests_from_scope_payload(repair))
 
-    matched_owner_handoff_ids: set[int] = set()
+    matched_owner_handoff_keys: set[tuple[str, tuple[str, ...]]] = set()
     for entry in entries:
         record = entry.to_dict() if hasattr(entry, "to_dict") else entry
         if not isinstance(record, dict):
             continue
         owner_handoff_request = _matching_owner_handoff_request(record, owner_handoff_requests)
         if owner_handoff_request:
-            matched_owner_handoff_ids.add(id(owner_handoff_request))
+            matched_owner_handoff_keys.add(_owner_handoff_match_key(owner_handoff_request))
 
     unmatched_owner_handoff_requests = [
         dict(request)
         for request in owner_handoff_requests
-        if id(request) not in matched_owner_handoff_ids
+        if _owner_handoff_match_key(request) not in matched_owner_handoff_keys
     ]
     return {
         "ownership_handoff_count": len(all_handoff_requests),

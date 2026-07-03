@@ -773,9 +773,14 @@ def test_quality_gate_task_boundary_validation_routes_owner_handoff_to_owner_tas
 
     assert bridge_summary["requested"] is True
     assert bridge_summary["reopened_count"] == 1
+    assert bridge_summary["skipped_count"] == 0
+    assert bridge_summary["unmatched_owner_handoff_count"] == 0
+    assert bridge_summary["unmatched_owner_handoff_requests"] == []
     assert bridge_summary["tasks"][0]["external_task_id"] == "PM-0001-1-S4"
     assert bridge_summary["tasks"][0]["reason"] == "task_boundary_owner_task_retry_required"
     assert rework_summary["requested_count"] == 1
+    assert rework_summary["unmatched_owner_handoff_count"] == 0
+    assert rework_summary["unmatched_owner_handoff_requests"] == []
     assert rework_summary["tasks"][0]["external_task_id"] == "PM-0001-1-S4"
 
     rows = {
@@ -841,6 +846,9 @@ def test_quality_gate_task_boundary_validation_routes_scope_authority_nested_han
 
     assert bridge_summary["requested"] is True
     assert bridge_summary["reopened_count"] == 1
+    assert bridge_summary["skipped_count"] == 0
+    assert bridge_summary["unmatched_owner_handoff_count"] == 0
+    assert bridge_summary["unmatched_owner_handoff_requests"] == []
     assert bridge_summary["tasks"][0]["external_task_id"] == "PM-0001-1-S4"
 
 
