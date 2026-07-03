@@ -168,9 +168,10 @@ def _tool_call_lifecycle_receipts_from_metadata(
     metadata: Mapping[str, Any],
 ) -> tuple[Mapping[str, Any], ...]:
     receipts: list[Mapping[str, Any]] = []
-    receipt = metadata.get("tool_call_lifecycle_receipt")
-    if isinstance(receipt, Mapping):
-        receipts.append(receipt)
+    for key in ("tool_call_lifecycle_receipt", "tool_call_lifecycle"):
+        receipt = metadata.get(key)
+        if isinstance(receipt, Mapping):
+            receipts.append(receipt)
     receipt_rows = metadata.get("tool_call_lifecycle_receipts")
     if isinstance(receipt_rows, (list, tuple)):
         receipts.extend(item for item in receipt_rows if isinstance(item, Mapping))

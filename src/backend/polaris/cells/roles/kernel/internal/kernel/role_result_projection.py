@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+    native_tool_call_count_from_metadata,
+    native_tool_call_names,
+)
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
 
@@ -20,6 +24,11 @@ _LLM_RESPONSE_METADATA_KEYS: tuple[str, ...] = (
     "native_tool_calls_count",
     "decision_caller_native_tool_calls_count",
     "native_tool_call_names",
+    "tool_call_lifecycle",
+    "tool_call_lifecycle_receipt",
+    "tool_call_lifecycle_receipts",
+    "native_tool_call_envelopes",
+    "native_tool_call_envelope_refs",
     "tool_call_provider",
     "decision_caller_tool_call_provider",
     "context_tokens_after",
@@ -118,6 +127,12 @@ def role_result_metadata_from_profile(
             metadata["context_os_audit"] = (
                 dict(raw_context_os_audit) if isinstance(raw_context_os_audit, dict) else raw_context_os_audit
             )
+        native_count = native_tool_call_count_from_metadata(llm_response_metadata)
+        if native_count > 0:
+            metadata.setdefault("native_tool_calls_count", native_count)
+        native_names = native_tool_call_names(llm_response_metadata, ())
+        if native_names:
+            metadata.setdefault("native_tool_call_names", native_names)
 
     if isinstance(monitoring, dict) and "context_os_audit" not in metadata:
         context_os_audit = monitoring.get("context_os_audit")

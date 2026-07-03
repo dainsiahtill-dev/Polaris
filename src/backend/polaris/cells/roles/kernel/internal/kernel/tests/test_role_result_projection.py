@@ -91,6 +91,29 @@ def test_role_result_metadata_projects_profile_and_llm_evidence() -> None:
     assert metadata["context_os_audit"] == {"coverage": "ok"}
 
 
+def test_role_result_metadata_projects_tool_lifecycle_and_derived_tool_facts() -> None:
+    profile = SimpleNamespace(provider_id="", model="")
+    lifecycle = {
+        "schema_version": "tool_call_lifecycle_receipt.v1",
+        "native_tool_calls_count": 2,
+        "decoded_tool_calls_count": 2,
+        "dispatched_tool_calls_count": 0,
+        "dropped_tool_calls": [
+            {"tool_name": "write_file", "reason": "tool_dispatch_dropped"},
+            {"tool_name": "execute_command", "reason": "tool_dispatch_dropped"},
+        ],
+    }
+
+    metadata = role_result_metadata_from_profile(
+        profile=profile,
+        llm_response_metadata={"tool_call_lifecycle": lifecycle},
+    )
+
+    assert metadata["tool_call_lifecycle"] == lifecycle
+    assert metadata["native_tool_calls_count"] == 2
+    assert metadata["native_tool_call_names"] == ["write_file", "execute_command"]
+
+
 def test_role_result_metadata_uses_monitoring_context_audit_when_not_already_set() -> None:
     profile = SimpleNamespace(provider_id="", model="")
 
