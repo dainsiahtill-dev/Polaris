@@ -1,6 +1,6 @@
 """Shared helpers for AIExecutor and StreamExecutor.
 
-Extracted to eliminate ~80% duplication between executor.py and stream_executor.py.
+Extracted to eliminate duplication between executor.py and stream executor components.
 Do NOT import this module from outside the engine package.
 """
 

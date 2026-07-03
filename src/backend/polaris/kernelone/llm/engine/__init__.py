@@ -3,7 +3,7 @@
 统一 AI 基础设施平台，提供：
 - 统一调用契约 (contracts)
 - 统一执行器 (executor)
-- 统一流式引擎 (stream_executor)
+- 统一流式引擎 (stream)
 - 统一解析器 (normalizer)
 - 统一弹性策略 (resilience)
 - 统一观测 (telemetry)
@@ -81,7 +81,7 @@ from .resilience import (
 )
 
 # Stream Executor
-from .stream_executor import StreamExecutor, stream_to_response
+from .stream import StreamExecutor, stream_to_response
 
 # Telemetry
 from .telemetry import (

@@ -5,7 +5,6 @@ from __future__ import annotations
 import polaris.kernelone.llm._timeout_config as timeout_config
 import polaris.kernelone.llm.engine.stream as stream
 import polaris.kernelone.llm.engine.stream.config as stream_config
-import polaris.kernelone.llm.engine.stream_executor as stream_executor
 
 _RETIRED_CONFIG_EXPORTS = {
     "INVOKE_TIMEOUT_SEC",
@@ -40,8 +39,7 @@ def test_stream_config_does_not_reintroduce_timeout_globals_or_proxy_functions()
 
 
 def test_stream_package_roots_do_not_reexport_retired_timeout_surface() -> None:
-    """Package-root stream facades must not keep a second timeout fact source alive."""
-    for module in (stream, stream_executor):
-        for name in _RETIRED_CONFIG_EXPORTS | _RETIRED_STREAM_TIMEOUT_PROXIES:
-            assert not hasattr(module, name), f"{module.__name__}.{name}"
-            assert name not in module.__all__
+    """The package-root stream surface must not keep a second timeout fact source alive."""
+    for name in _RETIRED_CONFIG_EXPORTS | _RETIRED_STREAM_TIMEOUT_PROXIES:
+        assert not hasattr(stream, name), f"{stream.__name__}.{name}"
+        assert name not in stream.__all__

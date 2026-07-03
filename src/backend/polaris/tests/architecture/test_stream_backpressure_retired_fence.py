@@ -35,12 +35,13 @@ def test_retired_stream_backpressure_module_is_removed() -> None:
 
 
 def test_stream_package_root_does_not_export_retired_buffer() -> None:
-    for relative_path in (
-        "kernelone/llm/engine/stream/__init__.py",
-        "kernelone/llm/engine/stream_executor.py",
-    ):
-        source = (POLARIS_ROOT / relative_path).read_text(encoding="utf-8")
-        assert RETIRED_EXPORT not in source
+    source = (POLARIS_ROOT / "kernelone/llm/engine/stream/__init__.py").read_text(encoding="utf-8")
+    assert RETIRED_EXPORT not in source
+
+
+def test_stream_executor_facade_is_removed() -> None:
+    retired_facade = POLARIS_ROOT / "kernelone" / "llm" / "engine" / "stream_executor.py"
+    assert not retired_facade.exists()
 
 
 def test_canonical_async_backpressure_buffer_exists() -> None:

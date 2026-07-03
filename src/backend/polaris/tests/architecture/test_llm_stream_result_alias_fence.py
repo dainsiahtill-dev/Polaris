@@ -6,7 +6,6 @@ from pathlib import Path
 
 import polaris.kernelone.llm.engine.stream as stream_package
 import polaris.kernelone.llm.engine.stream.config as stream_config
-import polaris.kernelone.llm.engine.stream_executor as stream_executor_facade
 from polaris.kernelone.llm.engine.stream.config import LLMStreamResult
 
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
@@ -19,11 +18,14 @@ def test_stream_result_alias_is_retired() -> None:
     """LLM streaming should expose only the unambiguous LLMStreamResult name."""
     assert stream_config.LLMStreamResult is LLMStreamResult
     assert stream_package.LLMStreamResult is LLMStreamResult
-    assert stream_executor_facade.LLMStreamResult is LLMStreamResult
 
     assert not hasattr(stream_config, "StreamResult")
     assert "StreamResult" not in stream_package.__all__
-    assert "StreamResult" not in stream_executor_facade.__all__
+
+
+def test_stream_executor_facade_is_retired() -> None:
+    """The package-root stream module is the canonical streaming import surface."""
+    assert not STREAM_EXECUTOR_FACADE.exists()
 
 
 def test_stream_sources_do_not_reintroduce_stream_result_alias() -> None:
@@ -31,8 +33,7 @@ def test_stream_sources_do_not_reintroduce_stream_result_alias() -> None:
     config_source = STREAM_CONFIG.read_text(encoding="utf-8")
     assert "StreamResult = LLMStreamResult" not in config_source
 
-    for path in (STREAM_PACKAGE, STREAM_EXECUTOR_FACADE):
-        source = path.read_text(encoding="utf-8")
-        lines = {line.strip() for line in source.splitlines()}
-        assert "StreamResult," not in lines
-        assert '"StreamResult",' not in lines
+    source = STREAM_PACKAGE.read_text(encoding="utf-8")
+    lines = {line.strip() for line in source.splitlines()}
+    assert "StreamResult," not in lines
+    assert '"StreamResult",' not in lines

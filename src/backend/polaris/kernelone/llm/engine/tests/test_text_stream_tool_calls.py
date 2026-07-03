@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from polaris.kernelone.llm.engine.stream_executor import StreamExecutor
+from polaris.kernelone.llm.engine.stream import StreamExecutor
 
 
 class _FakeTextToolProvider:

@@ -490,7 +490,7 @@ class AIExecutor:
         )
 
         try:
-            from .stream_executor import StreamExecutor
+            from .stream import StreamExecutor
 
             stream_executor = StreamExecutor(
                 workspace=self.workspace,

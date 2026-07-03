@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import polaris.kernelone.llm.engine.stream as stream_module
 import pytest
-from polaris.kernelone.llm.engine import stream_executor as stream_executor_module
 from polaris.kernelone.llm.engine.contracts import AIRequest, ModelSpec, TaskType, TokenBudgetDecision
-from polaris.kernelone.llm.engine.stream_executor import StreamExecutor
+from polaris.kernelone.llm.engine.stream import StreamExecutor
 from polaris.kernelone.trace import ContextManager, PolarisContext
 from polaris.kernelone.trace.context import get_trace_id
 from polaris.kernelone.trace.tracer import TraceRecorder, UnifiedTracer
@@ -215,7 +215,7 @@ async def test_stream_executor_decodes_structured_openai_tool_calls(
     )
 
     events = [event async for event in executor.invoke_stream(request)]
-    tool_call_events = [event for event in events if event.type == stream_executor_module.StreamEventType.TOOL_CALL]
+    tool_call_events = [event for event in events if event.type == stream_module.StreamEventType.TOOL_CALL]
 
     assert len(tool_call_events) == 1
     assert tool_call_events[0].tool_call == {
@@ -303,7 +303,7 @@ async def test_stream_executor_anthropic_partial_tool_delta_keeps_arguments_and_
     )
 
     events = [event async for event in executor.invoke_stream(request)]
-    tool_call_events = [event for event in events if event.type == stream_executor_module.StreamEventType.TOOL_CALL]
+    tool_call_events = [event for event in events if event.type == stream_module.StreamEventType.TOOL_CALL]
 
     assert len(tool_call_events) == 1
     assert tool_call_events[0].tool_call == {
@@ -384,7 +384,7 @@ async def test_stream_executor_anthropic_placeholder_input_waits_for_json_delta(
     )
 
     events = [event async for event in executor.invoke_stream(request)]
-    tool_call_events = [event for event in events if event.type == stream_executor_module.StreamEventType.TOOL_CALL]
+    tool_call_events = [event for event in events if event.type == stream_module.StreamEventType.TOOL_CALL]
 
     assert len(tool_call_events) == 1
     assert tool_call_events[0].tool_call == {
@@ -473,9 +473,9 @@ async def test_stream_executor_decodes_structured_ollama_tool_calls(
 
     events = [event async for event in executor.invoke_stream(request)]
     reasoning_events = [
-        event for event in events if event.type == stream_executor_module.StreamEventType.REASONING_CHUNK
+        event for event in events if event.type == stream_module.StreamEventType.REASONING_CHUNK
     ]
-    tool_call_events = [event for event in events if event.type == stream_executor_module.StreamEventType.TOOL_CALL]
+    tool_call_events = [event for event in events if event.type == stream_module.StreamEventType.TOOL_CALL]
 
     assert len(reasoning_events) == 1
     assert reasoning_events[0].reasoning == "Need to inspect the README first."
@@ -554,6 +554,6 @@ async def test_stream_executor_ignores_ollama_terminal_content_snapshot(
     )
 
     events = [event async for event in executor.invoke_stream(request)]
-    chunk_events = [event for event in events if event.type == stream_executor_module.StreamEventType.CHUNK]
+    chunk_events = [event for event in events if event.type == stream_module.StreamEventType.CHUNK]
 
     assert [event.chunk for event in chunk_events] == ["hello world"]

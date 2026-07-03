@@ -1,7 +1,7 @@
 """LLM subsystem convergence tests.
 
 Verifies:
-1. executor / stream_executor shared-logic deduplication (token counting consistency)
+1. executor / stream shared-logic deduplication (token counting consistency)
 2. API key resolver is a single function invoked from both execution paths
 3. Error classification is consistent across executor and resilience code paths
 """
@@ -36,7 +36,7 @@ def _make_model_spec(max_context: int = 8192, max_output: int = 1024) -> ModelSp
 
 
 # ---------------------------------------------------------------------------
-# Test 1: executor and stream_executor share the same resolve_requested_output_tokens
+# Test 1: executor and stream components share the same resolve_requested_output_tokens
 # ---------------------------------------------------------------------------
 
 
