@@ -11,6 +11,7 @@ from pathlib import Path
 
 from polaris.kernelone.quality.file_ownership_ledger import (
     build_file_ownership_handoff_requests,
+    owner_task_identifier_token_aliases,
     read_file_owners,
     record_file_owners,
     render_edit_contract,
@@ -169,7 +170,7 @@ class TestBuildFileOwnershipHandoffRequests:
             "reason": "quality_repair_targets_outside_current_task_target_files",
             "owner_step_id": "S4",
             "owner_parent": "PM-0001-1",
-            "owner_task_identifier_tokens": ["S4", "PM-0001-1"],
+            "owner_task_identifier_tokens": ["S4", "PM-0001-1", "PM-0001-1-S4"],
             "requesting_task_identifier_tokens": ["PM-0001-2-step-3"],
             "owner_found": True,
             "recommended_route": "owner_task_retry",
@@ -180,6 +181,17 @@ class TestBuildFileOwnershipHandoffRequests:
         assert requests[1]["requesting_task_identifier_tokens"] == ["PM-0001-2-step-3"]
         assert requests[1]["owner_found"] is False
         assert requests[1]["recommended_route"] == "scope_authority_resolution"
+
+    def test_owner_task_identifier_tokens_include_composed_parent_step_alias(self) -> None:
+        assert owner_task_identifier_token_aliases("S4", "PM-0001-1") == (
+            "S4",
+            "PM-0001-1",
+            "PM-0001-1-S4",
+        )
+        assert owner_task_identifier_token_aliases("PM-0001-1-S4", "PM-0001-1") == (
+            "PM-0001-1-S4",
+            "PM-0001-1",
+        )
 
     def test_empty_targets_return_empty_tuple(self, tmp_path: Path) -> None:
         assert (

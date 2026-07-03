@@ -7,7 +7,11 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from polaris.kernelone.quality.file_ownership_ledger import build_file_ownership_handoff_requests
+from polaris.kernelone.quality.file_ownership_ledger import (
+    build_file_ownership_handoff_requests,
+    owner_task_identifier_token_aliases,
+    task_identifier_token_aliases,
+)
 
 _SCHEMA_VERSION = "scope-authority-decision/1"
 
@@ -182,6 +186,67 @@ def unresolved_owner_handoff_requests_from_scope_payload(payload: Mapping[str, A
     )
 
 
+def task_record_identifier_tokens(record: Mapping[str, Any]) -> frozenset[str]:
+    """Return normalized identifier aliases for a task-board record.
+
+    This is read-only routing evidence. It does not authorize writes or mutate
+    task state; callers use it to match a scope-authority owner handoff request
+    back to the owning task row.
+    """
+
+    tokens: set[str] = set()
+    for value in (
+        record.get("id"),
+        record.get("task_id"),
+        record.get("external_task_id"),
+        record.get("pm_task_id"),
+        record.get("source_task_id"),
+    ):
+        token = _clean_token(value)
+        if token:
+            tokens.update(task_identifier_token_aliases(token))
+    metadata_raw = record.get("metadata")
+    metadata: Mapping[str, Any] = metadata_raw if isinstance(metadata_raw, Mapping) else {}
+    for key in ("external_task_id", "pm_task_id", "source_task_id", "task_id"):
+        token = _clean_token(metadata.get(key))
+        if token:
+            tokens.update(task_identifier_token_aliases(token))
+    return frozenset(tokens)
+
+
+def owner_handoff_identifier_tokens(request: Mapping[str, Any]) -> frozenset[str]:
+    """Return normalized owner identifier aliases for one handoff request."""
+
+    tokens: set[str] = set()
+    raw_tokens = request.get("owner_task_identifier_tokens")
+    if isinstance(raw_tokens, list):
+        for value in raw_tokens:
+            token = _clean_token(value)
+            if token:
+                tokens.add(token)
+    if tokens:
+        return frozenset(tokens)
+    tokens.update(owner_task_identifier_token_aliases(request.get("owner_step_id"), request.get("owner_parent")))
+    return frozenset(tokens)
+
+
+def matching_owner_handoff_request(
+    record: Mapping[str, Any],
+    handoff_requests: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Return the owner handoff request matching a task-board record."""
+
+    if not handoff_requests:
+        return {}
+    tokens = task_record_identifier_tokens(record)
+    if not tokens:
+        return {}
+    for request in handoff_requests:
+        if tokens & owner_handoff_identifier_tokens(request):
+            return dict(request)
+    return {}
+
+
 def _ownership_handoff_candidate_values(payload: Mapping[str, Any]) -> tuple[Any, ...]:
     scope_authority_raw = payload.get("scope_authority")
     scope_authority: Mapping[str, Any] = scope_authority_raw if isinstance(scope_authority_raw, Mapping) else {}
@@ -225,10 +290,13 @@ __all__ = [
     "ScopeAuthorityDecision",
     "build_scope_authority_decision",
     "glob_declared_scope_path_matches",
+    "matching_owner_handoff_request",
     "normalize_declared_scope_path",
+    "owner_handoff_identifier_tokens",
     "owner_task_retry_handoff_requests_from_scope_payload",
     "ownership_handoff_requests_from_scope_payload",
     "path_matches_any_declared_scope_candidate",
     "path_matches_declared_scope_candidate",
+    "task_record_identifier_tokens",
     "unresolved_owner_handoff_requests_from_scope_payload",
 ]

@@ -75,6 +75,27 @@ def task_identifier_token_aliases(value: Any) -> tuple[str, ...]:
     return tuple(sorted(aliases))
 
 
+def owner_task_identifier_token_aliases(owner_step_id: Any, owner_parent: Any) -> tuple[str, ...]:
+    """Return aliases that identify a file-owner task row.
+
+    Legacy ownership facts store ``owner_parent`` and ``owner_step_id`` in
+    separate fields. TaskBoard rows often expose the composed identifier
+    (for example ``PM-0001-1-S4``). This helper is the single place that
+    bridges those equivalent forms for owner-routing projections.
+    """
+
+    step = str(owner_step_id or "").strip()
+    parent = str(owner_parent or "").strip()
+    values: list[str] = []
+    if step:
+        values.append(step)
+    if parent:
+        values.append(parent)
+    if step and parent and not step.casefold().startswith(parent.casefold()):
+        values.append(f"{parent}-{step}")
+    return tuple(_task_identifier_tokens(*values))
+
+
 def _task_identifier_tokens(*values: Any) -> list[str]:
     tokens: list[str] = []
     seen: set[str] = set()
@@ -111,7 +132,9 @@ class FileOwnershipHandoffRequest:
             "reason": self.reason,
             "owner_step_id": self.owner_step_id,
             "owner_parent": self.owner_parent,
-            "owner_task_identifier_tokens": _task_identifier_tokens(self.owner_step_id, self.owner_parent),
+            "owner_task_identifier_tokens": list(
+                owner_task_identifier_token_aliases(self.owner_step_id, self.owner_parent)
+            ),
             "requesting_task_identifier_tokens": _task_identifier_tokens(self.requesting_task_id),
             "owner_found": owner_found,
             "recommended_route": "owner_task_retry" if owner_found else "scope_authority_resolution",
@@ -312,6 +335,7 @@ def render_edit_contract(owned_by_other: dict[str, dict[str, str]]) -> str:
 __all__ = [
     "FileOwnershipHandoffRequest",
     "build_file_ownership_handoff_requests",
+    "owner_task_identifier_token_aliases",
     "read_file_owners",
     "record_file_owners",
     "render_edit_contract",

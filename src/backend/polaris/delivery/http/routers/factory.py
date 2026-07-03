@@ -66,9 +66,12 @@ from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.llm.budget_policy import resolve_director_dispatch_timeout_seconds
 from polaris.kernelone.quality import (
+    matching_owner_handoff_request as kernelone_matching_owner_handoff_request,
+    owner_handoff_identifier_tokens as kernelone_owner_handoff_identifier_tokens,
     owner_task_retry_handoff_requests_from_scope_payload,
     ownership_handoff_requests_from_scope_payload,
     task_identifier_token_aliases,
+    task_record_identifier_tokens,
     unresolved_owner_handoff_requests_from_scope_payload,
 )
 from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path, resolve_storage_roots
@@ -1004,24 +1007,7 @@ def _owned_handoff_requests_from_repair_payload(repair: dict[str, Any]) -> list[
 
 
 def _task_record_external_tokens(record: dict[str, Any]) -> set[str]:
-    tokens: set[str] = set()
-    for value in (
-        record.get("id"),
-        record.get("task_id"),
-        record.get("external_task_id"),
-        record.get("pm_task_id"),
-        record.get("source_task_id"),
-    ):
-        token = str(value or "").strip()
-        if token:
-            tokens.update(_task_identifier_token_aliases(token))
-    metadata_raw = record.get("metadata")
-    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
-    for key in ("external_task_id", "pm_task_id", "source_task_id", "task_id"):
-        token = str(metadata.get(key) or "").strip()
-        if token:
-            tokens.update(_task_identifier_token_aliases(token))
-    return tokens
+    return set(task_record_identifier_tokens(record))
 
 
 def _task_identifier_token_aliases(value: Any) -> set[str]:
@@ -1032,32 +1018,11 @@ def _matching_owner_handoff_request(
     record: dict[str, Any],
     handoff_requests: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    if not handoff_requests:
-        return {}
-    tokens = _task_record_external_tokens(record)
-    if not tokens:
-        return {}
-    for request in handoff_requests:
-        if tokens & _owner_handoff_identifier_tokens(request):
-            return request
-    return {}
+    return kernelone_matching_owner_handoff_request(record, handoff_requests)
 
 
 def _owner_handoff_identifier_tokens(request: dict[str, Any]) -> set[str]:
-    tokens: set[str] = set()
-    raw_tokens = request.get("owner_task_identifier_tokens")
-    if isinstance(raw_tokens, list):
-        for value in raw_tokens:
-            token = str(value or "").strip()
-            if token:
-                tokens.add(token)
-    if tokens:
-        return tokens
-    for value in (request.get("owner_step_id"), request.get("owner_parent")):
-        token = str(value or "").strip()
-        if token:
-            tokens.update(_task_identifier_token_aliases(token))
-    return tokens
+    return set(kernelone_owner_handoff_identifier_tokens(request))
 
 
 def _safe_rework_int(value: Any, *, default: int = 0) -> int:

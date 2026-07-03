@@ -7,10 +7,13 @@ from pathlib import Path
 from polaris.kernelone.quality.file_ownership_ledger import record_file_owners
 from polaris.kernelone.quality.scope_authority import (
     build_scope_authority_decision,
+    matching_owner_handoff_request,
     normalize_declared_scope_path,
+    owner_handoff_identifier_tokens,
     owner_task_retry_handoff_requests_from_scope_payload,
     ownership_handoff_requests_from_scope_payload,
     path_matches_any_declared_scope_candidate,
+    task_record_identifier_tokens,
     unresolved_owner_handoff_requests_from_scope_payload,
 )
 
@@ -101,3 +104,41 @@ def test_scope_authority_extracts_and_classifies_handoff_payloads() -> None:
     )
     assert owner_task_retry_handoff_requests_from_scope_payload(payload) == (owned_request,)
     assert unresolved_owner_handoff_requests_from_scope_payload(payload) == (unknown_request,)
+
+
+def test_scope_authority_matches_owner_handoff_using_projected_identifier_tokens() -> None:
+    owner_row = {
+        "id": "row-1",
+        "external_task_id": "TASK-4",
+        "metadata": {"external_task_id": "TASK-4"},
+    }
+    request = {
+        "schema_version": "file-ownership-handoff-request/1",
+        "target_file": "src/index.js",
+        "owner_step_id": "unmatched-owner-step",
+        "owner_parent": "unmatched-parent",
+        "owner_task_identifier_tokens": ["4", "TASK-04", "TASK-4"],
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+    }
+
+    assert task_record_identifier_tokens(owner_row) >= {"TASK-4", "4"}
+    assert owner_handoff_identifier_tokens(request) == frozenset({"4", "TASK-04", "TASK-4"})
+    assert matching_owner_handoff_request(owner_row, [request]) == request
+
+
+def test_scope_authority_matches_owner_handoff_using_legacy_owner_fields() -> None:
+    owner_row = {
+        "external_task_id": "PM-0001-1-S4",
+        "metadata": {"pm_task_id": "PM-0001-1-S4"},
+    }
+    request = {
+        "schema_version": "file-ownership-handoff-request/1",
+        "target_file": "src/index.js",
+        "owner_step_id": "S4",
+        "owner_parent": "PM-0001-1",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+    }
+
+    assert matching_owner_handoff_request(owner_row, [request]) == request
