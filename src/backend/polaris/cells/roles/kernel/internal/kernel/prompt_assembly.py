@@ -168,7 +168,6 @@ def resolve_prompt_layer_options(context_override: Any, *, message: str | None =
         "append_to_file",
         "edit_blocks",
         "edit_file",
-        "precision_edit",
         "repo_apply_diff",
         "write_file",
     }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from polaris.cells.roles.kernel.internal.transaction.constants import REQUIRED_TOOL_EQUIVALENTS
 from polaris.cells.roles.kernel.internal.transaction.retry_tool_definitions import (
     select_retry_forced_write_tool_name,
 )
@@ -58,6 +59,22 @@ def test_retry_forced_write_prefers_robust_targeted_edit_over_precision_edit() -
     ]
 
     assert select_retry_forced_write_tool_name(tool_definitions) == "edit_file"
+
+
+def test_retry_forced_write_ignores_deprecated_exact_edit_when_alone() -> None:
+    tool_definitions = [
+        _tool_definition("read_file"),
+        _tool_definition("precision_edit"),
+    ]
+
+    assert select_retry_forced_write_tool_name(tool_definitions) is None
+
+
+def test_required_tool_equivalents_do_not_authorize_deprecated_exact_edit() -> None:
+    equivalents = REQUIRED_TOOL_EQUIVALENTS["search_replace"]
+
+    assert "edit_blocks" in equivalents
+    assert "precision_edit" not in equivalents
 
 
 def test_retry_forced_write_uses_append_only_when_no_targeted_write_tool_exists() -> None:

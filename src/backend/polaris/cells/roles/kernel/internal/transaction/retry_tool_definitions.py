@@ -138,11 +138,9 @@ def select_retry_forced_write_tool_name(
     target_files: tuple[str, ...] | list[str] = (),
 ) -> str | None:
     # Prefer tools that are robust when the retry context is incomplete. The
-    # retry path is entered after a failed/non-mutating first attempt, so forcing
-    # precision_edit first is brittle: it requires exact pre-read search text and
-    # commonly degenerates into guessed no-match replacements. Whole-file and
-    # block-edit tools are safer general recovery choices; append remains last
-    # because it can leave stale placeholder code in place.
+    # retry path is entered after a failed/non-mutating first attempt. Whole-file
+    # and block-edit tools are safer general recovery choices; append remains
+    # last because it can leave stale placeholder code in place.
     #
     # Target-existence awareness (factory-bench L1-05 round 6, 2026-06-12):
     # the final escalation forces the tool BY NAME via tool_choice — guided
@@ -163,7 +161,6 @@ def select_retry_forced_write_tool_name(
             "edit_file",
             "search_replace",
             "repo_apply_diff",
-            "precision_edit",
             "append_to_file",
         )
         available = extract_allowed_tool_names_from_definitions(tool_definitions)
@@ -177,7 +174,6 @@ def select_retry_forced_write_tool_name(
         "edit_file",
         "search_replace",
         "repo_apply_diff",
-        "precision_edit",
         "create_file",
         "append_to_file",
     )
@@ -529,7 +525,6 @@ _BOOTSTRAP_EXISTING_CONTENT_EDIT_TOOL_PRIORITY: tuple[str, ...] = (
     "edit_file",
     "repo_apply_diff",
     "search_replace",
-    "precision_edit",
 )
 _BOOTSTRAP_MISSING_FILE_ERROR_TYPES = frozenset(
     {

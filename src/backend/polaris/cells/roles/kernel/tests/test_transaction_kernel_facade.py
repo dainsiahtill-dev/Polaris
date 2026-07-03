@@ -2311,7 +2311,7 @@ def test_build_decision_messages_adds_equivalent_hint_for_missing_required_tool(
     tool_definitions = [
         {"type": "function", "function": {"name": "read_file"}},
         {"type": "function", "function": {"name": "repo_rg"}},
-        {"type": "function", "function": {"name": "precision_edit"}},
+        {"type": "function", "function": {"name": "edit_blocks"}},
     ]
     messages = controller._build_decision_messages(context, tool_definitions)
     system_messages = [str(item.get("content") or "") for item in messages if item.get("role") == "system"]
@@ -2319,7 +2319,7 @@ def test_build_decision_messages_adds_equivalent_hint_for_missing_required_tool(
     assert any(
         "Required contract tool `search_replace` is not exposed in this profile" in text for text in system_messages
     )
-    assert any("precision_edit" in text for text in system_messages)
+    assert any("edit_blocks" in text for text in system_messages)
 
 
 def test_build_decision_messages_includes_required_groups_and_min_calls_hint() -> None:

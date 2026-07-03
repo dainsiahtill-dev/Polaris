@@ -135,7 +135,7 @@ FILE_TOKEN_EXTENSION_PATTERN: str = (
 #   value: 可接受的等价工具名元组
 # ---------------------------------------------------------------------------
 REQUIRED_TOOL_EQUIVALENTS: dict[str, tuple[str, ...]] = {
-    "search_replace": ("precision_edit", "repo_apply_diff", "edit_file"),
+    "search_replace": ("edit_blocks", "repo_apply_diff", "edit_file"),
     "repo_rg": ("read_file", "repo_read_head", "repo_read_slice"),
 }
 

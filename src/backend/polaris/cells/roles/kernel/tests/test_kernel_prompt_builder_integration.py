@@ -3,7 +3,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
-from polaris.cells.roles.kernel.internal.kernel.prompt_assembly import build_system_prompt_for_request
+from polaris.cells.roles.kernel.internal.kernel.prompt_assembly import (
+    build_system_prompt_for_request,
+    resolve_prompt_layer_options,
+)
 from polaris.cells.roles.kernel.internal.kernel.prompt_builder_provider import get_prompt_builder
 from polaris.cells.roles.profile.public.service import RoleExecutionMode, RoleTurnRequest
 
@@ -385,3 +388,15 @@ def test_build_system_prompt_for_forced_write_suppresses_working_memory_only(mon
     assert captured["appendix"] == "forced write appendix"
     assert captured["include_working_memory_contract"] is False
     assert captured["include_tool_policy"] is True
+
+
+def test_deprecated_exact_edit_forced_choice_does_not_trigger_forced_write_prompt_layer() -> None:
+    retired_tool_name = "precision" + "_edit"
+
+    assert (
+        resolve_prompt_layer_options(
+            {"_transaction_kernel_forced_tool_choice": {"function": {"name": retired_tool_name}}},
+            message="Retry with the historical exact-edit tool.",
+        )
+        == {}
+    )
