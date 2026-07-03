@@ -834,6 +834,25 @@ class TestExtractNativeToolCalls:
         assert native_tool_call_count(metadata, raw_calls) == 2
         assert native_tool_call_names(metadata, raw_calls) == ["write_file", "execute_command"]
 
+    def test_native_tool_call_envelopes_use_normalized_lifecycle_receipt_aliases(self) -> None:
+        metadata = {
+            "native_tool_call_envelopes": ["bad legacy projection"],
+            "tool_call_lifecycle_receipt": {
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "native_tool_call_envelopes": [
+                    {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
+                    {"schema_version": "native_tool_call_envelope.v1", "tool_name": "execute_command"},
+                ],
+            },
+        }
+        raw_calls = [{"function": {"name": "read_file"}}]
+
+        envelopes = native_tool_call_envelopes_from_metadata(metadata)
+
+        assert [envelope["tool_name"] for envelope in envelopes] == ["write_file", "execute_command"]
+        assert native_tool_call_count(metadata, raw_calls) == 2
+        assert native_tool_call_names(metadata, raw_calls) == ["write_file", "execute_command"]
+
     def test_native_tool_call_envelope_refs_fall_back_to_plural_lifecycle_receipts(self) -> None:
         metadata = {
             "native_tool_call_envelopes": ["bad legacy projection"],
