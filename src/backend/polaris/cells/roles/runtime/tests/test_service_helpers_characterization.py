@@ -97,6 +97,30 @@ def test_extract_tool_calls_falls_back_to_native_envelope_refs() -> None:
     assert runtime_service._extract_tool_calls(result) == ("execute_command",)
 
 
+def test_extract_tool_calls_falls_back_to_lifecycle_receipt_envelope_refs() -> None:
+    result = RoleTurnResult(
+        content="x",
+        metadata={
+            "tool_call_lifecycle_receipt": {
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "native_tool_call_envelope_refs": [
+                    {
+                        "schema_version": "native_tool_call_envelope.v1",
+                        "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+                        "provider": "openai",
+                        "tool_name": "write_file",
+                        "call_id": "call-1",
+                        "raw_call_hash": "a" * 64,
+                        "arguments_hash": "b" * 64,
+                    }
+                ],
+            }
+        },
+    )
+
+    assert runtime_service._extract_tool_calls(result) == ("write_file",)
+
+
 def test_extract_artifacts_filters_blank_and_non_list() -> None:
     with_list = RoleTurnResult(content="x", structured_output={"artifacts": ["a.py", " ", "b.py"]})
     assert runtime_service._extract_artifacts(with_list) == ("a.py", "b.py")
@@ -297,6 +321,51 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
             "tool_name": "write_file",
             "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
             "reason": "tool_dispatch_dropped",
+        }
+    ]
+
+    dropped_from_lifecycle_receipt_metadata = runtime_service._to_contract_result(
+        role="director",
+        workspace=".",
+        task_id="t",
+        session_id="se",
+        run_id="ru",
+        result=RoleTurnResult(
+            content="I will call write_file.",
+            metadata={
+                "tool_call_lifecycle_receipt": {
+                    "schema_version": "tool_call_lifecycle_receipt.v1",
+                    "dispatch_status": "dropped",
+                    "failure_class": "tool_dispatch_dropped",
+                    "native_tool_call_envelope_refs": [
+                        {
+                            "schema_version": "native_tool_call_envelope.v1",
+                            "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+                            "provider": "openai",
+                            "tool_name": "write_file",
+                            "call_id": "call-1",
+                            "raw_call_hash": "a" * 64,
+                            "arguments_hash": "b" * 64,
+                        }
+                    ],
+                }
+            },
+        ),
+    )
+    assert dropped_from_lifecycle_receipt_metadata.ok is False
+    assert dropped_from_lifecycle_receipt_metadata.error_code == "tool_dispatch_dropped"
+    assert dropped_from_lifecycle_receipt_metadata.tool_calls == ("write_file",)
+    lifecycle_from_receipt = dropped_from_lifecycle_receipt_metadata.metadata["tool_call_lifecycle"]
+    assert lifecycle_from_receipt["native_tool_calls_count"] == 1
+    assert lifecycle_from_receipt["native_tool_call_envelope_refs"] == [
+        {
+            "schema_version": "native_tool_call_envelope.v1",
+            "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+            "provider": "openai",
+            "tool_name": "write_file",
+            "call_id": "call-1",
+            "raw_call_hash": "a" * 64,
+            "arguments_hash": "b" * 64,
         }
     ]
 
