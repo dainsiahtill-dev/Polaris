@@ -122,17 +122,17 @@ def clear_stop_flag_for(workspace: str, signal_name: str) -> None:
 
 
 def stop_flag_path(workspace: str) -> str:
-    """Legacy alias for PM stop signal path."""
+    """Return the PM role stop-signal flag path."""
     return stop_flag_path_for(workspace, RoleId.PM.value)
 
 
 def stop_requested(workspace: str) -> bool:
-    """Legacy alias for PM stop signal check."""
+    """Return whether the PM role stop signal is present."""
     return stop_requested_for(workspace, RoleId.PM.value)
 
 
 def clear_stop_flag(workspace: str) -> None:
-    """Legacy alias for PM stop signal clear."""
+    """Clear the PM role stop-signal flag when present."""
     clear_stop_flag_for(workspace, RoleId.PM.value)
 
 
@@ -152,17 +152,17 @@ def interrupt_notice_path(workspace: str) -> str:
 
 
 def director_stop_flag_path(workspace: str) -> str:
-    """Legacy alias for Director stop signal path."""
+    """Return the Director role stop-signal flag path."""
     return stop_flag_path_for(workspace, RoleId.DIRECTOR.value)
 
 
 def director_stop_requested(workspace: str) -> bool:
-    """Legacy alias for Director stop signal check."""
+    """Return whether the Director role stop signal is present."""
     return stop_requested_for(workspace, RoleId.DIRECTOR.value)
 
 
 def clear_director_stop_flag(workspace: str) -> None:
-    """Legacy alias for Director stop signal clear."""
+    """Clear the Director role stop-signal flag when present."""
     clear_stop_flag_for(workspace, RoleId.DIRECTOR.value)
 
 
