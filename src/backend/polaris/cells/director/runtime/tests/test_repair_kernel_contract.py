@@ -208,6 +208,22 @@ def test_public_normalizes_typed_artifact_quality_issues_to_repair_diagnostics()
     }
 
 
+def test_public_repair_diagnostics_preserve_kernelone_issue_locations() -> None:
+    issues = artifact_quality_issues_from_errors(
+        ("src/main.ts(3,14): error TS2322: Type 'string' is not assignable to type 'number'.",)
+    )
+
+    diagnostics = normalize_director_repair_issue_diagnostics(issues)
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].path == "src/main.ts"
+    assert diagnostics[0].metadata["line"] == 3
+    assert diagnostics[0].metadata["column"] == 14
+    assert diagnostics[0].metadata["raw"] == (
+        "src/main.ts(3,14): error TS2322: Type 'string' is not assignable to type 'number'."
+    )
+
+
 def _install_delete_file_test_runtime_binding(monkeypatch: pytest.MonkeyPatch, source_tool: str) -> None:
     def planner(
         base_files: dict[str, str],

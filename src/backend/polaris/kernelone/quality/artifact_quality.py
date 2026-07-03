@@ -383,10 +383,12 @@ class ArtifactQualityIssue:
     path: str | None = None
     severity: str = "error"
     source: str = "artifact_quality"
+    line: int | None = None
+    column: int | None = None
     metadata: Mapping[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "code": self.code,
             "message": self.message,
             "path": self.path,
@@ -394,6 +396,11 @@ class ArtifactQualityIssue:
             "source": self.source,
             "metadata": dict(self.metadata or {}),
         }
+        if self.line is not None:
+            payload["line"] = self.line
+        if self.column is not None:
+            payload["column"] = self.column
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -440,7 +447,10 @@ _ARTIFACT_QUALITY_PATH_EXTENSIONS = (
 _ARTIFACT_QUALITY_QUOTED_PATH_RE = re.compile(r"['\"](?P<path>[^'\"]+\.[A-Za-z0-9]+)['\"]")
 _ARTIFACT_QUALITY_IN_PATH_RE = re.compile(r"\bin\s+(?P<path>[^\s:]+(?:\.[A-Za-z0-9]+))(?::|$|\s)")
 _ARTIFACT_QUALITY_COMPILER_PATH_RE = re.compile(
-    r"(?m)^(?P<path>[^\s:(]+(?:\.[A-Za-z0-9]+))(?:\(\d+(?:,\d+)?\)|:\d+(?::\d+)?)?(?::|\s)"
+    r"(?m)^(?P<path>[^\s:(]+(?:\.[A-Za-z0-9]+))"
+    r"(?:(?:\((?P<line_paren>\d+)(?:,(?P<column_paren>\d+))?\))"
+    r"|(?::(?P<line_colon>\d+)(?::(?P<column_colon>\d+))?))?"
+    r"(?::|\s)"
 )
 _ARTIFACT_QUALITY_JAVASCRIPT_MODULE_ERROR_RE = re.compile(
     r"(?P<message>The requested module\s+['\"]?[^'\"\s]+['\"]?\s+"
@@ -494,11 +504,29 @@ def _artifact_quality_issue_path(message: str) -> str | None:
     return None
 
 
+def _artifact_quality_issue_location(message: str) -> tuple[int | None, int | None]:
+    match = _ARTIFACT_QUALITY_COMPILER_PATH_RE.search(message)
+    if not match:
+        return None, None
+    raw_line = match.group("line_paren") or match.group("line_colon")
+    raw_column = match.group("column_paren") or match.group("column_colon")
+    try:
+        line = int(raw_line) if raw_line else None
+    except ValueError:
+        line = None
+    try:
+        column = int(raw_column) if raw_column else None
+    except ValueError:
+        column = None
+    return line, column
+
+
 def _artifact_quality_issue_from_error(error: str) -> ArtifactQualityIssue:
     text = str(error or "").strip()
     message = text
     if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
         message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    line, column = _artifact_quality_issue_location(message)
     javascript_module_error = _ARTIFACT_QUALITY_JAVASCRIPT_MODULE_ERROR_RE.search(message)
     if javascript_module_error:
         return ArtifactQualityIssue(
@@ -506,12 +534,16 @@ def _artifact_quality_issue_from_error(error: str) -> ArtifactQualityIssue:
             message=str(javascript_module_error.group("message") or message).strip(),
             path=_artifact_quality_issue_path(message),
             source="runtime_smoke",
+            line=line,
+            column=column,
             metadata={"raw": text},
         )
     return ArtifactQualityIssue(
         code=_artifact_quality_issue_code(message),
         message=message,
         path=_artifact_quality_issue_path(message),
+        line=line,
+        column=column,
         metadata={"raw": text},
     )
 

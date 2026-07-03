@@ -83,6 +83,19 @@ def test_artifact_quality_issue_projection_extracts_compiler_path() -> None:
     issues = artifact_quality_issues_from_errors((error,))
 
     assert issues[0]["path"] == "src/main.ts"
+    assert issues[0]["line"] == 1
+    assert issues[0]["column"] == 1
+    assert issues[0]["metadata"] == {"raw": error}
+
+
+def test_artifact_quality_issue_projection_extracts_colon_line_column() -> None:
+    error = "src/main.py:7:13: SyntaxError: invalid syntax"
+
+    issues = artifact_quality_issues_from_errors((error,))
+
+    assert issues[0]["path"] == "src/main.py"
+    assert issues[0]["line"] == 7
+    assert issues[0]["column"] == 13
     assert issues[0]["metadata"] == {"raw": error}
 
 
