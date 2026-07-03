@@ -130,7 +130,7 @@ class UvicornServerHandle:
 
     @property
     def pid(self) -> int | None:
-        """Get process ID (for compatibility)."""
+        """Return the process ID exposed by the launch handle."""
         import os
 
         return os.getpid()
