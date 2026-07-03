@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.orchestration.workflow_runtime.internal.config import WorkflowConfig
-from polaris.kernelone.workflow.base import EmbeddedConfig, RuntimeBackend, RuntimeBackendPort
+from polaris.kernelone.workflow.base import EmbeddedConfig, RuntimeBackendPort
 
 if TYPE_CHECKING:
     pass
@@ -113,7 +113,7 @@ class RuntimeBackendAdapter:
         self._db_path = ""
         logger.info("RuntimeBackendAdapter stopped")
 
-    def _require_runtime(self) -> RuntimeBackend:
+    def _require_runtime(self) -> RuntimeBackendPort:
         if self._runtime is None:
             raise RuntimeError("Runtime adapter is not started")
         return self._runtime

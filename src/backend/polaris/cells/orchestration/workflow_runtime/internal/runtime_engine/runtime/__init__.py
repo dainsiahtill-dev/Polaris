@@ -6,7 +6,7 @@ from polaris.infrastructure.db.repositories.workflow_runtime_store import Sqlite
 from polaris.kernelone.workflow.activity_runner import ActivityConfig, ActivityRunner
 from polaris.kernelone.workflow.base import (
     EmbeddedConfig,
-    RuntimeBackend,
+    RuntimeBackendPort,
     RuntimeSubmissionResult,
     WorkflowConfig,
     WorkflowSnapshot,
@@ -26,7 +26,7 @@ __all__ = [
     "ActivityRunner",
     "EmbeddedConfig",
     "RetryPolicy",
-    "RuntimeBackend",
+    "RuntimeBackendPort",
     "RuntimeFactory",
     "RuntimeSubmissionResult",
     "SqliteRuntimeStore",

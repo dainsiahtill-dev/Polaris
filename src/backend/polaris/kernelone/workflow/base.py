@@ -88,10 +88,6 @@ class RuntimeBackendPort(Protocol):
         ...
 
 
-# Backward compatibility alias (deprecated, use RuntimeBackendPort)
-RuntimeBackend = RuntimeBackendPort
-
-
 @dataclass
 class EmbeddedConfig:
     """自研 workflow runtime 配置。"""

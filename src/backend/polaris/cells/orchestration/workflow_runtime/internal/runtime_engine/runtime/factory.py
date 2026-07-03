@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Literal
 
 from polaris.kernelone.workflow.activity_runner import ActivityRunner
-from polaris.kernelone.workflow.base import EmbeddedConfig, RuntimeBackend, RuntimeBackendPort
+from polaris.kernelone.workflow.base import EmbeddedConfig, RuntimeBackendPort
 from polaris.kernelone.workflow.engine import WorkflowEngine
 from polaris.kernelone.workflow.task_queue import TaskQueueManager
 from polaris.kernelone.workflow.timer_wheel import TimerWheel
@@ -28,7 +28,7 @@ class RuntimeFactory:
         cls,
         runtime_type: Literal["workflow"] = "workflow",
         config: EmbeddedConfig | None = None,
-    ) -> RuntimeBackend:
+    ) -> RuntimeBackendPort:
         """Create runtime instance.
 
         Args:
@@ -36,7 +36,7 @@ class RuntimeFactory:
             config: Runtime configuration
 
         Returns:
-            RuntimeBackend instance
+            RuntimeBackendPort instance
         """
         if cls._instance and cls._runtime_type == runtime_type:
             logger.info(f"Reusing existing {runtime_type} runtime")
@@ -55,7 +55,7 @@ class RuntimeFactory:
         return cls._instance
 
     @classmethod
-    async def _create_workflow(cls, config: EmbeddedConfig) -> RuntimeBackend:
+    async def _create_workflow(cls, config: EmbeddedConfig) -> RuntimeBackendPort:
         """Create self-hosted workflow runtime."""
         from polaris.cells.orchestration.workflow_engine.public.contracts import CellHandlerRegistry
         from polaris.infrastructure.db.repositories.workflow_runtime_store import SqliteRuntimeStore
@@ -159,7 +159,7 @@ class RuntimeFactory:
         )
 
     @classmethod
-    async def get_runtime(cls) -> RuntimeBackend | None:
+    async def get_runtime(cls) -> RuntimeBackendPort | None:
         """Get current runtime instance."""
         return cls._instance
 
@@ -179,6 +179,6 @@ class RuntimeFactory:
         return cls._runtime_type
 
 
-async def get_runtime(config: EmbeddedConfig | None = None) -> RuntimeBackend:
+async def get_runtime(config: EmbeddedConfig | None = None) -> RuntimeBackendPort:
     """Get runtime instance."""
     return await RuntimeFactory.create_runtime("workflow", config)
