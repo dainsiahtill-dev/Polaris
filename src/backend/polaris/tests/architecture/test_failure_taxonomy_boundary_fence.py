@@ -9,6 +9,7 @@ must not become a second QA/Factory verdict vocabulary.
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -79,6 +80,25 @@ def _production_python_files(root: Path) -> list[Path]:
 
 def _parse_python(path: Path) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+
+def _failure_key(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]+", "_", value.strip()).strip("_").casefold()
+
+
+def _enum_string_values(path: Path, class_name: str) -> tuple[str, ...]:
+    values: list[str] = []
+    tree = _parse_python(path)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef) or node.name != class_name:
+            continue
+        for statement in node.body:
+            if not isinstance(statement, ast.Assign):
+                continue
+            if isinstance(statement.value, ast.Constant) and isinstance(statement.value.value, str):
+                values.append(statement.value.value)
+        break
+    return tuple(values)
 
 
 def _failure_class_definitions(root: Path) -> list[ClassDefinition]:
@@ -211,3 +231,20 @@ def test_local_failure_classes_document_run_ledger_boundary() -> None:
             missing.append(f"{definition.path}:{definition.line}:{definition.name}")
 
     assert missing == []
+
+
+def test_local_failure_class_values_do_not_shadow_run_ledger_taxonomy() -> None:
+    """Local enum values must not normalize to canonical Run Ledger failures."""
+
+    canonical_values = _enum_string_values(CANONICAL_FAILURE_TAXONOMY, "FailureClassV1")
+    canonical_keys = {_failure_key(value) for value in canonical_values}
+    collisions: list[str] = []
+
+    for class_name in sorted(LOCAL_FAILURE_CLASS_NAMES):
+        relative_path = OWNED_FAILURE_CLASS_DEFINITIONS[class_name]
+        enum_values = _enum_string_values(BACKEND_ROOT / relative_path, class_name)
+        for value in enum_values:
+            if _failure_key(value) in canonical_keys:
+                collisions.append(f"{relative_path}:{class_name}.{value}")
+
+    assert collisions == []
