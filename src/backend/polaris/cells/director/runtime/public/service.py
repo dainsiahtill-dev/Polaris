@@ -1058,6 +1058,43 @@ def _repair_diagnostics_from_artifact_quality_issues(
     return tuple(diagnostics)
 
 
+def _merge_repair_diagnostic_evidence(primary: RepairDiagnostic, additive: RepairDiagnostic) -> RepairDiagnostic:
+    metadata = dict(additive.metadata)
+    metadata.update(primary.metadata)
+    return RepairDiagnostic(
+        source=primary.source,
+        code=primary.code,
+        message=primary.message,
+        severity=primary.severity,
+        path=primary.path or additive.path,
+        line=primary.line if primary.line is not None else additive.line,
+        column=primary.column if primary.column is not None else additive.column,
+        span_start=primary.span_start if primary.span_start is not None else additive.span_start,
+        span_end=primary.span_end if primary.span_end is not None else additive.span_end,
+        diagnostic_id=primary.diagnostic_id,
+        raw=primary.raw or additive.raw,
+        metadata=metadata,
+    )
+
+
+def _repair_diagnostic_raw_key(diagnostic: RepairDiagnostic) -> str:
+    return str(diagnostic.raw or diagnostic.message or "").strip()
+
+
+def _repair_diagnostic_structural_key(diagnostic: RepairDiagnostic) -> tuple[str, str, str, str, str] | None:
+    code = str(diagnostic.code or "").strip()
+    path = str(diagnostic.path or "").strip()
+    if not code or not path:
+        return None
+    return (
+        code,
+        path,
+        str(diagnostic.line or ""),
+        str(diagnostic.column or ""),
+        str(diagnostic.message or "").strip(),
+    )
+
+
 def _repair_diagnostics_from_quality_inputs(
     artifact_quality_errors: Sequence[str],
     artifact_quality_issues: Sequence[Mapping[str, Any]],
@@ -1072,14 +1109,28 @@ def _repair_diagnostics_from_quality_inputs(
     """
 
     diagnostics = list(normalize_artifact_quality_errors(list(artifact_quality_errors)))
-    seen_raw = {str(item.raw or item.message or "").strip() for item in diagnostics}
+    index_by_raw = {raw_key: index for index, item in enumerate(diagnostics) if (raw_key := _repair_diagnostic_raw_key(item))}
+    index_by_structural = {
+        structural_key: index
+        for index, item in enumerate(diagnostics)
+        if (structural_key := _repair_diagnostic_structural_key(item)) is not None
+    }
     for diagnostic in _repair_diagnostics_from_artifact_quality_issues(artifact_quality_issues):
-        raw_key = str(diagnostic.raw or diagnostic.message or "").strip()
-        if raw_key and raw_key in seen_raw:
+        raw_key = _repair_diagnostic_raw_key(diagnostic)
+        if raw_key and raw_key in index_by_raw:
+            index = index_by_raw[raw_key]
+            diagnostics[index] = _merge_repair_diagnostic_evidence(diagnostics[index], diagnostic)
+            continue
+        structural_key = _repair_diagnostic_structural_key(diagnostic)
+        if structural_key is not None and structural_key in index_by_structural:
+            index = index_by_structural[structural_key]
+            diagnostics[index] = _merge_repair_diagnostic_evidence(diagnostics[index], diagnostic)
             continue
         diagnostics.append(diagnostic)
         if raw_key:
-            seen_raw.add(raw_key)
+            index_by_raw[raw_key] = len(diagnostics) - 1
+        if structural_key is not None:
+            index_by_structural[structural_key] = len(diagnostics) - 1
     return tuple(diagnostics)
 
 
