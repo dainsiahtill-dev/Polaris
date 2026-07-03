@@ -34,8 +34,7 @@ from polaris.kernelone.runtime import ExecutionSnapshot
 
 logger = logging.getLogger(__name__)
 
-# Module-level cache for backwards compatibility with test patches.
-# Tests patch this variable to inject mock executors into worker loops.
+# Module-level executor seam for tests that inject mock workers into loops.
 _WorkerExecutor = WorkerExecutor
 
 
