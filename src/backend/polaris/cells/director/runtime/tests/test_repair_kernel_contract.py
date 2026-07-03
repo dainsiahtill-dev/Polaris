@@ -2727,6 +2727,30 @@ def test_runtime_dispatcher_generic_hygiene_runs_typed_scaffold_diagnostic_path(
     assert result.planning.diagnostics[0].metadata["stable_issue_id"] == "typed-generic-scaffold-marker-run"
 
 
+def test_runtime_convergence_planner_uses_typed_generic_hygiene_diagnostic_path() -> None:
+    content = 'console.log("Polaris TypeScript scaffold");\n'
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="scaffold_marker",
+        message="Scaffold marker remains in generated source.",
+        path="src/main.ts",
+        raw="Scaffold marker remains in generated source.",
+        metadata={"stable_issue_id": "typed-generic-scaffold-marker-convergence"},
+    )
+
+    planner = runtime_dispatch_module.build_runtime_repair_convergence_planner(
+        source_tools=(SCAFFOLD_MARKER_QUALITY_CLEANUP_SOURCE_TOOL,),
+        base_files={"src/main.ts": content},
+        mode="shadow",
+    )
+    plans = planner((diagnostic,), 1)
+
+    assert len(plans) == 1
+    assert plans[0].source_tool == SCAFFOLD_MARKER_QUALITY_CLEANUP_SOURCE_TOOL
+    assert plans[0].diagnostics[0].metadata["stable_issue_id"] == "typed-generic-scaffold-marker-convergence"
+    assert plans[0].operations[0].path == "src/main.ts"
+
+
 def test_single_runtime_entrypoints_preserve_typed_diagnostics_on_unsupported_tool(tmp_path: Path) -> None:
     diagnostic = RepairDiagnostic(
         source="artifact_quality",
