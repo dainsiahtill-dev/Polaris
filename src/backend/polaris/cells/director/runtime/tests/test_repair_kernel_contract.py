@@ -173,6 +173,7 @@ from polaris.cells.director.runtime.public import (
     run_director_repair,
     validate_director_repair_advisory,
 )
+from polaris.kernelone.quality import artifact_quality_issues_from_errors
 from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
 
 
@@ -558,14 +559,7 @@ def test_materialization_plan_probe_query_owns_candidate_and_plannable_source_to
         "SyntaxError: The requested module ./engine/AlchemyEngine.js "
         "does not provide an export named default"
     )
-    typed_issue = {
-        "source": "runtime_smoke",
-        "code": "javascript_module_error",
-        "message": "The requested module ./engine/AlchemyEngine.js does not provide an export named default",
-        "path": None,
-        "severity": "error",
-        "metadata": {"raw": error, "source": "typed_artifact_quality_issue"},
-    }
+    typed_issue = artifact_quality_issues_from_errors((error,))[0]
     base_files = {
         "package.json": '{"type":"module","scripts":{"start":"node src/index.js"}}',
         "src/index.js": 'import AlchemyEngine from "./engine/AlchemyEngine.js";\n',
@@ -593,6 +587,8 @@ def test_materialization_plan_probe_query_owns_candidate_and_plannable_source_to
     assert result.owner_cell == "director.runtime"
     assert result.execution_boundary == "read_only_materialization_plan_probe_no_writes"
     assert result.candidate_source_tools == ("deterministic_javascript_esm_commonjs_entrypoint_repair",)
+    assert result.plannable_source_tools == ("deterministic_javascript_esm_commonjs_entrypoint_repair",)
+    assert result.plan_probe_result is not None
     assert result.coverage_report.covered_diagnostic_count == 1
     assert result.coverage_report.items[0].diagnostic_code == "javascript_module_error"
     assert result.to_dict()["metadata"]["coverage_is_not_planning"] is True

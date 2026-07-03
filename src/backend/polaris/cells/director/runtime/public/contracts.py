@@ -2792,6 +2792,7 @@ class QueryDirectorRepairPlanProbeV1:
     """Read-only probe that verifies coverage matches can produce concrete repair plans."""
 
     artifact_quality_errors: tuple[str, ...]
+    artifact_quality_issues: tuple[Mapping[str, Any], ...] = ()
     base_files: Mapping[str, str] = field(default_factory=dict)
     source_tools: tuple[str, ...] = ()
     mode: str = "shadow"
@@ -2800,6 +2801,7 @@ class QueryDirectorRepairPlanProbeV1:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "artifact_quality_errors", _to_tuple_str(list(self.artifact_quality_errors)))
+        object.__setattr__(self, "artifact_quality_issues", _to_tuple_mapping_from_any(self.artifact_quality_issues))
         object.__setattr__(self, "base_files", dict(self.base_files or {}))
         object.__setattr__(self, "source_tools", _to_tuple_str(list(self.source_tools)))
         object.__setattr__(self, "mode", str(self.mode or "shadow").strip() or "shadow")

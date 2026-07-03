@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from polaris.kernelone.quality import scan_workspace_artifact_quality, scan_workspace_artifact_quality_evidence
+from polaris.kernelone.quality import (
+    artifact_quality_issues_from_errors,
+    scan_workspace_artifact_quality,
+    scan_workspace_artifact_quality_evidence,
+)
 
 
 def test_scan_package_manifest_rejects_invalid_script_shell_syntax(tmp_path: Path) -> None:
@@ -49,6 +53,28 @@ def test_artifact_quality_evidence_projects_typed_issues(tmp_path: Path) -> None
     assert evidence.issues[0].code == "npm_manifest_invalid"
     assert evidence.issues[0].path == "package.json"
     assert evidence.to_dict()["issues"][0]["code"] == "npm_manifest_invalid"
+
+
+def test_artifact_quality_issue_projection_classifies_javascript_module_runtime_error() -> None:
+    error = (
+        "Artifact quality scan failed: workspace validation command failed (npm run start): "
+        "file:///tmp/project/src/index.js:1\n"
+        "SyntaxError: The requested module ./engine/AlchemyEngine.js "
+        "does not provide an export named default"
+    )
+
+    issues = artifact_quality_issues_from_errors((error,))
+
+    assert issues == (
+        {
+            "code": "javascript_module_error",
+            "message": "The requested module ./engine/AlchemyEngine.js does not provide an export named default",
+            "path": None,
+            "severity": "error",
+            "source": "runtime_smoke",
+            "metadata": {"raw": error},
+        },
+    )
 
 
 def test_typescript_import_scanner_ignores_fixture_string_imports(tmp_path: Path) -> None:

@@ -439,6 +439,17 @@ _ARTIFACT_QUALITY_PATH_EXTENSIONS = (
 )
 _ARTIFACT_QUALITY_QUOTED_PATH_RE = re.compile(r"['\"](?P<path>[^'\"]+\.[A-Za-z0-9]+)['\"]")
 _ARTIFACT_QUALITY_IN_PATH_RE = re.compile(r"\bin\s+(?P<path>[^\s:]+(?:\.[A-Za-z0-9]+))(?::|$|\s)")
+_ARTIFACT_QUALITY_JAVASCRIPT_MODULE_ERROR_RE = re.compile(
+    r"(?P<message>The requested module\s+['\"]?[^'\"\s]+['\"]?\s+"
+    r"does not provide an export named\s+(?:['\"][^'\"]+['\"]|[A-Za-z_$][\w$]*)|"
+    r"Cannot find module ['\"][^'\"]+['\"]|"
+    r"does not provide an export named (?:['\"][^'\"]+['\"]|[A-Za-z_$][\w$]*)|"
+    r"require is not defined in ES module scope|exports is not defined in ES module scope|"
+    r"Cannot require\(\) ES Module [^\n]+|ERR_REQUIRE_CYCLE_MODULE|"
+    r"Cannot use import statement outside a module|"
+    r"[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\s+is not a function)",
+    re.IGNORECASE,
+)
 
 
 def _artifact_quality_issue_code(message: str) -> str:
@@ -481,6 +492,15 @@ def _artifact_quality_issue_from_error(error: str) -> ArtifactQualityIssue:
     message = text
     if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
         message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    javascript_module_error = _ARTIFACT_QUALITY_JAVASCRIPT_MODULE_ERROR_RE.search(message)
+    if javascript_module_error:
+        return ArtifactQualityIssue(
+            code="javascript_module_error",
+            message=str(javascript_module_error.group("message") or message).strip(),
+            path=_artifact_quality_issue_path(message),
+            source="runtime_smoke",
+            metadata={"raw": text},
+        )
     return ArtifactQualityIssue(
         code=_artifact_quality_issue_code(message),
         message=message,

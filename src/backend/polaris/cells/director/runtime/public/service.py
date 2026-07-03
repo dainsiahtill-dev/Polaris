@@ -1092,7 +1092,12 @@ def query_director_repair_coverage(query: QueryDirectorRepairCoverageV1) -> Dire
 def query_director_repair_plan_probe(query: QueryDirectorRepairPlanProbeV1) -> DirectorRepairPlanProbeResultV1:
     """Return read-only evidence that coverage-matched rules can produce concrete patches."""
 
-    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(query.artifact_quality_errors))
+    coverage = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(
+            query.artifact_quality_errors,
+            artifact_quality_issues=query.artifact_quality_issues,
+        )
+    )
     candidate_source_tools = _plan_probe_candidate_source_tools(coverage, requested_source_tools=query.source_tools)
     probe_items: list[DirectorRepairPlanProbeItemV1] = []
     for source_tool in candidate_source_tools:
@@ -1282,6 +1287,7 @@ def query_director_repair_materialization_plan_probe(
     plan_probe = query_director_repair_plan_probe(
         QueryDirectorRepairPlanProbeV1(
             artifact_quality_errors=query.artifact_quality_errors,
+            artifact_quality_issues=query.artifact_quality_issues,
             base_files=query.base_files,
             source_tools=candidate_source_tools,
             mode=query.mode,
