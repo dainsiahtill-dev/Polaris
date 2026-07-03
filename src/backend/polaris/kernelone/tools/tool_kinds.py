@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+DEPRECATED_WRITE_TOOLS: frozenset[str] = frozenset({"precision_edit"})
+
 WRITE_TOOLS: frozenset[str] = frozenset(
     {
         "precision_edit",
@@ -20,6 +22,8 @@ WRITE_TOOLS: frozenset[str] = frozenset(
     }
 )
 
+ACTIVE_WRITE_TOOLS: frozenset[str] = WRITE_TOOLS - DEPRECATED_WRITE_TOOLS
+
 
 def normalize_tool_name(value: object) -> str:
     """Normalize a provider/runtime tool name for kind checks."""
@@ -33,4 +37,10 @@ def is_write_tool_name(value: object) -> bool:
     return normalize_tool_name(value) in WRITE_TOOLS
 
 
-__all__ = ["WRITE_TOOLS", "is_write_tool_name", "normalize_tool_name"]
+__all__ = [
+    "ACTIVE_WRITE_TOOLS",
+    "DEPRECATED_WRITE_TOOLS",
+    "WRITE_TOOLS",
+    "is_write_tool_name",
+    "normalize_tool_name",
+]

@@ -15,7 +15,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
+from polaris.cells.roles.kernel.internal.transaction.constants import ACTIVE_WRITE_TOOLS
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     extract_allowed_scope_paths_from_message,
     extract_target_files_from_message,
@@ -85,7 +85,7 @@ def build_contract_retry_context(
             continue
         target_file_tokens.append(token)
     authorized_scope_paths = _extract_authorized_scope_paths(context, target_file_tokens)
-    write_candidates = set(WRITE_TOOLS)
+    write_candidates = set(ACTIVE_WRITE_TOOLS)
     write_tools: list[str] = []
     for item in tool_definitions:
         if not isinstance(item, Mapping):

@@ -13,7 +13,10 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     _READONLY_TOOLS,
 )
 from polaris.kernelone.tool_execution.tool_categories import SCOUT_RECON_TOOLS as _SCOUT_RECON_TOOLS
-from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS as _KERNELONE_WRITE_TOOLS
+from polaris.kernelone.tools.tool_kinds import (
+    ACTIVE_WRITE_TOOLS as _KERNELONE_ACTIVE_WRITE_TOOLS,
+    WRITE_TOOLS as _KERNELONE_WRITE_TOOLS,
+)
 
 # ---------------------------------------------------------------------------
 # LLM 拒绝标记
@@ -49,6 +52,7 @@ REFUSAL_MARKERS: tuple[str, ...] = (
 #   - turn_decision_decoder.py 中的 bash/mkdir/mv/cp 被排除（非注册工具名）
 # ---------------------------------------------------------------------------
 WRITE_TOOLS: frozenset[str] = _KERNELONE_WRITE_TOOLS
+ACTIVE_WRITE_TOOLS: frozenset[str] = _KERNELONE_ACTIVE_WRITE_TOOLS
 
 # ---------------------------------------------------------------------------
 # 读工具集合（上下文获取）

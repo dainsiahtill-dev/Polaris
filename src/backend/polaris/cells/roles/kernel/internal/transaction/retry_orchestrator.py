@@ -29,7 +29,7 @@ from polaris.cells.roles.kernel.internal.transaction.bootstrap_followup import (
     build_deterministic_bootstrap_followup_write_decision,
     merge_bootstrap_receipt_into_result,
 )
-from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
+from polaris.cells.roles.kernel.internal.transaction.constants import ACTIVE_WRITE_TOOLS
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     build_context_target_bootstrap_decision,
     build_stale_edit_bootstrap_decision,
@@ -815,7 +815,7 @@ class RetryOrchestrator:
                     )
                     candidate_bootstrap_decision = retry_decision
                     break
-                if escalated_definitions is not None and not any(name in WRITE_TOOLS for name in retry_tool_names):
+                if escalated_definitions is not None and not any(name in ACTIVE_WRITE_TOOLS for name in retry_tool_names):
                     logger.warning(
                         "mutation-contract retry attempt=%s emitted no write tools under escalation; "
                         "trying deterministic write fallback (decision_tools=%s)",

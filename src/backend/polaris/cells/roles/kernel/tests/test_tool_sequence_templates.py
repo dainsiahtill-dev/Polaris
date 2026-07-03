@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from polaris.cells.roles.kernel.internal.transaction.constants import REQUIRED_TOOL_EQUIVALENTS
 from polaris.cells.roles.kernel.internal.transaction.retry_tool_definitions import (
+    build_retry_tool_definitions_for_mutation,
     select_retry_forced_write_tool_name,
 )
 from polaris.cells.roles.kernel.internal.transaction.tool_sequence_templates import (
@@ -68,6 +69,25 @@ def test_retry_forced_write_ignores_deprecated_exact_edit_when_alone() -> None:
     ]
 
     assert select_retry_forced_write_tool_name(tool_definitions) is None
+
+
+def test_mutation_retry_tool_definitions_drop_deprecated_exact_edit() -> None:
+    tool_definitions = [
+        _tool_definition("read_file"),
+        _tool_definition("precision_edit"),
+        _tool_definition("edit_blocks"),
+    ]
+
+    narrowed = build_retry_tool_definitions_for_mutation(
+        latest_user_request="change src/app.py",
+        tool_definitions=tool_definitions,
+        requires_mutation=True,
+    )
+    names = {item["function"]["name"] for item in narrowed}
+
+    assert "edit_blocks" in names
+    assert "read_file" in names
+    assert "precision_edit" not in names
 
 
 def test_required_tool_equivalents_do_not_authorize_deprecated_exact_edit() -> None:

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 # Public package exports.
 from polaris.cells.roles.kernel.internal.transaction.constants import (
+    ACTIVE_WRITE_TOOLS,
     ANALYSIS_ONLY_SIGNALS,
     ASYNC_TOOLS,
     DEBUG_AND_FIX_CN_MARKERS,
@@ -89,6 +90,7 @@ from polaris.cells.roles.kernel.internal.transaction.task_contract_builder impor
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import ToolBatchExecutor
 
 __all__ = [
+    "ACTIVE_WRITE_TOOLS",
     "ANALYSIS_ONLY_SIGNALS",
     "ASYNC_TOOLS",
     "DEBUG_AND_FIX_CN_MARKERS",

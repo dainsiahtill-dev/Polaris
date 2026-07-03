@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from polaris.cells.roles.kernel.internal.speculation.write_phases import WriteToolPhases
 from polaris.cells.roles.kernel.internal.transaction.constants import (
+    ACTIVE_WRITE_TOOLS,
     ASYNC_TOOLS,
     READ_TOOLS,
     WRITE_TOOLS,
@@ -139,6 +140,15 @@ def test_write_tool_phases_uses_canonical_set() -> None:
     assert WriteToolPhases.is_write_tool("precision_edit") is True, "precision_edit 应被识别为写工具（此前遗漏）"
     assert WriteToolPhases.is_write_tool("edit_blocks") is True, "edit_blocks 应被识别为写工具"
     assert WriteToolPhases.is_write_tool("read_file") is False, "read_file 不应被识别为写工具"
+
+
+def test_active_write_tools_exclude_deprecated_compatibility_tools() -> None:
+    """Active planning must exclude deprecated tools while receipts still classify them."""
+    retired_tool_name = "precision" + "_edit"
+
+    assert retired_tool_name in WRITE_TOOLS
+    assert retired_tool_name not in ACTIVE_WRITE_TOOLS
+    assert "edit_blocks" in ACTIVE_WRITE_TOOLS
 
 
 # ---------------------------------------------------------------------------

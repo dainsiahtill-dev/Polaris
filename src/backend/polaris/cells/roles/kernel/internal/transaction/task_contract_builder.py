@@ -18,11 +18,11 @@ from collections.abc import Mapping
 from typing import Any
 
 from polaris.cells.roles.kernel.internal.transaction.constants import (
+    ACTIVE_WRITE_TOOLS,
     FILE_TOKEN_EXTENSION_PATTERN,
     REQUIRED_TOOL_EQUIVALENTS,
     TOOL_ALIASES,
     VERIFICATION_TOOLS,
-    WRITE_TOOLS,
 )
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
     requires_mutation_intent,
@@ -421,7 +421,7 @@ def build_single_batch_task_contract_hint(
     if not available_tools:
         return "", {}
 
-    write_candidates = tuple(WRITE_TOOLS)
+    write_candidates = tuple(ACTIVE_WRITE_TOOLS)
     verify_candidates = tuple(VERIFICATION_TOOLS)
     selected_write = [tool for tool in available_tools if tool in write_candidates]
     selected_verify = [tool for tool in available_tools if tool in verify_candidates]

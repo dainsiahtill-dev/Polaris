@@ -14,7 +14,7 @@ import os
 from collections.abc import Mapping
 from typing import Any
 
-from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
+from polaris.cells.roles.kernel.internal.transaction.constants import ACTIVE_WRITE_TOOLS
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
     requires_mutation_intent,
 )
@@ -44,7 +44,7 @@ def build_retry_tool_definitions_for_mutation(
 
     _forbidden: set[str] = forbidden_tool_names or set()
 
-    write_candidates = set(WRITE_TOOLS)
+    write_candidates = set(ACTIVE_WRITE_TOOLS)
     read_context_candidates = {
         "glob",
         "read_file",
