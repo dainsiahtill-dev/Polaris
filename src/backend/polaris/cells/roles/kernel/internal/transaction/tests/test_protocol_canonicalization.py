@@ -26,6 +26,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     ToolExecutionMode,
     _infer_execution_mode,
 )
+from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
 
 # ---------------------------------------------------------------------------
 # 测试 1: 写工具集合单一真相源
@@ -137,17 +138,16 @@ def test_async_tools_derived_from_truth_source() -> None:
 
 def test_write_tool_phases_uses_canonical_set() -> None:
     """验证 WriteToolPhases.is_write_tool 对已知写/读工具的分类正确。"""
-    assert WriteToolPhases.is_write_tool("precision_edit") is True, "precision_edit 应被识别为写工具（此前遗漏）"
+    for tool_name in DEPRECATED_WRITE_TOOLS:
+        assert WriteToolPhases.is_write_tool(tool_name) is True, f"{tool_name} 应被识别为兼容写工具"
     assert WriteToolPhases.is_write_tool("edit_blocks") is True, "edit_blocks 应被识别为写工具"
     assert WriteToolPhases.is_write_tool("read_file") is False, "read_file 不应被识别为写工具"
 
 
 def test_active_write_tools_exclude_deprecated_compatibility_tools() -> None:
     """Active planning must exclude deprecated tools while receipts still classify them."""
-    retired_tool_name = "precision" + "_edit"
-
-    assert retired_tool_name in WRITE_TOOLS
-    assert retired_tool_name not in ACTIVE_WRITE_TOOLS
+    assert DEPRECATED_WRITE_TOOLS <= WRITE_TOOLS
+    assert DEPRECATED_WRITE_TOOLS.isdisjoint(ACTIVE_WRITE_TOOLS)
     assert "edit_blocks" in ACTIVE_WRITE_TOOLS
 
 
@@ -158,7 +158,8 @@ def test_active_write_tools_exclude_deprecated_compatibility_tools() -> None:
 
 def test_infer_execution_mode_consistency() -> None:
     """验证 _infer_execution_mode 对典型工具的分类正确。"""
-    assert _infer_execution_mode("precision_edit") == ToolExecutionMode.WRITE_SERIAL
+    for tool_name in DEPRECATED_WRITE_TOOLS:
+        assert _infer_execution_mode(tool_name) == ToolExecutionMode.WRITE_SERIAL
     assert _infer_execution_mode("read_file") == ToolExecutionMode.READONLY_PARALLEL
     assert _infer_execution_mode("create_pull_request") == ToolExecutionMode.ASYNC_RECEIPT
     # 未知工具默认安全：WRITE_SERIAL
