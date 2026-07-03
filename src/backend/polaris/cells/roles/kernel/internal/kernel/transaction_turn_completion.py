@@ -33,6 +33,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+MISSING_DISPATCH_COMPLETION_ERROR = "tool_dispatch_dropped: required write tool was not dispatched before completion"
+
 
 def build_transaction_turn_completion_result(
     *,
@@ -104,22 +106,22 @@ def build_transaction_turn_completion_result(
         ledger=ledger,
     )
     error_msg, is_complete = _resolve_completion_status(kind=str(kind), finalization=finalization, metadata=metadata)
-    lifecycle_receipt = _build_missing_dispatch_lifecycle_receipt(
+    lifecycle_receipt = record_missing_dispatch_lifecycle_receipt(
+        role=role,
+        request=request,
+        kernel=kernel,
+        turn_id=turn_id,
         metadata=metadata,
         ledger=ledger,
         tool_results=tool_results,
         batch_receipt=normalized_batch_receipt,
     )
-    if lifecycle_receipt is not None:
-        metadata["tool_call_lifecycle"] = lifecycle_receipt
-        _append_tool_call_lifecycle_event(
-            role=role,
-            request=request,
-            kernel=kernel,
-            turn_id=turn_id,
-            lifecycle_receipt=lifecycle_receipt,
-        )
-        error_msg = "tool_dispatch_dropped: required write tool was not dispatched before completion"
+    if lifecycle_receipt is not None and is_complete and not error_msg:
+        # Dropped-dispatch evidence is always recorded above; it only becomes
+        # the turn error when the turn would otherwise claim a successful
+        # completion. Legitimate ask_user / needs_followup suspensions keep
+        # their own error and status.
+        error_msg = MISSING_DISPATCH_COMPLETION_ERROR
         is_complete = False
     final_thinking = thinking_text
     if final_thinking is None and isinstance(finalization, dict):
@@ -370,6 +372,49 @@ def _append_tool_call_lifecycle_event(
         )
     except (OSError, RuntimeError, TypeError, ValueError):
         logger.debug("failed to append completion tool-call lifecycle event", exc_info=True)
+
+
+def record_missing_dispatch_lifecycle_receipt(
+    *,
+    role: str,
+    request: RoleTurnRequest,
+    kernel: RoleExecutionKernel,
+    turn_id: str,
+    metadata: dict[str, Any],
+    ledger: Any,
+    tool_results: list[dict[str, Any]],
+    batch_receipt: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Record dropped required-write dispatch evidence for a completed turn.
+
+    Shared by the non-stream and stream completion owners: when the final
+    request required a write tool but the turn completed with zero
+    dispatch/effect evidence, this builds the ``tool_call_lifecycle_receipt.v1``,
+    stores it in the result metadata, and appends the Run Ledger lifecycle
+    event. Callers own error/status precedence over the returned receipt.
+
+    Complexity:
+        O(r + t) time where ``r`` is batch receipt size and ``t`` is the number
+        of required tools; O(t) additional memory for the receipt.
+    """
+
+    lifecycle_receipt = _build_missing_dispatch_lifecycle_receipt(
+        metadata=metadata,
+        ledger=ledger,
+        tool_results=tool_results,
+        batch_receipt=batch_receipt,
+    )
+    if lifecycle_receipt is None:
+        return None
+    metadata["tool_call_lifecycle"] = lifecycle_receipt
+    _append_tool_call_lifecycle_event(
+        role=role,
+        request=request,
+        kernel=kernel,
+        turn_id=turn_id,
+        lifecycle_receipt=lifecycle_receipt,
+    )
+    return lifecycle_receipt
 
 
 def _resolve_completion_status(

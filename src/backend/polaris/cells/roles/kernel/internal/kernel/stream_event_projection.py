@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,6 +23,11 @@ from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     tool_results_from_batch_receipt,
 )
 from polaris.cells.roles.kernel.internal.kernel.task_boundary import append_role_turn_task_boundary_verdict
+from polaris.cells.roles.kernel.internal.kernel.transaction_turn_completion import (
+    MISSING_DISPATCH_COMPLETION_ERROR,
+    _tool_dispatch_from_lifecycle,
+    record_missing_dispatch_lifecycle_receipt,
+)
 from polaris.cells.roles.kernel.public.turn_events import (
     CompletionEvent,
     ContentChunkEvent,
@@ -189,8 +195,38 @@ class StreamEventProjector:
             tool_filter_audit=self.tool_filter_audit,
             monitoring=event.monitoring if isinstance(event.monitoring, dict) else None,
         )
-        task_boundary_verdict = self._append_task_boundary_verdict(event.turn_id, tool_results, metadata)
+        _lift_completion_audit_evidence(metadata, event.monitoring)
+        lifecycle_receipt = record_missing_dispatch_lifecycle_receipt(
+            role=self.role,
+            request=self.request,
+            kernel=self.kernel,
+            turn_id=event.turn_id,
+            metadata=metadata,
+            ledger=None,
+            tool_results=tool_results,
+            batch_receipt=batch_receipt,
+        )
+        task_boundary_verdict = self._append_task_boundary_verdict(
+            event.turn_id,
+            tool_results,
+            metadata,
+            tool_dispatch=_tool_dispatch_from_lifecycle(metadata),
+        )
         task_boundary_error = _task_boundary_error_message(task_boundary_verdict, metadata)
+        if lifecycle_receipt is not None:
+            # Dropped required-write dispatch outranks the task-boundary error:
+            # the missing materialization is a symptom of the dropped dispatch.
+            self._record_projection_outcome(success=False, reason="stream tool dispatch dropped")
+            return await self._publish_result(
+                {
+                    "type": "error",
+                    "error": MISSING_DISPATCH_COMPLETION_ERROR,
+                    "error_type": "tool_dispatch_dropped",
+                    "turn_id": event.turn_id,
+                    "metadata": dict(metadata),
+                },
+                should_stop=True,
+            )
         if task_boundary_error:
             self._record_projection_outcome(success=False, reason="stream task boundary failure")
             return await self._publish_result(
@@ -261,6 +297,8 @@ class StreamEventProjector:
         turn_id: str,
         tool_results: list[dict[str, Any]],
         metadata: dict[str, Any],
+        *,
+        tool_dispatch: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         try:
             return append_role_turn_task_boundary_verdict(
@@ -270,6 +308,7 @@ class StreamEventProjector:
                 run_id=str(self.request.run_id or turn_id),
                 context_override=getattr(self.request, "context_override", None),
                 tool_results=tool_results,
+                tool_dispatch=tool_dispatch,
                 needs_followup_workflow=False,
                 evidence_refs=[str(metadata.get("context_snapshot_ref") or "").strip()],
             )
@@ -291,6 +330,28 @@ class StreamEventProjector:
             payload=event_dict,
         )
         return StreamEventProjectionResult(event=event_dict, should_stop=should_stop)
+
+
+_COMPLETION_AUDIT_EVIDENCE_KEYS: tuple[str, ...] = (
+    "final_request_context_audit",
+    "required_tools",
+    "native_tool_calls_count",
+)
+
+
+def _lift_completion_audit_evidence(metadata: dict[str, Any], monitoring: Mapping[str, Any] | None) -> None:
+    """Copy final-request dispatch-evidence keys from stream monitoring into metadata.
+
+    The stream completion event carries the final-request audit inside its
+    monitoring payload; the shared missing-dispatch lifecycle receipt reads
+    the same metadata keys as the non-stream completion owner.
+    """
+    if not isinstance(monitoring, Mapping):
+        return
+    for key in _COMPLETION_AUDIT_EVIDENCE_KEYS:
+        if key in monitoring and key not in metadata:
+            value = monitoring[key]
+            metadata[key] = dict(value) if isinstance(value, dict) else value
 
 
 def _task_boundary_error_message(verdict: dict[str, Any] | None, metadata: dict[str, Any]) -> str | None:

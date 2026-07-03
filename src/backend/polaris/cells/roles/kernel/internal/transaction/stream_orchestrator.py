@@ -1556,6 +1556,19 @@ class StreamOrchestrator:
         context_os_audit_summary = summarize_context_os_audit_from_ledger(ledger)
         if context_os_audit_summary:
             monitoring["context_os_audit"] = context_os_audit_summary
+        # Completion-side dispatch evidence: the stream completion owner rebuilds
+        # the missing-dispatch tool_call_lifecycle receipt from these keys, using
+        # the same metadata contract as the non-stream completion path.
+        for _evidence_source in (result.get("llm_response_metadata"), llm_response.get("usage")):
+            if not isinstance(_evidence_source, Mapping):
+                continue
+            for _evidence_key in ("final_request_context_audit", "required_tools"):
+                if _evidence_key in _evidence_source and _evidence_key not in monitoring:
+                    _evidence_value = _evidence_source[_evidence_key]
+                    monitoring[_evidence_key] = (
+                        dict(_evidence_value) if isinstance(_evidence_value, Mapping) else _evidence_value
+                    )
+        monitoring.setdefault("native_tool_calls_count", native_tool_call_count)
         yield CompletionEvent(
             turn_id=turn_id,
             status=completion_status,

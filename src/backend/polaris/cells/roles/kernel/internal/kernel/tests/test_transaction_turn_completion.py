@@ -220,6 +220,84 @@ def test_completion_owner_fails_closed_when_required_write_has_no_dispatch_recei
     context_gateway.record_projection_outcome.assert_called_once_with(success=False, tokens_used=11)
 
 
+def test_completion_owner_preserves_suspension_error_and_records_lifecycle_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """ask_user suspension keeps its own error while dropped-dispatch evidence is still recorded."""
+
+    monkeypatch.setattr(
+        completion,
+        "get_output_parser",
+        lambda _kernel: SimpleNamespace(
+            parse_thinking=lambda content: SimpleNamespace(clean_content=content, thinking=None),
+            extract_json=lambda _content: None,
+        ),
+    )
+    monkeypatch.setattr(completion, "_commit_turn_to_snapshot", lambda **_: None)
+
+    context_gateway = MagicMock(record_projection_outcome=MagicMock(return_value={"route_weight": 0.07}))
+    request = _Request(
+        workspace=str(tmp_path),
+        task_id="TASK-1",
+        run_id="run-suspended-missing-dispatch",
+        context_override={
+            "delivery_mode": "materialize_changes",
+            "target_files": ["src/index.js"],
+        },
+    )
+    result = completion.build_transaction_turn_completion_result(
+        kernel=RoleExecutionKernel.create_default(workspace=str(tmp_path)),
+        role="director",
+        profile=cast(RoleProfile, _Profile()),
+        request=cast(RoleTurnRequest, request),
+        fingerprint=SimpleNamespace(full_hash="abc"),
+        turn_id="turn-1",
+        tk_result={
+            "kind": "ask_user",
+            "visible_content": "Which file should I write?",
+            "batch_receipt": {},
+            "finalization": {"suspended_reason": "finalization_tool_calls_blocked"},
+            "metrics": {"duration_ms": 7, "llm_calls": 1, "tool_calls": 0},
+            "ledger": SimpleNamespace(
+                decisions=[
+                    {
+                        "metadata": {
+                            "native_tool_calls_count": 1,
+                            "tool_count": 0,
+                        }
+                    }
+                ]
+            ),
+            "llm_response_metadata": {
+                "context_snapshot_ref": "ctx/ref",
+                "native_tool_calls_count": 1,
+                "final_request_context_audit": {
+                    "final_request_evidence_coverage": {
+                        "required_tools": ["write_file"],
+                    },
+                },
+            },
+        },
+        response_schema=None,
+        runtime_tool_policy_audit={"tool_policy_mode": "native"},
+        tool_filter_audit={"status": "kept"},
+        context_gateway=context_gateway,
+        context_result=SimpleNamespace(token_estimate=11),
+    )
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-suspended-missing-dispatch")
+    ).projection
+
+    assert result.is_complete is False
+    assert result.error == "finalization_tool_calls_blocked"
+    assert result.metadata["tool_call_lifecycle"]["dispatch_status"] == "dropped"
+    assert result.metadata["tool_call_lifecycle"]["failure_class"] == "tool_dispatch_dropped"
+    assert projection["tool_lifecycle"]["dropped_count"] == 1
+    assert projection["tool_lifecycle"]["events"][0]["status"] == "dropped"
+
+
 def test_completion_owner_commits_missing_dispatch_lifecycle_to_run_ledger(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
