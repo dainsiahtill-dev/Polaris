@@ -28,7 +28,7 @@ class TestTokenServiceLazyImport:
         # This test verifies the refactor: no RuntimeError at import time
         # The service will simply not persist without a bootstrapped adapter.
         reset_token_service()
-        svc = TokenService()  # No KFS, no state_file
+        svc = TokenService()  # No KFS persistence configured
         assert svc.budget_limit is None
         assert svc._used_tokens == 0
 
@@ -127,7 +127,7 @@ class TestTokenServiceLazyImport:
 class TestTokenServiceWithKFSDisabled:
     """Service gracefully handles missing KFS adapter (no persistence, no crash)."""
 
-    def test_init_with_no_adapter_no_state_file(self):
+    def test_init_with_no_adapter_no_kfs_path(self):
         reset_token_service()
         # KFS adapter not set → should not raise, just skip persistence.
         # Mock raises RuntimeError to simulate un-bootstrapped adapter.

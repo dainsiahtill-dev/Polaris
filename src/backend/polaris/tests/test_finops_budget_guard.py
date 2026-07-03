@@ -28,40 +28,47 @@ from polaris.kernelone.fs.registry import set_default_adapter
 class _LocalFSAdapter:
     """Minimal local-filesystem-backed adapter for testing."""
 
-    def read_text(self, path: Path, *, encoding: str = "utf-8") -> str:
-        return path.read_text(encoding=encoding)
+    @staticmethod
+    def _path(path: Path | str) -> Path:
+        return Path(path)
 
-    def read_bytes(self, path: Path) -> bytes:
-        return path.read_bytes()
+    def read_text(self, path: Path | str, *, encoding: str = "utf-8") -> str:
+        return self._path(path).read_text(encoding=encoding)
 
-    def write_text(self, path: Path, content: str, *, encoding: str = "utf-8") -> int:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding=encoding)
+    def read_bytes(self, path: Path | str) -> bytes:
+        return self._path(path).read_bytes()
+
+    def write_text(self, path: Path | str, content: str, *, encoding: str = "utf-8") -> int:
+        resolved = self._path(path)
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_text(content, encoding=encoding)
         return len(content.encode(encoding))
 
-    def write_bytes(self, path: Path, content: bytes) -> int:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
+    def write_bytes(self, path: Path | str, content: bytes) -> int:
+        resolved = self._path(path)
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_bytes(content)
         return len(content)
 
-    def append_text(self, path: Path, content: str, *, encoding: str = "utf-8") -> int:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding=encoding) as fh:
+    def append_text(self, path: Path | str, content: str, *, encoding: str = "utf-8") -> int:
+        resolved = self._path(path)
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        with open(resolved, "a", encoding=encoding) as fh:
             fh.write(content)
         return len(content.encode(encoding))
 
-    def exists(self, path: Path) -> bool:
-        return path.exists()
+    def exists(self, path: Path | str) -> bool:
+        return self._path(path).exists()
 
-    def is_file(self, path: Path) -> bool:
-        return path.is_file()
+    def is_file(self, path: Path | str) -> bool:
+        return self._path(path).is_file()
 
-    def is_dir(self, path: Path) -> bool:
-        return path.is_dir()
+    def is_dir(self, path: Path | str) -> bool:
+        return self._path(path).is_dir()
 
-    def remove(self, path: Path, *, missing_ok: bool = True) -> bool:
+    def remove(self, path: Path | str, *, missing_ok: bool = True) -> bool:
         try:
-            path.unlink()
+            self._path(path).unlink()
             return True
         except FileNotFoundError:
             if missing_ok:
@@ -338,34 +345,38 @@ class TestEventStateReconciliation:
 
 
 class TestTokenServiceKFSPersistence:
-    def test_record_usage_does_not_call_path_write_text(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """TokenService.record_usage must not write to the old absolute state_file path.
+    def test_record_usage_writes_only_through_kfs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """TokenService.record_usage must not write directly to an absolute OS path.
 
         It must go through KFS (which resolves to a KFS-managed logical path),
-        not directly to the absolute OS path passed as ``state_file``.
+        not directly to an OS path chosen by the caller.
         """
         from polaris.domain.services.token_service import TokenService
 
         fs, _ = _make_fs(monkeypatch, tmp_path)
 
-        # The absolute legacy state_file path should never receive a direct write.
-        state_path = tmp_path / "runtime" / "state" / "budget" / "token_svc_legacy.json"
-        writes_to_legacy_path: list[str] = []
+        direct_path = tmp_path / "runtime" / "state" / "budget" / "token_svc.json"
+        direct_writes: list[str] = []
         original_write_text = Path.write_text
 
         def _spy_write_text(self_path: Path, data: str, *args, **kwargs):  # type: ignore[override]
-            if self_path.resolve() == state_path.resolve():
-                writes_to_legacy_path.append(str(self_path))
-            return original_write_text(self_path, data, *args, **kwargs)
+            resolved = Path(self_path)
+            if resolved.resolve() == direct_path.resolve():
+                direct_writes.append(str(resolved))
+            return original_write_text(resolved, data, *args, **kwargs)
 
         monkeypatch.setattr(Path, "write_text", _spy_write_text)
 
-        svc = TokenService(budget_limit=1000, state_file=state_path, fs=fs)
+        svc = TokenService(
+            budget_limit=1000,
+            kfs_logical_path="runtime/state/budget/token_svc.json",
+            fs=fs,
+        )
         svc.record_usage(200)
 
-        assert writes_to_legacy_path == [], (
-            f"TokenService wrote directly to the legacy absolute path (bypassing KFS logical path): "
-            f"{writes_to_legacy_path}"
+        assert direct_writes == [], (
+            "TokenService wrote directly to an absolute path instead of the KFS logical path: "
+            f"{direct_writes}"
         )
 
     def test_token_service_persists_and_recovers_via_kfs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -389,8 +400,8 @@ class TestTokenServiceKFSPersistence:
         assert svc2._used_tokens == 500, f"Restart did not recover used_tokens: got {svc2._used_tokens}, expected 500"
         reset_token_service()
 
-    def test_token_service_without_state_file_works_in_memory_only(self) -> None:
-        """TokenService without state_file stays in-memory (no KFS interaction)."""
+    def test_token_service_without_kfs_path_works_in_memory_only(self) -> None:
+        """TokenService without a KFS logical path stays in-memory."""
         from polaris.domain.services.token_service import TokenService, reset_token_service
 
         reset_token_service()

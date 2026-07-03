@@ -7,9 +7,8 @@ Infrastructure provides platform-specific implementations via DI.
 
 Persistence contract:
   All state is flushed through KernelOne FS (``KernelFileSystem``) so that the
-  same UTF-8 + audit-trail guarantees apply.  The ``state_file`` parameter
-  accepts a ``pathlib.Path`` for backward-compat path resolution but all I/O
-  is delegated to KFS — ``Path.write_text`` is never called directly.
+  same UTF-8 + audit-trail guarantees apply.  Persistence is configured by a
+  KernelOne logical path; absolute OS paths are not accepted by this service.
 """
 
 from __future__ import annotations
@@ -20,8 +19,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from polaris.kernelone.fs import KernelFileSystem
     from polaris.kernelone.fs.contracts import KernelFileSystemAdapter
 
@@ -104,7 +101,6 @@ class TokenService:
     def __init__(
         self,
         budget_limit: int | None = None,
-        state_file: Path | None = None,
         *,
         fs: KernelFileSystem | None = None,
         kfs_logical_path: str | None = None,
@@ -113,28 +109,20 @@ class TokenService:
 
         Args:
             budget_limit: Maximum token budget (None for unlimited).
-            state_file: Legacy parameter kept for backward compatibility.  When
-                        ``kfs_logical_path`` is not provided the logical path is
-                        derived from ``state_file.name`` under
-                        ``runtime/state/budget/``.  When both are ``None`` state
-                        is kept in-memory only (no persistence).
             fs: Optional injected ``KernelFileSystem``.  When ``None`` the
                 default adapter from the registry is used if persistence is
                 configured.
             kfs_logical_path: Explicit KFS logical path for the state file,
-                e.g. ``"runtime/state/budget/token_svc.json"``.  Preferred over
-                ``state_file`` for new code.
+                e.g. ``"runtime/state/budget/token_svc.json"``. When ``None``,
+                state is kept in-memory only.
         """
         self.budget_limit = budget_limit
-        self.state_file = state_file
         self._used_tokens = 0
         self._fs: KernelFileSystem | None = None
 
-        # Resolve the KFS logical path (preferred) or derive from state_file name.
+        # Resolve the optional KFS logical path.
         if kfs_logical_path is not None:
             self._kfs_logical_path: str | None = str(kfs_logical_path).strip() or None
-        elif state_file is not None:
-            self._kfs_logical_path = f"runtime/state/budget/{state_file.name}"
         else:
             self._kfs_logical_path = None
 
@@ -386,13 +374,16 @@ _token_service: TokenService | None = None
 
 def get_token_service(
     budget_limit: int | None = None,
-    state_file: Path | None = None,
+    *,
+    fs: KernelFileSystem | None = None,
+    kfs_logical_path: str | None = None,
 ) -> TokenService:
     """Get or create global token service.
 
     Args:
         budget_limit: Token budget limit
-        state_file: State persistence file
+        fs: Optional injected KernelOne filesystem.
+        kfs_logical_path: Optional KernelOne logical path for persisted state.
 
     Returns:
         TokenService instance
@@ -400,7 +391,11 @@ def get_token_service(
     global _token_service
 
     if _token_service is None:
-        _token_service = TokenService(budget_limit, state_file)
+        _token_service = TokenService(
+            budget_limit,
+            fs=fs,
+            kfs_logical_path=kfs_logical_path,
+        )
 
     return _token_service
 
