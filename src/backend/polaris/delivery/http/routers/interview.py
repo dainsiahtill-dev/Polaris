@@ -36,7 +36,7 @@ _BACKGROUND_JETSTREAM_TASKS: set[asyncio.Task[None]] = set()
 _SAFE_EVENT_ID_PATTERN = re.compile(r"[^a-zA-Z0-9._-]+")
 
 
-# 适配器函数，保持与旧接口的兼容性
+# HTTP wrapper helpers around the LLM evaluation interview service.
 def _active_role_binding(settings: Any, workspace: str, role: str) -> dict[str, Any] | None:
     role_key = str(role or "").strip().lower()
     if not role_key:
@@ -89,7 +89,7 @@ def _can_update_role_readiness(
 
 
 async def run_interactive_interview_question(settings, role, provider_id, model, question, **kwargs):
-    """兼容旧接口的面试问答函数"""
+    """Generate an interview answer through the evaluation service."""
     workspace = active_workspace_value(settings)
 
     result = await generate_interview_answer(
@@ -121,7 +121,7 @@ async def run_interactive_interview_question(settings, role, provider_id, model,
 
 
 def save_interactive_interview_report(settings, role, provider_id, model, report, **kwargs):
-    """兼容旧接口的保存报告函数"""
+    """Save an interview report through the evaluation service."""
     workspace = active_workspace_value(settings)
     update_role_readiness = _can_update_role_readiness(
         settings=settings,
@@ -144,7 +144,7 @@ def save_interactive_interview_report(settings, role, provider_id, model, report
 async def run_interactive_interview_streaming(
     settings, role, provider_id, model, question, output_queue, **kwargs
 ) -> None:
-    """兼容旧接口的流式面试函数"""
+    """Stream interview answer chunks through the evaluation service."""
     workspace = active_workspace_value(settings)
     await generate_interview_answer_streaming(
         workspace=workspace,
@@ -160,7 +160,7 @@ async def run_interactive_interview_streaming(
 
 
 def cancel_interactive_interview_stream(session_id: str) -> dict:
-    """兼容旧接口的取消函数（简化实现）"""
+    """Return a best-effort cancellation acknowledgement for an interview stream."""
     return {"ok": True, "cancelled": True}
 
 
