@@ -21,12 +21,39 @@ from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 
 
+def _tool_name_from_call(item: Mapping[str, Any]) -> str:
+    function = item.get("function")
+    if isinstance(function, Mapping):
+        name = str(function.get("name") or "").strip()
+        if name:
+            return name
+    for key in ("name", "tool", "tool_name", "toolName", "function_name", "functionName"):
+        name = str(item.get(key) or "").strip()
+        if name:
+            return name
+    return ""
+
+
+def _native_tool_call_envelopes(result: RoleTurnResult) -> tuple[Mapping[str, Any], ...]:
+    metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
+    envelopes = metadata.get("native_tool_call_envelopes")
+    if not isinstance(envelopes, list):
+        return ()
+    return tuple(item for item in envelopes if isinstance(item, Mapping))
+
+
 def _extract_tool_calls(result: RoleTurnResult) -> tuple[str, ...]:
     names: list[str] = []
     for item in list(result.tool_calls or []):
-        if not isinstance(item, dict):
+        if not isinstance(item, Mapping):
             continue
-        token = str(item.get("name") or item.get("tool") or "").strip()
+        token = _tool_name_from_call(item)
+        if token:
+            names.append(token)
+    if names:
+        return tuple(names)
+    for envelope in _native_tool_call_envelopes(result):
+        token = str(envelope.get("tool_name") or "").strip()
         if token:
             names.append(token)
     return tuple(names)
@@ -148,6 +175,7 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
     dropped_error = _tool_dispatch_dropped_error(result)
     if dropped_error:
         dropped_tool_calls = _extract_tool_calls(result)
+        native_envelopes = _native_tool_call_envelopes(result)
         metadata.setdefault(
             "tool_call_lifecycle",
             build_tool_call_lifecycle_receipt(
@@ -159,6 +187,7 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
                 decoded_tool_calls_count=len(dropped_tool_calls),
                 dispatched_tool_calls_count=0,
                 dropped_tool_calls=list(dropped_tool_calls),
+                native_tool_call_envelopes=list(native_envelopes),
                 dispatch_status="dropped",
                 failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
             ).to_dict(),

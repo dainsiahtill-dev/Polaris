@@ -44,9 +44,36 @@ def _make_role_execution_result(**overrides: Any) -> RoleExecutionResultV1:
 def test_extract_tool_calls_reads_name_then_tool_keys() -> None:
     # The 4th item is intentionally not a dict to characterize the guard that
     # skips non-mapping entries.
-    tool_calls: list[Any] = [{"name": "write_file"}, {"tool": "read"}, {"other": "y"}, "not-a-dict"]
+    tool_calls: list[Any] = [
+        {"name": "write_file"},
+        {"tool": "read"},
+        {"function": {"name": "execute_command"}},
+        {"other": "y"},
+        "not-a-dict",
+    ]
     result = RoleTurnResult(content="x", tool_calls=tool_calls)
-    assert runtime_service._extract_tool_calls(result) == ("write_file", "read")
+    assert runtime_service._extract_tool_calls(result) == ("write_file", "read", "execute_command")
+
+
+def test_extract_tool_calls_falls_back_to_native_envelopes() -> None:
+    result = RoleTurnResult(
+        content="x",
+        metadata={
+            "native_tool_call_envelopes": [
+                {
+                    "schema_version": "native_tool_call_envelope.v1",
+                    "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+                    "provider": "openai",
+                    "tool_name": "write_file",
+                    "call_id": "call-1",
+                    "raw_call_hash": "a" * 64,
+                    "arguments_hash": "b" * 64,
+                }
+            ]
+        },
+    )
+
+    assert runtime_service._extract_tool_calls(result) == ("write_file",)
 
 
 def test_extract_artifacts_filters_blank_and_non_list() -> None:
@@ -202,6 +229,46 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
         {
             "tool_name": "write_file",
             "reason": "tool_dispatch_dropped",
+        }
+    ]
+
+    dropped_from_envelope_metadata = runtime_service._to_contract_result(
+        role="director",
+        workspace=".",
+        task_id="t",
+        session_id="se",
+        run_id="ru",
+        result=RoleTurnResult(
+            content="I will call write_file.",
+            metadata={
+                "native_tool_call_envelopes": [
+                    {
+                        "schema_version": "native_tool_call_envelope.v1",
+                        "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+                        "provider": "openai",
+                        "tool_name": "write_file",
+                        "call_id": "call-1",
+                        "raw_call_hash": "a" * 64,
+                        "arguments_hash": "b" * 64,
+                    }
+                ]
+            },
+        ),
+    )
+    assert dropped_from_envelope_metadata.ok is False
+    assert dropped_from_envelope_metadata.error_code == "tool_dispatch_dropped"
+    assert dropped_from_envelope_metadata.tool_calls == ("write_file",)
+    lifecycle = dropped_from_envelope_metadata.metadata["tool_call_lifecycle"]
+    assert lifecycle["native_tool_calls_count"] == 1
+    assert lifecycle["native_tool_call_envelope_refs"] == [
+        {
+            "schema_version": "native_tool_call_envelope.v1",
+            "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+            "provider": "openai",
+            "tool_name": "write_file",
+            "call_id": "call-1",
+            "raw_call_hash": "a" * 64,
+            "arguments_hash": "b" * 64,
         }
     ]
 
