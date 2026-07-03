@@ -181,7 +181,7 @@ class CompressionRouter:
         )
 
     def _try_lazy_import_compressor(self, text: str, target_tokens: int) -> CompressionResult | None:
-        """Lazy import fallback for backward compatibility."""
+        """Lazy import fallback used when no compressor port is injected."""
         from polaris.kernelone.context import (
             RoleContextCompressor,
             RoleContextIdentity,
