@@ -1773,6 +1773,24 @@ def _collect_materialization_quality_errors(
     workspace_name: str,
     context: dict[str, Any] | None = None,
 ) -> list[str]:
+    errors, _issues = _collect_materialization_quality_findings(
+        adapter,
+        task=task,
+        all_affected_files=all_affected_files,
+        workspace_name=workspace_name,
+        context=context,
+    )
+    return errors
+
+
+def _collect_materialization_quality_findings(
+    adapter: Any,
+    *,
+    task: dict[str, Any],
+    all_affected_files: list[str],
+    workspace_name: str,
+    context: dict[str, Any] | None = None,
+) -> tuple[list[str], tuple[dict[str, Any], ...]]:
     workspace_full = str(getattr(adapter, "workspace", "") or "")
     step_target = _single_file_step_target(context) or _single_file_step_target(task)
     if step_target:
@@ -1800,7 +1818,7 @@ def _collect_materialization_quality_errors(
             workspace_full=workspace_full,
             affected_files=[*all_affected_files, *declared_target_paths],
         )
-    errors = _em.scan_workspace_artifact_quality(
+    errors, scan_issues = _scan_workspace_artifact_quality_findings(
         workspace_full,
         relative_paths=quality_scan_paths,
     )
@@ -1817,13 +1835,70 @@ def _collect_materialization_quality_errors(
         workspace_name=workspace_name,
         context=context,
     )
-    return _filter_missing_workspace_file_errors_to_task_write_scope(
+    filtered_errors = _filter_missing_workspace_file_errors_to_task_write_scope(
         scoped_errors,
         task=task,
         workspace_full=workspace_full,
         workspace_name=workspace_name,
         context=context,
     )
+    return filtered_errors, _artifact_quality_issues_for_errors(filtered_errors, scan_issues)
+
+
+def _scan_workspace_artifact_quality_findings(
+    workspace_full: str,
+    *,
+    relative_paths: list[str],
+) -> tuple[list[str], tuple[dict[str, Any], ...]]:
+    evidence_scanner = getattr(_em, "scan_workspace_artifact_quality_evidence", None)
+    if callable(evidence_scanner) and _execute_method_artifact_quality_scanner_is_default():
+        evidence = evidence_scanner(workspace_full, relative_paths=relative_paths)
+        return list(evidence.errors), tuple(issue.to_dict() for issue in evidence.issues)
+
+    errors = _em.scan_workspace_artifact_quality(workspace_full, relative_paths=relative_paths)
+    return list(errors), artifact_quality_issues_from_errors(errors)
+
+
+def _execute_method_artifact_quality_scanner_is_default() -> bool:
+    scanner = getattr(_em, "scan_workspace_artifact_quality", None)
+    return (
+        getattr(scanner, "__module__", "") == "polaris.kernelone.quality.artifact_quality"
+        and getattr(scanner, "__name__", "") == "scan_workspace_artifact_quality"
+    )
+
+
+def _artifact_quality_issues_for_errors(
+    errors: list[str],
+    issue_payloads: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    allowed_raw = {str(error or "").strip() for error in errors if str(error or "").strip()}
+    merged: list[dict[str, Any]] = []
+    seen_raw: set[str] = set()
+
+    for issue in issue_payloads:
+        raw = _artifact_quality_issue_raw(issue)
+        if not raw or raw not in allowed_raw or raw in seen_raw:
+            continue
+        merged.append(dict(issue))
+        seen_raw.add(raw)
+
+    for issue in artifact_quality_issues_from_errors(errors):
+        raw = _artifact_quality_issue_raw(issue)
+        if raw and raw in seen_raw:
+            continue
+        merged.append(dict(issue))
+        if raw:
+            seen_raw.add(raw)
+    return tuple(merged)
+
+
+def _artifact_quality_issue_raw(issue: dict[str, Any]) -> str:
+    metadata = issue.get("metadata")
+    if isinstance(metadata, dict):
+        raw = str(metadata.get("raw") or "").strip()
+        if raw:
+            return raw
+    return str(issue.get("message") or "").strip()
 
 
 def _materialization_quality_scan_paths_with_package_manifest(
@@ -1957,7 +2032,7 @@ def _run_post_llm_materialization_runtime_guard(
         return [], {"attempted": False, "reason": "no_successful_llm_repair_write"}
     workspace_full = str(getattr(adapter, "workspace", "") or "")
     workspace_name = Path(workspace_full).name if workspace_full else ""
-    post_repair_errors = _collect_materialization_quality_errors(
+    post_repair_errors, post_repair_issues = _collect_materialization_quality_findings(
         adapter,
         task=task,
         all_affected_files=_materialization_quality_scan_paths(changed_files, repair_tool_results),
@@ -1966,17 +2041,22 @@ def _run_post_llm_materialization_runtime_guard(
     )
     if not post_repair_errors:
         return [], {"attempted": False, "reason": "post_llm_artifact_quality_clean"}
-    if not has_materialization_quality_runtime_repair_coverage(post_repair_errors):
+    if not _has_materialization_quality_runtime_repair_coverage(
+        post_repair_errors,
+        artifact_quality_issues=post_repair_issues,
+    ):
         return [], {
             "attempted": False,
             "reason": "post_llm_errors_not_runtime_covered",
             "artifact_quality_errors": post_repair_errors[:20],
+            "artifact_quality_issue_count": len(post_repair_issues),
         }
     guard_tool_results, guard_summary = _run_materialization_quality_public_boundary(
         adapter,
         task=task,
         task_id=target_task_id,
         artifact_quality_errors=post_repair_errors,
+        artifact_quality_issues=post_repair_issues,
     )
     summary = dict(guard_summary or {})
     summary.update(
@@ -1984,11 +2064,28 @@ def _run_post_llm_materialization_runtime_guard(
             "stage": "post_llm_materialization_runtime_guard",
             "attempted": True,
             "artifact_quality_errors": post_repair_errors[:20],
+            "artifact_quality_issue_count": len(post_repair_issues),
             "tool_results": len(guard_tool_results),
             "write_tool_evidence": has_successful_write_tool(guard_tool_results),
         }
     )
     return guard_tool_results, summary
+
+
+def _has_materialization_quality_runtime_repair_coverage(
+    artifact_quality_errors: list[str],
+    *,
+    artifact_quality_issues: tuple[dict[str, Any], ...] = (),
+) -> bool:
+    try:
+        return has_materialization_quality_runtime_repair_coverage(
+            artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
+        )
+    except TypeError as exc:
+        if "artifact_quality_issues" not in str(exc):
+            raise
+        return has_materialization_quality_runtime_repair_coverage(artifact_quality_errors)
 
 
 async def _run_materialization_quality_repair_retry(

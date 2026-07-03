@@ -22,8 +22,16 @@ def _successful_write_result(path: str) -> dict[str, Any]:
 def test_post_llm_materialization_guard_routes_runtime_covered_errors(monkeypatch: Any, tmp_path: Any) -> None:
     captured: dict[str, Any] = {}
     diagnostic = "npm package manifest script 'build' recursively invokes itself via build -> build"
+    typed_issue = {
+        "code": "npm_manifest_invalid",
+        "message": diagnostic,
+        "path": "package.json",
+        "severity": "error",
+        "source": "artifact_quality",
+        "metadata": {"raw": diagnostic},
+    }
 
-    def _collect_errors(
+    def _collect_findings(
         adapter: Any,
         *,
         task: dict[str, Any],
@@ -34,7 +42,12 @@ def test_post_llm_materialization_guard_routes_runtime_covered_errors(monkeypatc
         captured["scan_paths"] = list(all_affected_files)
         captured["workspace_name"] = workspace_name
         captured["context"] = dict(context or {})
-        return [diagnostic]
+        return [diagnostic], (typed_issue,)
+
+    def _has_coverage(errors: list[str], *, artifact_quality_issues: tuple[dict[str, Any], ...] = ()) -> bool:
+        captured["coverage_errors"] = list(errors)
+        captured["coverage_issues"] = tuple(dict(item) for item in artifact_quality_issues)
+        return True
 
     def _run_runtime_repair(
         adapter: Any,
@@ -42,9 +55,11 @@ def test_post_llm_materialization_guard_routes_runtime_covered_errors(monkeypatc
         task: dict[str, Any],
         task_id: str,
         artifact_quality_errors: list[str],
+        artifact_quality_issues: tuple[dict[str, Any], ...] = (),
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         captured["task_id"] = task_id
         captured["artifact_quality_errors"] = list(artifact_quality_errors)
+        captured["artifact_quality_issues"] = tuple(dict(item) for item in artifact_quality_issues)
         return (
             [
                 {
@@ -59,8 +74,8 @@ def test_post_llm_materialization_guard_routes_runtime_covered_errors(monkeypatc
             {"source_tools": ["deterministic_npm_script_contract_repair"]},
         )
 
-    monkeypatch.setattr(quality_gate, "_collect_materialization_quality_errors", _collect_errors)
-    monkeypatch.setattr(quality_gate, "has_materialization_quality_runtime_repair_coverage", lambda errors: True)
+    monkeypatch.setattr(quality_gate, "_collect_materialization_quality_findings", _collect_findings)
+    monkeypatch.setattr(quality_gate, "has_materialization_quality_runtime_repair_coverage", _has_coverage)
     monkeypatch.setattr(quality_gate, "_run_materialization_quality_public_boundary", _run_runtime_repair)
 
     results, summary = quality_gate._run_post_llm_materialization_runtime_guard(
@@ -76,10 +91,14 @@ def test_post_llm_materialization_guard_routes_runtime_covered_errors(monkeypatc
     assert captured["workspace_name"] == tmp_path.name
     assert captured["context"] == {"run_id": "run-1"}
     assert captured["task_id"] == "task-1"
+    assert captured["coverage_errors"] == [diagnostic]
+    assert captured["coverage_issues"] == (typed_issue,)
     assert captured["artifact_quality_errors"] == [diagnostic]
+    assert captured["artifact_quality_issues"] == (typed_issue,)
     assert results[0]["result"]["source_tool"] == "deterministic_npm_script_contract_repair"
     assert summary["stage"] == "post_llm_materialization_runtime_guard"
     assert summary["attempted"] is True
+    assert summary["artifact_quality_issue_count"] == 1
     assert summary["write_tool_evidence"] is True
 
 
@@ -88,13 +107,13 @@ def test_post_llm_materialization_guard_does_not_repair_uncovered_errors(monkeyp
 
     monkeypatch.setattr(
         quality_gate,
-        "_collect_materialization_quality_errors",
-        lambda *args, **kwargs: ["unknown artifact quality failure"],
+        "_collect_materialization_quality_findings",
+        lambda *args, **kwargs: (["unknown artifact quality failure"], ()),
     )
     monkeypatch.setattr(
         quality_gate,
         "has_materialization_quality_runtime_repair_coverage",
-        lambda errors: False,
+        lambda errors, *, artifact_quality_issues=(): False,
     )
 
     def _unexpected_runtime_repair(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:

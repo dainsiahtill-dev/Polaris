@@ -36,6 +36,7 @@ from polaris.cells.roles.adapters.public import (
     RunDirectorMaterializationQualityRepairScheduleCommandV1,
     service as roles_adapters_public_service,
 )
+from polaris.kernelone.quality import artifact_quality_issues_from_errors
 
 _RELATIVE_PATH = "src/models/Flight.ts"
 _SOURCE_TOOL = "deterministic_typescript_return_object_semicolon_repair"
@@ -2410,6 +2411,19 @@ def test_materialization_runtime_coverage_detects_rust_line_suggestion() -> None
             ["Artifact quality scan failed: future verifier error without a runtime repair"]
         )
         is False
+    )
+    javascript_module_error = (
+        "Artifact quality scan failed: workspace validation command failed (npm run start): "
+        "file:///tmp/project/src/index.js:1\n"
+        "SyntaxError: The requested module ./engine/AlchemyEngine.js "
+        "does not provide an export named default"
+    )
+    assert (
+        materialization_quality_runtime_ports.has_materialization_quality_runtime_repair_coverage(
+            [],
+            artifact_quality_issues=artifact_quality_issues_from_errors([javascript_module_error]),
+        )
+        is True
     )
 
 

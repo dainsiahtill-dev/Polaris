@@ -52,13 +52,20 @@ _MATERIALIZATION_TARGET_RUNTIME_SUFFIXES = (
 )
 
 
-def has_materialization_quality_runtime_repair_coverage(artifact_quality_errors: list[str]) -> bool:
+def has_materialization_quality_runtime_repair_coverage(
+    artifact_quality_errors: list[str],
+    *,
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
+) -> bool:
     """Return true when runtime coverage maps diagnostics to this port's executable schedule."""
 
-    if not artifact_quality_errors:
+    if not artifact_quality_errors and not artifact_quality_issues:
         return False
     with suppress(RuntimeError, TypeError, ValueError):
-        coverage = _project_coverage_preaudit(artifact_quality_errors)
+        coverage = _project_coverage_preaudit(
+            artifact_quality_errors,
+            artifact_quality_issues=artifact_quality_issues,
+        )
         return _coverage_has_materialization_runtime_source_tool(
             coverage,
             materialization_source_tools=_materialization_runtime_coverage_source_tools(),
@@ -1048,12 +1055,17 @@ def _collect_materialization_go_base_files(workspace_path: Path) -> dict[str, st
     return base_files
 
 
-def _project_coverage_preaudit(artifact_quality_errors: list[str]) -> dict[str, Any]:
+def _project_coverage_preaudit(
+    artifact_quality_errors: list[str],
+    *,
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
     """Project read-only rule coverage before any bridge runner writes."""
 
     return query_director_repair_coverage(
         QueryDirectorRepairCoverageV1(
             artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+            artifact_quality_issues=tuple(dict(item) for item in artifact_quality_issues),
         )
     ).to_dict()
 

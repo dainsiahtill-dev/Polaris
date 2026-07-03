@@ -35,6 +35,7 @@ from polaris.kernelone.fs.materialization import materialized_file_paths
 from polaris.kernelone.quality import (
     artifact_quality_issues_from_errors,
     scan_workspace_artifact_quality as scan_workspace_artifact_quality,
+    scan_workspace_artifact_quality_evidence as scan_workspace_artifact_quality_evidence,
 )
 from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
