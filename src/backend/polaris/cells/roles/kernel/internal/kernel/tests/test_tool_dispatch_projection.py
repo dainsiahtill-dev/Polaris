@@ -193,6 +193,10 @@ def test_append_tool_dispatch_dropped_events_prefers_lifecycle_receipt_over_lega
         lambda **kwargs: captured.setdefault("task_boundary", kwargs),
     )
 
+    envelope = {
+        "envelope_id": "native-receipt-write",
+        "tool_name": "write_file",
+    }
     append_tool_dispatch_dropped_control_plane_events(
         role="director",
         profile=SimpleNamespace(role_id="director"),
@@ -211,6 +215,11 @@ def test_append_tool_dispatch_dropped_events_prefers_lifecycle_receipt_over_lega
                         "native_tool_calls_count": 1,
                         "decoded_tool_calls_count": 1,
                         "dispatched_tool_calls_count": 0,
+                        "native_tool_call_envelope_refs": (
+                            envelope,
+                            "invalid-ref",
+                            dict(envelope),
+                        ),
                         "dropped_tool_calls": [
                             {"tool_name": "write_file", "reason": "tool_dispatch_dropped"}
                         ],
@@ -227,6 +236,7 @@ def test_append_tool_dispatch_dropped_events_prefers_lifecycle_receipt_over_lega
     assert lifecycle["provider_response_hash"] == "receipt-hash"
     assert lifecycle["native_tool_calls_count"] == 1
     assert lifecycle["decoded_tool_calls_count"] == 1
+    assert lifecycle["native_tool_call_envelope_refs"] == [envelope]
     assert lifecycle["dropped_tool_calls"] == [
         {"tool_name": "write_file", "reason": "tool_dispatch_dropped"}
     ]

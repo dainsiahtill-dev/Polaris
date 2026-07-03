@@ -108,6 +108,7 @@ def append_tool_dispatch_dropped_control_plane_events(
         AppendRunLedgerEventCommandV1,
         append_run_ledger_event,
         build_tool_call_lifecycle_receipt,
+        normalize_native_tool_call_envelope_refs,
         normalize_tool_call_lifecycle_receipt,
     )
 
@@ -123,11 +124,11 @@ def append_tool_dispatch_dropped_control_plane_events(
                 lifecycle_seed = normalize_tool_call_lifecycle_receipt(lifecycle_raw)
                 native_count = 0
                 decoded_count = 0
-                native_tool_call_envelopes = [
-                    dict(item)
-                    for item in lifecycle_seed.get("native_tool_call_envelope_refs", [])
-                    if isinstance(item, dict)
-                ]
+                native_tool_call_envelopes = list(
+                    normalize_native_tool_call_envelope_refs(
+                        lifecycle_seed.get("native_tool_call_envelope_refs")
+                    )
+                )
                 dropped_refs = lifecycle_seed.get("dropped_tool_calls")
                 if isinstance(dropped_refs, (list, tuple)):
                     dropped_tool_calls = [dict(item) for item in dropped_refs if isinstance(item, dict)]

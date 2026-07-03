@@ -56,6 +56,8 @@ ToolExecutionResult/BatchReceipt → RoleTurnResult → completion/projection
   过滤/去重规则。
 - `roles.kernel.internal.turn_decision_decoder` 已改为消费同一 public helper，
   决策 metadata 不再维护 list-only 的 envelope 过滤规则。
+- `roles.kernel.internal.kernel.tool_dispatch_projection` 已改为消费同一 public
+  helper，dropped-dispatch ledger 投影不再维护 lifecycle seed refs 的本地过滤规则。
 - 验证：
   `rtk pytest src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py src/backend/polaris/cells/roles/runtime/tests/test_service_helpers_characterization.py -q -k "tool_lifecycle or native_tool_call_envelope or extract_tool_calls"`；
   `rtk ruff check src/backend/polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py src/backend/polaris/cells/control_plane/run_ledger/public/__init__.py src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py src/backend/polaris/cells/roles/runtime/public/result_mapping.py`；
@@ -68,6 +70,10 @@ ToolExecutionResult/BatchReceipt → RoleTurnResult → completion/projection
   `rtk pytest src/backend/polaris/cells/roles/kernel/tests/test_decision_decoder.py -q -k "native_tool_call_envelopes"`；
   `rtk ruff check src/backend/polaris/cells/roles/kernel/internal/turn_decision_decoder.py src/backend/polaris/cells/roles/kernel/tests/test_decision_decoder.py`；
   `rtk mypy src/backend/polaris/cells/roles/kernel/internal/turn_decision_decoder.py`。
+  dropped-dispatch 投影追加验证：
+  `rtk pytest src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_tool_dispatch_projection.py -q -k "lifecycle_receipt or native_envelopes"`；
+  `rtk ruff check src/backend/polaris/cells/roles/kernel/internal/kernel/tool_dispatch_projection.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_tool_dispatch_projection.py`；
+  `rtk mypy src/backend/polaris/cells/roles/kernel/internal/kernel/tool_dispatch_projection.py`。
 
 ## 5. 风险与边界
 
