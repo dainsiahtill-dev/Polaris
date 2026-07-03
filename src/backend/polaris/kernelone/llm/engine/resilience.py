@@ -967,20 +967,6 @@ class ResilienceManager:
             "task_type": str(task_type or ""),
         }
 
-    def _generate_dialogue_fallback(self, context: dict[str, Any]) -> dict[str, Any]:
-        """Deprecated - use _generate_fallback_content instead.
-
-        Retained for backward compatibility; returns generic fallback.
-        """
-        return self._generate_fallback_content("dialogue", context)
-
-    def _generate_interview_fallback(self, context: dict[str, Any]) -> dict[str, Any]:
-        """Deprecated - use _generate_fallback_content instead.
-
-        Retained for backward compatibility; returns generic fallback.
-        """
-        return self._generate_fallback_content("interview", context)
-
     def get_circuit_breaker_status(self) -> dict[str, Any] | None:
         """Get circuit breaker status if configured.
 
