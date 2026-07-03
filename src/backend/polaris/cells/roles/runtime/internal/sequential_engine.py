@@ -54,7 +54,7 @@ class TerminationReason(Enum):
 
 
 class SequentialFailureClass(Enum):
-    """失败类别（用于路由决策）"""
+    """Sequential-engine local routing categories, not Run Ledger failure taxonomy."""
 
     SUCCESS = "success"
     RETRYABLE = "retryable"

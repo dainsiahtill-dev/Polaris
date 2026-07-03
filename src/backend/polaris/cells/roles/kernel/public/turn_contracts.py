@@ -450,7 +450,8 @@ class SealedTurn(_FrozenMappingModel):
 class TurnFailureClass(str, Enum):
     """Turn 失败分类。
 
-    用于驱动 ContinuationPolicy 的自我保护决策。
+    用于驱动 ContinuationPolicy 的自我保护决策；这是角色内局部/local 分类，
+    不是 Run Ledger 跨层 failure taxonomy。
     """
 
     CONTRACT_VIOLATION = "contract_violation"

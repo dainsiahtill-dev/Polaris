@@ -41,6 +41,7 @@ class ClassDefinition:
     name: str
     path: str
     line: int
+    docstring: str
 
 
 def _production_python_files(root: Path) -> list[Path]:
@@ -64,7 +65,14 @@ def _failure_class_definitions(root: Path) -> list[ClassDefinition]:
             if not isinstance(node, ast.ClassDef):
                 continue
             if node.name == "FailureClassV1" or node.name.endswith("FailureClass"):
-                definitions.append(ClassDefinition(name=node.name, path=relative, line=node.lineno))
+                definitions.append(
+                    ClassDefinition(
+                        name=node.name,
+                        path=relative,
+                        line=node.lineno,
+                        docstring=ast.get_docstring(node) or "",
+                    )
+                )
     return definitions
 
 
@@ -131,3 +139,17 @@ def test_local_failure_classes_do_not_leak_into_qa_or_factory() -> None:
                 offenders.append(f"{relative}: {', '.join(leaked)}")
 
     assert offenders == []
+
+
+def test_local_failure_classes_document_run_ledger_boundary() -> None:
+    """Local failure enums must be visibly fenced from Run Ledger taxonomy."""
+
+    missing: list[str] = []
+    for definition in _failure_class_definitions(POLARIS_ROOT):
+        if definition.name not in LOCAL_FAILURE_CLASS_NAMES:
+            continue
+        doc = definition.docstring.lower()
+        if "local" not in doc or "run ledger" not in doc or "failure taxonomy" not in doc:
+            missing.append(f"{definition.path}:{definition.line}:{definition.name}")
+
+    assert missing == []

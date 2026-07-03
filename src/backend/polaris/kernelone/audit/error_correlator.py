@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 class AuditFailureClass(str, Enum):
+    """Local audit-correlation categories, not Run Ledger failure taxonomy."""
+
     TOOL_EXECUTION_FAILURE = "tool_execution_failure"
     LLM_CALL_FAILURE = "llm_call_failure"
     POLICY_BLOCKED = "policy_blocked"
