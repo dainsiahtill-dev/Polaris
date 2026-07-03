@@ -233,7 +233,7 @@ polaris/application/
 ### 3.8 P8: KernelOne→Cells 反向依赖根治 (Squad Epsilon)
 
 **策略**:
-1. `benchmark/adapters/agentic_adapter.py`: 迁移至 `polaris/tests/benchmark/adapters/`
+1. `benchmark/adapters/agentic_adapter.py`: 已迁移至 `polaris/tests/benchmark/adapters/`，KernelOne 内旧文件已退役
 2. `benchmark/unified_runner.py`: 迁移 `stream_role_session_command` 调用点至 application 层
 3. `cognitive/orchestrator.py`: 将 `AlignmentServiceAdapter` 改为 constructor injection，由 bootstrap 层注入
 
