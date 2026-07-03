@@ -407,18 +407,8 @@ class TestBackwardCompatibility:
 
         assert offenders == []
 
-    def test_shared_types_import(self) -> None:
-        """验证从 runtime.shared_types 导入仍然有效。"""
-        from polaris.kernelone.runtime.shared_types import (
-            ANSI_COLORS as _AC,
-            ANSI_RESET as _AR,
-            FILE_BLOCK_RE as _FBR,
-            normalize_path as _np,
-            safe_truncate as _st,
-        )
+    def test_runtime_shared_types_facade_is_removed(self) -> None:
+        """The retired runtime.shared_types facade must not be importable."""
+        import importlib.util
 
-        assert _AC == ANSI_COLORS
-        assert _AR == ANSI_RESET
-        assert _st == safe_truncate
-        assert _np == normalize_path
-        assert _FBR is FILE_BLOCK_RE
+        assert importlib.util.find_spec("polaris.kernelone.runtime.shared_types") is None
