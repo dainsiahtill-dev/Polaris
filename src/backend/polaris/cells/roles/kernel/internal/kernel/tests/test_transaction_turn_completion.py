@@ -263,6 +263,31 @@ def test_missing_dispatch_lifecycle_prefers_native_tool_call_envelopes() -> None
     ]
 
 
+def test_task_boundary_tool_dispatch_accepts_canonical_lifecycle_receipt() -> None:
+    lifecycle = {
+        "schema_version": "tool_call_lifecycle_receipt.v1",
+        "native_tool_calls_count": 1,
+        "decoded_tool_calls_count": 1,
+        "dispatched_tool_calls_count": 0,
+        "provider_response_hash": "provider/hash",
+        "dispatch_status": "dropped",
+        "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        "reason": "native_tool_calls_without_dispatch",
+    }
+
+    dispatch = completion._tool_dispatch_from_lifecycle({"tool_call_lifecycle_receipt": lifecycle})
+
+    assert dispatch == {
+        "status": "dropped",
+        "dropped": True,
+        "native_tool_calls_count": 1,
+        "decoded_tool_calls_count": 1,
+        "dispatched_tool_calls_count": 0,
+        "provider_response_hash": "provider/hash",
+        "reason": "native_tool_calls_without_dispatch",
+    }
+
+
 def test_missing_dispatch_lifecycle_accepts_lifecycle_envelope_refs() -> None:
     envelopes = [
         {"envelope_id": "native-ref-1", "tool_name": "write_file"},

@@ -16,6 +16,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
     build_tool_call_lifecycle_receipt,
     is_failure_class,
+    normalize_tool_call_lifecycle_receipt,
 )
 from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
     _build_turn_history_and_events,
@@ -511,9 +512,10 @@ def _append_task_boundary_verdict(
 
 
 def _tool_dispatch_from_lifecycle(metadata: Mapping[str, Any]) -> dict[str, Any] | None:
-    lifecycle = metadata.get("tool_call_lifecycle")
+    lifecycle = metadata.get("tool_call_lifecycle_receipt") or metadata.get("tool_call_lifecycle")
     if not isinstance(lifecycle, Mapping):
         return None
+    lifecycle = normalize_tool_call_lifecycle_receipt(lifecycle)
     dispatch_status = str(lifecycle.get("dispatch_status") or "").strip()
     failure_class = str(lifecycle.get("failure_class") or "").strip()
     if dispatch_status != "dropped" and not is_failure_class(failure_class, FailureClassV1.TOOL_DISPATCH_DROPPED):
