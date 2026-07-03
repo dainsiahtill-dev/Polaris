@@ -556,8 +556,9 @@ class CognitiveRuntimeService:
         turn_envelope: dict[str, Any] | None = None,
     ) -> RuntimeReceipt:
         normalized_payload = dict(payload or {})
-        legacy_envelope = normalized_payload.pop("turn_envelope", None)
-        resolved_envelope = _normalize_turn_envelope(turn_envelope or legacy_envelope)
+        if "turn_envelope" in normalized_payload:
+            raise ValueError("turn_envelope must be supplied through the explicit turn_envelope argument")
+        resolved_envelope = _normalize_turn_envelope(turn_envelope)
         receipt_id = str(uuid.uuid4())
         if resolved_envelope is not None:
             resolved_envelope = resolved_envelope.with_receipt_ids((receipt_id,))

@@ -351,6 +351,33 @@ def test_public_service_round_trips_receipts_and_handoffs() -> None:
     service.close()
 
 
+def test_public_service_rejects_turn_envelope_inside_receipt_payload() -> None:
+    workspace = tempfile.mkdtemp(prefix="cognitive-runtime-")
+    runtime = CognitiveRuntimeService(
+        session_service=cast("IRoleSessionService | None", _FakeRoleSessionService()),
+        context_memory_service=cast("IRoleSessionContextMemoryService | None", _FakeContextMemoryService()),
+        store=_build_store(workspace),
+    )
+    service = CognitiveRuntimePublicService(runtime=runtime)
+
+    result = service.record_runtime_receipt(
+        RecordRuntimeReceiptCommandV1(
+            workspace=workspace,
+            receipt_type="scope_lease",
+            session_id="session-1",
+            payload={
+                "source": "old-embedded-envelope-shape",
+                "turn_envelope": {"turn_id": "turn-1"},
+            },
+        )
+    )
+
+    assert result.ok is False
+    assert result.error_code == "record_runtime_receipt_failed"
+    assert "explicit turn_envelope argument" in str(result.error_message or "")
+    service.close()
+
+
 def test_public_service_rehydrates_handoff_into_state_first_context() -> None:
     workspace = tempfile.mkdtemp(prefix="cognitive-runtime-rehydrate-")
     runtime = CognitiveRuntimeService(
