@@ -1,6 +1,7 @@
-"""Unified runtime websocket endpoint (Facade).
+"""Unified runtime WebSocket router assembly.
 
-This file is a facade that imports from the refactored endpoint modules.
+This file wires the canonical runtime WebSocket endpoint modules into the v2
+HTTP router tree.
 All implementation has been moved to polaris/delivery/ws/endpoints/ for better
 maintainability and module size control.
 
@@ -19,7 +20,7 @@ v2 Protocol (canonical):
 - RESYNC_REQUIRED for reconnection/resync
 - strategy_receipt field for canonical context propagation
 
-Legacy v1 protocol is no longer supported. Runtime WebSocket clients must use
+Retired v1 protocol is no longer supported. Runtime WebSocket clients must use
 protocol=runtime.v2 and a working NATS/JetStream consumer.
 """
 
