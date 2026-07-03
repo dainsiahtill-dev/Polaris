@@ -11,6 +11,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     append_run_ledger_event,
     build_tool_call_lifecycle_receipt,
 )
+from polaris.cells.events.fact_stream.public.service import AppendFactEventCommandV1, append_fact_event
 from polaris.cells.orchestration.workflow_runtime.public.service import (
     OrchestrationMode,
     OrchestrationSnapshot,
@@ -424,6 +425,98 @@ def test_snapshot_task_rows_project_run_ledger_boundary_when_rows_are_missing(
     assert snapshot["tasks"][0]["metadata"]["source"] == "run_ledger_projection"
     assert snapshot["tasks"][0]["responsible_layer"] == "platform"
     assert snapshot["tasks"][0]["error_message"] == "provider emitted native tool calls but dispatch was dropped"
+
+
+def test_snapshot_task_rows_project_task_runtime_execution_facts_when_rows_are_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        projection_service,
+        "load_runtime_task_rows",
+        lambda workspace: [],
+    )
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(tmp_path),
+            stream="task_runtime.execution",
+            event_type="claimed",
+            source="runtime.task_runtime",
+            task_id="TASK-3",
+            run_id="run-3",
+            payload={
+                "task_id": "TASK-3",
+                "run_id": "run-3",
+                "event_type": "claimed",
+                "status": "in_progress",
+                "execution_state": "in_progress",
+                "session_id": "session-3",
+                "claimed_by": "director-worker",
+                "last_claimed_by": "director-worker",
+                "attempt": 2,
+                "resume_count": 1,
+                "resume_state": "resumed",
+                "resume_available": False,
+                "lease_expires_at": "2026-07-04T00:00:00+00:00",
+                "last_heartbeat_at": "2026-07-03T23:59:00+00:00",
+            },
+        )
+    )
+    projection = RuntimeProjection()
+
+    snapshot = build_snapshot_payload_from_projection(projection, workspace=str(tmp_path))
+
+    assert snapshot["tasks"][0]["task_id"] == "TASK-3"
+    assert snapshot["tasks"][0]["status"] == "in_progress"
+    assert snapshot["tasks"][0]["running"] is True
+    assert snapshot["tasks"][0]["session_id"] == "session-3"
+    assert snapshot["tasks"][0]["claim_attempt"] == 2
+    assert snapshot["tasks"][0]["resume_count"] == 1
+    assert snapshot["tasks"][0]["metadata"]["source"] == "task_runtime.execution_fact"
+
+
+def test_snapshot_task_rows_overlay_existing_rows_with_task_runtime_execution_facts(tmp_path: Path) -> None:
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(tmp_path),
+            stream="task_runtime.execution",
+            event_type="failed",
+            source="runtime.task_runtime",
+            task_id="TASK-4",
+            run_id="run-4",
+            payload={
+                "task_id": "TASK-4",
+                "run_id": "run-4",
+                "event_type": "failed",
+                "status": "failed",
+                "execution_state": "failed",
+                "session_id": "session-4",
+                "attempt": 1,
+                "resume_count": 0,
+                "last_error": "director execution failed",
+            },
+        )
+    )
+    projection = RuntimeProjection(
+        task_rows=[
+            {
+                "id": "TASK-4",
+                "task_id": "TASK-4",
+                "status": "RUNNING",
+                "running": True,
+                "metadata": {"source": "workflow"},
+            }
+        ]
+    )
+
+    snapshot = build_snapshot_payload_from_projection(projection, workspace=str(tmp_path))
+
+    assert snapshot["tasks"][0]["task_id"] == "TASK-4"
+    assert snapshot["tasks"][0]["status"] == "failed"
+    assert snapshot["tasks"][0]["running"] is False
+    assert snapshot["tasks"][0]["last_error"] == "director execution failed"
+    assert snapshot["tasks"][0]["metadata"]["status_source"] == "task_runtime.execution_fact"
+    assert snapshot["tasks"][0]["metadata"]["previous_status"] == "RUNNING"
 
 
 def test_snapshot_completed_count_includes_completed_verified_rows(tmp_path: Path) -> None:

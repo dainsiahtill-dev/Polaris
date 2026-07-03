@@ -36,6 +36,11 @@ from polaris.cells.control_plane.run_ledger.public import (
     read_run_ledger_projection,
 )
 from polaris.cells.docs.court_workflow.public.service import map_engine_to_court_state
+from polaris.cells.events.fact_stream.public.service import (
+    FactStreamError,
+    QueryFactEventsV1,
+    query_fact_events,
+)
 from polaris.cells.qa.audit_verdict.public import (
     QA_ARTIFACT_FAILURE_CLASSES,
     QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS,
@@ -1014,6 +1019,116 @@ def _row_task_id(row: dict[str, Any]) -> str:
     ).strip()
 
 
+def _read_task_runtime_execution_facts(workspace: str) -> list[dict[str, Any]]:
+    workspace_token = str(workspace or "").strip()
+    if not workspace_token:
+        return []
+    try:
+        result = query_fact_events(
+            QueryFactEventsV1(
+                workspace=workspace_token,
+                stream="task_runtime.execution",
+                limit=500,
+            )
+        )
+    except (FactStreamError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("runtime projection: failed to read task runtime execution facts: %s", exc)
+        return []
+    facts: list[dict[str, Any]] = []
+    for event in result.events:
+        if not isinstance(event, dict):
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        fact = dict(payload)
+        fact.setdefault("event_id", str(event.get("event_id") or ""))
+        fact.setdefault("occurred_at", str(event.get("occurred_at") or event.get("timestamp") or ""))
+        facts.append(fact)
+    return facts
+
+
+def _task_running_from_status(status: str) -> bool:
+    return str(status or "").strip().lower() in {"active", "claimed", "in_progress", "running"}
+
+
+def _row_from_task_runtime_execution_fact(fact: dict[str, Any]) -> dict[str, Any]:
+    task_id = str(fact.get("task_id") or "").strip()
+    if not task_id:
+        return {}
+    execution_state = str(fact.get("execution_state") or fact.get("status") or "").strip()
+    status = execution_state or str(fact.get("event_type") or "unknown").strip()
+    metadata = {
+        "source": "task_runtime.execution_fact",
+        "status_source": "task_runtime.execution_fact",
+        "task_runtime_execution_fact": fact,
+    }
+    return {
+        "id": task_id,
+        "task_id": task_id,
+        "status": status,
+        "state": status,
+        "execution_state": status,
+        "running": _task_running_from_status(status),
+        "session_id": str(fact.get("session_id") or ""),
+        "workflow_run_id": str(fact.get("run_id") or ""),
+        "claimed_by": str(fact.get("claimed_by") or ""),
+        "last_claimed_by": str(fact.get("last_claimed_by") or ""),
+        "resume_state": str(fact.get("resume_state") or ""),
+        "resume_available": bool(fact.get("resume_available")),
+        "claim_attempt": _safe_int(fact.get("attempt")),
+        "resume_count": _safe_int(fact.get("resume_count")),
+        "lease_expires_at": str(fact.get("lease_expires_at") or ""),
+        "last_heartbeat_at": str(fact.get("last_heartbeat_at") or ""),
+        "last_error": str(fact.get("last_error") or ""),
+        "last_result_summary": str(fact.get("last_result_summary") or ""),
+        "metadata": metadata,
+    }
+
+
+def _apply_task_runtime_execution_fact_overlay(rows: list[dict[str, Any]], workspace: str) -> list[dict[str, Any]]:
+    facts = _read_task_runtime_execution_facts(workspace)
+    if not facts:
+        return rows
+    latest_by_task: dict[str, dict[str, Any]] = {}
+    for fact in facts:
+        task_id = str(fact.get("task_id") or "").strip()
+        if task_id:
+            latest_by_task[task_id] = fact
+    if not latest_by_task:
+        return rows
+
+    overlaid: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows:
+        row_map = dict(row)
+        task_id = _row_task_id(row_map)
+        latest_fact = latest_by_task.get(task_id)
+        if not latest_fact:
+            overlaid.append(row_map)
+            continue
+        fact_row = _row_from_task_runtime_execution_fact(latest_fact)
+        if not fact_row:
+            overlaid.append(row_map)
+            continue
+        metadata = dict(row_map.get("metadata") or {})
+        fact_metadata = dict(fact_row.get("metadata") or {})
+        fact_metadata["previous_status"] = str(row_map.get("status") or row_map.get("state") or "")
+        metadata.update(fact_metadata)
+        row_map.update({key: value for key, value in fact_row.items() if key not in {"id", "task_id", "metadata"}})
+        row_map["metadata"] = metadata
+        overlaid.append(row_map)
+        seen.add(task_id)
+
+    for task_id, fact in latest_by_task.items():
+        if task_id in seen:
+            continue
+        fact_row = _row_from_task_runtime_execution_fact(fact)
+        if fact_row:
+            overlaid.append(fact_row)
+    return overlaid
+
+
 def _task_boundary_row_from_latest(latest_boundary: dict[str, Any]) -> dict[str, Any]:
     boundary_task_id = str(latest_boundary.get("task_id") or latest_boundary.get("taskId") or "").strip()
     if not boundary_task_id:
@@ -1746,6 +1861,7 @@ def build_snapshot_payload_from_projection(
         if not tasks:
             tasks = _read_factory_latest_plan_tasks(workspace)
     tasks = _enrich_tasks_with_factory_blueprints(tasks, workspace)
+    tasks = _apply_task_runtime_execution_fact_overlay(tasks, workspace)
     run_ledger_task_projection = (
         projection.director_merged.get("run_ledger_projection")
         if isinstance(projection.director_merged, dict)
