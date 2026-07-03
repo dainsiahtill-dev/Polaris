@@ -2903,6 +2903,10 @@ async def test_execute_turn_stream_fails_closed_when_native_tool_call_decodes_wi
     assert dropped_flags[0]["native_tool_calls_count"] == 1
     assert dropped_flags[0]["streaming"] is True
     assert dropped_flags[0]["provider_response_hash"]
+    lifecycle = dropped_flags[0]["tool_call_lifecycle_receipt"]
+    assert lifecycle["native_tool_calls_count"] == dropped_flags[0]["native_tool_calls_count"]
+    assert lifecycle["provider_response_hash"] == dropped_flags[0]["provider_response_hash"]
+    assert lifecycle["dispatch_status"] == "dropped"
 
 
 @pytest.mark.asyncio
