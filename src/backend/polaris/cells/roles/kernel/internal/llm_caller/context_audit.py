@@ -394,6 +394,7 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
     actual_sibling_exports = (
         _actual_sibling_exports_payload(ai_request, module_interface_contract) if ai_request is not None else {}
     )
+    target_scope = _target_scope_payload(ai_request) if ai_request is not None else {}
     architecture_or_file_plan = _architecture_or_file_plan_payload(ai_request) if ai_request is not None else {}
     blueprint_absent = any(
         marker in lowered
@@ -484,7 +485,8 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
                 "文件计划",
             )
         ),
-        "has_target_files": any(
+        "has_target_files": bool(target_scope)
+        or any(
             needle in lowered
             for needle in (
                 "target_files",
@@ -1094,6 +1096,91 @@ def _ce_blueprint_summary(blueprint: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _target_scope_payload(ai_request: Any | None) -> dict[str, Any]:
+    if ai_request is None:
+        return {}
+
+    def scope_entry(source: str, payload: dict[str, Any]) -> dict[str, Any]:
+        target_files = _string_list(payload.get("target_files") or payload.get("targets") or payload.get("target_paths"))
+        scope_paths = _string_list(payload.get("scope_paths") or payload.get("declared_scopes") or payload.get("scope"))
+        allowed_write_paths = _string_list(
+            payload.get("allowed_write_paths") or payload.get("allowed_paths") or payload.get("write_scope")
+        )
+        if not target_files and not scope_paths and not allowed_write_paths:
+            return {}
+        return {
+            "source": source,
+            "target_files": target_files,
+            "scope_paths": scope_paths,
+            "allowed_write_paths": allowed_write_paths,
+        }
+
+    context_payload = _request_context(ai_request)
+    task_payload = _mapping(context_payload.get("task"))
+    task_metadata = _task_metadata(ai_request)
+    execution_envelope = _execution_envelope(ai_request)
+    authorization = _mapping(execution_envelope.get("authorization"))
+    candidates = (
+        ("execution_envelope.authorization", authorization),
+        ("execution_profile", _execution_profile(ai_request)),
+        ("execution_contract", _execution_contract(ai_request)),
+        ("task_metadata", task_metadata),
+        ("context", context_payload),
+        ("context.metadata", _mapping(context_payload.get("metadata"))),
+        ("task", task_payload),
+        ("task.metadata", _mapping(task_payload.get("metadata"))),
+        ("pm_contract", _pm_contract_payload(ai_request)),
+        ("ce_blueprint", _ce_blueprint_payload(ai_request)),
+    )
+    sources = [
+        entry
+        for source, payload in candidates
+        if payload and (entry := scope_entry(source, payload))
+    ]
+    if not sources:
+        return {}
+    return {
+        "schema_version": "polaris.target_scope.evidence.v1",
+        "sources": sources,
+    }
+
+
+def _target_scope_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    if not payload:
+        return {}
+    sources_payload = payload.get("sources")
+    sources = sources_payload if isinstance(sources_payload, list) else []
+    target_files: list[str] = []
+    scope_paths: list[str] = []
+    allowed_write_paths: list[str] = []
+    source_summaries: list[dict[str, Any]] = []
+    for item in sources:
+        source = _mapping(item)
+        item_target_files = _string_list(source.get("target_files"))
+        item_scope_paths = _string_list(source.get("scope_paths"))
+        item_allowed_write_paths = _string_list(source.get("allowed_write_paths"))
+        target_files.extend(item_target_files)
+        scope_paths.extend(item_scope_paths)
+        allowed_write_paths.extend(item_allowed_write_paths)
+        source_summaries.append(
+            {
+                "source": str(source.get("source") or ""),
+                "target_file_count": len(item_target_files),
+                "scope_path_count": len(item_scope_paths),
+                "allowed_write_path_count": len(item_allowed_write_paths),
+            }
+        )
+    return {
+        "schema_version": str(payload.get("schema_version") or ""),
+        "source_count": len(source_summaries),
+        "target_file_count": len(_unique_strings(target_files)),
+        "scope_path_count": len(_unique_strings(scope_paths)),
+        "allowed_write_path_count": len(_unique_strings(allowed_write_paths)),
+        "sources": source_summaries,
+        "payload_hash": _stable_digest(payload),
+    }
+
+
 def _module_interface_contract_payload(ai_request: Any | None) -> dict[str, Any]:
     if ai_request is None:
         return {}
@@ -1512,6 +1599,7 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
     task_metadata = _task_metadata(ai_request)
     pm_contract = _pm_contract_payload(ai_request)
     ce_blueprint = _ce_blueprint_payload(ai_request)
+    target_scope = _target_scope_payload(ai_request)
     module_interface_contract = _module_interface_contract_payload(ai_request)
     actual_sibling_exports = _actual_sibling_exports_payload(ai_request, module_interface_contract)
     interface_discrepancy_context = _interface_discrepancy_context_payload(ai_request)
@@ -1564,6 +1652,9 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
         "has_chief_engineer_blueprint": bool(ce_blueprint),
         "chief_engineer_blueprint_summary": _ce_blueprint_summary(ce_blueprint),
         "chief_engineer_blueprint_hash": _stable_digest(ce_blueprint) if ce_blueprint else "",
+        "has_target_scope": bool(target_scope),
+        "target_scope_summary": _target_scope_summary(target_scope),
+        "target_scope_hash": _stable_digest(target_scope) if target_scope else "",
         "has_task_metadata": bool(task_metadata),
         "task_metadata_keys": sorted(str(key) for key in task_metadata),
         "task_metadata_hash": _stable_digest(task_metadata) if task_metadata else "",
@@ -1919,7 +2010,11 @@ def _included_evidence_refs(
     receipt_refs: list[str] | None = None,
 ) -> list[str]:
     refs = ["final_provider_request"]
-    refs.extend(ref for flag, ref in _COVERAGE_FLAG_TO_REF.items() if coverage.get(flag))
+    refs.extend(
+        ref
+        for flag, ref in _COVERAGE_FLAG_TO_REF.items()
+        if coverage.get(flag) and flag != "has_target_files"
+    )
     if request_metadata_summary.get("has_execution_profile"):
         refs.append("execution_profile")
     if request_metadata_summary.get("has_execution_strategy"):
@@ -1936,6 +2031,8 @@ def _included_evidence_refs(
         refs.append("pm_contract")
     if request_metadata_summary.get("has_chief_engineer_blueprint"):
         refs.append("ce_blueprint")
+    if request_metadata_summary.get("has_target_scope"):
+        refs.append("target_files")
     if request_metadata_summary.get("has_language_guidance"):
         refs.append("language_guidance")
     if request_metadata_summary.get("has_output_contract"):
@@ -2092,6 +2189,7 @@ def _coverage_source(
         "actual_sibling_exports": str(request_metadata_summary.get("actual_sibling_exports_hash") or ""),
         "interface_discrepancy_context": str(request_metadata_summary.get("interface_discrepancy_context_hash") or ""),
         "architecture_or_file_plan": str(request_metadata_summary.get("architecture_or_file_plan_hash") or ""),
+        "target_files": str(request_metadata_summary.get("target_scope_hash") or ""),
         "execution_profile": workflow_chain.get("execution_profile_hash", ""),
         "execution_envelope": workflow_chain.get("execution_envelope_hash", ""),
         "execution_contract": str(request_metadata_summary.get("execution_contract_hash") or ""),
@@ -2115,6 +2213,7 @@ def _coverage_source(
         "actual_sibling_exports": "has_actual_sibling_exports",
         "interface_discrepancy_context": "has_interface_discrepancy_context",
         "architecture_or_file_plan": "has_architecture_or_file_plan",
+        "target_files": "has_target_scope",
     }
     structured_flag = structured_metadata_flags.get(ref_type)
     if (structured_flag and request_metadata_summary.get(structured_flag)) or (present and ref_type in structured_refs):
@@ -2136,6 +2235,7 @@ def _coverage_source(
         "actual_sibling_exports": request_metadata_summary.get("actual_sibling_exports_summary"),
         "interface_discrepancy_context": request_metadata_summary.get("interface_discrepancy_context_summary"),
         "architecture_or_file_plan": request_metadata_summary.get("architecture_or_file_plan_summary"),
+        "target_files": request_metadata_summary.get("target_scope_summary"),
     }
     detail_payload = detail_by_ref.get(ref_type)
     if isinstance(detail_payload, dict) and detail_payload:
@@ -2392,6 +2492,7 @@ def _final_request_evidence_coverage(
             "actual_sibling_exports": bool(request_metadata_summary.get("has_actual_sibling_exports")),
             "interface_discrepancy_context": bool(request_metadata_summary.get("has_interface_discrepancy_context")),
             "architecture_or_file_plan": bool(request_metadata_summary.get("has_architecture_or_file_plan")),
+            "target_files": bool(request_metadata_summary.get("has_target_scope")),
         },
         "workflow_chain": workflow_chain,
         "ledger_evidence": _ledger_evidence(ai_request, receipt_refs=receipt_refs),

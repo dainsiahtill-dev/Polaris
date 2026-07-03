@@ -495,6 +495,10 @@ def test_final_request_evidence_tracks_module_interface_contract() -> None:
                 "envelope_hash": "envelope-hash",
                 "pm_contract": {"hash": "pm-hash"},
                 "ce_blueprint": {"hash": "ce-hash"},
+                "authorization": {
+                    "target_files": ["src/models/weather.py", "src/engine/forecast.py"],
+                    "scope_paths": ["src/models/weather.py", "src/engine/forecast.py"],
+                },
             },
             "ce_blueprint": {
                 "schema_version": "chief_engineer.blueprint.v1",
@@ -612,6 +616,10 @@ def test_final_request_evidence_tracks_direct_actual_sibling_exports_payload() -
                 "envelope_hash": "envelope-hash",
                 "pm_contract": {"hash": "pm-hash"},
                 "ce_blueprint": {"hash": "ce-hash"},
+                "authorization": {
+                    "target_files": ["src/main.ts"],
+                    "scope_paths": ["src/main.ts"],
+                },
             },
             "actual_sibling_exports": direct_exports,
             "metadata": {"actual_sibling_exports": direct_exports},
@@ -669,6 +677,10 @@ def test_final_request_evidence_reports_missing_module_interface_contract() -> N
                 "envelope_hash": "envelope-hash",
                 "pm_contract": {"hash": "pm-hash"},
                 "ce_blueprint": {"hash": "ce-hash"},
+                "authorization": {
+                    "target_files": ["src/models/Fairy.ts"],
+                    "scope_paths": ["src/models/Fairy.ts"],
+                },
             },
         },
     )
@@ -725,6 +737,10 @@ def test_final_request_evidence_aliases_verification_failure_and_architecture_pl
                 "envelope_hash": "envelope-hash",
                 "pm_contract": {"hash": "pm-hash"},
                 "ce_blueprint": {"hash": "ce-hash"},
+                "authorization": {
+                    "target_files": ["src/models/Fairy.ts"],
+                    "scope_paths": ["src/models/Fairy.ts"],
+                },
             },
         },
     )
@@ -1209,6 +1225,118 @@ def test_final_request_evidence_ignores_untrusted_user_message_body_for_required
     assert violation["missing_required_refs"] == ["pm_contract", "ce_blueprint", "target_files"]
 
 
+def test_final_request_evidence_uses_structured_target_scope_without_text_needle() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "director_execution_strategy": {
+                "schema_version": "task.execution_strategy.v1",
+                "evidence_requirements": ["target_files_or_declared_scopes"],
+            },
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+                "authorization": {
+                    "target_files": ["app/main.py"],
+                    "scope_paths": ["app/main.py"],
+                    "allowed_write_paths": ["app/main.py"],
+                },
+            },
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {"role": "user", "content": "Implement the authorized task."},
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {"role": "user", "content": "Implement the authorized task."},
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert audit["coverage"]["has_target_files"] is True
+    assert audit["request_metadata_summary"]["has_target_scope"] is True
+    assert evidence_coverage["structured_evidence"]["target_files"] is True
+    assert "target_files" in evidence_coverage["included_refs"]
+    assert evidence_coverage["missing_required_refs"] == []
+    target_slot = next(item for item in evidence_coverage["evidence_slots"] if item["ref_type"] == "target_files")
+    assert target_slot["confidence"] == "structured_metadata"
+    assert target_slot["details"]["target_file_count"] == 1
+    assert target_slot["details"]["scope_path_count"] == 1
+    assert target_slot["details"]["allowed_write_path_count"] == 1
+
+
+def test_final_request_evidence_rejects_text_only_target_scope_for_required_ref() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "final_request_evidence_required": True,
+            "director_execution_strategy": {
+                "schema_version": "task.execution_strategy.v1",
+                "evidence_requirements": ["target_files_or_declared_scopes"],
+            },
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+            },
+            "chat_messages": [
+                {
+                    "role": "system",
+                    "content": "PM text says target_files src/main.py but no structured contract is attached.",
+                },
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "system",
+                "content": "PM text says target_files src/main.py but no structured contract is attached.",
+            },
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert audit["coverage"]["has_target_files"] is True
+    assert audit["request_metadata_summary"]["has_target_scope"] is False
+    assert evidence_coverage["structured_evidence"]["target_files"] is False
+    assert "target_files" not in evidence_coverage["included_refs"]
+    assert evidence_coverage["missing_required_refs"] == ["target_files"]
+    violation = final_request_evidence_coverage_violation(ai_request=ai_request, audit=audit)
+    assert violation is not None
+    assert violation["missing_required_refs"] == ["target_files"]
+
+
 def test_final_request_evidence_enforcement_blocks_envelope_required_refs() -> None:
     ai_request = AIRequest(
         task_type=TaskType.DIALOGUE,
@@ -1263,6 +1391,14 @@ def test_final_request_evidence_coverage_counts_current_provider_request() -> No
         context={
             "final_request_evidence_required": True,
             "required_evidence": ["final_provider_request"],
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+                "authorization": {
+                    "target_files": ["src/main.py"],
+                    "scope_paths": ["src/main.py"],
+                },
+            },
             "chat_messages": [
                 {
                     "role": "system",
