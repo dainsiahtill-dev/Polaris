@@ -2962,6 +2962,120 @@ def test_typescript_escaped_newline_rule_repairs_line_comment_code() -> None:
     assert "\nexport const tenantContext" in patch["content_after"]
 
 
+def test_runtime_dispatcher_typescript_escaped_newline_uses_typed_diagnostic_path() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL
+    content = (
+        "import { AsyncLocalStorage } from 'async_hooks';\n\n"
+        "// Context for tenant lifecycle\\n"
+        "export const tenantContext = new AsyncLocalStorage<{ tenantId: string }>();\n"
+    )
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="typescript_escaped_newline",
+        message="Escaped newline remains in a TypeScript line comment.",
+        path="src/middleware/auth.ts",
+        raw="Escaped newline remains in a TypeScript line comment.",
+        metadata={"stable_issue_id": "typed-typescript-escaped-newline"},
+    )
+
+    planning = plan_runtime_repair(
+        source_tool=source_tool,
+        base_files={"src/middleware/auth.ts": content},
+        artifact_quality_errors=(),
+        repair_diagnostics=(diagnostic,),
+        mode="shadow",
+    )
+
+    assert planning.plan is not None
+    assert planning.composition is not None
+    assert planning.plan.diagnostics[0].metadata["stable_issue_id"] == "typed-typescript-escaped-newline"
+    assert "lifecycle\\nexport const tenantContext" not in planning.composition.patches[0].content_after
+    assert "\nexport const tenantContext" in planning.composition.patches[0].content_after
+
+
+def test_runtime_dispatcher_typescript_escaped_newline_runs_typed_diagnostic_path(tmp_path: Path) -> None:
+    source_tool = ts_syntax.TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL
+    relative_path = "src/middleware/auth.ts"
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    content = (
+        "import { AsyncLocalStorage } from 'async_hooks';\n\n"
+        "// Context for tenant lifecycle\\n"
+        "export const tenantContext = new AsyncLocalStorage<{ tenantId: string }>();\n"
+    )
+    target.write_text(content, encoding="utf-8")
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="typescript_escaped_newline",
+        message="Escaped newline remains in a TypeScript line comment.",
+        path=relative_path,
+        raw="Escaped newline remains in a TypeScript line comment.",
+        metadata={"stable_issue_id": "typed-typescript-escaped-newline-run"},
+    )
+    writes: list[str] = []
+
+    def writer(path: str, updated: str) -> dict[str, object]:
+        writes.append(path)
+        raise AssertionError("escaped-newline repair must prefer edit_file over write_file")
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        current = target.read_text(encoding="utf-8")
+        assert operation.span_start is not None
+        assert operation.span_end is not None
+        target.write_text(
+            current[: operation.span_start] + str(operation.replacement or "") + current[operation.span_end :],
+            encoding="utf-8",
+        )
+        return {"ok": True}
+
+    result = run_runtime_repair(
+        source_tool=source_tool,
+        workspace=tmp_path,
+        base_files={relative_path: content},
+        artifact_quality_errors=(),
+        repair_diagnostics=(diagnostic,),
+        writer=writer,
+        editor=editor,
+        allowed_paths=(relative_path,),
+    )
+
+    assert result.ok is True
+    assert writes == []
+    repaired = target.read_text(encoding="utf-8")
+    assert "lifecycle\\nexport const tenantContext" not in repaired
+    assert "\nexport const tenantContext" in repaired
+    assert result.planning.diagnostics[0].metadata["stable_issue_id"] == "typed-typescript-escaped-newline-run"
+
+
+def test_runtime_convergence_planner_uses_typed_typescript_escaped_newline_path() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL
+    content = (
+        "import { AsyncLocalStorage } from 'async_hooks';\n\n"
+        "// Context for tenant lifecycle\\n"
+        "export const tenantContext = new AsyncLocalStorage<{ tenantId: string }>();\n"
+    )
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="typescript_escaped_newline",
+        message="Escaped newline remains in a TypeScript line comment.",
+        path="src/middleware/auth.ts",
+        raw="Escaped newline remains in a TypeScript line comment.",
+        metadata={"stable_issue_id": "typed-typescript-escaped-newline-convergence"},
+    )
+
+    planner = runtime_dispatch_module.build_runtime_repair_convergence_planner(
+        source_tools=(source_tool,),
+        base_files={"src/middleware/auth.ts": content},
+        mode="shadow",
+    )
+    plans = planner((diagnostic,), 1)
+
+    assert len(plans) == 1
+    assert plans[0].source_tool == source_tool
+    assert plans[0].diagnostics[0].metadata["stable_issue_id"] == "typed-typescript-escaped-newline-convergence"
+    assert plans[0].operations[0].path == "src/middleware/auth.ts"
+
+
 def test_typescript_readonly_assignment_rule_covers_ts2540_and_removes_single_modifier() -> None:
     content = (
         "export interface InventoryItem {\n"

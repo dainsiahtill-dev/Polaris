@@ -245,7 +245,7 @@ def _diagnostics_for_generic_hygiene(
     artifact_quality_errors: Sequence[str],
     repair_diagnostics: Sequence[RepairDiagnostic] | None,
 ) -> tuple[RepairDiagnostic, ...]:
-    if repair_diagnostics is not None:
+    if repair_diagnostics:
         return tuple(repair_diagnostics)
     return tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
 

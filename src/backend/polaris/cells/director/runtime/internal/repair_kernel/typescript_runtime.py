@@ -563,6 +563,7 @@ def plan_typescript_runtime_repair_for_source_tool(
     source_tool: str,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
 ) -> TypeScriptRuntimePlanning:
@@ -570,7 +571,10 @@ def plan_typescript_runtime_repair_for_source_tool(
 
     normalized_source_tool = str(source_tool or "").strip()
     normalized_base = _normalize_base_files(base_files)
-    diagnostics = tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
+    diagnostics = _diagnostics_for_typescript_runtime(
+        artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
+    )
     notes = tuple(advisor_notes or ())
     plan = build_typescript_runtime_plan_for_source_tool(
         source_tool=normalized_source_tool,
@@ -1172,6 +1176,7 @@ def run_typescript_runtime_repair_for_source_tool(
     workspace: str | Path,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
     writer: WriteFileFn,
     editor: EditFileFn | None = None,
     allowed_paths: Sequence[str] | None = None,
@@ -1185,6 +1190,7 @@ def run_typescript_runtime_repair_for_source_tool(
         source_tool=source_tool,
         base_files=normalized_base,
         artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
         advisor_notes=advisor_notes,
         mode=mode,
     )
@@ -1245,6 +1251,16 @@ def _normalize_base_files(base_files: Mapping[str, str]) -> dict[str, str]:
         for path, content in dict(base_files or {}).items()
         if _normalize_repair_path(str(path or ""))
     }
+
+
+def _diagnostics_for_typescript_runtime(
+    *,
+    artifact_quality_errors: Sequence[str],
+    repair_diagnostics: Sequence[RepairDiagnostic] | None,
+) -> tuple[RepairDiagnostic, ...]:
+    if repair_diagnostics:
+        return tuple(repair_diagnostics)
+    return tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
 
 
 def _normalize_repair_path(path: str) -> str:

@@ -505,9 +505,10 @@ def plan_runtime_repair(
         repair_diagnostics,
     )
     initial_diagnostics = _initial_runtime_diagnostics(effective_artifact_quality_errors, repair_diagnostics)
+    has_legacy_artifact_quality_errors = _has_artifact_quality_errors(artifact_quality_errors)
     binding = _RUNTIME_REPAIR_BINDINGS.get(normalized_source_tool)
     if binding is not None:
-        if binding.typed_planner is not None and repair_diagnostics is not None:
+        if binding.typed_planner is not None and repair_diagnostics and not has_legacy_artifact_quality_errors:
             return binding.typed_planner(
                 base_files,
                 initial_diagnostics,
@@ -551,9 +552,10 @@ def run_runtime_repair(
         repair_diagnostics,
     )
     initial_diagnostics = _initial_runtime_diagnostics(effective_artifact_quality_errors, repair_diagnostics)
+    has_legacy_artifact_quality_errors = _has_artifact_quality_errors(artifact_quality_errors)
     binding = _RUNTIME_REPAIR_BINDINGS.get(normalized_source_tool)
     if binding is not None:
-        if binding.typed_runner is not None and repair_diagnostics is not None:
+        if binding.typed_runner is not None and repair_diagnostics and not has_legacy_artifact_quality_errors:
             return binding.typed_runner(
                 workspace,
                 base_files,
@@ -777,7 +779,7 @@ def _initial_runtime_diagnostics(
     artifact_quality_errors: Sequence[str],
     repair_diagnostics: Sequence[RepairDiagnostic] | None,
 ) -> tuple[RepairDiagnostic, ...]:
-    if repair_diagnostics is not None:
+    if repair_diagnostics:
         return tuple(repair_diagnostics)
     return tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
 
@@ -801,6 +803,10 @@ def _artifact_quality_errors_from_diagnostics(diagnostics: Sequence[RepairDiagno
         for diagnostic in diagnostics or ()
         if diagnostic.raw or diagnostic.message or diagnostic.code
     )
+
+
+def _has_artifact_quality_errors(artifact_quality_errors: Sequence[str]) -> bool:
+    return any(str(item or "").strip() for item in artifact_quality_errors or ())
 
 
 def _effective_artifact_quality_errors(
@@ -2212,6 +2218,29 @@ def _plan_typescript_runtime_source_tool(source_tool: str) -> RuntimePlannerFn:
     return planner
 
 
+def _plan_typescript_runtime_source_tool_typed(source_tool: str) -> RuntimeTypedPlannerFn:
+    normalized_source_tool = str(source_tool or "").strip()
+
+    def planner(
+        base_files: Mapping[str, str],
+        repair_diagnostics: Sequence[RepairDiagnostic],
+        artifact_quality_errors: Sequence[str],
+        advisor_notes: Sequence[RepairAdvisorNote] | None,
+        mode: str,
+    ) -> RuntimeRepairPlanning:
+        planning = plan_typescript_runtime_repair_for_source_tool(
+            source_tool=normalized_source_tool,
+            base_files=base_files,
+            artifact_quality_errors=artifact_quality_errors,
+            repair_diagnostics=repair_diagnostics,
+            advisor_notes=advisor_notes,
+            mode=mode,
+        )
+        return _runtime_planning_from_typescript_runtime(planning)
+
+    return planner
+
+
 def _run_typescript_runtime_source_tool(source_tool: str) -> RuntimeRunnerFn:
     normalized_source_tool = str(source_tool or "").strip()
 
@@ -2232,6 +2261,39 @@ def _run_typescript_runtime_source_tool(source_tool: str) -> RuntimeRunnerFn:
             workspace=workspace,
             base_files=base_files,
             artifact_quality_errors=artifact_quality_errors,
+            writer=writer,
+            editor=editor,
+            allowed_paths=allowed_paths,
+            advisor_notes=advisor_notes,
+            mode=mode,
+        )
+        return _runtime_run_from_typescript_runtime(run)
+
+    return runner
+
+
+def _run_typescript_runtime_source_tool_typed(source_tool: str) -> RuntimeTypedRunnerFn:
+    normalized_source_tool = str(source_tool or "").strip()
+
+    def runner(
+        workspace: str | Path,
+        base_files: Mapping[str, str],
+        repair_diagnostics: Sequence[RepairDiagnostic],
+        artifact_quality_errors: Sequence[str],
+        writer: WriteFileFn,
+        editor: EditFileFn | None,
+        deleter: DeleteFileFn | None,
+        allowed_paths: Sequence[str] | None,
+        advisor_notes: Sequence[RepairAdvisorNote] | None,
+        mode: str,
+    ) -> RuntimeRepairRun:
+        del deleter
+        run = run_typescript_runtime_repair_for_source_tool(
+            source_tool=normalized_source_tool,
+            workspace=workspace,
+            base_files=base_files,
+            artifact_quality_errors=artifact_quality_errors,
+            repair_diagnostics=repair_diagnostics,
             writer=writer,
             editor=editor,
             allowed_paths=allowed_paths,
@@ -4391,6 +4453,8 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
             rule_id=rule_id,
             planner=_plan_typescript_runtime_source_tool(source_tool),
             runner=_run_typescript_runtime_source_tool(source_tool),
+            typed_planner=_plan_typescript_runtime_source_tool_typed(source_tool),
+            typed_runner=_run_typescript_runtime_source_tool_typed(source_tool),
         )
         for source_tool, language, rule_id in _TYPESCRIPT_RUNTIME_MIGRATION_BINDINGS
     },

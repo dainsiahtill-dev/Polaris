@@ -3684,12 +3684,29 @@ def _build_typescript_entrypoint_aggregator(*, modules: Sequence[str], entrypoin
 def _parse_typescript_escaped_newline_paths(diagnostics: Sequence[RepairDiagnostic]) -> list[str]:
     paths: list[str] = []
     for diagnostic in diagnostics:
+        typed_path = _typed_typescript_escaped_newline_path(diagnostic)
+        if typed_path:
+            paths.append(typed_path)
+            continue
         match = _TS_ESCAPED_NEWLINE_IN_LINE_COMMENT_ERROR_RE.search(str(diagnostic.raw or diagnostic.message or ""))
         if match:
             path = _normalize_repair_path(str(match.group("path") or ""))
             if path:
                 paths.append(path)
     return _dedupe_preserve_order(paths)
+
+
+def _typed_typescript_escaped_newline_path(diagnostic: RepairDiagnostic) -> str:
+    path = _normalize_repair_path(str(diagnostic.path or ""))
+    if not path:
+        return ""
+    code = str(diagnostic.code or "").casefold()
+    if "escaped_newline" in code:
+        return path
+    metadata_kind = str(diagnostic.metadata.get("issue_kind") or diagnostic.metadata.get("archetype") or "").casefold()
+    if "escaped_newline" in metadata_kind:
+        return path
+    return ""
 
 
 def repair_typescript_escaped_newline_in_line_comments(text: str) -> str:
