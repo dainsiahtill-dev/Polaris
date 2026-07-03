@@ -1,7 +1,7 @@
 """FastAPI application factory for Polaris backend.
 
 Canonical delivery-layer API gateway implementation.
-Retired compatibility wrapper `api.main` delegates to this module.
+Bootstrap and ASGI entrypoints delegate to this module.
 """
 
 from __future__ import annotations
