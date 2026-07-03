@@ -4,7 +4,7 @@ This file serves as a backward-compatible import redirect.
 All implementations have been refactored into the stream/ subdirectory.
 
 Usage:
-    # Old imports (still work via this facade):
+    # Compatibility imports (still work via this facade):
     from polaris.kernelone.llm.engine.stream_executor import StreamExecutor
     from polaris.kernelone.llm.engine.stream_executor import StreamConfig, StreamState
 
@@ -20,7 +20,6 @@ from polaris.kernelone.llm.engine.stream import (
     _STREAM_TIMEOUT,
     _TOKEN_TIMEOUT,
     MAX_BUFFER_SIZE,
-    BackpressureBuffer,
     LLMStreamResult,
     StreamConfig,
     StreamEventType,
@@ -55,7 +54,6 @@ __all__ = [
     "_MAX_PENDING_TOOL_CALLS",
     "_STREAM_TIMEOUT",
     "_TOKEN_TIMEOUT",
-    "BackpressureBuffer",
     "LLMStreamResult",
     "StreamConfig",
     "StreamEventType",

@@ -106,7 +106,7 @@
 | CONTRACT-011 | 契约 | `director.execution` 仍有向后兼容存根导入 `director.tasking.internal` |
 | CONTRACT-014 | 契约 | `audit.verdict` 声明过宽的 state_owners 和 effects |
 | DEBT-004 | 债务 | `domain/__init__.py` 同时导出 entities 和 models 的 Task 类 |
-| DEBT-005 | 债务 | `BackpressureBuffer` deprecated，需迁移到 `AsyncBackpressureBuffer` |
+| DEBT-005 | 已关闭 | 旧 stream backpressure buffer 已删除，统一使用 `AsyncBackpressureBuffer` |
 | DEBT-006 | 债务 | `ScriptDirectorAdapter` deprecated |
 | DEBT-007 | 债务 | `storage.policy` artifact lifecycle 函数 deprecated |
 | DEBT-008 | 债务 | `RuntimeBackend` 别名 deprecated，应使用 `RuntimeBackendPort` |

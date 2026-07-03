@@ -7,7 +7,6 @@ This module provides unified streaming LLM invocation capability:
 - StreamConfig: Immutable configuration
 - StreamState: State machine enum
 - LLMStreamResult: Result validation dataclass
-- BackpressureBuffer: Thread-safe buffer with backpressure control
 """
 
 from __future__ import annotations
@@ -15,8 +14,6 @@ from __future__ import annotations
 from polaris.kernelone.llm.engine.contracts import StreamEventType
 from polaris.kernelone.llm.providers import get_provider_manager
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
-
-from .backpressure import BackpressureBuffer
 
 # Core exports
 from .config import (
@@ -56,7 +53,6 @@ __all__ = [
     "_MAX_PENDING_TOOL_CALLS",
     "_STREAM_TIMEOUT",
     "_TOKEN_TIMEOUT",
-    "BackpressureBuffer",
     "EventStreamer",
     "LLMStreamResult",
     "SerializationFormat",

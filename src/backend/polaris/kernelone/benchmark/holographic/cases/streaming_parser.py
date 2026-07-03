@@ -16,7 +16,6 @@ from polaris.kernelone.benchmark.holographic_models import HolographicCase
 from polaris.kernelone.benchmark.holographic_stats import summarize_samples
 from polaris.kernelone.llm.engine.contracts import AIStreamEvent
 from polaris.kernelone.llm.engine.normalizer import ResponseNormalizer
-from polaris.kernelone.llm.engine.stream.backpressure import BackpressureBuffer
 from polaris.kernelone.llm.engine.stream.event_streamer import (
     EventStreamer,
     SerializationFormat,
@@ -101,7 +100,7 @@ async def _exec_tc_nw_001(case: HolographicCase) -> dict[str, float]:
 
 
 async def _run_backpressure_scenario(
-    buffer: BackpressureBuffer | AsyncBackpressureBuffer,
+    buffer: AsyncBackpressureBuffer,
     *,
     producer_count: int,
     items_per_producer: int,
@@ -124,10 +123,7 @@ async def _run_backpressure_scenario(
         nonlocal consumed
         while not finished.is_set() or buffer.size > 0:
             await asyncio.sleep(consumer_delay_s)
-            if isinstance(buffer, AsyncBackpressureBuffer):
-                drained = await buffer.drain()
-            else:
-                drained = buffer.drain()
+            drained = await buffer.drain()
             consumed += len(drained)
 
     consumer_task = asyncio.create_task(consumer())
@@ -145,15 +141,8 @@ async def _run_backpressure_scenario(
 async def _exec_tc_nw_002(case: HolographicCase) -> dict[str, float]:
     producer_count = 120
     items_per_producer = max(20, min(case.min_samples, 120))
-    lock_buffer = BackpressureBuffer(max_size=100, backoff_seconds=0.0008)
     async_buffer = AsyncBackpressureBuffer(max_size=100, backoff_seconds=0.0008)
 
-    lock_throughput, lock_wait_p99 = await _run_backpressure_scenario(
-        lock_buffer,
-        producer_count=producer_count,
-        items_per_producer=items_per_producer,
-        consumer_delay_s=0.0012,
-    )
     async_throughput, async_wait_p99 = await _run_backpressure_scenario(
         async_buffer,
         producer_count=producer_count,
@@ -161,15 +150,12 @@ async def _exec_tc_nw_002(case: HolographicCase) -> dict[str, float]:
         consumer_delay_s=0.0012,
     )
 
-    throughput_ratio = async_throughput / max(lock_throughput, 1e-9)
-    wait_ratio = async_wait_p99 / max(lock_wait_p99, 1e-9)
+    total_items = producer_count * items_per_producer
     return {
-        "threading_lock_throughput_events_s": lock_throughput,
+        "async_queue_consumed_items": float(total_items),
         "async_queue_throughput_events_s": async_throughput,
-        "async_queue_throughput_ratio": throughput_ratio,
-        "threading_lock_wait_p99_ms": lock_wait_p99,
         "async_queue_wait_p99_ms": async_wait_p99,
-        "async_queue_wait_p99_ratio": wait_ratio,
+        "async_queue_backpressure_events": float(async_buffer.backpressure_events),
     }
 
 

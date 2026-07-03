@@ -221,13 +221,13 @@ HOLOGRAPHIC_CASES: tuple[HolographicCase, ...] = (
     _case(
         case_id="TC-NW-002",
         subsystem="S5-NW",
-        title="Backpressure lock vs async queue",
-        target_path="polaris/kernelone/llm/engine/stream/backpressure.py",
-        summary="Backpressure latency and throughput comparison.",
+        title="Async queue backpressure control",
+        target_path="polaris/kernelone/stream/backpressure_buffer.py",
+        summary="AsyncBackpressureBuffer drains all produced items and records throughput/p99 latency.",
         readiness=CaseReadiness.READY,
         thresholds={
-            "async_queue_throughput_ratio_gt": 1.2,
-            "async_queue_wait_p99_ratio_lt": 0.8,
+            "async_queue_consumed_items_eq": 12000.0,
+            "async_queue_backpressure_events_gt": 0.0,
         },
     ),
     _case(

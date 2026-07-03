@@ -48,7 +48,7 @@ Facade: orchestration_core.py (42行)
 polaris/kernelone/llm/engine/stream/
 ├── __init__.py (79行)
 ├── config.py (239行) - StreamConfig, StreamState
-├── backpressure.py (137行) - BackpressureBuffer
+├── ../stream/backpressure_buffer.py - AsyncBackpressureBuffer
 ├── tool_accumulator.py (165行) - _ToolCallAccumulator
 ├── result_tracker.py (217行) - _StreamResultTracker
 └── executor.py (695行) - StreamExecutor核心

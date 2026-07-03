@@ -21,7 +21,7 @@
 | 扩展: 优雅关闭 | ✅ 完成 | `EventStreamer.close(timeout=...)` |
 | 扩展: 订阅者限制 | ✅ 完成 | `EventStreamer(max_subscriptions=N)` |
 | 扩展: 背压统计 | ✅ 完成 | `get_stats()` 含 `total_dropped` |
-| 废弃: 旧 BackpressureBuffer | ✅ 完成 | 添加 `DeprecationWarning` |
+| 废弃: 旧 stream backpressure buffer | ✅ 完成 | 已硬切删除，统一使用 `AsyncBackpressureBuffer` |
 
 ---
 
@@ -32,7 +32,7 @@
 | 缺陷 | 位置 | 影响 |
 |------|------|------|
 | 无 SSE HTTP 序列化层 | `stream/executor.py` 输出 `AIStreamGenerator` 但无 SSE 端点 | 前端无法直接消费 `AIStreamEvent` |
-| `threading.Lock` 而非 `asyncio.Queue` | `backpressure.py:42` `BackpressureBuffer._buffer_lock` | GIL 竞争，async 上下文效率低 |
+| `threading.Lock` 而非 `asyncio.Queue` | 旧 stream backpressure buffer | GIL 竞争，async 上下文效率低 |
 | 单一消费者模式 | `StreamExecutor.invoke_stream()` | 无法多路复用（thinking + tool_log + 最终答案同时推送） |
 | 无 `EventStreamer` 类 | 缺失 | `AIStreamEvent` → SSE `data: {...}\n\n` 转换缺失 |
 
@@ -123,7 +123,7 @@ Producer (StreamExecutor)          Consumer 1 (Thinking Display)
 | `kernelone/llm/engine/stream/executor.py::StreamEventType` | 事件类型枚举 |
 | `kernelone/llm/engine/stream/config.py::StreamConfig` | 配置注入 |
 | `kernelone/llm/engine/stream/tool_accumulator.py::_ToolCallAccumulator` | Tool Call 增量组装（直接使用） |
-| `kernelone/llm/engine/stream/backpressure.py::BackpressureBuffer` | 替换为 asyncio.Queue |
+| stream backpressure buffer | 已替换为 `AsyncBackpressureBuffer` |
 
 ---
 
@@ -285,7 +285,7 @@ class EventStreamer:
 - [x] 实现 `asyncio.Queue` 基础多路复用
 
 ### Phase 2: 背压控制升级
-- [x] 将 `BackpressureBuffer` 迁移到 `asyncio.Queue`
+- [x] 将旧 stream backpressure buffer 迁移到 `asyncio.Queue`
 - [x] 保持 `feed()`/`drain()` 接口兼容
 - [x] 添加 `maxsize` 参数到 `EventStreamer`
 
@@ -306,7 +306,7 @@ class EventStreamer:
 
 | 风险 | 缓解措施 |
 |------|----------|
-| `threading.Lock` 替换为 `asyncio.Queue` 影响现有代码 | 保持 `BackpressureBuffer` 接口兼容，新增 `AsyncBackpressureBuffer` |
+| `threading.Lock` 替换为 `asyncio.Queue` 影响现有代码 | 旧实现已硬切删除，调用方统一使用 `AsyncBackpressureBuffer` |
 | 多路复用引入复杂性 | 先实现单消费者 SSE，Phase 2 再扩展广播 |
 | 现有 `StreamExecutor` 不支持广播 | 不修改原类，新增 `BroadcastStreamExecutor` 包装 |
 

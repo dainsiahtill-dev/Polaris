@@ -20,7 +20,7 @@
 - S4: `AkashicSemanticMemory.delete()` 存在 fire-and-forget 幽灵数据 bug
 - S6: `ResponseNormalizer` 与 `LLMResponseParser` 95% 代码重复
 - S6: `_parse_json_text()` 使用 `[^{}]*` 正则，深度仅支持单层
-- S5: `BackpressureBuffer` 使用 `threading.Lock` 而非 `asyncio.Queue`
+- S5: 旧 stream backpressure 使用 `threading.Lock` 而非 `asyncio.Queue`
 - S7: `Recording` 缺少 HTTP 协议细节（method/URL/headers/body/status_code）
 - S12: `flywheel/` 模块完全不存在
 - S1: `retry_policy.py` 与 `resilience.py` 重试延迟公式不一致
@@ -119,15 +119,13 @@ def _parse_json_text(text: str) -> list[str]:
 
 ---
 
-#### P0-4: S5 - BackpressureBuffer 使用 threading.Lock
+#### P0-4: S5 - 旧 stream backpressure 使用 threading.Lock
 
-**文件**: `polaris/kernelone/llm/engine/stream/backpressure.py:60`
+**状态**: 已硬切删除旧实现
 
 **问题**: `threading.Lock` 在 async 上下文中导致 GIL 竞争。
 
-**修复**: 已有 `AsyncBackpressureBuffer` 替代品（`sse_streamer.py:376`）。需要：
-1. 在 `BackpressureBuffer` 中添加弃用警告
-2. 将所有调用方迁移到 `AsyncBackpressureBuffer`
+**修复**: 所有调用方已迁移到 `AsyncBackpressureBuffer`，旧模块不再保留。
 
 ---
 
@@ -284,7 +282,7 @@ async def add(self, text: str, *, metadata=None, importance=5) -> str:
 | 修复 delete() 幽灵数据 bug | S4 | P0 | 2h |
 | 合并 ResponseNormalizer/LLMResponseParser | S6 | P0 | 3h |
 | 修复 _parse_json_text() 深度限制 | S6 | P0 | 1h |
-| 迁移 BackpressureBuffer 到 AsyncBackpressureBuffer | S5 | P0 | 2h |
+| 迁移旧 stream backpressure 到 AsyncBackpressureBuffer | S5 | P0 | 已完成 |
 
 ### Phase 1: 核心架构（P1 缺陷）
 
@@ -338,7 +336,7 @@ pytest polaris/tests/test_flywheel.py -v  # 新建测试
 | 风险 | 等级 | 缓解策略 |
 |-----|------|---------|
 | 删除 response_parser.py 可能破坏现有导入 | HIGH | 先添加 LLMResponseParser = ResponseNormalizer 别名，再删除重复代码 |
-| BackpressureBuffer 迁移影响流式性能 | MEDIUM | 保留旧实现并添加 DeprecationWarning，新实现完全独立 |
+| stream backpressure 迁移影响流式性能 | MEDIUM | 旧实现已删除，holographic TC-NW-002 直接验证 AsyncBackpressureBuffer |
 | flywheel/ 模块设计需要更多讨论 | MEDIUM | 先实现核心 FeedbackCollector，RingBuffer 和 JSONL 后置 |
 
 ---
@@ -353,13 +351,13 @@ pytest polaris/tests/test_flywheel.py -v  # 新建测试
 **方案**: LLMResponseParser 继承 ResponseNormalizer，删除重复代码
 **影响**: 需要更新所有 LLMResponseParser 的导入
 
-### ADR-0073: BackpressureBuffer 迁移策略
+### ADR-0073: stream backpressure 迁移策略
 
 **日期**: 2026-04-04
-**状态**: 拟议
+**状态**: 已完成
 **问题**: threading.Lock 在 async 上下文中导致 GIL 竞争
-**方案**: 迁移所有调用方到 AsyncBackpressureBuffer，保留旧实现用于向后兼容
-**影响**: 需要遍历所有 backpressure.py 调用方
+**方案**: 迁移所有调用方到 AsyncBackpressureBuffer，并删除旧实现
+**影响**: 旧 LLM stream package root 不再 re-export threading.Lock backpressure buffer
 
 ---
 

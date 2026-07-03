@@ -19,9 +19,10 @@ polaris/kernelone/llm/engine/
 │   ├── __init__.py
 │   ├── executor.py              # StreamExecutor核心 (400行)
 │   ├── config.py                # StreamConfig, StreamState (200行)
-│   ├── backpressure.py          # BackpressureBuffer (350行)
 │   ├── tool_accumulator.py      # _ToolCallAccumulator (250行)
-│   └── result_tracker.py        # _StreamResultTracker (200行)
+│   ├── result_tracker.py        # _StreamResultTracker (200行)
+└── ../../stream/
+    └── backpressure_buffer.py   # AsyncBackpressureBuffer
 ```
 
 ### 核心契约
@@ -42,18 +43,15 @@ class StreamState(Enum):
     COMPLETED = "completed"
     ERROR = "error"
 
-# backpressure.py
-class BackpressureBuffer:
-    """背压缓冲区 - 防止内存溢出。"""
+# polaris.kernelone.stream.backpressure_buffer
+class AsyncBackpressureBuffer:
+    """asyncio.Queue 背压缓冲区 - 防止内存溢出。"""
 
-    __slots__ = ('_buffer', '_max_size', '_dropped')
+    async def feed(self, chunk: str) -> None:
+        """等待容量并写入块。"""
 
-    def push(self, chunk: str) -> bool:
-        """推入块，返回是否成功。"""
-        if len(self._buffer) >= self._max_size:
-            self._dropped += 1
-            return False
-        self._buffer.append(chunk)
+    def feed_sync(self, chunk: str) -> bool:
+        """非阻塞写入块，返回是否成功。"""
         return True
 
     def flush(self) -> str:
