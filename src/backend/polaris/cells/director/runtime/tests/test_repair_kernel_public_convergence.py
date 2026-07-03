@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import polaris.cells.director.runtime.public.service as runtime_public_service
 import pytest
 from polaris.cells.director.runtime.internal.repair_kernel import (
     PatchComposer,
@@ -577,6 +579,63 @@ def test_public_convergence_preserves_typed_initial_diagnostics_through_runtime_
     assert result.final_diagnostics[0].path == _RELATIVE_PATH
     assert result.final_diagnostics[0].metadata["stable_issue_id"] == "typed-boundary-issue"
     assert target.read_text(encoding="utf-8") == _BROKEN_CONTENT
+
+
+def test_public_convergence_passes_typed_issues_as_repair_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run_runtime_repair_convergence(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return SimpleNamespace(
+            status="already_clean",
+            converged=True,
+            final_diagnostics=tuple(kwargs.get("repair_diagnostics") or ()),
+            receipts=(),
+            rounds=(),
+            max_rounds=kwargs.get("max_rounds", 3),
+            metadata={},
+        )
+
+    monkeypatch.setattr(
+        runtime_public_service,
+        "run_runtime_repair_convergence",
+        fake_run_runtime_repair_convergence,
+    )
+
+    result = run_director_repair_convergence(
+        RunDirectorRepairConvergenceCommandV1(
+            task_id="task-public-convergence-typed-boundary",
+            workspace=str(tmp_path),
+            source_tools=(_SOURCE_TOOL,),
+            artifact_quality_errors=(),
+            artifact_quality_issues=(
+                {
+                    "source": "artifact_quality",
+                    "code": "typescript_ts1005",
+                    "message": "',' expected.",
+                    "path": _RELATIVE_PATH,
+                    "metadata": {"raw": _QUALITY_ERROR, "line": 6, "column": 47},
+                },
+            ),
+            base_files={_RELATIVE_PATH: _BROKEN_CONTENT},
+            allowed_paths=(_RELATIVE_PATH,),
+        ),
+        writer=_writer(tmp_path),
+        verifier=lambda _: DirectorRepairVerifierSnapshotInputV1(
+            command=(),
+            exit_code=0,
+            raw_output_ref="runtime/verifier/not-used.log",
+            metadata=_valid_verifier_metadata(),
+        ),
+    )
+
+    assert result.ok is True
+    assert captured["artifact_quality_errors"] == ()
+    assert captured["repair_diagnostics"][0].code == "typescript_ts1005"
+    assert captured["repair_diagnostics"][0].path == _RELATIVE_PATH
 
 
 def test_public_convergence_verifier_accepts_typed_residual_issues(tmp_path: Path) -> None:

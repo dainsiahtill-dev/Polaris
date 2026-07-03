@@ -2540,7 +2540,9 @@ def run_director_repair_convergence(
             source_tools=command.source_tools,
             workspace=command.workspace,
             base_files=command.base_files,
-            artifact_quality_errors=_artifact_quality_errors_from_convergence_command(command),
+            artifact_quality_errors=tuple(
+                str(item) for item in command.artifact_quality_errors if str(item or "").strip()
+            ),
             verifier=_verifier,
             writer=writer,
             editor=editor,
@@ -3305,16 +3307,6 @@ def _artifact_quality_errors_from_command(
         return artifact_errors
     if command.diagnostics:
         return tuple(_artifact_quality_error_from_diagnostic(diagnostic) for diagnostic in command.diagnostics)
-    return tuple(
-        _artifact_quality_error_from_diagnostic(diagnostic)
-        for diagnostic in normalize_director_repair_issue_diagnostics(command.artifact_quality_issues)
-    )
-
-
-def _artifact_quality_errors_from_convergence_command(command: RunDirectorRepairConvergenceCommandV1) -> tuple[str, ...]:
-    artifact_errors = tuple(str(item) for item in command.artifact_quality_errors if str(item or "").strip())
-    if artifact_errors:
-        return artifact_errors
     return tuple(
         _artifact_quality_error_from_diagnostic(diagnostic)
         for diagnostic in normalize_director_repair_issue_diagnostics(command.artifact_quality_issues)
