@@ -16,6 +16,7 @@ from polaris.cells.roles.kernel.internal.policy.layer.exploration import (
     EDIT_TOOLS,
     ExplorationToolPolicy,
 )
+from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
 
 class TestEditFailureDiagnosticOverride:
@@ -75,18 +76,10 @@ class TestEditFailureDiagnosticOverride:
         assert len(approved) == 0
         assert len(blocked) == 1
 
-    def test_edit_tools_list_contains_expected_tools(self):
-        """Verify EDIT_TOOLS contains expected edit tools."""
-        expected = {
-            "precision_edit",
-            "apply_patch",
-            "edit_file",
-            "replace",
-            "replace_in_file",
-            "write_file",
-            "create_file",
-        }
-        assert expected == EDIT_TOOLS
+    def test_edit_tools_observation_uses_canonical_write_tools(self):
+        """Verify diagnostic override observes canonical write tools."""
+        assert WRITE_TOOLS <= EDIT_TOOLS
+        assert {"replace", "replace_in_file"} <= EDIT_TOOLS
 
     def test_diagnostic_override_only_for_file_read_tools(self):
         """Diagnostic override should only apply to file_read category tools."""

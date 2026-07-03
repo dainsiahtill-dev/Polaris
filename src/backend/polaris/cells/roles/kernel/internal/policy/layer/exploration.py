@@ -22,6 +22,7 @@ import os
 from typing import Any
 
 from polaris.cells.roles.kernel.internal.circuit_breaker import normalize_tool_signature
+from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
 from .core import CanonicalToolCall, PolicyViolation
 
@@ -66,18 +67,9 @@ EXPLORATION_TOOL_CATEGORIES: dict[str, frozenset[str]] = {
     ),
 }
 
-# 编辑工具列表 - 用于失败后的诊断读取例外
-EDIT_TOOLS: frozenset[str] = frozenset(
-    [
-        "precision_edit",
-        "apply_patch",
-        "edit_file",
-        "replace",
-        "replace_in_file",
-        "write_file",
-        "create_file",
-    ]
-)
+# 编辑/写入工具列表 - 用于失败后的诊断读取例外。
+# This is historical failure observation, not an active tool-admission list.
+EDIT_TOOLS: frozenset[str] = WRITE_TOOLS | frozenset({"replace", "replace_in_file"})
 
 
 class ExplorationToolPolicy:
