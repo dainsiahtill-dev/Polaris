@@ -38,7 +38,7 @@ def _create_rollback_guard(workspace: str) -> Any:
         create_rollback_guard,
     )
 
-    return create_rollback_guard(workspace, director_pool_mode=True)
+    return create_rollback_guard(workspace, use_memory_snapshots=True)
 
 
 async def _snapshot_files(rollback_guard: Any, director_id: str, files: list[str]) -> None:

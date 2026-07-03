@@ -69,9 +69,9 @@ def test_git_stash_guard_requires_git_repo(tmp_path: Path) -> None:
 
 
 def test_create_rollback_guard_factory() -> None:
-    guard_pool = create_rollback_guard("/tmp", director_pool_mode=True)
-    guard_serial = create_rollback_guard("/tmp", director_pool_mode=False)
-    assert isinstance(guard_pool, RollbackGuard)
+    guard_memory = create_rollback_guard("/tmp", use_memory_snapshots=True)
+    guard_serial = create_rollback_guard("/tmp", use_memory_snapshots=False)
+    assert isinstance(guard_memory, RollbackGuard)
     assert isinstance(guard_serial, GitStashRollbackGuard)
 
 

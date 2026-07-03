@@ -1,4 +1,4 @@
-"""Lightweight in-process event bus for DirectorPool observability.
+"""Lightweight in-process event bus for blueprint-local observability.
 
 This is a synchronous, local-only event bus. It avoids external
 dependencies (Redis, NATS) while providing a clean upgrade path:

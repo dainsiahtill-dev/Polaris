@@ -1,7 +1,7 @@
 """RollbackGuard system for DirectorTaskWorkflow.
 
 Provides two rollback strategies:
-- RollbackGuard: Director-level memory snapshot for parallel mode.
+- RollbackGuard: Director-level memory snapshot for task execution.
 - GitStashRollbackGuard: git stash fallback for serial degrade mode.
 """
 
@@ -197,9 +197,10 @@ class GitStashRollbackGuard:
 
 def create_rollback_guard(
     workspace: str,
-    director_pool_mode: bool = True,
+    *,
+    use_memory_snapshots: bool = True,
 ) -> RollbackGuard | GitStashRollbackGuard:
     """Factory function to create the appropriate rollback guard."""
-    if director_pool_mode:
+    if use_memory_snapshots:
         return RollbackGuard(workspace)
     return GitStashRollbackGuard(workspace)

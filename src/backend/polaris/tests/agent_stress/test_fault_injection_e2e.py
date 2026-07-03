@@ -2,9 +2,7 @@
 
 Deterministic chaos tests that inject faults via environment variables and
 direct API mocking to verify the fault-tolerance/recovery paths of:
-- DirectorPool (retry / reassign / split / abort)
 - RollbackGuard (snapshot + rollback)
-- ScopeConflictDetector (conflict detection + reassign)
 - TransactionKernel (tool failure → rollback)
 - ProjectionEngine (context budget → receipt offload)
 - TurnEngine (LLM timeout → fallback)
@@ -16,21 +14,12 @@ deterministically via env vars or direct method patching.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-# ---------------------------------------------------------------------------
-# Infrastructure imports (verified via codegraph_explore)
-# ---------------------------------------------------------------------------
-from polaris.cells.chief_engineer.blueprint.internal.director_pool import (
-    DirectorPool,
-    DirectorPoolConflictError,
-    RecoveryDecision,
-    ScopeConflictDetector,
-)
 from polaris.cells.chief_engineer.blueprint.internal.rollback_guard import (
     GitStashRollbackGuard,
     RollbackGuard,
@@ -38,25 +27,6 @@ from polaris.cells.chief_engineer.blueprint.internal.rollback_guard import (
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
 from polaris.kernelone.context.projection_engine import ProjectionEngine
 from polaris.kernelone.context.receipt_store import ReceiptStore
-
-# ---------------------------------------------------------------------------
-# Fake task / blueprint stubs (mirrors test_director_pool_chaos.py)
-# ---------------------------------------------------------------------------
-
-
-class FakeTask:
-    """Minimal task stub matching what DirectorPool.assign_task expects."""
-
-    def __init__(self, task_id: str, target_files: list[str] | None = None) -> None:
-        self.id = task_id
-        self.target_files = target_files or []
-
-
-class FakeBlueprint:
-    """Minimal blueprint stub for assign_task."""
-
-    pass
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -81,20 +51,6 @@ def rollback_guard(workspace: Path) -> RollbackGuard:
 def git_stash_guard(workspace: Path) -> GitStashRollbackGuard:
     """Fresh GitStashRollbackGuard scoped to the test workspace."""
     return GitStashRollbackGuard(str(workspace))
-
-
-@pytest.fixture
-def scope_detector() -> ScopeConflictDetector:
-    """Fresh ScopeConflictDetector (no shared state)."""
-    return ScopeConflictDetector()
-
-
-@pytest.fixture
-def director_pool(workspace: Path) -> DirectorPool:
-    """DirectorPool with 3 directors, no shared state."""
-    pool = DirectorPool(workspace=str(workspace), max_directors=3)
-    pool.initialize_directors()
-    return pool
 
 
 @pytest.fixture
@@ -157,38 +113,7 @@ async def test_network_partition_triggers_rollback(
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — OOM triggers director split
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_oom_triggers_director_split(director_pool: DirectorPool) -> None:
-    """Inject OOM fault and verify handle_failure returns action='split'.
-
-    Scenario: MEMORY_LIMIT_MB=50 causes a MemoryError during Director execution.
-    The DirectorPool.handle_failure() should classify this as an OOM and return
-    a RecoveryDecision with action='split', instructing the caller to decompose
-    the task into smaller subtasks.
-
-    Method: Assign a task, then call handle_failure() with a MemoryError and
-    assert the decision.action == "split".
-    """
-    # Arrange: assign a task to a director
-    task = FakeTask("T-OOM-1", ["big_file.py"])
-    director_id = await director_pool.assign_task(task, FakeBlueprint())
-    assert director_id is not None
-
-    # Act: simulate OOM during execution
-    decision = director_pool.handle_failure("T-OOM-1", MemoryError("out of memory"))
-
-    # Assert: pool correctly identifies OOM and recommends split
-    assert isinstance(decision, RecoveryDecision)
-    assert decision.action == "split"
-    assert "OOM" in decision.reason or "Memory" in decision.reason
-
-
-# ---------------------------------------------------------------------------
-# Test 3 — LLM timeout triggers fallback
+# Test 2 — LLM timeout triggers fallback
 # ---------------------------------------------------------------------------
 
 
@@ -231,7 +156,7 @@ async def test_llm_timeout_triggers_fallback(
 
 
 # ---------------------------------------------------------------------------
-# Test 4 — Tool failure triggers TransactionKernel rollback
+# Test 3 — Tool failure triggers TransactionKernel rollback
 # ---------------------------------------------------------------------------
 
 
@@ -313,50 +238,7 @@ async def test_tool_failure_triggers_transaction_rollback(
 
 
 # ---------------------------------------------------------------------------
-# Test 5 — Director conflict triggers reassign
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_director_conflict_triggers_reassign(
-    workspace: Path,
-    scope_detector: ScopeConflictDetector,
-    director_pool: DirectorPool,
-) -> None:
-    """Assign overlapping file scopes to 2 directors and verify reassign.
-
-    Scenario: Two directors are assigned tasks with overlapping file scopes.
-    ScopeConflictDetector should detect the conflict and raise
-    DirectorPoolConflictError. The pool should then release the conflicting
-    director and reassign to a different one.
-
-    Method:
-    1. Assign T-1 to D-1 with files=['a.py', 'b.py']
-    2. Try to assign T-2 to D-2 with files=['b.py', 'c.py'] (conflicts on b.py)
-    3. Verify DirectorPoolConflictError is raised
-    4. Release D-1 and retry, verify success
-    """
-    # Assign first task
-    task1 = FakeTask("T-CONFLICT-1", ["a.py", "b.py"])
-    did1 = await director_pool.assign_task(task1, FakeBlueprint())
-    assert did1 is not None
-
-    # Attempt to assign overlapping task should raise conflict error
-    task2 = FakeTask("T-CONFLICT-2", ["b.py", "c.py"])
-    with pytest.raises(DirectorPoolConflictError) as exc_info:
-        await director_pool.assign_task(task2, FakeBlueprint())
-
-    assert "b.py" in exc_info.value.conflicts
-
-    # Release the first director and retry — should succeed
-    director_pool._conflict_detector.release(did1)
-
-    did2 = await director_pool.assign_task(task2, FakeBlueprint())
-    assert did2 is not None
-
-
-# ---------------------------------------------------------------------------
-# Test 6 — Context budget exhaustion triggers receipt offload
+# Test 4 — Context budget exhaustion triggers receipt offload
 # ---------------------------------------------------------------------------
 
 
@@ -400,8 +282,6 @@ async def test_context_budget_exhaustion_triggers_receipt_offload(
     assert retrieved == large_content
 
     # Now test with ProjectionEngine.build_turns directly using a fake event
-    from dataclasses import dataclass
-
     @dataclass
     class FakeToolEvent:
         event_id: str
@@ -409,7 +289,7 @@ async def test_context_budget_exhaustion_triggers_receipt_offload(
         role: str
         content: str
         route: str = "tool"
-        metadata: dict = None
+        metadata: dict[str, Any] | None = None
 
         def __post_init__(self) -> None:
             if self.metadata is None:
