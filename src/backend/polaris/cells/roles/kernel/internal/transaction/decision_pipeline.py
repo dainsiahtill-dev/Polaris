@@ -50,7 +50,19 @@ from polaris.cells.roles.kernel.public.turn_events import TurnEvent, TurnPhaseEv
 logger = logging.getLogger(__name__)
 
 
-def _native_tool_call_count(response: RawLLMResponse) -> int:
+def _native_tool_call_envelopes_from_metadata(metadata: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(metadata, Mapping):
+        return []
+    value = metadata.get("native_tool_call_envelopes")
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, Mapping)]
+
+
+def _native_tool_call_count(response: RawLLMResponse, metadata: Mapping[str, Any] | None = None) -> int:
+    native_envelopes = _native_tool_call_envelopes_from_metadata(metadata)
+    if native_envelopes:
+        return len(native_envelopes)
     native_calls = _native_tool_calls_from_response(response)
     return len(native_calls) if isinstance(native_calls, list) else 0
 
@@ -71,10 +83,11 @@ def _native_tool_calls_from_response(response: Any) -> list[dict[str, Any]]:
     return []
 
 
-def _provider_response_hash(response: RawLLMResponse) -> str:
+def _provider_response_hash(response: RawLLMResponse, metadata: Mapping[str, Any] | None = None) -> str:
     payload = {
         "content": getattr(response, "content", ""),
         "model": getattr(response, "model", ""),
+        "native_tool_call_envelopes": _native_tool_call_envelopes_from_metadata(metadata),
         "native_tool_calls": _native_tool_calls_from_response(response),
         "thinking": getattr(response, "thinking", None),
     }
@@ -159,9 +172,9 @@ async def run_decision_pipeline(
 
     # === Phase 3: 解码决策 ===
     decision = probe_decision if corrective_ask is None else decoder.decode(llm_response, TurnId(turn_id))
-    native_tool_call_count = _native_tool_call_count(llm_response)
     decision_metadata = dict(decision.get("metadata") or {})
-    decision_metadata.setdefault("provider_response_hash", _provider_response_hash(llm_response))
+    native_tool_call_count = _native_tool_call_count(llm_response, decision_metadata)
+    decision_metadata.setdefault("provider_response_hash", _provider_response_hash(llm_response, decision_metadata))
     decision_metadata.setdefault("native_tool_calls_count", native_tool_call_count)
     decision = _with_decision_metadata(decision, decision_metadata)
     if native_tool_call_count > 0 and tool_definitions and not decision.get("tool_batch"):

@@ -1293,9 +1293,9 @@ class StreamOrchestrator:
         # Reuse the probe decision when no corrective retry replaced the response
         # (decode is pure — identical input yields an identical decision).
         decision = probe_decision if corrective_ask is None else self.decoder.decode(llm_response, TurnId(turn_id))
-        native_tool_call_count = _native_tool_call_count(llm_response)
-        provider_response_hash = _provider_response_hash(llm_response)
         decision_metadata = dict(decision.get("metadata") or {})
+        native_tool_call_count = _native_tool_call_count(llm_response, decision_metadata)
+        provider_response_hash = _provider_response_hash(llm_response, decision_metadata)
         decision_metadata.setdefault("provider_response_hash", provider_response_hash)
         decision_metadata.setdefault("native_tool_calls_count", native_tool_call_count)
         decision = dict(decision)
