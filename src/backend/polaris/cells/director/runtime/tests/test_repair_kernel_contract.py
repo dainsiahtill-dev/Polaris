@@ -248,6 +248,21 @@ def test_public_repair_diagnostics_preserve_kernelone_rust_issue_locations() -> 
     assert diagnostics[0].metadata["raw"] == raw_error.strip()
 
 
+def test_public_repair_diagnostics_preserve_kernelone_go_compile_issue() -> None:
+    raw_error = "engine/main.go:10:5: undefined: Weather"
+    issues = artifact_quality_issues_from_errors((raw_error,))
+
+    diagnostics = normalize_director_repair_issue_diagnostics(issues)
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].code == "go_compile_error"
+    assert diagnostics[0].path == "engine/main.go"
+    assert diagnostics[0].metadata["line"] == 10
+    assert diagnostics[0].metadata["column"] == 5
+    assert diagnostics[0].metadata["language"] == "go"
+    assert diagnostics[0].metadata["raw"] == raw_error
+
+
 def test_public_repair_diagnostics_preserve_import_issue_metadata() -> None:
     issues = artifact_quality_issues_from_errors(
         (

@@ -429,9 +429,17 @@ class ArtifactQualityEvidence:
 
 _ARTIFACT_QUALITY_ERROR_PREFIX = "Artifact quality scan failed:"
 _ARTIFACT_QUALITY_PATH_EXTENSIONS = (
+    ".c",
     ".cjs",
+    ".cc",
+    ".cpp",
     ".css",
+    ".cxx",
     ".go",
+    ".h",
+    ".hh",
+    ".hpp",
+    ".hxx",
     ".html",
     ".htm",
     ".java",
@@ -501,6 +509,15 @@ def _artifact_quality_issue_code(message: str) -> str:
     rust_match = _ARTIFACT_QUALITY_RUST_ERROR_RE.search(message)
     if rust_match:
         return f"rust_{str(rust_match.group('code') or '').lower()}"
+    compiler_path = _artifact_quality_issue_path(message)
+    if compiler_path:
+        compiler_suffix = Path(compiler_path).suffix.lower()
+        if compiler_suffix == ".go":
+            return "go_compile_error"
+        if compiler_suffix == ".java" and "error:" in normalized:
+            return "java_compile_error"
+        if compiler_suffix in {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}:
+            return "cpp_compile_error"
     if "typescript project typecheck failed" in normalized:
         return "typescript_project_typecheck_failed"
     if "syntax error" in normalized or "invalid json" in normalized:
@@ -608,6 +625,8 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
         rust_match = _ARTIFACT_QUALITY_RUST_ERROR_RE.search(message)
         if rust_match:
             metadata["diagnostic_code"] = str(rust_match.group("code") or "").strip()
+    elif code in {"go_compile_error", "java_compile_error", "cpp_compile_error"}:
+        metadata["language"] = code.removesuffix("_compile_error")
     return {key: value for key, value in metadata.items() if value}
 
 

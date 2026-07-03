@@ -117,6 +117,33 @@ def test_artifact_quality_issue_projection_extracts_rust_compiler_code_and_locat
     assert issues[0]["metadata"] == {"raw": error.strip(), "diagnostic_code": "E0583"}
 
 
+def test_artifact_quality_issue_projection_extracts_language_compile_errors() -> None:
+    cases = (
+        ("engine/main.go:10:5: undefined: Weather", "go_compile_error", "engine/main.go", 10, 5, "go"),
+        ("src/Main.java:3: error: cannot find symbol", "java_compile_error", "src/Main.java", 3, None, "java"),
+        (
+            "src/main.cpp:4:5: error: 'cout' was not declared in this scope",
+            "cpp_compile_error",
+            "src/main.cpp",
+            4,
+            5,
+            "cpp",
+        ),
+    )
+
+    for error, code, path, line, column, language in cases:
+        issues = artifact_quality_issues_from_errors((error,))
+
+        assert issues[0]["code"] == code
+        assert issues[0]["path"] == path
+        assert issues[0]["line"] == line
+        if column is None:
+            assert "column" not in issues[0]
+        else:
+            assert issues[0]["column"] == column
+        assert issues[0]["metadata"] == {"raw": error, "language": language}
+
+
 def test_artifact_quality_issue_projection_extracts_declared_target_metadata() -> None:
     error = "Artifact quality scan failed: declared target file missing 'src/main.py' is missing"
 
