@@ -608,17 +608,7 @@ async def emit_llm_event(
     return await bus.emit(event, priority=priority)
 
 
-# =============================================================================
-# Aliases for backward compatibility
-# =============================================================================
-
-# Keep old names as aliases
-LLMAuditInterceptor = LLMCallInterceptor
-LLMAuditTracker = LLMCallTracker
-
 __all__ = [
-    "LLMAuditInterceptor",  # backward compat
-    "LLMAuditTracker",  # backward compat
     "LLMCallInterceptor",
     "LLMCallTracker",
     "emit_llm_event",

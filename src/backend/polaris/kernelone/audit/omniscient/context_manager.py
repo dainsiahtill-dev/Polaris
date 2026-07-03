@@ -412,7 +412,7 @@ class _AuditContextScope:
     """Async context manager for managing unified audit context lifecycle.
 
     Usage:
-        async with AuditContextScope(run_id="run-123", workspace="/path"):
+        async with audit_context_scope(run_id="run-123", workspace="/path"):
             ctx = get_current_audit_context()
             # ctx.run_id == "run-123" — propagates to all async children
         # Context automatically cleared on exit
@@ -550,20 +550,7 @@ class ThreadAuditContextScope:
         self._previous_context = None
 
 
-# =============================================================================
-# Backward compatibility aliases
-# =============================================================================
-
-# Keep old AuditContext name as alias for migration
-AuditContext = UnifiedAuditContext
-
-# Keep old context manager name as alias
-AuditContextManager = _AuditContextScope
-AuditContextScope = _AuditContextScope  # backward compat alias
-
 __all__ = [
-    "AuditContext",  # backward compat alias
-    "AuditContextScope",  # backward compat alias
     "ThreadAuditContextScope",
     "UnifiedAuditContext",
     "UnifiedContextFactory",

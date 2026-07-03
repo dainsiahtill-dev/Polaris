@@ -227,6 +227,7 @@ used as a second tool fact source.
 | Workflow-engine handler registry alias | Closed by LR-110 | `workflow_engine` exports the concrete `CellHandlerRegistry` and DI protocol `HandlerRegistryPort`; the generic `HandlerRegistry` alias is removed. | Do not restore `workflow_engine.HandlerRegistry`; import `CellHandlerRegistry` for the Cell implementation or `HandlerRegistryPort` for the KernelOne DI protocol. |
 | Tool-execution short error aliases | Closed by LR-111 | Tool execution exports descriptive validator error constants such as `ERROR_STRING_TOO_LONG` and `ERROR_INTEGER_TOO_SMALL`; short aliases are removed. | Do not restore `ERROR_MIN_LENGTH`, `ERROR_MAX_LENGTH`, `ERROR_PATTERN`, `ERROR_MINIMUM`, or `ERROR_MAXIMUM`; use descriptive validator constants. |
 | KernelOne runtime shared-types facade | Closed by LR-112 | `polaris.kernelone.runtime.shared_types` is removed; shared terminal, text, and path helpers are owned by `polaris.kernelone.shared.*`. | Do not restore `runtime/shared_types.py`; import from `polaris.kernelone.shared.terminal`, `shared.text_utils`, or `shared.path_utils`. |
+| Omniscient audit compatibility aliases | Closed by LR-113 | `context_manager.py` exports only `UnifiedAuditContext` / `audit_context_scope`, and `llm_interceptor.py` exports only `LLMCallInterceptor` / `LLMCallTracker`; provider runtime imports `LLMStrategy` from its schema source. | Do not restore `AuditContext = UnifiedAuditContext`, `AuditContextManager`, `AuditContextScope`, `LLMAuditInterceptor = LLMCallInterceptor`, or `LLMAuditTracker`; use explicit current audit context and LLM call telemetry names. |
 | Arsenal route aliases | Closed by LR-27 | Arsenal product calls use `/arsenal/v2/*`; non-v2 Arsenal aliases are no longer registered. | Keep Arsenal endpoints under the router's canonical `/arsenal/v2/*` namespace; do not add parallel non-v2 aliases. |
 | Factory run route aliases | Closed by LR-28 | Factory run operations use `/v2/factory/runs*`; old `/factory/runs*` aliases are no longer registered. | Factory run control-plane APIs must remain under `/v2/factory/runs*`; do not restore non-v2 aliases. |
 | Logs route aliases | Closed by LR-29 | Logs APIs use `/logs/v2/*`; old `/logs/*` aliases are no longer registered, and frontend `logsV2Service` targets the actual backend namespace. | Keep logs endpoints under `/logs/v2/*` unless the router itself is intentionally migrated; do not add parallel `/logs/*` aliases or `/v2/logs/*` callers. |
@@ -242,4 +243,4 @@ used as a second tool fact source.
 
 ## Next Closure Order
 
-Current intake is closed after LR-112. Reopen only with a new evidence-backed ledger item.
+Current intake is closed after LR-113. Reopen only with a new evidence-backed ledger item.

@@ -45,8 +45,8 @@ from typing import TYPE_CHECKING
 from polaris.infrastructure.llm import AppLLMRuntimeAdapter
 from polaris.kernelone.audit.omniscient.interceptors.llm_interceptor import (
     LLMCallTracker,
-    LLMStrategy,
 )
+from polaris.kernelone.audit.omniscient.schemas.llm_event import LLMStrategy
 from polaris.kernelone.llm import (
     KernelLLM,
     RuntimeProviderInvokeResult,
