@@ -58,6 +58,7 @@ from .helpers import (
     build_native_tool_call_envelope_payloads,
     extract_json_from_text,
     extract_native_tool_calls,
+    native_tool_call_name,
     resolve_tool_call_provider,
 )
 from .invoker_phases import FallbackLadderResult, read_response_status
@@ -137,21 +138,11 @@ def _required_tools_from_final_request_audit(audit: dict[str, Any]) -> list[str]
     return rows
 
 
-def _native_tool_call_name(call: dict[str, Any]) -> str:
-    direct = str(call.get("name") or "").strip()
-    if direct:
-        return direct
-    function = call.get("function")
-    if isinstance(function, dict):
-        return str(function.get("name") or "").strip()
-    return ""
-
-
 def _called_required_native_tool(native_tool_calls: list[dict[str, Any]], required_tools: list[str]) -> bool:
     required = {canonicalize_tool_name(name) for name in required_tools if str(name or "").strip()}
     if not required:
         return True
-    called = {canonicalize_tool_name(name) for call in native_tool_calls if (name := _native_tool_call_name(call))}
+    called = {canonicalize_tool_name(name) for call in native_tool_calls if (name := native_tool_call_name(call))}
     return bool(required & called)
 
 

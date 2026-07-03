@@ -139,7 +139,7 @@ class NativeToolCallEnvelopeV1:
         }
 
 
-def _native_tool_call_name(call: Mapping[str, Any]) -> str:
+def native_tool_call_name(call: Mapping[str, Any]) -> str:
     function = call.get("function")
     if isinstance(function, Mapping):
         name = function.get("name")
@@ -150,6 +150,9 @@ def _native_tool_call_name(call: Mapping[str, Any]) -> str:
         if name:
             return str(name).strip()
     return ""
+
+
+_native_tool_call_name = native_tool_call_name
 
 
 def _native_tool_call_arguments(call: Mapping[str, Any]) -> Any:
@@ -1371,5 +1374,6 @@ __all__ = [
     "build_native_tool_call_envelopes",
     "build_native_tool_schemas",
     "extract_native_tool_calls",
+    "native_tool_call_name",
     "resolve_tool_call_provider",
 ]

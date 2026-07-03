@@ -27,6 +27,7 @@ from .tool_helpers import (
     build_native_tool_call_envelopes,
     build_native_tool_schemas,
     extract_native_tool_calls,
+    native_tool_call_name,
     resolve_tool_call_provider,
 )
 
@@ -425,6 +426,7 @@ __all__ = [
     "extract_json_from_text",
     "extract_native_tool_calls",
     "messages_to_input",
+    "native_tool_call_name",
     "resolve_context_output_budget_tokens",
     "resolve_max_tokens",
     "resolve_platform_retry_max",

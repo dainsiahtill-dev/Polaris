@@ -376,6 +376,59 @@ def test_required_tool_not_called_error_allows_native_tool_call() -> None:
     assert error == ""
 
 
+def test_required_tool_not_called_error_allows_native_tool_name_alias() -> None:
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    profile.role_id = "director"
+    profile.provider_id = "openai"
+    profile.model = "gpt-4.1"
+    tool_schema = {"type": "function", "function": {"name": "write_file"}}
+    messages = [{"role": "user", "content": "TASK-1 target_files package.json Chief Engineer blueprint"}]
+    ai_request = Mock()
+    ai_request.context = {
+        "chat_messages": messages,
+        "required_tools": ["write_file"],
+        "tool_contract": {"required_tools": ["write_file"]},
+    }
+    ai_request.options = {"tools": [tool_schema], "tool_choice": "auto"}
+    ai_request.input = ""
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={"tools": [tool_schema], "tool_choice": "auto"},
+        ai_request=ai_request,
+        native_tool_schemas=[tool_schema],
+    )
+    response = SimpleNamespace(
+        raw={
+            "tool_calls": [
+                {
+                    "id": "call_write",
+                    "type": "function",
+                    "tool_name": "write_file",
+                    "arguments": {"path": "package.json", "content": "{}"},
+                }
+            ],
+            "model": "gpt-4.1",
+            "provider_id": "openai",
+        },
+        output="",
+        model="gpt-4.1",
+        provider_id="openai",
+    )
+
+    error = _required_tool_not_called_error(
+        prepared=prepared,
+        active_request=ai_request,
+        response=response,
+        profile=profile,
+    )
+
+    assert error == ""
+
+
 def test_required_tool_not_called_error_rejects_wrong_native_tool_call() -> None:
     profile = Mock()
     profile.max_context_tokens = 32768
