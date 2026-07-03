@@ -265,10 +265,6 @@ class ProjectBlueprint:
     evolution_roadmap: list[dict[str, Any]] = field(default_factory=list)  # 架构演进路线图
 
 
-# Backward compatibility alias
-_utc_now_iso = utc_now_str
-
-
 def _dedupe(items: Sequence[str]) -> list[str]:
     merged: list[str] = []
     for item in items:
@@ -724,7 +720,7 @@ def _analyze_file(
         unresolved_imports=_dedupe(unresolved_imports),
         symbols=symbols,
         checksum=_sha256(content) if exists else "",
-        updated_at=_utc_now_iso(),
+        updated_at=utc_now_str(),
     )
     return payload, _dedupe(missing_dependency_hints)
 
@@ -1217,7 +1213,7 @@ def _plan_module_evolution(
                         f"需要定义 {module_name} 的公共 API",
                     ],
                     "status": "proposed",
-                    "created_at": _utc_now_iso(),
+                    "created_at": utc_now_str(),
                     "related_modules": [module_name],
                 }
             )
@@ -1524,7 +1520,7 @@ def run_chief_engineer_analysis(
             scope_for_apply=scope_for_apply,
             verify_ready=verify_ready,
             continue_reason=continue_reason,
-            updated_at=_utc_now_iso(),
+            updated_at=utc_now_str(),
             context_pack=semantic_context,
             semantic_files=[f.get("path", "") for f in semantic_context.get("top_files", [])],
             incremental_analysis=incremental_analysis,
@@ -1569,7 +1565,7 @@ def run_chief_engineer_analysis(
         workspace=workspace_full,
         run_id=run_id,
         pm_iteration=int(pm_iteration or 0),
-        updated_at=_utc_now_iso(),
+        updated_at=utc_now_str(),
         files=files_payload,
         modules=modules_payload,
         tasks=tasks_payload,
