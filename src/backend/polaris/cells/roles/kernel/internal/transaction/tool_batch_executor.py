@@ -78,6 +78,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnId,
 )
 from polaris.cells.roles.kernel.public.turn_events import ErrorEvent, TurnEvent, TurnPhaseEvent
+from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -157,16 +158,18 @@ def _is_no_write_structured_turn(config: TransactionConfig, ledger: TurnLedger) 
 
 
 def _tool_requires_existing_file(tool_name: str) -> bool:
-    return tool_name in {
-        "read_file",
-        "repo_read_head",
-        "repo_read_slice",
-        "repo_read_tail",
-        "repo_read_around",
-        "file_exists",
-        "edit_file",
-        "precision_edit",
-    }
+    return tool_name in (
+        {
+            "read_file",
+            "repo_read_head",
+            "repo_read_slice",
+            "repo_read_tail",
+            "repo_read_around",
+            "file_exists",
+            "edit_file",
+        }
+        | DEPRECATED_WRITE_TOOLS
+    )
 
 
 _DIRECT_READ_TOOLS = {

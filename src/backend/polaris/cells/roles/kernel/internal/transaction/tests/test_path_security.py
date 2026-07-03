@@ -17,6 +17,7 @@ from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import 
     _resolve_existing_workspace_file,
     rewrite_existing_file_paths_in_invocations,
 )
+from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
 
 # ---------------------------------------------------------------------------
 # _resolve_existing_workspace_file 测试
@@ -115,6 +116,21 @@ class TestRewriteExistingFilePathsInInvocations:
             invocations: list[Any] = [{"tool_name": "read_file", "arguments": {"path": "a.txt"}}]
             result = rewrite_existing_file_paths_in_invocations(turn_id="t1", workspace=tmpdir, invocations=invocations)
             assert result[0]["arguments"]["path"] == "a.txt"
+
+    def test_deprecated_write_tools_still_use_existing_file_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nested_file = Path(tmpdir) / "nested" / "legacy.txt"
+            nested_file.parent.mkdir(parents=True, exist_ok=True)
+            nested_file.write_text("legacy", encoding="utf-8")
+            invocations: list[Any] = [
+                {"tool_name": tool_name, "arguments": {"file": nested_file.as_posix()}}
+                for tool_name in sorted(DEPRECATED_WRITE_TOOLS)
+            ]
+
+            result = rewrite_existing_file_paths_in_invocations(turn_id="t1", workspace=tmpdir, invocations=invocations)
+
+            assert result
+            assert {item["arguments"]["file"] for item in result if isinstance(item, dict)} == {"nested/legacy.txt"}
 
     def test_rewrite_workspace_relative_path_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
