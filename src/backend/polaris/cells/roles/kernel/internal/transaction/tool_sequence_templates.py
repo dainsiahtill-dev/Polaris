@@ -99,7 +99,6 @@ def build_sequence_template(
                     "TEMPLATE [Edit-Then-Verify]: "
                     "Step 1: read_file the target file to confirm exact content. "
                     "Step 2: Use edit_blocks/edit_file/search_replace/repo_apply_diff for existing content changes; "
-                    "use precision_edit only when exact search text is already verified. "
                     "use append_to_file only when the task explicitly requires appending content at the end. "
                     "Step 3: read_file again to verify the modification succeeded. "
                     "All three steps must be in the SAME batch if the benchmark contract requires single-batch completion."
@@ -115,7 +114,7 @@ def build_sequence_template(
                     "TEMPLATE [Search-Replace]: "
                     "Step 1: Use repo_rg/ripgrep to locate occurrences. "
                     "Step 2: Use read_file to read the target file content EXACTLY. "
-                    "Step 3: Use search_replace or precision_edit to perform replacement. "
+                    "Step 3: Use edit_blocks/edit_file/search_replace/repo_apply_diff to perform replacement. "
                     "CRITICAL: If you mix read tools (repo_rg/read_file) and write tools (search_replace) "
                     "in the SAME parallel batch, the Read-Write Barrier will REJECT it. "
                     "Use ordered groups: [repo_rg/read_file] first, then [search_replace]."
@@ -139,7 +138,6 @@ def build_sequence_template(
             "For existing targeted edits, read only the specific target file if exact current content is needed, "
             "then use edit_blocks/edit_file/search_replace/repo_apply_diff in the same batch. "
             "A read/list/execute-only batch is invalid for mutation tasks. "
-            "Use precision_edit only after exact search text has been verified; "
             "use append_to_file only for explicit append-at-end tasks. "
             "Verify after writing when a verification/read tool is available, but never defer the write."
         )
@@ -179,7 +177,6 @@ def build_recovery_protocol(
             "repo_apply_diff",
             "write_file",
             "create_file",
-            "precision_edit",
             "append_to_file",
         ):
             if t in available_write_tools:

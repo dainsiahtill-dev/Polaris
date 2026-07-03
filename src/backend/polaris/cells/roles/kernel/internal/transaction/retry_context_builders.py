@@ -108,7 +108,7 @@ def build_contract_retry_context(
         retry_lines.append("Allowed write tools in this turn: " + ", ".join(write_tools) + ".")
         retry_lines.append("Include at least one of the allowed write tools in the emitted batch.")
         retry_lines.append(
-            "Do not guess precision_edit/search_replace search text. "
+            "Do not guess search_replace search text. "
             "For create-file or whole-file replacement tasks, prefer write_file. "
             "For existing targeted edits, prefer edit_blocks or edit_file after verifying exact content."
         )

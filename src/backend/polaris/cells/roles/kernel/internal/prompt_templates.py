@@ -220,7 +220,6 @@ ROLE_PROMPT_TEMPLATES: dict[str, str] = {
 ## 代码编辑策略（强制）
 - **推荐**：`edit_blocks` + SEARCH/REPLACE 格式（原生代码，无 JSON 转义问题）
 - **备选**：`edit_file` 的 search/replace 模式（简单替换）
-- **不推荐**：`precision_edit`（已弃用，JSON 格式易出错）
 
 ## 文件产出纪律（强制 — 输出预算物理约束）
 - 单次 write_file 内容**必须 ≤120 行**：超过此规模的写入会被你的输出上限截断且永远无法通过重写补全。
@@ -306,13 +305,13 @@ def new():
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ─────────────────────────────────────────────────────────────────────────────
-# EDIT BLOCKS GUIDE（SEARCH/REPLACE 格式指南 - 推荐替代 precision_edit）
+# EDIT BLOCKS GUIDE（SEARCH/REPLACE 格式指南）
 # ─────────────────────────────────────────────────────────────────────────────
 
 EDIT_BLOCKS_GUIDE = """
 【代码编辑 — 推荐格式：SEARCH/REPLACE 块】
 
-对于代码修改，强烈推荐使用 `edit_blocks` 工具的 SEARCH/REPLACE 格式，而非 `precision_edit`：
+对于代码修改，强烈推荐使用 `edit_blocks` 工具的 SEARCH/REPLACE 格式：
 
 **优势：**
 - ✅ 零 JSON 转义问题（原生代码格式）
@@ -405,7 +404,6 @@ ACTION_FIRST_TEMPLATE = """【系统角色】
 【代码编辑推荐】
 - 对于复杂代码修改：使用 `edit_blocks` 工具 + SEARCH/REPLACE 格式（见详细指南）
 - 对于简单替换：可使用 `edit_file` 的 search/replace 模式
-- `precision_edit` 已弃用，避免使用（JSON 格式易出错）
 
 【思考区】
 <thinking>
@@ -433,7 +431,7 @@ def build_action_first_prompt(
 
     Args:
         persona_id: Persona 注册表中的 ID（如 "director", "pm" 等）
-        tool_name: 要调用的工具名称（如 "repo_tree", "precision_edit" 等）
+        tool_name: 要调用的工具名称（如 "repo_tree", "edit_blocks" 等）
                     若为 None，则输出 [Action]:（空），表示等待 LLM 决策
         json_arguments: 工具调用的 JSON 参数字符串，若为 None 则输出 {}
         marker: 任务标识符或标记，若为 None 则输出空字符串（解析时还原为 None）

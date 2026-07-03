@@ -23,7 +23,7 @@ def test_general_mutation_template_does_not_rank_append_as_default_write_tool() 
         requires_verify=True,
     )
 
-    assert "append_to_file > precision_edit" not in template
+    assert "precision_edit" not in template
     assert "edit_blocks/edit_file/search_replace/repo_apply_diff" in template
     assert "write_file" in template
     assert "append_to_file only for explicit append-at-end tasks" in template
@@ -34,18 +34,19 @@ def test_general_mutation_template_does_not_rank_append_as_default_write_tool() 
 
 def test_edit_recovery_protocol_keeps_append_as_last_resort() -> None:
     protocol = build_recovery_protocol(
-        required_tools=["precision_edit"],
+        required_tools=["edit_blocks"],
         required_any_groups=[],
         available_write_tools=[
             "append_to_file",
-            "precision_edit",
+            "edit_blocks",
             "edit_file",
             "search_replace",
             "write_file",
         ],
     )
 
-    assert "edit_file -> search_replace -> write_file -> precision_edit -> append_to_file" in protocol
+    assert "edit_blocks -> edit_file -> search_replace -> write_file -> append_to_file" in protocol
+    assert "precision_edit" not in protocol
     assert "append_to_file is only valid for explicit append-at-end tasks" in protocol
 
 
