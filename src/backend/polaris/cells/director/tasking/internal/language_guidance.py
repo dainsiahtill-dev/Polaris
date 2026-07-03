@@ -1332,7 +1332,7 @@ def build_language_section(
 ) -> tuple[str, str]:
     """Build composable language/task guidance and a role identity.
 
-    The positional parameters remain backward compatible with the original API.
+    The positional parameters remain the stable call shape for existing callers.
     Keyword-only context lets ``PromptBuilder`` produce task-aware guidance
     without hard-coding language rules in the prompt assembly path.
     """
