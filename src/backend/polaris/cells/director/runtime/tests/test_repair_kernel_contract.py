@@ -304,6 +304,28 @@ def test_public_repair_diagnostics_accept_top_level_import_issue_fields() -> Non
     }
 
 
+def test_public_repair_diagnostics_accept_top_level_owner_path() -> None:
+    diagnostics = normalize_director_repair_issue_diagnostics(
+        (
+            {
+                "source": "cross_artifact_consistency",
+                "code": "cross_artifact_unresolved_import_symbol",
+                "message": "WeatherKind is imported but not exported",
+                "specifier": "src.models.weather",
+                "importer_path": "src/engine/forecast.py",
+                "owner_path": "src/models/weather.py",
+                "symbol": "WeatherKind",
+            },
+        )
+    )
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].path == "src/engine/forecast.py"
+    assert diagnostics[0].metadata["importer_path"] == "src/engine/forecast.py"
+    assert diagnostics[0].metadata["owner_path"] == "src/models/weather.py"
+    assert diagnostics[0].metadata["symbol"] == "WeatherKind"
+
+
 def test_public_repair_planning_projects_typed_diagnostics() -> None:
     diagnostic = RepairDiagnosticV1(
         source="artifact_quality",
