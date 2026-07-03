@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from polaris.kernelone.tool_execution.contracts import validate_tool_step
+from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
 
 
 @pytest.fixture(autouse=True)
@@ -128,9 +129,11 @@ class TestValidateToolStep:
         assert is_valid is True
         assert error_code is None
 
-    def test_precision_edit_missing_required(self) -> None:
-        """Test precision_edit without required args fails validation."""
-        is_valid, error_code, _error_msg = validate_tool_step("precision_edit", {"file": "test.py"})
+    def test_deprecated_exact_edit_missing_required(self) -> None:
+        """Deprecated exact-edit compatibility schema still validates required args."""
+        deprecated_exact_edit = next(iter(DEPRECATED_WRITE_TOOLS))
+
+        is_valid, error_code, _error_msg = validate_tool_step(deprecated_exact_edit, {"file": "test.py"})
         assert is_valid is False
         assert error_code == "REQUIRED_MISSING"
 
