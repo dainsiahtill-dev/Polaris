@@ -103,7 +103,10 @@ return self.passed_cases / self.total_cases if self.total_cases > 0 else 0.0
 
 ### A04: episode_turn_ratio 逻辑反向
 
-**文件**: `polaris/kernelone/context/benchmarks/validators.py:563`
+**历史位置**: 已退役的 ContextOS benchmark validator
+
+该 ContextOS benchmark 包已退役；新的 ContextOS benchmark validator
+归属 `polaris/kernelone/benchmark/validators/contextos_validators.py`。
 
 **问题**: `episode_turn_ratio < max` 在健康压缩比(5.0)时会触发violation
 
@@ -306,14 +309,14 @@ ruff format polaris/kernelone/context/ polaris/kernelone/auth_context/
 # Mypy
 python -m mypy polaris/kernelone/context/context_os/metrics_collector.py
 python -m mypy polaris/kernelone/context/strategy_benchmark.py
-python -m mypy polaris/kernelone/context/benchmarks/validators.py
+python -m mypy polaris/kernelone/benchmark/validators/contextos_validators.py
 python -m mypy polaris/kernelone/context/context_os/runtime.py
 python -m mypy polaris/kernelone/context/context_os/evaluation.py
 python -m mypy polaris/kernelone/context/context_os/patterns.py
 python -m mypy polaris/kernelone/auth_context/__init__.py
 
 # Pytest
-pytest polaris/kernelone/context/tests/ polaris/kernelone/context/benchmarks/tests/ -v --tb=short
+pytest polaris/kernelone/context/tests/ polaris/kernelone/benchmark/tests/ -v --tb=short
 ```
 
 ---

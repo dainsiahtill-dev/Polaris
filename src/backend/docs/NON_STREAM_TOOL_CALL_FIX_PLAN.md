@@ -141,8 +141,11 @@ pytest polaris/cells/roles/kernel/tests/test_turn_engine.py -v -k "text_tool"
 
 ### 6.2 Benchmark
 ```bash
-pytest polaris/kernelone/context/benchmarks/ -v
+pytest polaris/kernelone/benchmark/tests/ -v
 ```
+
+旧 ContextOS benchmark 包已退役；ContextOS 相关 benchmark validator
+归属 `polaris/kernelone/benchmark/validators/`。
 
 ### 6.3 日志检查
 ```bash
