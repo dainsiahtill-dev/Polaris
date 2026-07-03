@@ -187,7 +187,10 @@ def test_public_normalizes_typed_artifact_quality_issues_to_repair_diagnostics()
                 "message": "npm package manifest script 'test' is invalid",
                 "path": "package.json",
                 "severity": "error",
-                "metadata": {"script": "test"},
+                "line": 12,
+                "column": 4,
+                "symbol": "scripts.test",
+                "metadata": {"script": "test", "column": 99},
             },
         )
     )
@@ -197,7 +200,12 @@ def test_public_normalizes_typed_artifact_quality_issues_to_repair_diagnostics()
     assert diagnostics[0].code == "npm_manifest_invalid"
     assert diagnostics[0].message == "npm package manifest script 'test' is invalid"
     assert diagnostics[0].path == "package.json"
-    assert diagnostics[0].metadata == {"script": "test"}
+    assert diagnostics[0].metadata == {
+        "script": "test",
+        "line": 12,
+        "column": 99,
+        "symbol": "scripts.test",
+    }
 
 
 def _install_delete_file_test_runtime_binding(monkeypatch: pytest.MonkeyPatch, source_tool: str) -> None:

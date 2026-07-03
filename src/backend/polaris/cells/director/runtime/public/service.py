@@ -1010,6 +1010,10 @@ def normalize_director_repair_issue_diagnostics(
         severity = str(issue.get("severity") or "error").strip() or "error"
         source = str(issue.get("source") or "artifact_quality").strip() or "artifact_quality"
         metadata = issue.get("metadata")
+        metadata_payload = dict(metadata) if isinstance(metadata, Mapping) else {}
+        for key in ("raw", "line", "column", "span_start", "span_end", "symbol", "symbol_kind", "confidence"):
+            if key in issue and key not in metadata_payload:
+                metadata_payload[key] = issue[key]
         diagnostics.append(
             RepairDiagnosticV1(
                 source=source,
@@ -1017,7 +1021,7 @@ def normalize_director_repair_issue_diagnostics(
                 message=message,
                 path=path,
                 severity=severity,
-                metadata=dict(metadata) if isinstance(metadata, Mapping) else {},
+                metadata=metadata_payload,
             )
         )
     return tuple(diagnostics)
