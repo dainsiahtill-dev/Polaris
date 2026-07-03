@@ -1,10 +1,10 @@
-"""Executor module - Split from executor.py (1838 lines).
+"""Package entrypoint for KernelOne LLM toolkit executor components.
 
 This module provides the tool execution infrastructure for the LLM toolkit.
-The original executor.py has been split into the following structure:
+The public package root exports the stable executor APIs from these modules:
 
 executor/
-    __init__.py          # Backward compatibility - re-exports from core
+    __init__.py          # Package-root public executor exports
     core.py              # AgentAccelToolExecutor main class
     runtime.py           # KernelToolCallingRuntime and build_tool_feedback
     handlers/
@@ -21,11 +21,10 @@ from __future__ import annotations
 
 import subprocess
 
-# Re-export BudgetExceededError from unified exceptions for backward compatibility
+# Public executor boundary error surfaced by AgentAccelToolExecutor.
 from polaris.kernelone.llm.exceptions import BudgetExceededError
 
-# Re-export all public symbols from the new module structure
-# for backward compatibility
+# Public executor APIs exposed at the package root.
 from polaris.kernelone.llm.toolkit.executor.core import (
     CODE_INTELLIGENCE_AVAILABLE,
     AgentAccelToolExecutor,
