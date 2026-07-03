@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.control_plane.run_ledger.public.failure_evidence import (
+    normalize_failure_class as normalize_run_ledger_failure_class,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -364,7 +368,11 @@ QA_PLATFORM_FAILURE_CLASSES = frozenset(
 
 def _normalize_qa_failure_class(value: str) -> str:
     token = _require_non_empty("failure_class", value)
-    return _QA_FAILURE_CLASS_ALIASES.get(token.lower(), token.upper())
+    run_ledger_token = normalize_run_ledger_failure_class(token)
+    return _QA_FAILURE_CLASS_ALIASES.get(
+        run_ledger_token.lower(),
+        _QA_FAILURE_CLASS_ALIASES.get(token.lower(), run_ledger_token.upper()),
+    )
 
 
 def normalize_qa_failure_class(value: str) -> str:

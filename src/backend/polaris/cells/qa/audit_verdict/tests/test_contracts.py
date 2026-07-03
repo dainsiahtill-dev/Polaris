@@ -9,6 +9,7 @@ from polaris.cells.audit.evidence.public.contracts import (
     AppendEvidenceEventCommandV1,
     EvidenceAppendedEventV1,
 )
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.qa.audit_verdict.public.contracts import (
     FailureSignalV1,
     GetQaVerdictQueryV1,
@@ -24,6 +25,7 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     VisualAuditFindingV1,
     VisualQaAuditResultV1,
     build_qa_failure_classification_v1,
+    normalize_qa_failure_class,
 )
 from polaris.cells.qa.audit_verdict.public.service import (
     get_qa_verdict_envelope,
@@ -121,6 +123,10 @@ class TestQaFailureClassificationBuilder:
 
         assert classification.failure_class == "TOOL_DISPATCH_DROPPED"
         assert classification.severity == "critical"
+
+    def test_overlapping_platform_failures_use_run_ledger_normalization(self) -> None:
+        assert normalize_qa_failure_class("tool dispatch dropped") == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+        assert normalize_qa_failure_class("missing-effect-receipt") == FailureClassV1.MISSING_EFFECT_RECEIPT.value
 
 
 class TestQaVerdictIssuedEventV1:
