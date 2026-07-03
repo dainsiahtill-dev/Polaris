@@ -299,7 +299,7 @@ class StreamingPatchBuffer:
         blocks: list[PatchBlock] = []
 
         try:
-            from polaris.kernelone.llm.toolkit.protocol_kernel import (
+            from polaris.kernelone.llm.toolkit.protocol import (
                 EditType,
                 FileOperation,
                 ProtocolParser,
@@ -385,7 +385,7 @@ class StreamingPatchBuffer:
         )
 
         try:
-            from polaris.kernelone.llm.toolkit.protocol_kernel import (
+            from polaris.kernelone.llm.toolkit.protocol import (
                 EditType,
                 FileOperation,
                 StrictOperationApplier,
@@ -426,14 +426,14 @@ class StreamingPatchBuffer:
 
         except ImportError as exc:
             logger.error(
-                "[StreamingPatchBuffer] protocol_kernel 不可用: %s",
+                "[StreamingPatchBuffer] protocol package unavailable: %s",
                 exc,
             )
             return PatchExecutionResult(
                 success=False,
                 path=block.path,
                 error_code="IMPORT_ERROR",
-                error_message=f"protocol_kernel not available: {exc}",
+                error_message=f"protocol package not available: {exc}",
             )
         except (RuntimeError, ValueError) as exc:
             logger.exception(

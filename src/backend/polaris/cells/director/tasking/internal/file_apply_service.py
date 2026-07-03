@@ -625,7 +625,7 @@ class FileApplyService:
     ) -> tuple[list[dict], list[str]]:
         """Apply patch/file operations from LLM response with pre-apply validation.
 
-        Uses protocol_kernel v2.0 with strict mode (no fallback to full file).
+        Uses the KernelOne protocol package with strict mode (no fallback to full file).
 
         Args:
             response: LLM response text

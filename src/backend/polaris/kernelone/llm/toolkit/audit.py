@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .protocol_kernel import FileOperation, OperationResult
+    from .protocol import FileOperation, OperationResult
 
 from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 

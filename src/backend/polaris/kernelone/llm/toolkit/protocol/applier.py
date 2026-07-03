@@ -142,46 +142,15 @@ class StrictOperationApplier:
             old_content = fs.workspace_read_text(rel, encoding="utf-8")
             old_line_count = len(old_content.splitlines())
 
-        # Content unchanged, skip
-        if old_content == new_content:
-            return OperationResult(
-                operation=operation,
-                success=True,
-                error_code=ErrorCode.NOOP,
-                changed=False,
-                old_hash=hashlib.sha256(old_content.encode("utf-8")).hexdigest()[:16],
-                new_hash=hashlib.sha256(new_content.encode("utf-8")).hexdigest()[:16],
-            )
-
-        policy_error, director_policy = cls._director_policy_error(
+        return cls._write_or_move(
+            fs=fs,
+            operation=operation,
             workspace=workspace,
-            rel=rel,
             old_content=old_content,
             new_content=new_content,
-            operation="protocol_full_file",
-        )
-        if policy_error:
-            return OperationResult(
-                operation=operation,
-                success=False,
-                error_code=ErrorCode.PERMISSION_DENIED,
-                error_message=policy_error,
-                director_policy=director_policy,
-            )
-
-        # Write
-        fs.workspace_write_text(rel, new_content, encoding="utf-8")
-
-        return OperationResult(
-            operation=operation,
-            success=True,
-            error_code=ErrorCode.OK,
-            changed=True,
-            old_hash=hashlib.sha256(old_content.encode("utf-8")).hexdigest()[:16],
-            new_hash=hashlib.sha256(new_content.encode("utf-8")).hexdigest()[:16],
+            rel=rel,
             old_line_count=old_line_count,
-            new_line_count=len(new_content.splitlines()),
-            director_policy=director_policy,
+            operation_name="protocol_full_file",
         )
 
     @classmethod
@@ -235,39 +204,22 @@ class StrictOperationApplier:
                     replace=replace,
                 )
                 if aider_content is not None:
-                    if aider_content == current_content:
+                    if aider_content == current_content and not operation.move_to:
                         return OperationResult(
                             operation=operation,
                             success=True,
                             error_code=ErrorCode.NOOP,
                             changed=False,
                         )
-                    policy_error, director_policy = cls._director_policy_error(
+                    return cls._write_or_move(
+                        fs=fs,
+                        operation=operation,
                         workspace=workspace,
-                        rel=rel,
                         old_content=current_content,
                         new_content=aider_content,
-                        operation="protocol_search_replace:fuzzy",
-                    )
-                    if policy_error:
-                        return OperationResult(
-                            operation=operation,
-                            success=False,
-                            error_code=ErrorCode.PERMISSION_DENIED,
-                            error_message=policy_error,
-                            director_policy=director_policy,
-                        )
-                    fs.workspace_write_text(rel, aider_content, encoding="utf-8")
-                    return OperationResult(
-                        operation=operation,
-                        success=True,
-                        error_code=ErrorCode.OK,
-                        changed=True,
-                        old_hash=hashlib.sha256(current_content.encode("utf-8")).hexdigest()[:16],
-                        new_hash=hashlib.sha256(aider_content.encode("utf-8")).hexdigest()[:16],
+                        rel=rel,
                         old_line_count=len(current_content.splitlines()),
-                        new_line_count=len(aider_content.splitlines()),
-                        director_policy=director_policy,
+                        operation_name="protocol_search_replace:fuzzy",
                     )
 
                 # Try lightweight fuzzy matching
@@ -301,7 +253,7 @@ class StrictOperationApplier:
         # Execute replacement
         new_content = current_content.replace(actual_search, replace, 1)
 
-        if new_content == current_content:
+        if new_content == current_content and not operation.move_to:
             return OperationResult(
                 operation=operation,
                 success=True,
@@ -309,12 +261,149 @@ class StrictOperationApplier:
                 changed=False,
             )
 
+        return cls._write_or_move(
+            fs=fs,
+            operation=operation,
+            workspace=workspace,
+            old_content=current_content,
+            new_content=new_content,
+            rel=rel,
+            old_line_count=len(current_content.splitlines()),
+            operation_name="protocol_search_replace",
+        )
+
+    @classmethod
+    def _write_or_move(
+        cls,
+        *,
+        fs: KernelFileSystem,
+        operation: FileOperation,
+        workspace: str,
+        old_content: str,
+        new_content: str,
+        rel: str,
+        old_line_count: int,
+        operation_name: str,
+    ) -> OperationResult:
+        """Write updated content, optionally moving it to ``operation.move_to``."""
+        target_rel = rel
+        if operation.move_to:
+            try:
+                target_rel = fs.to_workspace_relative_path(str(Path(workspace) / operation.move_to))
+            except ValueError:
+                return OperationResult(
+                    operation=operation,
+                    success=False,
+                    error_code=ErrorCode.PATH_TRAVERSAL,
+                    error_message="Move target path traversal detected",
+                )
+
+        if target_rel == rel:
+            return cls._write_same_path(
+                fs=fs,
+                operation=operation,
+                workspace=workspace,
+                old_content=old_content,
+                new_content=new_content,
+                rel=rel,
+                old_line_count=old_line_count,
+                operation_name=operation_name,
+            )
+
+        if fs.workspace_exists(target_rel):
+            return OperationResult(
+                operation=operation,
+                success=False,
+                error_code=ErrorCode.FILE_NOT_WRITABLE,
+                error_message=f"Move target already exists: {target_rel}",
+            )
+
+        delete_policy_error, delete_policy = cls._director_policy_error(
+            workspace=workspace,
+            rel=rel,
+            old_content=old_content,
+            new_content="",
+            operation=f"{operation_name}:move_delete",
+        )
+        if delete_policy_error:
+            return OperationResult(
+                operation=operation,
+                success=False,
+                error_code=ErrorCode.PERMISSION_DENIED,
+                error_message=delete_policy_error,
+                director_policy=delete_policy,
+            )
+
+        create_policy_error, create_policy = cls._director_policy_error(
+            workspace=workspace,
+            rel=target_rel,
+            old_content="",
+            new_content=new_content,
+            operation=f"{operation_name}:move_create",
+        )
+        if create_policy_error:
+            return OperationResult(
+                operation=operation,
+                success=False,
+                error_code=ErrorCode.PERMISSION_DENIED,
+                error_message=create_policy_error,
+                director_policy=create_policy,
+            )
+
+        try:
+            fs.workspace_write_text(target_rel, new_content, encoding="utf-8")
+            if fs.workspace_exists(rel):
+                fs.workspace_remove(rel, missing_ok=False)
+        except (OSError, ValueError) as exc:
+            return OperationResult(
+                operation=operation,
+                success=False,
+                error_code=ErrorCode.FILE_NOT_WRITABLE,
+                error_message=f"Move write failed: {exc}",
+            )
+
+        return OperationResult(
+            operation=operation,
+            success=True,
+            error_code=ErrorCode.OK,
+            changed=True,
+            old_hash=hashlib.sha256(old_content.encode("utf-8")).hexdigest()[:16],
+            new_hash=hashlib.sha256(new_content.encode("utf-8")).hexdigest()[:16],
+            old_line_count=old_line_count,
+            new_line_count=len(new_content.splitlines()),
+            director_policy={"delete": delete_policy, "create": create_policy},
+        )
+
+    @classmethod
+    def _write_same_path(
+        cls,
+        *,
+        fs: KernelFileSystem,
+        operation: FileOperation,
+        workspace: str,
+        old_content: str,
+        new_content: str,
+        rel: str,
+        old_line_count: int,
+        operation_name: str,
+    ) -> OperationResult:
+        """Write content back to the original path."""
+        if old_content == new_content:
+            return OperationResult(
+                operation=operation,
+                success=True,
+                error_code=ErrorCode.NOOP,
+                changed=False,
+                old_hash=hashlib.sha256(old_content.encode("utf-8")).hexdigest()[:16],
+                new_hash=hashlib.sha256(new_content.encode("utf-8")).hexdigest()[:16],
+            )
+
         policy_error, director_policy = cls._director_policy_error(
             workspace=workspace,
             rel=rel,
-            old_content=current_content,
+            old_content=old_content,
             new_content=new_content,
-            operation="protocol_search_replace",
+            operation=operation_name,
         )
         if policy_error:
             return OperationResult(
@@ -325,17 +414,24 @@ class StrictOperationApplier:
                 director_policy=director_policy,
             )
 
-        # Write
-        fs.workspace_write_text(rel, new_content, encoding="utf-8")
+        try:
+            fs.workspace_write_text(rel, new_content, encoding="utf-8")
+        except (OSError, ValueError) as exc:
+            return OperationResult(
+                operation=operation,
+                success=False,
+                error_code=ErrorCode.FILE_NOT_WRITABLE,
+                error_message=f"Write failed: {exc}",
+            )
 
         return OperationResult(
             operation=operation,
             success=True,
             error_code=ErrorCode.OK,
             changed=True,
-            old_hash=hashlib.sha256(current_content.encode("utf-8")).hexdigest()[:16],
+            old_hash=hashlib.sha256(old_content.encode("utf-8")).hexdigest()[:16],
             new_hash=hashlib.sha256(new_content.encode("utf-8")).hexdigest()[:16],
-            old_line_count=len(current_content.splitlines()),
+            old_line_count=old_line_count,
             new_line_count=len(new_content.splitlines()),
             director_policy=director_policy,
         )

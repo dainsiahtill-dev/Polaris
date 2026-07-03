@@ -448,7 +448,7 @@ def normalize_patch_like_write_content(
         candidate = f"{compare_path or file_path}\n{body}"
 
     try:
-        from polaris.kernelone.llm.toolkit.protocol_kernel import EditType, parse_protocol_output
+        from polaris.kernelone.llm.toolkit.protocol import EditType, parse_protocol_output
 
         edit_type_enum = EditType
     except ImportError:

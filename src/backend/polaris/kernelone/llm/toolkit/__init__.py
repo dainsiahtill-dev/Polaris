@@ -92,7 +92,7 @@ from .parsers import (
 )
 
 # 统一协议内核 (v2.0 - Strict Mode)
-from .protocol_kernel import (
+from .protocol import (
     ApplyReport,
     EditType,
     # 枚举
