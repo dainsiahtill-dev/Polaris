@@ -552,6 +552,28 @@ def _artifact_quality_issues_from_errors(errors: Iterable[str]) -> tuple[Artifac
     return tuple(_artifact_quality_issue_from_error(error) for error in errors if str(error or "").strip())
 
 
+def _artifact_quality_issue_from_cross_artifact_issue(
+    issue: CrossArtifactConsistencyIssue,
+) -> ArtifactQualityIssue:
+    """Project cross-file interface evidence without reparsing its message."""
+
+    raw_message = issue.to_error_message()
+    return ArtifactQualityIssue(
+        code=issue.code,
+        message=issue.message,
+        path=issue.importer_path or issue.owner_path or None,
+        severity=issue.severity,
+        source="cross_artifact_consistency",
+        metadata={
+            "raw": raw_message,
+            "importer_path": issue.importer_path,
+            "owner_path": issue.owner_path,
+            "symbol": issue.symbol,
+            "details": dict(issue.details),
+        },
+    )
+
+
 def artifact_quality_issues_from_errors(errors: Iterable[str]) -> tuple[dict[str, Any], ...]:
     """Project legacy artifact-quality errors into typed issue payloads."""
 
@@ -567,11 +589,27 @@ def _artifact_quality_evidence(
     contract_amendment_request: ContractAmendmentRequest | None = None,
 ) -> ArtifactQualityEvidence:
     deduped_errors = tuple(dict.fromkeys(str(error).strip() for error in errors if str(error or "").strip()))
+    deduped_cross_artifact_issues = tuple(cross_artifact_issues)
+    cross_artifact_error_messages = {
+        issue.to_error_message()
+        for issue in deduped_cross_artifact_issues
+        if not issue.code.startswith("contract_")
+    }
+    legacy_issues = tuple(
+        issue
+        for issue in _artifact_quality_issues_from_errors(deduped_errors)
+        if str((issue.metadata or {}).get("raw") or issue.message).strip() not in cross_artifact_error_messages
+    )
+    projected_cross_artifact_issues = tuple(
+        _artifact_quality_issue_from_cross_artifact_issue(issue)
+        for issue in deduped_cross_artifact_issues
+        if not issue.code.startswith("contract_")
+    )
     return ArtifactQualityEvidence(
         errors=deduped_errors,
-        issues=_artifact_quality_issues_from_errors(deduped_errors),
+        issues=(*legacy_issues, *projected_cross_artifact_issues),
         scanned_relative_paths=tuple(scanned_relative_paths),
-        cross_artifact_issues=tuple(cross_artifact_issues),
+        cross_artifact_issues=deduped_cross_artifact_issues,
         cross_artifact_repair_plans=tuple(cross_artifact_repair_plans),
         contract_amendment_request=contract_amendment_request,
     )

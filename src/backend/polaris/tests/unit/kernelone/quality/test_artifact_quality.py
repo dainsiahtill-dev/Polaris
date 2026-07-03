@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from polaris.kernelone.quality import scan_workspace_artifact_quality
+from polaris.kernelone.quality import scan_workspace_artifact_quality, scan_workspace_artifact_quality_evidence
 
 
 def _write_trivial_test(path: Path, *, count: int = 4) -> None:
@@ -1446,6 +1446,24 @@ class TestPythonCrossFileSymbolCoherence:
         assert errors, "drift symbol must be flagged"
         assert any("SRS_ROTATION_STATES" in e for e in errors)
         assert not any("BOARD_WIDTH" in e for e in errors), "defined symbol must not be flagged"
+
+    def test_unresolved_import_symbol_has_typed_cross_artifact_issue(self, tmp_path: Path) -> None:
+        (tmp_path / "tetris").mkdir()
+        (tmp_path / "tetris" / "constants.py").write_text("BOARD_WIDTH = 10\n", encoding="utf-8")
+        (tmp_path / "tetris" / "__init__.py").write_text(
+            "from .constants import SRS_ROTATION_STATES\n", encoding="utf-8"
+        )
+
+        evidence = scan_workspace_artifact_quality_evidence(str(tmp_path))
+        issues = [issue.to_dict() for issue in evidence.issues]
+
+        issue = next(item for item in issues if item["code"] == "unresolved_import_symbol")
+        assert issue["source"] == "cross_artifact_consistency"
+        assert issue["path"] == "tetris/__init__.py"
+        assert issue["metadata"]["symbol"] == "SRS_ROTATION_STATES"
+        assert issue["metadata"]["importer_path"] == "tetris/__init__.py"
+        assert issue["metadata"]["owner_path"] == "tetris/constants.py"
+        assert issue["metadata"]["raw"] in evidence.errors
 
     def test_relative_import_unresolved_symbol_is_flagged(self, tmp_path: Path) -> None:
         (tmp_path / "tetris").mkdir()
