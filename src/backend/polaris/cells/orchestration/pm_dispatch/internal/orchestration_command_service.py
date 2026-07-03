@@ -520,7 +520,7 @@ class PMRunOptions:
     Attributes:
         run_type: Type of PM run ("full", "architect", "pm")
         directive: Optional directive/requirement text
-        run_director: Legacy flag that enables the PM -> Chief Engineer -> Director chain
+        run_director: Governed-chain flag that enables PM -> Chief Engineer -> Director
         director_iterations: Number of Director iterations
     """
 
