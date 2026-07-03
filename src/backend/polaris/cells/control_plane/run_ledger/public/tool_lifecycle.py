@@ -60,6 +60,12 @@ def _native_tool_call_envelope_refs(value: Any) -> list[dict[str, Any]]:
     return [dict(item) for item in value if isinstance(item, Mapping)]
 
 
+def _mapping_refs(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [dict(item) for item in value if isinstance(item, Mapping)]
+
+
 def _dropped_tool_calls_from_native_envelopes(value: Any) -> list[dict[str, Any]]:
     dropped: list[dict[str, Any]] = []
     for envelope in _native_tool_call_envelope_refs(value):
@@ -300,14 +306,21 @@ def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
         native_refs = _native_tool_call_envelope_refs(payload.get("native_tool_call_envelope_refs"))
         if not native_refs:
             native_refs = _native_tool_call_envelope_refs(payload.get("native_tool_call_envelopes"))
+        batch_refs = _mapping_refs(payload.get("batch_receipt_refs"))
+        effect_refs = _mapping_refs(payload.get("effect_receipt_refs"))
         native_count = len(native_refs) if native_refs else _int_value(payload.get("native_tool_calls_count"))
+        result_count = _int_value(payload.get("tool_result_count"))
         dispatched_count = _int_value(payload.get("dispatched_tool_calls_count"))
+        if dispatched_count <= 0 and result_count > 0:
+            dispatched_count = result_count
         payload["native_tool_call_envelope_refs"] = native_refs
+        payload["batch_receipt_refs"] = batch_refs
+        payload["effect_receipt_refs"] = effect_refs
         payload["native_tool_calls_count"] = native_count
         payload["decoded_tool_calls_count"] = _int_value(payload.get("decoded_tool_calls_count"))
         payload["dispatched_tool_calls_count"] = dispatched_count
-        payload["tool_result_count"] = _int_value(payload.get("tool_result_count"))
-        payload["effect_receipt_count"] = _int_value(payload.get("effect_receipt_count"))
+        payload["tool_result_count"] = result_count
+        payload["effect_receipt_count"] = len(effect_refs) if effect_refs else _int_value(payload.get("effect_receipt_count"))
         dropped_tool_calls = _dropped_tool_call_refs(payload.get("dropped_tool_calls"))
         if native_count > 0 and dispatched_count <= 0 and not dropped_tool_calls:
             dropped_tool_calls = _dropped_tool_calls_from_native_envelopes(native_refs)
@@ -317,6 +330,8 @@ def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
                 payload["dispatch_status"] = "dropped"
             if not normalize_failure_class(payload.get("failure_class")):
                 payload["failure_class"] = FailureClassV1.TOOL_DISPATCH_DROPPED.value
+        elif result_count > 0 and not _clean_string(payload.get("dispatch_status")):
+            payload["dispatch_status"] = "dispatched"
         payload.setdefault("ok", False)
         payload.setdefault("dispatch_status", "unknown")
         payload.setdefault("failure_class", FailureClassV1.TOOL_LIFECYCLE_UNKNOWN.value)

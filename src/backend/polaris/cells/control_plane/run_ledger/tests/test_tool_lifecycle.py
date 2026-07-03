@@ -227,6 +227,42 @@ def test_tool_lifecycle_normalizer_falls_back_to_valid_legacy_envelopes() -> Non
     ]
 
 
+def test_tool_lifecycle_normalizer_derives_counts_from_lifecycle_refs() -> None:
+    receipt = normalize_tool_call_lifecycle_receipt(
+        {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_calls_count": 7,
+            "dispatched_tool_calls_count": 0,
+            "tool_result_count": 1,
+            "effect_receipt_count": 0,
+            "native_tool_call_envelope_refs": [
+                {
+                    "schema_version": "native_tool_call_envelope.v1",
+                    "envelope_id": "native_tool_call:openai:0:call-0:abcdef",
+                    "provider": "openai",
+                    "tool_name": "write_file",
+                    "call_id": "call-0",
+                }
+            ],
+            "batch_receipt_refs": [{"batch_id": "batch-1", "receipt_hash": "batch-hash"}],
+            "effect_receipt_refs": [
+                {"receipt_hash": "effect-1", "operation": "write_file:create", "file": "src/index.js"},
+                {"receipt_hash": "effect-2", "operation": "edit_file", "file": "src/index.js"},
+            ],
+            "dispatch_status": "",
+            "failure_class": "",
+        }
+    )
+
+    assert receipt["native_tool_calls_count"] == 1
+    assert receipt["dispatched_tool_calls_count"] == 1
+    assert receipt["tool_result_count"] == 1
+    assert receipt["effect_receipt_count"] == 2
+    assert receipt["batch_receipt_refs"] == [{"batch_id": "batch-1", "receipt_hash": "batch-hash"}]
+    assert [item["receipt_hash"] for item in receipt["effect_receipt_refs"]] == ["effect-1", "effect-2"]
+    assert receipt["dispatch_status"] == "dispatched"
+
+
 def test_tool_lifecycle_receipt_preserves_native_tool_call_envelopes() -> None:
     envelope = {
         "schema_version": "native_tool_call_envelope.v1",
