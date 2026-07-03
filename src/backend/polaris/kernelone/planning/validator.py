@@ -41,7 +41,7 @@ class Violation:
 
 
 @dataclass(frozen=True)
-class ValidationResult:
+class PlanValidationResult:
     """Validation result containing violations and suggestions.
 
     Attributes:
@@ -100,7 +100,7 @@ class ValidationResult:
 class PlanValidator(Protocol):
     """Plan validator protocol."""
 
-    def validate(self, plan: Plan) -> ValidationResult:
+    def validate(self, plan: Plan) -> PlanValidationResult:
         """Validate a plan and return validation result."""
         ...
 
@@ -108,7 +108,7 @@ class PlanValidator(Protocol):
 class StructuralPlanValidator:
     """Structural plan validator that checks plan integrity and dependencies."""
 
-    def validate(self, plan: Plan) -> ValidationResult:
+    def validate(self, plan: Plan) -> PlanValidationResult:
         """Validate plan structure.
 
         Checks:
@@ -128,7 +128,7 @@ class StructuralPlanValidator:
                     message="Plan has no steps",
                 )
             )
-            return ValidationResult(
+            return PlanValidationResult(
                 is_valid=False,
                 violations=tuple(violations),
                 suggestions=self._generate_suggestions(plan, tuple(violations)),
@@ -176,7 +176,7 @@ class StructuralPlanValidator:
                     )
                 )
 
-        return ValidationResult(
+        return PlanValidationResult(
             is_valid=not any(v.severity == ViolationSeverity.ERROR for v in violations),
             violations=tuple(violations),
             suggestions=self._generate_suggestions(plan, tuple(violations)),

@@ -17,8 +17,8 @@ from typing import Any
 from polaris.kernelone.planning import (
     Plan,
     PlanStep,
+    PlanValidationResult,
     StructuralPlanValidator,
-    ValidationResult,
 )
 
 from .base import (
@@ -126,7 +126,7 @@ class PlanSolveEngine(BaseEngine):
         self._current_plan_index: int = 0
         self._plan_confidence: float = 0.0
         self._validator: StructuralPlanValidator = validator or StructuralPlanValidator()
-        self._validation_result: ValidationResult | None = None
+        self._validation_result: PlanValidationResult | None = None
 
     @property
     def strategy(self) -> EngineStrategy:
@@ -402,13 +402,13 @@ class PlanSolveEngine(BaseEngine):
         response = await self._call_llm(context, prompt)
         return self._parse_plan_response(response)
 
-    def _validate_plan(self) -> ValidationResult:
+    def _validate_plan(self) -> PlanValidationResult:
         """Validate the current plan using the structural validator.
 
         Converts the raw string plan into Plan objects for validation.
 
         Returns:
-            ValidationResult with is_valid and any violations found
+            PlanValidationResult with is_valid and any violations found
         """
         # Convert raw string plan to Plan model
         plan_steps: list[PlanStep] = []

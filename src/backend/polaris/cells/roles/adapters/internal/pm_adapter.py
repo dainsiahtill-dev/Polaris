@@ -29,8 +29,8 @@ from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.planning import (
     Plan,
     PlanStep,
+    PlanValidationResult,
     StructuralPlanValidator,
-    ValidationResult,
 )
 from polaris.kernelone.storage import (
     resolve_runtime_path,
@@ -153,9 +153,9 @@ __all__ = [
     "Path",
     "Plan",
     "PlanStep",
+    "PlanValidationResult",
     "SequenceMatcher",
     "StructuralPlanValidator",
-    "ValidationResult",
     "_pm_append_unique_path",
     "_pm_extract_concrete_file_paths_from_text",
     "_pm_extract_inline_list_field",

@@ -8,8 +8,8 @@ from polaris.kernelone.planning import (
     PlanBuilder,
     PlanStep,
     PlanStepBuilder,
+    PlanValidationResult,
     StructuralPlanValidator,
-    ValidationResult,
     Violation,
     ViolationSeverity,
 )
@@ -106,12 +106,12 @@ class TestStructuralPlanValidator:
         assert len(result.suggestions) > 0
 
 
-class TestValidationResultFormatting:
-    """Tests for ValidationResult formatting methods."""
+class TestPlanValidationResultFormatting:
+    """Tests for PlanValidationResult formatting methods."""
 
     def test_format_errors_empty_plan(self) -> None:
         """Format errors for empty plan."""
-        result = ValidationResult(
+        result = PlanValidationResult(
             is_valid=False,
             violations=(
                 Violation(
@@ -130,7 +130,7 @@ class TestValidationResultFormatting:
 
     def test_format_errors_with_location(self) -> None:
         """Format errors including location."""
-        result = ValidationResult(
+        result = PlanValidationResult(
             is_valid=False,
             violations=(
                 Violation(
@@ -148,7 +148,7 @@ class TestValidationResultFormatting:
 
     def test_format_warnings(self) -> None:
         """Format warnings correctly."""
-        result = ValidationResult(
+        result = PlanValidationResult(
             is_valid=True,
             violations=(
                 Violation(
@@ -166,7 +166,7 @@ class TestValidationResultFormatting:
 
     def test_format_valid_plan(self) -> None:
         """Format valid plan returns pass message."""
-        result = ValidationResult(
+        result = PlanValidationResult(
             is_valid=True,
             violations=(),
             suggestions=(),

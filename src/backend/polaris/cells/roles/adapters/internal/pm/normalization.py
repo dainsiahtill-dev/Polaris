@@ -16,8 +16,8 @@ from polaris.cells.orchestration.pm_planning.public.service import (
 from polaris.kernelone.planning import (
     Plan,
     PlanStep,
+    PlanValidationResult,
     StructuralPlanValidator,
-    ValidationResult,
 )
 
 from ._protocol import _PMAdapterMixinBase
@@ -587,17 +587,17 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
             quality["summary"] = f"{summary}; {suffix}" if summary else suffix
         return normalized, quality
 
-    def _validate_task_contracts(self, task_contracts: list[dict[str, Any]]) -> ValidationResult:
+    def _validate_task_contracts(self, task_contracts: list[dict[str, Any]]) -> PlanValidationResult:
         """Validate task contract dependencies using StructuralPlanValidator.
 
         Args:
             task_contracts: List of task contract dictionaries
 
         Returns:
-            ValidationResult with is_valid and any violations found
+            PlanValidationResult with is_valid and any violations found
         """
         if not task_contracts:
-            return ValidationResult(
+            return PlanValidationResult(
                 is_valid=False,
                 violations=(),
                 suggestions=("At least one task is required",),

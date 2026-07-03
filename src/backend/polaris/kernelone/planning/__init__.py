@@ -3,9 +3,9 @@
 from polaris.kernelone.planning.builder import PlanBuilder, PlanStepBuilder
 from polaris.kernelone.planning.models import Plan, PlanStep
 from polaris.kernelone.planning.validator import (
+    PlanValidationResult,
     PlanValidator,
     StructuralPlanValidator,
-    ValidationResult,
     Violation,
     ViolationSeverity,
 )
@@ -15,9 +15,9 @@ __all__ = [
     "PlanBuilder",
     "PlanStep",
     "PlanStepBuilder",
+    "PlanValidationResult",
     "PlanValidator",
     "StructuralPlanValidator",
-    "ValidationResult",
     "Violation",
     "ViolationSeverity",
 ]

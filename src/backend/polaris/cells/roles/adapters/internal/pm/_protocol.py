@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from polaris.kernelone.planning import ValidationResult
+from polaris.kernelone.planning import PlanValidationResult
 
 from ..base import BaseRoleAdapter
 
@@ -174,7 +174,7 @@ if TYPE_CHECKING:
             directive: str = "",
         ) -> tuple[list[dict[str, Any]], dict[str, Any]]: ...
 
-        def _validate_task_contracts(self, task_contracts: list[dict[str, Any]]) -> ValidationResult: ...
+        def _validate_task_contracts(self, task_contracts: list[dict[str, Any]]) -> PlanValidationResult: ...
 
         # --- synthesis ----------------------------------------------------
         def _build_projection_hint_contracts(
