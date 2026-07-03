@@ -472,6 +472,14 @@ _ARTIFACT_QUALITY_UNRESOLVED_RELATIVE_IMPORT_RE = re.compile(
     r"unresolved relative import ['\"](?P<specifier>[^'\"]+)['\"] in (?P<path>\S+)",
     re.IGNORECASE,
 )
+_ARTIFACT_QUALITY_NPM_SCRIPT_RE = re.compile(
+    r"npm package manifest script ['\"](?P<script>[^'\"]+)['\"] (?P<detail>.+)",
+    re.IGNORECASE,
+)
+_ARTIFACT_QUALITY_NPM_MISSING_ENTRYPOINT_RE = re.compile(
+    r"references missing local entrypoint ['\"](?P<entrypoint>[^'\"]+)['\"]",
+    re.IGNORECASE,
+)
 
 
 def _artifact_quality_issue_code(message: str) -> str:
@@ -532,7 +540,21 @@ def _artifact_quality_issue_location(message: str) -> tuple[int | None, int | No
 
 def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict[str, Any]:
     metadata: dict[str, Any] = {"raw": text}
-    if code == "unresolved_import_symbol":
+    if code == "declared_target_missing":
+        path = _artifact_quality_issue_path(message)
+        if path:
+            metadata["target_file"] = path
+    elif code == "npm_manifest_invalid":
+        metadata["manifest_path"] = "package.json"
+        script_match = _ARTIFACT_QUALITY_NPM_SCRIPT_RE.search(message)
+        if script_match:
+            detail = str(script_match.group("detail") or "").strip()
+            metadata["script_name"] = str(script_match.group("script") or "").strip()
+            metadata["script_issue"] = _npm_manifest_script_issue(detail)
+            entrypoint_match = _ARTIFACT_QUALITY_NPM_MISSING_ENTRYPOINT_RE.search(detail)
+            if entrypoint_match:
+                metadata["entrypoint"] = str(entrypoint_match.group("entrypoint") or "").strip()
+    elif code == "unresolved_import_symbol":
         match = _ARTIFACT_QUALITY_UNRESOLVED_IMPORT_SYMBOL_RE.search(message)
         if match:
             metadata.update(
@@ -554,6 +576,25 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
     return {key: value for key, value in metadata.items() if value}
 
 
+def _npm_manifest_script_issue(detail: str) -> str:
+    normalized = detail.lower()
+    if "placeholder command" in normalized:
+        return "placeholder_command"
+    if "references missing local entrypoint" in normalized:
+        return "missing_local_entrypoint"
+    if "recursively invokes itself" in normalized:
+        return "recursive_script"
+    if "invalid shell syntax" in normalized:
+        return "invalid_shell_syntax"
+    if "invalid node eval syntax" in normalized:
+        return "invalid_node_eval_syntax"
+    if "shell command substitution" in normalized:
+        return "shell_command_substitution"
+    if "swallows command failures" in normalized:
+        return "swallows_command_failures"
+    return "manifest_script_error"
+
+
 def _artifact_quality_issue_from_error(error: str) -> ArtifactQualityIssue:
     text = str(error or "").strip()
     message = text
@@ -572,10 +613,11 @@ def _artifact_quality_issue_from_error(error: str) -> ArtifactQualityIssue:
             metadata={"raw": text},
         )
     code = _artifact_quality_issue_code(message)
+    path = "package.json" if code == "npm_manifest_invalid" else _artifact_quality_issue_path(message)
     return ArtifactQualityIssue(
         code=code,
         message=message,
-        path=_artifact_quality_issue_path(message),
+        path=path,
         line=line,
         column=column,
         metadata=_artifact_quality_issue_metadata(text, message, code),

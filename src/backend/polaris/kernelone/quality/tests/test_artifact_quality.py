@@ -99,6 +99,53 @@ def test_artifact_quality_issue_projection_extracts_colon_line_column() -> None:
     assert issues[0]["metadata"] == {"raw": error}
 
 
+def test_artifact_quality_issue_projection_extracts_declared_target_metadata() -> None:
+    error = "Artifact quality scan failed: declared target file missing 'src/main.py' is missing"
+
+    issues = artifact_quality_issues_from_errors((error,))
+
+    assert issues[0]["code"] == "declared_target_missing"
+    assert issues[0]["path"] == "src/main.py"
+    assert issues[0]["metadata"] == {"raw": error, "target_file": "src/main.py"}
+
+
+def test_artifact_quality_issue_projection_extracts_npm_script_metadata() -> None:
+    error = (
+        "Artifact quality scan failed: npm package manifest script 'test' "
+        "is a placeholder command: echo \"Error: no test specified\" && exit 1"
+    )
+
+    issues = artifact_quality_issues_from_errors((error,))
+
+    assert issues[0]["code"] == "npm_manifest_invalid"
+    assert issues[0]["path"] == "package.json"
+    assert issues[0]["metadata"] == {
+        "raw": error,
+        "manifest_path": "package.json",
+        "script_name": "test",
+        "script_issue": "placeholder_command",
+    }
+
+
+def test_artifact_quality_issue_projection_extracts_npm_missing_entrypoint_metadata() -> None:
+    error = (
+        "Artifact quality scan failed: npm package manifest script 'start' "
+        "references missing local entrypoint 'src/index.js'"
+    )
+
+    issues = artifact_quality_issues_from_errors((error,))
+
+    assert issues[0]["code"] == "npm_manifest_invalid"
+    assert issues[0]["path"] == "package.json"
+    assert issues[0]["metadata"] == {
+        "raw": error,
+        "manifest_path": "package.json",
+        "script_name": "start",
+        "script_issue": "missing_local_entrypoint",
+        "entrypoint": "src/index.js",
+    }
+
+
 def test_artifact_quality_issue_projection_extracts_unresolved_import_symbol_metadata() -> None:
     error = (
         "Artifact quality scan failed: unresolved import symbol 'WeatherKind' "
