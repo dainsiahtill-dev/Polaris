@@ -36,10 +36,11 @@ def _tool_name_from_call(item: Mapping[str, Any]) -> str:
 
 def _native_tool_call_envelopes(result: RoleTurnResult) -> tuple[Mapping[str, Any], ...]:
     metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
-    envelopes = metadata.get("native_tool_call_envelopes")
-    if not isinstance(envelopes, list):
-        return ()
-    return tuple(item for item in envelopes if isinstance(item, Mapping))
+    for key in ("native_tool_call_envelope_refs", "native_tool_call_envelopes"):
+        envelopes = metadata.get(key)
+        if isinstance(envelopes, (list, tuple)):
+            return tuple(item for item in envelopes if isinstance(item, Mapping))
+    return ()
 
 
 def _extract_tool_calls(result: RoleTurnResult) -> tuple[str, ...]:

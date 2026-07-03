@@ -76,6 +76,27 @@ def test_extract_tool_calls_falls_back_to_native_envelopes() -> None:
     assert runtime_service._extract_tool_calls(result) == ("write_file",)
 
 
+def test_extract_tool_calls_falls_back_to_native_envelope_refs() -> None:
+    result = RoleTurnResult(
+        content="x",
+        metadata={
+            "native_tool_call_envelope_refs": (
+                {
+                    "schema_version": "native_tool_call_envelope.v1",
+                    "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+                    "provider": "openai",
+                    "tool_name": "execute_command",
+                    "call_id": "call-1",
+                    "raw_call_hash": "a" * 64,
+                    "arguments_hash": "b" * 64,
+                },
+            )
+        },
+    )
+
+    assert runtime_service._extract_tool_calls(result) == ("execute_command",)
+
+
 def test_extract_artifacts_filters_blank_and_non_list() -> None:
     with_list = RoleTurnResult(content="x", structured_output={"artifacts": ["a.py", " ", "b.py"]})
     assert runtime_service._extract_artifacts(with_list) == ("a.py", "b.py")
