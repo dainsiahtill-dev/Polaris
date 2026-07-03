@@ -119,6 +119,17 @@ def _native_tool_call_envelope_refs(value: Any) -> list[dict[str, Any]]:
     return refs
 
 
+def normalize_native_tool_call_envelope_refs(value: Any) -> tuple[dict[str, Any], ...]:
+    """Return deduplicated native tool-call envelope refs.
+
+    Native tool-call envelopes are lifecycle evidence owned by Run Ledger. Other
+    cells should consume this helper instead of carrying local envelope filtering
+    or de-duplication rules.
+    """
+
+    return tuple(_native_tool_call_envelope_refs(value))
+
+
 def _mapping_ref_key(value: Mapping[str, Any]) -> str:
     for key in ("receipt_hash", "batch_id", "effect_receipt_hash", "id"):
         token = _clean_string(value.get(key))
@@ -455,5 +466,6 @@ def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
 __all__ = [
     "ToolCallLifecycleReceiptV1",
     "build_tool_call_lifecycle_receipt",
+    "normalize_native_tool_call_envelope_refs",
     "normalize_tool_call_lifecycle_receipt",
 ]

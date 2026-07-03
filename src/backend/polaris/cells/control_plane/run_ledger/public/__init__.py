@@ -39,6 +39,7 @@ from .task_boundary import (
 from .tool_lifecycle import (
     ToolCallLifecycleReceiptV1,
     build_tool_call_lifecycle_receipt,
+    normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
 )
 
@@ -67,6 +68,7 @@ __all__ = [
     "evaluate_task_boundary_verdict",
     "is_failure_class",
     "normalize_failure_class",
+    "normalize_native_tool_call_envelope_refs",
     "normalize_task_boundary_verdict",
     "normalize_tool_call_lifecycle_receipt",
     "read_run_ledger_projection",

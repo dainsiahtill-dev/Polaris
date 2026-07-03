@@ -3,6 +3,7 @@ from __future__ import annotations
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_tool_call_lifecycle_receipt,
+    normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
 )
 
@@ -47,6 +48,36 @@ def test_tool_lifecycle_receipt_links_batch_and_effect_refs() -> None:
     assert receipt["effect_receipt_count"] == 1
     assert receipt["effect_receipt_refs"][0]["file"] == "src/index.js"
     assert receipt["effect_receipt_refs"][0]["tool_name"] == "write_file"
+
+
+def test_normalize_native_tool_call_envelope_refs_filters_and_deduplicates() -> None:
+    envelope = {
+        "schema_version": "native_tool_call_envelope.v1",
+        "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+        "provider": "openai",
+        "tool_name": "write_file",
+        "call_id": "call-1",
+    }
+    without_id = {
+        "schema_version": "native_tool_call_envelope.v1",
+        "provider": "openai",
+        "tool_name": "execute_command",
+        "call_id": "call-2",
+        "raw_call_hash": "a" * 64,
+        "arguments_hash": "b" * 64,
+    }
+
+    refs = normalize_native_tool_call_envelope_refs(
+        [
+            envelope,
+            dict(envelope),
+            "not-an-envelope",
+            without_id,
+            dict(without_id),
+        ]
+    )
+
+    assert refs == (envelope, without_id)
 
 
 def test_tool_lifecycle_receipt_derives_dispatched_count_from_batch_receipts() -> None:

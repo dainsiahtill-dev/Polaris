@@ -15,6 +15,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
     build_tool_call_lifecycle_receipt,
     is_failure_class,
+    normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnResult
@@ -34,23 +35,17 @@ def _tool_name_from_call(item: Mapping[str, Any]) -> str:
     return ""
 
 
-def _envelope_refs_from_payload(value: Any) -> tuple[Mapping[str, Any], ...]:
-    if not isinstance(value, (list, tuple)):
-        return ()
-    return tuple(item for item in value if isinstance(item, Mapping))
-
-
 def _envelope_refs_from_lifecycle(value: Any) -> tuple[Mapping[str, Any], ...]:
     if not isinstance(value, Mapping):
         return ()
     receipt = normalize_tool_call_lifecycle_receipt(value)
-    return _envelope_refs_from_payload(receipt.get("native_tool_call_envelope_refs"))
+    return normalize_native_tool_call_envelope_refs(receipt.get("native_tool_call_envelope_refs"))
 
 
 def _native_tool_call_envelopes(result: RoleTurnResult) -> tuple[Mapping[str, Any], ...]:
     metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
     for key in ("native_tool_call_envelope_refs", "native_tool_call_envelopes"):
-        envelopes = _envelope_refs_from_payload(metadata.get(key))
+        envelopes = normalize_native_tool_call_envelope_refs(metadata.get(key))
         if envelopes:
             return envelopes
     for key in ("tool_call_lifecycle", "tool_call_lifecycle_receipt"):

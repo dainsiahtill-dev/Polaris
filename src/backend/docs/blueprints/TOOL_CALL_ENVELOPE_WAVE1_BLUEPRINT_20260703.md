@@ -44,6 +44,18 @@ ToolExecutionResult/BatchReceipt → RoleTurnResult → completion/projection
 - 全零行为变更验证：既有 kernel/transaction/adapter 套件全绿（wiring/controller/facade/completion/decoder/llm_caller）。
 - 新增：铸造唯一性（同 call id 不复铸）、transition append-only、每个过滤点产生 filtered transition 的单测、divergence 对账单测（人为制造别名丢失场景 → divergence 非零且被记录）。
 
+## 4.1 2026-07-04 增量落地记录
+
+- `control_plane.run_ledger.public.tool_lifecycle` 已公开
+  `normalize_native_tool_call_envelope_refs()`，Run Ledger 成为 native
+  tool-call envelope refs 过滤与去重规则的 owner。
+- `roles.runtime.public.result_mapping` 已改为消费该 public helper，不再维护
+  本地 envelope payload 过滤规则。
+- 验证：
+  `rtk pytest src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py src/backend/polaris/cells/roles/runtime/tests/test_service_helpers_characterization.py -q -k "tool_lifecycle or native_tool_call_envelope or extract_tool_calls"`；
+  `rtk ruff check src/backend/polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py src/backend/polaris/cells/control_plane/run_ledger/public/__init__.py src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py src/backend/polaris/cells/roles/runtime/public/result_mapping.py`；
+  `rtk mypy src/backend/polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py src/backend/polaris/cells/control_plane/run_ledger/public/__init__.py src/backend/polaris/cells/roles/runtime/public/result_mapping.py`。
+
 ## 5. 风险与边界
 
 - 信封 dict 引用穿过 provider-callback 层时可能被浅拷贝分离——穿线以 `_envelope` 键随调用 dict 本体走，凡深拷贝调用 dict 的站点自动携带。
