@@ -354,9 +354,13 @@ def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
                 payload["failure_class"] = FailureClassV1.TOOL_DISPATCH_DROPPED.value
         elif result_count > 0 and not _clean_string(payload.get("dispatch_status")):
             payload["dispatch_status"] = "dispatched"
-        payload.setdefault("ok", False)
         payload.setdefault("dispatch_status", "unknown")
         payload.setdefault("failure_class", FailureClassV1.TOOL_LIFECYCLE_UNKNOWN.value)
+        payload.setdefault(
+            "ok",
+            payload["dispatch_status"] == "dispatched"
+            and not normalize_failure_class(payload.get("failure_class")),
+        )
         return payload
     return {
         "schema_version": "tool_call_lifecycle_receipt.v1",

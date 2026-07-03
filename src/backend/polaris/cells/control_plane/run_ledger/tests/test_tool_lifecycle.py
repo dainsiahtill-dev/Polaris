@@ -331,6 +331,26 @@ def test_tool_lifecycle_normalizer_derives_counts_from_lifecycle_refs() -> None:
     assert receipt["batch_receipt_refs"] == [{"batch_id": "batch-1", "receipt_hash": "batch-hash"}]
     assert [item["receipt_hash"] for item in receipt["effect_receipt_refs"]] == ["effect-1", "effect-2"]
     assert receipt["dispatch_status"] == "dispatched"
+    assert receipt["ok"] is True
+
+
+def test_tool_lifecycle_normalizer_projects_raw_dispatched_payload_as_ok() -> None:
+    receipt = normalize_tool_call_lifecycle_receipt(
+        {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_calls_count": 1,
+            "decoded_tool_calls_count": 1,
+            "dispatched_tool_calls_count": 1,
+            "tool_result_count": 1,
+            "effect_receipt_count": 1,
+            "dispatch_status": "dispatched",
+            "failure_class": "",
+        }
+    )
+
+    assert receipt["ok"] is True
+    assert receipt["dispatch_status"] == "dispatched"
+    assert receipt["failure_class"] == ""
 
 
 def test_tool_lifecycle_receipt_preserves_native_tool_call_envelopes() -> None:
