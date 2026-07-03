@@ -1,39 +1,25 @@
-import sys
-from pathlib import Path
-
-import pytest
-
-# Skip this test - tool_output_json module has been migrated to polaris.kernelone.tool_execution.output_json
-try:
-    from tool_output_json import parse_json_stdout
-except ImportError:
-    pytest.importorskip("polaris.kernelone.tool_execution.output_json")
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-MODULE_DIR = REPO_ROOT / "src" / "backend" / "core" / "polaris_loop"
-if str(MODULE_DIR) not in sys.path:
-    sys.path.insert(0, str(MODULE_DIR))
+from polaris.kernelone.tool_execution.output_json import parse_json_stdout
 
 
 def test_parse_json_stdout_accepts_clean_json():
-    payload, error = parse_json_stdout('{"ok": true, "tool": "precision_edit"}')
+    payload, error = parse_json_stdout('{"ok": true, "tool": "edit_blocks"}')
 
     assert error is None
     assert isinstance(payload, dict)
     assert payload["ok"] is True
-    assert payload["tool"] == "precision_edit"
+    assert payload["tool"] == "edit_blocks"
 
 
 def test_parse_json_stdout_extracts_json_after_log_prefix():
     text = (
         "Ruff check failed: F401 unused import\n"
-        '{"ok": false, "tool": "precision_edit", "error": "Quality gates failed"}'
+        '{"ok": false, "tool": "edit_blocks", "error": "Quality gates failed"}'
     )
     payload, error = parse_json_stdout(text)
 
     assert error is None
     assert isinstance(payload, dict)
-    assert payload["tool"] == "precision_edit"
+    assert payload["tool"] == "edit_blocks"
     assert payload["ok"] is False
 
 
