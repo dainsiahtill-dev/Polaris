@@ -37,6 +37,22 @@ def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _dropped_tool_call_refs(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    refs: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, dict):
+            ref = dict(item)
+            if ref:
+                refs.append(ref)
+            continue
+        tool_name = _clean_string(item)
+        if tool_name:
+            refs.append({"tool_name": tool_name, "reason": "tool_dispatch_dropped"})
+    return refs
+
+
 def _result_items(receipts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for receipt in receipts:
@@ -179,6 +195,7 @@ def build_tool_call_lifecycle_receipt(
     decoded_tool_calls_count: int = 0,
     dispatched_tool_calls_count: int = 0,
     receipts: list[dict[str, Any]] | None = None,
+    dropped_tool_calls: list[Any] | tuple[Any, ...] | None = None,
     dispatch_status: str = "",
     failure_class: str = "",
     reason: str = "",
@@ -193,12 +210,13 @@ def build_tool_call_lifecycle_receipt(
     dispatched_count = _int_value(dispatched_tool_calls_count)
     status = _clean_string(dispatch_status)
     failure = normalize_failure_class(failure_class)
-    dropped: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = _dropped_tool_call_refs(dropped_tool_calls)
 
     if native_count > 0 and dispatched_count <= 0:
         status = status or "dropped"
         failure = failure or FailureClassV1.TOOL_DISPATCH_DROPPED.value
-        dropped.append({"count": native_count, "reason": "native_tool_calls_without_dispatch"})
+        if not dropped:
+            dropped.append({"count": native_count, "reason": "native_tool_calls_without_dispatch"})
     elif decoded_count > 0 and not receipt_rows:
         status = status or "blocked"
         failure = failure or FailureClassV1.MISSING_BATCH_RECEIPT.value

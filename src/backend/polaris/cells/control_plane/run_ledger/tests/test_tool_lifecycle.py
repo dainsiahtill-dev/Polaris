@@ -64,6 +64,30 @@ def test_tool_lifecycle_receipt_detects_missing_batch_receipt() -> None:
     assert receipt["failure_class"] == "MISSING_BATCH_RECEIPT"
 
 
+def test_tool_lifecycle_receipt_preserves_dropped_tool_details() -> None:
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=0,
+        dropped_tool_calls=["write_file"],
+        receipts=[],
+    ).to_dict()
+
+    assert receipt["ok"] is False
+    assert receipt["dispatch_status"] == "dropped"
+    assert receipt["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert receipt["dropped_tool_calls"] == [
+        {
+            "tool_name": "write_file",
+            "reason": "tool_dispatch_dropped",
+        }
+    ]
+
+
 def test_tool_lifecycle_receipt_blocks_successful_write_without_effect_receipt() -> None:
     receipt = build_tool_call_lifecycle_receipt(
         run_id="run-1",

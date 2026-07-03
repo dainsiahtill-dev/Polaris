@@ -12,7 +12,11 @@ import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from polaris.cells.control_plane.run_ledger.public import FailureClassV1, is_failure_class
+from polaris.cells.control_plane.run_ledger.public import (
+    FailureClassV1,
+    build_tool_call_lifecycle_receipt,
+    is_failure_class,
+)
 from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
     _build_turn_history_and_events,
     _commit_turn_to_snapshot,
@@ -308,18 +312,19 @@ def _build_missing_dispatch_lifecycle_receipt(
     if not required_write_tools:
         return None
     latest_metadata = _last_decision_metadata(ledger)
-    return {
-        "schema_version": "tool_call_lifecycle_receipt.v1",
-        "dispatch_status": "dropped",
-        "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
-        "reason": "required_write_tool_without_dispatch_evidence",
-        "native_tool_calls_count": _native_tool_calls_count(metadata, ledger),
-        "decoded_tool_calls_count": _safe_int(latest_metadata.get("tool_count")),
-        "dispatched_tool_calls_count": 0,
-        "tool_result_count": 0,
-        "effect_receipt_count": 0,
-        "dropped_tool_calls": list(required_write_tools),
-    }
+    return build_tool_call_lifecycle_receipt(
+        run_id="",
+        task_id="",
+        turn_id="",
+        role="",
+        native_tool_calls_count=_native_tool_calls_count(metadata, ledger),
+        decoded_tool_calls_count=_safe_int(latest_metadata.get("tool_count")),
+        dispatched_tool_calls_count=0,
+        dropped_tool_calls=list(required_write_tools),
+        dispatch_status="dropped",
+        failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        reason="required_write_tool_without_dispatch_evidence",
+    ).to_dict()
 
 
 def _append_tool_call_lifecycle_event(

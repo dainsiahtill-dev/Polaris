@@ -11,7 +11,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from polaris.cells.control_plane.run_ledger.public import FailureClassV1, is_failure_class
+from polaris.cells.control_plane.run_ledger.public import (
+    FailureClassV1,
+    build_tool_call_lifecycle_receipt,
+    is_failure_class,
+)
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 
@@ -140,19 +144,21 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
         metadata.setdefault(key, value)
     dropped_error = _tool_dispatch_dropped_error(result)
     if dropped_error:
+        dropped_tool_calls = _extract_tool_calls(result)
         metadata.setdefault(
             "tool_call_lifecycle",
-            {
-                "schema_version": "tool_call_lifecycle_receipt.v1",
-                "dispatch_status": "dropped",
-                "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
-                "native_tool_calls_count": len(_extract_tool_calls(result)),
-                "decoded_tool_calls_count": len(_extract_tool_calls(result)),
-                "dispatched_tool_calls_count": 0,
-                "tool_result_count": 0,
-                "effect_receipt_count": 0,
-                "dropped_tool_calls": list(_extract_tool_calls(result)),
-            },
+            build_tool_call_lifecycle_receipt(
+                run_id="",
+                task_id="",
+                turn_id="",
+                role="",
+                native_tool_calls_count=len(dropped_tool_calls),
+                decoded_tool_calls_count=len(dropped_tool_calls),
+                dispatched_tool_calls_count=0,
+                dropped_tool_calls=list(dropped_tool_calls),
+                dispatch_status="dropped",
+                failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+            ).to_dict(),
         )
     return metadata
 

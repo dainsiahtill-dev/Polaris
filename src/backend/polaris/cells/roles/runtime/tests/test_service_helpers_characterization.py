@@ -163,7 +163,12 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
         "tool_dispatch_dropped: native tool calls observed but no tool dispatch/effect receipt was committed"
     )
     assert dropped.metadata["tool_call_lifecycle"]["dispatch_status"] == "dropped"
-    assert dropped.metadata["tool_call_lifecycle"]["dropped_tool_calls"] == ["write_file"]
+    assert dropped.metadata["tool_call_lifecycle"]["dropped_tool_calls"] == [
+        {
+            "tool_name": "write_file",
+            "reason": "tool_dispatch_dropped",
+        }
+    ]
 
     dropped_from_metadata = runtime_service._to_contract_result(
         role="director",
