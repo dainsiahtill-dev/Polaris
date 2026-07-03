@@ -647,6 +647,7 @@ class PlanDirectorRepairCommandV1:
     source_tool: str
     base_files: Mapping[str, str] = field(default_factory=dict)
     artifact_quality_errors: tuple[str, ...] = ()
+    artifact_quality_issues: tuple[Mapping[str, Any], ...] = ()
     diagnostics: tuple[RepairDiagnosticV1, ...] = ()
     mode: str = "commit"
     deterministic_only: bool = True
@@ -657,6 +658,7 @@ class PlanDirectorRepairCommandV1:
         object.__setattr__(self, "source_tool", _require_non_empty("source_tool", self.source_tool))
         object.__setattr__(self, "base_files", dict(self.base_files or {}))
         object.__setattr__(self, "artifact_quality_errors", tuple(str(item) for item in self.artifact_quality_errors))
+        object.__setattr__(self, "artifact_quality_issues", _to_tuple_mapping_from_any(self.artifact_quality_issues))
         object.__setattr__(self, "diagnostics", tuple(self.diagnostics or ()))
         object.__setattr__(self, "advisor_notes", tuple(self.advisor_notes or ()))
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
@@ -671,6 +673,7 @@ class RunDirectorRepairCommandV1:
     source_tool: str
     base_files: Mapping[str, str] = field(default_factory=dict)
     artifact_quality_errors: tuple[str, ...] = ()
+    artifact_quality_issues: tuple[Mapping[str, Any], ...] = ()
     diagnostics: tuple[RepairDiagnosticV1, ...] = ()
     mode: str = "commit"
     deterministic_only: bool = True
@@ -684,6 +687,7 @@ class RunDirectorRepairCommandV1:
         object.__setattr__(self, "source_tool", _require_non_empty("source_tool", self.source_tool))
         object.__setattr__(self, "base_files", dict(self.base_files or {}))
         object.__setattr__(self, "artifact_quality_errors", tuple(str(item) for item in self.artifact_quality_errors))
+        object.__setattr__(self, "artifact_quality_issues", _to_tuple_mapping_from_any(self.artifact_quality_issues))
         object.__setattr__(self, "diagnostics", tuple(self.diagnostics or ()))
         object.__setattr__(self, "allowed_paths", tuple(str(item) for item in self.allowed_paths))
         object.__setattr__(self, "advisor_notes", tuple(self.advisor_notes or ()))

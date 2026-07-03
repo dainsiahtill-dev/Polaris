@@ -249,6 +249,31 @@ def test_public_repair_planning_projects_typed_diagnostics() -> None:
     assert payload["diagnostics"][0]["metadata"]["confidence"] == "parser"
 
 
+def test_public_repair_planning_accepts_typed_artifact_quality_issues() -> None:
+    result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool="unsupported.future_rule",
+            artifact_quality_issues=(
+                {
+                    "source": "artifact_quality",
+                    "code": "typescript_ts9999",
+                    "message": "Unknown future compiler error.",
+                    "path": "src/app.ts",
+                    "metadata": {"line": 3, "column": 14, "confidence": "parser"},
+                },
+            ),
+        )
+    )
+    payload = result.to_dict()
+
+    assert payload["ok"] is False
+    assert payload["diagnostic_count"] == 1
+    assert payload["diagnostics"][0]["code"] == "typescript_ts9999"
+    assert payload["diagnostics"][0]["path"] == "src/app.ts"
+    assert payload["diagnostics"][0]["metadata"]["column"] == 14
+    assert payload["diagnostics"][0]["metadata"]["confidence"] == "parser"
+
+
 def _install_delete_file_test_runtime_binding(monkeypatch: pytest.MonkeyPatch, source_tool: str) -> None:
     def planner(
         base_files: dict[str, str],
