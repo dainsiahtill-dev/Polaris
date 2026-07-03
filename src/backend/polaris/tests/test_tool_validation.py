@@ -35,6 +35,26 @@ def test_removed_semantic_tools_are_unknown(monkeypatch) -> None:
         assert "Unknown tool" in str(result.get("error") or "")
 
 
+def test_deprecated_exact_edit_tool_has_no_executor_handler(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(executor_module, "CODE_INTELLIGENCE_AVAILABLE", False)
+    executor = executor_module.AgentAccelToolExecutor(str(tmp_path))
+    target = tmp_path / "example.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    result = executor.execute(
+        "precision_edit",
+        {
+            "file": "example.py",
+            "search": "value = 1",
+            "replace": "value = 2",
+        },
+    )
+
+    assert result["ok"] is False
+    assert "Handler not implemented" in str(result.get("error") or "")
+    assert target.read_text(encoding="utf-8") == "value = 1\n"
+
+
 def test_validation_before_dependency_check_for_missing_parameters(monkeypatch) -> None:
     monkeypatch.setattr(executor_module, "CODE_INTELLIGENCE_AVAILABLE", False)
     executor = executor_module.AgentAccelToolExecutor(".")

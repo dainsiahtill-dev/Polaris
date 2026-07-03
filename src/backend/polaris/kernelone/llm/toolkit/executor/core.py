@@ -176,7 +176,7 @@ class AgentAccelToolExecutor:
 
         # File read history for mandatory read-before-edit enforcement
         # Tracks the read sequence number when each file was last read successfully.
-        # Edit tools (precision_edit, search_replace, edit_file) require the target
+        # Edit tools (search_replace, edit_file) require the target
         # file to have been read within a recent window to prevent stale content edits.
         # P0 FIX: Use FailureBudget formal API for cross-call persistence.
         self._read_sequence_window: int = FILE_READ_SEQUENCE_WINDOW  # File must be read within last N reads
