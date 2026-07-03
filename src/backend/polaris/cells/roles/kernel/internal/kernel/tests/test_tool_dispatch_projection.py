@@ -86,10 +86,13 @@ def test_append_tool_dispatch_dropped_events_preserves_native_envelopes(
     )
     monkeypatch.setattr(
         "polaris.cells.roles.kernel.internal.kernel.tool_dispatch_projection.append_director_task_boundary_verdict",
-        lambda **_: None,
+        lambda **kwargs: captured.setdefault("task_boundary", kwargs),
     )
 
-    envelopes = [{"envelope_id": "native-read", "tool_name": "read_file"}]
+    envelopes = [
+        {"envelope_id": "native-read", "tool_name": "read_file"},
+        {"envelope_id": "native-write", "tool_name": "write_file"},
+    ]
     append_tool_dispatch_dropped_control_plane_events(
         role="director",
         profile=SimpleNamespace(role_id="director"),
@@ -110,6 +113,7 @@ def test_append_tool_dispatch_dropped_events_preserves_native_envelopes(
     )
 
     lifecycle = captured["event"]["tool_call_lifecycle_receipt"]
-    assert lifecycle["native_tool_calls_count"] == 1
+    assert lifecycle["native_tool_calls_count"] == 2
     assert lifecycle["native_tool_call_envelope_refs"] == envelopes
-    assert lifecycle["dropped_tool_calls"] == [{"count": 1, "reason": "native_tool_calls_without_dispatch"}]
+    assert lifecycle["dropped_tool_calls"] == [{"count": 2, "reason": "native_tool_calls_without_dispatch"}]
+    assert captured["task_boundary"]["tool_dispatch"]["native_tool_calls_count"] == 2

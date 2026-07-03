@@ -113,7 +113,7 @@ def append_tool_dispatch_dropped_control_plane_events(
             dropped_refs = flag.get("dropped_tool_calls")
             if isinstance(dropped_refs, list):
                 dropped_tool_calls = [dict(item) for item in dropped_refs if isinstance(item, dict)]
-            native_count = max(1, int(flag.get("native_tool_calls_count") or 1))
+            native_count = len(native_tool_call_envelopes) or max(1, int(flag.get("native_tool_calls_count") or 1))
             decoded_count = max(0, int(flag.get("decoded_tool_calls_count") or 0))
             dispatched_count = max(0, int(flag.get("dispatched_tool_calls_count") or 0))
             provider_response_hash = str(flag.get("provider_response_hash") or "").strip()
