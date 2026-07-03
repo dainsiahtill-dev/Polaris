@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "description": "Machine-readable quarantine registry of known-failing tests. Consumed by docs/governance/ci/scripts/run_test_quarantine_gate.py. Test bodies keep their failing assertions; this registry only lets the gate distinguish pre-existing debt from new regressions and flags stale entries (unexpected passes) for removal. See docs/blueprints/GOVERNANCE_MECHANIZATION_BLUEPRINT_20260703.md.",
+  "registered_at": "2026-07-03",
+  "entries": [
+    {
+      "node_id": "polaris/cells/roles/runtime/tests/test_host_session_continuity.py::test_execute_role_task_emits_cognitive_runtime_shadow_receipt",
+      "file": "polaris/cells/roles/runtime/tests/test_host_session_continuity.py",
+      "reason": "Cognitive runtime shadow receipt is no longer emitted the way the test expects (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.runtime",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/runtime/tests/test_host_session_continuity.py::test_execute_role_session_persists_transcript_and_context_os",
+      "file": "polaris/cells/roles/runtime/tests/test_host_session_continuity.py",
+      "reason": "Transcript and ContextOS persistence expectations drifted from the current host session runtime (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.runtime",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/tests/unit/kernelone/quality/test_r6_regression_gates.py::TestFactoryRunServiceFailClosed::test_clean_chain_preserves_static_pass",
+      "file": "polaris/tests/unit/kernelone/quality/test_r6_regression_gates.py",
+      "reason": "FactoryRunService fail-closed clean-chain scenario no longer preserves the static pass verdict the regression gate expects (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "kernelone.quality",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py::test_exploration_streak_hard_block_allows_non_exploration_only_batches[broad_plus_direct_read]",
+      "file": "polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py",
+      "reason": "Mutation guard soft-mode expectations drifted after guard hardening (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.kernel",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py::test_exploration_streak_hard_block_allows_non_exploration_only_batches[write_only]",
+      "file": "polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py",
+      "reason": "Mutation guard soft-mode expectations drifted after guard hardening (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.kernel",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py::test_warn_mode_allows_readonly_batch_for_negated_mutation_request",
+      "file": "polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py",
+      "reason": "Mutation guard warn-mode expectations drifted after guard hardening (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.kernel",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py::test_warn_mode_allows_readonly_batch_for_weak_mutation_request",
+      "file": "polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py",
+      "reason": "Mutation guard warn-mode expectations drifted after guard hardening (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.kernel",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py::test_off_mode_completely_bypasses_mutation_guard",
+      "file": "polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py",
+      "reason": "Mutation guard off-mode bypass expectations drifted after guard hardening (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.kernel",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py::test_allowed_tool_names_alias_normalization_permits_scaffolding_alias",
+      "file": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py",
+      "reason": "Tool batch executor decision-tree contract drifted; current executor raises tool_dispatch_dropped where the test expects an authorized dispatch (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.kernel",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py::test_read_write_barrier_bypassed_for_platform_tool_contract",
+      "file": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py",
+      "reason": "Tool batch executor decision-tree contract drifted; current executor raises tool_dispatch_dropped where the test expects an authorized dispatch (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.kernel",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py::test_platform_tool_contract_targets_authorize_mutation_guard",
+      "file": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py",
+      "reason": "Tool batch executor decision-tree contract drifted; current executor raises tool_dispatch_dropped where the test expects an authorized dispatch (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.kernel",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py::test_content_gathered_verification_read_exemption_allows_direct_read",
+      "file": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py",
+      "reason": "Tool batch executor decision-tree contract drifted; current executor raises tool_dispatch_dropped where the test expects an authorized dispatch (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.kernel",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py::test_content_gathered_needs_plan_allows_read_when_under_max_turns",
+      "file": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py",
+      "reason": "Tool batch executor decision-tree contract drifted; current executor raises tool_dispatch_dropped where the test expects an authorized dispatch (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.kernel",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py::test_implementing_phase_partial_block_sets_ledger_flag",
+      "file": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py",
+      "reason": "Tool batch executor decision-tree contract drifted; current executor raises tool_dispatch_dropped where the test expects an authorized dispatch (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.kernel",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py::test_guard_invoked_once_when_count_towards_limit",
+      "file": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py",
+      "reason": "Tool batch executor decision-tree contract drifted; current executor raises tool_dispatch_dropped where the test expects an authorized dispatch (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.kernel",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py::test_guard_not_invoked_when_count_towards_limit_false",
+      "file": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py",
+      "reason": "Tool batch executor decision-tree contract drifted; current executor raises tool_dispatch_dropped where the test expects an authorized dispatch (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.kernel",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py::test_finalize_mode_none_completes_with_tool_results",
+      "file": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py",
+      "reason": "Tool batch executor decision-tree contract drifted; finalize-mode routing no longer matches the test expectations (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.kernel",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py::test_finalize_mode_local_routes_to_finalize_local",
+      "file": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py",
+      "reason": "Tool batch executor decision-tree contract drifted; finalize-mode routing no longer matches the test expectations (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.kernel",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py::test_finalize_mode_unknown_raises_value_error",
+      "file": "polaris/cells/roles/kernel/tests/test_tool_batch_executor_decision_tree.py",
+      "reason": "Tool batch executor decision-tree contract drifted; finalize-mode routing no longer matches the test expectations (pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.kernel",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/adapters/tests/test_deterministic_repair_strategy_catalog.py::test_materialization_quality_public_wrapper_is_not_internal_function_alias",
+      "file": "polaris/cells/roles/adapters/tests/test_deterministic_repair_strategy_catalog.py",
+      "reason": "Test fake for the materialization repair step does not accept the new advisor_notes keyword argument (mock signature drift; pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.adapters",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/adapters/tests/test_deterministic_repair_strategy_catalog.py::test_materialization_quality_migration_debt_marks_legacy_only_step_blocked",
+      "file": "polaris/cells/roles/adapters/tests/test_deterministic_repair_strategy_catalog.py",
+      "reason": "Test fake for the materialization repair step does not accept the new advisor_notes keyword argument (mock signature drift; pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.adapters",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py::TestFrontendTestRepairContracts::test_typescript_web_root_workspace_directive_prefers_package_contracts",
+      "file": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "reason": "PM frontend-test repair contract now emits TASK-3 which the expected task list does not include (expectation drift; pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.adapters",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    },
+    {
+      "node_id": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py::TestFrontendTestRepairContracts::test_typescript_placeholder_script_rule_does_not_route_to_qa_repair",
+      "file": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "reason": "PM frontend-test repair contract now emits TASK-3 which the expected task list does not include (expectation drift; pre-existing failure at HEAD per 2026-07-03 audit).",
+      "owner_hint": "cells.roles.adapters",
+      "registered_at": "2026-07-03",
+      "expiry": null
+    }
+  ]
+}

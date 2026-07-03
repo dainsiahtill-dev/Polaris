@@ -39,6 +39,7 @@ from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.fs.text_ops import write_json_atomic
+from polaris.kernelone.llm.budget_policy import FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
 from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
 from . import factory_stage_helpers as helpers
@@ -115,7 +116,11 @@ _LANGUAGE_NEUTRAL_FILENAMES: frozenset[str] = frozenset(
 _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 3
 _WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_ENV = "KERNELONE_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_SECONDS"
 _DEFAULT_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_SECONDS = 90.0
-_WORKSPACE_QUALITY_REPAIR_MIN_LLM_START_BUDGET_SECONDS = 45.0
+# Shares the single budget_policy constant with the chief-engineer copy below.
+# Bench r46 lowered the CE min start budget 45.0 -> 40.0; this sibling had
+# silently kept 45.0 (EXECUTION_BUDGET_POLICY_BLUEPRINT_20260703 §1) — now both
+# read the same 40.0 fact from one place.
+_WORKSPACE_QUALITY_REPAIR_MIN_LLM_START_BUDGET_SECONDS = FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
 _WORKSPACE_QUALITY_REPAIR_SOURCE_SUFFIXES = frozenset(
     {
         ".css",
@@ -150,7 +155,9 @@ _QUALITY_GATE_MIN_PASS_SCORE = 70
 _QUALITY_GATE_MIN_START_BUDGET_SECONDS = 15.0
 _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS = 15.0
 _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS = 5.0
-_CHIEF_ENGINEER_MIN_LLM_START_BUDGET_SECONDS = 40.0
+# Bench r46 evidence: 45.0 -> 40.0; single-sourced in budget_policy together
+# with the workspace-quality-repair sibling above.
+_CHIEF_ENGINEER_MIN_LLM_START_BUDGET_SECONDS = FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
 _PRE_DIRECTOR_SNAPSHOT_RELATIVE_DIR = ".polaris/factory_snapshots/pre_director"
 _PRE_DIRECTOR_SNAPSHOT_KIND = "pre_director_workspace"
 _PRE_DIRECTOR_PLATFORM_PREFIXES = (

@@ -13,6 +13,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from polaris.kernelone.llm.budget_policy import RETRY_CREATE_OUTPUT_FLOOR_TOKENS
+
 
 def resolve_retry_model_override(retry_llm_call_ordinal: int) -> str | None:
     """Resolve optional retry model override from environment.
@@ -154,7 +156,13 @@ _RETRY_OUTPUT_FLOOR_ENV = "KERNELONE_RETRY_OUTPUT_FLOOR_TOKENS"
 _DEFAULT_RETRY_OUTPUT_FLOOR_TOKENS = 2500
 
 _RETRY_CREATE_OUTPUT_FLOOR_ENV = "KERNELONE_RETRY_CREATE_OUTPUT_FLOOR_TOKENS"
-_DEFAULT_RETRY_CREATE_OUTPUT_FLOOR_TOKENS = 7000
+# FLOOR semantics, NOT a cap: this default participates as ``max`` — reserve AT
+# LEAST this much output for a pure-create forced write — whereas the shared
+# 7000 in polaris.kernelone.llm.budget_policy is a CAP
+# (FORCED_WRITE_OUTPUT_TOKEN_CEILING, ``min`` direction) at the forced-write /
+# required-tool retry sites. The numeric value is single-sourced via the
+# RETRY_CREATE_OUTPUT_FLOOR_TOKENS alias; the direction stays floor here.
+_DEFAULT_RETRY_CREATE_OUTPUT_FLOOR_TOKENS = RETRY_CREATE_OUTPUT_FLOOR_TOKENS
 
 
 def resolve_escalation_temperature() -> float | None:

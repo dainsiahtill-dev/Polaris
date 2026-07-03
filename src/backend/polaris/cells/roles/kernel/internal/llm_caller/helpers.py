@@ -12,6 +12,15 @@ from functools import lru_cache
 from typing import Any
 
 from polaris.kernelone.constants import DIRECTOR_TIMEOUT_SECONDS
+from polaris.kernelone.llm.budget_policy import (
+    BUDGET_CONTEXT_KEYS_CANONICAL,
+    CANONICAL_NESTED_CONTAINER_KEYS,
+    OUTPUT_BUDGET_CONTEXT_KEYS,
+    STRATEGY_NESTED_BUDGET_KEYS,
+    TIMEOUT_CEILING_CONTEXT_KEYS,
+    TIMEOUT_OVERRIDE_CONTEXT_KEYS,
+    clamp_output_tokens,
+)
 
 from .tool_helpers import build_native_tool_schemas, extract_native_tool_calls, resolve_tool_call_provider
 
@@ -66,11 +75,7 @@ def _coerce_context_timeout_override(raw: Any) -> int | None:
 def _resolve_context_timeout_override(context_override: Any) -> int | None:
     if not isinstance(context_override, dict):
         return None
-    for key in (
-        "llm_call_timeout_seconds",
-        "request_timeout_seconds",
-        "timeout_seconds",
-    ):
+    for key in TIMEOUT_OVERRIDE_CONTEXT_KEYS:
         timeout = _coerce_context_timeout_override(context_override.get(key))
         if timeout is not None:
             return timeout
@@ -80,11 +85,7 @@ def _resolve_context_timeout_override(context_override: Any) -> int | None:
 def _resolve_context_timeout_ceiling(context_override: Any) -> int | None:
     if not isinstance(context_override, dict):
         return None
-    for key in (
-        "llm_call_timeout_ceiling_seconds",
-        "request_timeout_ceiling_seconds",
-        "timeout_ceiling_seconds",
-    ):
+    for key in TIMEOUT_CEILING_CONTEXT_KEYS:
         timeout = _coerce_context_timeout_override(context_override.get(key))
         if timeout is not None:
             return timeout
@@ -101,45 +102,42 @@ def _coerce_context_max_tokens_override(raw: Any) -> int | None:
         return None
     if value <= 0:
         return None
-    return max(1, min(value, 128_000))
+    return clamp_output_tokens(value)
 
 
 def _mapping_payload(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
-def _resolve_context_max_tokens_override(context_override: Any) -> int | None:
+def resolve_context_output_budget_tokens(context_override: Any) -> int | None:
+    """Resolve the output-token budget declared in trusted runtime context.
+
+    THE one canonical key scan (budget_policy blueprint Phase 1):
+    ``kernel/transaction_factory`` delegates here instead of keeping its
+    mirrored copy. Key lists are owned by ``polaris.kernelone.llm.budget_policy``.
+    """
     if not isinstance(context_override, dict):
         return None
-    for key in (
-        "llm_max_tokens",
-        "max_output_tokens",
-        "max_tokens",
-    ):
+    for key in OUTPUT_BUDGET_CONTEXT_KEYS:
         max_tokens = _coerce_context_max_tokens_override(context_override.get(key))
         if max_tokens is not None:
             return max_tokens
-    for payload_key in (
-        "task_execution_contract",
-        "director_execution_contract",
-        "task_execution_strategy",
-        "director_execution_strategy",
-        "execution_strategy",
-    ):
+    for payload_key in BUDGET_CONTEXT_KEYS_CANONICAL:
         payload = _mapping_payload(context_override.get(payload_key))
-        context_budget = _mapping_payload(payload.get("context_budget"))
-        for nested_key in (
-            "output_budget_tokens",
-            "llm_max_tokens",
-            "max_output_tokens",
-            "max_tokens",
-        ):
+        nested_containers = [_mapping_payload(payload.get(key)) for key in CANONICAL_NESTED_CONTAINER_KEYS]
+        for nested_key in STRATEGY_NESTED_BUDGET_KEYS:
             max_tokens = _coerce_context_max_tokens_override(payload.get(nested_key))
-            if max_tokens is None:
-                max_tokens = _coerce_context_max_tokens_override(context_budget.get(nested_key))
+            for container in nested_containers:
+                if max_tokens is not None:
+                    break
+                max_tokens = _coerce_context_max_tokens_override(container.get(nested_key))
             if max_tokens is not None:
                 return max_tokens
     return None
+
+
+def _resolve_context_max_tokens_override(context_override: Any) -> int | None:
+    return resolve_context_output_budget_tokens(context_override)
 
 
 def resolve_timeout_seconds(profile: Any, context_override: Any | None = None) -> int:
@@ -180,7 +178,7 @@ def resolve_max_tokens(requested: Any, context_override: Any | None = None) -> i
         value = int(requested)
     except (TypeError, ValueError):
         value = 4000
-    return max(1, min(value, 128_000))
+    return clamp_output_tokens(value)
 
 
 _TRANSACTION_KERNEL_TEMPERATURE_OVERRIDE_KEY = "_transaction_kernel_temperature_override"
@@ -419,6 +417,7 @@ __all__ = [
     "extract_json_from_text",
     "extract_native_tool_calls",
     "messages_to_input",
+    "resolve_context_output_budget_tokens",
     "resolve_max_tokens",
     "resolve_platform_retry_max",
     "resolve_timeout_seconds",

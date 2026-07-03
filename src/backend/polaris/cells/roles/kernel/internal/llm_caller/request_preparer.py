@@ -18,6 +18,13 @@ from polaris.cells.roles.kernel.internal.interaction_contract import (
 )
 from polaris.kernelone.audit.context_os_prompt import audit_context_os_prompt_messages
 from polaris.kernelone.context.projection_engine import is_empty_run_card_message
+from polaris.kernelone.llm.budget_policy import (
+    REASONING_TRUNCATION_RETRY_OUTPUT_TOKENS,
+    REQUIRED_TOOL_RETRY_OUTPUT_TOKEN_CAP,
+    REQUIRED_TOOL_RETRY_TIMEOUT_SECONDS,
+    ResolvedBudgetV1,
+    classify_turn_kind,
+)
 from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
 from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
 
@@ -27,6 +34,8 @@ from .error_handling import (
     build_text_response_fallback_instruction,
 )
 from .helpers import (
+    _resolve_context_max_tokens_override,
+    _resolve_context_timeout_override,
     build_native_response_format,
     build_native_tool_schemas,
     compute_context_summary,
@@ -95,10 +104,12 @@ _FINAL_REQUEST_EVIDENCE_CONTEXT_KEYS = (
 )
 
 
+# Retry caps/floors are single-sourced in polaris.kernelone.llm.budget_policy
+# (blueprint Phase 1); local names kept as compatibility aliases.
 # 5th floor (2026-06-15): reserved output budget for the reasoning-truncation re-ask.
-_REASONING_TRUNCATION_RETRY_MAX_TOKENS = 8000
-_REQUIRED_TOOL_RETRY_MAX_TOKENS = 7000
-_REQUIRED_TOOL_RETRY_TIMEOUT_SECONDS = 120.0
+_REASONING_TRUNCATION_RETRY_MAX_TOKENS = REASONING_TRUNCATION_RETRY_OUTPUT_TOKENS
+_REQUIRED_TOOL_RETRY_MAX_TOKENS = REQUIRED_TOOL_RETRY_OUTPUT_TOKEN_CAP
+_REQUIRED_TOOL_RETRY_TIMEOUT_SECONDS = REQUIRED_TOOL_RETRY_TIMEOUT_SECONDS
 
 
 def is_reasoning_truncation_error(error: str) -> bool:
@@ -300,6 +311,54 @@ def _bounded_required_tool_retry_timeout(value: Any) -> float:
     if current <= 0:
         return _REQUIRED_TOOL_RETRY_TIMEOUT_SECONDS
     return min(current, _REQUIRED_TOOL_RETRY_TIMEOUT_SECONDS)
+
+
+def _build_execution_budget_projection(
+    *,
+    profile: Any,
+    override: dict[str, Any] | None,
+    request_options: dict[str, Any],
+    request_max_tokens: int,
+    request_timeout_seconds: int,
+) -> dict[str, Any]:
+    """Project the ACTUAL resolved budget as a ``ResolvedBudgetV1`` payload.
+
+    Observability only (budget policy blueprint Phase 1 step 3): every number
+    is copied from the already-resolved sampling values — this projection must
+    never change what is sent to the provider. Provenance reuses the SAME
+    detection funnels (`_resolve_context_*` helpers) that produced the values.
+    """
+    context_max_tokens_present = _resolve_context_max_tokens_override(override) is not None
+    context_timeout_present = _resolve_context_timeout_override(override) is not None
+    role_id = str(getattr(profile, "role_id", "") or "").strip().lower()
+
+    output_floor_tokens = 0
+    floor_provenance = "no_explicit_floor_visible"
+    if isinstance(override, dict) and override.get("_transaction_kernel_retry_output_budget_bounded"):
+        # transaction_factory wrote the retry floor into llm_max_tokens; at this
+        # layer the floor and the resolved budget coincide by construction.
+        output_floor_tokens = request_max_tokens
+        floor_provenance = "transaction_kernel_retry_output_budget_bounded"
+
+    provenance: dict[str, Any] = {
+        "max_output_tokens": ("context_override" if context_max_tokens_present else "requested_clamped"),
+        "output_floor_tokens": floor_provenance,
+        "llm_timeout_seconds": (
+            "director_timeout_policy"
+            if role_id == "director"
+            else ("context_override" if context_timeout_present else "role_default")
+        ),
+        "request_timeout_seconds": "same_funnel_as_llm_timeout",
+        "turn_kind": "classify_turn_kind",
+    }
+    return ResolvedBudgetV1(
+        max_output_tokens=int(request_max_tokens),
+        output_floor_tokens=int(output_floor_tokens),
+        llm_timeout_seconds=float(request_timeout_seconds),
+        request_timeout_seconds=float(request_timeout_seconds),
+        turn_kind=classify_turn_kind(override, request_options),
+        provenance=provenance,
+    ).to_payload()
 
 
 def _resident_agi_participation_scope_key(value: Any) -> str:
@@ -911,6 +970,15 @@ class LLMRequestPreparer:
                 selected_prompt_profile_ids = [
                     str(item).strip() for item in raw_selected_prompt_profile_ids if str(item or "").strip()
                 ]
+        # Budget policy blueprint Phase 1 step 3: stamp the ACTUAL resolved
+        # budget (observability only) under the single `execution_budget` key.
+        execution_budget = _build_execution_budget_projection(
+            profile=profile,
+            override=override if isinstance(override, dict) else None,
+            request_options=request_options,
+            request_max_tokens=request_max_tokens,
+            request_timeout_seconds=request_timeout_seconds,
+        )
         ai_request = AIRequest(
             task_type=TaskType.DIALOGUE,
             role=profile.role_id,
@@ -919,6 +987,7 @@ class LLMRequestPreparer:
             context={
                 "workspace": self.workspace,
                 "mode": "chat",
+                "execution_budget": execution_budget,
                 "native_tool_mode": native_tool_mode,
                 "response_format_mode": response_format_mode,
                 "interaction_contract": contract.to_metadata(),

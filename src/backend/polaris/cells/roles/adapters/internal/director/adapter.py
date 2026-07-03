@@ -20,6 +20,16 @@ from polaris.cells.director.tasking.public.execution_guidance import (
     resolve_task_execution_profile,
     resolve_task_execution_strategy,
 )
+from polaris.kernelone.llm.budget_policy import (
+    FORCED_WRITE_CONTEXT_KEYS,
+    FORCED_WRITE_OUTPUT_TOKEN_FLOOR,
+    FORCED_WRITE_STAGE_MARKERS,
+    OUTPUT_BUDGET_CONTEXT_KEYS,
+    TIMEOUT_CEILING_CONTEXT_KEYS,
+    TIMEOUT_OVERRIDE_CONTEXT_KEYS,
+    forced_write_output_token_ceiling,
+    forced_write_retry_timeout_seconds,
+)
 
 from ..base import BaseRoleAdapter
 from ..director_execution_backend import (
@@ -93,31 +103,17 @@ def _string_list_payload(value: Any, *, limit: int = 8) -> list[str]:
     return values[: max(int(limit), 0)]
 
 
-_ROLE_CALL_TIMEOUT_CEILING_KEYS = (
-    "llm_call_timeout_ceiling_seconds",
-    "request_timeout_ceiling_seconds",
-    "timeout_ceiling_seconds",
-)
+# Budget/timeout constants, context-key lists and env parsing are
+# single-sourced in polaris.kernelone.llm.budget_policy (blueprint Phase 1);
+# the local names below are kept as compatibility aliases for this module.
+_ROLE_CALL_TIMEOUT_CEILING_KEYS = TIMEOUT_CEILING_CONTEXT_KEYS
 _ROLE_CALL_TIMEOUT_KEYS = (
-    *_ROLE_CALL_TIMEOUT_CEILING_KEYS,
-    "llm_call_timeout_seconds",
-    "request_timeout_seconds",
-    "timeout_seconds",
+    *TIMEOUT_CEILING_CONTEXT_KEYS,
+    *TIMEOUT_OVERRIDE_CONTEXT_KEYS,
 )
-_RETRY_STAGE_TIMEOUT_ENV = "KERNELONE_DIRECTOR_RETRY_LLM_TIMEOUT_SECONDS"
-_DEFAULT_RETRY_STAGE_TIMEOUT_SECONDS = 120.0
-_FORCED_WRITE_OUTPUT_BUDGET_ENV = "KERNELONE_DIRECTOR_FORCED_WRITE_OUTPUT_TOKENS"
-_DEFAULT_FORCED_WRITE_OUTPUT_TOKENS = 7000
-_FORCED_WRITE_STAGE_MARKERS = (
-    "no_write_materialization_retry",
-    "empty_write_content_retry",
-    "contract_violation_retry",
-)
-_FORCED_WRITE_CONTEXT_KEYS = (
-    "director_no_write_materialization_retry",
-    "director_empty_write_retry",
-)
-_OUTPUT_BUDGET_CONTEXT_KEYS = ("llm_max_tokens", "max_output_tokens", "max_tokens")
+_FORCED_WRITE_STAGE_MARKERS = FORCED_WRITE_STAGE_MARKERS
+_FORCED_WRITE_CONTEXT_KEYS = FORCED_WRITE_CONTEXT_KEYS
+_OUTPUT_BUDGET_CONTEXT_KEYS = OUTPUT_BUDGET_CONTEXT_KEYS
 
 
 def _coerce_positive_float(value: Any) -> float | None:
@@ -144,12 +140,6 @@ def _coerce_positive_int(value: Any) -> int | None:
     return parsed
 
 
-def _bounded_env_float(name: str, *, default: float, lower: float, upper: float) -> float:
-    parsed = _coerce_positive_float(os.environ.get(name))
-    value = default if parsed is None else parsed
-    return max(lower, min(value, upper))
-
-
 def _role_call_timeout_from_context(context: dict[str, Any]) -> float | None:
     for key in _ROLE_CALL_TIMEOUT_KEYS:
         parsed = _coerce_positive_float(context.get(key))
@@ -170,12 +160,7 @@ def _resolve_role_call_timeout(
         timeout = min(timeout, context_timeout)
     normalized_stage = str(stage_label or "").strip().lower()
     if any(marker in normalized_stage for marker in _FORCED_WRITE_STAGE_MARKERS):
-        retry_timeout = _bounded_env_float(
-            _RETRY_STAGE_TIMEOUT_ENV,
-            default=_DEFAULT_RETRY_STAGE_TIMEOUT_SECONDS,
-            lower=10.0,
-            upper=timeout,
-        )
+        retry_timeout = forced_write_retry_timeout_seconds(upper=timeout)
         timeout = min(timeout, retry_timeout)
     return max(0.1, timeout)
 
@@ -187,23 +172,14 @@ def _context_has_forced_write_retry(context: dict[str, Any], *, stage_label: str
     return any(key in context for key in _FORCED_WRITE_CONTEXT_KEYS)
 
 
-def _forced_write_output_budget_tokens() -> int:
-    raw = os.environ.get(_FORCED_WRITE_OUTPUT_BUDGET_ENV)
-    try:
-        value = int(str(raw).strip()) if raw is not None and str(raw).strip() else _DEFAULT_FORCED_WRITE_OUTPUT_TOKENS
-    except (TypeError, ValueError):
-        value = _DEFAULT_FORCED_WRITE_OUTPUT_TOKENS
-    return max(512, min(value, 128_000))
-
-
 def _forced_write_effective_output_budget(context: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-    ceiling = _forced_write_output_budget_tokens()
+    ceiling = forced_write_output_token_ceiling()
     existing_values: dict[str, Any] = {key: context[key] for key in _OUTPUT_BUDGET_CONTEXT_KEYS if key in context}
     parsed_existing = [
         parsed for value in existing_values.values() if (parsed := _coerce_positive_int(value)) is not None
     ]
     if parsed_existing:
-        return max(512, min(ceiling, *parsed_existing)), existing_values
+        return max(FORCED_WRITE_OUTPUT_TOKEN_FLOOR, min(ceiling, *parsed_existing)), existing_values
     return ceiling, existing_values
 
 
@@ -234,7 +210,7 @@ def _prepare_role_dialogue_context(
             "schema_version": "director.forced_write_output_budget.v1",
             "stage_label": str(stage_label or ""),
             "max_tokens": output_tokens,
-            "ceiling_tokens": _forced_write_output_budget_tokens(),
+            "ceiling_tokens": forced_write_output_token_ceiling(),
             "previous_budget_values": previous_budget_values,
             "source": "director_adapter_forced_write_retry",
         }

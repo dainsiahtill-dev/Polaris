@@ -32,6 +32,7 @@ from polaris.cells.roles.kernel.internal.kernel.tool_runtime_executor import (
     execute_single_tool,
     reset_cached_tool_gateway_turn_boundary,
 )
+from polaris.cells.roles.kernel.internal.llm_caller.helpers import resolve_context_output_budget_tokens
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
 from polaris.cells.roles.kernel.internal.transaction.recon_policy import resolve_recon_required
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
@@ -63,41 +64,15 @@ def _first_non_empty(*values: Any) -> str:
     return ""
 
 
-def _coerce_positive_int(value: Any) -> int | None:
-    if isinstance(value, bool) or value is None:
-        return None
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return None
-    return parsed if parsed > 0 else None
-
-
-def _mapping_value(value: Any) -> dict[str, Any]:
-    return dict(value) if isinstance(value, dict) else {}
-
-
 def _resolve_existing_output_budget_tokens(context_override: dict[str, Any]) -> int | None:
-    for key in ("llm_max_tokens", "max_output_tokens", "max_tokens"):
-        parsed = _coerce_positive_int(context_override.get(key))
-        if parsed is not None:
-            return parsed
-    for payload_key in (
-        "task_execution_contract",
-        "director_execution_contract",
-        "task_execution_strategy",
-        "director_execution_strategy",
-        "execution_strategy",
-    ):
-        payload = _mapping_value(context_override.get(payload_key))
-        context_budget = _mapping_value(payload.get("context_budget"))
-        for nested_key in ("output_budget_tokens", "llm_max_tokens", "max_output_tokens", "max_tokens"):
-            parsed = _coerce_positive_int(payload.get(nested_key))
-            if parsed is None:
-                parsed = _coerce_positive_int(context_budget.get(nested_key))
-            if parsed is not None:
-                return parsed
-    return None
+    """Delegate to the ONE llm_caller key scan (budget_policy blueprint Phase 1).
+
+    This module previously mirrored the helpers key scan; the shared
+    implementation (clamped to the hard output-token limit) is behavior
+    preserving here — the result only feeds ``max(floor, existing or 0)``
+    below, and downstream ``resolve_max_tokens`` applies the same clamp.
+    """
+    return resolve_context_output_budget_tokens(context_override)
 
 
 def _assert_task_runtime_guard_allows_tool(request: Any) -> None:

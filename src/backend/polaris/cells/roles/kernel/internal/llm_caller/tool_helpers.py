@@ -11,6 +11,14 @@ import os
 import re
 from typing import Any
 
+from polaris.kernelone.llm.budget_policy import (
+    BUDGET_STRATEGY_PAYLOAD_KEYS,
+    FORCED_WRITE_OUTPUT_TOKEN_FLOOR,
+    OUTPUT_BUDGET_CONTEXT_KEYS,
+    STRATEGY_NESTED_BUDGET_KEYS,
+    STRATEGY_NESTED_CONTAINER_KEYS,
+    forced_write_output_token_ceiling,
+)
 from polaris.kernelone.tools.tool_kinds import ACTIVE_WRITE_TOOLS, DEPRECATED_WRITE_TOOLS
 
 logger = logging.getLogger(__name__)
@@ -18,14 +26,12 @@ logger = logging.getLogger(__name__)
 # I3-r23 (Prong A): force the write tool on turn 1 for a from-scratch leaf step.
 _FIRST_TURN_WRITE_ENV = "KERNELONE_FIRST_TURN_WRITE"
 _FIRST_TURN_WRITE_DISABLED = {"off", "none", "disabled", "false", "0"}
-_DIRECTOR_FORCED_WRITE_OUTPUT_BUDGET_ENV = "KERNELONE_DIRECTOR_FORCED_WRITE_OUTPUT_TOKENS"
-_DEFAULT_DIRECTOR_FORCED_WRITE_OUTPUT_TOKENS = 7_000
-_OUTPUT_BUDGET_CONTEXT_KEYS = ("llm_max_tokens", "max_output_tokens", "max_tokens")
-_EXECUTION_STRATEGY_CONTEXT_KEYS = (
-    "task_execution_strategy",
-    "director_execution_strategy",
-    "execution_strategy",
-)
+# Budget constants / env parsing / key lists are single-sourced in
+# polaris.kernelone.llm.budget_policy (blueprint Phase 1). The strategy-payload
+# scan below intentionally diverges from the canonical helpers scan — see the
+# budget_policy module docstring for the enumerated key differences.
+_OUTPUT_BUDGET_CONTEXT_KEYS = OUTPUT_BUDGET_CONTEXT_KEYS
+_EXECUTION_STRATEGY_CONTEXT_KEYS = BUDGET_STRATEGY_PAYLOAD_KEYS
 
 # I3-r28 (R7, repair-preserving edit): on a repair/bounce turn whose target file
 # already exists, force an ANCHORED edit and forbid the whole-file rewrite verb so
@@ -98,22 +104,16 @@ def _coerce_positive_int(value: Any) -> int | None:
     return parsed if parsed > 0 else None
 
 
-def _director_forced_write_output_budget_tokens() -> int:
-    parsed = _coerce_positive_int(os.environ.get(_DIRECTOR_FORCED_WRITE_OUTPUT_BUDGET_ENV))
-    value = parsed if parsed is not None else _DEFAULT_DIRECTOR_FORCED_WRITE_OUTPUT_TOKENS
-    return max(512, min(value, 128_000))
-
-
 def _strategy_budget_values(strategy: dict[str, Any]) -> dict[str, Any]:
     values: dict[str, Any] = {}
-    for key in ("output_budget_tokens", "llm_max_tokens", "max_output_tokens", "max_tokens"):
+    for key in STRATEGY_NESTED_BUDGET_KEYS:
         if key in strategy:
             values[key] = strategy[key]
-    for nested_key in ("budget_policy", "context_budget", "llm_sampling"):
+    for nested_key in STRATEGY_NESTED_CONTAINER_KEYS:
         nested = strategy.get(nested_key)
         if not isinstance(nested, dict):
             continue
-        for key in ("output_budget_tokens", "llm_max_tokens", "max_output_tokens", "max_tokens"):
+        for key in STRATEGY_NESTED_BUDGET_KEYS:
             if key in nested:
                 values[f"{nested_key}.{key}"] = nested[key]
     return values
@@ -137,7 +137,7 @@ def _apply_director_first_call_output_budget(
     *,
     targets: list[str],
 ) -> None:
-    ceiling = _director_forced_write_output_budget_tokens()
+    ceiling = forced_write_output_token_ceiling()
     previous_values: dict[str, Any] = {
         key: context_override[key] for key in _OUTPUT_BUDGET_CONTEXT_KEYS if key in context_override
     }
@@ -162,7 +162,7 @@ def _apply_director_first_call_output_budget(
             if parsed is not None:
                 parsed_values.append(parsed)
 
-    output_tokens = max(512, min(ceiling, *parsed_values)) if parsed_values else ceiling
+    output_tokens = max(FORCED_WRITE_OUTPUT_TOKEN_FLOOR, min(ceiling, *parsed_values)) if parsed_values else ceiling
     for key in _OUTPUT_BUDGET_CONTEXT_KEYS:
         if key in context_override or key != "max_tokens":
             context_override[key] = output_tokens
