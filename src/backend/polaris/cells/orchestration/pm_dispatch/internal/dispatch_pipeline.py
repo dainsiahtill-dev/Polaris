@@ -905,7 +905,7 @@ def _mainline_publish_dispatch_tasks_to_task_market(
     return results
 
 
-def _shadow_publish_dispatch_tasks_to_task_market(
+def _publish_dispatch_tasks_to_governed_design_queue(
     *,
     workspace_full: str,
     run_id: str,
@@ -913,11 +913,11 @@ def _shadow_publish_dispatch_tasks_to_task_market(
     normalized: dict[str, Any] | None = None,
     docs_stage: dict[str, Any] | None = None,
 ) -> None:
-    """Compatibility helper that now publishes only governed design work.
+    """Publish PM dispatch tasks to the governed design queue.
 
-    Historical shadow mode mirrored PM tasks directly to Director execution.
-    That route is retired: even calls through this helper publish to
-    ``pending_design`` with a Chief Engineer blueprint requirement.
+    PM dispatch tasks always enter ``pending_design`` with a Chief Engineer
+    blueprint requirement; direct-to-Director routes are normalized before
+    publish.
     """
     mode = _resolve_task_market_mode()
     rollout_mode = _resolve_task_market_rollout_mode()
@@ -1722,7 +1722,7 @@ _get_chief_engineer_service_ref = _get_chief_engineer_service
 __all__ = [
     "DispatchCallbacks",
     "_mainline_publish_dispatch_tasks_to_task_market",
-    "_shadow_publish_dispatch_tasks_to_task_market",
+    "_publish_dispatch_tasks_to_governed_design_queue",
     "record_dispatch_status_to_shangshuling",
     "resolve_director_dispatch_tasks",
     "run_chief_engineer_preflight",

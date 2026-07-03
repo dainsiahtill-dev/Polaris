@@ -17,11 +17,11 @@ from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (
     _classify_integration_qa_evidence,
     _mainline_publish_dispatch_tasks_to_task_market,
     _normalize_task_market_route,
+    _publish_dispatch_tasks_to_governed_design_queue,
     _resolve_task_market_mode,
     _resolve_task_market_rollout_mode,
     _resolve_workflow_submit_fn,
     _run_inline_task_market_consumers,
-    _shadow_publish_dispatch_tasks_to_task_market,
     _start_durable_consumer_loops,
     _task_market_stage_for_route,
     _tasks_touch_docs_only,
@@ -101,7 +101,7 @@ def test_task_market_legacy_direct_route_is_forced_to_chief_blueprint() -> None:
     assert _task_market_stage_for_route("direct_to_director") == "pending_design"
 
 
-def test_shadow_publish_emits_publish_commands(monkeypatch) -> None:
+def test_governed_design_publish_emits_publish_commands(monkeypatch) -> None:
     monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "shadow")
 
     captured: list[object] = []
@@ -121,7 +121,7 @@ def test_shadow_publish_emits_publish_commands(monkeypatch) -> None:
         "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._get_task_market_services",
         _fake_get_task_market_services,
     )
-    _shadow_publish_dispatch_tasks_to_task_market(
+    _publish_dispatch_tasks_to_governed_design_queue(
         workspace_full="/workspace",
         run_id="run-2",
         tasks=[
