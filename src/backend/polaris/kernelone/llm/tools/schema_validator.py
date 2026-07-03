@@ -16,8 +16,6 @@ if TYPE_CHECKING:
 
 # Type aliases for clarity
 SchemaDict = dict[str, Any]
-ValidationError = str
-ValidationResult = tuple[bool, list[ValidationError]]
 
 
 # JSON Schema draft-07 keywords that we validate
