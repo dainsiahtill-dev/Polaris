@@ -257,6 +257,41 @@ def test_missing_dispatch_lifecycle_prefers_native_tool_call_envelopes() -> None
     assert lifecycle["native_tool_calls_count"] == 2
     assert lifecycle["native_tool_call_envelope_refs"] == envelopes
     assert lifecycle["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert lifecycle["dropped_tool_calls"] == [
+        {"tool_name": "write_file", "envelope_id": "native-1", "reason": "tool_dispatch_dropped"},
+        {"tool_name": "execute_command", "envelope_id": "native-2", "reason": "tool_dispatch_dropped"},
+    ]
+
+
+def test_missing_dispatch_lifecycle_uses_native_envelope_tools_not_required_tools() -> None:
+    lifecycle = completion._build_missing_dispatch_lifecycle_receipt(
+        metadata={
+            "final_request_context_audit": {
+                "final_request_evidence_coverage": {
+                    "required_tools": ["write_file"],
+                },
+            },
+        },
+        ledger=SimpleNamespace(
+            decisions=[
+                {
+                    "metadata": {
+                        "native_tool_call_envelopes": [
+                            {"envelope_id": "native-read", "tool_name": "read_file"},
+                        ],
+                    }
+                }
+            ]
+        ),
+        tool_results=[],
+        batch_receipt={},
+    )
+
+    assert lifecycle is not None
+    assert lifecycle["native_tool_calls_count"] == 1
+    assert lifecycle["dropped_tool_calls"] == [
+        {"tool_name": "read_file", "envelope_id": "native-read", "reason": "tool_dispatch_dropped"}
+    ]
 
 
 def test_completion_owner_preserves_suspension_error_and_records_lifecycle_evidence(
