@@ -46,7 +46,7 @@ class InterviewAskPayload(BaseModel):
     criteria: list[str] | None = Field(default=None, validation_alias=AliasChoices("criteria", "expectedCriteria"))
     session_id: str | None = Field(default=None, validation_alias=AliasChoices("session_id", "sessionId"))
     api_key: str | None = None
-    # 使用空字典作为默认值，避免 None vs {} 的兼容性问题
+    # Use stable empty mappings so downstream request builders can merge safely.
     headers: dict[str, str] | None = Field(default_factory=dict)
     env_overrides: dict[str, str] | None = Field(
         default_factory=dict,
