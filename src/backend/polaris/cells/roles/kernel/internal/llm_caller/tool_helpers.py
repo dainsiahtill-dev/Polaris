@@ -189,6 +189,22 @@ def _native_tool_call_count_from_lifecycle_receipts(metadata: Mapping[str, Any])
     return 0
 
 
+def _native_tool_call_names_from_lifecycle_receipts(metadata: Mapping[str, Any]) -> list[str]:
+    for receipt in _tool_call_lifecycle_receipts_from_metadata(metadata):
+        normalized = normalize_tool_call_lifecycle_receipt(receipt)
+        dropped_refs = normalized.get("dropped_tool_calls")
+        if not isinstance(dropped_refs, (list, tuple)):
+            continue
+        names = [
+            name
+            for item in dropped_refs
+            if isinstance(item, Mapping) and (name := str(item.get("tool_name") or "").strip())
+        ]
+        if names:
+            return names
+    return []
+
+
 def native_tool_call_envelopes_from_metadata(metadata: Mapping[str, Any] | None) -> tuple[Mapping[str, Any], ...]:
     """Return valid native tool-call envelope payloads from response metadata."""
 
@@ -255,6 +271,10 @@ def native_tool_call_names(
             for envelope in envelopes
             if (name := str(envelope.get("tool_name") or "").strip())
         ]
+    if isinstance(metadata, Mapping):
+        lifecycle_names = _native_tool_call_names_from_lifecycle_receipts(metadata)
+        if lifecycle_names:
+            return lifecycle_names
     return [
         name
         for item in native_tool_calls

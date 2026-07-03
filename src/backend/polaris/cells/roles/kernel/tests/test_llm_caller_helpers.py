@@ -754,6 +754,22 @@ class TestExtractNativeToolCalls:
         assert native_tool_call_count(metadata, ()) == 5
         assert native_tool_call_count_from_metadata(metadata, fallback=1) == 5
 
+    def test_native_tool_call_names_derive_from_lifecycle_dropped_refs(self) -> None:
+        metadata = {
+            "tool_call_lifecycle_receipt": {
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "native_tool_calls_count": 2,
+                "decoded_tool_calls_count": 2,
+                "dispatched_tool_calls_count": 0,
+                "dropped_tool_calls": [
+                    {"tool_name": "write_file", "reason": "tool_dispatch_dropped"},
+                    {"tool_name": "execute_command", "reason": "tool_dispatch_dropped"},
+                ],
+            }
+        }
+
+        assert native_tool_call_names(metadata, ()) == ["write_file", "execute_command"]
+
     def test_native_tool_call_count_and_names_accept_lifecycle_envelope_refs(self) -> None:
         metadata = {
             "native_tool_call_envelope_refs": [
