@@ -124,6 +124,17 @@ class RepairDiagnosticV1:
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
 
 
+def _repair_diagnostic_v1_to_dict(diagnostic: RepairDiagnosticV1) -> dict[str, Any]:
+    return {
+        "source": diagnostic.source,
+        "code": diagnostic.code,
+        "message": diagnostic.message,
+        "path": diagnostic.path,
+        "severity": diagnostic.severity,
+        "metadata": dict(diagnostic.metadata),
+    }
+
+
 @dataclass(frozen=True)
 class RepairAdvisoryV1:
     """Optional future AGI advisory overlay.
@@ -2732,6 +2743,7 @@ class DirectorRepairPlanningResultV1:
     planned: bool
     source_tool: str
     diagnostic_count: int
+    diagnostics: tuple[RepairDiagnosticV1, ...] = ()
     plan_summary: DirectorRepairPlanSummaryV1 | None = None
     composition_summary: DirectorRepairCompositionSummaryV1 = field(
         default_factory=lambda: DirectorRepairCompositionSummaryV1(ok=False)
@@ -2751,6 +2763,7 @@ class DirectorRepairPlanningResultV1:
         object.__setattr__(self, "planned", bool(self.planned))
         object.__setattr__(self, "source_tool", _require_non_empty("source_tool", self.source_tool))
         object.__setattr__(self, "diagnostic_count", max(0, int(self.diagnostic_count)))
+        object.__setattr__(self, "diagnostics", tuple(self.diagnostics or ()))
         object.__setattr__(self, "advisor_notes", tuple(self.advisor_notes or ()))
         object.__setattr__(self, "error_code", str(self.error_code or "").strip() or None)
         object.__setattr__(self, "error_message", str(self.error_message or "").strip() or None)
@@ -2774,6 +2787,7 @@ class DirectorRepairPlanningResultV1:
             "planned": self.planned,
             "source_tool": self.source_tool,
             "diagnostic_count": self.diagnostic_count,
+            "diagnostics": [_repair_diagnostic_v1_to_dict(diagnostic) for diagnostic in self.diagnostics],
             "owner_cell": self.owner_cell,
             "execution_boundary": self.execution_boundary,
             "agi_execution_authority": False,

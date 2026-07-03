@@ -2270,6 +2270,7 @@ def plan_director_repair(command: PlanDirectorRepairCommandV1) -> DirectorRepair
     """Plan a deterministic repair through the generic public runtime surface."""
 
     public_advisor_notes = tuple(command.advisor_notes or ())
+    public_diagnostics = _public_repair_diagnostics_from_command(command)
     planning = plan_runtime_repair(
         source_tool=command.source_tool,
         base_files=command.base_files,
@@ -2277,7 +2278,11 @@ def plan_director_repair(command: PlanDirectorRepairCommandV1) -> DirectorRepair
         advisor_notes=_to_internal_advisor_notes(public_advisor_notes),
         mode=command.mode,
     )
-    return _to_public_repair_planning_result(planning, public_advisor_notes=public_advisor_notes)
+    return _to_public_repair_planning_result(
+        planning,
+        public_advisor_notes=public_advisor_notes,
+        public_diagnostics=public_diagnostics,
+    )
 
 
 def run_director_repair(
@@ -2291,6 +2296,7 @@ def run_director_repair(
     """Run a deterministic repair through the generic public runtime surface."""
 
     public_advisor_notes = tuple(command.advisor_notes or ())
+    public_diagnostics = _public_repair_diagnostics_from_command(command)
     internal_run = run_runtime_repair(
         source_tool=command.source_tool,
         workspace=command.workspace,
@@ -2306,6 +2312,7 @@ def run_director_repair(
     planning_result = _to_public_repair_planning_result(
         internal_run.planning,
         advisor_notes=public_advisor_notes,
+        public_diagnostics=public_diagnostics,
     )
     metadata: dict[str, Any] = {"planning": planning_result.to_dict()}
     if internal_run.planning.error_code or internal_run.planning.error_message:
@@ -3142,14 +3149,20 @@ def _to_public_repair_planning_result(
     *,
     advisor_notes: Sequence[RepairAdvisoryV1] | None = None,
     public_advisor_notes: Sequence[RepairAdvisoryV1] | None = None,
+    public_diagnostics: Sequence[RepairDiagnosticV1] | None = None,
 ) -> DirectorRepairPlanningResultV1:
     notes = tuple(public_advisor_notes if public_advisor_notes is not None else advisor_notes or ())
+    if public_diagnostics is not None:
+        diagnostics = tuple(public_diagnostics)
+    else:
+        diagnostics = tuple(_to_public_repair_diagnostic(item) for item in planning.diagnostics)
     if planning.plan is None:
         return DirectorRepairPlanningResultV1(
             ok=False,
             planned=False,
             source_tool=planning.source_tool,
-            diagnostic_count=len(planning.diagnostics),
+            diagnostic_count=len(diagnostics),
+            diagnostics=diagnostics,
             advisor_notes=notes,
             error_code=planning.error_code,
             error_message=planning.error_message,
@@ -3159,7 +3172,8 @@ def _to_public_repair_planning_result(
         ok=bool(planning.composition and planning.composition.ok),
         planned=True,
         source_tool=planning.plan.source_tool,
-        diagnostic_count=len(planning.plan.diagnostics),
+        diagnostic_count=len(diagnostics),
+        diagnostics=diagnostics,
         plan_summary=_to_public_repair_plan_summary(planning.plan, advisor_note_count=len(notes)),
         composition_summary=_to_public_repair_composition_summary(planning.composition),
         advisor_notes=notes,
@@ -3221,6 +3235,19 @@ def _to_public_repair_diagnostic(diagnostic: RepairDiagnostic) -> RepairDiagnost
         path=diagnostic.path,
         severity=diagnostic.severity,
         metadata=diagnostic.metadata,
+    )
+
+
+def _public_repair_diagnostics_from_command(
+    command: PlanDirectorRepairCommandV1 | RunDirectorRepairCommandV1,
+) -> tuple[RepairDiagnosticV1, ...]:
+    """Project command diagnostics without forcing typed evidence through strings."""
+
+    if command.diagnostics:
+        return tuple(command.diagnostics)
+    return tuple(
+        _to_public_repair_diagnostic(diagnostic)
+        for diagnostic in normalize_artifact_quality_errors(list(_artifact_quality_errors_from_command(command)))
     )
 
 
