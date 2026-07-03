@@ -1845,19 +1845,37 @@ class ToolBatchExecutor:
                 }
                 for invocation in invocations
             ]
+            native_tool_call_envelopes = (
+                metadata.get("native_tool_call_envelopes")
+                if isinstance(metadata.get("native_tool_call_envelopes"), list)
+                else []
+            )
+            lifecycle = build_tool_call_lifecycle_receipt(
+                run_id=str(metadata.get("run_id") or ""),
+                task_id=str(metadata.get("task_id") or ""),
+                turn_id=turn_id,
+                role=str(getattr(self.config, "role_id", "") or ""),
+                provider_response_hash=str(metadata.get("provider_response_hash") or ""),
+                decoded_tool_calls_count=len(invocations),
+                dispatched_tool_calls_count=0,
+                dropped_tool_calls=decoded_tool_calls,
+                native_tool_call_envelopes=native_tool_call_envelopes,
+                dispatch_status="dropped",
+                failure_class="TOOL_DISPATCH_DROPPED",
+                reason="decoded_tool_batch_produced_no_authoritative_batch_receipt",
+            ).to_dict()
             ledger.anomaly_flags.append(
                 {
                     "type": "TOOL_DISPATCH_DROPPED",
                     "turn_id": turn_id,
-                    "native_tool_calls_count": _metadata_native_tool_call_count(metadata, fallback=len(invocations)),
-                    "decoded_tool_calls_count": len(invocations),
-                    "dispatched_tool_calls_count": 0,
-                    "provider_response_hash": str(metadata.get("provider_response_hash") or ""),
-                    "dropped_tool_calls": decoded_tool_calls,
-                    "native_tool_call_envelopes": metadata.get("native_tool_call_envelopes")
-                    if isinstance(metadata.get("native_tool_call_envelopes"), list)
-                    else [],
-                    "reason": "decoded_tool_batch_produced_no_authoritative_batch_receipt",
+                    "native_tool_calls_count": lifecycle["native_tool_calls_count"],
+                    "decoded_tool_calls_count": lifecycle["decoded_tool_calls_count"],
+                    "dispatched_tool_calls_count": lifecycle["dispatched_tool_calls_count"],
+                    "provider_response_hash": lifecycle["provider_response_hash"],
+                    "dropped_tool_calls": lifecycle["dropped_tool_calls"],
+                    "native_tool_call_envelopes": lifecycle["native_tool_call_envelope_refs"],
+                    "reason": lifecycle["reason"],
+                    "tool_call_lifecycle_receipt": lifecycle,
                 }
             )
             raise RuntimeError("tool_dispatch_dropped: decoded tool batch produced no authoritative batch receipt")

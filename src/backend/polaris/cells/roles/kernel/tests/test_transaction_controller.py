@@ -395,6 +395,10 @@ class TestToolBatchExecution:
         assert dropped_flags[0]["dispatched_tool_calls_count"] == 0
         assert len(dropped_flags[0]["native_tool_call_envelopes"]) == 2
         assert dropped_flags[0]["dropped_tool_calls"][0]["tool_name"] == "read_file"
+        lifecycle = dropped_flags[0]["tool_call_lifecycle_receipt"]
+        assert lifecycle["native_tool_calls_count"] == dropped_flags[0]["native_tool_calls_count"]
+        assert lifecycle["decoded_tool_calls_count"] == dropped_flags[0]["decoded_tool_calls_count"]
+        assert lifecycle["dropped_tool_calls"] == dropped_flags[0]["dropped_tool_calls"]
 
     @pytest.mark.asyncio
     async def test_multiple_readonly_parallel(
