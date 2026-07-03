@@ -110,7 +110,7 @@ _TERMINAL_PHASES: set[TaskPhase] = {TaskPhase.COMPLETED, TaskPhase.FAILED, TaskP
 class TaskStateMachine:
     """Simplified 4-phase state machine for task execution.
 
-    Implements StateMachinePort for KernelOne compatibility.
+    Implements the KernelOne StateMachinePort contract.
 
     Unlike the original 7-phase HP ritual, this version:
     - Merges start_run + blueprint into PLANNING
