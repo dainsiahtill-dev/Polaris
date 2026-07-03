@@ -1295,12 +1295,50 @@ def _resolve_quality_rework_max_cycles() -> int:
     return max(1, min(value, 20))
 
 
+def _quality_gate_handoff_summary_from_payload(
+    payload: dict[str, Any],
+    entries: list[Any],
+) -> dict[str, Any]:
+    repair_raw = payload.get("repair")
+    repair: dict[str, Any] = repair_raw if isinstance(repair_raw, dict) else {}
+    all_handoff_requests = _ownership_handoff_requests_from_repair_payload(repair)
+    owner_handoff_requests = _owned_handoff_requests_from_repair_payload(repair)
+    unknown_owner_handoff_requests = list(unresolved_owner_handoff_requests_from_scope_payload(repair))
+
+    matched_owner_handoff_ids: set[int] = set()
+    for entry in entries:
+        record = entry.to_dict() if hasattr(entry, "to_dict") else entry
+        if not isinstance(record, dict):
+            continue
+        owner_handoff_request = _matching_owner_handoff_request(record, owner_handoff_requests)
+        if owner_handoff_request:
+            matched_owner_handoff_ids.add(id(owner_handoff_request))
+
+    unmatched_owner_handoff_requests = [
+        dict(request)
+        for request in owner_handoff_requests
+        if id(request) not in matched_owner_handoff_ids
+    ]
+    return {
+        "ownership_handoff_count": len(all_handoff_requests),
+        "unmatched_owner_handoff_count": len(unmatched_owner_handoff_requests),
+        "unmatched_owner_handoff_requests": unmatched_owner_handoff_requests,
+        "unknown_owner_handoff_count": len(unknown_owner_handoff_requests),
+        "unknown_owner_handoff_requests": unknown_owner_handoff_requests,
+    }
+
+
 def _read_quality_gate_rework_summary(workspace: str) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "requested": False,
         "requested_count": 0,
         "exhausted_count": 0,
         "ready_count": 0,
+        "ownership_handoff_count": 0,
+        "unmatched_owner_handoff_count": 0,
+        "unmatched_owner_handoff_requests": [],
+        "unknown_owner_handoff_count": 0,
+        "unknown_owner_handoff_requests": [],
         "tasks": [],
     }
     try:
@@ -1352,6 +1390,9 @@ def _read_quality_gate_rework_summary(workspace: str) -> dict[str, Any]:
             "tasks": tasks,
         }
     )
+    payload, _artifact = _read_task_boundary_workspace_validation(workspace)
+    if payload:
+        summary.update(_quality_gate_handoff_summary_from_payload(payload, entries))
     return summary
 
 

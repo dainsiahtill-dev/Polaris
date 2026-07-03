@@ -912,12 +912,16 @@ def test_quality_gate_task_boundary_validation_reports_unmatched_owner_handoff(t
     )
 
     bridge_summary = factory_router_module._apply_quality_gate_task_boundary_rework_requests(str(temp_workspace))
+    rework_summary = factory_router_module._read_quality_gate_rework_summary(str(temp_workspace))
 
     assert bridge_summary["requested"] is False
     assert bridge_summary["reopened_count"] == 0
     assert bridge_summary["skipped_count"] == 1
     assert bridge_summary["unmatched_owner_handoff_count"] == 1
     assert bridge_summary["unmatched_owner_handoff_requests"][0]["owner_step_id"] == "PM-0001-1-S4"
+    assert rework_summary["ownership_handoff_count"] == 1
+    assert rework_summary["unmatched_owner_handoff_count"] == 1
+    assert rework_summary["unmatched_owner_handoff_requests"][0]["owner_step_id"] == "PM-0001-1-S4"
 
     rows = {
         row["metadata"]["external_task_id"]: row
@@ -1010,12 +1014,16 @@ def test_quality_gate_task_boundary_validation_reports_unknown_owner_handoff(tem
     )
 
     bridge_summary = factory_router_module._apply_quality_gate_task_boundary_rework_requests(str(temp_workspace))
+    rework_summary = factory_router_module._read_quality_gate_rework_summary(str(temp_workspace))
 
     assert bridge_summary["requested"] is False
     assert bridge_summary["reopened_count"] == 0
     assert bridge_summary["skipped_count"] == 1
     assert bridge_summary["unknown_owner_handoff_count"] == 1
     assert bridge_summary["unknown_owner_handoff_requests"][0]["target_file"] == "src/index.js"
+    assert rework_summary["ownership_handoff_count"] == 1
+    assert rework_summary["unknown_owner_handoff_count"] == 1
+    assert rework_summary["unknown_owner_handoff_requests"][0]["target_file"] == "src/index.js"
 
     rows = {
         row["metadata"]["external_task_id"]: row
