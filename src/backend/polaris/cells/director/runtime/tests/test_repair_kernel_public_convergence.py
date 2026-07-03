@@ -538,6 +538,47 @@ def test_public_convergence_accepts_typed_artifact_quality_issues(tmp_path: Path
     assert target.read_text(encoding="utf-8") == _BROKEN_CONTENT
 
 
+def test_public_convergence_verifier_accepts_typed_residual_issues(tmp_path: Path) -> None:
+    target = _write_initial_file(tmp_path)
+    requests: list[DirectorRepairConvergenceVerifierRequestV1] = []
+
+    def verifier(request: DirectorRepairConvergenceVerifierRequestV1) -> DirectorRepairVerifierSnapshotInputV1:
+        requests.append(request)
+        current = target.read_text(encoding="utf-8")
+        residual_issues = (
+            (
+                {
+                    "source": "artifact_quality",
+                    "code": "typescript_ts1005",
+                    "message": "',' expected.",
+                    "path": _RELATIVE_PATH,
+                    "metadata": {"raw": _QUALITY_ERROR, "line": 6, "column": 47},
+                },
+            )
+            if "flightTime, landed:" not in current
+            else ()
+        )
+        return DirectorRepairVerifierSnapshotInputV1(
+            residual_artifact_quality_errors=(),
+            residual_artifact_quality_issues=residual_issues,
+            command=("rtk", "tsc", "--noEmit"),
+            exit_code=0 if not residual_issues else 1,
+            raw_output_ref=f"runtime/verifier/public-convergence-typed-residual-{request.round_number}.log",
+            metadata=_valid_verifier_metadata(),
+        )
+
+    result = run_director_repair_convergence(
+        _command(tmp_path),
+        writer=_writer(tmp_path),
+        verifier=verifier,
+    )
+
+    assert result.ok is True
+    assert result.status == "converged"
+    assert [request.round_number for request in requests] == [0, 1]
+    assert result.receipts[0].diagnostics_before[0]["code"] == "typescript_ts1005"
+
+
 def test_public_convergence_projects_environment_prep_plan_before_revalidation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

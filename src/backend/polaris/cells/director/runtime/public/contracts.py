@@ -732,6 +732,7 @@ class DirectorRepairVerifierSnapshotInputV1:
     """Adapter-supplied verifier snapshot for a convergence round."""
 
     residual_artifact_quality_errors: tuple[str, ...] = ()
+    residual_artifact_quality_issues: tuple[Mapping[str, Any], ...] = ()
     command: tuple[str, ...] = ()
     exit_code: int | None = None
     raw_output_ref: str | None = None
@@ -743,6 +744,11 @@ class DirectorRepairVerifierSnapshotInputV1:
             self,
             "residual_artifact_quality_errors",
             _to_tuple_str(list(self.residual_artifact_quality_errors)),
+        )
+        object.__setattr__(
+            self,
+            "residual_artifact_quality_issues",
+            _to_tuple_mapping_from_any(self.residual_artifact_quality_issues),
         )
         object.__setattr__(self, "command", _to_tuple_str(list(self.command)))
         object.__setattr__(self, "exit_code", None if self.exit_code is None else int(self.exit_code))
@@ -757,6 +763,7 @@ class DirectorRepairVerifierSnapshotInputV1:
     def to_dict(self) -> dict[str, Any]:
         return {
             "residual_artifact_quality_errors": list(self.residual_artifact_quality_errors),
+            "residual_artifact_quality_issues": [dict(item) for item in self.residual_artifact_quality_issues],
             "command": list(self.command),
             "exit_code": self.exit_code,
             "raw_output_ref": self.raw_output_ref,
@@ -908,6 +915,7 @@ class DirectorRepairRevalidationInputV1:
     """Adapter-supplied post-check evidence for a Director repair run."""
 
     residual_artifact_quality_errors: tuple[str, ...] = ()
+    residual_artifact_quality_issues: tuple[Mapping[str, Any], ...] = ()
     command: tuple[str, ...] = ()
     exit_code: int | None = None
     raw_output_ref: str | None = None
@@ -918,6 +926,11 @@ class DirectorRepairRevalidationInputV1:
             self,
             "residual_artifact_quality_errors",
             _to_tuple_str(list(self.residual_artifact_quality_errors)),
+        )
+        object.__setattr__(
+            self,
+            "residual_artifact_quality_issues",
+            _to_tuple_mapping_from_any(self.residual_artifact_quality_issues),
         )
         object.__setattr__(self, "command", _to_tuple_str(list(self.command)))
         object.__setattr__(self, "exit_code", None if self.exit_code is None else int(self.exit_code))
@@ -1320,6 +1333,7 @@ class AttachDirectorRepairRevalidationEvidenceV1:
 
     summary: Mapping[str, Any]
     residual_artifact_quality_errors: tuple[str, ...] = ()
+    residual_artifact_quality_issues: tuple[Mapping[str, Any], ...] = ()
     command: tuple[str, ...] = ("materialization_quality_revalidation",)
     exit_code: int | None = None
     round_number: int | None = None
@@ -1331,6 +1345,11 @@ class AttachDirectorRepairRevalidationEvidenceV1:
             self,
             "residual_artifact_quality_errors",
             _to_tuple_str(list(self.residual_artifact_quality_errors)),
+        )
+        object.__setattr__(
+            self,
+            "residual_artifact_quality_issues",
+            _to_tuple_mapping_from_any(self.residual_artifact_quality_issues),
         )
         object.__setattr__(self, "command", _to_tuple_str(list(self.command)))
         object.__setattr__(self, "exit_code", None if self.exit_code is None else int(self.exit_code))

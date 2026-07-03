@@ -12083,6 +12083,52 @@ def test_public_revalidation_projection_marks_failed_post_check_as_non_authorita
     assert receipt["net_error_reduction"] == 0
 
 
+def test_public_revalidation_projection_accepts_typed_residual_issues() -> None:
+    diagnostic = "TypeScript syntax check failed: src/app.ts(1,14): error TS2304: Cannot find name 'Widget'."
+    typed_issue = {
+        "source": "artifact_quality",
+        "code": "typescript_ts2304",
+        "message": "Cannot find name 'Widget'.",
+        "path": "src/app.ts",
+        "metadata": {"raw": diagnostic, "line": 1, "column": 14},
+    }
+    summary = build_director_repair_kernel_summary(
+        stage="materialization_quality_repairs",
+        mode="commit",
+        artifact_quality_errors=[diagnostic],
+        tool_results=[
+            {
+                "tool": "write_file",
+                "tool_name": "write_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_typescript_missing_export_repair",
+                    "file": "src/app.ts",
+                    "operation": "modify",
+                },
+            }
+        ],
+    )
+
+    result = project_director_repair_revalidation_evidence(
+        AttachDirectorRepairRevalidationEvidenceV1(
+            summary={"repair_kernel": summary, "stage": "deterministic_quality_repair"},
+            residual_artifact_quality_errors=(),
+            residual_artifact_quality_issues=(typed_issue,),
+            command=("tsc", "--noEmit"),
+        )
+    )
+    receipt = result.summary["repair_kernel"]["receipts"][0]
+    diagnostics_after = receipt["revalidation_evidence"]["diagnostics_after"]
+
+    assert receipt["status"] == "failed_revalidation"
+    assert receipt["errors_after"] == 1
+    assert diagnostics_after[0]["code"] == "typescript_ts2304"
+    assert diagnostics_after[0]["path"] == "src/app.ts"
+    assert diagnostics_after[0]["metadata"]["raw"] == diagnostic
+
+
 def test_public_revalidation_projection_uses_diagnostic_signatures_when_ids_are_missing() -> None:
     diagnostic = "TypeScript syntax check failed: src/app.ts(1,14): error TS2304: Cannot find name 'Widget'."
     summary = build_director_repair_kernel_summary(

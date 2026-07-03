@@ -371,6 +371,7 @@ def attach_director_repair_revalidation_evidence(
     summary: Mapping[str, Any] | None,
     *,
     residual_artifact_quality_errors: Sequence[str],
+    residual_artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     command: Sequence[str] = ("materialization_quality_revalidation",),
     exit_code: int | None = None,
     round_number: int | None = None,
@@ -382,6 +383,7 @@ def attach_director_repair_revalidation_evidence(
         AttachDirectorRepairRevalidationEvidenceV1(
             summary=dict(summary or {}),
             residual_artifact_quality_errors=tuple(str(item) for item in residual_artifact_quality_errors),
+            residual_artifact_quality_issues=tuple(dict(item) for item in residual_artifact_quality_issues),
             command=tuple(str(item) for item in command),
             exit_code=exit_code,
             round_number=round_number,
@@ -419,7 +421,10 @@ def project_director_repair_revalidation_evidence(
 
     diagnostics_after = [
         diagnostic.to_dict()
-        for diagnostic in normalize_artifact_quality_errors(list(command.residual_artifact_quality_errors))
+        for diagnostic in _repair_diagnostics_from_quality_inputs(
+            command.residual_artifact_quality_errors,
+            command.residual_artifact_quality_issues,
+        )
     ]
     after_signature_index = _repair_diagnostic_signature_index(diagnostics_after)
     errors_after = len(diagnostics_after)
@@ -2489,10 +2494,13 @@ def run_director_repair_convergence(
                     "verifier_result_type": type(verifier_input).__name__,
                     "round_number": round_number,
                 },
-            )
+        )
 
         _validate_public_convergence_verifier_evidence(verifier_input, round_number=round_number)
-        diagnostics = tuple(normalize_artifact_quality_errors(list(verifier_input.residual_artifact_quality_errors)))
+        diagnostics = _repair_diagnostics_from_quality_inputs(
+            verifier_input.residual_artifact_quality_errors,
+            verifier_input.residual_artifact_quality_issues,
+        )
         environment_prep_receipts = tuple(receipt.to_dict() for receipt in verifier_input.environment_prep_receipts)
         verifier_metadata = dict(verifier_input.metadata)
         if environment_prep_receipts:
@@ -3089,7 +3097,10 @@ def _attach_native_revalidation_evidence(
             },
         )
 
-    diagnostics_after = normalize_artifact_quality_errors(list(revalidation_input.residual_artifact_quality_errors))
+    diagnostics_after = _repair_diagnostics_from_quality_inputs(
+        revalidation_input.residual_artifact_quality_errors,
+        revalidation_input.residual_artifact_quality_issues,
+    )
     if revalidation_input.exit_code is None:
         evidence = RepairRevalidationEvidence(
             command=revalidation_input.command,
