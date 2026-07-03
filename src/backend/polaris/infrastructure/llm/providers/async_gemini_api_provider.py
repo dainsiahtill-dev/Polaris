@@ -17,9 +17,9 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.llm.providers import (
+    ProviderConfigValidationResult,
     ProviderInfo,
     ThinkingInfo,
-    ValidationResult,
     WorkingDirConfig,
 )
 from polaris.kernelone.llm.types import (
@@ -129,7 +129,7 @@ class AsyncGeminiAPIProvider(AsyncBaseProvider):
         }
 
     @classmethod
-    def validate_config(cls, config: dict[str, Any]) -> ValidationResult:
+    def validate_config(cls, config: dict[str, Any]) -> ProviderConfigValidationResult:
         errors: list[str] = []
         warnings: list[str] = []
         normalized = dict(config)
@@ -165,7 +165,7 @@ class AsyncGeminiAPIProvider(AsyncBaseProvider):
             warnings.append("Invalid temperature, using default 0.7")
             normalized["temperature"] = 0.7
 
-        return ValidationResult(
+        return ProviderConfigValidationResult(
             valid=len(errors) == 0,
             errors=errors,
             warnings=warnings,

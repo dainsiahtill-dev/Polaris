@@ -15,8 +15,8 @@ from polaris.infrastructure.llm.providers.provider_registry import (
 )
 from polaris.kernelone.llm.providers import (
     BaseProvider,
+    ProviderConfigValidationResult,
     ProviderInfo,
-    ValidationResult,
 )
 from polaris.kernelone.llm.toolkit.contracts import ServiceLocator
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelListResult, Usage
@@ -63,9 +63,9 @@ class _BootstrapTestProvider(BaseProvider):
         return {}
 
     @classmethod
-    def validate_config(cls, config: dict[str, object]) -> ValidationResult:
+    def validate_config(cls, config: dict[str, object]) -> ProviderConfigValidationResult:
         del config
-        return ValidationResult(valid=True, errors=[], warnings=[], normalized_config={})
+        return ProviderConfigValidationResult(valid=True, errors=[], warnings=[], normalized_config={})
 
     def health(self, config: dict[str, object]) -> HealthResult:
         del config

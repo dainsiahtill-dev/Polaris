@@ -11,8 +11,8 @@ import requests
 from polaris.kernelone.llm.provider_contract import AdapterProviderContract
 from polaris.kernelone.llm.providers import (
     BaseProvider,
+    ProviderConfigValidationResult,
     ProviderInfo,
-    ValidationResult,
 )
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage, estimate_usage
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds, timeout_seconds_or_none
@@ -125,7 +125,7 @@ class OllamaProvider(BaseProvider):
         }
 
     @classmethod
-    def validate_config(cls, config: dict[str, Any]) -> ValidationResult:
+    def validate_config(cls, config: dict[str, Any]) -> ProviderConfigValidationResult:
         errors: list[str] = []
         warnings: list[str] = []
         normalized = dict(config)
@@ -161,7 +161,7 @@ class OllamaProvider(BaseProvider):
             # Native Ollama API doesn't require api_key
             normalized["api_path"] = api_path if api_path else DEFAULT_CHAT_PATH
 
-        return ValidationResult(
+        return ProviderConfigValidationResult(
             valid=len(errors) == 0,
             errors=errors,
             warnings=warnings,

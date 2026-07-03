@@ -14,8 +14,8 @@ import requests
 from polaris.kernelone.llm.providers import (
     THINKING_PREFIX,
     BaseProvider,
+    ProviderConfigValidationResult,
     ProviderInfo,
-    ValidationResult,
 )
 from polaris.kernelone.llm.providers.stream_thinking_parser import StreamThinkingParser
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage, estimate_usage
@@ -339,7 +339,7 @@ class MiniMaxProvider(BaseProvider):
         }
 
     @classmethod
-    def validate_config(cls, config: dict[str, Any]) -> ValidationResult:
+    def validate_config(cls, config: dict[str, Any]) -> ProviderConfigValidationResult:
         errors: list[str] = []
         warnings: list[str] = []
         normalized = dict(config)
@@ -375,7 +375,7 @@ class MiniMaxProvider(BaseProvider):
             else:
                 normalized["timeout"] = timeout_num
 
-        return ValidationResult(
+        return ProviderConfigValidationResult(
             valid=len(errors) == 0,
             errors=errors,
             warnings=warnings,

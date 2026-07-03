@@ -12,7 +12,7 @@ import concurrent.futures
 import logging
 from typing import Any
 
-from polaris.kernelone.llm.providers import BaseProvider, ProviderInfo, ValidationResult
+from polaris.kernelone.llm.providers import BaseProvider, ProviderConfigValidationResult, ProviderInfo
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelListResult
 
 from .async_base_provider import AsyncBaseProvider
@@ -81,7 +81,7 @@ class AsyncProviderAdapter(BaseProvider):
         raise NotImplementedError("Use instance method or register async provider directly")
 
     @classmethod
-    def validate_config(cls, config: dict[str, Any]) -> ValidationResult:
+    def validate_config(cls, config: dict[str, Any]) -> ProviderConfigValidationResult:
         """Delegate to the async provider class."""
         raise NotImplementedError("Use instance method or register async provider directly")
 
@@ -150,7 +150,7 @@ class AsyncProviderClassAdapter:
                 return cls._async_class.get_default_config()
 
             @classmethod
-            def validate_config(cls, config: dict[str, Any]) -> ValidationResult:
+            def validate_config(cls, config: dict[str, Any]) -> ProviderConfigValidationResult:
                 return cls._async_class.validate_config(config)
 
             def health(self, config: dict[str, Any]) -> HealthResult:

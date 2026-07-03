@@ -8,9 +8,9 @@ from polaris.infrastructure.llm.sdk import CodexSDK, SDKConfig, SDKMessage, SDKU
 from polaris.kernelone.constants import DEFAULT_MAX_RETRIES
 from polaris.kernelone.llm.providers import (
     BaseProvider,
+    ProviderConfigValidationResult,
     ProviderInfo,
     ThinkingInfo,
-    ValidationResult,
 )
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage, estimate_usage
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
@@ -139,14 +139,14 @@ class CodexSDKProvider(BaseProvider):
         }
 
     @classmethod
-    def validate_config(cls, config: dict[str, Any]) -> ValidationResult:
+    def validate_config(cls, config: dict[str, Any]) -> ProviderConfigValidationResult:
         errors: list[str] = []
         warnings: list[str] = []
         normalized = dict(config)
 
         if config is None:
             errors.append("config cannot be None")
-            return ValidationResult(
+            return ProviderConfigValidationResult(
                 valid=False,
                 errors=errors,
                 warnings=warnings,
@@ -192,7 +192,7 @@ class CodexSDKProvider(BaseProvider):
         except (ValueError, TypeError, AttributeError) as e:
             errors.append(f"Configuration validation failed: {e}")
 
-        return ValidationResult(
+        return ProviderConfigValidationResult(
             valid=len(errors) == 0,
             errors=errors,
             warnings=warnings,

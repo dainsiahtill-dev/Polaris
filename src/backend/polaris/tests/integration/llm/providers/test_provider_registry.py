@@ -47,9 +47,9 @@ class DummyProvider(BaseProvider):
 
     @classmethod
     def validate_config(cls, config: dict[str, Any]) -> Any:
-        from polaris.kernelone.llm.providers import ValidationResult
+        from polaris.kernelone.llm.providers import ProviderConfigValidationResult
 
-        return ValidationResult(valid=True, errors=[], warnings=[])
+        return ProviderConfigValidationResult(valid=True, errors=[], warnings=[])
 
     def health(self, config: dict[str, Any]) -> HealthResult:
         return HealthResult(ok=True, latency_ms=1)
@@ -89,9 +89,9 @@ class AnotherDummyProvider(BaseProvider):
 
     @classmethod
     def validate_config(cls, config: dict[str, Any]) -> Any:
-        from polaris.kernelone.llm.providers import ValidationResult
+        from polaris.kernelone.llm.providers import ProviderConfigValidationResult
 
-        return ValidationResult(valid=True, errors=[], warnings=[])
+        return ProviderConfigValidationResult(valid=True, errors=[], warnings=[])
 
     def health(self, config: dict[str, Any]) -> HealthResult:
         return HealthResult(ok=True, latency_ms=1)

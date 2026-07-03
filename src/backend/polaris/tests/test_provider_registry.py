@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 from polaris.infrastructure.llm.providers.provider_registry import ProviderManager
-from polaris.kernelone.llm.providers import BaseProvider, ProviderInfo, ValidationResult
+from polaris.kernelone.llm.providers import BaseProvider, ProviderConfigValidationResult, ProviderInfo
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelListResult, Usage
 
 
@@ -49,9 +49,9 @@ class _CountingProvider(BaseProvider):
         return {}
 
     @classmethod
-    def validate_config(cls, config: dict[str, Any]) -> ValidationResult:
+    def validate_config(cls, config: dict[str, Any]) -> ProviderConfigValidationResult:
         del config
-        return ValidationResult(valid=True, errors=[], warnings=[], normalized_config={})
+        return ProviderConfigValidationResult(valid=True, errors=[], warnings=[], normalized_config={})
 
     def health(self, config: dict[str, Any]) -> HealthResult:
         del config

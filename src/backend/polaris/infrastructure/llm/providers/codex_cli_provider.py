@@ -11,9 +11,9 @@ from typing import Any
 
 from polaris.kernelone.llm.providers import (
     BaseProvider,
+    ProviderConfigValidationResult,
     ProviderInfo,
     ThinkingInfo,
-    ValidationResult,
     WorkingDirConfig,
 )
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, estimate_usage
@@ -135,7 +135,7 @@ class CodexCLIProvider(BaseProvider):
         }
 
     @classmethod
-    def validate_config(cls, config: dict[str, Any]) -> ValidationResult:
+    def validate_config(cls, config: dict[str, Any]) -> ProviderConfigValidationResult:
         errors = []
         warnings = []
         normalized = config.copy()
@@ -183,7 +183,7 @@ class CodexCLIProvider(BaseProvider):
             warnings.append("codex_exec should be a dictionary")
             normalized["codex_exec"] = cls.get_default_config()["codex_exec"]
 
-        return ValidationResult(valid=len(errors) == 0, errors=errors, warnings=warnings, normalized_config=normalized)
+        return ProviderConfigValidationResult(valid=len(errors) == 0, errors=errors, warnings=warnings, normalized_config=normalized)
 
     def health(self, config: dict[str, Any]) -> HealthResult:
         command = str(config.get("command", "codex")).strip()

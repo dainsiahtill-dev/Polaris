@@ -11,9 +11,9 @@ from typing import Any
 from polaris.kernelone.fs.encoding import build_utf8_env
 from polaris.kernelone.llm.providers import (
     BaseProvider,
+    ProviderConfigValidationResult,
     ProviderInfo,
     ThinkingInfo,
-    ValidationResult,
     WorkingDirConfig,
 )
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, estimate_usage
@@ -76,7 +76,7 @@ class GeminiCLIProvider(BaseProvider):
         }
 
     @classmethod
-    def validate_config(cls, config: dict[str, Any]) -> ValidationResult:
+    def validate_config(cls, config: dict[str, Any]) -> ProviderConfigValidationResult:
         errors = []
         warnings = []
         normalized = config.copy()
@@ -131,7 +131,7 @@ class GeminiCLIProvider(BaseProvider):
             normalized["cli_mode"] = "headless"
             warnings.append("Invalid cli_mode, using headless")
 
-        return ValidationResult(valid=len(errors) == 0, errors=errors, warnings=warnings, normalized_config=normalized)
+        return ProviderConfigValidationResult(valid=len(errors) == 0, errors=errors, warnings=warnings, normalized_config=normalized)
 
     def __init__(self) -> None:
         pass

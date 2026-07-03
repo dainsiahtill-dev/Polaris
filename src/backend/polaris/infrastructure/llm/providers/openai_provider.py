@@ -15,8 +15,8 @@ from polaris.kernelone.llm.model_resolver import resolve_model_name, validate_mo
 from polaris.kernelone.llm.providers import (
     THINKING_PREFIX,
     BaseProvider,
+    ProviderConfigValidationResult,
     ProviderInfo,
-    ValidationResult,
 )
 from polaris.kernelone.llm.providers.stream_thinking_parser import StreamThinkingParser
 from polaris.kernelone.llm.response_parser import LLMResponseParser
@@ -483,7 +483,7 @@ class OpenAIProvider(BaseProvider):
         }
 
     @classmethod
-    def validate_config(cls, config: dict[str, Any]) -> ValidationResult:
+    def validate_config(cls, config: dict[str, Any]) -> ProviderConfigValidationResult:
         errors: list[str] = []
         warnings: list[str] = []
         normalized = dict(config)
@@ -536,7 +536,7 @@ class OpenAIProvider(BaseProvider):
             warnings.append("Headers should be a dictionary")
             normalized["headers"] = {}
 
-        return ValidationResult(
+        return ProviderConfigValidationResult(
             valid=len(errors) == 0,
             errors=errors,
             warnings=warnings,

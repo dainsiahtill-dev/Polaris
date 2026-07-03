@@ -17,10 +17,10 @@ __all__ = [
     "OllamaProvider",
     "OpenAIProvider",
     "ProviderAdapter",
+    "ProviderConfigValidationResult",
     "ProviderInfo",
     "ProviderManager",
     "ThinkingInfo",
-    "ValidationResult",
     "WorkingDirConfig",
     "anthropic_health",
     "anthropic_invoke",
@@ -49,7 +49,7 @@ def __getattr__(name: str) -> Any:
         "BaseProvider",
         "ProviderInfo",
         "ThinkingInfo",
-        "ValidationResult",
+        "ProviderConfigValidationResult",
         "WorkingDirConfig",
     }:
         module = import_module("polaris.kernelone.llm.providers")
@@ -58,7 +58,7 @@ def __getattr__(name: str) -> Any:
             "BaseProvider": module.BaseProvider,
             "ProviderInfo": module.ProviderInfo,
             "ThinkingInfo": module.ThinkingInfo,
-            "ValidationResult": module.ValidationResult,
+            "ProviderConfigValidationResult": module.ProviderConfigValidationResult,
             "WorkingDirConfig": module.WorkingDirConfig,
         }[name]
     if name in {"AnthropicProvider", "anthropic_health", "anthropic_invoke", "anthropic_list_models"}:

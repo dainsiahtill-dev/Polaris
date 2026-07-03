@@ -11,8 +11,8 @@ from polaris.cells.runtime.task_runtime.public.task_board_contract import TaskBo
 from polaris.kernelone.audit.invariant_sentinel import run_invariant_sentinel
 from polaris.kernelone.llm.providers import (
     BaseProvider,
+    ProviderConfigValidationResult,
     ProviderInfo,
-    ValidationResult,
     get_provider_manager,
     reset_provider_runtime,
 )
@@ -88,7 +88,7 @@ class _BrokenProvider(BaseProvider):
         return {}
 
     @classmethod
-    def validate_config(cls, config: dict[str, object]) -> ValidationResult:
+    def validate_config(cls, config: dict[str, object]) -> ProviderConfigValidationResult:
         del config
         raise RuntimeError("validation exploded")
 

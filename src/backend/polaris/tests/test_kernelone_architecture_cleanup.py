@@ -13,8 +13,8 @@ from polaris.kernelone.context.engine.models import ContextBudget, ContextItem, 
 from polaris.kernelone.events.message_bus import Message, MessageBus, MessageType
 from polaris.kernelone.llm.providers import (
     BaseProvider,
+    ProviderConfigValidationResult,
     ProviderInfo,
-    ValidationResult,
     get_provider_manager,
     get_provider_registry,
     reset_provider_runtime,
@@ -145,9 +145,9 @@ class _CleanupProvider(BaseProvider):
         return {}
 
     @classmethod
-    def validate_config(cls, config: dict[str, object]) -> ValidationResult:
+    def validate_config(cls, config: dict[str, object]) -> ProviderConfigValidationResult:
         del config
-        return ValidationResult(valid=True, errors=[], warnings=[], normalized_config={})
+        return ProviderConfigValidationResult(valid=True, errors=[], warnings=[], normalized_config={})
 
     def health(self, config: dict[str, object]) -> HealthResult:
         del config

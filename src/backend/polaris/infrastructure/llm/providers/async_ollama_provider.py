@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING, Any
 import httpx
 from polaris.kernelone.llm.provider_contract import AdapterProviderContract
 from polaris.kernelone.llm.providers import (
+    ProviderConfigValidationResult,
     ProviderInfo,
-    ValidationResult,
 )
 from polaris.kernelone.llm.types import (
     HealthResult,
@@ -202,7 +202,7 @@ class AsyncOllamaProvider(AsyncBaseProvider):
         }
 
     @classmethod
-    def validate_config(cls, config: dict[str, Any]) -> ValidationResult:
+    def validate_config(cls, config: dict[str, Any]) -> ProviderConfigValidationResult:
         errors: list[str] = []
         warnings: list[str] = []
         normalized = dict(config)
@@ -235,7 +235,7 @@ class AsyncOllamaProvider(AsyncBaseProvider):
         else:
             normalized["api_path"] = api_path if api_path else DEFAULT_CHAT_PATH
 
-        return ValidationResult(
+        return ProviderConfigValidationResult(
             valid=len(errors) == 0,
             errors=errors,
             warnings=warnings,

@@ -37,7 +37,7 @@ class ProviderInfo:
 class ProviderConfigValidationResult:
     """Result of provider configuration validation.
 
-    Note: This is distinct from other ValidationResult types:
+    Note: This is distinct from other validation result types:
     - ToolArgValidationResult: Tool argument validation
     - FileOpValidationResult: File operation validation
     - LaunchValidationResult: Bootstrap launch validation
@@ -48,10 +48,6 @@ class ProviderConfigValidationResult:
     errors: list[str]
     warnings: list[str]
     normalized_config: dict[str, Any] | None = None
-
-
-# Backward compatibility alias (deprecated)
-ValidationResult = ProviderConfigValidationResult
 
 
 @dataclass
@@ -92,7 +88,7 @@ class BaseProvider(ABC):
 
     @classmethod
     @abstractmethod
-    def validate_config(cls, config: dict[str, Any]) -> ValidationResult:
+    def validate_config(cls, config: dict[str, Any]) -> ProviderConfigValidationResult:
         """Validate provider configuration"""
         pass
 
@@ -249,9 +245,9 @@ class ProviderRegistry:
 __all__ = [
     "THINKING_PREFIX",
     "BaseProvider",
+    "ProviderConfigValidationResult",
     "ProviderInfo",
     "ProviderRegistry",
     "ThinkingInfo",
-    "ValidationResult",
     "WorkingDirConfig",
 ]

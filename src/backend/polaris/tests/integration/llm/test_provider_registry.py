@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 import requests
 from polaris.infrastructure.llm.providers.provider_registry import provider_manager
-from polaris.kernelone.llm.providers import BaseProvider, ProviderInfo, ValidationResult
+from polaris.kernelone.llm.providers import BaseProvider, ProviderConfigValidationResult, ProviderInfo
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelListResult
 
 # ---------------------------------------------------------------------------
@@ -329,7 +329,7 @@ class TestProviderConfigValidation:
 
     @pytest.mark.parametrize("provider_type", EXPECTED_PROVIDERS)
     def test_validate_config_returns_validation_result(self, provider_type: str) -> None:
-        """validate_config 必须返回 ValidationResult 实例。"""
+        """validate_config 必须返回 ProviderConfigValidationResult 实例。"""
         cls = provider_manager.get_provider_class(provider_type)
         assert cls is not None
         # Use mock config instead of empty dict to avoid provider-specific None bugs
@@ -338,7 +338,7 @@ class TestProviderConfigValidation:
             result = cls.validate_config(config)
         except TypeError:
             pytest.skip(f"'{provider_type}' validate_config has a known None-handling bug")
-        assert isinstance(result, ValidationResult)
+        assert isinstance(result, ProviderConfigValidationResult)
         assert isinstance(result.valid, bool)
         assert isinstance(result.errors, list)
         assert isinstance(result.warnings, list)

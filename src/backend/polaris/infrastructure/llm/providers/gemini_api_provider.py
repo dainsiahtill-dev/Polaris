@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING, Any
 import requests
 from polaris.kernelone.llm.providers import (
     BaseProvider,
+    ProviderConfigValidationResult,
     ProviderInfo,
     ThinkingInfo,
-    ValidationResult,
     WorkingDirConfig,
 )
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage, estimate_usage
@@ -100,7 +100,7 @@ class GeminiAPIProvider(BaseProvider):
         }
 
     @classmethod
-    def validate_config(cls, config: dict[str, Any]) -> ValidationResult:
+    def validate_config(cls, config: dict[str, Any]) -> ProviderConfigValidationResult:
         errors = []
         warnings = []
         normalized = config.copy()
@@ -140,7 +140,7 @@ class GeminiAPIProvider(BaseProvider):
             warnings.append("Invalid temperature, using default 0.7")
             normalized["temperature"] = 0.7
 
-        return ValidationResult(valid=len(errors) == 0, errors=errors, warnings=warnings, normalized_config=normalized)
+        return ProviderConfigValidationResult(valid=len(errors) == 0, errors=errors, warnings=warnings, normalized_config=normalized)
 
     def __init__(self) -> None:
         pass

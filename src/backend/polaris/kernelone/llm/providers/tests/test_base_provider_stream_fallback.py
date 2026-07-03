@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 from polaris.kernelone.llm.providers.base_provider import (
     BaseProvider,
+    ProviderConfigValidationResult,
     ProviderInfo,
-    ValidationResult,
 )
 from polaris.kernelone.llm.types import (
     HealthResult,
@@ -37,8 +37,8 @@ class _DummyProvider(BaseProvider):
         return {}
 
     @classmethod
-    def validate_config(cls, config: dict[str, object]) -> ValidationResult:
-        return ValidationResult(valid=True, errors=[], warnings=[], normalized_config=dict(config))
+    def validate_config(cls, config: dict[str, object]) -> ProviderConfigValidationResult:
+        return ProviderConfigValidationResult(valid=True, errors=[], warnings=[], normalized_config=dict(config))
 
     def health(self, config: dict[str, object]) -> HealthResult:
         del config

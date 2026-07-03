@@ -26,8 +26,8 @@ from polaris.kernelone.context.contracts import (
 from polaris.kernelone.llm.providers import (
     THINKING_PREFIX,
     BaseProvider,
+    ProviderConfigValidationResult,
     ProviderInfo,
-    ValidationResult,
 )
 from polaris.kernelone.llm.providers.stream_thinking_parser import ChunkKind, StreamThinkingParser
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage, estimate_usage
@@ -192,7 +192,7 @@ class KimiProvider(BaseProvider):
         }
 
     @classmethod
-    def validate_config(cls, config: dict[str, Any]) -> ValidationResult:
+    def validate_config(cls, config: dict[str, Any]) -> ProviderConfigValidationResult:
         errors: list[str] = []
         warnings: list[str] = []
         normalized = dict(config)
@@ -268,7 +268,7 @@ class KimiProvider(BaseProvider):
             else:
                 normalized["max_tokens"] = max_tokens
 
-        return ValidationResult(
+        return ProviderConfigValidationResult(
             valid=len(errors) == 0,
             errors=errors,
             warnings=warnings,

@@ -7,10 +7,10 @@ from typing import NoReturn
 from .base_provider import (
     THINKING_PREFIX,
     BaseProvider,
+    ProviderConfigValidationResult,
     ProviderInfo,
     ProviderRegistry,
     ThinkingInfo,
-    ValidationResult,
     WorkingDirConfig,
 )
 from .registry import (
@@ -26,12 +26,12 @@ __all__ = [
     "THINKING_PREFIX",
     "BaseProvider",
     "ChunkKind",
+    "ProviderConfigValidationResult",
     "ProviderInfo",
     "ProviderManager",
     "ProviderRegistry",
     "StreamThinkingParser",
     "ThinkingInfo",
-    "ValidationResult",
     "WorkingDirConfig",
     "get_provider_manager",
     "get_provider_registry",

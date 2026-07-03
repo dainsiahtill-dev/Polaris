@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any
 from polaris.kernelone.llm.providers.base_provider import (
     ProviderConfigValidationResult,
     ProviderInfo,
-    ValidationResult,
 )
 
 if TYPE_CHECKING:
@@ -50,7 +49,7 @@ class AsyncBaseProvider(ABC):
 
     @classmethod
     @abstractmethod
-    def validate_config(cls, config: dict[str, Any]) -> ValidationResult:
+    def validate_config(cls, config: dict[str, Any]) -> ProviderConfigValidationResult:
         """Validate provider configuration."""
         ...
 
@@ -86,5 +85,4 @@ __all__ = [
     "AsyncBaseProvider",
     "ProviderConfigValidationResult",
     "ProviderInfo",
-    "ValidationResult",
 ]
