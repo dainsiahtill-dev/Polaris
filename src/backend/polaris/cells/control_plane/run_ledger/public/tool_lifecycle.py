@@ -94,7 +94,29 @@ def _dropped_tool_call_count(refs: list[dict[str, Any]]) -> int:
 def _native_tool_call_envelope_refs(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, (list, tuple)):
         return []
-    return [dict(item) for item in value if isinstance(item, Mapping)]
+    refs: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        ref = dict(item)
+        if not ref:
+            continue
+        key = _clean_string(ref.get("envelope_id"))
+        if not key:
+            key = _stable_hash(
+                {
+                    "call_id": _clean_string(ref.get("call_id")),
+                    "tool_name": _clean_string(ref.get("tool_name")),
+                    "raw_call_hash": _clean_string(ref.get("raw_call_hash")),
+                    "arguments_hash": _clean_string(ref.get("arguments_hash")),
+                }
+            )
+        if key in seen:
+            continue
+        seen.add(key)
+        refs.append(ref)
+    return refs
 
 
 def _mapping_refs(value: Any) -> list[dict[str, Any]]:

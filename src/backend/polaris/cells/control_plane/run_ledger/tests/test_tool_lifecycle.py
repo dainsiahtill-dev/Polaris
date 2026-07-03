@@ -341,6 +341,30 @@ def test_tool_lifecycle_normalizer_falls_back_to_valid_legacy_envelopes() -> Non
     ]
 
 
+def test_tool_lifecycle_normalizer_deduplicates_native_envelopes() -> None:
+    envelope = {
+        "schema_version": "native_tool_call_envelope.v1",
+        "envelope_id": "native_tool_call:openai:0:call-0:abcdef",
+        "provider": "openai",
+        "tool_name": "write_file",
+        "call_id": "call-0",
+    }
+
+    receipt = normalize_tool_call_lifecycle_receipt(
+        {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_calls_count": 9,
+            "dispatched_tool_calls_count": 0,
+            "native_tool_call_envelope_refs": [envelope, dict(envelope)],
+            "dispatch_status": "",
+            "failure_class": "",
+        }
+    )
+
+    assert receipt["native_tool_calls_count"] == 1
+    assert receipt["native_tool_call_envelope_refs"] == [envelope]
+
+
 def test_tool_lifecycle_normalizer_derives_counts_from_lifecycle_refs() -> None:
     receipt = normalize_tool_call_lifecycle_receipt(
         {
@@ -485,6 +509,37 @@ def test_tool_lifecycle_receipt_derives_native_count_from_envelopes() -> None:
     assert receipt["native_tool_calls_count"] == 2
     assert receipt["dispatch_status"] == "dropped"
     assert receipt["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+
+
+def test_tool_lifecycle_receipt_deduplicates_native_envelopes_by_envelope_id() -> None:
+    envelope = {
+        "schema_version": "native_tool_call_envelope.v1",
+        "envelope_id": "native_tool_call:openai:0:call-0:abcdef",
+        "provider": "openai",
+        "tool_name": "write_file",
+        "call_id": "call-0",
+    }
+
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=9,
+        decoded_tool_calls_count=9,
+        dispatched_tool_calls_count=0,
+        native_tool_call_envelopes=[envelope, dict(envelope)],
+    ).to_dict()
+
+    assert receipt["native_tool_calls_count"] == 1
+    assert receipt["native_tool_call_envelope_refs"] == [envelope]
+    assert receipt["dropped_tool_calls"] == [
+        {
+            "tool_name": "write_file",
+            "envelope_id": "native_tool_call:openai:0:call-0:abcdef",
+            "reason": "tool_dispatch_dropped",
+        }
+    ]
 
 
 def test_tool_lifecycle_receipt_blocks_successful_write_without_effect_receipt() -> None:
