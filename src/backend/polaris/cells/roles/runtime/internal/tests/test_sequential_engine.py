@@ -7,12 +7,12 @@ from polaris.cells.roles.runtime.internal.sequential_engine import (
     DEFAULT_BUDGET_CONFIG,
     RESERVED_KEYS,
     WRITE_TOOL_NAMES,
-    FailureClass,
     RetryHint,
     SeqEventType,
     SeqProgressDetector,
     SeqState,
     SequentialBudget,
+    SequentialFailureClass,
     SequentialStateProxy,
     SequentialStats,
     StepDecision,
@@ -37,12 +37,12 @@ class TestEnums:
         assert TerminationReason.SEQ_CRASH_ORPHAN.value == "seq_crash_orphan"
         assert TerminationReason.SEQ_ERROR.value == "seq_error"
 
-    def test_failure_class_values(self):
-        assert FailureClass.SUCCESS.value == "success"
-        assert FailureClass.RETRYABLE.value == "retryable"
-        assert FailureClass.VALIDATION_FAIL.value == "validation_fail"
-        assert FailureClass.INTERNAL_BUG.value == "internal_bug"
-        assert FailureClass.UNKNOWN.value == "unknown"
+    def test_sequential_failure_class_values(self):
+        assert SequentialFailureClass.SUCCESS.value == "success"
+        assert SequentialFailureClass.RETRYABLE.value == "retryable"
+        assert SequentialFailureClass.VALIDATION_FAIL.value == "validation_fail"
+        assert SequentialFailureClass.INTERNAL_BUG.value == "internal_bug"
+        assert SequentialFailureClass.UNKNOWN.value == "unknown"
 
     def test_retry_hint_values(self):
         assert RetryHint.HANDOFF.value == "handoff"

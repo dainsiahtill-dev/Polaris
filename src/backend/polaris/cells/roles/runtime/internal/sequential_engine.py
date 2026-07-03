@@ -53,7 +53,7 @@ class TerminationReason(Enum):
     SEQ_ERROR = "seq_error"  # 执行错误
 
 
-class FailureClass(Enum):
+class SequentialFailureClass(Enum):
     """失败类别（用于路由决策）"""
 
     SUCCESS = "success"
@@ -950,25 +950,25 @@ class SequentialEngine:
     def _map_termination_to_action(
         self,
         termination_reason: str,
-    ) -> tuple[FailureClass, RetryHint]:
+    ) -> tuple[SequentialFailureClass, RetryHint]:
         """终止原因映射到外层动作"""
         mapping = {
-            TerminationReason.SEQ_COMPLETED.value: (FailureClass.SUCCESS, RetryHint.HANDOFF),
-            TerminationReason.SEQ_NO_PROGRESS.value: (FailureClass.RETRYABLE, RetryHint.STAGNATION),
-            TerminationReason.SEQ_BUDGET_EXHAUSTED.value: (FailureClass.RETRYABLE, RetryHint.ESCALATE),
+            TerminationReason.SEQ_COMPLETED.value: (SequentialFailureClass.SUCCESS, RetryHint.HANDOFF),
+            TerminationReason.SEQ_NO_PROGRESS.value: (SequentialFailureClass.RETRYABLE, RetryHint.STAGNATION),
+            TerminationReason.SEQ_BUDGET_EXHAUSTED.value: (SequentialFailureClass.RETRYABLE, RetryHint.ESCALATE),
             TerminationReason.SEQ_TOOL_FAIL_RECOVERABLE_EXHAUSTED.value: (
-                FailureClass.RETRYABLE,
+                SequentialFailureClass.RETRYABLE,
                 RetryHint.COOLDOWN_RETRY,
             ),
             TerminationReason.SEQ_OUTPUT_INVALID_EXHAUSTED.value: (
-                FailureClass.VALIDATION_FAIL,
+                SequentialFailureClass.VALIDATION_FAIL,
                 RetryHint.MANUAL_REVIEW,
             ),
-            TerminationReason.SEQ_RESERVED_KEY_VIOLATION.value: (FailureClass.INTERNAL_BUG, RetryHint.ALERT),
-            TerminationReason.SEQ_CRASH_ORPHAN.value: (FailureClass.UNKNOWN, RetryHint.AUDIT_RECOVER),
-            TerminationReason.SEQ_ERROR.value: (FailureClass.UNKNOWN, RetryHint.ESCALATE),
+            TerminationReason.SEQ_RESERVED_KEY_VIOLATION.value: (SequentialFailureClass.INTERNAL_BUG, RetryHint.ALERT),
+            TerminationReason.SEQ_CRASH_ORPHAN.value: (SequentialFailureClass.UNKNOWN, RetryHint.AUDIT_RECOVER),
+            TerminationReason.SEQ_ERROR.value: (SequentialFailureClass.UNKNOWN, RetryHint.ESCALATE),
         }
-        return mapping.get(termination_reason, (FailureClass.UNKNOWN, RetryHint.ESCALATE))
+        return mapping.get(termination_reason, (SequentialFailureClass.UNKNOWN, RetryHint.ESCALATE))
 
     # ═══════════════════════════════════════════════════════════════════════════
     # 幂等恢复支持

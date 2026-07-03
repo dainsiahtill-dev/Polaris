@@ -6,7 +6,6 @@ Tests the vNext sequential thinking kernel implementation.
 import pytest
 from polaris.cells.roles.runtime.internal.sequential_engine import (
     RESERVED_KEYS,
-    FailureClass,
     ReservedKeyViolationError,
     RetryHint,
     SeqEventType,
@@ -14,6 +13,7 @@ from polaris.cells.roles.runtime.internal.sequential_engine import (
     SeqState,
     SequentialBudget,
     SequentialEngine,
+    SequentialFailureClass,
     SequentialStateProxy,
     SequentialStats,
     StepDecision,
@@ -134,7 +134,7 @@ class TestTerminationMapping:
 
         failure_class, retry_hint = engine._map_termination_to_action(TerminationReason.SEQ_COMPLETED.value)
 
-        assert failure_class == FailureClass.SUCCESS
+        assert failure_class == SequentialFailureClass.SUCCESS
         assert retry_hint == RetryHint.HANDOFF
 
     def test_no_progress_mapping(self):
@@ -143,7 +143,7 @@ class TestTerminationMapping:
             TerminationReason.SEQ_NO_PROGRESS.value
         )
 
-        assert failure_class == FailureClass.RETRYABLE
+        assert failure_class == SequentialFailureClass.RETRYABLE
         assert retry_hint == RetryHint.STAGNATION
 
     def test_budget_exhausted_mapping(self):
@@ -152,7 +152,7 @@ class TestTerminationMapping:
             TerminationReason.SEQ_BUDGET_EXHAUSTED.value
         )
 
-        assert failure_class == FailureClass.RETRYABLE
+        assert failure_class == SequentialFailureClass.RETRYABLE
         assert retry_hint == RetryHint.ESCALATE
 
 
