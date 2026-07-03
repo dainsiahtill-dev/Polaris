@@ -1407,6 +1407,7 @@ class ProjectDirectorRepairKernelSummaryV1:
     stage: str
     tool_results: tuple[Mapping[str, Any], ...] = ()
     artifact_quality_errors: tuple[str, ...] = ()
+    artifact_quality_issues: tuple[Mapping[str, Any], ...] = ()
     mode: str = "commit"
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
@@ -1418,6 +1419,7 @@ class ProjectDirectorRepairKernelSummaryV1:
             "artifact_quality_errors",
             _to_tuple_str(list(self.artifact_quality_errors)),
         )
+        object.__setattr__(self, "artifact_quality_issues", _to_tuple_mapping_from_any(self.artifact_quality_issues))
         object.__setattr__(self, "mode", _require_non_empty("mode", self.mode))
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
 
@@ -1426,6 +1428,7 @@ class ProjectDirectorRepairKernelSummaryV1:
             "stage": self.stage,
             "tool_results": [dict(item) for item in self.tool_results],
             "artifact_quality_errors": list(self.artifact_quality_errors),
+            "artifact_quality_issues": [dict(item) for item in self.artifact_quality_issues],
             "mode": self.mode,
             "metadata": dict(self.metadata),
         }

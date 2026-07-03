@@ -18,11 +18,15 @@ def build_repair_kernel_result_summary(
     stage: str,
     tool_results: Sequence[dict[str, Any]],
     artifact_quality_errors: list[str] | None = None,
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
     mode: str = "commit",
 ) -> dict[str, Any]:
     """Build repair-kernel audit metadata for existing deterministic results."""
 
-    diagnostics = normalize_artifact_quality_errors(list(artifact_quality_errors or []))
+    if repair_diagnostics is not None:
+        diagnostics = tuple(repair_diagnostics)
+    else:
+        diagnostics = normalize_artifact_quality_errors(list(artifact_quality_errors or []))
     receipts = _receipts_from_tool_results(stage=stage, tool_results=tool_results, diagnostics=diagnostics, mode=mode)
     coverage_report = build_repair_coverage_report(diagnostics)
     shadow_comparison = compare_baseline_and_kernel_repairs(

@@ -2238,6 +2238,7 @@ def build_director_repair_kernel_summary(
     stage: str,
     tool_results: Sequence[dict[str, Any]],
     artifact_quality_errors: list[str] | None = None,
+    artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     mode: str = "commit",
 ) -> dict[str, Any]:
     """Build a public repair-kernel summary for projected Director repair effects."""
@@ -2247,6 +2248,7 @@ def build_director_repair_kernel_summary(
             stage=stage,
             tool_results=tuple(tool_results or ()),
             artifact_quality_errors=tuple(artifact_quality_errors or ()),
+            artifact_quality_issues=tuple(dict(item) for item in artifact_quality_issues),
             mode=mode,
         )
     )
@@ -2261,7 +2263,11 @@ def project_director_repair_kernel_summary(
     summary = _build_repair_kernel_result_summary(
         stage=command.stage,
         tool_results=[dict(item) for item in command.tool_results],
-        artifact_quality_errors=list(command.artifact_quality_errors),
+        artifact_quality_errors=list(_artifact_quality_errors_from_summary_command(command)),
+        repair_diagnostics=_repair_diagnostics_from_quality_inputs(
+            command.artifact_quality_errors,
+            command.artifact_quality_issues,
+        ),
         mode=command.mode,
     )
     return DirectorRepairKernelSummaryProjectionResultV1(
@@ -3285,6 +3291,16 @@ def _artifact_quality_errors_from_command(
 
 
 def _artifact_quality_errors_from_convergence_command(command: RunDirectorRepairConvergenceCommandV1) -> tuple[str, ...]:
+    artifact_errors = tuple(str(item) for item in command.artifact_quality_errors if str(item or "").strip())
+    if artifact_errors:
+        return artifact_errors
+    return tuple(
+        _artifact_quality_error_from_diagnostic(diagnostic)
+        for diagnostic in normalize_director_repair_issue_diagnostics(command.artifact_quality_issues)
+    )
+
+
+def _artifact_quality_errors_from_summary_command(command: ProjectDirectorRepairKernelSummaryV1) -> tuple[str, ...]:
     artifact_errors = tuple(str(item) for item in command.artifact_quality_errors if str(item or "").strip())
     if artifact_errors:
         return artifact_errors

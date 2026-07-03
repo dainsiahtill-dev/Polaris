@@ -11810,6 +11810,41 @@ def test_receipt_summary_includes_uncovered_diagnostic_report() -> None:
     assert coverage_report["coverage_gaps"][0]["audit_reason"] == "known_rule_matched=false"
 
 
+def test_receipt_summary_accepts_typed_artifact_quality_issues() -> None:
+    typed_issue = {
+        "source": "artifact_quality",
+        "code": "typescript_ts2304",
+        "message": "Cannot find name 'Widget'.",
+        "path": "src/app.ts",
+        "metadata": {"raw": "src/app.ts(1,14): error TS2304: Cannot find name 'Widget'.", "line": 1, "column": 14},
+    }
+    summary = build_director_repair_kernel_summary(
+        stage="quality",
+        mode="commit",
+        artifact_quality_errors=[],
+        artifact_quality_issues=(typed_issue,),
+        tool_results=[
+            {
+                "tool": "write_file",
+                "tool_name": "write_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_typescript_missing_export_repair",
+                    "file": "src/app.ts",
+                    "operation": "modify",
+                },
+            }
+        ],
+    )
+
+    diagnostic = summary["receipts"][0]["diagnostics"][0]
+    assert diagnostic["code"] == "typescript_ts2304"
+    assert diagnostic["path"] == "src/app.ts"
+    assert diagnostic["metadata"]["line"] == 1
+    assert summary["coverage_report"]["items"][0]["diagnostic_code"] == "typescript_ts2304"
+
+
 def test_receipt_summary_preserves_embedded_runtime_kernel_receipt_identity() -> None:
     summary = build_director_repair_kernel_summary(
         stage="quality",
