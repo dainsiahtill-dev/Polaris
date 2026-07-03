@@ -91,7 +91,7 @@ def _drive_role_workers(
 
     Args:
         workers: ``(consumer, provider_id)`` pairs, one per bound backend.
-        poll_interval: deprecated compatibility argument; inline workers now wait on
+        poll_interval: retained host-call parameter; inline workers now wait on
             TaskMarket wake events instead of timer-driven empty polls.
         max_claims_per_worker: defensive cap on claims per worker per drain so a
             pathological always-ready market can never spin forever (the outer
