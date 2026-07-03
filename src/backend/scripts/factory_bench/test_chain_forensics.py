@@ -19,6 +19,7 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 
 import chain_forensics  # noqa: E402
+from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS  # noqa: E402
 
 
 def _build_log(tmp_path: Path, *, scenario: str) -> Path:
@@ -89,6 +90,11 @@ def test_happy_path_extracts_all_fields(tmp_path: Path) -> None:
     assert report["wall_seconds"] == 10.0
     assert len(report["archive_runs"]) == 1
     assert "single_batch_contract_violation" not in {e[0] for e in report["top_errors"]}
+
+
+def test_write_detector_uses_canonical_write_tool_catalog() -> None:
+    assert set(chain_forensics._FILE_WRITE_TOOL_NAMES) == set(WRITE_TOOLS)
+    assert chain_forensics._FILE_WRITE_RE.search("[director] precision_edit -> main.py")
 
 
 def test_f16_wall_categorizes_correctly(tmp_path: Path) -> None:

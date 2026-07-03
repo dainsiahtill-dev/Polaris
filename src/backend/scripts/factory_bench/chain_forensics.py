@@ -28,7 +28,14 @@ import os
 import re
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Any
+
+_BACKEND_ROOT = Path(__file__).resolve().parents[2]
+if str(_BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_ROOT))
+
+from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Known failure-signature catalog (the 4th field of the per-batch report).
@@ -100,7 +107,8 @@ _SIGNATURES: tuple[tuple[str, str, str], ...] = (
 _TIMESTAMP_RE = re.compile(
     r"\[LLMInvoker\.call\] ENTRY(?: POINT REACHED)?: profile=director.*?(?:run|turn)_id=([\w\-]+)"
 )
-_FILE_WRITE_RE = re.compile(r"write_file|edit_blocks|edit_file|append_to_file|precision_edit|repo_apply_diff")
+_FILE_WRITE_TOOL_NAMES = tuple(sorted(WRITE_TOOLS, key=len, reverse=True))
+_FILE_WRITE_RE = re.compile("|".join(re.escape(tool_name) for tool_name in _FILE_WRITE_TOOL_NAMES))
 _TOOL_FAIL_RE = re.compile(r"\[director\] 工具执行返回失败结果")
 _QA_VERDICT_RE = re.compile(r'"passed"\s*:\s*(true|false).*?"reason"\s*:\s*"([^"]*)"', re.DOTALL)
 _OUTCOME_JSON_RE = re.compile(r"\[market-chain\] outcome: (\{[^\n]+\})")
