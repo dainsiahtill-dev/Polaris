@@ -94,9 +94,7 @@ class TokenService:
         features like budget tracking and state persistence.
     """
 
-    # Delegate to canonical TokenEstimator for estimation
-    # Keep CHARS_PER_TOKEN for backward compatibility with code that may reference it
-    CHARS_PER_TOKEN = 4
+    # Delegate to canonical TokenEstimator for estimation.
 
     # Output limits
     MAX_OUTPUT_SIZE = 50 * 1024  # 50KB
