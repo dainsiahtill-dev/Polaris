@@ -2,7 +2,7 @@ chief_engineer:
   director_pool:
     max_directors: 3
     auto_scale: false              # P3: enable auto-scaling based on load
-    conflict_detection: global     # global | per_consumer (legacy compat)
+    conflict_detection: global     # global | per_consumer
     graceful_degrade: true         # fallback to single Director if init fails
     event_bus:
       backend: sync                # sync | redis_stream (P3 upgrade path)
