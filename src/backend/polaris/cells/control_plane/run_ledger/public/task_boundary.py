@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import tomllib
+from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1
 
 _LOCAL_ENTRYPOINT_SUFFIXES = (
     ".js",
@@ -480,7 +481,7 @@ def evaluate_task_boundary_verdict(
         return TaskBoundaryVerdictV1(
             status="tool_dispatch_dropped",
             ok=False,
-            failure_class="TOOL_DISPATCH_DROPPED",
+            failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
             responsible_layer="execution_control_plane",
             reason="Provider emitted tool calls, but no authoritative tool dispatch receipt was committed",
             **base_kwargs,

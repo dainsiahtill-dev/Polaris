@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public.failure_evidence import (
+    FailureClassV1,
+    normalize_failure_class,
+)
 from polaris.cells.control_plane.run_ledger.public.task_boundary import (
     normalize_task_boundary_verdict,
 )
@@ -973,10 +977,9 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
         events = tool_lifecycle_map.get("events")
         event_rows = events if isinstance(events, list) else []
         failed_events = [item for item in event_rows if isinstance(item, dict) and bool(item.get("failed"))]
-        failure = (
-            str(failed_events[-1].get("failure_class") or "TOOL_LIFECYCLE_FAILED")
-            if failed_events
-            else "TOOL_LIFECYCLE_FAILED"
+        failure = normalize_failure_class(
+            failed_events[-1].get("failure_class") if failed_events else "",
+            default=FailureClassV1.TOOL_LIFECYCLE_FAILED,
         )
         return {
             "ok": False,

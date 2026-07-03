@@ -12,6 +12,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public import (
+    FailureClassV1,
+    is_failure_class,
+    normalize_failure_class,
+)
 from polaris.cells.control_plane.run_ledger.public.contracts import (
     ReadRunLedgerProjectionBarrierQueryV1,
     ReadRunLedgerProjectionQueryV1,
@@ -143,7 +148,7 @@ def _route_classification(
     tool_lifecycle = _mapping(ledger.get("tool_lifecycle"))
     if tool_lifecycle and _int_value(tool_lifecycle.get("dropped_count")) > 0:
         classification = build_qa_failure_classification_v1(
-            failure_class="TOOL_DISPATCH_DROPPED",
+            failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
             route="waiting_human",
             reason="LLM emitted tool calls but the execution control plane did not commit dispatch receipts",
             repairable_by_director=False,
@@ -158,7 +163,10 @@ def _route_classification(
         event_rows = events if isinstance(events, list) else []
         failed_events = [item for item in event_rows if isinstance(item, dict) and bool(item.get("failed"))]
         latest_failure = failed_events[-1] if failed_events else {}
-        failure_class = str(latest_failure.get("failure_class") or "TOOL_LIFECYCLE_FAILED").strip()
+        failure_class = normalize_failure_class(
+            latest_failure.get("failure_class"),
+            default=FailureClassV1.TOOL_LIFECYCLE_FAILED,
+        )
         reason = str(latest_failure.get("reason") or "Tool lifecycle receipt failed").strip()
         classification = build_qa_failure_classification_v1(
             failure_class=failure_class,
@@ -246,9 +254,9 @@ def _route_classification(
                 evidence_refs=evidence_refs,
             )
             return "FAIL", False, "pending_design", "", classification
-        if boundary_failure_class == "TOOL_DISPATCH_DROPPED":
+        if is_failure_class(boundary_failure_class, FailureClassV1.TOOL_DISPATCH_DROPPED):
             classification = build_qa_failure_classification_v1(
-                failure_class="TOOL_DISPATCH_DROPPED",
+                failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
                 route="waiting_human",
                 reason=boundary_reason,
                 repairable_by_director=False,
