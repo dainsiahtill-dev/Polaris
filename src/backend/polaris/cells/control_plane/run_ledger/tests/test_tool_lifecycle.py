@@ -108,6 +108,47 @@ def test_tool_lifecycle_normalizer_canonicalizes_legacy_dropped_tool_names() -> 
     ]
 
 
+def test_tool_lifecycle_normalizer_derives_counts_from_native_envelopes() -> None:
+    envelopes = [
+        {
+            "schema_version": "native_tool_call_envelope.v1",
+            "envelope_id": f"native_tool_call:openai:{index}:call-{index}:abcdef",
+            "provider": "openai",
+            "tool_name": "write_file",
+            "call_id": f"call-{index}",
+        }
+        for index in range(2)
+    ]
+
+    receipt = normalize_tool_call_lifecycle_receipt(
+        {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_calls_count": 9,
+            "decoded_tool_calls_count": 2,
+            "dispatched_tool_calls_count": 0,
+            "native_tool_call_envelope_refs": envelopes,
+            "dispatch_status": "",
+            "failure_class": "",
+        }
+    )
+
+    assert receipt["native_tool_calls_count"] == 2
+    assert receipt["dispatch_status"] == "dropped"
+    assert receipt["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert receipt["dropped_tool_calls"] == [
+        {
+            "tool_name": "write_file",
+            "envelope_id": "native_tool_call:openai:0:call-0:abcdef",
+            "reason": "tool_dispatch_dropped",
+        },
+        {
+            "tool_name": "write_file",
+            "envelope_id": "native_tool_call:openai:1:call-1:abcdef",
+            "reason": "tool_dispatch_dropped",
+        },
+    ]
+
+
 def test_tool_lifecycle_receipt_preserves_native_tool_call_envelopes() -> None:
     envelope = {
         "schema_version": "native_tool_call_envelope.v1",

@@ -59,6 +59,22 @@ def _native_tool_call_envelope_refs(value: Any) -> list[dict[str, Any]]:
     return [dict(item) for item in value if isinstance(item, dict)]
 
 
+def _dropped_tool_calls_from_native_envelopes(value: Any) -> list[dict[str, Any]]:
+    dropped: list[dict[str, Any]] = []
+    for envelope in _native_tool_call_envelope_refs(value):
+        tool_name = _clean_string(envelope.get("tool_name"))
+        envelope_id = _clean_string(envelope.get("envelope_id"))
+        if not tool_name and not envelope_id:
+            continue
+        item: dict[str, Any] = {"reason": "tool_dispatch_dropped"}
+        if tool_name:
+            item["tool_name"] = tool_name
+        if envelope_id:
+            item["envelope_id"] = envelope_id
+        dropped.append(item)
+    return dropped
+
+
 def _result_items(receipts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for receipt in receipts:
@@ -276,13 +292,29 @@ def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
     payload = _mapping(value)
     if payload:
         payload.setdefault("schema_version", "tool_call_lifecycle_receipt.v1")
+        native_refs = _native_tool_call_envelope_refs(
+            payload.get("native_tool_call_envelope_refs") or payload.get("native_tool_call_envelopes")
+        )
+        native_count = len(native_refs) if native_refs else _int_value(payload.get("native_tool_calls_count"))
+        dispatched_count = _int_value(payload.get("dispatched_tool_calls_count"))
+        payload["native_tool_call_envelope_refs"] = native_refs
+        payload["native_tool_calls_count"] = native_count
+        payload["decoded_tool_calls_count"] = _int_value(payload.get("decoded_tool_calls_count"))
+        payload["dispatched_tool_calls_count"] = dispatched_count
+        payload["tool_result_count"] = _int_value(payload.get("tool_result_count"))
+        payload["effect_receipt_count"] = _int_value(payload.get("effect_receipt_count"))
+        dropped_tool_calls = _dropped_tool_call_refs(payload.get("dropped_tool_calls"))
+        if native_count > 0 and dispatched_count <= 0 and not dropped_tool_calls:
+            dropped_tool_calls = _dropped_tool_calls_from_native_envelopes(native_refs)
+        payload["dropped_tool_calls"] = dropped_tool_calls
+        if native_count > 0 and dispatched_count <= 0:
+            if not _clean_string(payload.get("dispatch_status")):
+                payload["dispatch_status"] = "dropped"
+            if not normalize_failure_class(payload.get("failure_class")):
+                payload["failure_class"] = FailureClassV1.TOOL_DISPATCH_DROPPED.value
         payload.setdefault("ok", False)
         payload.setdefault("dispatch_status", "unknown")
         payload.setdefault("failure_class", FailureClassV1.TOOL_LIFECYCLE_UNKNOWN.value)
-        payload["dropped_tool_calls"] = _dropped_tool_call_refs(payload.get("dropped_tool_calls"))
-        payload["native_tool_call_envelope_refs"] = _native_tool_call_envelope_refs(
-            payload.get("native_tool_call_envelope_refs")
-        )
         return payload
     return {
         "schema_version": "tool_call_lifecycle_receipt.v1",
