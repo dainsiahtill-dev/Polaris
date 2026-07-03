@@ -120,6 +120,7 @@ from .schemas import (
     validate_report_file,
     validate_suite_file,
 )
+from .snapshot_summary import SnapshotSummaryView
 
 _LAZY_EXPORTS = {
     "MultiResolutionContent": ".multi_resolution_store",
@@ -232,6 +233,7 @@ __all__ = [
     "RoutingClass",
     "RunCard",
     "SchemaValidationResult",
+    "SnapshotSummaryView",
     "StateEntry",
     "StateFirstContextOS",
     "StateFirstContextOSPolicy",

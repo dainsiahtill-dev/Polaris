@@ -11,6 +11,8 @@ import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
+from .snapshot_summary import SnapshotSummaryView
+
 if TYPE_CHECKING:
     from polaris.kernelone.events.typed import ContextWindowStatus
 
@@ -1523,31 +1525,6 @@ class StateFirstContextOSPolicy:
             overrides = cast(_PolicyEnvOverrides, kwargs)
             return replace(cls(), **overrides)
         return cls()
-
-
-class SnapshotSummaryView:
-    """Lightweight snapshot summary — avoids full to_dict() serialization.
-
-    Extracts only the fields needed for LLM context injection without
-    materializing the full transcript_log (the ~109KB "nuke" problem).
-    """
-
-    @staticmethod
-    def from_snapshot(snapshot: ContextOSSnapshot) -> dict[str, Any]:
-        ws = snapshot.working_state
-        ts = ws.task_state if hasattr(ws, "task_state") else None
-        return {
-            "version": snapshot.version,
-            "transcript_events_count": len(snapshot.transcript_log),
-            "goal": ts.current_goal.value if ts and ts.current_goal else None,
-            "open_loops_count": len(ts.open_loops) if ts else 0,
-            "decisions_count": len(ws.decision_log) if hasattr(ws, "decision_log") else 0,
-            "artifacts_count": len(snapshot.artifact_store),
-            "episodes_count": len(snapshot.episode_store),
-            "has_pending_followup": snapshot.pending_followup is not None,
-            "content_map_entries": len(getattr(snapshot, "content_map", {})),
-        }
-
 
 # === DEPRECATED: Compatibility aliases for v1 → v2 migration ===
 # These aliases allow consumer code to migrate incrementally from v1 to v2.

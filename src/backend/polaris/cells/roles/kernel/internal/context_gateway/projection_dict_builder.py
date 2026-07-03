@@ -10,7 +10,7 @@ because this method folds together six signal readers, the budget-pressure
 estimate, the security sanitizer and the projection engine — passing each one
 individually would just reconstruct the gateway. The
 three in-method lazy imports (``make_offload_capture`` /
-``role_signal_freshness`` / ``role_signals`` / ``SnapshotSummaryView``) are
+``role_signal_freshness`` / ``role_signals`` / snapshot summary formatting) are
 LOAD-BEARING (CCR producer-loop / circular-import avoidance) and preserved
 verbatim.
 
@@ -234,7 +234,7 @@ class ProjectionDictBuilder:
             _has_artifacts = bool(getattr(proj_snapshot, "artifact_store", ()))
             _has_pending = bool(getattr(proj_snapshot, "pending_followup", None))
             if _has_artifacts or _has_pending:
-                from polaris.kernelone.context.context_os.models import SnapshotSummaryView
+                from polaris.kernelone.context.context_os.snapshot_summary import SnapshotSummaryView
 
                 summary_dict = SnapshotSummaryView.from_snapshot(proj_snapshot)
                 snapshot_summary = ProjectionFormatter.format_context_os_snapshot(summary_dict)
