@@ -766,18 +766,6 @@ __all__ = [
 ]
 
 
-# ============================================================================
-# Lazy module-level attribute access for LLMError
-# ============================================================================
-
-
-def __getattr__(name: str) -> type:
-    """Lazily provide LLMError when accessed as a module attribute."""
-    if name == "LLMError":
-        return _get_llm_error()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 # Ensure LLMError is available for isinstance checks and type hints at runtime
 # This is loaded on first access to any attribute in the module
 LLMError = _get_llm_error()
