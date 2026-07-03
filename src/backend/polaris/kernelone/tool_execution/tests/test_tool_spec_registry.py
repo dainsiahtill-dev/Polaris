@@ -342,6 +342,24 @@ class TestToolSpecRegistry:
         assert "q" not in default_schema["function"]["parameters"]["properties"]
         assert "q" in alias_schema["function"]["parameters"]["properties"]
 
+    def test_generate_llm_schemas_excludes_deprecated_tools_by_default(self) -> None:
+        """Deprecated tools stay registered but are not provider-advertised by default."""
+        from polaris.kernelone.tool_execution import tool_spec_registry
+
+        ToolSpecRegistry.clear()
+        tool_spec_registry.migrate_from_contracts_specs()
+        default_names = {
+            schema["function"]["name"] for schema in ToolSpecRegistry.generate_llm_schemas(format="openai")
+        }
+        compat_names = {
+            schema["function"]["name"]
+            for schema in ToolSpecRegistry.generate_llm_schemas(format="openai", include_deprecated=True)
+        }
+
+        assert ToolSpecRegistry.get("precision_edit") is not None
+        assert "precision_edit" not in default_names
+        assert "precision_edit" in compat_names
+
     def test_generate_llm_schemas_anthropic(self) -> None:
         """Test generating Anthropic format schemas."""
         spec = ToolSpec(

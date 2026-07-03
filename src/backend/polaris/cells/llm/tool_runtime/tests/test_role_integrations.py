@@ -28,3 +28,15 @@ def test_director_text_tool_prompt_does_not_advertise_deprecated_precision_edit(
 
     assert "precision_edit" not in prompt
     assert "edit_blocks" in prompt
+
+
+def test_director_native_tools_do_not_advertise_deprecated_precision_edit(tmp_path: Path) -> None:
+    integration = ROLE_TOOL_INTEGRATIONS["director"](str(tmp_path))
+    try:
+        tools = integration.format_tools_for_native_calling()
+    finally:
+        integration.close()
+
+    tool_names = {tool["function"]["name"] for tool in tools if isinstance(tool.get("function"), dict)}
+    assert "precision_edit" not in tool_names
+    assert "edit_blocks" in tool_names

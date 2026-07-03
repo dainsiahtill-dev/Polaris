@@ -332,6 +332,7 @@ class ToolSpecRegistry:
         format: str = "openai",
         categories: tuple[str, ...] | None = None,
         *,
+        include_deprecated: bool = False,
         include_arg_aliases: bool = False,
         deterministic: bool = False,
     ) -> list[dict[str, Any]]:
@@ -341,6 +342,8 @@ class ToolSpecRegistry:
             format: Provider schema format. Supported values are ``openai`` and
                 ``anthropic``.
             categories: Optional category filter such as ``("read",)``.
+            include_deprecated: When false, deprecated tools remain registered
+                for normalization/compatibility but are not advertised to LLMs.
             include_arg_aliases: When true, expose safe argument aliases from
                 ``arg_aliases`` as optional schema properties. This preserves the
                 weak-model shaping previously provided by the retired
@@ -354,6 +357,8 @@ class ToolSpecRegistry:
         specs = cls.get_all_tools()
         if categories:
             specs = [s for s in specs if any(c in s.categories for c in categories)]
+        if not include_deprecated:
+            specs = [s for s in specs if not cls._is_deprecated_tool(s.canonical_name)]
 
         schemas: list[dict[str, Any]] = []
         for spec in specs:
@@ -366,6 +371,12 @@ class ToolSpecRegistry:
             if schema is not None:
                 schemas.append(schema)
         return schemas
+
+    @classmethod
+    def _is_deprecated_tool(cls, canonical_name: str) -> bool:
+        """Return whether a canonical tool is deprecated in the raw registry."""
+        raw_spec = cls._get_registry().get(canonical_name)
+        return isinstance(raw_spec, dict) and bool(raw_spec.get("deprecated"))
 
     @classmethod
     def get_llm_schema(
