@@ -9,6 +9,7 @@ from pathlib import Path
 
 from polaris.cells.director.runtime.internal.repair_kernel import (
     PatchComposer,
+    RepairDiagnostic,
     RepairOperation,
     normalize_artifact_quality_errors,
     run_runtime_repair,
@@ -728,6 +729,47 @@ def test_npm_script_contract_repairs_plain_javascript_placeholder_lint() -> None
     assert repaired["scripts"]["lint"] == plan.operations[0].value
 
 
+def test_npm_script_contract_uses_typed_placeholder_script_metadata() -> None:
+    package_text = json.dumps(
+        {
+            "name": "sample",
+            "version": "1.0.0",
+            "type": "module",
+            "scripts": {
+                "start": "node src/index.js",
+                "lint": 'echo "lint placeholder - wire eslint later" && exit 0',
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    diagnostics = (
+        RepairDiagnostic(
+            source="artifact_quality",
+            code="npm_manifest_invalid",
+            message="npm manifest script contract violation",
+            path="package.json",
+            metadata={
+                "manifest_path": "package.json",
+                "script_name": "lint",
+                "script_issue": "placeholder_command",
+            },
+        ),
+    )
+
+    plan = build_npm_script_contract_plan(
+        base_files={"package.json": package_text, "src/index.js": "export const ok = true;\n"},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert [(operation.kind, operation.path, operation.json_path) for operation in plan.operations] == [
+        ("json_set", "package.json", ("scripts", "lint"))
+    ]
+    assert plan.operations[0].value == "node --check src/index.js"
+
+
 def test_npm_script_contract_repairs_python_commands_with_structured_json() -> None:
     package_text = json.dumps(
         {
@@ -891,6 +933,52 @@ def test_npm_script_contract_repairs_recursive_build_script_with_structured_json
     assert repaired["scripts"]["build"] == "tsc -p tsconfig.json"
     assert repaired["scripts"]["verify"] == "npm run build"
     assert repaired["scripts"]["test"] == "npm run verify"
+
+
+def test_npm_script_contract_uses_typed_missing_entrypoint_metadata() -> None:
+    package_text = json.dumps(
+        {
+            "name": "sample",
+            "version": "1.0.0",
+            "type": "module",
+            "devDependencies": {"typescript": "^5.0.0"},
+            "scripts": {"start": "node src/index.js"},
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    diagnostics = (
+        RepairDiagnostic(
+            source="artifact_quality",
+            code="npm_manifest_invalid",
+            message="npm manifest script contract violation",
+            path="package.json",
+            metadata={
+                "manifest_path": "package.json",
+                "script_name": "start",
+                "script_issue": "missing_local_entrypoint",
+                "entrypoint": "src/index.js",
+            },
+        ),
+    )
+
+    plan = build_npm_script_contract_plan(
+        base_files={
+            "package.json": package_text,
+            "tsconfig.json": "{}\n",
+            "src/index.ts": "export {};\n",
+        },
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert [(operation.kind, operation.path, operation.json_path) for operation in plan.operations] == [
+        ("json_set", "package.json", ("scripts", "build")),
+        ("json_set", "package.json", ("scripts", "start")),
+    ]
+    assert plan.operations[0].value == "tsc"
+    assert plan.operations[1].value == "npm run build && node dist/index.js"
 
 
 def test_npm_script_contract_repairs_strip_types_test_runner_to_compiled_verifier() -> None:

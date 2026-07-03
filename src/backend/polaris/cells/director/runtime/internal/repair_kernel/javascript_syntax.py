@@ -183,10 +183,16 @@ def build_npm_script_contract_plan(
     scripts: dict[str, Any] = dict(scripts_raw) if isinstance(scripts_raw, dict) else {}
     updates: dict[tuple[str, ...], str] = {}
     raw_errors = [str(diagnostic.raw or diagnostic.message or "") for diagnostic in matched_diagnostics]
+    missing_entrypoints = _missing_entrypoints(raw_errors)
+    missing_entrypoints.update(_missing_entrypoints_from_diagnostics(matched_diagnostics))
     has_typescript_context = _has_typescript_context(normalized_base, package_payload)
     has_node_test_runner_contract = _has_node_test_runner_contract_error(raw_errors)
 
-    for script_name in _placeholder_scripts(raw_errors):
+    for script_name in _script_names_for_manifest_issue(
+        matched_diagnostics,
+        "placeholder_command",
+        fallback_names=_placeholder_scripts(raw_errors),
+    ):
         replacement = _fallback_script_for_placeholder_script(
             script_name,
             normalized_base,
@@ -207,7 +213,11 @@ def build_npm_script_contract_plan(
             updates[("scripts", script_name)] = replacement
 
     if has_typescript_context:
-        for script_name in _recursive_scripts(raw_errors):
+        for script_name in _script_names_for_manifest_issue(
+            matched_diagnostics,
+            "recursive_script",
+            fallback_names=_recursive_scripts(raw_errors),
+        ):
             replacement = _fallback_script_for_recursive_script(script_name, normalized_base, package_payload)
             if replacement:
                 updates[("scripts", script_name)] = replacement
@@ -248,17 +258,17 @@ def build_npm_script_contract_plan(
         if replacement:
             updates[("scripts", "start")] = replacement
 
-    if has_typescript_context and _missing_entrypoint(raw_errors, script_name="verify"):
+    if has_typescript_context and missing_entrypoints.get("verify"):
         updates[("scripts", "verify")] = "npm run build"
         test_script = str(scripts.get("test") or "")
         if "verify" in test_script:
             updates[("scripts", "test")] = "npm run verify"
 
-    if has_typescript_context and _missing_entrypoint(raw_errors, script_name="start"):
+    if has_typescript_context and missing_entrypoints.get("start"):
         entrypoint = _compiled_typescript_entrypoint(normalized_base, package_payload)
         updates[("scripts", "start")] = f"npm run build && node {entrypoint}" if entrypoint else "npm run build"
 
-    for script_name, _entrypoint in _missing_entrypoints(raw_errors).items():
+    for script_name, _entrypoint in missing_entrypoints.items():
         if script_name in {"test", "start", "verify"}:
             continue
         if has_typescript_context:
@@ -1041,6 +1051,11 @@ def _parse_package_json(text: str) -> dict[str, Any] | None:
 
 def _is_npm_script_contract_diagnostic(diagnostic: RepairDiagnostic) -> bool:
     raw = f"{diagnostic.message}\n{diagnostic.raw}".lower()
+    metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
+    if str(diagnostic.code or "").strip() == "npm_manifest_invalid":
+        return True
+    if str(metadata.get("script_name") or "").strip() or str(metadata.get("script_issue") or "").strip():
+        return True
     return (
         "npm default failing test script" in raw
         or "npm placeholder test script" in raw
@@ -1057,6 +1072,34 @@ def _is_npm_script_contract_diagnostic(diagnostic: RepairDiagnostic) -> bool:
         or ("npm run test" in raw and "strip-types" in raw)
         or _has_fixed_port_start_script_error((raw,))
     )
+
+
+def _script_names_for_manifest_issue(
+    diagnostics: Sequence[RepairDiagnostic],
+    issue: str,
+    *,
+    fallback_names: Sequence[str] = (),
+) -> tuple[str, ...]:
+    script_names: list[str] = [str(name or "").strip() for name in fallback_names if str(name or "").strip()]
+    for diagnostic in diagnostics:
+        metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
+        script_issue = str(metadata.get("script_issue") or "").strip()
+        script_name = str(metadata.get("script_name") or "").strip()
+        if script_issue == issue and script_name:
+            script_names.append(script_name)
+    return tuple(dict.fromkeys(script_names))
+
+
+def _missing_entrypoints_from_diagnostics(diagnostics: Sequence[RepairDiagnostic]) -> dict[str, str]:
+    entrypoints: dict[str, str] = {}
+    for diagnostic in diagnostics:
+        metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
+        script_issue = str(metadata.get("script_issue") or "").strip()
+        script_name = str(metadata.get("script_name") or "").strip()
+        entrypoint = str(metadata.get("entrypoint") or "").strip().replace("\\", "/")
+        if script_issue == "missing_local_entrypoint" and script_name and entrypoint:
+            entrypoints[script_name] = entrypoint
+    return entrypoints
 
 
 def _is_node_test_script_contract_diagnostic(diagnostic: RepairDiagnostic) -> bool:
