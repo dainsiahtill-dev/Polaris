@@ -6,9 +6,9 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 from polaris.kernelone.audit.error_correlator import (
+    AuditFailureClass,
     ErrorCorrelationResult,
     ErrorCorrelator,
-    FailureClass,
     _classify_event,
     _map_to_resolution_hint,
 )
@@ -18,16 +18,16 @@ from polaris.kernelone.audit.error_correlator_rules import (
 )
 
 
-class TestFailureClass:
+class TestAuditFailureClass:
     def test_values(self) -> None:
-        assert FailureClass.TOOL_EXECUTION_FAILURE == "tool_execution_failure"
-        assert FailureClass.LLM_CALL_FAILURE == "llm_call_failure"
-        assert FailureClass.POLICY_BLOCKED == "policy_blocked"
-        assert FailureClass.SECURITY_VIOLATION == "security_violation"
-        assert FailureClass.VERIFICATION_FAILURE == "verification_failure"
-        assert FailureClass.TASK_FAILURE == "task_failure"
-        assert FailureClass.RESOURCE_EXHAUSTION == "resource_exhaustion"
-        assert FailureClass.UNKNOWN == "unknown"
+        assert AuditFailureClass.TOOL_EXECUTION_FAILURE == "tool_execution_failure"
+        assert AuditFailureClass.LLM_CALL_FAILURE == "llm_call_failure"
+        assert AuditFailureClass.POLICY_BLOCKED == "policy_blocked"
+        assert AuditFailureClass.SECURITY_VIOLATION == "security_violation"
+        assert AuditFailureClass.VERIFICATION_FAILURE == "verification_failure"
+        assert AuditFailureClass.TASK_FAILURE == "task_failure"
+        assert AuditFailureClass.RESOURCE_EXHAUSTION == "resource_exhaustion"
+        assert AuditFailureClass.UNKNOWN == "unknown"
 
 
 class TestClassifyEvent:
@@ -35,48 +35,48 @@ class TestClassifyEvent:
         event = MagicMock()
         event.event_type.value = "security_violation"
         event.action = {}
-        assert _classify_event(event) == FailureClass.SECURITY_VIOLATION
+        assert _classify_event(event) == AuditFailureClass.SECURITY_VIOLATION
 
     def test_policy_blocked(self) -> None:
         event = MagicMock()
         event.event_type.value = "policy_check"
         event.action = {}
-        assert _classify_event(event) == FailureClass.POLICY_BLOCKED
+        assert _classify_event(event) == AuditFailureClass.POLICY_BLOCKED
 
     def test_llm_call_failure(self) -> None:
         event = MagicMock()
         event.event_type.value = "llm_call"
         event.action = {}
-        assert _classify_event(event) == FailureClass.LLM_CALL_FAILURE
+        assert _classify_event(event) == AuditFailureClass.LLM_CALL_FAILURE
 
     def test_tool_execution_failure(self) -> None:
         event = MagicMock()
         event.event_type.value = "tool_execution"
         event.action = {}
-        assert _classify_event(event) == FailureClass.TOOL_EXECUTION_FAILURE
+        assert _classify_event(event) == AuditFailureClass.TOOL_EXECUTION_FAILURE
 
     def test_task_failure(self) -> None:
         event = MagicMock()
         event.event_type.value = "task_failed"
         event.action = {}
-        assert _classify_event(event) == FailureClass.TASK_FAILURE
+        assert _classify_event(event) == AuditFailureClass.TASK_FAILURE
 
     def test_unknown_with_failure_result(self) -> None:
         event = MagicMock()
         event.event_type.value = "other"
         event.action = {"result": "failure"}
-        assert _classify_event(event) == FailureClass.UNKNOWN
+        assert _classify_event(event) == AuditFailureClass.UNKNOWN
 
     def test_unknown_default(self) -> None:
         event = MagicMock()
         event.event_type.value = "other"
         event.action = {"result": "success"}
-        assert _classify_event(event) == FailureClass.UNKNOWN
+        assert _classify_event(event) == AuditFailureClass.UNKNOWN
 
 
 class TestMapToResolutionHint:
     def test_all_classes_have_hints(self) -> None:
-        for fc in FailureClass:
+        for fc in AuditFailureClass:
             hint = _map_to_resolution_hint(fc)
             assert isinstance(hint, str)
             assert len(hint) > 0
@@ -87,7 +87,7 @@ class TestErrorCorrelationResult:
         event = MagicMock()
         event.to_dict.return_value = {"id": "e1"}
         result = ErrorCorrelationResult(
-            primary_cause=FailureClass.TOOL_EXECUTION_FAILURE,
+            primary_cause=AuditFailureClass.TOOL_EXECUTION_FAILURE,
             upstream_events=[event],
             affected_downstream=[event],
             resolution_hint="fix it",
@@ -99,7 +99,7 @@ class TestErrorCorrelationResult:
         assert result["resolution_hint"] == "fix it"
         assert result["correlation_type"] == "causal"
         # Attribute access
-        assert result.primary_cause == FailureClass.TOOL_EXECUTION_FAILURE
+        assert result.primary_cause == AuditFailureClass.TOOL_EXECUTION_FAILURE
         assert result.confidence == 0.85
 
 
@@ -125,7 +125,7 @@ class TestErrorCorrelator:
         correlator = ErrorCorrelator()
         error_event = self._make_event("e1", "task_failed")
         result = correlator.correlate("t1", error_event, all_events=[])
-        assert result.primary_cause == FailureClass.TASK_FAILURE
+        assert result.primary_cause == AuditFailureClass.TASK_FAILURE
         assert result.upstream_events == []
         assert result.affected_downstream == []
 
@@ -155,7 +155,7 @@ class TestErrorCorrelator:
             for i in range(1, 10)
         ]
         error_event = self._make_event("e_err", "task_failed", timestamp=now)
-        result = correlator.correlate("t1", error_event, all_events=events + [error_event])
+        result = correlator.correlate("t1", error_event, all_events=[*events, error_event])
         assert len(result.upstream_events) <= 2
 
     def test_correlate_limits_downstream(self) -> None:
@@ -166,7 +166,7 @@ class TestErrorCorrelator:
             self._make_event(f"e{i}", "verification", timestamp=now + __import__("datetime").timedelta(minutes=i))
             for i in range(1, 10)
         ]
-        result = correlator.correlate("t1", error_event, all_events=[error_event] + events)
+        result = correlator.correlate("t1", error_event, all_events=[error_event, *events])
         assert len(result.affected_downstream) <= 2
 
     def test_correlate_with_rule_match(self) -> None:

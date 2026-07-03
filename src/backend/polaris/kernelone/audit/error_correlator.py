@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class FailureClass(str, Enum):
+class AuditFailureClass(str, Enum):
     TOOL_EXECUTION_FAILURE = "tool_execution_failure"
     LLM_CALL_FAILURE = "llm_call_failure"
     POLICY_BLOCKED = "policy_blocked"
@@ -33,18 +33,18 @@ class FailureClass(str, Enum):
     UNKNOWN = "unknown"
 
 
-# Map event_type → FailureClass
-_EVENT_TYPE_TO_FAILURE: dict[str, FailureClass] = {
-    "security_violation": FailureClass.SECURITY_VIOLATION,
-    "policy_check": FailureClass.POLICY_BLOCKED,
-    "llm_call": FailureClass.LLM_CALL_FAILURE,
-    "verification": FailureClass.VERIFICATION_FAILURE,
-    "tool_execution": FailureClass.TOOL_EXECUTION_FAILURE,
-    "task_failed": FailureClass.TASK_FAILURE,
+# Map event_type → audit failure class.
+_EVENT_TYPE_TO_FAILURE: dict[str, AuditFailureClass] = {
+    "security_violation": AuditFailureClass.SECURITY_VIOLATION,
+    "policy_check": AuditFailureClass.POLICY_BLOCKED,
+    "llm_call": AuditFailureClass.LLM_CALL_FAILURE,
+    "verification": AuditFailureClass.VERIFICATION_FAILURE,
+    "tool_execution": AuditFailureClass.TOOL_EXECUTION_FAILURE,
+    "task_failed": AuditFailureClass.TASK_FAILURE,
 }
 
 
-def _classify_event(event: KernelAuditEvent) -> FailureClass:
+def _classify_event(event: KernelAuditEvent) -> AuditFailureClass:
     """Classify an event into a failure category."""
     event_type_val = event.event_type.value
     fc = _EVENT_TYPE_TO_FAILURE.get(event_type_val)
@@ -52,24 +52,24 @@ def _classify_event(event: KernelAuditEvent) -> FailureClass:
         return fc
     result = str(event.action.get("result") or "").lower()
     if result == "failure":
-        return FailureClass.UNKNOWN
-    return FailureClass.UNKNOWN
+        return AuditFailureClass.UNKNOWN
+    return AuditFailureClass.UNKNOWN
 
 
-_RESOLUTION_HINTS: dict[FailureClass, str] = {
-    FailureClass.TOOL_EXECUTION_FAILURE: "Tool execution failed. Check tool configuration and permissions. Verify npx allowlist if applicable.",
-    FailureClass.LLM_CALL_FAILURE: "LLM call failed. Inspect LLM provider logs. Check model availability and API key validity.",
-    FailureClass.POLICY_BLOCKED: "Policy blocked the operation. Review policy configuration for this workspace.",
-    FailureClass.SECURITY_VIOLATION: "SECURITY_VIOLATION detected. Review security logs for details immediately.",
-    FailureClass.VERIFICATION_FAILURE: "Operation verification failed. Check constraint configuration and preconditions.",
-    FailureClass.TASK_FAILURE: "Task failed. Check upstream events for root cause.",
-    FailureClass.RESOURCE_EXHAUSTION: "Resource limit reached. Consider increasing timeout or quota.",
-    FailureClass.UNKNOWN: "Unknown failure class. Review audit logs for additional context.",
+_RESOLUTION_HINTS: dict[AuditFailureClass, str] = {
+    AuditFailureClass.TOOL_EXECUTION_FAILURE: "Tool execution failed. Check tool configuration and permissions. Verify npx allowlist if applicable.",
+    AuditFailureClass.LLM_CALL_FAILURE: "LLM call failed. Inspect LLM provider logs. Check model availability and API key validity.",
+    AuditFailureClass.POLICY_BLOCKED: "Policy blocked the operation. Review policy configuration for this workspace.",
+    AuditFailureClass.SECURITY_VIOLATION: "SECURITY_VIOLATION detected. Review security logs for details immediately.",
+    AuditFailureClass.VERIFICATION_FAILURE: "Operation verification failed. Check constraint configuration and preconditions.",
+    AuditFailureClass.TASK_FAILURE: "Task failed. Check upstream events for root cause.",
+    AuditFailureClass.RESOURCE_EXHAUSTION: "Resource limit reached. Consider increasing timeout or quota.",
+    AuditFailureClass.UNKNOWN: "Unknown failure class. Review audit logs for additional context.",
 }
 
 
-def _map_to_resolution_hint(fc: FailureClass) -> str:
-    return _RESOLUTION_HINTS.get(fc, _RESOLUTION_HINTS[FailureClass.UNKNOWN])
+def _map_to_resolution_hint(fc: AuditFailureClass) -> str:
+    return _RESOLUTION_HINTS.get(fc, _RESOLUTION_HINTS[AuditFailureClass.UNKNOWN])
 
 
 class ErrorCorrelationResult(dict):
@@ -86,7 +86,7 @@ class ErrorCorrelationResult(dict):
 
     def __init__(
         self,
-        primary_cause: FailureClass | None,
+        primary_cause: AuditFailureClass | None,
         upstream_events: list[KernelAuditEvent],
         affected_downstream: list[KernelAuditEvent],
         resolution_hint: str,
@@ -199,7 +199,7 @@ class ErrorCorrelator:
         self,
         error_event: KernelAuditEvent,
         upstream: list[KernelAuditEvent],
-    ) -> tuple[FailureClass | None, CorrelationType | None]:
+    ) -> tuple[AuditFailureClass | None, CorrelationType | None]:
         """Find the primary cause from matched rules."""
         matched_rules: list[tuple[CorrelationRule, float]] = []
 
@@ -236,7 +236,7 @@ class ErrorCorrelator:
 
     def _compute_confidence(
         self,
-        primary_cause: FailureClass | None,
+        primary_cause: AuditFailureClass | None,
         upstream: list[KernelAuditEvent],
         corr_type: CorrelationType | None,
     ) -> float:
@@ -258,11 +258,11 @@ class ErrorCorrelator:
             base = min(1.0, base + 0.05 * len(upstream[:3]))
 
         # SECURITY_VIOLATION is always high confidence
-        if primary_cause == FailureClass.SECURITY_VIOLATION:
+        if primary_cause == AuditFailureClass.SECURITY_VIOLATION:
             base = 1.0
 
         # POLICY_BLOCKED is high confidence
-        if primary_cause == FailureClass.POLICY_BLOCKED:
+        if primary_cause == AuditFailureClass.POLICY_BLOCKED:
             base = max(base, 0.95)
 
         return round(base, 2)
