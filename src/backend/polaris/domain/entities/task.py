@@ -7,14 +7,14 @@ This module provides the single canonical Task model consumed by:
 - runtime.task_runtime cell
 
 It merges the lifecycle coverage of all earlier task definitions:
-  - kernelone/task_graph/task_board.py: PENDING/BLOCKED/IN_PROGRESS/COMPLETED/FAILED/CANCELLED
+  - historical KernelOne task-board module: PENDING/BLOCKED/IN_PROGRESS/COMPLETED/FAILED/CANCELLED
   - domain/models/task.py: QUEUED/BLOCKED/TIMEOUT
   - domain/entities/task.py: READY/CLAIMED + execution config
 
 Current ownership notes (2026-03-22):
-  - kernelone/task_graph/task_board.py TaskStatus/TaskPriority/Task are re-exported
-    from here for compatibility with historical import paths. KernelOne should NOT contain Polaris
-    business semantics; this module is the canonical source.
+  - KernelOne no longer re-exports TaskStatus/TaskPriority/Task for historical
+    task-board import paths. KernelOne should NOT contain Polaris business
+    semantics; this module is the canonical source.
   - domain/entities/task_pydantic.py provides validated DTO-style parsing, while
     this module remains the mutable runtime task aggregate consumed by TaskBoard.
   - The Polaris TaskBoard implementation (file-backed CRUD + DAG) lives in
@@ -468,12 +468,11 @@ def _now_seconds() -> float:
 
 
 # ---------------------------------------------------------------------------
-# Re-exports consumed by the kernelone task_graph compatibility facade.
+# Public task domain exports.
 # ---------------------------------------------------------------------------
 
-# These are re-exported from kernelone/task_graph/task_board.py so that
-# existing import paths continue to work without changes.
-# The canonical source is THIS module (domain/entities/task.py).
+# The canonical source is THIS module (domain/entities/task.py). KernelOne must
+# not re-export Polaris business task semantics.
 __all__ = [
     "Task",
     "TaskEvidence",

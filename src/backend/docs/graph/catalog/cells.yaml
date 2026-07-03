@@ -517,7 +517,7 @@ cells:
     current_modules:
       - polaris.cells.runtime.task_runtime.public.service
       - polaris.cells.runtime.task_runtime.internal.service
-      - polaris.kernelone.task_graph.task_board
+      - polaris.cells.runtime.task_runtime.internal.task_board
     owned_paths:
       - polaris/cells/runtime/task_runtime/**
     public_contracts:

@@ -84,7 +84,6 @@ polaris/kernelone/prompts/utils.py=1
 polaris/kernelone/runtime/lifecycle.py=1
 polaris/kernelone/runtime/shared_types.py=1
 polaris/kernelone/storage/layout.py=1
-polaris/kernelone/task_graph/task_board.py=3
 polaris/cells/director/execution/internal/tools/executor_core.py=1
 polaris/cells/finops/budget_guard/internal/budget_store.py=1
 polaris/cells/orchestration/pm_dispatch/internal/pm_task_utils.py=1

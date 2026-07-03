@@ -45,7 +45,7 @@ Hotspot files by size and likely future refactor pressure:
 2. `polaris/kernelone/llm/toolkit/executor.py`
 3. `polaris/kernelone/tools/io_utils.py`
 4. `polaris/kernelone/llm/toolkit/protocol/`
-5. `polaris/kernelone/task_graph/task_board.py`
+5. `polaris/cells/runtime/task_runtime/internal/task_board.py` (retired KernelOne task_graph owner)
 6. `polaris/kernelone/process/background_manager.py`
 
 ## 3. Wave-1 Fixes Landed
@@ -128,7 +128,7 @@ These are repository-level migration issues, not regressions introduced by wave-
 1. Remove `kernelone -> infrastructure` leak in `polaris/kernelone/llm/providers/__init__.py`
 2. Remove `kernelone -> infrastructure` leak in `polaris/kernelone/llm/toolkit/executor.py`
 3. Replace broad-exception usage on hot runtime paths:
-   - `polaris/kernelone/task_graph/task_board.py`
+   - `polaris/cells/runtime/task_runtime/internal/task_board.py`
    - `polaris/kernelone/process/background_manager.py`
    - `polaris/kernelone/llm/toolkit/executor.py`
    - `polaris/kernelone/llm/engine/executor.py`

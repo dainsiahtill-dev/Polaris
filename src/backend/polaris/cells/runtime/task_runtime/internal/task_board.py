@@ -1,7 +1,7 @@
 """Polaris TaskBoard — file-backed task board with DAG dependency tracking.
 
 This is the canonical home for the Polaris TaskBoard implementation.
-It was moved here from ``polaris.kernelone.task_graph.task_board`` (2026-03-22)
+It was moved here from the historical KernelOne task-board module (2026-03-22)
 to resolve the architectural violation of embedding business logic in KernelOne.
 
 Responsibilities:

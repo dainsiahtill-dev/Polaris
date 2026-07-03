@@ -60,8 +60,6 @@ DEPRECATION_SHIM_PATHS: frozenset[str] = frozenset(
         "polaris/kernelone/tools/director/utils.py",
         # Agent-32: role alias normalization moved to cells layer
         "polaris/kernelone/prompts/meta_prompting.py",
-        # Agent-35: TaskBoard re-export from task_runtime cell
-        "polaris/kernelone/task_graph/task_board.py",
         # Historical migration bridges pending retirement.
         # Agent-34 continued: runtime_executor bridges director tools via cells
         "polaris/kernelone/tools/runtime_executor.py",
