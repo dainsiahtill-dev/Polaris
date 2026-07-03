@@ -2567,6 +2567,50 @@ def test_typescript_number_to_string_argument_runtime_uses_editor_without_write_
     assert result.execution_result.receipt.metadata["write_file_reasons_by_path"] == {}
 
 
+def test_single_runtime_entrypoints_preserve_typed_diagnostics_on_unsupported_tool(tmp_path: Path) -> None:
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="typescript_ts1005",
+        message="',' expected.",
+        path="src/models/Flight.ts",
+        line=6,
+        column=47,
+        diagnostic_id="diag-typed-single-entrypoint",
+        raw="src/models/Flight.ts(6,47): error TS1005: ',' expected.",
+        metadata={"stable_issue_id": "typed-single-entrypoint"},
+    )
+
+    planning = plan_runtime_repair(
+        source_tool="unsupported.future_rule",
+        base_files={},
+        artifact_quality_errors=(),
+        repair_diagnostics=(diagnostic,),
+    )
+
+    assert planning.error_code == "unsupported_repair_source_tool"
+    assert planning.diagnostics[0].diagnostic_id == "diag-typed-single-entrypoint"
+    assert planning.diagnostics[0].line == 6
+    assert planning.diagnostics[0].metadata["stable_issue_id"] == "typed-single-entrypoint"
+
+    def writer(_: str, __: str) -> dict[str, object]:
+        raise AssertionError("unsupported runtime source tool must not write")
+
+    result = run_runtime_repair(
+        source_tool="unsupported.future_rule",
+        workspace=tmp_path,
+        base_files={},
+        artifact_quality_errors=(),
+        repair_diagnostics=(diagnostic,),
+        writer=writer,
+    )
+
+    assert result.ok is False
+    assert result.error_code == "unsupported_repair_source_tool"
+    assert result.planning.diagnostics[0].diagnostic_id == "diag-typed-single-entrypoint"
+    assert result.planning.diagnostics[0].column == 47
+    assert result.planning.diagnostics[0].metadata["stable_issue_id"] == "typed-single-entrypoint"
+
+
 def test_typescript_too_few_arguments_rule_adds_trailing_declaration_defaults() -> None:
     source_tool = ts_syntax.TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL
     base_files = {

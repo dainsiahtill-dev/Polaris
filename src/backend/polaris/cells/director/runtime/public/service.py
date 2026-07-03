@@ -2289,6 +2289,7 @@ def plan_director_repair(command: PlanDirectorRepairCommandV1) -> DirectorRepair
         artifact_quality_errors=_artifact_quality_errors_from_command(command),
         advisor_notes=_to_internal_advisor_notes(public_advisor_notes),
         mode=command.mode,
+        repair_diagnostics=tuple(_to_internal_repair_diagnostic(item) for item in public_diagnostics),
     )
     return _to_public_repair_planning_result(
         planning,
@@ -2320,6 +2321,7 @@ def run_director_repair(
         allowed_paths=command.allowed_paths,
         advisor_notes=_to_internal_advisor_notes(public_advisor_notes),
         mode=command.mode,
+        repair_diagnostics=tuple(_to_internal_repair_diagnostic(item) for item in public_diagnostics),
     )
     planning_result = _to_public_repair_planning_result(
         internal_run.planning,
@@ -3259,6 +3261,24 @@ def _to_public_repair_diagnostic(diagnostic: RepairDiagnostic) -> RepairDiagnost
         path=diagnostic.path,
         severity=diagnostic.severity,
         metadata=diagnostic.metadata,
+    )
+
+
+def _to_internal_repair_diagnostic(diagnostic: RepairDiagnosticV1) -> RepairDiagnostic:
+    metadata = dict(diagnostic.metadata)
+    return RepairDiagnostic(
+        source=diagnostic.source,
+        code=diagnostic.code,
+        message=diagnostic.message,
+        severity=diagnostic.severity,
+        path=diagnostic.path,
+        line=_optional_int(metadata.get("line")),
+        column=_optional_int(metadata.get("column")),
+        span_start=_optional_int(metadata.get("span_start")),
+        span_end=_optional_int(metadata.get("span_end")),
+        diagnostic_id=str(metadata.get("diagnostic_id") or ""),
+        raw=str(metadata.get("raw") or diagnostic.message),
+        metadata=metadata,
     )
 
 

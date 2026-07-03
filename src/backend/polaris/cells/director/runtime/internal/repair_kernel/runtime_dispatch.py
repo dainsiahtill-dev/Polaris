@@ -467,6 +467,7 @@ def plan_runtime_repair(
     artifact_quality_errors: Sequence[str],
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
 ) -> RuntimeRepairPlanning:
     """Plan one deterministic repair through a language-neutral runtime entrypoint."""
 
@@ -478,7 +479,7 @@ def plan_runtime_repair(
 
     return RuntimeRepairPlanning(
         source_tool=normalized_source_tool,
-        diagnostics=tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ()))),
+        diagnostics=_initial_runtime_diagnostics(artifact_quality_errors, repair_diagnostics),
         plan=None,
         composition=None,
         advisor_notes=notes,
@@ -499,6 +500,7 @@ def run_runtime_repair(
     allowed_paths: Sequence[str] | None = None,
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
 ) -> RuntimeRepairRun:
     """Run one deterministic repair through a language-neutral runtime entrypoint."""
 
@@ -512,7 +514,7 @@ def run_runtime_repair(
 
     planning = RuntimeRepairPlanning(
         source_tool=normalized_source_tool,
-        diagnostics=tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ()))),
+        diagnostics=_initial_runtime_diagnostics(artifact_quality_errors, repair_diagnostics),
         plan=None,
         composition=None,
         advisor_notes=notes,
@@ -588,11 +590,7 @@ def run_runtime_repair_convergence(
     """Run runtime repairs through the typed convergence scheduler envelope."""
 
     normalized_source_tools = _normalize_source_tools(source_tools)
-    initial_diagnostics = (
-        tuple(repair_diagnostics)
-        if repair_diagnostics is not None
-        else tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
-    )
+    initial_diagnostics = _initial_runtime_diagnostics(artifact_quality_errors, repair_diagnostics)
     initial_coverage_report = build_repair_coverage_report(initial_diagnostics)
     native_coverage_gate_status = _native_coverage_gate_status(initial_coverage_report, normalized_source_tools)
     if planner is None and native_coverage_gate_status is not None:
@@ -704,6 +702,15 @@ def run_runtime_repair_convergence(
 
 def _normalize_source_tool(source_tool: str) -> str:
     return str(source_tool or "").strip()
+
+
+def _initial_runtime_diagnostics(
+    artifact_quality_errors: Sequence[str],
+    repair_diagnostics: Sequence[RepairDiagnostic] | None,
+) -> tuple[RepairDiagnostic, ...]:
+    if repair_diagnostics is not None:
+        return tuple(repair_diagnostics)
+    return tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
 
 
 def _normalize_source_tools(source_tools: Sequence[str]) -> tuple[str, ...]:
