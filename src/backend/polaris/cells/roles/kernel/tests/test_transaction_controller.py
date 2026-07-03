@@ -14,7 +14,7 @@ Tests for Turn Transaction Controller
 import json
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -25,9 +25,18 @@ from polaris.cells.roles.kernel.internal.transaction.delivery_intent_resolver im
     enforce_explicit_materialize_delivery_marker,
 )
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
+from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import (
+    WRITE_FILE_AUTOFILL_EVIDENCE_KEY,
+    WRITE_FILE_DUPLICATE_REJECTION_KEY,
+    ToolBatchExecutor,
+    annotate_autofilled_write_receipts,
+    diff_write_file_autofill_evidence,
+    fill_content_only_write_file_from_remaining_targets,
+    split_write_file_duplicate_content_rejections,
+)
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
-from polaris.cells.roles.kernel.public.turn_contracts import FinalizeMode, TurnDecisionKind
+from polaris.cells.roles.kernel.public.turn_contracts import FinalizeMode, TurnDecision, TurnDecisionKind
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
 from polaris.cells.storage.layout.public.service import resolve_polaris_roots
 
@@ -1256,3 +1265,343 @@ class TestProtocolPanicHandoff:
         assert result["kind"] == "finalization_tool_calls_blocked"
         # batch_receipt 应存在，因为决策阶段工具已执行
         assert result.get("batch_receipt") is not None
+
+
+# ============ Test write_file target autofill guards ============
+
+
+def _decoded_state_machine(turn_id: str) -> TurnStateMachine:
+    state_machine = TurnStateMachine(turn_id=turn_id)
+    state_machine.transition_to(TurnState.CONTEXT_BUILT)
+    state_machine.transition_to(TurnState.DECISION_REQUESTED)
+    state_machine.transition_to(TurnState.DECISION_RECEIVED)
+    state_machine.transition_to(TurnState.DECISION_DECODED)
+    return state_machine
+
+
+class TestWriteFileTargetAutofillGuards:
+    """fill_content_only_write_file_from_remaining_targets 的 fail-closed 守卫。
+
+    回归背景：弱模型重发一个内容属于已认领目标、但漏掉 file 参数的重复
+    write_file 时，旧实现会把它猜测性填到唯一剩余的 contract target 上，
+    以错误内容静默覆盖那个文件。修复后：重复内容 → 结构化 teaching error
+    （不写任何文件）；真正的单目标填充仍然工作并携带 autofill 审计证据。
+    """
+
+    def test_duplicate_content_fileless_retry_is_rejected_not_filled(self) -> None:
+        """(a) 重复内容的 file-less retry 不得被猜到剩余目标上。"""
+        invocations: list[Any] = [
+            {
+                "call_id": "write_app",
+                "tool_name": "write_file",
+                "arguments": {"file": "src/app.py", "content": "print('app')\n"},
+            },
+            {
+                "call_id": "write_retry",
+                "tool_name": "write_file",
+                "arguments": {"content": "print('app')\n"},
+            },
+        ]
+
+        filled = fill_content_only_write_file_from_remaining_targets(
+            invocations,
+            target_files=("src/app.py", "README.md"),
+        )
+
+        # 不得把重复内容填到 README.md
+        assert "file" not in filled[1]["arguments"]
+        rejection = filled[1][WRITE_FILE_DUPLICATE_REJECTION_KEY]
+        assert rejection["duplicate_of"] == "src/app.py"
+
+        dispatchable, rejections = split_write_file_duplicate_content_rejections(filled)
+        assert [inv["call_id"] for inv in dispatchable] == ["write_app"]
+        assert len(rejections) == 1
+        assert rejections[0]["call_id"] == "write_retry"
+        assert rejections[0]["status"] == "error"
+        assert "duplicate_content_write_rejected" in str(rejections[0]["error"])
+        assert "src/app.py" in str(rejections[0]["error"])
+
+    def test_duplicate_detection_survives_trivial_whitespace_differences(self) -> None:
+        """CRLF/行尾空格/首尾空行差异不影响重复判定。"""
+        invocations: list[Any] = [
+            {
+                "call_id": "write_app",
+                "tool_name": "write_file",
+                "arguments": {"file": "src/app.py", "content": "def main():\n    pass\n"},
+            },
+            {
+                "call_id": "write_retry",
+                "tool_name": "write_file",
+                "arguments": {"content": "def main():\r\n    pass  \r\n\r\n"},
+            },
+        ]
+
+        filled = fill_content_only_write_file_from_remaining_targets(
+            invocations,
+            target_files=("src/app.py", "README.md"),
+        )
+
+        assert "file" not in filled[1]["arguments"]
+        assert filled[1][WRITE_FILE_DUPLICATE_REJECTION_KEY]["duplicate_of"] == "src/app.py"
+
+    def test_legitimate_single_fill_still_fills_and_records_evidence(self) -> None:
+        """(b) 合法单一剩余目标仍然填充，且证据可注入 receipt。"""
+        invocations: list[Any] = [
+            {
+                "call_id": "write_app",
+                "tool_name": "write_file",
+                "arguments": {"file": "src/app.py", "content": "print('app')\n"},
+            },
+            {
+                "call_id": "write_readme",
+                "tool_name": "write_file",
+                "arguments": {"content": "# README\n"},
+            },
+        ]
+
+        filled = fill_content_only_write_file_from_remaining_targets(
+            invocations,
+            target_files=("src/app.py", "README.md"),
+        )
+
+        assert filled[1]["arguments"]["file"] == "README.md"
+        assert filled[1]["arguments"]["content"] == "# README\n"
+
+        dispatchable, rejections = split_write_file_duplicate_content_rejections(filled)
+        assert rejections == []
+        assert len(dispatchable) == 2
+
+        evidence_map = diff_write_file_autofill_evidence(invocations, dispatchable)
+        assert evidence_map == {
+            "write_readme": {
+                "assigned_path": "README.md",
+                "basis": "sole_remaining_contract_target",
+            }
+        }
+
+        receipts: list[dict[str, Any]] = [
+            {
+                "batch_id": "batch_fill",
+                "turn_id": "turn_fill",
+                "results": [
+                    {"call_id": "write_app", "tool_name": "write_file", "status": "success"},
+                    {"call_id": "write_readme", "tool_name": "write_file", "status": "success"},
+                ],
+                "raw_results": [],
+                "success_count": 2,
+                "failure_count": 0,
+            }
+        ]
+        annotate_autofilled_write_receipts(receipts, evidence_map)
+        assert WRITE_FILE_AUTOFILL_EVIDENCE_KEY not in receipts[0]["results"][0]
+        assert receipts[0]["results"][1][WRITE_FILE_AUTOFILL_EVIDENCE_KEY] == {
+            "assigned_path": "README.md",
+            "basis": "sole_remaining_contract_target",
+        }
+
+    def test_no_fill_when_zero_remaining_targets(self) -> None:
+        """(c) 所有 contract target 已被认领时不填充、不拒绝（新内容非重复）。"""
+        invocations: list[Any] = [
+            {
+                "call_id": "write_readme",
+                "tool_name": "write_file",
+                "arguments": {"file": "README.md", "content": "# README\n"},
+            },
+            {
+                "call_id": "write_orphan",
+                "tool_name": "write_file",
+                "arguments": {"content": "print('other')\n"},
+            },
+        ]
+
+        filled = fill_content_only_write_file_from_remaining_targets(
+            invocations,
+            target_files=("README.md",),
+        )
+
+        assert "file" not in filled[1]["arguments"]
+        assert WRITE_FILE_DUPLICATE_REJECTION_KEY not in filled[1]
+        assert WRITE_FILE_AUTOFILL_EVIDENCE_KEY not in filled[1]
+
+    def test_no_fill_when_multiple_remaining_targets(self) -> None:
+        """(c) 多个剩余目标保持 fail-closed：不填充、不加标记。"""
+        invocations: list[Any] = [
+            {
+                "call_id": "write_unknown",
+                "tool_name": "write_file",
+                "arguments": {"content": "# Project\n"},
+            }
+        ]
+
+        filled = fill_content_only_write_file_from_remaining_targets(
+            invocations,
+            target_files=("README.md", "CHANGELOG.md"),
+        )
+
+        assert "file" not in filled[0]["arguments"]
+        assert WRITE_FILE_DUPLICATE_REJECTION_KEY not in filled[0]
+        assert WRITE_FILE_AUTOFILL_EVIDENCE_KEY not in filled[0]
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_batch_rejects_duplicate_and_preserves_original_receipt(self, tmp_path: Path) -> None:
+        """端到端：重复 write 不 dispatch，teaching error 进 receipt，原写保留。"""
+        tool_runtime = AsyncMock(
+            return_value={
+                "success": True,
+                "result": "written",
+                "effect_receipt": {"file": "src/app.py", "operation": "create"},
+            }
+        )
+        executor = ToolBatchExecutor(
+            tool_runtime=tool_runtime,
+            config=TransactionConfig(mutation_guard_mode="warn"),
+            emit_event=lambda event: None,
+            guard_assert_single_tool_batch=lambda **kw: None,
+            finalization_handler=AsyncMock(),
+            handoff_handler=AsyncMock(),
+        )
+        turn_id = "turn_duplicate_write_reject"
+        ledger = TurnLedger(turn_id=turn_id)
+        ledger.modification_contract.target_files = ["src/app.py", "README.md"]
+        decision = cast(
+            TurnDecision,
+            {
+                "turn_id": turn_id,
+                "metadata": {"workspace": str(tmp_path)},
+                "finalize_mode": "none",
+                "tool_batch": {
+                    "batch_id": "batch_duplicate_write",
+                    "invocations": [
+                        {
+                            "call_id": "call_original",
+                            "tool_name": "write_file",
+                            "arguments": {"file": "src/app.py", "content": "print('app')\n"},
+                            "execution_mode": "write_serial",
+                            "effect_type": "write",
+                        },
+                        {
+                            "call_id": "call_duplicate",
+                            "tool_name": "write_file",
+                            "arguments": {"content": "print('app')\n"},
+                            "execution_mode": "write_serial",
+                            "effect_type": "write",
+                        },
+                    ],
+                },
+            },
+        )
+        context = [{"role": "user", "content": "Write src/app.py and README.md"}]
+
+        result = await executor.execute_tool_batch(
+            decision,
+            _decoded_state_machine(turn_id),
+            ledger,
+            context,
+            stream=False,
+        )
+
+        # 只有原始写被 dispatch；重复写绝不能落到 README.md 上
+        assert tool_runtime.await_count == 1
+        assert tool_runtime.await_args is not None
+        dispatched_args = tool_runtime.await_args.args
+        assert dispatched_args[0] == "write_file"
+        assert dispatched_args[1].get("file") == "src/app.py"
+
+        batch_receipt = result["batch_receipt"]
+        assert batch_receipt is not None
+        results_by_call_id = {
+            str(item.get("call_id")): item for item in batch_receipt.get("results", []) if isinstance(item, dict)
+        }
+        # 原始写 receipt 保留为成功
+        assert results_by_call_id["call_original"]["status"] == "success"
+        # 重复写以结构化 teaching error 呈现，且没有 effect
+        duplicate_result = results_by_call_id["call_duplicate"]
+        assert duplicate_result["status"] == "error"
+        assert "duplicate_content_write_rejected" in str(duplicate_result.get("error"))
+        assert duplicate_result.get("effect_receipt") is None
+        assert duplicate_result[WRITE_FILE_DUPLICATE_REJECTION_KEY]["duplicate_of"] == "src/app.py"
+
+        # ledger 留下可审计 anomaly flag
+        rejection_flags = [
+            item
+            for item in ledger.anomaly_flags
+            if isinstance(item, dict) and item.get("type") == "WRITE_FILE_DUPLICATE_CONTENT_REJECTED"
+        ]
+        assert len(rejection_flags) == 1
+        assert rejection_flags[0]["rejected_call_ids"] == ["call_duplicate"]
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_batch_autofill_receipt_carries_evidence(self, tmp_path: Path) -> None:
+        """端到端：合法单目标填充照常 dispatch，且 receipt 带 autofill 证据。"""
+        tool_runtime = AsyncMock(
+            return_value={
+                "success": True,
+                "result": "written",
+                "effect_receipt": {"operation": "create"},
+            }
+        )
+        executor = ToolBatchExecutor(
+            tool_runtime=tool_runtime,
+            config=TransactionConfig(mutation_guard_mode="warn"),
+            emit_event=lambda event: None,
+            guard_assert_single_tool_batch=lambda **kw: None,
+            finalization_handler=AsyncMock(),
+            handoff_handler=AsyncMock(),
+        )
+        turn_id = "turn_autofill_write_evidence"
+        ledger = TurnLedger(turn_id=turn_id)
+        ledger.modification_contract.target_files = ["src/app.py", "README.md"]
+        decision = cast(
+            TurnDecision,
+            {
+                "turn_id": turn_id,
+                "metadata": {"workspace": str(tmp_path)},
+                "finalize_mode": "none",
+                "tool_batch": {
+                    "batch_id": "batch_autofill_write",
+                    "invocations": [
+                        {
+                            "call_id": "call_app",
+                            "tool_name": "write_file",
+                            "arguments": {"file": "src/app.py", "content": "print('app')\n"},
+                            "execution_mode": "write_serial",
+                            "effect_type": "write",
+                        },
+                        {
+                            "call_id": "call_readme",
+                            "tool_name": "write_file",
+                            "arguments": {"content": "# README\n"},
+                            "execution_mode": "write_serial",
+                            "effect_type": "write",
+                        },
+                    ],
+                },
+            },
+        )
+        context = [{"role": "user", "content": "Write src/app.py and README.md"}]
+
+        result = await executor.execute_tool_batch(
+            decision,
+            _decoded_state_machine(turn_id),
+            ledger,
+            context,
+            stream=False,
+        )
+
+        # 两个写都被 dispatch，file-less 写被填到唯一剩余目标 README.md
+        assert tool_runtime.await_count == 2
+        dispatched_files = [call.args[1].get("file") for call in tool_runtime.await_args_list]
+        assert dispatched_files == ["src/app.py", "README.md"]
+
+        batch_receipt = result["batch_receipt"]
+        assert batch_receipt is not None
+        results_by_call_id = {
+            str(item.get("call_id")): item for item in batch_receipt.get("results", []) if isinstance(item, dict)
+        }
+        assert results_by_call_id["call_readme"]["status"] == "success"
+        assert results_by_call_id["call_readme"][WRITE_FILE_AUTOFILL_EVIDENCE_KEY] == {
+            "assigned_path": "README.md",
+            "basis": "sole_remaining_contract_target",
+        }
+        # 模型显式给出 file 的写不携带 autofill 证据
+        assert WRITE_FILE_AUTOFILL_EVIDENCE_KEY not in results_by_call_id["call_app"]

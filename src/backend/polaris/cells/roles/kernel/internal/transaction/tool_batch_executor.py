@@ -292,6 +292,47 @@ def _safe_contract_target_files(target_files: tuple[str, ...] | list[str]) -> li
     return list(normalized.values())
 
 
+WRITE_FILE_AUTOFILL_EVIDENCE_KEY = "write_file_target_autofilled"
+WRITE_FILE_DUPLICATE_REJECTION_KEY = "write_file_duplicate_content_rejection"
+_WRITE_FILE_AUTOFILL_BASIS = "sole_remaining_contract_target"
+
+
+def _normalize_write_content_for_duplicate_check(content: str) -> str:
+    """Normalize write_file content for duplicate detection (trivial whitespace only).
+
+    Unifies line endings, strips per-line trailing whitespace and outer blank
+    space so a retry that only differs in insignificant whitespace still counts
+    as the same content.
+    """
+
+    unified = content.replace("\r\n", "\n").replace("\r", "\n")
+    return "\n".join(line.rstrip() for line in unified.split("\n")).strip()
+
+
+def _with_invocation_top_level_field(invocation: Any, key: str, value: Any) -> Any:
+    """Return a copy of the invocation with a top-level metadata field attached.
+
+    Mirrors `_with_invocation_arguments`. Falls back to returning the original
+    invocation unchanged when it cannot be safely copied; callers must treat the
+    field as best-effort metadata, never as a dispatch precondition.
+    """
+
+    if isinstance(invocation, dict):
+        new_invocation = dict(invocation)
+        new_invocation[key] = value
+        return new_invocation
+    to_dict = getattr(invocation, "to_dict", None)
+    if callable(to_dict):
+        new_invocation = dict(to_dict())
+        new_invocation[key] = value
+        return new_invocation
+    if isinstance(invocation, Mapping):
+        new_invocation = dict(invocation)
+        new_invocation[key] = value
+        return new_invocation
+    return invocation
+
+
 def fill_content_only_write_file_from_remaining_targets(
     invocations: list[Any],
     *,
@@ -304,12 +345,28 @@ def fill_content_only_write_file_from_remaining_targets(
     same batch already claim all but one target and a later write_file has a
     complete body but no path, assign the sole remaining target. Multi-target
     ambiguity stays fail-closed.
+
+    Fail-closed duplicate guard: when the file-less call's content equals (after
+    trivial whitespace normalization) the content of an earlier same-batch write
+    that already claimed a target, the call is a model retry/duplicate — NOT a
+    request for the remaining target. Guessing there silently corrupts the
+    remaining file, so the invocation is marked with
+    ``WRITE_FILE_DUPLICATE_REJECTION_KEY`` instead of being filled; the executor
+    converts that marker into a structured teaching error without dispatching
+    any write (see ``split_write_file_duplicate_content_rejections``).
+
+    Auditable autofill evidence is derived by the executor via
+    ``diff_write_file_autofill_evidence`` (``ToolInvocation`` is a strict
+    schema, so the evidence cannot ride on the invocation itself) and attached
+    to the matching receipt result items so downstream lifecycle/audit can see
+    the ``file`` argument was inferred, not model-provided.
     """
 
     contract_targets = _safe_contract_target_files(target_files)
     if not contract_targets:
         return invocations
     claimed: set[str] = set()
+    claimed_write_contents: dict[str, str] = {}
     filled: list[Any] = []
     for invocation in invocations:
         tool_name = extract_invocation_tool_name(invocation)
@@ -323,10 +380,30 @@ def fill_content_only_write_file_from_remaining_targets(
             while normalized_existing.startswith("./"):
                 normalized_existing = normalized_existing[2:]
             claimed.add(normalized_existing.lower())
+            content_value = arguments.get("content")
+            if isinstance(content_value, str):
+                claimed_write_contents.setdefault(
+                    _normalize_write_content_for_duplicate_check(content_value),
+                    normalized_existing,
+                )
             filled.append(invocation)
             continue
         if "content" not in arguments or not isinstance(arguments.get("content"), str):
             filled.append(invocation)
+            continue
+        normalized_content = _normalize_write_content_for_duplicate_check(str(arguments["content"]))
+        duplicate_of = claimed_write_contents.get(normalized_content)
+        if duplicate_of is not None:
+            filled.append(
+                _with_invocation_top_level_field(
+                    invocation,
+                    WRITE_FILE_DUPLICATE_REJECTION_KEY,
+                    {
+                        "duplicate_of": duplicate_of,
+                        "reason": "duplicate_content_write_file_without_file_argument",
+                    },
+                )
+            )
             continue
         remaining = [target for target in contract_targets if target.lower() not in claimed]
         if len(remaining) != 1:
@@ -335,8 +412,126 @@ def fill_content_only_write_file_from_remaining_targets(
         new_arguments = dict(arguments)
         new_arguments["file"] = remaining[0]
         claimed.add(remaining[0].lower())
+        claimed_write_contents.setdefault(normalized_content, remaining[0])
         filled.append(_with_invocation_arguments(invocation, new_arguments))
     return filled
+
+
+def split_write_file_duplicate_content_rejections(
+    invocations: list[Any],
+) -> tuple[list[Any], list[dict[str, Any]]]:
+    """Separate duplicate-content rejected write_file calls from dispatchable ones.
+
+    Each rejected invocation (marked by
+    ``fill_content_only_write_file_from_remaining_targets``) becomes a
+    structured error tool-result — a teaching error the model sees for the
+    rejected call_id. The duplicate is never written anywhere and the original
+    same-batch write keeps its own receipt.
+    """
+
+    dispatchable: list[Any] = []
+    rejections: list[dict[str, Any]] = []
+    for invocation in invocations:
+        rejection: Any = None
+        if isinstance(invocation, Mapping) or hasattr(invocation, "get"):
+            rejection = invocation.get(WRITE_FILE_DUPLICATE_REJECTION_KEY)
+        if not isinstance(rejection, Mapping):
+            dispatchable.append(invocation)
+            continue
+        call_id = str(invocation.get("call_id", "") or "")
+        duplicate_of = str(rejection.get("duplicate_of") or "")
+        rejections.append(
+            {
+                "call_id": call_id,
+                "tool_name": extract_invocation_tool_name(invocation) or "write_file",
+                "status": "error",
+                "result": None,
+                "error": (
+                    "duplicate_content_write_rejected: this write_file call omitted the 'file' "
+                    f"argument and its content duplicates the earlier same-batch write to '{duplicate_of}'. "
+                    "Nothing was written for this call. If you meant a different file, re-emit "
+                    "write_file with an explicit 'file' argument and that file's own content."
+                ),
+                "execution_time_ms": 0,
+                "effect_receipt": None,
+                WRITE_FILE_DUPLICATE_REJECTION_KEY: {
+                    "duplicate_of": duplicate_of,
+                    "reason": str(rejection.get("reason") or "duplicate_content_write_file_without_file_argument"),
+                },
+            }
+        )
+    return dispatchable, rejections
+
+
+def _invocation_call_id(invocation: Any) -> str:
+    if isinstance(invocation, Mapping) or hasattr(invocation, "get"):
+        return str(invocation.get("call_id", "") or "")
+    return str(getattr(invocation, "call_id", "") or "")
+
+
+def diff_write_file_autofill_evidence(
+    invocations_before: list[Any],
+    invocations_after: list[Any],
+) -> dict[str, dict[str, Any]]:
+    """Map call_id -> autofill evidence for write_file targets inferred by the fill pass.
+
+    ``ToolInvocation`` is a strict schema (extra fields are forbidden), so the
+    evidence cannot ride on the invocation itself. It is derived by diffing the
+    batch before/after ``fill_content_only_write_file_from_remaining_targets``
+    and later attached to the matching receipt result items (see
+    ``annotate_autofilled_write_receipts``) so downstream lifecycle/audit can
+    see the ``file`` argument was inferred, not model-provided.
+    """
+
+    fileless_before: set[str] = set()
+    for invocation in invocations_before:
+        if extract_invocation_tool_name(invocation) != "write_file":
+            continue
+        if extract_target_file_from_invocation_args(invocation):
+            continue
+        call_id = _invocation_call_id(invocation)
+        if call_id:
+            fileless_before.add(call_id)
+    if not fileless_before:
+        return {}
+    evidence_by_call_id: dict[str, dict[str, Any]] = {}
+    for invocation in invocations_after:
+        if extract_invocation_tool_name(invocation) != "write_file":
+            continue
+        call_id = _invocation_call_id(invocation)
+        if not call_id or call_id not in fileless_before:
+            continue
+        assigned_path = extract_target_file_from_invocation_args(invocation)
+        if not assigned_path:
+            continue
+        evidence_by_call_id[call_id] = {
+            "assigned_path": assigned_path,
+            "basis": _WRITE_FILE_AUTOFILL_BASIS,
+        }
+    return evidence_by_call_id
+
+
+def annotate_autofilled_write_receipts(
+    receipts: list[dict[str, Any]],
+    evidence_by_call_id: Mapping[str, dict[str, Any]],
+) -> None:
+    """Attach autofill evidence onto matching receipt result items (audit trail)."""
+
+    if not evidence_by_call_id:
+        return
+    for receipt in receipts:
+        if not isinstance(receipt, dict):
+            continue
+        for results_key in ("results", "raw_results"):
+            result_items = receipt.get(results_key)
+            if not isinstance(result_items, list):
+                continue
+            for item in result_items:
+                if not isinstance(item, dict):
+                    continue
+                evidence = evidence_by_call_id.get(str(item.get("call_id") or ""))
+                if evidence is not None:
+                    item[WRITE_FILE_AUTOFILL_EVIDENCE_KEY] = dict(evidence)
 
 
 def _normalize_file_reference_path(raw_path: str) -> str:
@@ -1043,10 +1238,31 @@ class ToolBatchExecutor:
             invocations,
             target_files=tuple(single_target_candidates),
         )
+        invocations_before_write_fill = invocations
         invocations = fill_content_only_write_file_from_remaining_targets(
             invocations,
             target_files=tuple(structured_target_candidates or single_target_candidates),
         )
+        invocations, duplicate_write_rejections = split_write_file_duplicate_content_rejections(invocations)
+        if duplicate_write_rejections:
+            rejected_call_ids = [str(item.get("call_id") or "") for item in duplicate_write_rejections]
+            logger.warning(
+                "duplicate_content_write_rejected: file-less write_file duplicated an already-claimed "
+                "same-batch write; rejected without dispatch. turn_id=%s call_ids=%s",
+                turn_id,
+                rejected_call_ids,
+            )
+            ledger.anomaly_flags.append(
+                {
+                    "type": "WRITE_FILE_DUPLICATE_CONTENT_REJECTED",
+                    "turn_id": turn_id,
+                    "rejected_call_ids": rejected_call_ids,
+                    "rejections": [
+                        dict(item.get(WRITE_FILE_DUPLICATE_REJECTION_KEY) or {}) for item in duplicate_write_rejections
+                    ],
+                }
+            )
+        write_file_autofill_evidence = diff_write_file_autofill_evidence(invocations_before_write_fill, invocations)
         invocations, dropped_out_of_scope_writes = filter_out_of_scope_write_invocations(
             latest_user_request,
             invocations,
@@ -1646,6 +1862,24 @@ class ToolBatchExecutor:
             )
             raise RuntimeError("tool_dispatch_dropped: decoded tool batch produced no authoritative batch receipt")
 
+        if write_file_autofill_evidence:
+            annotate_autofilled_write_receipts(receipts_as_dicts, write_file_autofill_evidence)
+        if duplicate_write_rejections:
+            # Teaching-error receipt for the rejected duplicate(s): surfaces to the
+            # model as a failed tool result without any write having happened, and
+            # keeps the original same-batch write's receipt authoritative.
+            receipts_as_dicts.append(
+                {
+                    "batch_id": str(tool_batch.get("batch_id", "") or ""),
+                    "turn_id": turn_id,
+                    "results": [dict(item) for item in duplicate_write_rejections],
+                    "raw_results": [dict(item) for item in duplicate_write_rejections],
+                    "success_count": 0,
+                    "failure_count": len(duplicate_write_rejections),
+                    "pending_async_count": 0,
+                    "has_pending_async": False,
+                }
+            )
         record_receipts_to_ledger(receipts_as_dicts, ledger)
         _append_tool_batch_receipts_to_run_ledger(
             workspace=workspace,
