@@ -1783,6 +1783,42 @@ def _required_tool_names(ai_request: Any) -> list[str]:
     return _unique_strings(names)
 
 
+_NO_TOOL_CONTRACT_CONTEXT_KEYS = (
+    "tool_contract_require_no_tool_calls",
+    "require_no_tool_calls",
+    "no_tool_calls",
+)
+
+
+def _required_tools_exempt_reason(ai_request: Any, prepared: PreparedLLMRequest) -> str:
+    """Reason string when this request's tool surface is disabled BY DESIGN.
+
+    A finalization-style call (tool_choice ``none``/``disabled``, an explicit
+    no-tool contract, or a TransactionKernel forced tool disable) exposes zero
+    callable tools on purpose. Required-tool semantics inherited from the turn
+    context must not be reported as ``missing_required_tools`` for such a call:
+    the tools are not missing — they are not exposed by design. An empty tool
+    surface WITHOUT one of these explicit disable signals is still treated as
+    required-tool pruning and keeps failing coverage.
+    """
+
+    options = _request_options(ai_request, prepared)
+    tool_choice = str(options.get("tool_choice") or "").strip().lower()
+    if tool_choice in {"none", "disabled"}:
+        return "tool_choice_disabled_by_design"
+    context_payload = _request_context(ai_request)
+    if any(bool(context_payload.get(key)) for key in _NO_TOOL_CONTRACT_CONTEXT_KEYS):
+        return "tool_contract_requires_no_tool_calls"
+    tool_contract = _mapping(context_payload.get("tool_contract"))
+    if any(bool(tool_contract.get(key)) for key in _NO_TOOL_CONTRACT_CONTEXT_KEYS):
+        return "tool_contract_requires_no_tool_calls"
+    forced_definitions = context_payload.get("_transaction_kernel_forced_tool_definitions")
+    forced_choice = str(context_payload.get("_transaction_kernel_forced_tool_choice") or "").strip().lower()
+    if isinstance(forced_definitions, list) and not forced_definitions and forced_choice == "none":
+        return "transaction_kernel_tools_disabled"
+    return ""
+
+
 def _allowed_tool_names(ai_request: Any) -> list[str]:
     context_payload = _request_context(ai_request)
     names: list[str] = []
@@ -2142,6 +2178,15 @@ def _final_request_evidence_coverage(
     available_tools = _available_tool_names(tool_schema_payload)
     required_tools = _required_tool_names(ai_request)
     allowed_tools = _allowed_tool_names(ai_request)
+    required_tools_exempt: list[str] = []
+    required_tools_exempt_reason = ""
+    if required_tools:
+        required_tools_exempt_reason = _required_tools_exempt_reason(ai_request, prepared)
+        if required_tools_exempt_reason:
+            # The call exposes no callable tools BY DESIGN: keep the stale claim
+            # as audit evidence, but do not require tools this call cannot call.
+            required_tools_exempt = required_tools
+            required_tools = []
     missing_required_tools = [tool for tool in required_tools if tool not in available_tools]
     removed_allowed_tools = [tool for tool in allowed_tools if available_tools and tool not in available_tools]
     workflow_chain = _workflow_chain(
@@ -2189,6 +2234,8 @@ def _final_request_evidence_coverage(
             "offered_tools": available_tools,
             "missing_required_tools": missing_required_tools,
             "removed_allowed_tools": removed_allowed_tools,
+            "required_tools_exempt": required_tools_exempt,
+            "required_tools_exempt_reason": required_tools_exempt_reason,
             "required_tool_source": "explicit_required_tool_fields_only",
             "allowed_tool_source": "allowed_available_policy_contract_fields",
             "canonicalized": True,

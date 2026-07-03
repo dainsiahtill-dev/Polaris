@@ -437,6 +437,140 @@ def test_required_tool_not_called_error_rejects_wrong_native_tool_call() -> None
     assert error == "required_tool_not_called: required_tools=write_file"
 
 
+def _zero_tool_prepared_request(
+    options: dict[str, Any],
+    context: dict[str, Any],
+    messages: list[dict[str, Any]],
+) -> tuple[Any, PreparedLLMRequest]:
+    ai_request = Mock()
+    ai_request.context = context
+    ai_request.options = options
+    ai_request.input = ""
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options=dict(options),
+        ai_request=ai_request,
+        native_tool_schemas=[],
+    )
+    return ai_request, prepared
+
+
+def test_required_tool_not_called_error_does_not_fire_on_zero_tool_request() -> None:
+    """Regression: stale required_tools from the shared turn context must not
+    fire the required_tool_not_called retry on a request that physically cannot
+    call tools (finalization: zero tool schemas, tool_choice=none)."""
+
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    profile.role_id = "director"
+    profile.provider_id = "openai"
+    profile.model = "gpt-4.1"
+    messages = [{"role": "user", "content": "TASK-1 target_files package.json Chief Engineer blueprint"}]
+    stale_context = {
+        "chat_messages": messages,
+        "required_tools": ["write_file"],
+        "tool_contract": {"required_tools": ["write_file"]},
+    }
+    response = SimpleNamespace(
+        raw={"model": "gpt-4.1", "provider_id": "openai"},
+        output="Final summary of the completed write.",
+        model="gpt-4.1",
+        provider_id="openai",
+    )
+
+    # Explicit tool_choice=none finalization request.
+    ai_request, prepared = _zero_tool_prepared_request(
+        {"tools": [], "tool_choice": "none"},
+        dict(stale_context),
+        messages,
+    )
+    assert (
+        _required_tool_not_called_error(
+            prepared=prepared,
+            active_request=ai_request,
+            response=response,
+            profile=profile,
+        )
+        == ""
+    )
+
+    # Request whose provider options carry no tool surface at all.
+    ai_request, prepared = _zero_tool_prepared_request(
+        {"temperature": 0.2, "max_tokens": 2000},
+        dict(stale_context),
+        messages,
+    )
+    assert (
+        _required_tool_not_called_error(
+            prepared=prepared,
+            active_request=ai_request,
+            response=response,
+            profile=profile,
+        )
+        == ""
+    )
+
+
+def test_final_request_coverage_passes_for_finalization_request_after_forced_write_turn() -> None:
+    """Regression: a same-turn finalization-style request (zero tool schemas,
+    tool_choice=none) must pass evidence coverage instead of reporting
+    missing_required_tools for tools that are not exposed by design."""
+
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    profile.role_id = "director"
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "TASK-1 acceptance criteria target_files src/index.js "
+                "Chief Engineer blueprint construction_plan scope_for_apply "
+                "stderr exit_code failed retry factory_workspace_quality npm run build "
+                "public_symbols: createEntrypoint consumes_symbols: src/index.js"
+            ),
+        },
+    ]
+    ai_request = Mock()
+    ai_request.role = "director"
+    # Stale turn-context contamination: required_tools survived into this call.
+    ai_request.context = {
+        "chat_messages": messages,
+        "required_tools": ["write_file"],
+        "tool_contract": {"required_tools": ["write_file"]},
+        "_transaction_kernel_forced_tool_definitions": [],
+        "_transaction_kernel_forced_tool_choice": "none",
+    }
+    ai_request.options = {"tools": [], "tool_choice": "none"}
+    ai_request.input = ""
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={"tools": [], "tool_choice": "none"},
+        ai_request=ai_request,
+        native_tool_schemas=[],
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=32768),
+    )
+
+    coverage = audit["final_request_evidence_coverage"]
+    assert coverage["required_tools"] == []
+    assert coverage["missing_required_tools"] == []
+    assert coverage["tool_surface"]["required_tools_exempt"] == ["write_file"]
+    assert coverage["tool_surface"]["required_tools_exempt_reason"] == "tool_choice_disabled_by_design"
+    assert coverage["pass"] is True
+    finding_codes = {item["code"] for item in audit["context_quality"]["findings"]}
+    assert "missing_required_final_request_tools" not in finding_codes
+
+
 def test_final_request_context_audit_marks_complete_context_as_reasonable() -> None:
     profile = Mock()
     profile.max_context_tokens = 32768

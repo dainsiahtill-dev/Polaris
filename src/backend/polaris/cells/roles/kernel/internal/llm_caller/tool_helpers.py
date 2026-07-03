@@ -439,31 +439,6 @@ def _append_required_tool(required: list[str], tool_name: Any, known_tool_map: d
         required.append(canonical)
 
 
-def _append_context_required_tool(context_override: dict[str, Any], tool_name: str) -> None:
-    """Project a runtime-required tool into final-request evidence metadata."""
-
-    normalized = str(tool_name or "").strip()
-    if not normalized:
-        return
-    required_tools = context_override.get("required_tools")
-    if not isinstance(required_tools, list):
-        required_tools = []
-        context_override["required_tools"] = required_tools
-    if normalized not in [str(item) for item in required_tools]:
-        required_tools.append(normalized)
-
-    tool_contract = context_override.get("tool_contract")
-    if not isinstance(tool_contract, dict):
-        tool_contract = {}
-        context_override["tool_contract"] = tool_contract
-    contract_required = tool_contract.get("required_tools")
-    if not isinstance(contract_required, list):
-        contract_required = []
-        tool_contract["required_tools"] = contract_required
-    if normalized not in [str(item) for item in contract_required]:
-        contract_required.append(normalized)
-
-
 def _append_required_tools_from_value(required: list[str], value: Any, known_tool_map: dict[str, str]) -> None:
     if isinstance(value, str):
         for item in re.split(r"[,;\s]+", value):
@@ -838,7 +813,14 @@ def ensure_director_first_call_materialization_scope(
         "transaction_tools_disabled": False,
     }
     _apply_director_first_call_output_budget(context_override, targets=targets)
-    _append_context_required_tool(context_override, "write_file")
+    # Copy-on-write required-tool projection: the turn context dict is shared by
+    # every subsequent same-turn LLM call (transaction_factory copies it into each
+    # per-call override), so the write_file requirement must NOT be written into
+    # ``required_tools`` / ``tool_contract`` here. The request preparer derives the
+    # requirement per call from ``director_first_call_materialization_scope`` and
+    # only for calls whose tool surface is not explicitly disabled — otherwise the
+    # finalization call (tool_choice=none, zero tool schemas) inherits a required
+    # tool it physically cannot call and fails coverage / retries forever.
     return forced_definitions
 
 

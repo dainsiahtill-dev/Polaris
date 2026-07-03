@@ -154,6 +154,27 @@ def _called_required_native_tool(native_tool_calls: list[dict[str, Any]], requir
     return bool(required & called)
 
 
+def _request_tool_surface_disabled(active_request: Any, prepared: PreparedLLMRequest) -> bool:
+    """True when the request physically cannot call tools (zero-tool surface).
+
+    A request without native tool schemas — or with tool_choice ``none`` /
+    ``disabled`` — cannot satisfy required-tool semantics no matter how many
+    retries fire. Stale ``required_tools`` inherited from the shared turn
+    context (e.g. a forced-write first call) must never turn such a call into
+    a required_tool_not_called retry storm.
+    """
+
+    options = getattr(active_request, "options", None)
+    if not isinstance(options, dict):
+        raw_prepared_options = getattr(prepared, "request_options", None)
+        options = raw_prepared_options if isinstance(raw_prepared_options, dict) else {}
+    tool_choice = str(options.get("tool_choice") or "").strip().lower()
+    if tool_choice in {"none", "disabled"}:
+        return True
+    tools = options.get("tools")
+    return not (isinstance(tools, list) and tools)
+
+
 def _required_tool_not_called_error(
     *,
     prepared: PreparedLLMRequest,
@@ -161,6 +182,8 @@ def _required_tool_not_called_error(
     response: Any,
     profile: Any,
 ) -> str:
+    if _request_tool_surface_disabled(active_request, prepared):
+        return ""
     audit = build_final_request_context_audit_for_request(
         ai_request=active_request,
         prepared=prepared,

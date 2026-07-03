@@ -75,6 +75,28 @@ def test_tool_contract_context_fields_project_materialization_write_requirement(
     assert fields["tool_contract"]["required_tools"] == ["write_file"]
 
 
+def test_tool_contract_context_fields_skip_projection_when_tool_surface_disabled() -> None:
+    """A finalization-style call (explicit tool disable) must not inherit
+    required-tool semantics from the shared turn context, even when the turn
+    carries a stale forced-write projection."""
+
+    fields = _tool_contract_context_fields(
+        {
+            "required_tools": ["write_file"],
+            "tool_contract": {"required_tools": ["write_file"]},
+            "director_first_call_materialization_scope": {
+                "schema_version": "director.first_call_materialization_scope.v1",
+                "injected": True,
+                "tool": "write_file",
+            },
+            "_transaction_kernel_forced_tool_definitions": [],
+            "_transaction_kernel_forced_tool_choice": "none",
+        }
+    )
+
+    assert fields == {}
+
+
 def test_required_tool_retry_request_handles_non_numeric_temperature_and_tool_contract() -> None:
     messages = [{"role": "user", "content": "TASK-1 target_files package.json"}]
     ai_request = SimpleNamespace(

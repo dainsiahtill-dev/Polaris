@@ -169,10 +169,32 @@ def _copy_final_request_evidence_context_fields(context_override: Any) -> dict[s
     return result
 
 
+def _tool_surface_explicitly_disabled(override: dict[str, Any]) -> bool:
+    """True when this call's tool surface is disabled by design (e.g. finalization).
+
+    TransactionKernel marks tool-free calls with an explicit empty forced tool
+    definition list plus tool_choice ``none`` (see FinalizationCaller and
+    ``_build_context_override_with_prebuilt_messages``).
+    """
+
+    forced_definitions = override.get(_TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY)
+    forced_choice = str(override.get(_TRANSACTION_KERNEL_FORCED_TOOL_CHOICE_KEY) or "").strip().lower()
+    return isinstance(forced_definitions, list) and not forced_definitions and forced_choice == "none"
+
+
 def _tool_contract_context_fields(override: Any) -> dict[str, Any]:
-    """Project runtime tool obligations into AIRequest.context for final-request audit."""
+    """Project runtime tool obligations into AIRequest.context for final-request audit.
+
+    The projection is call-scoped: a call whose tool surface is explicitly
+    disabled (finalization-style ``tool_choice=none`` with zero tool schemas)
+    must not inherit required-tool semantics from the shared turn context —
+    it physically cannot call tools, so projecting ``required_tools`` would
+    fail evidence coverage and trigger a futile required_tool_not_called retry.
+    """
 
     if not isinstance(override, dict):
+        return {}
+    if _tool_surface_explicitly_disabled(override):
         return {}
     required_tools: list[str] = []
     for key in ("required_tools", "task_required_tools"):

@@ -161,8 +161,13 @@ def test_plan_transaction_tool_surface_forces_write_for_multi_missing_materializ
     scope = context_override["director_first_call_materialization_scope"]
     assert scope["reason"] == "declared_scope_incomplete_requires_first_turn_write_tool"
     assert scope["target_files"] == ["src/engine/rules.js", "src/engine/runner.js"]
-    assert context_override["required_tools"] == ["write_file"]
-    assert context_override["tool_contract"]["required_tools"] == ["write_file"]
+    # Copy-on-write: the shared turn context must not be contaminated with
+    # required-tool semantics — subsequent same-turn calls (finalization,
+    # tool_choice=none) copy this dict and must not inherit a write_file
+    # requirement they physically cannot satisfy. The forced call's own
+    # final-request audit derives the requirement from the scope marker.
+    assert "required_tools" not in context_override
+    assert "tool_contract" not in context_override
     assert context_override["llm_max_tokens"] == 7000
     assert context_override["max_output_tokens"] == 7000
     assert context_override["director_first_call_output_budget"] == {
@@ -232,8 +237,9 @@ def test_plan_transaction_tool_surface_forces_write_for_declared_missing_targets
 
     assert [item["function"]["name"] for item in plan.tool_definitions] == ["write_file"]
     assert plan.tool_choice_override == {"type": "function", "function": {"name": "write_file"}}
-    assert context_override["required_tools"] == ["write_file"]
-    assert context_override["tool_contract"]["required_tools"] == ["write_file"]
+    # Copy-on-write: no required-tool contamination of the shared turn context.
+    assert "required_tools" not in context_override
+    assert "tool_contract" not in context_override
     scope = context_override["director_first_call_materialization_scope"]
     assert scope["reason"] == "declared_scope_incomplete_requires_first_turn_write_tool"
     assert scope["target_files"] == ["src/engine/rules.js", "src/engine/runner.js"]
@@ -419,3 +425,78 @@ def test_plan_transaction_tool_surface_projects_required_tool_choice(monkeypatch
     )
 
     assert plan.tool_choice_override == "required"
+
+
+def test_forced_write_plan_does_not_contaminate_same_turn_finalization_context(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    """Regression: forced-write projection must be copy-on-write for the turn context.
+
+    The same context dict is copied into every subsequent same-turn LLM call
+    (transaction_factory / FinalizationCaller). A finalization-style request
+    (zero tool schemas, tool_choice=none) built from that dict must not inherit
+    required-tool semantics, while the forced call itself still projects
+    required_tools=["write_file"] into ITS request context.
+    """
+
+    from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import (
+        _tool_contract_context_fields,
+    )
+
+    native_write = {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "parameters": {
+                "type": "object",
+                "properties": {"file": {"type": "string"}, "content": {"type": "string"}},
+            },
+        },
+    }
+
+    monkeypatch.setattr(tool_surface, "build_native_tool_schemas", lambda _profile: [native_write])
+    monkeypatch.setattr(
+        tool_surface,
+        "_apply_runtime_tool_policy",
+        lambda **kwargs: (kwargs["tool_definitions"], {"runtime_tool_policy_applied": True}),
+    )
+    monkeypatch.setattr(tool_surface, "resolve_repair_edit_target", lambda _context, _workspace: "")
+    monkeypatch.setattr(tool_surface, "should_use_weak_director_slim_tool_schema", lambda **_kwargs: False)
+
+    context_override: dict[str, Any] = {
+        "delivery_mode": "materialize_changes",
+        "target_files": ["src/index.js"],
+    }
+    request = RoleTurnRequest(
+        workspace=str(tmp_path),
+        message="[mode:materialize] create entrypoint",
+        context_override=context_override,
+    )
+
+    plan = tool_surface.plan_transaction_tool_surface(
+        role="director",
+        profile=_profile(),
+        request=request,
+        context_result=_context_result(),
+        messages=[],
+        workspace=str(tmp_path),
+        mode="turn",
+    )
+
+    assert plan.tool_choice_override == {"type": "function", "function": {"name": "write_file"}}
+    assert "required_tools" not in context_override
+    assert "tool_contract" not in context_override
+
+    # The forced call's own request context still projects the requirement.
+    forced_call_override = dict(context_override)
+    forced_fields = _tool_contract_context_fields(forced_call_override)
+    assert forced_fields["required_tools"] == ["write_file"]
+    assert forced_fields["tool_contract"]["required_tools"] == ["write_file"]
+
+    # A same-turn finalization-style copy (FinalizationCaller sets the explicit
+    # tool disable) carries no required-tool contamination.
+    finalization_override = dict(context_override)
+    finalization_override["_transaction_kernel_forced_tool_definitions"] = []
+    finalization_override["_transaction_kernel_forced_tool_choice"] = "none"
+    assert _tool_contract_context_fields(finalization_override) == {}
