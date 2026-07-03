@@ -1151,7 +1151,7 @@ class Settings(BaseModel):
         return self.backend_root / "core" / "polaris_loop"
 
     def to_payload(self) -> dict[str, Any]:
-        """Build JSON-safe payload including compatibility keys."""
+        """Build the JSON-safe settings payload consumed by API and launcher clients."""
         payload = super().model_dump(mode="json")
         payload["model"] = self.model
         payload["pm_backend"] = self.pm_backend
