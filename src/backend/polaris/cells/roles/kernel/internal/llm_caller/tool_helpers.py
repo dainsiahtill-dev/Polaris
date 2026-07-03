@@ -11,7 +11,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from polaris.kernelone.llm.budget_policy import (
     BUDGET_STRATEGY_PAYLOAD_KEYS,
@@ -145,7 +145,7 @@ def native_tool_call_name(call: Mapping[str, Any]) -> str:
         name = function.get("name")
         if name:
             return str(name).strip()
-    for key in ("name", "tool_name", "toolName"):
+    for key in ("name", "tool_name", "toolName", "function_name", "functionName"):
         name = call.get(key)
         if name:
             return str(name).strip()
@@ -153,6 +153,49 @@ def native_tool_call_name(call: Mapping[str, Any]) -> str:
 
 
 _native_tool_call_name = native_tool_call_name
+
+
+def native_tool_call_envelopes_from_metadata(metadata: Mapping[str, Any] | None) -> tuple[Mapping[str, Any], ...]:
+    """Return valid native tool-call envelope payloads from response metadata."""
+
+    if not isinstance(metadata, Mapping):
+        return ()
+    envelopes = metadata.get("native_tool_call_envelopes")
+    if not isinstance(envelopes, list):
+        return ()
+    return tuple(item for item in envelopes if isinstance(item, Mapping))
+
+
+def native_tool_call_count(
+    metadata: Mapping[str, Any] | None,
+    native_tool_calls: Sequence[Any],
+) -> int:
+    """Derive native tool-call count from envelopes, falling back to raw native calls."""
+
+    envelopes = native_tool_call_envelopes_from_metadata(metadata)
+    if envelopes:
+        return len(envelopes)
+    return sum(1 for item in native_tool_calls if isinstance(item, Mapping))
+
+
+def native_tool_call_names(
+    metadata: Mapping[str, Any] | None,
+    native_tool_calls: Sequence[Any],
+) -> list[str]:
+    """Derive native tool names from envelopes, falling back to raw native calls."""
+
+    envelopes = native_tool_call_envelopes_from_metadata(metadata)
+    if envelopes:
+        return [
+            name
+            for envelope in envelopes
+            if (name := str(envelope.get("tool_name") or "").strip())
+        ]
+    return [
+        name
+        for item in native_tool_calls
+        if isinstance(item, Mapping) and (name := native_tool_call_name(item))
+    ]
 
 
 def _native_tool_call_arguments(call: Mapping[str, Any]) -> Any:
@@ -1374,6 +1417,9 @@ __all__ = [
     "build_native_tool_call_envelopes",
     "build_native_tool_schemas",
     "extract_native_tool_calls",
+    "native_tool_call_count",
+    "native_tool_call_envelopes_from_metadata",
     "native_tool_call_name",
+    "native_tool_call_names",
     "resolve_tool_call_provider",
 ]

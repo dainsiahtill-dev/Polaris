@@ -29,6 +29,10 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, cast
 
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+    native_tool_call_count as derive_native_tool_call_count,
+    native_tool_call_envelopes_from_metadata,
+)
 from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
     build_corrective_context,
     evaluate_decode_corrective,
@@ -50,21 +54,8 @@ from polaris.cells.roles.kernel.public.turn_events import TurnEvent, TurnPhaseEv
 logger = logging.getLogger(__name__)
 
 
-def _native_tool_call_envelopes_from_metadata(metadata: Mapping[str, Any] | None) -> list[dict[str, Any]]:
-    if not isinstance(metadata, Mapping):
-        return []
-    value = metadata.get("native_tool_call_envelopes")
-    if not isinstance(value, list):
-        return []
-    return [dict(item) for item in value if isinstance(item, Mapping)]
-
-
 def _native_tool_call_count(response: RawLLMResponse, metadata: Mapping[str, Any] | None = None) -> int:
-    native_envelopes = _native_tool_call_envelopes_from_metadata(metadata)
-    if native_envelopes:
-        return len(native_envelopes)
-    native_calls = _native_tool_calls_from_response(response)
-    return len(native_calls) if isinstance(native_calls, list) else 0
+    return derive_native_tool_call_count(metadata, _native_tool_calls_from_response(response))
 
 
 def _native_tool_calls_from_response(response: Any) -> list[dict[str, Any]]:
@@ -87,7 +78,7 @@ def _provider_response_hash(response: RawLLMResponse, metadata: Mapping[str, Any
     payload = {
         "content": getattr(response, "content", ""),
         "model": getattr(response, "model", ""),
-        "native_tool_call_envelopes": _native_tool_call_envelopes_from_metadata(metadata),
+        "native_tool_call_envelopes": native_tool_call_envelopes_from_metadata(metadata),
         "native_tool_calls": _native_tool_calls_from_response(response),
         "thinking": getattr(response, "thinking", None),
     }

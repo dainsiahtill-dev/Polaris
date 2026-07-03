@@ -30,6 +30,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.helpers import (
     extract_json_from_text,
     extract_native_tool_calls,
     messages_to_input,
+    native_tool_call_count,
     resolve_max_tokens,
     resolve_platform_retry_max,
     resolve_temperature,
@@ -41,7 +42,10 @@ from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import (
     _tool_contract_context_fields,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
-from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import build_native_tool_schemas
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+    build_native_tool_schemas,
+    native_tool_call_names,
+)
 from polaris.cells.roles.profile.public.service import load_core_roles
 from polaris.kernelone.context.contracts import TurnEngineContextResult
 
@@ -707,6 +711,27 @@ class TestExtractNativeToolCalls:
         assert envelopes[0]["provider"] == "anthropic"
         assert envelopes[0]["tool_name"] == "read_file"
         assert envelopes[0]["call_id"].startswith("native_tool_call_")
+
+    def test_native_tool_call_count_and_names_prefer_envelopes(self) -> None:
+        metadata = {
+            "native_tool_call_envelopes": [
+                {"schema_version": "native_tool_call_envelope.v1", "tool_name": "repo_rg"},
+                {"schema_version": "native_tool_call_envelope.v1", "tool_name": "read_file"},
+            ]
+        }
+        raw_calls = [{"function": {"name": "write_file"}}]
+
+        assert native_tool_call_count(metadata, raw_calls) == 2
+        assert native_tool_call_names(metadata, raw_calls) == ["repo_rg", "read_file"]
+
+    def test_native_tool_call_names_fallback_uses_shared_aliases(self) -> None:
+        raw_calls = [
+            {"functionName": "write_file", "arguments": {"path": "x.py"}},
+            {"function_name": "execute_command", "arguments": {"cmd": "pytest"}},
+        ]
+
+        assert native_tool_call_count({}, raw_calls) == 2
+        assert native_tool_call_names({}, raw_calls) == ["write_file", "execute_command"]
 
     def test_empty_payload_returns_empty(self) -> None:
         calls, provider = extract_native_tool_calls({}, provider_id="openai", model="gpt-4")

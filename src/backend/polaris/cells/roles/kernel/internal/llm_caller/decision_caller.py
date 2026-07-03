@@ -6,8 +6,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
+
+from .tool_helpers import native_tool_call_count, native_tool_call_names
 
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
@@ -21,48 +22,6 @@ class DecisionCaller:
 
     def __init__(self, llm_invoker: LLMInvoker) -> None:
         self._invoker = llm_invoker
-
-    @staticmethod
-    def _native_tool_name_hint(native: dict[str, Any]) -> str:
-        function = native.get("function")
-        if isinstance(function, dict):
-            name = str(function.get("name") or "").strip()
-            if name:
-                return name
-        for key in ("name", "tool_name", "toolName", "function_name", "functionName"):
-            name = str(native.get(key) or "").strip()
-            if name:
-                return name
-        return ""
-
-    @staticmethod
-    def _tool_call_envelopes(metadata: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
-        envelopes = metadata.get("native_tool_call_envelopes")
-        if not isinstance(envelopes, list):
-            return ()
-        return tuple(item for item in envelopes if isinstance(item, Mapping))
-
-    @classmethod
-    def _native_tool_call_count(cls, metadata: Mapping[str, Any], native_tool_calls: list[Any]) -> int:
-        envelopes = cls._tool_call_envelopes(metadata)
-        if envelopes:
-            return len(envelopes)
-        return len(native_tool_calls)
-
-    @classmethod
-    def _native_tool_call_names(cls, metadata: Mapping[str, Any], native_tool_calls: list[Any]) -> list[str]:
-        envelopes = cls._tool_call_envelopes(metadata)
-        if envelopes:
-            return [
-                name
-                for item in envelopes
-                if (name := str(item.get("tool_name") or "").strip())
-            ]
-        return [
-            name
-            for item in native_tool_calls
-            if isinstance(item, dict) and (name := cls._native_tool_name_hint(item))
-        ]
 
     async def call(
         self,
@@ -94,10 +53,10 @@ class DecisionCaller:
             raise RuntimeError(str(response.error))
         native_tool_calls = getattr(response, "tool_calls", []) or []
         metadata = dict(getattr(response, "metadata", {}) or {})
-        native_tool_call_count = self._native_tool_call_count(metadata, native_tool_calls)
-        tool_names = self._native_tool_call_names(metadata, native_tool_calls)
-        metadata["decision_caller_native_tool_calls_count"] = native_tool_call_count
-        metadata["native_tool_calls_count"] = native_tool_call_count
+        native_count = native_tool_call_count(metadata, native_tool_calls)
+        tool_names = native_tool_call_names(metadata, native_tool_calls)
+        metadata["decision_caller_native_tool_calls_count"] = native_count
+        metadata["native_tool_calls_count"] = native_count
         metadata["native_tool_call_names"] = tool_names
         metadata["decision_caller_tool_call_provider"] = str(
             getattr(response, "tool_call_provider", "") or metadata.get("tool_call_provider") or "auto"
