@@ -243,7 +243,7 @@ class SubprocessCommandExecutor:
 
 
 # =============================================================================
-# ProcessControlPort — process lifecycle contract (legacy, retained for compat)
+# ProcessControlPort — process lifecycle contract
 # =============================================================================
 
 
@@ -358,7 +358,7 @@ __all__ = [
     # CommandExecutorPort contract
     "CommandExecutorPort",
     "CommandResult",
-    # ProcessControlPort (legacy)
+    # ProcessControlPort contract
     "ProcessControlPort",
     "ProcessInfo",
     "ShellDisallowedError",
