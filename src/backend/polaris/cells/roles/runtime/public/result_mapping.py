@@ -59,6 +59,22 @@ def _extract_tool_calls(result: RoleTurnResult) -> tuple[str, ...]:
     return tuple(names)
 
 
+def _dropped_tool_calls_from_envelopes(native_envelopes: tuple[Mapping[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+    dropped: list[dict[str, Any]] = []
+    for envelope in native_envelopes:
+        tool_name = str(envelope.get("tool_name") or "").strip()
+        envelope_id = str(envelope.get("envelope_id") or "").strip()
+        if not tool_name and not envelope_id:
+            continue
+        item: dict[str, Any] = {"reason": "tool_dispatch_dropped"}
+        if tool_name:
+            item["tool_name"] = tool_name
+        if envelope_id:
+            item["envelope_id"] = envelope_id
+        dropped.append(item)
+    return tuple(dropped)
+
+
 def _has_tool_dispatch_evidence(result: RoleTurnResult) -> bool:
     if result.tool_results:
         return True
@@ -176,6 +192,9 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
     if dropped_error:
         dropped_tool_calls = _extract_tool_calls(result)
         native_envelopes = _native_tool_call_envelopes(result)
+        dropped_tool_call_refs = _dropped_tool_calls_from_envelopes(native_envelopes) or tuple(
+            {"tool_name": tool_name, "reason": "tool_dispatch_dropped"} for tool_name in dropped_tool_calls
+        )
         metadata.setdefault(
             "tool_call_lifecycle",
             build_tool_call_lifecycle_receipt(
@@ -186,7 +205,7 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
                 native_tool_calls_count=len(dropped_tool_calls),
                 decoded_tool_calls_count=len(dropped_tool_calls),
                 dispatched_tool_calls_count=0,
-                dropped_tool_calls=list(dropped_tool_calls),
+                dropped_tool_calls=list(dropped_tool_call_refs),
                 native_tool_call_envelopes=list(native_envelopes),
                 dispatch_status="dropped",
                 failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,

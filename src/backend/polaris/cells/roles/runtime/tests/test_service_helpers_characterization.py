@@ -271,6 +271,13 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
             "arguments_hash": "b" * 64,
         }
     ]
+    assert lifecycle["dropped_tool_calls"] == [
+        {
+            "tool_name": "write_file",
+            "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+            "reason": "tool_dispatch_dropped",
+        }
+    ]
 
     failed = runtime_service._to_contract_result(
         role="pm",
