@@ -26,6 +26,15 @@ _LOCAL_ENTRYPOINT_SUFFIXES = (
 )
 _ENTRYPOINT_PATTERN_CHARS = frozenset("*?[]{}")
 _LOCAL_SOURCE_IMPORT_SUFFIXES = (".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx")
+# NodeNext/ESM TypeScript requires importing the emitted ".js" specifier even
+# when the on-disk source is ".ts"; accept the TypeScript sibling sources that
+# tsc would compile into the referenced JavaScript file before declaring the
+# local import unresolved.
+_TYPESCRIPT_SOURCE_SIBLINGS_BY_EMITTED_SUFFIX: dict[str, tuple[str, ...]] = {
+    ".js": (".ts", ".tsx"),
+    ".mjs": (".mts",),
+    ".cjs": (".cts",),
+}
 _ESM_LOCAL_IMPORT_RE = re.compile(
     r"(?m)^\s*(?:import\s+(?:[^'\"\n]+?\s+from\s*)?|export\s+[^'\"\n]+?\s+from\s*)"
     r"['\"](?P<specifier>\.{1,2}/[^'\"\n]+)['\"]"
@@ -232,7 +241,16 @@ def _local_import_target_candidates(importer_path: str, specifier: str) -> list[
         return []
     suffix = PurePosixPath(target).suffix
     if suffix:
-        return [_clean_path(target)]
+        stem = target[: len(target) - len(suffix)]
+        return _dedupe_paths(
+            [
+                target,
+                *(
+                    f"{stem}{sibling_suffix}"
+                    for sibling_suffix in _TYPESCRIPT_SOURCE_SIBLINGS_BY_EMITTED_SUFFIX.get(suffix, ())
+                ),
+            ]
+        )
     candidates = [f"{target}{ext}" for ext in _LOCAL_SOURCE_IMPORT_SUFFIXES]
     candidates.extend(f"{target}/index{ext}" for ext in _LOCAL_SOURCE_IMPORT_SUFFIXES)
     return _dedupe_paths(candidates)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from polaris.cells.control_plane.run_ledger.public.task_boundary import (
     evaluate_task_boundary_verdict,
 )
@@ -129,6 +130,78 @@ def test_task_boundary_allows_existing_local_import_target(tmp_path: Path) -> No
     assert verdict["ok"] is True
     assert verdict["status"] == "completed_verified"
     assert verdict["unresolved_local_imports"] == []
+
+
+@pytest.mark.parametrize(
+    ("specifier_name", "source_name"),
+    [
+        ("util.js", "util.ts"),
+        ("widget.js", "widget.tsx"),
+        ("helper.mjs", "helper.mts"),
+        ("legacy.cjs", "legacy.cts"),
+    ],
+)
+def test_task_boundary_allows_nodenext_typescript_sibling_for_emitted_specifier(
+    tmp_path: Path, specifier_name: str, source_name: str
+) -> None:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "main.ts").write_text(
+        f'import {{ x }} from "./{specifier_name}";\nconsole.log(x);\n',
+        encoding="utf-8",
+    )
+    (src_dir / source_name).write_text("export const x = 1;\n", encoding="utf-8")
+
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-1-nodenext",
+        run_id="run-1",
+        target_files=["src/main.ts", f"src/{source_name}"],
+        completed_artifacts=["src/main.ts", f"src/{source_name}"],
+    ).to_dict()
+
+    assert verdict["ok"] is True
+    assert verdict["status"] == "completed_verified"
+    assert verdict["unresolved_local_imports"] == []
+
+
+def test_task_boundary_reports_unresolved_js_specifier_without_typescript_sibling(tmp_path: Path) -> None:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "main.ts").write_text('import { x } from "./util.js";\nconsole.log(x);\n', encoding="utf-8")
+
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-1-nodenext-missing",
+        run_id="run-1",
+        target_files=["src/main.ts"],
+        completed_artifacts=["src/main.ts"],
+    ).to_dict()
+
+    assert verdict["ok"] is False
+    assert verdict["status"] == "unresolved_local_import"
+    assert verdict["failure_class"] == "UNRESOLVED_LOCAL_IMPORT"
+    assert verdict["unresolved_local_imports"] == ["src/main.ts -> ./util.js (src/util.js)"]
+
+
+def test_task_boundary_mjs_specifier_not_rescued_by_plain_ts_sibling(tmp_path: Path) -> None:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "main.ts").write_text('import { x } from "./helper.mjs";\nconsole.log(x);\n', encoding="utf-8")
+    (src_dir / "helper.ts").write_text("export const x = 1;\n", encoding="utf-8")
+
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-1-nodenext-mjs",
+        run_id="run-1",
+        target_files=["src/main.ts", "src/helper.ts"],
+        completed_artifacts=["src/main.ts", "src/helper.ts"],
+    ).to_dict()
+
+    assert verdict["ok"] is False
+    assert verdict["status"] == "unresolved_local_import"
+    assert verdict["failure_class"] == "UNRESOLVED_LOCAL_IMPORT"
+    assert verdict["unresolved_local_imports"] == ["src/main.ts -> ./helper.mjs (src/helper.mjs)"]
 
 
 def test_task_boundary_ignores_package_script_glob_patterns(tmp_path: Path) -> None:

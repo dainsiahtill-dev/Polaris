@@ -64,6 +64,30 @@ def test_director_task_boundary_verdict_projects_declared_downstream_entrypoints
     assert verdict["downstream_pending_artifacts"] == ["src/index.js"]
 
 
+def test_director_task_boundary_verdict_allows_nodenext_ts_source_for_js_specifier(tmp_path: Path) -> None:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "main.ts").write_text('import { x } from "./util.js";\nconsole.log(x);\n', encoding="utf-8")
+    (src_dir / "util.ts").write_text("export const x = 1;\n", encoding="utf-8")
+
+    verdict = build_director_task_boundary_verdict(
+        role="director",
+        workspace=str(tmp_path),
+        task_id="TASK-1-nodenext",
+        run_id="run-1",
+        context_override={"target_files": ["src/main.ts", "src/util.ts"]},
+        tool_results=[
+            {"tool": "write_file", "success": True, "effect_receipt": {"file": "src/main.ts"}},
+            {"tool": "write_file", "success": True, "effect_receipt": {"file": "src/util.ts"}},
+        ],
+    )
+
+    assert verdict is not None
+    assert verdict["status"] == "completed_verified"
+    assert verdict["failure_class"] == "PASSED"
+    assert verdict["unresolved_local_imports"] == []
+
+
 def test_director_task_boundary_verdict_reports_dropped_dispatch(tmp_path: Path) -> None:
     verdict = build_director_task_boundary_verdict(
         role="director",
