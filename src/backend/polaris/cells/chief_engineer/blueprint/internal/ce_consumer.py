@@ -467,8 +467,8 @@ class CEConsumer:
         worker_id: Unique identifier for this worker instance.
         visibility_timeout_seconds: How long a claimed task is locked before it
             becomes visible to other workers again on failure.
-        poll_interval: Compatibility argument; consumers now wait on
-            task-market wake signals when no task is found.
+        poll_interval: Retained constructor parameter for older host wiring;
+            task-market wake signals now drive idle waits when no task is found.
         enable_adr_blueprint_store: Enable ADRStore-backed blueprint persistence.
     """
 
