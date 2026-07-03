@@ -1219,7 +1219,7 @@ def detect_primary_language(
 
 
 def get_language_guidance(language: str) -> str:
-    """Get language-specific coding guidance for compatibility callers."""
+    """Return language-specific coding guidance for prompt profile callers."""
 
     profile = _LANGUAGE_PROFILES.get(_normalize_language(language))
     if profile is None:
