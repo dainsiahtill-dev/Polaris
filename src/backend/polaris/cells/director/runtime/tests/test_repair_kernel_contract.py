@@ -315,6 +315,10 @@ def test_public_repair_diagnostics_accept_top_level_owner_path() -> None:
                 "importer_path": "src/engine/forecast.py",
                 "owner_path": "src/models/weather.py",
                 "symbol": "WeatherKind",
+                "details": {
+                    "available_exports": ["WeatherReport"],
+                    "resolution_path": "src.models.weather",
+                },
             },
         )
     )
@@ -324,6 +328,10 @@ def test_public_repair_diagnostics_accept_top_level_owner_path() -> None:
     assert diagnostics[0].metadata["importer_path"] == "src/engine/forecast.py"
     assert diagnostics[0].metadata["owner_path"] == "src/models/weather.py"
     assert diagnostics[0].metadata["symbol"] == "WeatherKind"
+    assert diagnostics[0].metadata["details"] == {
+        "available_exports": ["WeatherReport"],
+        "resolution_path": "src.models.weather",
+    }
 
 
 def test_public_repair_planning_projects_typed_diagnostics() -> None:
