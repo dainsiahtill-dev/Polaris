@@ -389,6 +389,27 @@ def test_projection_exposes_task_boundary_failure() -> None:
     assert summary["detail"] == "run ledger projection task boundary failed: MISSING_ENTRYPOINT_TARGET"
 
 
+def test_public_projection_summary_normalizes_task_boundary_failure_alias() -> None:
+    summary = summarize_run_ledger_projection(
+        {
+            "source": "run_ledger",
+            "ok": False,
+            "gate_count": 1,
+            "capability": {"ok": True},
+            "task_boundary": {
+                "ok": False,
+                "latest": {
+                    "ok": False,
+                    "failure_class": "missing-entrypoint-target",
+                },
+            },
+        }
+    )
+
+    assert summary["detail"] == "run ledger projection task boundary failed: MISSING_ENTRYPOINT_TARGET"
+    assert summary["failed_control_plane_events"] == ["MISSING_ENTRYPOINT_TARGET"]
+
+
 def test_public_projection_carries_task_boundary_and_tool_lifecycle(tmp_path: Path) -> None:
     lifecycle = build_tool_call_lifecycle_receipt(
         run_id="run-1",

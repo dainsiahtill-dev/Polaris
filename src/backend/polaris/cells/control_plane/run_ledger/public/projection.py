@@ -993,7 +993,7 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
     task_boundary_map = task_boundary if isinstance(task_boundary, dict) else {}
     if task_boundary_map and not bool(task_boundary_map.get("ok", True)):
         latest = task_boundary_map.get("latest")
-        latest_map = latest if isinstance(latest, dict) else {}
+        latest_map = normalize_task_boundary_verdict(latest if isinstance(latest, dict) else {})
         failure = str(latest_map.get("failure_class") or "TASK_BOUNDARY_FAILED")
         return {
             "ok": False,
