@@ -68,9 +68,3 @@ class UEPAuditEventPayload:
     data: dict[str, Any] = field(default_factory=dict)
     timestamp: str = ""
 
-
-# Backward compatibility aliases (deprecated, use topics.py constants directly)
-UEP_TOPIC_STREAM = TOPIC_RUNTIME_STREAM
-UEP_TOPIC_LLM = TOPIC_RUNTIME_LLM
-UEP_TOPIC_FINGERPRINT = TOPIC_RUNTIME_FINGERPRINT
-UEP_TOPIC_AUDIT = TOPIC_RUNTIME_AUDIT

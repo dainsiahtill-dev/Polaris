@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import polaris.kernelone.events.uep_contracts as uep_contracts
 from polaris.kernelone.events.topics import (
     TOPIC_RUNTIME_AUDIT,
     TOPIC_RUNTIME_FINGERPRINT,
@@ -48,3 +49,9 @@ class TestTopicConstants:
         assert UEP_TOPIC_TO_CATEGORY[TOPIC_RUNTIME_LLM] == "lifecycle"
         assert UEP_TOPIC_TO_CATEGORY[TOPIC_RUNTIME_FINGERPRINT] == "context"
         assert UEP_TOPIC_TO_CATEGORY[TOPIC_RUNTIME_AUDIT] == "audit"
+
+    def test_uep_contracts_do_not_export_topic_aliases(self) -> None:
+        assert not hasattr(uep_contracts, "UEP_TOPIC_STREAM")
+        assert not hasattr(uep_contracts, "UEP_TOPIC_LLM")
+        assert not hasattr(uep_contracts, "UEP_TOPIC_FINGERPRINT")
+        assert not hasattr(uep_contracts, "UEP_TOPIC_AUDIT")
