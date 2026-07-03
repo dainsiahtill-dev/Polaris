@@ -113,6 +113,19 @@ FORCED_WRITE_RETRY_TIMEOUT_MIN_SECONDS: Final[float] = 10.0
 #: one place, value 40.0 (blueprint §1 quantified evidence).
 FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS: Final[float] = 40.0
 
+#: Default timeout for the Factory Director dispatch stage. This value is
+#: injected into the stage context as both stage timeout and LLM-call timeout.
+DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS: Final[int] = 1_800
+
+#: Env keys that can raise the Factory Director dispatch timeout. Keep the key
+#: order in one place so HTTP/router and factory-stage code cannot drift.
+DIRECTOR_DISPATCH_TIMEOUT_ENV_KEYS: Final[tuple[str, ...]] = (
+    "KERNELONE_FACTORY_DIRECTOR_DISPATCH_TIMEOUT_SECONDS",
+    "KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS",
+    "KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS",
+    "KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS",
+)
+
 # ---------------------------------------------------------------------------
 # Shared context-key tuples (reader consolidation — Phase 1 step 4)
 # ---------------------------------------------------------------------------
@@ -259,6 +272,29 @@ def forced_write_retry_timeout_seconds(*, upper: float) -> float:
     return max(FORCED_WRITE_RETRY_TIMEOUT_MIN_SECONDS, min(value, upper))
 
 
+def resolve_director_dispatch_timeout_seconds(env: Mapping[str, Any] | None = None) -> int:
+    """Resolve the Factory Director dispatch timeout from budget policy facts.
+
+    The resolved value is projected into the Factory Director stage as both
+    stage timeout and LLM-call timeout. Env overrides may raise the default
+    timeout; invalid or non-positive values are ignored.
+    """
+
+    source = os.environ if env is None else env
+    candidates = [DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS]
+    for env_key in DIRECTOR_DISPATCH_TIMEOUT_ENV_KEYS:
+        raw = source.get(env_key)
+        if raw is None:
+            continue
+        try:
+            value = int(float(str(raw).strip()))
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            candidates.append(value)
+    return max(candidates)
+
+
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
@@ -375,6 +411,8 @@ __all__ = [
     "BUDGET_CONTEXT_KEYS_CANONICAL",
     "BUDGET_STRATEGY_PAYLOAD_KEYS",
     "CANONICAL_NESTED_CONTAINER_KEYS",
+    "DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS",
+    "DIRECTOR_DISPATCH_TIMEOUT_ENV_KEYS",
     "FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS",
     "FORCED_WRITE_CONTEXT_KEYS",
     "FORCED_WRITE_OUTPUT_TOKEN_CEILING",
@@ -406,4 +444,5 @@ __all__ = [
     "classify_turn_kind",
     "forced_write_output_token_ceiling",
     "forced_write_retry_timeout_seconds",
+    "resolve_director_dispatch_timeout_seconds",
 ]

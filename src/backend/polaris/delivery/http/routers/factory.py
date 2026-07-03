@@ -64,6 +64,7 @@ from polaris.delivery.http.schemas import (
 )
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 from polaris.kernelone.fs.text_ops import write_text_atomic
+from polaris.kernelone.llm.budget_policy import resolve_director_dispatch_timeout_seconds
 from polaris.kernelone.quality import (
     owner_task_retry_handoff_requests_from_scope_payload,
     ownership_handoff_requests_from_scope_payload,
@@ -118,13 +119,6 @@ SERVICE_STATUS_TO_CONTRACT: dict[ServiceRunStatus, RunLifecycleStatus] = {
 _DEFAULT_LOOP_MAX_CYCLES = 12
 _DEFAULT_LOOP_STALL_THRESHOLD = 2
 _DEFAULT_QUALITY_REWORK_MAX_CYCLES = 3
-_DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS = 1800
-_DIRECTOR_DISPATCH_TIMEOUT_ENV_KEYS = (
-    "KERNELONE_FACTORY_DIRECTOR_DISPATCH_TIMEOUT_SECONDS",
-    "KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS",
-    "KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS",
-    "KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS",
-)
 _FACTORY_RUN_DEADLINE_METADATA_KEYS = (
     "factory_run_deadline_epoch_seconds",
     "factory_deadline_epoch_seconds",
@@ -141,21 +135,6 @@ _PLAN_PROBE_UNPLANNABLE_STATUS = "coverage_matched_but_unplannable"
 def _get_service(workspace: str) -> FactoryRunService:
     """Get a service instance bound to the current workspace."""
     return FactoryRunService(workspace=Path(workspace))
-
-
-def _resolve_director_dispatch_timeout_seconds() -> int:
-    candidates = [_DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS]
-    for env_key in _DIRECTOR_DISPATCH_TIMEOUT_ENV_KEYS:
-        raw = os.getenv(env_key)
-        if raw is None:
-            continue
-        try:
-            value = int(float(str(raw).strip()))
-        except (TypeError, ValueError):
-            continue
-        if value > 0:
-            candidates.append(value)
-    return max(candidates)
 
 
 def _metadata_float(metadata: dict[str, Any], *keys: str) -> float | None:
@@ -905,7 +884,7 @@ def _build_stage_context(
         context["dispatch_mode"] = "mainline-full"
         if int(payload.director_iterations) > 0:
             context["director_max_rounds"] = int(payload.director_iterations)
-        director_dispatch_timeout = _resolve_director_dispatch_timeout_seconds()
+        director_dispatch_timeout = resolve_director_dispatch_timeout_seconds()
         context["timeout"] = director_dispatch_timeout
         context["director_dispatch_timeout_seconds"] = director_dispatch_timeout
         context["llm_call_timeout_seconds"] = director_dispatch_timeout

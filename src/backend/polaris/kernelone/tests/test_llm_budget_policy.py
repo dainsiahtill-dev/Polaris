@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 from polaris.kernelone.llm.budget_policy import (
+    DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS,
+    DIRECTOR_DISPATCH_TIMEOUT_ENV_KEYS,
     FORCED_WRITE_OUTPUT_TOKEN_ENV,
     FORCED_WRITE_RETRY_TIMEOUT_ENV,
     HARD_OUTPUT_TOKEN_CLAMP,
@@ -19,6 +21,7 @@ from polaris.kernelone.llm.budget_policy import (
     classify_turn_kind,
     forced_write_output_token_ceiling,
     forced_write_retry_timeout_seconds,
+    resolve_director_dispatch_timeout_seconds,
 )
 
 
@@ -70,6 +73,22 @@ def test_forced_write_retry_timeout_seconds_is_bounded_by_stage_timeout(
         monkeypatch.setenv(FORCED_WRITE_RETRY_TIMEOUT_ENV, raw_value)
 
     assert forced_write_retry_timeout_seconds(upper=upper) == expected
+
+
+def test_director_dispatch_timeout_resolver_owns_env_key_order() -> None:
+    first_key, second_key, *_ = DIRECTOR_DISPATCH_TIMEOUT_ENV_KEYS
+
+    assert resolve_director_dispatch_timeout_seconds({}) == DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS
+    assert (
+        resolve_director_dispatch_timeout_seconds(
+            {
+                first_key: "not-a-number",
+                second_key: "2100",
+            }
+        )
+        == 2100
+    )
+    assert resolve_director_dispatch_timeout_seconds({first_key: "10"}) == DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS
 
 
 def test_clamp_output_tokens_applies_single_hard_cap() -> None:
