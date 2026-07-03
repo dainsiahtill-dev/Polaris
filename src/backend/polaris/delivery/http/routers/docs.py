@@ -254,10 +254,10 @@ def _sync_plan_to_runtime(workspace: str, cache_root: str) -> None:
 
         service = ArtifactService(workspace=workspace, cache_root=cache_root)
 
-        # Read plan from workspace docs (legacy location)
+        # Read the plan from persistent workspace docs before syncing runtime contracts.
         plan_src_candidates = [
             resolve_artifact_path(workspace, cache_root, "workspace/docs/product/plan.md"),
-            os.path.join(workspace, "docs", "product", "plan.md"),  # backward compatibility
+            os.path.join(workspace, "docs", "product", "plan.md"),  # direct workspace source
         ]
         plan_src = ""
         for candidate in plan_src_candidates:
