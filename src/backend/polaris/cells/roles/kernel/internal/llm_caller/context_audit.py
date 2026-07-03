@@ -89,10 +89,14 @@ _EVIDENCE_REQUIREMENT_TO_REF = {
     "final_provider_request_audit": "final_provider_request",
     "run_ledger": "run_ledger",
     "workspace_quality_evidence": "workspace_quality_evidence",
+    "quality_evidence": "workspace_quality_evidence",
+    "quality_gate_verdict": "workspace_quality_evidence",
     "failed_gate_evidence": "failed_gate_evidence",
+    "failure_evidence": "failed_gate_evidence",
     "failed_gate_or_verification_evidence": "failed_gate_evidence",
     "verification_evidence": "failed_gate_evidence",
     "verification_failure_evidence": "failed_gate_evidence",
+    "verifier_failure_evidence": "failed_gate_evidence",
     "architecture_or_file_plan": "architecture_or_file_plan",
     "architecture_plan": "architecture_or_file_plan",
     "file_plan": "architecture_or_file_plan",
@@ -1488,6 +1492,36 @@ def _first_evidence_mapping(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _evidence_ref(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    token = value.strip()
+    return _EVIDENCE_REQUIREMENT_TO_REF.get(token, token)
+
+
+def _context_slot_payload(value: Any, *, keys: tuple[str, ...]) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    accepted_refs = {_evidence_ref(key) for key in keys}
+    slot_ref = _evidence_ref(
+        str(
+            value.get("ref_type")
+            or value.get("evidence_ref")
+            or value.get("slot_type")
+            or value.get("evidence_type")
+            or value.get("name")
+            or ""
+        )
+    )
+    if slot_ref not in accepted_refs:
+        return {}
+    for payload_key in ("payload", "evidence", "value", "source_payload", "details"):
+        payload = _first_evidence_mapping(value.get(payload_key))
+        if payload:
+            return payload
+    return dict(value)
+
+
 def _looks_like_failed_gate_evidence(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
@@ -1540,6 +1574,9 @@ def _find_structured_evidence_context(
     if depth > 5:
         return {}
     if isinstance(value, dict):
+        slot_payload = _context_slot_payload(value, keys=keys)
+        if predicate(slot_payload):
+            return slot_payload
         for key in keys:
             found = _first_evidence_mapping(value.get(key))
             if predicate(found):
@@ -1556,6 +1593,10 @@ def _find_structured_evidence_context(
             "quality",
             "quality_gate",
             "workspace_quality",
+            "context_evidence_slots",
+            "evidence_slots",
+            "typed_evidence_slots",
+            "required_evidence_slots",
             "task_boundary",
             "task_boundary_verdict",
             "task_metadata",
