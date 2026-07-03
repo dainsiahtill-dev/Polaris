@@ -23,10 +23,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Generic, TypeVar
 
-# Re-export InvalidStateTransitionError for backward compatibility
-from polaris.kernelone.errors import InvalidStateTransitionError
-
-__all__ = ["InvalidStateTransitionError"]
+__all__ = ["BaseStateMachine", "StateMachinePort"]
 
 # =============================================================================
 # Generic Type Variables

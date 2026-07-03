@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from polaris.kernelone.state_machine import InvalidStateTransitionError
+from polaris.kernelone.errors import InvalidStateTransitionError
 
 # =============================================================================
 # State Enum
