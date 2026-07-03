@@ -51,10 +51,17 @@ ToolExecutionResult/BatchReceipt → RoleTurnResult → completion/projection
   tool-call envelope refs 过滤与去重规则的 owner。
 - `roles.runtime.public.result_mapping` 已改为消费该 public helper，不再维护
   本地 envelope payload 过滤规则。
+- `roles.kernel.internal.llm_caller.tool_helpers` 已改为消费同一 public helper，
+  保留 `native_tool_call_envelopes_from_metadata()` 调用面但移除本地 envelope
+  过滤/去重规则。
 - 验证：
   `rtk pytest src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py src/backend/polaris/cells/roles/runtime/tests/test_service_helpers_characterization.py -q -k "tool_lifecycle or native_tool_call_envelope or extract_tool_calls"`；
   `rtk ruff check src/backend/polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py src/backend/polaris/cells/control_plane/run_ledger/public/__init__.py src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py src/backend/polaris/cells/roles/runtime/public/result_mapping.py`；
   `rtk mypy src/backend/polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py src/backend/polaris/cells/control_plane/run_ledger/public/__init__.py src/backend/polaris/cells/roles/runtime/public/result_mapping.py`。
+  追加验证：
+  `rtk pytest src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_helpers.py -q -k "native_tool_call"`；
+  `rtk ruff check src/backend/polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py`；
+  `rtk mypy src/backend/polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py`。
 
 ## 5. 风险与边界
 

@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
+    normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
 )
 from polaris.kernelone.llm.budget_policy import (
@@ -158,25 +159,6 @@ def native_tool_call_name(call: Mapping[str, Any]) -> str:
 _native_tool_call_name = native_tool_call_name
 
 
-def _valid_native_tool_call_envelopes(value: Any) -> tuple[Mapping[str, Any], ...]:
-    if not isinstance(value, (list, tuple)):
-        return ()
-    envelopes: list[Mapping[str, Any]] = []
-    seen: set[str] = set()
-    for item in value:
-        if not isinstance(item, Mapping):
-            continue
-        envelope = dict(item)
-        key = str(envelope.get("envelope_id") or "").strip()
-        if not key:
-            key = _stable_hash(envelope)
-        if key in seen:
-            continue
-        seen.add(key)
-        envelopes.append(envelope)
-    return tuple(envelopes)
-
-
 def _tool_call_lifecycle_receipts_from_metadata(
     metadata: Mapping[str, Any],
 ) -> tuple[Mapping[str, Any], ...]:
@@ -237,12 +219,12 @@ def native_tool_call_envelopes_from_metadata(metadata: Mapping[str, Any] | None)
     if not isinstance(metadata, Mapping):
         return ()
     for key in ("native_tool_call_envelopes", "native_tool_call_envelope_refs"):
-        valid_envelopes = _valid_native_tool_call_envelopes(metadata.get(key))
+        valid_envelopes = normalize_native_tool_call_envelope_refs(metadata.get(key))
         if valid_envelopes:
             return valid_envelopes
     for receipt in _tool_call_lifecycle_receipts_from_metadata(metadata):
         for key in ("native_tool_call_envelope_refs", "native_tool_call_envelopes"):
-            valid_envelopes = _valid_native_tool_call_envelopes(receipt.get(key))
+            valid_envelopes = normalize_native_tool_call_envelope_refs(receipt.get(key))
             if valid_envelopes:
                 return valid_envelopes
     return ()
