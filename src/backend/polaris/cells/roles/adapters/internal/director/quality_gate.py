@@ -27,8 +27,7 @@ from typing import Any
 
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.cells.roles.adapters.public.contracts import RunDirectorMaterializationQualityRepairScheduleCommandV1
-from polaris.kernelone.quality import artifact_quality_issues_from_errors
-from polaris.kernelone.quality.file_ownership_ledger import build_file_ownership_handoff_requests
+from polaris.kernelone.quality import artifact_quality_issues_from_errors, build_scope_authority_decision
 
 from . import execute_method as _em
 from .artifact_quality_diagnostics import (
@@ -1554,21 +1553,22 @@ def _task_boundary_scope_filter_evidence(
     workspace: str = "",
     cache_root: str = "",
 ) -> dict[str, Any]:
-    ownership_handoff_requests: tuple[dict[str, Any], ...] = ()
-    if str(workspace or "").strip():
-        ownership_handoff_requests = build_file_ownership_handoff_requests(
-            str(workspace or "").strip(),
-            str(cache_root or "").strip(),
-            target_files,
-            requesting_task_id=_task_boundary_requesting_task_id(task),
-            reason=reason,
-        )
+    decision = build_scope_authority_decision(
+        workspace=str(workspace or "").strip(),
+        cache_root=str(cache_root or "").strip(),
+        task_declared_write_targets=_task_write_scope_candidates(task),
+        out_of_scope_repair_target_files=target_files,
+        requesting_task_id=_task_boundary_requesting_task_id(task),
+        reason=reason,
+    )
+    scope_authority = decision.to_dict()
     return {
         "schema_version": "director.task_boundary.repair_scope_filter.v1",
         "reason": reason,
-        "task_declared_write_targets": _task_write_scope_candidates(task)[:12],
-        "out_of_scope_repair_target_files": _dedupe_preserve_order(target_files)[:12],
-        "ownership_handoff_requests": list(ownership_handoff_requests)[:12],
+        "task_declared_write_targets": scope_authority["task_declared_write_targets"][:12],
+        "out_of_scope_repair_target_files": scope_authority["out_of_scope_repair_target_files"][:12],
+        "ownership_handoff_requests": scope_authority["ownership_handoff_requests"][:12],
+        "scope_authority": scope_authority,
         "deferred": True,
     }
 

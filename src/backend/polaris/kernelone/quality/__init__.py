@@ -26,6 +26,7 @@ from polaris.kernelone.quality.cross_artifact_interfaces import (
 )
 from polaris.kernelone.quality.package_scripts import PackageScriptsCheckResult, check_package_scripts
 from polaris.kernelone.quality.role_output_markers import DEBT_MARKERS
+from polaris.kernelone.quality.scope_authority import ScopeAuthorityDecision, build_scope_authority_decision
 from polaris.kernelone.quality.syntax_gate import (
     SyntaxCheckResult,
     check_file_syntax,
@@ -43,10 +44,12 @@ __all__ = [
     "InterfaceImport",
     "InterfaceSymbol",
     "PackageScriptsCheckResult",
+    "ScopeAuthorityDecision",
     "SymbolIndexSnapshot",
     "SyntaxCheckResult",
     "artifact_quality_issues_from_errors",
     "build_contract_amendment_request",
+    "build_scope_authority_decision",
     "build_symbol_index_snapshot",
     "check_file_syntax",
     "check_package_scripts",

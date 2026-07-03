@@ -37,3 +37,14 @@ def test_scope_filter_evidence_includes_file_ownership_handoff_requests(tmp_path
     assert requests[1]["target_file"] == "src/missing.js"
     assert requests[1]["owner_found"] is False
     assert requests[1]["status"] == "owner_unknown"
+
+    scope_authority = evidence["scope_authority"]
+    assert scope_authority["schema_version"] == "scope-authority-decision/1"
+    assert scope_authority["authority"] == "kernelone.quality.scope_authority"
+    assert scope_authority["requesting_task_id"] == "PM-0001-2-step-3"
+    assert scope_authority["task_declared_write_targets"] == ["tests/behavior.test.js"]
+    assert scope_authority["out_of_scope_repair_target_files"] == ["src/index.js", "src/missing.js"]
+    assert scope_authority["handoff_request_count"] == 2
+    assert scope_authority["owner_found_count"] == 1
+    assert scope_authority["owner_unknown_count"] == 1
+    assert scope_authority["recommended_routes"] == ["owner_task_retry", "scope_authority_resolution"]
