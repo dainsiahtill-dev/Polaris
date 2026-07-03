@@ -412,7 +412,7 @@ class ActivityRunner:
         *,
         timeout_seconds: float | None = None,
     ) -> Any:
-        """执行 handler，兼容 sync/async"""
+        """执行 handler，支持同步和异步处理函数"""
         # 安全处理输入参数
         safe_input = input if isinstance(input, dict) else {}
         result = handler(**safe_input)
