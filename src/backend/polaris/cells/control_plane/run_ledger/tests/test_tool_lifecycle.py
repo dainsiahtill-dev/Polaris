@@ -122,6 +122,29 @@ def test_tool_lifecycle_receipt_preserves_dropped_tool_details() -> None:
     ]
 
 
+def test_tool_lifecycle_receipt_derives_counts_from_dropped_tool_details() -> None:
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        dispatched_tool_calls_count=0,
+        dropped_tool_calls=[{"tool_name": "write_file", "reason": "tool_dispatch_dropped"}],
+        receipts=[],
+    ).to_dict()
+
+    assert receipt["native_tool_calls_count"] == 1
+    assert receipt["decoded_tool_calls_count"] == 1
+    assert receipt["dispatch_status"] == "dropped"
+    assert receipt["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert receipt["dropped_tool_calls"] == [
+        {
+            "tool_name": "write_file",
+            "reason": "tool_dispatch_dropped",
+        }
+    ]
+
+
 def test_tool_lifecycle_normalizer_canonicalizes_legacy_dropped_tool_names() -> None:
     receipt = normalize_tool_call_lifecycle_receipt(
         {

@@ -238,14 +238,18 @@ def build_tool_call_lifecycle_receipt(
     effect_refs = _effect_receipt_refs(receipt_rows)
     missing_write_effects = _successful_write_results_without_effect_receipts(receipt_rows)
     result_count = len(_result_items(receipt_rows))
-    native_count = len(native_envelope_refs) if native_envelope_refs else _int_value(native_tool_calls_count)
-    decoded_count = _int_value(decoded_tool_calls_count)
     dispatched_count = _int_value(dispatched_tool_calls_count)
     if dispatched_count <= 0 and result_count > 0:
         dispatched_count = result_count
     status = _clean_string(dispatch_status)
     failure = normalize_failure_class(failure_class)
     dropped: list[dict[str, Any]] = _dropped_tool_call_refs(dropped_tool_calls)
+    native_count = len(native_envelope_refs) if native_envelope_refs else _int_value(native_tool_calls_count)
+    if native_count <= 0 and dropped:
+        native_count = len(dropped)
+    decoded_count = _int_value(decoded_tool_calls_count)
+    if decoded_count <= 0 and native_count > 0 and dispatched_count <= 0:
+        decoded_count = native_count
 
     if native_count > 0 and dispatched_count <= 0:
         status = status or "dropped"

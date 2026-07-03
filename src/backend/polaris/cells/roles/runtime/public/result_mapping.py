@@ -201,7 +201,6 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
     if dropped_error:
         dropped_tool_calls = _extract_tool_calls(result)
         native_envelopes = _native_tool_call_envelopes(result)
-        native_tool_calls_count = len(native_envelopes) or len(dropped_tool_calls)
         dropped_tool_call_refs = (
             []
             if native_envelopes
@@ -214,8 +213,6 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
                 task_id="",
                 turn_id="",
                 role="",
-                native_tool_calls_count=native_tool_calls_count,
-                decoded_tool_calls_count=native_tool_calls_count,
                 dispatched_tool_calls_count=0,
                 dropped_tool_calls=list(dropped_tool_call_refs),
                 native_tool_call_envelopes=list(native_envelopes),
