@@ -679,6 +679,87 @@ def test_quality_gate_task_boundary_validation_reopens_failed_director_task(temp
     assert evidence["plan_probe_preaudit"]["status"] == "coverage_matched_but_unplannable"
 
 
+def test_quality_gate_task_boundary_validation_routes_owner_handoff_to_owner_task(temp_workspace: Path) -> None:
+    task_board = TaskRuntimeService(str(temp_workspace))
+    owner_row = task_board.ensure_task_row(
+        external_task_id="PM-0001-1-S4",
+        subject="Owner creates src/index.js",
+        metadata={"external_task_id": "PM-0001-1-S4", "source_task_id": "PM-0001-1-S4"},
+        priority=1,
+    )
+    current_row = task_board.ensure_task_row(
+        external_task_id="PM-0001-2-step-3",
+        subject="Current task wants to repair tests",
+        metadata={
+            "external_task_id": "PM-0001-2-step-3",
+            "last_execution_error": "director_materialization_quality_failed",
+            "adapter_result": {
+                "quality_repair": {
+                    "stage": "task_boundary_repair_targets_deferred",
+                    "success_reason": "repair_targets_outside_current_task_target_files",
+                }
+            },
+        },
+        priority=2,
+    )
+    task_board.update(owner_row["id"], status="completed", assignee="director")
+    task_board.update(current_row["id"], status="failed", assignee="director")
+
+    target = Path(resolve_logical_path(str(temp_workspace), "workspace/qa/latest.workspace-validation.json"))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(
+            {
+                "passed": False,
+                "repair": {
+                    "success_reason": "repair_targets_outside_current_task_target_files",
+                    "task_boundary_scope_filter": {
+                        "schema_version": "director.task_boundary.repair_scope_filter.v1",
+                        "reason": "quality_repair_targets_outside_current_task_target_files",
+                        "ownership_handoff_requests": [
+                            {
+                                "schema_version": "file-ownership-handoff-request/1",
+                                "target_file": "src/index.js",
+                                "requesting_task_id": "PM-0001-2-step-3",
+                                "reason": "quality_repair_targets_outside_current_task_target_files",
+                                "owner_step_id": "PM-0001-1-S4",
+                                "owner_parent": "PM-0001-1",
+                                "owner_found": True,
+                                "recommended_route": "owner_task_retry",
+                                "status": "owner_found",
+                            }
+                        ],
+                    },
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    bridge_summary = factory_router_module._apply_quality_gate_task_boundary_rework_requests(str(temp_workspace))
+    rework_summary = factory_router_module._read_quality_gate_rework_summary(str(temp_workspace))
+
+    assert bridge_summary["requested"] is True
+    assert bridge_summary["reopened_count"] == 1
+    assert bridge_summary["tasks"][0]["external_task_id"] == "PM-0001-1-S4"
+    assert bridge_summary["tasks"][0]["reason"] == "task_boundary_owner_task_retry_required"
+    assert rework_summary["requested_count"] == 1
+    assert rework_summary["tasks"][0]["external_task_id"] == "PM-0001-1-S4"
+
+    rows = {
+        row["metadata"]["external_task_id"]: row
+        for row in TaskRuntimeService(str(temp_workspace)).list_task_rows()
+    }
+    assert rows["PM-0001-1-S4"]["status"] == "pending"
+    assert rows["PM-0001-1-S4"]["metadata"]["task_boundary_rework_reason"] == (
+        "task_boundary_owner_task_retry_required"
+    )
+    assert rows["PM-0001-2-step-3"]["status"] == "failed"
+
+
 def test_execute_run_reenters_director_when_quality_gate_requests_rework(temp_workspace: Path) -> None:
     executor = QualityReworkStageExecutor(temp_workspace)
     service = FactoryRunService(

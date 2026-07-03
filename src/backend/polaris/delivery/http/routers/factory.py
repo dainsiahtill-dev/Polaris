@@ -129,6 +129,7 @@ _RETRY_START_POLICY_AFTER_CHECKPOINT = "after_checkpoint"
 FactoryStartFrom: TypeAlias = Literal["auto", "architect", "pm", "director_resume"]
 StageSequenceStatus: TypeAlias = Literal["completed", "cancelled", "quality_rework_requested"]
 _TASK_BOUNDARY_REWORK_REASON = "task_boundary_interface_discrepancy_required"
+_TASK_BOUNDARY_OWNER_REWORK_REASON = "task_boundary_owner_task_retry_required"
 _PLAN_PROBE_UNPLANNABLE_STATUS = "coverage_matched_but_unplannable"
 
 
@@ -952,6 +953,8 @@ def _workspace_validation_requests_task_boundary_rework(payload: dict[str, Any])
         return True
     if str(repair.get("success_reason") or "").strip() == _TASK_BOUNDARY_REWORK_REASON:
         return True
+    if _owned_handoff_requests_from_repair_payload(repair):
+        return True
     warnings = payload.get("warnings")
     return isinstance(warnings, list) and _TASK_BOUNDARY_REWORK_REASON in {str(item).strip() for item in warnings}
 
@@ -1007,6 +1010,57 @@ def _task_record_needs_task_boundary_rework(record: dict[str, Any]) -> bool:
     )
 
 
+def _owned_handoff_requests_from_repair_payload(repair: dict[str, Any]) -> list[dict[str, Any]]:
+    scope_filter_raw = repair.get("task_boundary_scope_filter")
+    scope_filter: dict[str, Any] = scope_filter_raw if isinstance(scope_filter_raw, dict) else {}
+    requests_raw = scope_filter.get("ownership_handoff_requests")
+    if not isinstance(requests_raw, list):
+        return []
+    requests: list[dict[str, Any]] = []
+    for item in requests_raw:
+        request: dict[str, Any] = item if isinstance(item, dict) else {}
+        if not bool(request.get("owner_found")):
+            continue
+        if str(request.get("recommended_route") or "").strip() != "owner_task_retry":
+            continue
+        requests.append(request)
+    return requests
+
+
+def _task_record_external_tokens(record: dict[str, Any]) -> set[str]:
+    tokens: set[str] = set()
+    for value in (record.get("id"), record.get("task_id")):
+        token = str(value or "").strip()
+        if token:
+            tokens.add(token)
+    metadata_raw = record.get("metadata")
+    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+    for key in ("external_task_id", "pm_task_id", "source_task_id", "task_id"):
+        token = str(metadata.get(key) or "").strip()
+        if token:
+            tokens.add(token)
+    return tokens
+
+
+def _matching_owner_handoff_request(
+    record: dict[str, Any],
+    handoff_requests: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not handoff_requests:
+        return {}
+    tokens = _task_record_external_tokens(record)
+    if not tokens:
+        return {}
+    for request in handoff_requests:
+        owner_tokens = {
+            str(request.get("owner_step_id") or "").strip(),
+            str(request.get("owner_parent") or "").strip(),
+        }
+        if tokens & {token for token in owner_tokens if token}:
+            return request
+    return {}
+
+
 def _safe_rework_int(value: Any, *, default: int = 0) -> int:
     try:
         return int(value)
@@ -1028,6 +1082,7 @@ def _task_boundary_rework_evidence(payload: dict[str, Any], *, artifact: str) ->
         "success_reason",
         "plan_probe_preaudit",
         "interface_discrepancy_evidence",
+        "task_boundary_scope_filter",
         "residual_error_count",
         "residual_errors",
     ):
@@ -1065,11 +1120,27 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
     max_retries = _resolve_quality_rework_max_cycles()
     now_iso = datetime.now(timezone.utc).isoformat()
     evidence = _task_boundary_rework_evidence(payload, artifact=artifact)
+    repair_raw = payload.get("repair")
+    repair: dict[str, Any] = repair_raw if isinstance(repair_raw, dict) else {}
+    owner_handoff_requests = _owned_handoff_requests_from_repair_payload(repair)
     for entry in entries:
         record = entry.to_dict() if hasattr(entry, "to_dict") else entry
         if not isinstance(record, dict):
             continue
-        if not _task_record_needs_task_boundary_rework(record):
+        owner_handoff_request = _matching_owner_handoff_request(record, owner_handoff_requests)
+        if owner_handoff_requests:
+            if not owner_handoff_request:
+                continue
+            rework_reason = _TASK_BOUNDARY_OWNER_REWORK_REASON
+            task_evidence = {
+                **evidence,
+                "reason": rework_reason,
+                "ownership_handoff_request": owner_handoff_request,
+            }
+        elif _task_record_needs_task_boundary_rework(record):
+            rework_reason = _TASK_BOUNDARY_REWORK_REASON
+            task_evidence = evidence
+        else:
             continue
 
         task_id = _safe_rework_int(record.get("id") or record.get("task_id"), default=0)
@@ -1092,25 +1163,25 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
         merged_adapter_result.update(
             {
                 "task_boundary_rework_requested": not exhausted,
-                "task_boundary_rework_reason": _TASK_BOUNDARY_REWORK_REASON,
+                "task_boundary_rework_reason": rework_reason,
                 "qa_rework_retry_count": next_retry_count,
                 "qa_rework_max_retries": max_retries,
-                "qa_rework_reason": _TASK_BOUNDARY_REWORK_REASON,
+                "qa_rework_reason": rework_reason,
                 "qa_rework_exhausted": exhausted,
-                "qa_rework_evidence": evidence,
+                "qa_rework_evidence": task_evidence,
             }
         )
         metadata_update = {
             "adapter_result": merged_adapter_result,
             "task_boundary_rework_requested": not exhausted,
-            "task_boundary_rework_reason": _TASK_BOUNDARY_REWORK_REASON,
-            "task_boundary_rework_evidence": evidence,
+            "task_boundary_rework_reason": rework_reason,
+            "task_boundary_rework_evidence": task_evidence,
             "qa_rework_requested": not exhausted,
             "qa_rework_exhausted": exhausted,
             "qa_rework_retry_count": next_retry_count,
             "qa_rework_max_retries": max_retries,
-            "qa_rework_reason": _TASK_BOUNDARY_REWORK_REASON,
-            "qa_rework_evidence": evidence,
+            "qa_rework_reason": rework_reason,
+            "qa_rework_evidence": task_evidence,
             "qa_last_reviewed_at": now_iso,
             "qa_last_verdict": "FAIL",
         }
@@ -1121,6 +1192,7 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
             "retry_count": next_retry_count,
             "max_retries": max_retries,
             "exhausted": exhausted,
+            "reason": rework_reason,
         }
         try:
             if exhausted:
@@ -1129,7 +1201,7 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
             else:
                 task_board.reopen(
                     task_id,
-                    reason=_TASK_BOUNDARY_REWORK_REASON,
+                    reason=rework_reason,
                     metadata=metadata_update,
                 )
                 summary["reopened_count"] += 1
