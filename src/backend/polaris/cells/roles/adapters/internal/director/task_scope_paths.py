@@ -11,10 +11,16 @@ symbol here); this module exists only to host the leaf logic.
 
 from __future__ import annotations
 
-import fnmatch
 import re
 from pathlib import Path
 from typing import Any
+
+from polaris.kernelone.quality.scope_authority import (
+    glob_declared_scope_path_matches,
+    normalize_declared_scope_path,
+    path_matches_any_declared_scope_candidate,
+    path_matches_declared_scope_candidate,
+)
 
 
 def _filter_diff_to_task_declared_paths(
@@ -88,28 +94,11 @@ def _extract_task_target_path_candidates(task: dict[str, Any]) -> list[str]:
 
 
 def _path_matches_any_declared_candidate(path: str, candidates: list[str]) -> bool:
-    normalized_path = _normalize_declared_task_path(path)
-    if not normalized_path:
-        return False
-    return any(_path_matches_declared_candidate(normalized_path, candidate) for candidate in candidates)
+    return path_matches_any_declared_scope_candidate(path, candidates)
 
 
 def _path_matches_declared_candidate(path: str, candidate: str) -> bool:
-    candidate = str(candidate or "").strip().rstrip("/")
-    if not candidate:
-        return False
-    if any(ch in candidate for ch in ("*", "?")):
-        return _glob_path_matches(path, candidate)
-    # Declared-intent matching is case-insensitive: PM contracts routinely
-    # declare "readme.md" while the materialized file is "README.md". A
-    # case-sensitive comparison filtered the task's only real output from the
-    # diff and produced a director_no_materialized_changes pseudo-failure
-    # (live factory-bench L2-09 PM-0001-2, 2026-06-12).
-    path_folded = path.casefold()
-    candidate_folded = candidate.casefold()
-    if path_folded == candidate_folded:
-        return True
-    return path_folded.startswith(f"{candidate_folded}/")
+    return path_matches_declared_scope_candidate(path, candidate)
 
 
 def _workspace_path_exists_case_insensitive(root: Path, rel_path: str) -> bool:
@@ -315,19 +304,7 @@ def _scope_directory_covers_explicit_target(scope_candidate: str, explicit_targe
 
 
 def _normalize_declared_task_path(value: str, *, workspace_name: str = "") -> str:
-    token = str(value or "").strip().strip("'\"`")
-    token = token.replace("\\", "/").strip().lstrip("./")
-    while token.endswith((".", ":", "，", "。", "；", ";", ",")):
-        token = token[:-1].strip()
-    if not token:
-        return ""
-    parts = [part for part in token.split("/") if part not in {"", "."}]
-    if any(part == ".." for part in parts):
-        return ""
-    workspace_prefix = str(workspace_name or "").strip().lower()
-    if workspace_prefix and len(parts) > 1 and parts[0].lower() == workspace_prefix:
-        parts = parts[1:]
-    return "/".join(parts)
+    return normalize_declared_scope_path(value, workspace_name=workspace_name)
 
 
 def _path_candidate_exists_in_file_set(candidate: str, current_files: set[str]) -> bool:
@@ -346,17 +323,7 @@ def _path_candidate_exists_in_file_set(candidate: str, current_files: set[str]) 
 
 
 def _glob_path_matches(path: str, pattern: str) -> bool:
-    # fnmatch.fnmatch is only case-insensitive on case-insensitive platforms;
-    # declared-intent matching must be case-insensitive everywhere (see
-    # _path_matches_declared_candidate).
-    path = path.casefold()
-    pattern = pattern.casefold()
-    if fnmatch.fnmatch(path, pattern):
-        return True
-    if "/**/" not in pattern:
-        return False
-    shallow_pattern = pattern.replace("/**/", "/")
-    return fnmatch.fnmatch(path, shallow_pattern)
+    return glob_declared_scope_path_matches(path, pattern)
 
 
 def _dedupe_preserve_order(values: list[str]) -> list[str]:

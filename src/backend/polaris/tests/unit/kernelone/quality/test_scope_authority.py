@@ -5,7 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from polaris.kernelone.quality.file_ownership_ledger import record_file_owners
-from polaris.kernelone.quality.scope_authority import build_scope_authority_decision
+from polaris.kernelone.quality.scope_authority import (
+    build_scope_authority_decision,
+    normalize_declared_scope_path,
+    path_matches_any_declared_scope_candidate,
+)
 
 
 def test_scope_authority_projects_owner_handoffs(tmp_path: Path) -> None:
@@ -52,3 +56,11 @@ def test_scope_authority_without_workspace_still_records_defer_decision() -> Non
     assert decision["owner_found_count"] == 0
     assert decision["owner_unknown_count"] == 0
     assert decision["recommended_routes"] == []
+
+
+def test_scope_authority_path_matching_is_case_insensitive_and_workspace_relative() -> None:
+    assert normalize_declared_scope_path("L2-08/src/Index.ts", workspace_name="L2-08") == "src/Index.ts"
+    assert path_matches_any_declared_scope_candidate("SRC/index.ts", ["src/index.ts"])
+    assert path_matches_any_declared_scope_candidate("src/app/main.ts", ["src/**/main.ts"])
+    assert path_matches_any_declared_scope_candidate("src/main.ts", ["src/**/main.ts"])
+    assert not path_matches_any_declared_scope_candidate("../outside.ts", ["src/**/main.ts"])

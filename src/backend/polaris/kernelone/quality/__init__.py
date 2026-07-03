@@ -26,7 +26,14 @@ from polaris.kernelone.quality.cross_artifact_interfaces import (
 )
 from polaris.kernelone.quality.package_scripts import PackageScriptsCheckResult, check_package_scripts
 from polaris.kernelone.quality.role_output_markers import DEBT_MARKERS
-from polaris.kernelone.quality.scope_authority import ScopeAuthorityDecision, build_scope_authority_decision
+from polaris.kernelone.quality.scope_authority import (
+    ScopeAuthorityDecision,
+    build_scope_authority_decision,
+    glob_declared_scope_path_matches,
+    normalize_declared_scope_path,
+    path_matches_any_declared_scope_candidate,
+    path_matches_declared_scope_candidate,
+)
 from polaris.kernelone.quality.syntax_gate import (
     SyntaxCheckResult,
     check_file_syntax,
@@ -55,6 +62,10 @@ __all__ = [
     "check_package_scripts",
     "check_source_file_syntax",
     "first_syntax_failure",
+    "glob_declared_scope_path_matches",
+    "normalize_declared_scope_path",
+    "path_matches_any_declared_scope_candidate",
+    "path_matches_declared_scope_candidate",
     "plan_cross_artifact_repairs",
     "scan_cross_artifact_consistency",
     "scan_cross_artifact_consistency_errors",

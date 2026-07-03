@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -20,6 +21,64 @@ def _normalize_target(raw: Any) -> str:
     while target.startswith("./"):
         target = target[2:]
     return target
+
+
+def normalize_declared_scope_path(value: Any, *, workspace_name: str = "") -> str:
+    """Normalize a declared task-scope path without consulting the filesystem."""
+
+    token = _clean_token(value).strip("'\"`")
+    token = token.replace("\\", "/").strip().lstrip("./")
+    while token.endswith((".", ":", "，", "。", "；", ";", ",")):
+        token = token[:-1].strip()
+    if not token:
+        return ""
+    parts = [part for part in token.split("/") if part not in {"", "."}]
+    if any(part == ".." for part in parts):
+        return ""
+    workspace_prefix = _clean_token(workspace_name).lower()
+    if workspace_prefix and len(parts) > 1 and parts[0].lower() == workspace_prefix:
+        parts = parts[1:]
+    return "/".join(parts)
+
+
+def glob_declared_scope_path_matches(path: str, pattern: str) -> bool:
+    """Case-insensitive glob match for declared task scopes."""
+
+    normalized_path = normalize_declared_scope_path(path).casefold()
+    normalized_pattern = normalize_declared_scope_path(pattern).casefold()
+    if not normalized_path or not normalized_pattern:
+        return False
+    if fnmatch.fnmatch(normalized_path, normalized_pattern):
+        return True
+    if "/**/" not in normalized_pattern:
+        return False
+    shallow_pattern = normalized_pattern.replace("/**/", "/")
+    return fnmatch.fnmatch(normalized_path, shallow_pattern)
+
+
+def path_matches_declared_scope_candidate(path: str, candidate: str) -> bool:
+    """Return whether a path belongs to one normalized declared scope candidate."""
+
+    normalized_path = normalize_declared_scope_path(path)
+    normalized_candidate = normalize_declared_scope_path(candidate).rstrip("/")
+    if not normalized_path or not normalized_candidate:
+        return False
+    if any(ch in normalized_candidate for ch in ("*", "?")):
+        return glob_declared_scope_path_matches(normalized_path, normalized_candidate)
+    path_folded = normalized_path.casefold()
+    candidate_folded = normalized_candidate.casefold()
+    if path_folded == candidate_folded:
+        return True
+    return path_folded.startswith(f"{candidate_folded}/")
+
+
+def path_matches_any_declared_scope_candidate(path: str, candidates: Sequence[str]) -> bool:
+    """Return whether a path belongs to any declared task-scope candidate."""
+
+    normalized_path = normalize_declared_scope_path(path)
+    if not normalized_path:
+        return False
+    return any(path_matches_declared_scope_candidate(normalized_path, candidate) for candidate in candidates)
 
 
 def _dedupe_targets(values: Iterable[Any]) -> tuple[str, ...]:
@@ -107,4 +166,8 @@ def build_scope_authority_decision(
 __all__ = [
     "ScopeAuthorityDecision",
     "build_scope_authority_decision",
+    "glob_declared_scope_path_matches",
+    "normalize_declared_scope_path",
+    "path_matches_any_declared_scope_candidate",
+    "path_matches_declared_scope_candidate",
 ]
