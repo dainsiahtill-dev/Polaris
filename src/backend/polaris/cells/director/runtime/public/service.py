@@ -1023,10 +1023,30 @@ def normalize_director_repair_issue_diagnostics(
     return tuple(diagnostics)
 
 
+def _repair_diagnostics_from_artifact_quality_issues(
+    artifact_quality_issues: Sequence[Mapping[str, Any]],
+) -> tuple[RepairDiagnostic, ...]:
+    diagnostics: list[RepairDiagnostic] = []
+    for public_diagnostic in normalize_director_repair_issue_diagnostics(artifact_quality_issues):
+        diagnostics.append(
+            RepairDiagnostic(
+                source=public_diagnostic.source,
+                code=public_diagnostic.code,
+                message=public_diagnostic.message,
+                path=public_diagnostic.path,
+                raw=str(public_diagnostic.metadata.get("raw") or public_diagnostic.message),
+                metadata=public_diagnostic.metadata,
+            )
+        )
+    return tuple(diagnostics)
+
+
 def query_director_repair_coverage(query: QueryDirectorRepairCoverageV1) -> DirectorRepairCoverageReportV1:
     """Return read-only repair-rule coverage for raw artifact-quality errors."""
 
-    diagnostics = normalize_artifact_quality_errors(list(query.artifact_quality_errors))
+    diagnostics = _repair_diagnostics_from_artifact_quality_issues(query.artifact_quality_issues)
+    if not diagnostics:
+        diagnostics = normalize_artifact_quality_errors(list(query.artifact_quality_errors))
     report = build_repair_coverage_report(diagnostics)
     coverage_gaps_by_id = {
         str(gap.get("diagnostic_id") or ""): dict(gap)

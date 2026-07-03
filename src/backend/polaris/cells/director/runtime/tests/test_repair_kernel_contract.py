@@ -12067,6 +12067,31 @@ def test_public_repair_coverage_report_exposes_uncovered_diagnostics() -> None:
     assert payload["coverage_gaps"][0]["missing_capability"] == "deterministic_repair_rule"
 
 
+def test_public_repair_coverage_accepts_typed_artifact_quality_issues() -> None:
+    result = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(
+            artifact_quality_errors=(),
+            artifact_quality_issues=(
+                {
+                    "source": "artifact_quality",
+                    "code": "typescript_ts9999",
+                    "message": "Unknown future compiler error.",
+                    "path": "src/app.ts",
+                    "severity": "error",
+                    "metadata": {"line": 3, "column": 14},
+                },
+            ),
+        )
+    )
+    payload = result.to_dict()
+
+    assert payload["total_diagnostics"] == 1
+    assert payload["items"][0]["diagnostic"]["code"] == "typescript_ts9999"
+    assert payload["items"][0]["diagnostic"]["path"] == "src/app.ts"
+    assert payload["items"][0]["diagnostic_code"] == "typescript_ts9999"
+    assert payload["uncovered_diagnostics"][0]["code"] == "typescript_ts9999"
+
+
 def test_public_repair_coverage_suggests_rust_missing_method_self_family() -> None:
     result = query_director_repair_coverage(
         QueryDirectorRepairCoverageV1(

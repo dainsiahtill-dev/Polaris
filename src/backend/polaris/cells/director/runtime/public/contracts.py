@@ -1029,9 +1029,11 @@ class QueryDirectorRepairCoverageV1:
     """Query shape for read-only deterministic repair diagnostic coverage."""
 
     artifact_quality_errors: tuple[str, ...]
+    artifact_quality_issues: tuple[Mapping[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "artifact_quality_errors", _to_tuple_str(list(self.artifact_quality_errors)))
+        object.__setattr__(self, "artifact_quality_issues", _to_tuple_mapping_from_any(self.artifact_quality_issues))
 
 
 @dataclass(frozen=True)
