@@ -95,3 +95,51 @@ def test_lift_completion_audit_evidence_preserves_lifecycle_envelope_refs() -> N
             "reason": "tool_dispatch_dropped",
         }
     ]
+
+
+def test_lift_completion_audit_evidence_preserves_canonical_lifecycle_receipt() -> None:
+    envelope = {
+        "schema_version": "native_tool_call_envelope.v1",
+        "envelope_id": "native-tool-call-lifecycle-1",
+        "tool_name": "write_file",
+        "call_id": "call-lifecycle-1",
+    }
+    metadata: dict[str, object] = {}
+
+    projection._lift_completion_audit_evidence(
+        metadata,
+        {
+            "required_tools": ["write_file"],
+            "tool_call_lifecycle": {
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "native_tool_call_envelope_refs": [envelope],
+            },
+        },
+    )
+
+    assert metadata["required_tools"] == ["write_file"]
+    assert metadata["tool_call_lifecycle"] == {
+        "schema_version": "tool_call_lifecycle_receipt.v1",
+        "native_tool_call_envelope_refs": [envelope],
+    }
+
+    lifecycle = record_missing_dispatch_lifecycle_receipt(
+        role="director",
+        request=RoleTurnRequest(workspace=".", message="implement", run_id="run-1", task_id="TASK-1"),
+        kernel=SimpleNamespace(workspace="."),
+        turn_id="turn-1",
+        metadata=metadata,
+        ledger=None,
+        tool_results=[],
+        batch_receipt=None,
+    )
+
+    assert lifecycle is not None
+    assert lifecycle["native_tool_calls_count"] == 1
+    assert lifecycle["dropped_tool_calls"] == [
+        {
+            "tool_name": "write_file",
+            "envelope_id": "native-tool-call-lifecycle-1",
+            "reason": "tool_dispatch_dropped",
+        }
+    ]

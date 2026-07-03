@@ -335,6 +335,9 @@ class StreamEventProjector:
 _COMPLETION_AUDIT_EVIDENCE_KEYS: tuple[str, ...] = (
     "final_request_context_audit",
     "required_tools",
+    "tool_call_lifecycle",
+    "tool_call_lifecycle_receipt",
+    "tool_call_lifecycle_receipts",
     "native_tool_call_envelopes",
     "native_tool_call_envelope_refs",
     "native_tool_calls_count",
