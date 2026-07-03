@@ -1,6 +1,6 @@
 """orchestration.workflow_engine Cell.
 
-Owns the KernelOne WorkflowEngine and the HandlerRegistry protocol.
+Owns the KernelOne WorkflowEngine and the CellHandlerRegistry implementation.
 """
 
 from __future__ import annotations
@@ -15,12 +15,9 @@ from polaris.kernelone.workflow.engine import (
 
 from .public.contracts import CellHandlerRegistry
 
-# Backward-compatible alias for older Cell imports.
-HandlerRegistry = HandlerRegistryPort
-
 __all__ = [
     "CellHandlerRegistry",
-    "HandlerRegistry",
+    "HandlerRegistryPort",
     "TaskExecutionOutcome",
     "TaskRuntimeState",
     "WorkflowEngine",
