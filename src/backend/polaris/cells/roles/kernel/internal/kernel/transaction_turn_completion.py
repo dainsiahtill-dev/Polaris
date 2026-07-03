@@ -12,6 +12,7 @@ import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1, is_failure_class
 from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
     _build_turn_history_and_events,
     _commit_turn_to_snapshot,
@@ -310,7 +311,7 @@ def _build_missing_dispatch_lifecycle_receipt(
     return {
         "schema_version": "tool_call_lifecycle_receipt.v1",
         "dispatch_status": "dropped",
-        "failure_class": "tool_dispatch_dropped",
+        "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
         "reason": "required_write_tool_without_dispatch_evidence",
         "native_tool_calls_count": _native_tool_calls_count(metadata, ledger),
         "decoded_tool_calls_count": _safe_int(latest_metadata.get("tool_count")),
@@ -498,8 +499,8 @@ def _tool_dispatch_from_lifecycle(metadata: Mapping[str, Any]) -> dict[str, Any]
     if not isinstance(lifecycle, Mapping):
         return None
     dispatch_status = str(lifecycle.get("dispatch_status") or "").strip()
-    failure_class = str(lifecycle.get("failure_class") or "").strip().lower()
-    if dispatch_status != "dropped" and failure_class != "tool_dispatch_dropped":
+    failure_class = str(lifecycle.get("failure_class") or "").strip()
+    if dispatch_status != "dropped" and not is_failure_class(failure_class, FailureClassV1.TOOL_DISPATCH_DROPPED):
         return None
     return {
         "status": "dropped",

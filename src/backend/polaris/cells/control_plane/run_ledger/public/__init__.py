@@ -13,6 +13,12 @@ from .contracts import (
     RunLedgerProjectionResultV1,
     RunProvenanceBundleResultV1,
 )
+from .failure_evidence import (
+    FailureClassV1,
+    FailureEvidenceV1,
+    is_failure_class,
+    normalize_failure_class,
+)
 from .job_token import JobToken
 from .ledger import RunLedger, stable_hash, stable_json
 from .projection import build_run_ledger_projection, summarize_run_ledger_projection
@@ -39,6 +45,8 @@ from .tool_lifecycle import (
 __all__ = [
     "AppendRunLedgerEventCommandV1",
     "ControlPlaneRunLedgerV1Error",
+    "FailureClassV1",
+    "FailureEvidenceV1",
     "JobToken",
     "ReadRunLedgerProjectionBarrierQueryV1",
     "ReadRunLedgerProjectionQueryV1",
@@ -57,6 +65,8 @@ __all__ = [
     "build_run_provenance_bundle",
     "build_tool_call_lifecycle_receipt",
     "evaluate_task_boundary_verdict",
+    "is_failure_class",
+    "normalize_failure_class",
     "normalize_task_boundary_verdict",
     "normalize_tool_call_lifecycle_receipt",
     "read_run_ledger_projection",

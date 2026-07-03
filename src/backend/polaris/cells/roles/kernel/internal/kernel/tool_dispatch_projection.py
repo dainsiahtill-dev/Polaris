@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.roles.kernel.internal.kernel.task_boundary import append_director_task_boundary_verdict
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest
 from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
@@ -58,9 +59,10 @@ def llm_metadata_from_ledger_on_error(
     if context_os_audit_summary:
         metadata.setdefault("context_os_audit", context_os_audit_summary)
     anomaly_flags = getattr(ledger, "anomaly_flags", None)
+    tool_dispatch_dropped_class = FailureClassV1.TOOL_DISPATCH_DROPPED.value
     if isinstance(anomaly_flags, list) and anomaly_flags:
         metadata["anomaly_flags"] = [dict(item) for item in anomaly_flags if isinstance(item, dict)]
-        if any(str(item.get("type") or "") == "TOOL_DISPATCH_DROPPED" for item in metadata["anomaly_flags"]):
+        if any(str(item.get("type") or "") == tool_dispatch_dropped_class for item in metadata["anomaly_flags"]):
             metadata["tool_dispatch_dropped"] = True
     metadata["transaction_kernel_error_audit_available"] = bool(
         isinstance(metadata.get("final_request_context_audit"), dict)
@@ -102,7 +104,7 @@ def append_tool_dispatch_dropped_control_plane_events(
     dispatched_count = 0
     provider_response_hash = ""
     for flag in error_metadata.get("anomaly_flags", []):
-        if isinstance(flag, dict) and str(flag.get("type") or "") == "TOOL_DISPATCH_DROPPED":
+        if isinstance(flag, dict) and str(flag.get("type") or "") == FailureClassV1.TOOL_DISPATCH_DROPPED.value:
             native_count = max(1, int(flag.get("native_tool_calls_count") or 1))
             decoded_count = max(0, int(flag.get("decoded_tool_calls_count") or 0))
             dispatched_count = max(0, int(flag.get("dispatched_tool_calls_count") or 0))
@@ -119,7 +121,7 @@ def append_tool_dispatch_dropped_control_plane_events(
         dispatched_tool_calls_count=dispatched_count,
         receipts=[],
         dispatch_status="dropped",
-        failure_class="TOOL_DISPATCH_DROPPED",
+        failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
         reason=reason,
     )
     append_run_ledger_event(

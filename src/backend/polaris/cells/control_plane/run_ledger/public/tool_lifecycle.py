@@ -7,6 +7,10 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public.failure_evidence import (
+    FailureClassV1,
+    normalize_failure_class,
+)
 from polaris.kernelone.tools.tool_kinds import is_write_tool_name
 
 
@@ -188,29 +192,29 @@ def build_tool_call_lifecycle_receipt(
     decoded_count = _int_value(decoded_tool_calls_count)
     dispatched_count = _int_value(dispatched_tool_calls_count)
     status = _clean_string(dispatch_status)
-    failure = _clean_string(failure_class)
+    failure = normalize_failure_class(failure_class)
     dropped: list[dict[str, Any]] = []
 
     if native_count > 0 and dispatched_count <= 0:
         status = status or "dropped"
-        failure = failure or "TOOL_DISPATCH_DROPPED"
+        failure = failure or FailureClassV1.TOOL_DISPATCH_DROPPED.value
         dropped.append({"count": native_count, "reason": "native_tool_calls_without_dispatch"})
     elif decoded_count > 0 and not receipt_rows:
         status = status or "blocked"
-        failure = failure or "MISSING_BATCH_RECEIPT"
+        failure = failure or FailureClassV1.MISSING_BATCH_RECEIPT.value
     elif missing_write_effects:
         status = status or "blocked"
-        failure = failure or "MISSING_EFFECT_RECEIPT"
+        failure = failure or FailureClassV1.MISSING_EFFECT_RECEIPT.value
         dropped.extend(missing_write_effects)
     elif result_count > 0:
         status = status or "dispatched"
     else:
         status = status or "blocked"
-        failure = failure or "MISSING_TOOL_RESULT"
+        failure = failure or FailureClassV1.MISSING_TOOL_RESULT.value
 
     failure_count = sum(_int_value(receipt.get("failure_count")) for receipt in receipt_rows)
     if failure_count > 0:
-        failure = failure or "TOOL_RESULT_FAILED"
+        failure = failure or FailureClassV1.TOOL_RESULT_FAILED.value
 
     ok = status == "dispatched" and failure_count == 0 and not failure
     return ToolCallLifecycleReceiptV1(
@@ -245,13 +249,13 @@ def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
         payload.setdefault("schema_version", "tool_call_lifecycle_receipt.v1")
         payload.setdefault("ok", False)
         payload.setdefault("dispatch_status", "unknown")
-        payload.setdefault("failure_class", "TOOL_LIFECYCLE_UNKNOWN")
+        payload.setdefault("failure_class", FailureClassV1.TOOL_LIFECYCLE_UNKNOWN.value)
         return payload
     return {
         "schema_version": "tool_call_lifecycle_receipt.v1",
         "ok": False,
         "dispatch_status": "unknown",
-        "failure_class": "TOOL_LIFECYCLE_MISSING",
+        "failure_class": FailureClassV1.TOOL_LIFECYCLE_MISSING.value,
     }
 
 

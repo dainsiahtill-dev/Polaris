@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1, is_failure_class
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 
@@ -44,8 +45,11 @@ def _tool_dispatch_dropped_error(result: RoleTurnResult) -> str:
     lifecycle = metadata.get("tool_call_lifecycle")
     if isinstance(lifecycle, Mapping):
         dispatch_status = str(lifecycle.get("dispatch_status") or "").strip().lower()
-        failure_class = str(lifecycle.get("failure_class") or "").strip().lower()
-        if dispatch_status == "dropped" or failure_class == "tool_dispatch_dropped":
+        failure_class = str(lifecycle.get("failure_class") or "").strip()
+        if dispatch_status == "dropped" or is_failure_class(
+            failure_class,
+            FailureClassV1.TOOL_DISPATCH_DROPPED,
+        ):
             return "tool_dispatch_dropped: required or native tool calls had no dispatch/effect receipt"
     tool_calls = _extract_tool_calls(result)
     if not tool_calls or _has_tool_dispatch_evidence(result):
@@ -141,7 +145,7 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
             {
                 "schema_version": "tool_call_lifecycle_receipt.v1",
                 "dispatch_status": "dropped",
-                "failure_class": "tool_dispatch_dropped",
+                "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
                 "native_tool_calls_count": len(_extract_tool_calls(result)),
                 "decoded_tool_calls_count": len(_extract_tool_calls(result)),
                 "dispatched_tool_calls_count": 0,
