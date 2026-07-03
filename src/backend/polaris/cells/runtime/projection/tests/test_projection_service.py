@@ -426,6 +426,18 @@ def test_snapshot_task_rows_project_run_ledger_boundary_when_rows_are_missing(
     assert snapshot["tasks"][0]["error_message"] == "provider emitted native tool calls but dispatch was dropped"
 
 
+def test_snapshot_completed_count_includes_completed_verified_rows(tmp_path: Path) -> None:
+    projection = RuntimeProjection(
+        workflow_archive={"tasks": {"by_status": {"COMPLETED_VERIFIED": 1}}},
+        task_rows=[{"id": "TASK-1", "status": "COMPLETED_VERIFIED"}],
+    )
+
+    snapshot = build_snapshot_payload_from_projection(projection, workspace=str(tmp_path))
+
+    assert snapshot["snapshot_derived"]["workflow_completed_tasks"] == 1
+    assert snapshot["pm_state"]["completed_task_count"] == 1
+
+
 def test_snapshot_task_rows_normalize_run_ledger_task_boundary_failure_class(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

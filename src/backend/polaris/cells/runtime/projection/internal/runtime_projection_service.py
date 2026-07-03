@@ -1910,14 +1910,18 @@ def _derive_projection_fields(projection: RuntimeProjection) -> dict[str, Any]:
     def _completed_task_count(task_rows: list[dict[str, Any]], tasks_payload: dict[str, Any]) -> int:
         by_status = tasks_payload.get("by_status")
         if isinstance(by_status, dict):
-            completed = _safe_int(by_status.get("COMPLETED") or by_status.get("completed"))
+            completed = max(
+                _safe_int(by_status.get("COMPLETED") or by_status.get("completed")),
+                _safe_int(by_status.get("COMPLETED_VERIFIED") or by_status.get("completed_verified")),
+            )
             if completed > 0:
                 return completed
         return len(
             [
                 item
                 for item in task_rows
-                if str(item.get("status") or item.get("state") or "").strip().upper() == "COMPLETED"
+                if str(item.get("status") or item.get("state") or "").strip().upper()
+                in {"COMPLETED", "COMPLETED_VERIFIED"}
             ]
         )
 
