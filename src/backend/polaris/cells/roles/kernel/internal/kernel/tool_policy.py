@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.internal.forced_tool_scope import augment_forced_transaction_tool_definitions
+from polaris.kernelone.tools.tool_kinds import ACTIVE_WRITE_TOOLS
 
 if TYPE_CHECKING:
     from polaris.cells.roles.profile.public.service import RoleTurnRequest
@@ -128,20 +129,7 @@ def _runtime_tool_policy_from_context(
                 if tool_name and tool_name not in _CONTEXT_SAFE_MUTATING_TOOL_EXCEPTIONS:
                     blocked.add(tool_name)
         except (ImportError, RuntimeError, ValueError):
-            blocked.update(
-                {
-                    "append_to_file",
-                    "apply_patch",
-                    "background_run",
-                    "edit_blocks",
-                    "edit_file",
-                    "execute_command",
-                    "precision_edit",
-                    "repo_apply_diff",
-                    "search_replace",
-                    "write_file",
-                }
-            )
+            blocked.update(ACTIVE_WRITE_TOOLS | {"background_run", "execute_command"})
 
     audit = {
         "context_tool_policy_applied": bool(blocked),

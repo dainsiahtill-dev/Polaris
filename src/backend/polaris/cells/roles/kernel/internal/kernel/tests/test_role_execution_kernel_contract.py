@@ -24,6 +24,7 @@ from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
     _apply_runtime_tool_policy,
     _cognitive_runtime_blocked_tools,
     _filter_cognitive_blocked_tool_definitions,
+    _runtime_tool_policy_from_context,
 )
 from polaris.cells.roles.kernel.internal.kernel.tool_runtime_executor import (
     execute_single_tool,
@@ -352,6 +353,30 @@ class TestInjectedServiceEntrypoints:
         assert "execute_command" in audit["context_blocked_tools"]
         assert "update_session_state" not in audit["context_blocked_tools"]
         assert "compact_context" not in audit["context_blocked_tools"]
+
+    def test_context_tool_policy_fallback_blocks_active_mutations_only(self, monkeypatch) -> None:
+        """Fallback suppress-mutating policy must not list deprecated write tools."""
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        def _raise_registry_error():
+            raise RuntimeError("registry unavailable")
+
+        monkeypatch.setattr(ToolSpecRegistry, "get_write_tools", _raise_registry_error)
+        context_result = SimpleNamespace(
+            metadata={
+                "context_decision_hints": {
+                    "source": "roles.kernel.context_gateway",
+                    "suppress_mutating_tools": True,
+                }
+            }
+        )
+
+        blocked, audit = _runtime_tool_policy_from_context(context_result)
+
+        assert "edit_file" in blocked
+        assert "execute_command" in blocked
+        assert "precision_edit" not in blocked
+        assert "precision_edit" not in audit["context_blocked_tools"]
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_resets_counter_between_none_run_id_requests(self, monkeypatch) -> None:
