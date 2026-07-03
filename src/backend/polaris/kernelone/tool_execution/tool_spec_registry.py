@@ -1199,7 +1199,7 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
     "write_file": {
         "category": "write",
         "description": "Write content to a file, replacing the entire file. "
-        "For partial modifications (changing specific lines), use edit_file or precision_edit instead.",
+        "For partial modifications (changing specific lines), use edit_blocks or edit_file instead.",
         "aliases": [
             "create_file",
             "new_file",

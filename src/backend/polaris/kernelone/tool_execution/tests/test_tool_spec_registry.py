@@ -360,6 +360,18 @@ class TestToolSpecRegistry:
         assert "precision_edit" not in default_names
         assert "precision_edit" in compat_names
 
+    def test_default_llm_schemas_do_not_mention_deprecated_tool_names(self) -> None:
+        """Provider-visible default schema text must not steer models to deprecated tools."""
+        from polaris.kernelone.tool_execution import tool_spec_registry
+
+        ToolSpecRegistry.clear()
+        tool_spec_registry.migrate_from_contracts_specs()
+        schemas = ToolSpecRegistry.generate_llm_schemas(format="openai", deterministic=True)
+
+        rendered = str(schemas)
+        assert "precision_edit" not in rendered
+        assert "edit_blocks" in rendered
+
     def test_generate_llm_schemas_anthropic(self) -> None:
         """Test generating Anthropic format schemas."""
         spec = ToolSpec(
