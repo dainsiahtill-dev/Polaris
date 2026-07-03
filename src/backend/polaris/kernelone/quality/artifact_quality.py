@@ -1141,8 +1141,20 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
     issues: list[ArtifactQualityIssue] = []
     syntax = check_source_file_syntax(str(full_path))
     if syntax is not None and syntax.get("ok") is False:
-        errors.append(
-            f"Artifact quality scan failed: syntax error in {relative_path}: {str(syntax.get('error'))[:200]}"
+        syntax_detail = str(syntax.get("error"))[:200]
+        syntax_error = f"Artifact quality scan failed: syntax error in {relative_path}: {syntax_detail}"
+        errors.append(syntax_error)
+        issues.append(
+            ArtifactQualityIssue(
+                code="syntax_error",
+                message=f"syntax error in {relative_path}: {syntax_detail}",
+                path=relative_path,
+                source="source_syntax_checker",
+                metadata={
+                    "raw": syntax_error,
+                    "syntax_error": syntax_detail,
+                },
+            )
         )
     if os.path.basename(relative_path).lower() == "package.json":
         manifest_evidence = _scan_package_manifest_evidence(root_full, text, relative_path)

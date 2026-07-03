@@ -71,6 +71,19 @@ def test_artifact_quality_evidence_uses_direct_typed_issue_for_missing_workspace
     assert evidence.issues[0].source == "artifact_quality_scanner"
 
 
+def test_artifact_quality_evidence_uses_direct_source_syntax_issue(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"broken": true,,}\n', encoding="utf-8")
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["package.json"])
+
+    assert evidence.errors
+    assert len(evidence.issues) == 1
+    assert evidence.issues[0].code == "syntax_error"
+    assert evidence.issues[0].path == "package.json"
+    assert evidence.issues[0].source == "source_syntax_checker"
+    assert evidence.issues[0].metadata["raw"] == evidence.errors[0]
+
+
 def test_artifact_quality_evidence_uses_direct_declared_interface_issue(
     tmp_path: Path,
 ) -> None:

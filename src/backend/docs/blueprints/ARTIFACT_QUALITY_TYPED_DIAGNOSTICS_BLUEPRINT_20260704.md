@@ -48,6 +48,10 @@ Typed issues are evidence, not repair authorization. Repair still flows through
   `_scan_package_manifest()` API remains a string projection, but npm manifest
   findings no longer need to be reparsed from prose to become
   `ArtifactQualityIssue(code="npm_manifest_invalid", path="package.json")`.
+- Source syntax failures from `check_source_file_syntax()` now emit direct
+  `ArtifactQualityIssue(code="syntax_error", source="source_syntax_checker")`
+  at file-scan time, while preserving the legacy error string for existing
+  callers.
 
 ## 4. Verification
 
