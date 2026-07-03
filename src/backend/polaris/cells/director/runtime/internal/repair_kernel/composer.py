@@ -279,7 +279,7 @@ class PatchComposer:
                     "span_based": True,
                     "precision_strategy": "span_context_text_patch",
                     "write_file_fallback_allowed": True,
-                    "write_file_fallback_reason": "precision_editor_unavailable_or_rejected",
+                    "write_file_fallback_reason": "targeted_editor_unavailable_or_rejected",
                     "unique_context_checked": bool(unique_context_operation_ids),
                     "unique_context_operation_ids": unique_context_operation_ids,
                     "write_file_reason": "",
