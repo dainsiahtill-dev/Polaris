@@ -30,7 +30,7 @@ class SyntaxPolicy:
     """L3 运行时语法契约策略.
 
     在代码生成工具调用前拦截常见语法错误模式，强制要求 LLM 重新生成。
-    这是防止 precision_edit/precision_edit 因 'return0' 等错误反复失败的最后防线。
+    这是防止精确搜索文本或 diff 片段因 'return0' 等错误反复失败的最后防线。
     """
 
     # 高频错误模式: (正则, 错误描述, 修复建议)
@@ -106,21 +106,23 @@ class SyntaxPolicy:
 
         return SyntaxValidationResult(valid=True)
 
-    def validate_precision_edit_search(
+    def validate_exact_search_text(
         self,
         search_text: str,
         file_path: str | None = None,
     ) -> SyntaxValidationResult:
-        """专门验证 precision_edit 的 search 参数.
+        """Validate exact-search text before it is used by edit tools.
 
-        precision_edit 最容易因 'return0' 类错误失败，此函数提供针对性检查。
+        Exact-search edits are brittle when the search text contains common
+        generated-code mistakes such as ``return0``. This check fails early with
+        actionable guidance before the edit layer attempts a no-match operation.
 
         Args:
-            search_text: precision_edit 的 search 参数
-            file_path: 目标文件路径（用于推断语言）
+            search_text: Search text that must match the target file exactly.
+            file_path: Target file path used to infer the language.
 
         Returns:
-            SyntaxValidationResult: 验证结果
+            SyntaxValidationResult: Validation result.
         """
         # 根据文件扩展名推断语言
         language = "python"
@@ -132,10 +134,9 @@ class SyntaxPolicy:
 
         result = self.validate_code(search_text, language, file_path)
         if not result.valid:
-            # 为 precision_edit 场景增强错误消息
             return SyntaxValidationResult(
                 valid=False,
-                error=f"[precision_edit 语法拦截] {result.error}",
+                error=f"[exact-search 语法拦截] {result.error}",
                 line_number=result.line_number,
                 suggestion=f"{result.suggestion}\n\n重要提示: search 字符串必须与文件中的代码完全一致（包括空格）。建议使用 read_file() 先读取文件内容，复制其中的精确文本。",
             )
