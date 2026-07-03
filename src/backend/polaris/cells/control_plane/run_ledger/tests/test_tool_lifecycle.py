@@ -353,6 +353,23 @@ def test_tool_lifecycle_normalizer_projects_raw_dispatched_payload_as_ok() -> No
     assert receipt["failure_class"] == ""
 
 
+def test_tool_lifecycle_normalizer_does_not_mark_dispatched_without_failure_as_unknown() -> None:
+    receipt = normalize_tool_call_lifecycle_receipt(
+        {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_calls_count": 1,
+            "decoded_tool_calls_count": 1,
+            "dispatched_tool_calls_count": 1,
+            "tool_result_count": 1,
+            "dispatch_status": "dispatched",
+        }
+    )
+
+    assert receipt["ok"] is True
+    assert receipt["dispatch_status"] == "dispatched"
+    assert receipt["failure_class"] == ""
+
+
 def test_tool_lifecycle_receipt_preserves_native_tool_call_envelopes() -> None:
     envelope = {
         "schema_version": "native_tool_call_envelope.v1",
