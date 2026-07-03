@@ -8,7 +8,6 @@ from .artifact_compression import (
     compress_if_changed,
 )
 from .budget_gate import (
-    DEFAULT_FALLBACK_WINDOW,
     DEFAULT_SAFETY_MARGIN,
     MIN_BUDGET_TOKENS,
     ContextBudgetGate,
@@ -193,7 +192,6 @@ __all__ = [
     "CANONICAL_BUNDLE",
     "CANONICAL_WEIGHTING",
     "COST_GUARDED_WEIGHTING",
-    "DEFAULT_FALLBACK_WINDOW",
     "DEFAULT_SAFETY_MARGIN",
     "LOW_LATENCY_WEIGHTING",
     "MIN_BUDGET_TOKENS",

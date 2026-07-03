@@ -17,10 +17,14 @@ def test_context_budget_usage_alias_is_retired() -> None:
     assert hasattr(budget_gate, "ContextBudgetUsage")
     assert not hasattr(budget_gate, "ContextBudget")
     assert "ContextBudget" not in budget_gate.__all__
+    assert not hasattr(budget_gate, "DEFAULT_FALLBACK_WINDOW")
+    assert "DEFAULT_FALLBACK_WINDOW" not in budget_gate.__all__
 
     assert hasattr(context_root, "ContextBudgetUsage")
     assert not hasattr(context_root, "ContextBudget")
     assert "ContextBudget" not in context_root.__all__
+    assert not hasattr(context_root, "DEFAULT_FALLBACK_WINDOW")
+    assert "DEFAULT_FALLBACK_WINDOW" not in context_root.__all__
 
 
 def test_budget_gate_sources_do_not_reintroduce_context_budget_alias() -> None:
@@ -28,3 +32,4 @@ def test_budget_gate_sources_do_not_reintroduce_context_budget_alias() -> None:
     for path in (BUDGET_GATE_MODULE, CONTEXT_INIT):
         source = path.read_text(encoding="utf-8")
         assert "ContextBudget = ContextBudgetUsage" not in source
+        assert "DEFAULT_FALLBACK_WINDOW" not in source

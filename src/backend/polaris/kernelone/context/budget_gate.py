@@ -297,10 +297,8 @@ class ContextBudgetGate:
     ) -> ContextBudgetGate:
         """Resolve context window from a provider/model spec.
 
-        Resolution order:
-            1. provider.get_model_context_window(model_name)
-            2. hard-coded table for known models
-            3. DEFAULT_FALLBACK_WINDOW
+        The ModelCatalog is the sole source of truth for provider/model
+        context windows; unresolved model specs fail closed.
         """
         window = _resolve_model_window_from_spec(provider_name, model_name)
         return cls(
@@ -351,13 +349,6 @@ class ContextBudgetGate:
 # ------------------------------------------------------------------
 # Internal helpers
 # ------------------------------------------------------------------
-
-# DEPRECATED: This constant is kept for backward compatibility only.
-# The fallback mechanism it supported has been removed per SSOT principles.
-# Model context windows MUST now be configured in llm_config.json.
-# If not configured, ModelCatalog.resolve() will raise ValueError.
-DEFAULT_FALLBACK_WINDOW = 0  # Invalid value - should never be used
-
 
 def _resolve_model_window_from_spec(provider_name: str, model_name: str, workspace: str = ".") -> int:
     """Resolve model window from ModelCatalog (SSOT for model specs).

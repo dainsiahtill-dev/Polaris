@@ -382,7 +382,6 @@ def _build_context_os_overlay(
     policy: dict[str, Any] | None = None,
 ) -> tuple[str, ContextItem, dict[str, Any]] | None:
     # Lazy imports (P1-CTX-003 convergence)
-    from polaris.kernelone.context.budget_gate import DEFAULT_FALLBACK_WINDOW
     from polaris.kernelone.context.chunks import PromptChunkAssembler
     from polaris.kernelone.context.context_os import summarize_context_os_payload
     from polaris.kernelone.context.engine import ContextItem
@@ -399,7 +398,7 @@ def _build_context_os_overlay(
     source_messages = _coerce_int(continuity_payload.get("source_message_count"), 0)
 
     assembler = PromptChunkAssembler(
-        model_window=_resolve_context_os_overlay_model_window(policy, DEFAULT_FALLBACK_WINDOW),
+        model_window=_resolve_context_os_overlay_model_window(policy),
         safety_margin=0.85,
     )
     chunk = assembler.add_continuity(
@@ -433,7 +432,7 @@ def _build_context_os_overlay(
     return rendered, item, summary
 
 
-def _resolve_context_os_overlay_model_window(policy: dict[str, Any] | None, fallback: int) -> int:
+def _resolve_context_os_overlay_model_window(policy: dict[str, Any] | None) -> int:
     payload = dict(policy or {})
     candidate_keys = (
         "resolved_context_window",
@@ -452,7 +451,7 @@ def _resolve_context_os_overlay_model_window(policy: dict[str, Any] | None, fall
             value = _coerce_int(context_window.get(key), 0)
             if value > 0:
                 return value
-    return max(1, int(fallback or 1))
+    return 1
 
 
 def _extract_context_os_summary(pack: ContextPack) -> dict[str, Any]:
