@@ -121,6 +121,8 @@ def append_tool_dispatch_dropped_control_plane_events(
             lifecycle_raw = flag.get("tool_call_lifecycle_receipt") or flag.get("tool_call_lifecycle")
             if isinstance(lifecycle_raw, dict):
                 lifecycle_seed = normalize_tool_call_lifecycle_receipt(lifecycle_raw)
+                native_count = 0
+                decoded_count = 0
                 native_tool_call_envelopes = [
                     dict(item)
                     for item in lifecycle_seed.get("native_tool_call_envelope_refs", [])
@@ -129,8 +131,6 @@ def append_tool_dispatch_dropped_control_plane_events(
                 dropped_refs = lifecycle_seed.get("dropped_tool_calls")
                 if isinstance(dropped_refs, (list, tuple)):
                     dropped_tool_calls = [dict(item) for item in dropped_refs if isinstance(item, dict)]
-                native_count = _nonnegative_int(lifecycle_seed.get("native_tool_calls_count")) or 1
-                decoded_count = _nonnegative_int(lifecycle_seed.get("decoded_tool_calls_count"))
                 provider_response_hash = str(lifecycle_seed.get("provider_response_hash") or "").strip()
             else:
                 native_tool_call_envelopes = [dict(item) for item in native_tool_call_envelopes_from_metadata(flag)]

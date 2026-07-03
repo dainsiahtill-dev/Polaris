@@ -145,6 +145,29 @@ def test_tool_lifecycle_receipt_derives_counts_from_dropped_tool_details() -> No
     ]
 
 
+def test_tool_lifecycle_receipt_derives_counts_from_count_only_dropped_ref() -> None:
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        dispatched_tool_calls_count=0,
+        dropped_tool_calls=[{"count": 4, "reason": "native_tool_calls_without_dispatch"}],
+        receipts=[],
+    ).to_dict()
+
+    assert receipt["native_tool_calls_count"] == 4
+    assert receipt["decoded_tool_calls_count"] == 4
+    assert receipt["dispatch_status"] == "dropped"
+    assert receipt["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert receipt["dropped_tool_calls"] == [
+        {
+            "count": 4,
+            "reason": "native_tool_calls_without_dispatch",
+        }
+    ]
+
+
 def test_tool_lifecycle_normalizer_canonicalizes_legacy_dropped_tool_names() -> None:
     receipt = normalize_tool_call_lifecycle_receipt(
         {
@@ -213,6 +236,30 @@ def test_tool_lifecycle_normalizer_derives_counts_from_native_envelopes() -> Non
             "envelope_id": "native_tool_call:openai:1:call-1:abcdef",
             "reason": "tool_dispatch_dropped",
         },
+    ]
+
+
+def test_tool_lifecycle_normalizer_preserves_count_only_dropped_evidence() -> None:
+    receipt = normalize_tool_call_lifecycle_receipt(
+        {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_calls_count": 6,
+            "decoded_tool_calls_count": 0,
+            "dispatched_tool_calls_count": 0,
+            "dispatch_status": "",
+            "failure_class": "",
+        }
+    )
+
+    assert receipt["native_tool_calls_count"] == 6
+    assert receipt["decoded_tool_calls_count"] == 6
+    assert receipt["dispatch_status"] == "dropped"
+    assert receipt["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert receipt["dropped_tool_calls"] == [
+        {
+            "count": 6,
+            "reason": "native_tool_calls_without_dispatch",
+        }
     ]
 
 

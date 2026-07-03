@@ -54,6 +54,17 @@ def _dropped_tool_call_refs(value: Any) -> list[dict[str, Any]]:
     return refs
 
 
+def _dropped_tool_call_count(refs: list[dict[str, Any]]) -> int:
+    count = 0
+    for ref in refs:
+        explicit_count = _int_value(ref.get("count"))
+        if explicit_count > 0:
+            count += explicit_count
+            continue
+        count += 1
+    return count
+
+
 def _native_tool_call_envelope_refs(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, (list, tuple)):
         return []
@@ -246,7 +257,7 @@ def build_tool_call_lifecycle_receipt(
     dropped: list[dict[str, Any]] = _dropped_tool_call_refs(dropped_tool_calls)
     native_count = len(native_envelope_refs) if native_envelope_refs else _int_value(native_tool_calls_count)
     if native_count <= 0 and dropped:
-        native_count = len(dropped)
+        native_count = _dropped_tool_call_count(dropped)
     decoded_count = _int_value(decoded_tool_calls_count)
     if decoded_count <= 0 and native_count > 0 and dispatched_count <= 0:
         decoded_count = native_count
@@ -320,15 +331,22 @@ def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
         payload["native_tool_call_envelope_refs"] = native_refs
         payload["batch_receipt_refs"] = batch_refs
         payload["effect_receipt_refs"] = effect_refs
-        payload["native_tool_calls_count"] = native_count
-        payload["decoded_tool_calls_count"] = _int_value(payload.get("decoded_tool_calls_count"))
         payload["dispatched_tool_calls_count"] = dispatched_count
         payload["tool_result_count"] = result_count
         payload["effect_receipt_count"] = len(effect_refs) if effect_refs else _int_value(payload.get("effect_receipt_count"))
         dropped_tool_calls = _dropped_tool_call_refs(payload.get("dropped_tool_calls"))
         if native_count > 0 and dispatched_count <= 0 and not dropped_tool_calls:
             dropped_tool_calls = _dropped_tool_calls_from_native_envelopes(native_refs)
+        if native_count > 0 and dispatched_count <= 0 and not dropped_tool_calls:
+            dropped_tool_calls = [{"count": native_count, "reason": "native_tool_calls_without_dispatch"}]
+        if native_count <= 0 and dropped_tool_calls:
+            native_count = _dropped_tool_call_count(dropped_tool_calls)
+        decoded_count = _int_value(payload.get("decoded_tool_calls_count"))
+        if decoded_count <= 0 and native_count > 0 and dispatched_count <= 0:
+            decoded_count = native_count
         payload["dropped_tool_calls"] = dropped_tool_calls
+        payload["native_tool_calls_count"] = native_count
+        payload["decoded_tool_calls_count"] = decoded_count
         if native_count > 0 and dispatched_count <= 0:
             if not _clean_string(payload.get("dispatch_status")):
                 payload["dispatch_status"] = "dropped"
