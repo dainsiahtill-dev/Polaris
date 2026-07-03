@@ -19,9 +19,6 @@ logger = logging.getLogger(__name__)
 #: This is broader than TaskMarket consumers and intentionally includes
 #: ``resident_agi`` for status/audit visibility.
 RUNTIME_OBSERVABLE_ROLE_TOKENS: frozenset[str] = frozenset(role.value for role in RoleId.runtime_observable_roles())
-# Backward-compatible export for older imports. Do not use for new code; this
-# no longer means "TaskMarket consumer".
-CONSUMER_ROLE_TOKENS: frozenset[str] = RUNTIME_OBSERVABLE_ROLE_TOKENS
 
 
 # =============================================================================
@@ -122,7 +119,6 @@ def resolve_current_run_id(cache_root: str) -> str:
 
 
 __all__ = [
-    "CONSUMER_ROLE_TOKENS",
     "RUNTIME_OBSERVABLE_ROLE_TOKENS",
     "channel_max_chars",
     "is_llm_channel",

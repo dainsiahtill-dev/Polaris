@@ -222,6 +222,7 @@ used as a second tool fact source.
 | UEP topic aliases | Closed by LR-105 | UEP topic strings are owned by `polaris.kernelone.events.topics.TOPIC_RUNTIME_*`; `uep_contracts` owns payload dataclasses only. | Do not restore `UEP_TOPIC_*` aliases in `uep_contracts`; import canonical topic constants from `events.topics`. |
 | Message-bus sync handler adapter alias | Closed by LR-106 | Synchronous message-bus handler adaptation is an active capability exposed as `SyncMessageHandlerAdapter`, not a legacy adapter surface. | Do not restore `LegacySyncHandlerAdapter`; import and export `SyncMessageHandlerAdapter` directly. |
 | Domain token estimator constant alias | Closed by LR-107 | Token estimation constants are owned by `polaris.kernelone.llm.engine.TokenEstimator`; `TokenService` only delegates estimation and budget behavior. | Do not restore `TokenService.CHARS_PER_TOKEN`; import estimator constants from `TokenEstimator` only when a caller truly needs the heuristic constant. |
+| Runtime WebSocket role-token alias | Closed by LR-108 | Runtime WebSocket role filtering exposes `RUNTIME_OBSERVABLE_ROLE_TOKENS`; it is broader than TaskMarket consumers and must not be published as `CONSUMER_ROLE_TOKENS`. | Do not restore `CONSUMER_ROLE_TOKENS`; use `RUNTIME_OBSERVABLE_ROLE_TOKENS` for runtime observability filters. |
 | Arsenal route aliases | Closed by LR-27 | Arsenal product calls use `/arsenal/v2/*`; non-v2 Arsenal aliases are no longer registered. | Keep Arsenal endpoints under the router's canonical `/arsenal/v2/*` namespace; do not add parallel non-v2 aliases. |
 | Factory run route aliases | Closed by LR-28 | Factory run operations use `/v2/factory/runs*`; old `/factory/runs*` aliases are no longer registered. | Factory run control-plane APIs must remain under `/v2/factory/runs*`; do not restore non-v2 aliases. |
 | Logs route aliases | Closed by LR-29 | Logs APIs use `/logs/v2/*`; old `/logs/*` aliases are no longer registered, and frontend `logsV2Service` targets the actual backend namespace. | Keep logs endpoints under `/logs/v2/*` unless the router itself is intentionally migrated; do not add parallel `/logs/*` aliases or `/v2/logs/*` callers. |
@@ -237,4 +238,4 @@ used as a second tool fact source.
 
 ## Next Closure Order
 
-Current intake is closed after LR-107. Reopen only with a new evidence-backed ledger item.
+Current intake is closed after LR-108. Reopen only with a new evidence-backed ledger item.
