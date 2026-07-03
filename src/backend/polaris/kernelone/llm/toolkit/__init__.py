@@ -75,7 +75,6 @@ from .executor import (
 )
 
 # 解析器 - 统一工具调用解析入口
-# P0-002: CanonicalToolCall deprecated, use ToolCall from contracts.tool
 from .parsers import (
     CANONICAL_ARGUMENT_KEYS,
     CanonicalToolCallParser,  # 统一解析器 (returns list[ToolCall])
@@ -152,7 +151,6 @@ __all__ = [
     "AuditEvent",
     "AuditEventType",
     "AuditLogger",
-    # P0-002: CanonicalToolCall deprecated, use ToolCall directly
     # 统一解析器 (新增 2026-03-28)
     "CanonicalToolCallParser",  # 统一解析器入口 (returns list[ToolCall])
     "CompressionResult",

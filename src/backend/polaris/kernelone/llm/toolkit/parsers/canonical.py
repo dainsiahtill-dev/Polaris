@@ -186,15 +186,6 @@ def _build_tool_call(
     )
 
 
-# ------------------------------------------------------------------
-# Backward compatibility alias (DEPRECATED)
-# ------------------------------------------------------------------
-
-# CanonicalToolCall is deprecated - use ToolCall directly
-# This alias is kept for backward compatibility with tests that import CanonicalToolCall
-CanonicalToolCall = ToolCall
-
-
 class CanonicalToolCallParser:
     """Unified parser for tool calls from all providers.
 

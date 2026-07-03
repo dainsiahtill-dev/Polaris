@@ -4,7 +4,7 @@ This module provides tool call parsing functionality.
 The original parsers.py has been split into the following structure:
 
 parsers/
-    __init__.py           # Re-exports for backward compatibility
+    __init__.py           # Public parser package exports
     canonical.py          # Unified CanonicalToolCallParser entry point (returns list[ToolCall])
     core.py               # Legacy unified parsing entry point
     utils.py              # Shared utilities (ParsedToolCall = ToolCall alias, helpers)
@@ -53,7 +53,6 @@ from polaris.kernelone.llm.toolkit.parsers.utils import (
 # Backward compatibility: ParsedToolCall is now an alias to ToolCall
 ParsedToolCall = ToolCall
 
-# Backward compatibility: CanonicalToolCall is deprecated, use ToolCall directly
 from polaris.kernelone.llm.toolkit.parsers.xml_based import (  # noqa: E402
     XMLToolParser,
 )
