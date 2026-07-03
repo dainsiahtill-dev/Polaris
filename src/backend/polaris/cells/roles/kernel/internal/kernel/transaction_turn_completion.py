@@ -302,22 +302,6 @@ def _native_tool_calls_count(metadata: Mapping[str, Any], ledger: Any) -> int:
     return _safe_int(latest_metadata.get("native_tool_calls_count"))
 
 
-def _dropped_tool_calls_from_native_envelopes(native_envelopes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    dropped: list[dict[str, Any]] = []
-    for envelope in native_envelopes:
-        tool_name = normalize_tool_name(envelope.get("tool_name"))
-        envelope_id = str(envelope.get("envelope_id") or "").strip()
-        if not tool_name and not envelope_id:
-            continue
-        item: dict[str, Any] = {"reason": "tool_dispatch_dropped"}
-        if tool_name:
-            item["tool_name"] = tool_name
-        if envelope_id:
-            item["envelope_id"] = envelope_id
-        dropped.append(item)
-    return dropped
-
-
 def _batch_has_dispatch_evidence(batch_receipt: Mapping[str, Any] | None) -> bool:
     if not isinstance(batch_receipt, Mapping):
         return False
@@ -343,12 +327,14 @@ def _build_missing_dispatch_lifecycle_receipt(
         return None
     latest_metadata = _last_decision_metadata(ledger)
     native_envelopes = _native_tool_call_envelopes(metadata, ledger)
-    dropped_tool_calls = _dropped_tool_calls_from_native_envelopes(native_envelopes)
-    if not dropped_tool_calls:
-        dropped_tool_calls = [
+    dropped_tool_calls = (
+        []
+        if native_envelopes
+        else [
             {"tool_name": tool_name, "reason": "tool_dispatch_dropped"}
             for tool_name in required_write_tools
         ]
+    )
     return build_tool_call_lifecycle_receipt(
         run_id="",
         task_id="",
