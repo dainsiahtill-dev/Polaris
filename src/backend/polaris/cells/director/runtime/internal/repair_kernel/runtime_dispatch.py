@@ -583,11 +583,16 @@ def run_runtime_repair_convergence(
     planner: PlannerFn | None = None,
     base_files_provider: BaseFilesProviderFn | None = None,
     previous_receipts: Sequence[RepairReceipt] = (),
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
 ) -> RepairConvergenceResult:
     """Run runtime repairs through the typed convergence scheduler envelope."""
 
     normalized_source_tools = _normalize_source_tools(source_tools)
-    initial_diagnostics = tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
+    initial_diagnostics = (
+        tuple(repair_diagnostics)
+        if repair_diagnostics is not None
+        else tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
+    )
     initial_coverage_report = build_repair_coverage_report(initial_diagnostics)
     native_coverage_gate_status = _native_coverage_gate_status(initial_coverage_report, normalized_source_tools)
     if planner is None and native_coverage_gate_status is not None:

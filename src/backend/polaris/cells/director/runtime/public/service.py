@@ -2547,6 +2547,7 @@ def run_director_repair_convergence(
             advisor_notes=_to_internal_advisor_notes(public_advisor_notes),
             mode=command.mode,
             max_rounds=command.max_rounds,
+            repair_diagnostics=initial_diagnostics,
         )
     except _PublicConvergenceVerifierError as exc:
         return _failed_public_convergence_result(

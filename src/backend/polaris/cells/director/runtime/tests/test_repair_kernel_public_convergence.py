@@ -538,6 +538,47 @@ def test_public_convergence_accepts_typed_artifact_quality_issues(tmp_path: Path
     assert target.read_text(encoding="utf-8") == _BROKEN_CONTENT
 
 
+def test_public_convergence_preserves_typed_initial_diagnostics_through_runtime_boundary(tmp_path: Path) -> None:
+    target = _write_initial_file(tmp_path)
+
+    def verifier(_: DirectorRepairConvergenceVerifierRequestV1) -> DirectorRepairVerifierSnapshotInputV1:
+        pytest.fail("unsupported source tool should stop before verifier execution")
+
+    result = run_director_repair_convergence(
+        RunDirectorRepairConvergenceCommandV1(
+            task_id="task-public-convergence-typed-boundary",
+            workspace=str(tmp_path),
+            source_tools=("unsupported.future_rule",),
+            artifact_quality_errors=(),
+            artifact_quality_issues=(
+                {
+                    "source": "artifact_quality",
+                    "code": "typescript_ts1005",
+                    "message": "',' expected.",
+                    "path": _RELATIVE_PATH,
+                    "metadata": {
+                        "raw": _QUALITY_ERROR,
+                        "line": 6,
+                        "column": 47,
+                        "stable_issue_id": "typed-boundary-issue",
+                    },
+                },
+            ),
+            base_files={_RELATIVE_PATH: _BROKEN_CONTENT},
+            allowed_paths=(_RELATIVE_PATH,),
+            metadata={"caller": "typed_issue_runtime_boundary_test"},
+        ),
+        writer=_writer(tmp_path),
+        verifier=verifier,
+    )
+
+    assert result.ok is False
+    assert result.final_diagnostics[0].code == "typescript_ts1005"
+    assert result.final_diagnostics[0].path == _RELATIVE_PATH
+    assert result.final_diagnostics[0].metadata["stable_issue_id"] == "typed-boundary-issue"
+    assert target.read_text(encoding="utf-8") == _BROKEN_CONTENT
+
+
 def test_public_convergence_verifier_accepts_typed_residual_issues(tmp_path: Path) -> None:
     target = _write_initial_file(tmp_path)
     requests: list[DirectorRepairConvergenceVerifierRequestV1] = []
