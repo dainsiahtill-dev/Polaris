@@ -168,6 +168,137 @@ def native_tool_call_name(call: Mapping[str, Any]) -> str:
 _native_tool_call_name = native_tool_call_name
 
 
+def build_native_tool_call_from_stream_event(
+    *,
+    tool_name: str,
+    tool_args: Mapping[str, Any] | None,
+    call_id: str,
+    ordinal: int,
+) -> dict[str, Any]:
+    """Convert one streamed tool-call event into decoder-native shape.
+
+    Boundary:
+        The helper only normalizes already-structured stream event data. It
+        does not authorize, dispatch, or infer tool calls from assistant prose.
+
+    Complexity:
+        O(k) time and memory for copying the argument mapping.
+    """
+
+    normalized_tool_name = str(tool_name or "").strip()
+    if not normalized_tool_name:
+        return {}
+    normalized_call_id = str(call_id or "").strip() or f"stream_tool_call_{max(1, ordinal)}"
+    return {
+        "id": normalized_call_id,
+        "type": "function",
+        "function": {
+            "name": normalized_tool_name,
+            "arguments": dict(tool_args or {}),
+        },
+    }
+
+
+def stream_tool_call_signature(tool_name: str, tool_args: Mapping[str, Any] | None, call_id: str) -> str:
+    """Return a deterministic signature for stream tool-call de-duplication."""
+
+    payload = {
+        "tool": str(tool_name or "").strip(),
+        "call_id": str(call_id or "").strip(),
+        "args": dict(tool_args or {}),
+    }
+    try:
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return str(payload)
+
+
+def _native_call_identity(call: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Extract (tool_name, args_dict) from a decoder-native tool call payload."""
+
+    function_payload = call.get("function")
+    if not isinstance(function_payload, Mapping):
+        return "", {}
+    name = str(function_payload.get("name") or "").strip()
+    arguments = function_payload.get("arguments")
+    if isinstance(arguments, Mapping):
+        return name, dict(arguments)
+    if isinstance(arguments, str):
+        try:
+            decoded = json.loads(arguments)
+        except (TypeError, ValueError):
+            return name, {}
+        return name, decoded if isinstance(decoded, dict) else {}
+    return name, {}
+
+
+def _args_strict_subset(smaller: Mapping[str, Any], larger: Mapping[str, Any]) -> bool:
+    if len(smaller) >= len(larger):
+        return False
+    return all(key in larger and larger[key] == value for key, value in smaller.items())
+
+
+def upsert_stream_native_tool_call(
+    native_tool_calls: list[dict[str, Any]],
+    call_index_by_id: dict[str, int],
+    *,
+    tool_name: str,
+    tool_args: dict[str, Any],
+    call_id: str,
+) -> None:
+    """Insert or refine a streamed tool call in the pending native batch."""
+
+    existing_index = call_index_by_id.get(call_id) if call_id else None
+    if existing_index is not None:
+        refined = build_native_tool_call_from_stream_event(
+            tool_name=tool_name,
+            tool_args=tool_args,
+            call_id=call_id,
+            ordinal=existing_index + 1,
+        )
+        if refined:
+            native_tool_calls[existing_index] = refined
+        return
+    appended = build_native_tool_call_from_stream_event(
+        tool_name=tool_name,
+        tool_args=tool_args,
+        call_id=call_id,
+        ordinal=len(native_tool_calls) + 1,
+    )
+    if appended:
+        native_tool_calls.append(appended)
+        if call_id:
+            call_index_by_id[call_id] = len(native_tool_calls) - 1
+
+
+def supersede_partial_tool_calls(native_tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop partial duplicates of a streamed tool call before materialization.
+
+    A streamed call can arrive first as a placeholder with empty/partial args
+    and later as the same logical call with completed args. A call is
+    superseded only when another call for the same tool has a strict superset of
+    arguments. Distinct same-tool calls with non-overlapping args are preserved.
+    """
+
+    if len(native_tool_calls) < 2:
+        return native_tool_calls
+    identities = [_native_call_identity(call) for call in native_tool_calls]
+    kept: list[dict[str, Any]] = []
+    for index, call in enumerate(native_tool_calls):
+        name, args = identities[index]
+        superseded = False
+        if name:
+            for other_index, (other_name, other_args) in enumerate(identities):
+                if other_index == index or other_name != name:
+                    continue
+                if _args_strict_subset(args, other_args):
+                    superseded = True
+                    break
+        if not superseded:
+            kept.append(call)
+    return kept
+
+
 def native_tool_call_envelopes_from_metadata(metadata: Mapping[str, Any] | None) -> tuple[Mapping[str, Any], ...]:
     """Return valid native tool-call envelope payloads from response metadata."""
 

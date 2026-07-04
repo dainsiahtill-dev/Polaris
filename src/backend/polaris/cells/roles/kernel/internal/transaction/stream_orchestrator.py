@@ -29,6 +29,9 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_call_facts_from_response,
     provider_response_hash as derive_provider_response_hash,
     restrict_tool_definitions_to_write,
+    stream_tool_call_signature,
+    supersede_partial_tool_calls,
+    upsert_stream_native_tool_call,
 )
 from polaris.cells.roles.kernel.internal.speculation.cancel import CancellationCoordinator
 from polaris.cells.roles.kernel.internal.speculation.task_group import TurnScopedTaskGroup
@@ -75,130 +78,6 @@ from polaris.cells.roles.kernel.public.turn_events import (
 from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
 
 logger = logging.getLogger(__name__)
-
-
-def build_native_tool_call_from_stream_event(
-    *,
-    tool_name: str,
-    tool_args: Mapping[str, Any] | None,
-    call_id: str,
-    ordinal: int,
-) -> dict[str, Any]:
-    """Convert a streamed tool_call UI event back into decoder-native shape."""
-    normalized_tool_name = str(tool_name or "").strip()
-    if not normalized_tool_name:
-        return {}
-    normalized_call_id = str(call_id or "").strip() or f"stream_tool_call_{max(1, ordinal)}"
-    return {
-        "id": normalized_call_id,
-        "type": "function",
-        "function": {
-            "name": normalized_tool_name,
-            "arguments": dict(tool_args or {}),
-        },
-    }
-
-
-def stream_tool_call_signature(tool_name: str, tool_args: Mapping[str, Any] | None, call_id: str) -> str:
-    payload = {
-        "tool": str(tool_name or "").strip(),
-        "call_id": str(call_id or "").strip(),
-        "args": dict(tool_args or {}),
-    }
-    try:
-        return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    except (TypeError, ValueError):
-        return str(payload)
-
-
-def _native_call_identity(call: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
-    """Extract (tool_name, args_dict) from a decoder-native tool call payload."""
-    function_payload = call.get("function")
-    if not isinstance(function_payload, Mapping):
-        return "", {}
-    name = str(function_payload.get("name") or "").strip()
-    arguments = function_payload.get("arguments")
-    if isinstance(arguments, Mapping):
-        return name, dict(arguments)
-    if isinstance(arguments, str):
-        try:
-            decoded = json.loads(arguments)
-        except (TypeError, ValueError):
-            return name, {}
-        return name, decoded if isinstance(decoded, dict) else {}
-    return name, {}
-
-
-def _args_strict_subset(smaller: Mapping[str, Any], larger: Mapping[str, Any]) -> bool:
-    if len(smaller) >= len(larger):
-        return False
-    return all(key in larger and larger[key] == value for key, value in smaller.items())
-
-
-def upsert_stream_native_tool_call(
-    native_tool_calls: list[dict[str, Any]],
-    call_index_by_id: dict[str, int],
-    *,
-    tool_name: str,
-    tool_args: dict[str, Any],
-    call_id: str,
-) -> None:
-    """Insert or refine a streamed tool call in the pending native batch (ADR-0090 I2.1).
-
-    The same call_id arriving again means a progressive refinement of ONE logical
-    call (placeholder → completed arguments): the later payload replaces the slot
-    instead of coexisting with it. Calls without call_id append as before.
-    """
-    existing_index = call_index_by_id.get(call_id) if call_id else None
-    if existing_index is not None:
-        refined = build_native_tool_call_from_stream_event(
-            tool_name=tool_name,
-            tool_args=tool_args,
-            call_id=call_id,
-            ordinal=existing_index + 1,
-        )
-        if refined:
-            native_tool_calls[existing_index] = refined
-        return
-    appended = build_native_tool_call_from_stream_event(
-        tool_name=tool_name,
-        tool_args=tool_args,
-        call_id=call_id,
-        ordinal=len(native_tool_calls) + 1,
-    )
-    if appended:
-        native_tool_calls.append(appended)
-        if call_id:
-            call_index_by_id[call_id] = len(native_tool_calls) - 1
-
-
-def supersede_partial_tool_calls(native_tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop partial duplicates of a tool call before the batch materializes (ADR-0090 I2.2).
-
-    A streamed tool call can surface twice: once as an early placeholder with
-    empty/partial arguments and once completed. Executing the placeholder wastes
-    the batch (observed: ``edit_blocks{}`` burning the mutation-contract retry).
-    A call A is superseded when another call B of the SAME tool exists whose
-    arguments strictly contain A's (including A == {}). Distinct same-tool calls
-    with non-overlapping arguments are preserved.
-    """
-    if len(native_tool_calls) < 2:
-        return native_tool_calls
-    identities = [_native_call_identity(call) for call in native_tool_calls]
-    kept: list[dict[str, Any]] = []
-    for index, call in enumerate(native_tool_calls):
-        name, args = identities[index]
-        superseded = False
-        if name:
-            for other_index, (other_name, other_args) in enumerate(identities):
-                if other_index == index or other_name != name:
-                    continue
-                if _args_strict_subset(args, other_args):
-                    superseded = True
-                    break
-        if not superseded:
-            kept.append(call)
-    return kept
 
 
 # ---------------------------------------------------------------------------

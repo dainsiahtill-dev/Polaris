@@ -45,6 +45,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import (
 )
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+    build_native_tool_call_from_stream_event,
     build_native_tool_schemas,
     native_tool_call_envelopes_from_metadata,
     native_tool_call_envelopes_from_response,
@@ -54,6 +55,9 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_call_provider_from_metadata,
     native_tool_calls_from_response,
     provider_response_hash,
+    stream_tool_call_signature,
+    supersede_partial_tool_calls,
+    upsert_stream_native_tool_call,
 )
 from polaris.cells.roles.profile.public.service import load_core_roles
 from polaris.kernelone.context.contracts import TurnEngineContextResult
@@ -72,6 +76,74 @@ class MockProfile:
         self.model = model
         self.provider_id = provider_id
         self.tool_policy = SimpleNamespace(allowed_tools=[], denied_tools=[])
+
+
+def test_stream_event_native_tool_call_projection_uses_decoder_shape() -> None:
+    call = build_native_tool_call_from_stream_event(
+        tool_name="write_file",
+        tool_args={"file": "src/index.ts", "content": "ok"},
+        call_id="call-1",
+        ordinal=1,
+    )
+
+    assert call == {
+        "id": "call-1",
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "arguments": {"file": "src/index.ts", "content": "ok"},
+        },
+    }
+
+
+def test_stream_tool_call_signature_is_stable() -> None:
+    first = stream_tool_call_signature("write_file", {"b": 2, "a": 1}, "call-1")
+    second = stream_tool_call_signature("write_file", {"a": 1, "b": 2}, "call-1")
+
+    assert first == second
+
+
+def test_upsert_stream_native_tool_call_refines_same_call_id() -> None:
+    calls: list[dict[str, object]] = []
+    index: dict[str, int] = {}
+
+    upsert_stream_native_tool_call(calls, index, tool_name="edit_file", tool_args={}, call_id="call-1")
+    upsert_stream_native_tool_call(
+        calls,
+        index,
+        tool_name="edit_file",
+        tool_args={"file": "src/app.ts", "old": "a", "new": "b"},
+        call_id="call-1",
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["function"] == {
+        "name": "edit_file",
+        "arguments": {"file": "src/app.ts", "old": "a", "new": "b"},
+    }
+
+
+def test_supersede_partial_tool_calls_keeps_distinct_same_tool_calls() -> None:
+    partial = build_native_tool_call_from_stream_event(
+        tool_name="edit_file",
+        tool_args={"file": "src/app.ts"},
+        call_id="partial",
+        ordinal=1,
+    )
+    complete = build_native_tool_call_from_stream_event(
+        tool_name="edit_file",
+        tool_args={"file": "src/app.ts", "old": "a", "new": "b"},
+        call_id="complete",
+        ordinal=2,
+    )
+    distinct = build_native_tool_call_from_stream_event(
+        tool_name="edit_file",
+        tool_args={"file": "src/other.ts"},
+        call_id="distinct",
+        ordinal=3,
+    )
+
+    assert supersede_partial_tool_calls([partial, complete, distinct]) == [complete, distinct]
 
 
 def test_tool_contract_context_fields_project_materialization_write_requirement() -> None:
