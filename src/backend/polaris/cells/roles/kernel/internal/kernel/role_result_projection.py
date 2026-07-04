@@ -33,6 +33,8 @@ _LLM_RESPONSE_METADATA_KEYS: tuple[str, ...] = (
     "contextTokens",
     "usage",
     "usage_source",
+    "failure_evidence",
+    "failure_evidence_summary",
 )
 
 _NATIVE_TOOL_FACT_KEYS: tuple[str, ...] = (

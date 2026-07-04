@@ -75,6 +75,14 @@ def test_role_result_metadata_projects_profile_and_llm_evidence() -> None:
         "context_snapshot_ref": "runtime/contexts/ab/cd.json",
         "usage": {"input_tokens": 12},
         "context_os_audit": {"coverage": "ok"},
+        "failure_evidence": [
+            {
+                "schema_version": "polaris.failure_evidence.v1",
+                "failure_class": "TOOL_RESULT_FAILED",
+                "responsible_layer": "platform",
+            }
+        ],
+        "failure_evidence_summary": {"count": 1, "latest_failure_class": "TOOL_RESULT_FAILED"},
     }
 
     metadata = role_result_metadata_from_profile(
@@ -89,6 +97,14 @@ def test_role_result_metadata_projects_profile_and_llm_evidence() -> None:
     assert metadata["context_snapshot_ref"] == "runtime/contexts/ab/cd.json"
     assert metadata["usage"] == {"input_tokens": 12}
     assert metadata["context_os_audit"] == {"coverage": "ok"}
+    assert metadata["failure_evidence"] == [
+        {
+            "schema_version": "polaris.failure_evidence.v1",
+            "failure_class": "TOOL_RESULT_FAILED",
+            "responsible_layer": "platform",
+        }
+    ]
+    assert metadata["failure_evidence_summary"] == {"count": 1, "latest_failure_class": "TOOL_RESULT_FAILED"}
 
 
 def test_role_result_metadata_projects_tool_lifecycle_and_derived_tool_facts() -> None:
