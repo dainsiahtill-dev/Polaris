@@ -20,11 +20,13 @@ from unittest.mock import MagicMock
 
 import pytest
 from polaris.cells.chief_engineer.blueprint.public import BlueprintPersistence
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.director.runtime.public.repair_kernel_contracts import (
     build_substantive_node_test_script as _build_substantive_node_test_script,
     is_overstrict_node_test_script_contract as _is_overstrict_node_test_script_contract,
     remove_patch_residue_lines as _remove_patch_residue_lines,
 )
+from polaris.cells.qa.audit_verdict.public import QaFailureClassV1
 from polaris.cells.roles.adapters.internal.director import execute_method as execute_method_module
 from polaris.cells.roles.adapters.internal.director.adapter import (
     DirectorAdapter,
@@ -4946,6 +4948,7 @@ class TestDirectorFailureClosure:
 
         assert result["success"] is False
         assert result["error_code"] == "director_materialized_out_of_scope"
+        assert result["failure_class"] == QaFailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value
         updated = adapter.task_board.get_task(str(task.id))
         assert updated is not None
         raw_metadata = updated.get("metadata")
@@ -4991,7 +4994,7 @@ class TestDirectorFailureClosure:
 
         assert result["success"] is False
         assert result["error_code"] == "incomplete_materialization"
-        assert result["failure_class"] == "INCOMPLETE_MATERIALIZATION"
+        assert result["failure_class"] == QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value
         updated = adapter.task_board.get_task(str(task.id))
         assert updated is not None
         raw_metadata = updated.get("metadata")
@@ -5000,7 +5003,7 @@ class TestDirectorFailureClosure:
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
         assert adapter_result.get("materialization_error") == "director_no_materialized_changes"
         assert adapter_result.get("materialization_error_code") == "incomplete_materialization"
-        assert adapter_result.get("failure_class") == "INCOMPLETE_MATERIALIZATION"
+        assert adapter_result.get("failure_class") == QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value
         assert adapter_result.get("out_of_scope_files") == ["scripts/verify.js"]
 
     def test_no_materialized_changes_ignores_sibling_diff_after_failed_write_tool(self, tmp_path: Any) -> None:
@@ -5054,7 +5057,7 @@ class TestDirectorFailureClosure:
         assert result is not None
         assert result["success"] is False
         assert result["error_code"] == "incomplete_materialization"
-        assert result["failure_class"] == "INCOMPLETE_MATERIALIZATION"
+        assert result["failure_class"] == QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value
 
     def test_no_materialized_changes_preserves_primary_tool_dispatch_failure(self, tmp_path: Any) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
@@ -5104,7 +5107,7 @@ class TestDirectorFailureClosure:
         assert result["success"] is False
         assert result["error"] == "tool_dispatch_dropped"
         assert result["error_code"] == "tool_dispatch_dropped"
-        assert result["failure_class"] == "TOOL_DISPATCH_DROPPED"
+        assert result["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
         assert result["responsible_layer"] == "execution_control_plane"
         assert result["failure_stage"] == "director_tool_lifecycle"
         assert result["root_cause_hint"] == "required_tool_without_dispatch_receipt"
@@ -5127,7 +5130,7 @@ class TestDirectorFailureClosure:
         assert _primary_llm_tool_dispatch_failure({"error_code": "tool-dispatch-dropped"}) == {
             "error": "tool_dispatch_dropped",
             "error_code": "tool_dispatch_dropped",
-            "failure_class": "TOOL_DISPATCH_DROPPED",
+            "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
             "responsible_layer": "execution_control_plane",
             "materialization_mode": "tool_dispatch_dropped",
             "failure_stage": "director_tool_lifecycle",

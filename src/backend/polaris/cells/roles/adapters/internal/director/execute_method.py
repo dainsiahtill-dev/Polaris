@@ -25,6 +25,7 @@ from polaris.cells.director.runtime.public.service import (
     AttachDirectorRepairRevalidationEvidenceV1,
     project_director_repair_revalidation_evidence,
 )
+from polaris.cells.qa.audit_verdict.public import QaFailureClassV1
 from polaris.kernelone.fs.materialization import materialized_file_paths
 
 # ``scan_workspace_artifact_quality`` MUST stay a name on THIS module: the test
@@ -3597,7 +3598,7 @@ def _primary_llm_tool_dispatch_failure(primary_llm_summary: dict[str, Any] | Non
     return {
         "error": "tool_dispatch_dropped",
         "error_code": "tool_dispatch_dropped",
-        "failure_class": "TOOL_DISPATCH_DROPPED",
+        "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
         "responsible_layer": "execution_control_plane",
         "materialization_mode": "tool_dispatch_dropped",
         "failure_stage": "director_tool_lifecycle",
@@ -3662,7 +3663,7 @@ def _phase_no_materialized_changes(
             error = "director_materialized_out_of_scope"
             materialization_mode = "materialized_out_of_scope"
             public_error_code = error
-            failure_class = "BLUEPRINT_SCOPE_MISMATCH"
+            failure_class = QaFailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value
             responsible_layer = "director_scope_guard"
             failure_stage = "director_materialization"
             root_cause_hint = "no_changed_files"
@@ -3671,7 +3672,7 @@ def _phase_no_materialized_changes(
             error = "director_no_materialized_changes"
             materialization_mode = "no_materialized_changes"
             public_error_code = "incomplete_materialization"
-            failure_class = "INCOMPLETE_MATERIALIZATION"
+            failure_class = QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value
             responsible_layer = "director"
             failure_stage = "director_materialization"
             root_cause_hint = "no_changed_files"
