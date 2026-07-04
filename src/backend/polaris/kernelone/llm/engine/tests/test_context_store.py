@@ -501,6 +501,19 @@ class TestContextStoreInvokeFailure:
                 "content": "PM task contract: create src/app.ts. acceptance criteria: npm test.",
             },
         ]
+        request.context["pm_contract"] = {
+            "schema_version": "pm.task_contract.v1",
+            "task_id": "TASK-1",
+            "goal": "Create a runnable app entrypoint.",
+            "target_files": ["src/app.ts"],
+            "acceptance": ["npm test"],
+        }
+        request.context["ce_blueprint"] = {
+            "schema_version": "chief_engineer.blueprint.v1",
+            "blueprint_id": "ce-1",
+            "target_files": ["src/app.ts"],
+            "construction_plan": {"phase": "implement"},
+        }
         request.context["prompt_profile_audit"] = {
             "selected_prompt_profile_ids": ["builtin.language.typescript", "builtin.task.implement"],
             "inferred_language": "typescript",

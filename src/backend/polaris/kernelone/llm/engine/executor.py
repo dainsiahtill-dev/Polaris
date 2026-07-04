@@ -149,55 +149,18 @@ def _structured_coverage_flags(context: Any) -> dict[str, bool]:
 
 
 def _coverage_flags(text: str, *, context: Any = None) -> dict[str, bool]:
-    lowered = text.lower()
-    text_flags = {
-        "has_pm_contract": any(
-            needle in lowered
-            for needle in (
-                "task-",
-                "acceptance",
-                "acceptance criteria",
-                "depends_on",
-                "pm task contract",
-                "quality gates",
-                "verification commands",
-                "任务:",
-                "任务合同",
-                "执行步骤",
-                "验收标准",
-            )
-        ),
-        "has_chief_engineer_blueprint": any(
-            needle in lowered
-            for needle in (
-                "chief engineer",
-                "chief_engineer",
-                "blueprint",
-                "blueprint_id",
-                "ce handoff",
-                "ce 蓝图",
-                "construction signatures",
-                "construction target",
-                "construction verify",
-                "scope_for_apply",
-                "construction_plan",
-                "蓝图交接",
-            )
-        ),
-        "has_target_files": any(
-            needle in lowered
-            for needle in (
-                "target_files",
-                "scope_paths",
-                "src/",
-                "tests/",
-            )
-        ),
-        "has_failure_feedback": False,
-        "has_workspace_quality_evidence": False,
-    }
+    del text
     structured_flags = _structured_coverage_flags(context)
-    return {key: bool(structured_flags.get(key) or text_flags.get(key)) for key in text_flags}
+    return {
+        key: bool(structured_flags.get(key))
+        for key in (
+            "has_pm_contract",
+            "has_chief_engineer_blueprint",
+            "has_target_files",
+            "has_failure_feedback",
+            "has_workspace_quality_evidence",
+        )
+    }
 
 
 def _context_quality_findings(

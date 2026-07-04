@@ -193,6 +193,27 @@ def test_executor_context_snapshot_coverage_does_not_count_failure_or_quality_pr
     assert coverage["has_workspace_quality_evidence"] is False
 
 
+def test_executor_context_snapshot_coverage_does_not_count_contract_or_scope_prose() -> None:
+    coverage = _coverage_flags(
+        (
+            "PM task contract acceptance depends_on Chief Engineer blueprint "
+            "target_files src/index.ts scope_paths tests/"
+        ),
+        context={
+            "chat_messages": [
+                {
+                    "role": "user",
+                    "content": "PM task contract target_files src/index.ts Chief Engineer blueprint",
+                }
+            ],
+        },
+    )
+
+    assert coverage["has_pm_contract"] is False
+    assert coverage["has_chief_engineer_blueprint"] is False
+    assert coverage["has_target_files"] is False
+
+
 def _patch_prepare(
     monkeypatch: pytest.MonkeyPatch,
     prepared: PreparedLLMRequest,
