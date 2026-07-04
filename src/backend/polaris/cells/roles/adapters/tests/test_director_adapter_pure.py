@@ -6078,7 +6078,7 @@ export function summary() {
         adapter = _make_adapter(tmp_path)
         target = tmp_path / "src" / "fish" / "arena.ts"
         target.parent.mkdir(parents=True, exist_ok=True)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Implement fish predator prey multiplayer arena",
             description="Build fish arena movement and predator prey scoring for the online game.",
             metadata={
@@ -6088,6 +6088,7 @@ export function summary() {
                 "acceptance": ["No generic unrelated implementation remains"],
             },
         )
+        task_id = str(task["id"])
 
         async def _write_unrelated_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -6117,15 +6118,15 @@ export function summary() {
         adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-semantic-quality"},
         )
 
         assert result["success"] is False
         assert result["error_code"] == "director_materialization_semantic_quality_failed"
         assert "no project-domain signal" in result["semantic_quality_error"]
-        updated = adapter.task_board.get_task(str(task.id))
+        updated = adapter.task_board.get_task(task_id)
         assert updated is not None
         raw_metadata = updated.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
@@ -6138,7 +6139,7 @@ export function summary() {
         adapter = _make_adapter(tmp_path)
         target = tmp_path / "src" / "fish" / "arena.ts"
         target.parent.mkdir(parents=True, exist_ok=True)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Implement fish predator prey multiplayer arena",
             description="Build fish arena movement and predator prey scoring for the online game.",
             metadata={
@@ -6148,6 +6149,7 @@ export function summary() {
                 "acceptance": ["Arena code contains fish domain behavior"],
             },
         )
+        task_id = str(task["id"])
         stages: list[str] = []
         repair_contexts: list[dict[str, Any]] = []
 
@@ -6204,8 +6206,8 @@ export function summary() {
         adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-semantic-quality-repair"},
         )
 
@@ -6213,7 +6215,7 @@ export function summary() {
         assert stages.count("quality_repair") == 1
         assert "fish arena predator prey" in target.read_text(encoding="utf-8")
         assert repair_contexts[0]["director_quality_repair"]["artifact_quality_errors"]
-        updated = adapter.task_board.get_task(str(task.id))
+        updated = adapter.task_board.get_task(task_id)
         assert updated is not None
         raw_metadata = updated.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
@@ -6224,7 +6226,7 @@ export function summary() {
     @pytest.mark.asyncio
     async def test_execute_fails_autofix_declared_scope_without_real_materialization(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Implement interactive game renderer",
             description="Quality gate repair task generated because the PM contract omitted renderer scope.",
             metadata={
@@ -6234,6 +6236,7 @@ export function summary() {
                 "autofix_reason": "game_pm_domain_coverage",
             },
         )
+        task_id = str(task["id"])
 
         async def _empty_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -6247,8 +6250,8 @@ export function summary() {
         adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-scaffold"},
         )
 
@@ -6257,7 +6260,7 @@ export function summary() {
         assert result["error_code"] == "incomplete_materialization"
         assert result["failure_class"] == "INCOMPLETE_MATERIALIZATION"
         assert target.exists() is False
-        updated = adapter.task_board.get_task(str(task.id))
+        updated = adapter.task_board.get_task(task_id)
         assert updated is not None
         raw_metadata = updated.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
