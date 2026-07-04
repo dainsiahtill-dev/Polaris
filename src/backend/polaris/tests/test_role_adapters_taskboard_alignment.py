@@ -20,6 +20,33 @@ from polaris.kernelone.storage import resolve_runtime_path
 from polaris.kernelone.storage.paths import resolve_signal_path
 
 
+def _create_task_row(adapter: Any, **kwargs: Any) -> dict[str, Any]:
+    row = adapter.task_board.create_task_row(**kwargs)
+    assert isinstance(row, dict)
+    return row
+
+
+def _update_task_row(adapter: Any, task_id: Any, **kwargs: Any) -> dict[str, Any]:
+    row = adapter.task_board.update_task_row(task_id, **kwargs)
+    assert isinstance(row, dict)
+    return row
+
+
+def _get_task_row(adapter: Any, task_id: Any) -> dict[str, Any]:
+    row = adapter.task_board.get_task(task_id)
+    assert isinstance(row, dict)
+    return row
+
+
+def _row_id(row: dict[str, Any]) -> int:
+    return int(row.get("id") or 0)
+
+
+def _row_metadata(row: dict[str, Any]) -> dict[str, Any]:
+    raw = row.get("metadata")
+    return raw if isinstance(raw, dict) else {}
+
+
 def test_pm_adapter_fallback_domain_prefers_workspace_slug_over_directive_noise(tmp_path: Path) -> None:
     workspace = tmp_path / "expense-tracker"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -65,7 +92,8 @@ def test_pm_typescript_package_contract_uses_requirement_checks_not_fixed_templa
 
 def test_director_ephemeral_task_includes_pending_taskboard_contract(tmp_path: Path) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
-    adapter.task_board.create(
+    _create_task_row(
+        adapter,
         subject="实现expense账单实体",
         description="创建账单模型与校验",
         metadata={
@@ -97,7 +125,7 @@ def test_task_runtime_execution_event_publishes_factory_progress_channel(
     )
 
     service = TaskRuntimeService(str(tmp_path))
-    task = service.create(
+    task = service.create_task_row(
         subject="实现发光昆虫模拟器",
         metadata={
             "factory_run_id": "factory-1",
@@ -107,7 +135,7 @@ def test_task_runtime_execution_event_publishes_factory_progress_channel(
     )
 
     result = service.claim_execution(
-        task.id,
+        task["id"],
         worker_id="director",
         role_id="director",
         run_id="director-1",
@@ -214,8 +242,8 @@ async def test_director_adapter_removes_legacy_call_role_llm_shims(
 
 def test_director_selects_pending_board_task_when_orchestration_task_missing(tmp_path: Path) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
-    adapter.task_board.create(subject="任务A", description="A", metadata={})
-    adapter.task_board.create(subject="任务B", description="B", metadata={})
+    _create_task_row(adapter, subject="任务A", description="A", metadata={})
+    _create_task_row(adapter, subject="任务B", description="B", metadata={})
 
     selected = adapter._select_pending_board_task()
 
@@ -225,22 +253,25 @@ def test_director_selects_pending_board_task_when_orchestration_task_missing(tmp
 
 def test_director_taskboard_snapshot_includes_completed_qa_state(tmp_path: Path) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
-    done_pending_qa = adapter.task_board.create(subject="任务待QA", description="A", metadata={})
-    done_failed_qa = adapter.task_board.create(subject="任务QA未通过", description="B", metadata={})
-    done_passed_qa = adapter.task_board.create(subject="任务QA通过", description="C", metadata={})
+    done_pending_qa = _create_task_row(adapter, subject="任务待QA", description="A", metadata={})
+    done_failed_qa = _create_task_row(adapter, subject="任务QA未通过", description="B", metadata={})
+    done_passed_qa = _create_task_row(adapter, subject="任务QA通过", description="C", metadata={})
 
-    adapter.task_board.update(
-        done_pending_qa.id,
+    _update_task_row(
+        adapter,
+        done_pending_qa["id"],
         status="completed",
         metadata={"adapter_result": {"qa_required_for_final_verdict": True, "qa_passed": None}},
     )
-    adapter.task_board.update(
-        done_failed_qa.id,
+    _update_task_row(
+        adapter,
+        done_failed_qa["id"],
         status="completed",
         metadata={"adapter_result": {"qa_required_for_final_verdict": True, "qa_passed": False}},
     )
-    adapter.task_board.update(
-        done_passed_qa.id,
+    _update_task_row(
+        adapter,
+        done_passed_qa["id"],
         status="completed",
         metadata={"adapter_result": {"qa_required_for_final_verdict": True, "qa_passed": True}},
     )
@@ -253,28 +284,30 @@ def test_director_taskboard_snapshot_includes_completed_qa_state(tmp_path: Path)
         if isinstance(item, dict)
     }
 
-    assert qa_states.get(str(done_pending_qa.id)) == "pending"
-    assert qa_states.get(str(done_failed_qa.id)) == "failed"
-    assert qa_states.get(str(done_passed_qa.id)) == "passed"
+    assert qa_states.get(str(done_pending_qa["id"])) == "pending"
+    assert qa_states.get(str(done_failed_qa["id"])) == "failed"
+    assert qa_states.get(str(done_passed_qa["id"])) == "passed"
 
 
 def test_director_taskboard_snapshot_surfaces_running_task_without_duplicate_ready_rows(
     tmp_path: Path,
 ) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
-    running_task = adapter.task_board.create(
+    running_task = _create_task_row(
+        adapter,
         subject="实现数据模型与本地持久化存储层",
         description="实现模型、仓储与序列化",
         metadata={"execution_backend": "code_edit"},
     )
-    ready_task = adapter.task_board.create(
+    ready_task = _create_task_row(
+        adapter,
         subject="编写单元测试与集成验证",
         description="补齐测试与回归验证",
         metadata={"execution_backend": "code_edit"},
     )
 
     claimed = adapter.task_runtime.claim_execution(
-        running_task.id,
+        running_task["id"],
         worker_id="director",
         role_id="director",
         run_id="run-observer-focus",
@@ -289,7 +322,7 @@ def test_director_taskboard_snapshot_surfaces_running_task_without_duplicate_rea
     assert int(counts.get("in_progress") or 0) == 1
     in_progress_samples = samples.get("in_progress", [])
     in_progress_ids = {str(item.get("id") or "") for item in in_progress_samples if isinstance(item, dict)}
-    assert str(running_task.id) in in_progress_ids
+    assert str(running_task["id"]) in in_progress_ids
 
     all_sample_ids = [
         str(item.get("id") or "")
@@ -298,7 +331,7 @@ def test_director_taskboard_snapshot_surfaces_running_task_without_duplicate_rea
         for item in bucket
         if isinstance(item, dict)
     ]
-    assert all_sample_ids.count(str(ready_task.id)) == 1
+    assert all_sample_ids.count(str(ready_task["id"])) == 1
 
 
 def test_pm_adapter_preserves_execution_backend_metadata_on_board_tasks(tmp_path: Path) -> None:
@@ -625,7 +658,8 @@ async def test_pm_adapter_recovers_with_synthesized_contracts_when_unparseable(t
 
 def test_pm_adapter_create_board_tasks_deduplicates_existing_semantic_tasks(tmp_path: Path) -> None:
     adapter = PMAdapter(workspace=str(tmp_path))
-    existing = adapter.task_board.create(
+    existing = _create_task_row(
+        adapter,
         subject="筛选查询与月度汇总统计实现",
         description="已有任务",
         metadata={"goal": "实现筛选查询与月度汇总统计"},
@@ -660,22 +694,21 @@ def test_pm_adapter_create_board_tasks_deduplicates_existing_semantic_tasks(tmp_
 
     board_tasks = adapter.task_board.list_task_rows()
     assert len(board_tasks) == 2
-    assert any(int(item.get("id") or 0) == int(existing.id) for item in created)
+    assert any(int(item.get("id") or 0) == _row_id(existing) for item in created)
 
-    reused = adapter.task_board.get(existing.id)
-    assert reused is not None
-    assert bool((reused.metadata or {}).get("pm_deduplicated")) is True
-    dependent = next((task for task in board_tasks if int(task.get("id") or 0) != int(existing.id)), None)
+    reused = _get_task_row(adapter, existing["id"])
+    assert bool(_row_metadata(reused).get("pm_deduplicated")) is True
+    dependent = next((task for task in board_tasks if int(task.get("id") or 0) != _row_id(existing)), None)
     assert dependent is not None
     raw_dependent_metadata = dependent.get("metadata")
     dependent_metadata: dict[str, Any] = raw_dependent_metadata if isinstance(raw_dependent_metadata, dict) else {}
     resolved_dep = dependent_metadata.get("resolved_depends_on_task_ids")
     assert isinstance(resolved_dep, list)
-    assert int(existing.id) in [int(item) for item in resolved_dep]
-    assert dependent.get("blocked_by") == [int(existing.id)]
+    assert _row_id(existing) in [int(item) for item in resolved_dep]
+    assert dependent.get("blocked_by") == [_row_id(existing)]
     assert dependent.get("status") == "blocked"
 
-    reused_metadata = reused.metadata or {}
+    reused_metadata = _row_metadata(reused)
     assert reused_metadata["external_task_id"] == "TASK-3"
     assert reused_metadata["pm_task_id"] == "TASK-3"
 
@@ -723,9 +756,8 @@ def test_pm_adapter_create_board_tasks_preserves_execution_contract_paths(tmp_pa
     )
 
     assert len(created) == 1
-    task = adapter.task_board.get(created[0]["id"])
-    assert task is not None
-    metadata = task.metadata or {}
+    task = _get_task_row(adapter, created[0]["id"])
+    metadata = _row_metadata(task)
     assert metadata.get("target_files") == target_files
     assert metadata.get("scope_paths") == scope_paths
     assert metadata.get("context_files") == context_files
@@ -733,13 +765,15 @@ def test_pm_adapter_create_board_tasks_preserves_execution_contract_paths(tmp_pa
 
 def test_pm_adapter_cleans_existing_duplicate_tasks_before_new_plan(tmp_path: Path) -> None:
     adapter = PMAdapter(workspace=str(tmp_path))
-    keep = adapter.task_board.create(
+    keep = _create_task_row(
+        adapter,
         subject="筛选查询与月度汇总统计实现",
         description="主任务",
         metadata={"goal": "实现筛选查询与月度汇总统计"},
     )
-    adapter.task_board.update(int(keep.id), status="in_progress")
-    duplicate = adapter.task_board.create(
+    _update_task_row(adapter, keep["id"], status="in_progress")
+    duplicate = _create_task_row(
+        adapter,
         subject="筛选查询与月度汇总统计实现",
         description="重复任务",
         metadata={"goal": "实现筛选查询与月度汇总统计"},
@@ -761,10 +795,9 @@ def test_pm_adapter_cleans_existing_duplicate_tasks_before_new_plan(tmp_path: Pa
         ]
     )
 
-    duplicate_after = adapter.task_board.get(int(duplicate.id))
-    assert duplicate_after is not None
-    assert duplicate_after.status.value == "cancelled"
-    assert int((duplicate_after.metadata or {}).get("dedup_merged_into") or 0) == int(keep.id)
+    duplicate_after = _get_task_row(adapter, duplicate["id"])
+    assert duplicate_after.get("status") == "cancelled"
+    assert int(_row_metadata(duplicate_after).get("dedup_merged_into") or 0) == _row_id(keep)
 
 
 @pytest.mark.asyncio
@@ -808,7 +841,8 @@ async def test_director_adapter_updates_selected_taskboard_row_when_fallback_sel
     tmp_path: Path,
 ) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
-    board_task = adapter.task_board.create(
+    board_task = _create_task_row(
+        adapter,
         subject="实现账单导出接口",
         description="生成导出模块并补充测试",
         metadata={},
@@ -836,7 +870,7 @@ async def test_director_adapter_updates_selected_taskboard_row_when_fallback_sel
         context={"run_id": "run-select-board-task"},
     )
 
-    assert result["task_id"] == str(board_task.id)
+    assert result["task_id"] == str(board_task["id"])
     assert bool(result.get("qa_required_for_final_verdict")) is True
 
 
@@ -1048,7 +1082,8 @@ async def test_director_adapter_force_retry_can_recover_with_write_output(tmp_pa
 @pytest.mark.asyncio
 async def test_director_adapter_falls_back_when_kernel_tool_results_are_unsuccessful(tmp_path: Path) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
-    adapter.task_board.create(
+    _create_task_row(
+        adapter,
         subject="实现expense核心模型",
         description="实现 expense 领域对象与存储访问层",
         metadata={"scope": "src/expense, tests/", "steps": ["实现模型", "添加测试"]},
@@ -1484,9 +1519,10 @@ async def test_qa_adapter_quality_gate_fails_when_critical_issues_present(tmp_pa
 @pytest.mark.asyncio
 async def test_qa_adapter_reopens_completed_director_task_on_fail(tmp_path: Path) -> None:
     adapter = QAAdapter(workspace=str(tmp_path))
-    director_task = adapter.task_board.create(subject="实现账单导出", description="A", metadata={})
-    adapter.task_board.update(
-        director_task.id,
+    director_task = _create_task_row(adapter, subject="实现账单导出", description="A", metadata={})
+    _update_task_row(
+        adapter,
+        director_task["id"],
         status="completed",
         metadata={"adapter_result": {"qa_required_for_final_verdict": True, "qa_passed": None}},
     )
@@ -1510,10 +1546,9 @@ async def test_qa_adapter_reopens_completed_director_task_on_fail(tmp_path: Path
     )
 
     assert result["success"] is False
-    board_row = adapter.task_board.get(director_task.id)
-    assert board_row is not None
-    assert str(board_row.status.value) == "pending"
-    metadata = board_row.metadata if isinstance(board_row.metadata, dict) else {}
+    board_row = _get_task_row(adapter, director_task["id"])
+    assert str(board_row.get("status") or "") == "pending"
+    metadata = _row_metadata(board_row)
     assert bool(metadata.get("qa_rework_requested")) is True
     assert int(metadata.get("qa_rework_retry_count") or 0) == 1
     raw_adapter_result = metadata.get("adapter_result")
@@ -1528,9 +1563,10 @@ async def test_qa_adapter_marks_failed_when_rework_retry_exhausted(
 ) -> None:
     monkeypatch.setenv("KERNELONE_DIRECTOR_TASK_REWORK_MAX_RETRIES", "2")
     adapter = QAAdapter(workspace=str(tmp_path))
-    director_task = adapter.task_board.create(subject="实现账单导出", description="A", metadata={})
-    adapter.task_board.update(
-        director_task.id,
+    director_task = _create_task_row(adapter, subject="实现账单导出", description="A", metadata={})
+    _update_task_row(
+        adapter,
+        director_task["id"],
         status="completed",
         metadata={
             "adapter_result": {
@@ -1563,28 +1599,29 @@ async def test_qa_adapter_marks_failed_when_rework_retry_exhausted(
     )
 
     assert result["success"] is False
-    board_row = adapter.task_board.get(director_task.id)
-    assert board_row is not None
-    assert str(board_row.status.value) == "failed"
-    metadata = board_row.metadata if isinstance(board_row.metadata, dict) else {}
+    board_row = _get_task_row(adapter, director_task["id"])
+    assert str(board_row.get("status") or "") == "failed"
+    metadata = _row_metadata(board_row)
     assert bool(metadata.get("qa_rework_exhausted")) is True
     assert int(metadata.get("qa_rework_retry_count") or 0) == 2
 
 
 def test_director_taskboard_snapshot_includes_rework_and_exhausted_states(tmp_path: Path) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
-    pending_rework = adapter.task_board.create(subject="任务待返工", description="A", metadata={})
-    failed_exhausted = adapter.task_board.create(subject="任务重试耗尽", description="B", metadata={})
+    pending_rework = _create_task_row(adapter, subject="任务待返工", description="A", metadata={})
+    failed_exhausted = _create_task_row(adapter, subject="任务重试耗尽", description="B", metadata={})
 
-    adapter.task_board.update(
-        pending_rework.id,
+    _update_task_row(
+        adapter,
+        pending_rework["id"],
         metadata={
             "adapter_result": {"qa_required_for_final_verdict": True, "qa_passed": False},
             "qa_rework_requested": True,
         },
     )
-    adapter.task_board.update(
-        failed_exhausted.id,
+    _update_task_row(
+        adapter,
+        failed_exhausted["id"],
         status="failed",
         metadata={
             "adapter_result": {"qa_required_for_final_verdict": True, "qa_passed": False},
@@ -1602,8 +1639,8 @@ def test_director_taskboard_snapshot_includes_rework_and_exhausted_states(tmp_pa
         str(item.get("id") or ""): str(item.get("qa_state") or "") for item in failed_samples if isinstance(item, dict)
     }
 
-    assert pending_states.get(str(pending_rework.id)) == "rework"
-    assert failed_states.get(str(failed_exhausted.id)) == "exhausted"
+    assert pending_states.get(str(pending_rework["id"])) == "rework"
+    assert failed_states.get(str(failed_exhausted["id"])) == "exhausted"
 
 
 def test_qa_adapter_filters_stale_stage_signals_by_run_id(tmp_path: Path) -> None:
@@ -1724,9 +1761,9 @@ class TestConcurrentDirectorBindingClaimDifferentTasks:
         from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
 
         service = TaskRuntimeService(workspace=str(tmp_path))
-        service.create(subject="任务A", description="A", priority=1)
-        service.create(subject="任务B", description="B", priority=1)
-        service.create(subject="任务C", description="C", priority=1)
+        service.create_task_row(subject="任务A", description="A", priority=1)
+        service.create_task_row(subject="任务B", description="B", priority=1)
+        service.create_task_row(subject="任务C", description="C", priority=1)
 
         selected_ids: list[str] = []
         for _ in range(5):
@@ -1743,8 +1780,8 @@ class TestConcurrentDirectorBindingClaimDifferentTasks:
         adapter1 = DirectorAdapter(workspace=str(tmp_path))
         adapter2 = DirectorAdapter(workspace=str(tmp_path))
 
-        adapter1.task_board.create(subject="任务A", description="A", priority=1)
-        adapter1.task_board.create(subject="任务B", description="B", priority=1)
+        _create_task_row(adapter1, subject="任务A", description="A", priority=1)
+        _create_task_row(adapter1, subject="任务B", description="B", priority=1)
 
         selected1 = adapter1._select_pending_board_task()
         assert selected1 is not None
@@ -1783,10 +1820,10 @@ class TestConcurrentDirectorBindingClaimDifferentTasks:
         from polaris.cells.roles.adapters.internal.director_adapter import DirectorAdapter
 
         adapter = DirectorAdapter(workspace=str(tmp_path))
-        task = adapter.task_board.create(subject="独占任务", description="only one should claim", priority=1)
+        task = _create_task_row(adapter, subject="独占任务", description="only one should claim", priority=1)
 
         claim1 = adapter.task_runtime.claim_execution(
-            task.id,
+            task["id"],
             worker_id="director-1",
             role_id="director",
             run_id="run-1",
@@ -1795,7 +1832,7 @@ class TestConcurrentDirectorBindingClaimDifferentTasks:
         assert claim1["success"] is True
 
         claim2 = adapter.task_runtime.claim_execution(
-            task.id,
+            task["id"],
             worker_id="director-2",
             role_id="director",
             run_id="run-2",
@@ -1809,11 +1846,11 @@ class TestConcurrentDirectorBindingClaimDifferentTasks:
         from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
 
         service = TaskRuntimeService(workspace=str(tmp_path))
-        task_a = service.create(subject="任务A", description="A", priority=1)
-        task_b = service.create(subject="任务B", description="B", priority=1)
+        task_a = service.create_task_row(subject="任务A", description="A", priority=1)
+        task_b = service.create_task_row(subject="任务B", description="B", priority=1)
 
         service.claim_execution(
-            task_a.id,
+            task_a["id"],
             worker_id="director-1",
             role_id="director",
             run_id="run-1",
@@ -1822,7 +1859,7 @@ class TestConcurrentDirectorBindingClaimDifferentTasks:
 
         selected = service.select_next_task()
         assert selected is not None
-        assert str(selected.get("id") or "") == str(task_b.id)
+        assert str(selected.get("id") or "") == str(task_b["id"])
 
 
 class TestAtomicClaimNextExecution:
@@ -1833,8 +1870,8 @@ class TestAtomicClaimNextExecution:
         from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
 
         service = TaskRuntimeService(workspace=str(tmp_path))
-        service.create(subject="任务A", description="A", priority=1)
-        service.create(subject="任务B", description="B", priority=1)
+        service.create_task_row(subject="任务A", description="A", priority=1)
+        service.create_task_row(subject="任务B", description="B", priority=1)
 
         # Director 1 claims first task
         result1 = service.claim_next_execution(
@@ -1864,12 +1901,12 @@ class TestAtomicClaimNextExecution:
         from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
 
         service = TaskRuntimeService(workspace=str(tmp_path))
-        task_a = service.create(subject="任务A", description="A", priority=1)
-        task_b = service.create(subject="任务B", description="B", priority=1)
+        task_a = service.create_task_row(subject="任务A", description="A", priority=1)
+        task_b = service.create_task_row(subject="任务B", description="B", priority=1)
 
         # Pre-claim task A with director-1 (this changes status to in_progress)
         claim_result = service.claim_execution(
-            task_a.id,
+            task_a["id"],
             worker_id="director-1",
             role_id="director",
             run_id="run-1",
@@ -1886,7 +1923,7 @@ class TestAtomicClaimNextExecution:
             selection_source="test",
         )
         assert result["success"] is True
-        assert result["task"]["id"] == task_b.id
+        assert result["task"]["id"] == task_b["id"]
         assert len(result["attempts"]) == 1
         assert result["attempts"][0]["success"] is True
 
@@ -1914,19 +1951,19 @@ class TestAtomicClaimNextExecution:
         from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
 
         service = TaskRuntimeService(workspace=str(tmp_path))
-        task_a = service.create(subject="任务A", description="A", priority=1)
-        task_b = service.create(subject="任务B", description="B", priority=1)
+        task_a = service.create_task_row(subject="任务A", description="A", priority=1)
+        task_b = service.create_task_row(subject="任务B", description="B", priority=1)
 
         # Claim all tasks with director-1 (changes status to in_progress)
         service.claim_execution(
-            task_a.id,
+            task_a["id"],
             worker_id="director-1",
             role_id="director",
             run_id="run-1",
             selection_source="test",
         )
         service.claim_execution(
-            task_b.id,
+            task_b["id"],
             worker_id="director-1",
             role_id="director",
             run_id="run-1",
@@ -1949,12 +1986,12 @@ class TestAtomicClaimNextExecution:
         from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
 
         service = TaskRuntimeService(workspace=str(tmp_path))
-        service.create(subject="普通任务", description="A", priority=1)
+        service.create_task_row(subject="普通任务", description="A", priority=1)
 
         # Create a resumable task by claiming and suspending
-        task_b = service.create(subject="可恢复任务", description="B", priority=1)
+        task_b = service.create_task_row(subject="可恢复任务", description="B", priority=1)
         claim_result = service.claim_execution(
-            task_b.id,
+            task_b["id"],
             worker_id="director-1",
             role_id="director",
             run_id="run-1",
@@ -1965,7 +2002,7 @@ class TestAtomicClaimNextExecution:
 
         # Suspend the task to make it resumable
         suspend_result = service.suspend_execution(
-            task_b.id,
+            task_b["id"],
             session_id=session_id,
             reason="test_suspend",
         )
@@ -1980,4 +2017,4 @@ class TestAtomicClaimNextExecution:
             prefer_resumable=True,
         )
         assert result["success"] is True
-        assert result["task"]["id"] == task_b.id
+        assert result["task"]["id"] == task_b["id"]
