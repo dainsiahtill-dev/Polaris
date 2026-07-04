@@ -1287,6 +1287,55 @@ def summarize_tool_lifecycle_events(events: Sequence[Mapping[str, Any]]) -> dict
     }
 
 
+def project_tool_lifecycle_failure_status(summary: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Project aggregate lifecycle failure status from a canonical summary.
+
+    Boundary:
+        Run Ledger owns the precedence between dropped dispatch and other
+        lifecycle failures. Runtime/UI projections should consume this helper
+        instead of reinterpreting ``dropped_count`` / ``failed_count`` locally.
+
+    Complexity:
+        O(n) time and O(1) additional memory over projected lifecycle events.
+    """
+
+    lifecycle = summary if isinstance(summary, Mapping) else {}
+    if not lifecycle:
+        return {"failed": False, "status": "", "failure_class": "", "reason": ""}
+
+    events_raw = lifecycle.get("events")
+    events = [dict(item) for item in events_raw if isinstance(item, Mapping)] if isinstance(events_raw, list) else []
+    dropped_count = _int_value(lifecycle.get("dropped_count"))
+    failed_count = _int_value(lifecycle.get("failed_count"))
+    if dropped_count > 0:
+        dropped_events = [event for event in events if bool(event.get("dropped"))]
+        latest = dropped_events[-1] if dropped_events else {}
+        failure_class = normalize_failure_class(
+            _clean_string(latest.get("failure_class")) or FailureClassV1.TOOL_DISPATCH_DROPPED.value
+        )
+        return {
+            "failed": True,
+            "status": _clean_string(latest.get("status")) or "dropped",
+            "failure_class": failure_class,
+            "reason": _clean_string(latest.get("reason")) or failure_class,
+        }
+
+    if failed_count > 0 or not bool(lifecycle.get("ok", True)):
+        failed_events = [event for event in events if bool(event.get("failed"))]
+        latest = failed_events[-1] if failed_events else {}
+        failure_class = normalize_failure_class(
+            _clean_string(latest.get("failure_class")) or FailureClassV1.TOOL_LIFECYCLE_FAILED.value
+        )
+        return {
+            "failed": True,
+            "status": _clean_string(latest.get("status")) or "failed",
+            "failure_class": failure_class,
+            "reason": _clean_string(latest.get("reason")) or failure_class,
+        }
+
+    return {"failed": False, "status": "", "failure_class": "", "reason": ""}
+
+
 def empty_tool_lifecycle_summary() -> dict[str, Any]:
     """Return the canonical empty tool-lifecycle summary shape."""
 
@@ -1897,6 +1946,7 @@ __all__ = [
     "project_native_tool_call_facts_from_evidence_to_metadata",
     "project_native_tool_call_facts_to_metadata",
     "project_tool_lifecycle_event",
+    "project_tool_lifecycle_failure_status",
     "project_tool_lifecycle_metadata",
     "project_tool_lifecycle_receipt_to_metadata",
     "summarize_tool_lifecycle_events",

@@ -36,6 +36,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     project_native_tool_call_facts_from_evidence_to_metadata,
     project_native_tool_call_facts_to_metadata,
     project_tool_lifecycle_event,
+    project_tool_lifecycle_failure_status,
     project_tool_lifecycle_metadata,
     project_tool_lifecycle_receipt_to_metadata,
     summarize_tool_lifecycle_events,
@@ -51,6 +52,7 @@ def test_tool_lifecycle_all_exports_source_projection_helpers() -> None:
         "build_tool_dispatch_dropped_anomaly_from_sources",
         "native_tool_call_names_from_facts",
         "observed_tool_call_names_from_sources",
+        "project_tool_lifecycle_failure_status",
         "task_boundary_tool_dispatch_from_lifecycle_receipt",
     }
 
@@ -642,6 +644,98 @@ def test_summarize_tool_lifecycle_events_centralizes_projection_totals() -> None
     assert summary["failed_count"] == 1
     assert summary["failure_evidence"][0]["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
     assert [event["content_id"] for event in summary["events"]] == ["event-1", "event-2"]
+
+
+def test_project_tool_lifecycle_failure_status_centralizes_failure_precedence() -> None:
+    dropped_receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=0,
+        receipts=[],
+        reason="native calls had no dispatch receipt",
+    ).to_dict()
+    missing_effect_receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-2",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[
+            {
+                "batch_id": "batch-1",
+                "results": [
+                    {
+                        "tool_name": "write_file",
+                        "status": "success",
+                    }
+                ],
+            }
+        ],
+        reason="write result had no effect receipt",
+    ).to_dict()
+
+    summary = summarize_tool_lifecycle_events(
+        [
+            project_tool_lifecycle_event(missing_effect_receipt, content_id="event-1"),
+            project_tool_lifecycle_event(dropped_receipt, content_id="event-2"),
+        ]
+    )
+
+    failure_status = project_tool_lifecycle_failure_status(summary)
+
+    assert failure_status == {
+        "failed": True,
+        "status": "dropped",
+        "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        "reason": "native calls had no dispatch receipt",
+    }
+
+
+def test_project_tool_lifecycle_failure_status_reports_non_dropped_failure() -> None:
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[
+            {
+                "batch_id": "batch-1",
+                "results": [
+                    {
+                        "tool_name": "write_file",
+                        "status": "success",
+                    }
+                ],
+            }
+        ],
+        reason="write result had no effect receipt",
+    ).to_dict()
+
+    summary = summarize_tool_lifecycle_events([project_tool_lifecycle_event(receipt)])
+
+    failure_status = project_tool_lifecycle_failure_status(summary)
+
+    assert failure_status == {
+        "failed": True,
+        "status": "blocked",
+        "failure_class": FailureClassV1.MISSING_EFFECT_RECEIPT.value,
+        "reason": "write result had no effect receipt",
+    }
+    assert project_tool_lifecycle_failure_status(empty_tool_lifecycle_summary()) == {
+        "failed": False,
+        "status": "",
+        "failure_class": "",
+        "reason": "",
+    }
 
 
 def test_merge_tool_lifecycle_summaries_centralizes_multi_project_projection() -> None:
