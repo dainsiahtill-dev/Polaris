@@ -333,9 +333,9 @@ async def test_pm_adapter_pm_stage_creates_tasks_with_current_taskboard_api(tmp_
     rows = payload.get("signals") if isinstance(payload, dict) else []
     assert isinstance(rows, list)
     assert any(isinstance(item, dict) and str(item.get("code") or "") == "pm.execution.summary" for item in rows)
-    board_tasks = adapter.task_board.list_all()
+    board_tasks = adapter.task_board.list_task_rows()
     assert len(board_tasks) >= 2
-    assert all(task.subject for task in board_tasks)
+    assert all(str(task.get("subject") or "").strip() for task in board_tasks)
 
 
 @pytest.mark.asyncio
@@ -365,9 +365,9 @@ async def test_pm_adapter_projection_hint_synthesizes_generic_projection_contrac
     )
 
     assert result["success"] is True
-    board_tasks = adapter.task_board.list_all()
+    board_tasks = adapter.task_board.list_task_rows()
     assert len(board_tasks) >= 3
-    raw_first_metadata = board_tasks[0].metadata
+    raw_first_metadata = board_tasks[0].get("metadata")
     first_metadata: dict[str, Any] = raw_first_metadata if isinstance(raw_first_metadata, dict) else {}
     raw_projection = first_metadata.get("projection")
     projection: dict[str, Any] = raw_projection if isinstance(raw_projection, dict) else {}
@@ -375,7 +375,7 @@ async def test_pm_adapter_projection_hint_synthesizes_generic_projection_contrac
     assert projection.get("scenario_id") == "scenario_alpha"
     assert projection.get("project_slug") == "projection_lab"
     for task in board_tasks:
-        raw_metadata = task.metadata
+        raw_metadata = task.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
         target_files = metadata.get("target_files")
         assert isinstance(target_files, list)
@@ -622,20 +622,22 @@ def test_pm_adapter_create_board_tasks_deduplicates_existing_semantic_tasks(tmp_
 
     created = adapter._create_board_tasks(contracts)
 
-    board_tasks = adapter.task_board.list_all()
+    board_tasks = adapter.task_board.list_task_rows()
     assert len(board_tasks) == 2
     assert any(int(item.get("id") or 0) == int(existing.id) for item in created)
 
     reused = adapter.task_board.get(existing.id)
     assert reused is not None
     assert bool((reused.metadata or {}).get("pm_deduplicated")) is True
-    dependent = next((task for task in board_tasks if int(task.id) != int(existing.id)), None)
+    dependent = next((task for task in board_tasks if int(task.get("id") or 0) != int(existing.id)), None)
     assert dependent is not None
-    resolved_dep = (dependent.metadata or {}).get("resolved_depends_on_task_ids")
+    raw_dependent_metadata = dependent.get("metadata")
+    dependent_metadata: dict[str, Any] = raw_dependent_metadata if isinstance(raw_dependent_metadata, dict) else {}
+    resolved_dep = dependent_metadata.get("resolved_depends_on_task_ids")
     assert isinstance(resolved_dep, list)
     assert int(existing.id) in [int(item) for item in resolved_dep]
-    assert dependent.blocked_by == [int(existing.id)]
-    assert dependent.status.value == "blocked"
+    assert dependent.get("blocked_by") == [int(existing.id)]
+    assert dependent.get("status") == "blocked"
 
     reused_metadata = reused.metadata or {}
     assert reused_metadata["external_task_id"] == "TASK-3"
@@ -1078,7 +1080,7 @@ async def test_director_invoke_role_dialogue_uses_default_kernel_retry_budget(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    captured = {"max_retries": None}
+    captured: dict[str, int | None] = {"max_retries": None}
 
     async def _fake_runtime_session(message: str, *, context: dict[str, Any] | None = None, max_retries: int = 1):
         del message, context
@@ -1098,7 +1100,7 @@ async def test_director_invoke_role_dialogue_honors_retry_budget_env(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    captured = {"max_retries": None}
+    captured: dict[str, int | None] = {"max_retries": None}
 
     async def _fake_runtime_session(message: str, *, context: dict[str, Any] | None = None, max_retries: int = 1):
         del message, context

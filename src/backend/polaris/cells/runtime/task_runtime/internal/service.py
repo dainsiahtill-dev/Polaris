@@ -517,11 +517,7 @@ class TaskRuntimeService:
         owner: str | None = None,
         tag: str | None = None,
     ) -> list[Task]:
-        return self._board.list_all(
-            status=status,
-            owner=owner,
-            tag=tag,
-        )
+        raise RuntimeError("TaskRuntimeService.list_all is retired; use list_task_rows()")
 
     def list_task_rows(self, *, include_terminal: bool = True) -> list[dict[str, Any]]:
         self.refresh_dependency_unblocks()

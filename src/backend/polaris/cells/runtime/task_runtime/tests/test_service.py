@@ -50,6 +50,16 @@ def test_task_runtime_service_manages_task_rows(tmp_path: Path) -> None:
     assert rows[0]["id"] == created.id
 
 
+def test_task_runtime_service_raw_list_all_is_retired(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    service.create(subject="row projection only")
+
+    with pytest.raises(RuntimeError, match="use list_task_rows"):
+        service.list_all()
+
+
 def test_create_task_row_reports_event_append_failure_without_persisting_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
