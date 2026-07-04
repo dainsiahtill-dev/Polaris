@@ -4,15 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from polaris.cells.control_plane.run_ledger.public.failure_evidence import (
-    FailureClassV1,
-    normalize_failure_class,
-)
 from polaris.cells.control_plane.run_ledger.public.task_boundary import (
     normalize_task_boundary_verdict,
 )
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     project_tool_lifecycle_event,
+    project_tool_lifecycle_failure_status,
     project_tool_lifecycle_summary,
     summarize_tool_lifecycle_events,
 )
@@ -919,19 +916,14 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
     tool_lifecycle = value.get("tool_lifecycle")
     tool_lifecycle_map = tool_lifecycle if isinstance(tool_lifecycle, dict) else {}
     if tool_lifecycle_map and not bool(tool_lifecycle_map.get("ok", True)):
-        events = tool_lifecycle_map.get("events")
-        event_rows = events if isinstance(events, list) else []
-        failed_events = [item for item in event_rows if isinstance(item, dict) and bool(item.get("failed"))]
+        failure_status = project_tool_lifecycle_failure_status(tool_lifecycle_map)
         failure_evidence_raw = tool_lifecycle_map.get("failure_evidence")
         failure_evidence = [
             dict(item)
             for item in failure_evidence_raw
             if isinstance(item, dict)
         ] if isinstance(failure_evidence_raw, list) else []
-        failure = normalize_failure_class(
-            failed_events[-1].get("failure_class") if failed_events else "",
-            default=FailureClassV1.TOOL_LIFECYCLE_FAILED,
-        )
+        failure = _clean_string(failure_status.get("failure_class")) or "TOOL_LIFECYCLE_FAILED"
         return {
             "ok": False,
             "detail": "run ledger projection tool lifecycle failed: " + failure,
