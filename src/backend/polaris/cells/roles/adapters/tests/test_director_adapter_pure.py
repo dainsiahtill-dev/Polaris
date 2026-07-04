@@ -112,12 +112,12 @@ def _run_go_materialization_quality_schedule(
     return [dict(item) for item in result.tool_results]
 
 
-def _make_adapter(tmp_path: Any, task_board: Any = None, task_runtime: Any = None) -> DirectorAdapter:
+def _make_adapter(tmp_path: Any, task_runtime: Any = None) -> DirectorAdapter:
     """Create a DirectorAdapter with mocked heavy dependencies."""
-    if task_board is None and task_runtime is None:
+    if task_runtime is None:
         adapter = DirectorAdapter(workspace=str(tmp_path))
     else:
-        adapter = DirectorAdapter(workspace=str(tmp_path), task_board=task_board, task_runtime=task_runtime)
+        adapter = DirectorAdapter(workspace=str(tmp_path), task_runtime=task_runtime)
     return adapter
 
 
@@ -3084,7 +3084,7 @@ def _assert_retry_text_fallback_is_non_authoritative(
     assert result["error_code"] == "incomplete_materialization"
     assert result["failure_class"] == "INCOMPLETE_MATERIALIZATION"
 
-    updated = adapter.task_board.get_task(task_id)
+    updated = adapter.task_runtime.get_task(task_id)
     assert updated is not None
     raw_metadata = updated.get("metadata")
     metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
@@ -3115,7 +3115,7 @@ def test_target_candidates_include_explicit_scope_directories_with_target_files(
 @pytest.mark.asyncio
 async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_path: Any) -> None:
     adapter = _make_adapter(tmp_path)
-    task = adapter.task_board.create_task_row(
+    task = adapter.task_runtime.create_task_row(
         subject="Create app module",
         description="Create src/app.py with a runnable entry point.",
         metadata={"target_files": ["src/app.py"], "scope_paths": ["src/app.py"]},
@@ -3210,7 +3210,7 @@ async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_p
 @pytest.mark.asyncio
 async def test_execute_retries_no_write_probe_with_write_only_materialize_prompt(tmp_path: Any) -> None:
     adapter = _make_adapter(tmp_path)
-    task = adapter.task_board.create_task_row(
+    task = adapter.task_runtime.create_task_row(
         subject="Create app module",
         description="Create src/app.py with a runnable entry point.",
         metadata={"target_files": ["src/app.py"], "scope_paths": ["src/app.py"], "phase": "implementation"},
@@ -3303,7 +3303,7 @@ async def test_execute_retries_no_write_probe_with_write_only_materialize_prompt
 @pytest.mark.asyncio
 async def test_execute_retries_multi_file_no_write_with_mutation_tools_only(tmp_path: Any) -> None:
     adapter = _make_adapter(tmp_path)
-    task = adapter.task_board.create_task_row(
+    task = adapter.task_runtime.create_task_row(
         subject="Create application modules",
         description="Create src/app.py and src/utils.py with a runnable entry point.",
         metadata={
@@ -3402,7 +3402,7 @@ async def test_execute_retries_multi_file_no_write_with_mutation_tools_only(tmp_
 @pytest.mark.asyncio
 async def test_execute_retries_read_only_materialization_with_forced_write(tmp_path: Any) -> None:
     adapter = _make_adapter(tmp_path)
-    task = adapter.task_board.create_task_row(
+    task = adapter.task_runtime.create_task_row(
         subject="Create app module",
         description="Create src/app.py with a runnable entry point.",
         metadata={"target_files": ["src/app.py"], "scope_paths": ["src/app.py"]},
@@ -4837,7 +4837,7 @@ class TestDirectorFailureClosure:
     @pytest.mark.asyncio
     async def test_execute_fails_claimed_task_on_unhandled_runtime_error(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="实现核心模块",
             description="创建文件",
             metadata={"scope": "src/core.ts", "steps": ["写入核心文件"]},
@@ -4858,14 +4858,14 @@ class TestDirectorFailureClosure:
 
         assert result["success"] is False
         assert result["error_code"] == "director.runtime.exception"
-        updated = adapter.task_board.get_task(task_id)
+        updated = adapter.task_runtime.get_task(task_id)
         assert updated is not None
         assert str(updated.get("status") or "").lower() == "failed"
 
     @pytest.mark.asyncio
     async def test_execute_rejects_workspace_diff_without_write_tool_receipt(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Repair failing TypeScript test",
             description="Apply the smallest code change and verify npm test behavior.",
             metadata={
@@ -4907,7 +4907,7 @@ class TestDirectorFailureClosure:
             for signal in result.get("decision_signals", [])
             if isinstance(signal, dict)
         )
-        updated = adapter.task_board.get_task(task_id)
+        updated = adapter.task_runtime.get_task(task_id)
         assert updated is not None
         assert str(updated.get("status") or "").lower() == "failed"
         raw_metadata = updated.get("metadata")
@@ -4921,7 +4921,7 @@ class TestDirectorFailureClosure:
     @pytest.mark.asyncio
     async def test_execute_rejects_off_target_workspace_diff_as_materialization(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Implement browser networking client",
             description="Update the declared network client target file.",
             metadata={
@@ -4956,7 +4956,7 @@ class TestDirectorFailureClosure:
         assert result["success"] is False
         assert result["error_code"] == "director_materialized_out_of_scope"
         assert result["failure_class"] == QaFailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value
-        updated = adapter.task_board.get_task(task_id)
+        updated = adapter.task_runtime.get_task(task_id)
         assert updated is not None
         raw_metadata = updated.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
@@ -4968,7 +4968,7 @@ class TestDirectorFailureClosure:
     @pytest.mark.asyncio
     async def test_execute_keeps_failed_no_write_separate_from_sibling_diff(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Implement garden simulator module",
             description="Update only the declared garden module.",
             metadata={
@@ -5003,7 +5003,7 @@ class TestDirectorFailureClosure:
         assert result["success"] is False
         assert result["error_code"] == "incomplete_materialization"
         assert result["failure_class"] == QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value
-        updated = adapter.task_board.get_task(task_id)
+        updated = adapter.task_runtime.get_task(task_id)
         assert updated is not None
         raw_metadata = updated.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
@@ -5021,7 +5021,7 @@ class TestDirectorFailureClosure:
         )
 
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Bootstrap package manifest",
             description="Create only package.json.",
             metadata={"target_files": ["package.json"], "scope_paths": ["package.json"]},
@@ -5075,7 +5075,7 @@ class TestDirectorFailureClosure:
         )
 
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Bootstrap package manifest",
             description="Create only package.json.",
             metadata={"target_files": ["package.json"], "scope_paths": ["package.json"]},
@@ -5178,7 +5178,7 @@ class TestDirectorFailureClosure:
             "\n".join(f"test('case {idx}', () => expect({idx} + 1).toBe({idx + 1}));" for idx in range(4)) + "\n",
             encoding="utf-8",
         )
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Replace placeholder Card3D unit tests",
             description="Remove trivial arithmetic placeholder tests and replace them with domain assertions.",
             metadata={
@@ -5221,7 +5221,7 @@ class TestDirectorFailureClosure:
         assert result["success"] is False
         assert result["error_code"] == "director_materialization_quality_failed"
         assert any("tests/unit/card-rules.test.ts" in item for item in result["artifact_quality_errors"])
-        updated = adapter.task_board.get_task(task_id)
+        updated = adapter.task_runtime.get_task(task_id)
         assert updated is not None
         assert str(updated.get("status") or "").lower() == "failed"
         raw_metadata = updated.get("metadata")
@@ -5236,7 +5236,7 @@ class TestDirectorFailureClosure:
         tmp_path: Any,
     ) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Build web e2e testing workspace",
             description="Create a runnable web e2e workspace with source code and tests.",
             metadata={
@@ -5357,7 +5357,7 @@ class TestDirectorFailureClosure:
         tmp_path: Any,
     ) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Create package manifest",
             description="Create a package.json with a runnable local test script.",
             metadata={
@@ -5419,7 +5419,7 @@ class TestDirectorFailureClosure:
         tmp_path: Any,
     ) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Create package manifest",
             description="Create a package.json with a syntactically valid npm test script.",
             metadata={
@@ -5482,7 +5482,7 @@ class TestDirectorFailureClosure:
         tmp_path: Any,
     ) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Create task model summary",
             description="Create a task model summary function with valid TypeScript syntax.",
             metadata={
@@ -5558,7 +5558,7 @@ export function summary() {
         )
         _write_substantive_node_test_script(tmp_path)
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Define tenant model",
             description="Create the tenant model with runtime imports declared in package.json.",
             metadata={
@@ -5641,7 +5641,7 @@ export function summary() {
         )
         _write_substantive_node_test_script(tmp_path)
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Tenant Context & Audit Log Middleware",
             description="Implement immutable audit log model with tenant context.",
             metadata={
@@ -5742,7 +5742,7 @@ export function summary() {
         )
         _write_substantive_node_test_script(tmp_path)
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Immutable Audit Logging Implementation",
             description="Create a TypeScript audit log service with stable event IDs and structured logging.",
             metadata={
@@ -5844,7 +5844,7 @@ export function summary() {
         )
         _write_substantive_node_test_script(tmp_path)
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Tenant Context Middleware",
             description="Create request-scoped tenant context middleware for an Express service.",
             metadata={
@@ -5944,7 +5944,7 @@ export function summary() {
         )
         _write_substantive_node_test_script(tmp_path)
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Task Definition Model",
             description="Create zod-backed task definition model.",
             metadata={
@@ -6023,7 +6023,7 @@ export function summary() {
             encoding="utf-8",
         )
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Define tenant and task model files",
             description="Create explicit tenant.model.ts and task.model.ts model files.",
             metadata={
@@ -6078,7 +6078,7 @@ export function summary() {
         adapter = _make_adapter(tmp_path)
         target = tmp_path / "src" / "fish" / "arena.ts"
         target.parent.mkdir(parents=True, exist_ok=True)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Implement fish predator prey multiplayer arena",
             description="Build fish arena movement and predator prey scoring for the online game.",
             metadata={
@@ -6126,7 +6126,7 @@ export function summary() {
         assert result["success"] is False
         assert result["error_code"] == "director_materialization_semantic_quality_failed"
         assert "no project-domain signal" in result["semantic_quality_error"]
-        updated = adapter.task_board.get_task(task_id)
+        updated = adapter.task_runtime.get_task(task_id)
         assert updated is not None
         raw_metadata = updated.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
@@ -6139,7 +6139,7 @@ export function summary() {
         adapter = _make_adapter(tmp_path)
         target = tmp_path / "src" / "fish" / "arena.ts"
         target.parent.mkdir(parents=True, exist_ok=True)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Implement fish predator prey multiplayer arena",
             description="Build fish arena movement and predator prey scoring for the online game.",
             metadata={
@@ -6215,7 +6215,7 @@ export function summary() {
         assert stages.count("quality_repair") == 1
         assert "fish arena predator prey" in target.read_text(encoding="utf-8")
         assert repair_contexts[0]["director_quality_repair"]["artifact_quality_errors"]
-        updated = adapter.task_board.get_task(task_id)
+        updated = adapter.task_runtime.get_task(task_id)
         assert updated is not None
         raw_metadata = updated.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
@@ -6226,7 +6226,7 @@ export function summary() {
     @pytest.mark.asyncio
     async def test_execute_fails_autofix_declared_scope_without_real_materialization(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Implement interactive game renderer",
             description="Quality gate repair task generated because the PM contract omitted renderer scope.",
             metadata={
@@ -6260,7 +6260,7 @@ export function summary() {
         assert result["error_code"] == "incomplete_materialization"
         assert result["failure_class"] == "INCOMPLETE_MATERIALIZATION"
         assert target.exists() is False
-        updated = adapter.task_board.get_task(task_id)
+        updated = adapter.task_runtime.get_task(task_id)
         assert updated is not None
         raw_metadata = updated.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
@@ -6298,7 +6298,7 @@ export function summary() {
             encoding="utf-8",
         )
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Extend Node.js backend entrypoint",
             description="Implement Node.js backend entrypoint.",
             metadata={
@@ -6337,7 +6337,7 @@ export function summary() {
 
         assert result["success"] is True
         assert result["materialization_mode"] == "verified_existing_workspace_scope"
-        updated = adapter.task_board.get_task(task_id)
+        updated = adapter.task_runtime.get_task(task_id)
         assert updated is not None
         assert str(updated.get("status") or "").lower() == "completed"
         raw_metadata = updated.get("metadata")
@@ -6361,7 +6361,7 @@ export function summary() {
             encoding="utf-8",
         )
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Extend multiplayer session persistence",
             description="Implement multiplayer session persistence.",
             metadata={
@@ -6407,7 +6407,7 @@ export function summary() {
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("export const serverReady = true;\n", encoding="utf-8")
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Extend Node.js backend entrypoint",
             description="Implement Node.js backend entrypoint.",
             metadata={
@@ -6466,7 +6466,7 @@ export function summary() {
             encoding="utf-8",
         )
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Strengthen multiplayer card integration tests",
             description="Verify multiplayer card integration tests according to acceptance criteria.",
             metadata={
@@ -6554,7 +6554,7 @@ export function summary() {
             )
 
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Strengthen multiplayer card integration test runner",
             description="Replace the brittle scripts/test.mjs validation-contract gate with substantive test checks.",
             metadata={
@@ -6764,7 +6764,7 @@ export function summary() {
             encoding="utf-8",
         )
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Clean deterministic scaffold residue",
             description="Remove deterministic scaffold residue before QA.",
             metadata={
@@ -6802,7 +6802,7 @@ export function summary() {
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("export const combatReady = true;\n", encoding="utf-8")
         adapter = _make_adapter(tmp_path)
-        combat = adapter.task_board.create_task_row(
+        combat = adapter.task_runtime.create_task_row(
             subject="Audit turn based combat system scope",
             description="Materialize combat scope.",
             metadata={
@@ -6826,7 +6826,7 @@ export function summary() {
         )
 
         assert result["success"] is True
-        updated = adapter.task_board.get_task(combat_id)
+        updated = adapter.task_runtime.get_task(combat_id)
         assert updated is not None
         metadata_raw = updated.get("metadata")
         metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
@@ -6842,7 +6842,7 @@ export function summary() {
         existing_target = tmp_path / "worker_3.py"
         existing_target.write_text('MARKER = "D4-SAT-3"\n', encoding="utf-8")
         adapter = _make_adapter(tmp_path)
-        sibling = adapter.task_board.create_task_row(
+        sibling = adapter.task_runtime.create_task_row(
             subject="Create independent saturation Python file 3",
             description="Create worker_3.py.",
             metadata={
@@ -6887,7 +6887,7 @@ export function summary() {
         materialized = adapter.task_runtime.get_task("D4-SAT-2")
         assert materialized is not None
         assert materialized["metadata"]["external_task_id"] == "D4-SAT-2"
-        sibling_after = adapter.task_board.get_task(sibling_id)
+        sibling_after = adapter.task_runtime.get_task(sibling_id)
         assert sibling_after is not None
         assert sibling_after["status"] != "completed"
 
@@ -6908,7 +6908,7 @@ export function summary() {
 
     def test_get_task_resolves_external_task_id_before_queue_fallback(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        adapter.task_board.create_task_row(
+        adapter.task_runtime.create_task_row(
             subject="Create independent saturation Python file 3",
             description="Create worker_3.py.",
             metadata={
@@ -6917,7 +6917,7 @@ export function summary() {
                 "target_files": ["worker_3.py"],
             },
         )
-        adapter.task_board.create_task_row(
+        adapter.task_runtime.create_task_row(
             subject="Create independent saturation Python file 2",
             description="Create worker_2.py.",
             metadata={
@@ -6944,7 +6944,7 @@ export function summary() {
             'export const gameViewScaffoldVersion = "deterministic-declared-scope-v1";\n',
             encoding="utf-8",
         )
-        task = adapter.task_board.create_task_row(
+        task = adapter.task_runtime.create_task_row(
             subject="Implement interactive game renderer",
             description="Quality gate repair task generated because the PM contract omitted renderer scope.",
             metadata={
@@ -6976,7 +6976,7 @@ export function summary() {
         assert result["success"] is False
         assert result["error_code"] == "incomplete_materialization"
         assert result["failure_class"] == "INCOMPLETE_MATERIALIZATION"
-        updated = adapter.task_board.get_task(task_id)
+        updated = adapter.task_runtime.get_task(task_id)
         assert updated is not None
         raw_metadata = updated.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
@@ -7806,7 +7806,7 @@ class TestPersistExecutionBackendMetadata:
 
     def test_noop_when_task_id_empty(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        # Should not raise even with no task_board
+        # Should not raise even with no task_runtime
         adapter._persist_execution_backend_metadata("", MagicMock())
 
     def test_calls_update_board_task(self, tmp_path: Any) -> None:

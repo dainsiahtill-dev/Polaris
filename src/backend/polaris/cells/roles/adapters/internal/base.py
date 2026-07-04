@@ -63,11 +63,6 @@ class BaseRoleAdapter(RoleOrchestrationAdapter):
             self._task_runtime = TaskRuntimeService(workspace=self.workspace)
         return self._task_runtime
 
-    @property
-    def task_board(self) -> TaskRuntimeService:
-        """Compatibility alias retained while tests migrate to ``task_runtime``."""
-        return self.task_runtime
-
     def _build_env(self, overrides: dict[str, str] | None = None) -> dict[str, str]:
         """构建环境变量"""
         env = {

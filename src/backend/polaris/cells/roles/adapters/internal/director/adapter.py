@@ -1005,11 +1005,10 @@ class DirectorAdapter(BaseRoleAdapter):
     - 工具调用
     """
 
-    def __init__(self, workspace: str, task_board: Any = None, task_runtime: Any = None) -> None:
+    def __init__(self, workspace: str, task_runtime: Any = None) -> None:
         super().__init__(workspace)
-        runtime_override = task_runtime if task_runtime is not None else task_board
-        if runtime_override is not None:
-            self._task_runtime = runtime_override
+        if task_runtime is not None:
+            self._task_runtime = task_runtime
         self._state_tracker = DirectorStateTracker(workspace)
         self._execution = DirectorPatchExecutor(workspace)
 

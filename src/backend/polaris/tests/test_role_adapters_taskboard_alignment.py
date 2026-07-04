@@ -21,19 +21,19 @@ from polaris.kernelone.storage.paths import resolve_signal_path
 
 
 def _create_task_row(adapter: Any, **kwargs: Any) -> dict[str, Any]:
-    row = adapter.task_board.create_task_row(**kwargs)
+    row = adapter.task_runtime.create_task_row(**kwargs)
     assert isinstance(row, dict)
     return row
 
 
 def _update_task_row(adapter: Any, task_id: Any, **kwargs: Any) -> dict[str, Any]:
-    row = adapter.task_board.update_task_row(task_id, **kwargs)
+    row = adapter.task_runtime.update_task_row(task_id, **kwargs)
     assert isinstance(row, dict)
     return row
 
 
 def _get_task_row(adapter: Any, task_id: Any) -> dict[str, Any]:
-    row = adapter.task_board.get_task(task_id)
+    row = adapter.task_runtime.get_task(task_id)
     assert isinstance(row, dict)
     return row
 
@@ -402,7 +402,7 @@ async def test_pm_adapter_pm_stage_creates_tasks_with_current_taskboard_api(tmp_
     rows = payload.get("signals") if isinstance(payload, dict) else []
     assert isinstance(rows, list)
     assert any(isinstance(item, dict) and str(item.get("code") or "") == "pm.execution.summary" for item in rows)
-    board_tasks = adapter.task_board.list_task_rows()
+    board_tasks = adapter.task_runtime.list_task_rows()
     assert len(board_tasks) >= 2
     assert all(str(task.get("subject") or "").strip() for task in board_tasks)
 
@@ -434,7 +434,7 @@ async def test_pm_adapter_projection_hint_synthesizes_generic_projection_contrac
     )
 
     assert result["success"] is True
-    board_tasks = adapter.task_board.list_task_rows()
+    board_tasks = adapter.task_runtime.list_task_rows()
     assert len(board_tasks) >= 3
     raw_first_metadata = board_tasks[0].get("metadata")
     first_metadata: dict[str, Any] = raw_first_metadata if isinstance(raw_first_metadata, dict) else {}
@@ -692,7 +692,7 @@ def test_pm_adapter_create_board_tasks_deduplicates_existing_semantic_tasks(tmp_
 
     created = adapter._create_board_tasks(contracts)
 
-    board_tasks = adapter.task_board.list_task_rows()
+    board_tasks = adapter.task_runtime.list_task_rows()
     assert len(board_tasks) == 2
     assert any(int(item.get("id") or 0) == _row_id(existing) for item in created)
 
@@ -931,7 +931,7 @@ async def test_director_adapter_projection_backend_is_explicit_and_optional(
 
     assert result["success"] is True
     assert result["execution_backend"] == "projection_generate"
-    board_row = adapter.task_board.get_task(result["task_id"])
+    board_row = adapter.task_runtime.get_task(result["task_id"])
     assert isinstance(board_row, dict)
     raw_metadata = board_row.get("metadata")
     metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}

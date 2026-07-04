@@ -165,7 +165,7 @@ class TestTaskboardQaVerdict:
 
     def test_uses_runtime_task_row_projection_before_raw_task_entities(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        task_board = _QaRowProjectionOnlyTaskBoard(
+        task_runtime = _QaRowProjectionOnlyTaskBoard(
             [
                 {
                     "id": 7,
@@ -179,7 +179,7 @@ class TestTaskboardQaVerdict:
                 }
             ]
         )
-        adapter._task_runtime = cast(Any, task_board)
+        adapter._task_runtime = cast(Any, task_runtime)
 
         summary = adapter._apply_taskboard_qa_verdict(
             review_result={
@@ -193,9 +193,9 @@ class TestTaskboardQaVerdict:
 
         assert summary["evaluated"] == 1
         assert summary["reopened"] == 1
-        assert task_board.reopened[0]["task_id"] == 7
-        assert task_board.reopened[0]["reason"] == "integration failed"
-        metadata = task_board.reopened[0]["metadata"]
+        assert task_runtime.reopened[0]["task_id"] == 7
+        assert task_runtime.reopened[0]["reason"] == "integration failed"
+        metadata = task_runtime.reopened[0]["metadata"]
         assert metadata["qa_rework_requested"] is True
         assert metadata["adapter_result"]["qa_review_run_id"] == "qa-run"
 

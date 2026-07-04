@@ -218,14 +218,14 @@ def summarize_tool_results(tool_results: list[dict[str, Any]]) -> str:
 
 def collect_pending_task_context(
     workspace: str,
-    task_board: Any,
+    task_runtime: Any,
     *,
     limit: int = 3,
 ) -> list[str]:
     """收集待办任务上下文"""
 
     lines: list[str] = []
-    list_task_rows = getattr(task_board, "list_task_rows", None)
+    list_task_rows = getattr(task_runtime, "list_task_rows", None)
     if not callable(list_task_rows):
         return lines
     entries = list_task_rows()
