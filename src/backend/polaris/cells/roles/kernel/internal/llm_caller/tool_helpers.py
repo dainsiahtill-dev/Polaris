@@ -311,6 +311,42 @@ def native_tool_call_facts(
     }
 
 
+def native_tool_calls_from_response(response: Any) -> list[dict[str, Any]]:
+    """Return provider-native tool-call payloads from a response-like object.
+
+    Boundary:
+        This helper only normalizes already-decoded response objects. It does
+        not parse assistant text, infer tool calls from prose, or authorize any
+        tool execution.
+
+    Complexity:
+        O(n) time and memory for copying mapping-shaped tool calls.
+    """
+
+    native_calls = getattr(response, "native_tool_calls", None)
+    if isinstance(native_calls, list):
+        return [dict(item) for item in native_calls if isinstance(item, Mapping)]
+    alias_calls = getattr(response, "tool_calls", None)
+    if isinstance(alias_calls, list):
+        return [dict(item) for item in alias_calls if isinstance(item, Mapping)]
+    if isinstance(response, Mapping):
+        raw_calls = response.get("native_tool_calls")
+        if not isinstance(raw_calls, list):
+            raw_calls = response.get("tool_calls")
+        if isinstance(raw_calls, list):
+            return [dict(item) for item in raw_calls if isinstance(item, Mapping)]
+    return []
+
+
+def native_tool_call_facts_from_response(
+    response: Any,
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Project canonical native tool-call facts from one response-like object."""
+
+    return native_tool_call_facts(metadata, native_tool_calls_from_response(response))
+
+
 def _native_tool_call_arguments(call: Mapping[str, Any]) -> Any:
     function = call.get("function")
     if isinstance(function, Mapping) and "arguments" in function:
@@ -1534,8 +1570,10 @@ __all__ = [
     "native_tool_call_count_from_metadata",
     "native_tool_call_envelopes_from_metadata",
     "native_tool_call_facts",
+    "native_tool_call_facts_from_response",
     "native_tool_call_name",
     "native_tool_call_names",
+    "native_tool_calls_from_response",
     "project_native_tool_call_facts_to_metadata",
     "resolve_tool_call_provider",
 ]
