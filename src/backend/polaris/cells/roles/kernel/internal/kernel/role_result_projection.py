@@ -150,7 +150,7 @@ def role_result_metadata_from_profile(
                 dict(raw_context_os_audit) if isinstance(raw_context_os_audit, dict) else raw_context_os_audit
             )
         _project_canonical_tool_lifecycle_receipt(metadata)
-        _project_failure_evidence_from_tool_lifecycle(metadata)
+        project_failure_evidence_from_tool_lifecycle(metadata)
         project_native_tool_call_facts(metadata, metadata)
 
     if isinstance(monitoring, dict) and "context_os_audit" not in metadata:
@@ -188,7 +188,7 @@ def _project_canonical_tool_lifecycle_receipt(metadata: dict[str, Any]) -> None:
                 return
 
 
-def _project_failure_evidence_from_tool_lifecycle(metadata: dict[str, Any]) -> None:
+def project_failure_evidence_from_tool_lifecycle(metadata: dict[str, Any]) -> None:
     """Project failure evidence from canonical lifecycle receipt if absent."""
 
     if "failure_evidence" in metadata:

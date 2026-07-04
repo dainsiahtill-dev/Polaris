@@ -192,6 +192,34 @@ def test_lift_completion_audit_evidence_preserves_failure_evidence() -> None:
     }
 
 
+def test_lift_completion_audit_evidence_derives_failure_evidence_from_lifecycle() -> None:
+    metadata: dict[str, object] = {}
+
+    projection._lift_completion_audit_evidence(
+        metadata,
+        {
+            "tool_call_lifecycle_receipt": {
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "provider_response_hash": "provider-hash-1",
+                "native_tool_call_envelope_refs": [
+                    {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
+                ],
+                "decoded_tool_calls_count": 1,
+                "dispatched_tool_calls_count": 0,
+                "dispatch_status": "dropped",
+            },
+        },
+    )
+
+    assert metadata["failure_evidence"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert metadata["failure_evidence"][0]["responsible_layer"] == "execution_control_plane"
+    assert "provider_response:provider-hash-1" in metadata["failure_evidence"][0]["evidence_refs"]
+    assert metadata["failure_evidence_summary"] == {
+        "count": 1,
+        "latest_failure_class": "TOOL_DISPATCH_DROPPED",
+    }
+
+
 def test_lift_completion_audit_evidence_treats_zero_lifecycle_as_authoritative() -> None:
     metadata: dict[str, object] = {}
 
