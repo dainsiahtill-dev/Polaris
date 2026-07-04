@@ -10588,14 +10588,15 @@ class TestQualityRepairMissingTargetContract:
         )
 
         assert errors == []
-        assert context["director_task_boundary_deferred_quality_errors"] == [
-            {
-                "schema_version": "director.task_boundary.deferred_quality_errors.v1",
-                "reason": "npm_script_entrypoint_outside_current_task_target_files",
-                "artifact_quality_errors": [error],
-                "target_files": ["src/index.js"],
-            }
-        ]
+        records = context["director_task_boundary_deferred_quality_errors"]
+        assert len(records) == 1
+        record = records[0]
+        assert record["schema_version"] == "director.task_boundary.deferred_quality_errors.v1"
+        assert record["reason"] == "npm_script_entrypoint_outside_current_task_target_files"
+        assert record["artifact_quality_errors"] == [error]
+        assert record["target_files"] == ["src/index.js"]
+        assert record["artifact_quality_issues"][0]["code"] == "npm_manifest_invalid"
+        assert record["artifact_quality_issues"][0]["metadata"]["entrypoint"] == "src/index.js"
 
     def test_unresolved_relative_import_outside_task_scope_is_deferred(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
@@ -10628,14 +10629,15 @@ class TestQualityRepairMissingTargetContract:
         )
 
         assert errors == []
-        assert context["director_task_boundary_deferred_quality_errors"] == [
-            {
-                "schema_version": "director.task_boundary.deferred_quality_errors.v1",
-                "reason": "missing_workspace_file_outside_current_task_target_files",
-                "artifact_quality_errors": [error],
-                "target_files": ["src/meteor.js"],
-            }
-        ]
+        records = context["director_task_boundary_deferred_quality_errors"]
+        assert len(records) == 1
+        record = records[0]
+        assert record["schema_version"] == "director.task_boundary.deferred_quality_errors.v1"
+        assert record["reason"] == "missing_workspace_file_outside_current_task_target_files"
+        assert record["artifact_quality_errors"] == [error]
+        assert record["target_files"] == ["src/meteor.js"]
+        assert record["artifact_quality_issues"][0]["code"] == "unresolved_relative_import"
+        assert record["artifact_quality_issues"][0]["metadata"]["importer_path"] == "src/engine/rules.js"
 
     def test_step_verify_missing_downstream_file_is_deferred(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
         from polaris.cells.roles.adapters.internal.director import quality_gate as director_quality_gate

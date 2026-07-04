@@ -1496,7 +1496,7 @@ def _record_deferred_task_boundary_quality_errors(
 ) -> None:
     if not isinstance(context, dict) or not errors:
         return
-    issues = _artifact_quality_issues_for_errors(errors, issue_payloads)
+    issues = _artifact_quality_issues_for_errors(errors, issue_payloads) if issue_payloads else ()
     record = {
         "schema_version": "director.task_boundary.deferred_quality_errors.v1",
         "reason": reason,
