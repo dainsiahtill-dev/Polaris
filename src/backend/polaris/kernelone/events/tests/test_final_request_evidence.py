@@ -9,6 +9,7 @@ from polaris.kernelone.events.final_request_evidence import (
     build_final_request_tool_slots,
     final_request_evidence_ref_for_coverage_flag,
     final_request_evidence_ref_for_requirement,
+    looks_like_failed_gate_evidence_context_payload,
     looks_like_workspace_quality_evidence_payload,
     missing_required_refs_from_evidence_coverage,
     missing_required_tools_from_evidence_coverage,
@@ -314,6 +315,27 @@ def test_workspace_quality_context_slot_uses_structured_payload() -> None:
         "failed_required_modalities": ["command"],
         "missing_required_modalities": ["browser", "screenshot"],
     }
+
+
+def test_failed_gate_context_payload_uses_structured_payload() -> None:
+    assert looks_like_failed_gate_evidence_context_payload(
+        {"schema_version": "polaris.failed_gate_evidence.context_slot.v1"}
+    )
+    assert looks_like_failed_gate_evidence_context_payload(
+        {
+            "items": [
+                {
+                    "schema_version": "failure_evidence.v1",
+                    "failure_class": "TOOL_DISPATCH_DROPPED",
+                }
+            ]
+        }
+    )
+    assert looks_like_failed_gate_evidence_context_payload({"failed_required_modalities": ["command"]})
+    assert not looks_like_failed_gate_evidence_context_payload("failure_class: TOOL_DISPATCH_DROPPED")
+    assert not looks_like_failed_gate_evidence_context_payload(
+        {"message": "failure_class: TOOL_DISPATCH_DROPPED"}
+    )
 
 
 def test_build_final_request_evidence_preserves_existing_lightweight_projection() -> None:

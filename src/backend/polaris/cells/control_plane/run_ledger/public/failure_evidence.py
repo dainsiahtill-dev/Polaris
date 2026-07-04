@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from polaris.kernelone.events.final_request_evidence import looks_like_failed_gate_evidence_context_payload
+
 
 class FailureClassV1(str, Enum):
     """Canonical failure classes carried through run-ledger evidence."""
@@ -149,45 +151,16 @@ def looks_like_failure_evidence_payload(value: Any) -> bool:
     """Return whether *value* is structured failure evidence.
 
     Boundary:
-        This predicate recognizes already-shaped failure evidence payloads and
-        rows for ContextOS/final-request evidence discovery. It deliberately
-        checks schema/field structure only; it does not parse diagnostic prose.
+        Run Ledger exposes the platform failure-evidence predicate as a public
+        contract, while final-request evidence owns the context-slot shape
+        detection. This wrapper keeps existing Run Ledger consumers on the same
+        API without maintaining a second structural key table.
 
     Complexity:
-        O(k) time over a fixed key set; O(1) memory.
+        O(k) via the final-request evidence context predicate; O(1) memory.
     """
 
-    if not isinstance(value, Mapping):
-        return False
-    schema_version = str(value.get("schema_version") or "").strip().lower()
-    if (
-        "failed_gate" in schema_version
-        or "verification_failure" in schema_version
-        or "failure_evidence" in schema_version
-    ):
-        return True
-    if isinstance(value.get("items"), (list, tuple)) and value.get("items"):
-        return True
-    return any(
-        key in value
-        for key in (
-            "failure_class",
-            "responsible_layer",
-            "repairable_by_director",
-            "requires_ce_replan",
-            "requires_pm_revision",
-            "evidence_refs",
-            "exit_code",
-            "command",
-            "stderr",
-            "stdout",
-            "diagnostics",
-            "quality_errors",
-            "failed_required_modalities",
-            "failed_checks",
-            "verifier_results",
-        )
-    )
+    return looks_like_failed_gate_evidence_context_payload(value)
 
 
 def _merge_failure_evidence_rows_into_payload(

@@ -17,6 +17,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
+from polaris.kernelone.events.final_request_evidence import (
+    looks_like_failed_gate_evidence_context_payload,
+    looks_like_workspace_quality_evidence_payload,
+)
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.trace import get_trace_id
 
@@ -108,10 +112,10 @@ def _iter_context_mappings(value: Any, *, depth: int = 0) -> list[dict[str, Any]
             mappings.extend(_iter_context_mappings(nested, depth=depth + 1))
         return mappings
     if isinstance(value, (list, tuple)):
-        mappings: list[dict[str, Any]] = []
+        nested_mappings: list[dict[str, Any]] = []
         for item in value:
-            mappings.extend(_iter_context_mappings(item, depth=depth + 1))
-        return mappings
+            nested_mappings.extend(_iter_context_mappings(item, depth=depth + 1))
+        return nested_mappings
     return []
 
 
@@ -137,35 +141,9 @@ def _structured_coverage_flags(context: Any) -> dict[str, bool]:
             flags["has_chief_engineer_blueprint"] = True
         if keys & {"target_files", "scope_paths", "allowed_write_paths", "allowed_read_paths"}:
             flags["has_target_files"] = True
-        if (
-            keys
-            & {
-                "failed_gate_evidence",
-                "failure_evidence",
-                "failure_evidence_summary",
-                "verification_failure_evidence",
-                "failure_class",
-                "evidence_refs",
-            }
-            or "failure_evidence" in schema_version
-            or "failed_gate" in schema_version
-            or "verification_failure" in schema_version
-        ):
+        if looks_like_failed_gate_evidence_context_payload(payload):
             flags["has_failure_feedback"] = True
-        if (
-            keys
-            & {
-                "workspace_quality_evidence",
-                "factory_workspace_quality",
-                "artifact_quality_evidence",
-                "quality_errors",
-                "deterministic_checks",
-                "failed_required_modalities",
-                "missing_required_modalities",
-            }
-            or "workspace_quality" in schema_version
-            or "artifact_quality" in schema_version
-        ):
+        if looks_like_workspace_quality_evidence_payload(payload):
             flags["has_workspace_quality_evidence"] = True
     return flags
 
@@ -215,28 +193,8 @@ def _coverage_flags(text: str, *, context: Any = None) -> dict[str, bool]:
                 "tests/",
             )
         ),
-        "has_failure_feedback": any(
-            needle in lowered
-            for needle in (
-                "exit_code",
-                "stderr",
-                "stdout",
-                "failed",
-                "error",
-                "retry",
-                "工具执行返回失败",
-            )
-        ),
-        "has_workspace_quality_evidence": any(
-            needle in lowered
-            for needle in (
-                "factory_workspace_quality",
-                "workspace quality",
-                "npm run build",
-                "npm test",
-                "real_run_gate",
-            )
-        ),
+        "has_failure_feedback": False,
+        "has_workspace_quality_evidence": False,
     }
     structured_flags = _structured_coverage_flags(context)
     return {key: bool(structured_flags.get(key) or text_flags.get(key)) for key in text_flags}

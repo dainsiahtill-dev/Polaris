@@ -365,6 +365,51 @@ def looks_like_workspace_quality_evidence_payload(value: Any) -> bool:
     )
 
 
+def looks_like_failed_gate_evidence_context_payload(value: Any) -> bool:
+    """Return whether *value* is structured failed-gate evidence.
+
+    Boundary:
+        This predicate recognizes already-shaped failure evidence for
+        final-request context-slot discovery. It checks schema and structural
+        keys only; it does not parse diagnostic prose.
+
+    Complexity:
+        O(k) time over a fixed key set; O(1) memory.
+    """
+
+    if not isinstance(value, Mapping):
+        return False
+    schema_version = _text(value.get("schema_version")).lower()
+    if (
+        "failed_gate" in schema_version
+        or "verification_failure" in schema_version
+        or "failure_evidence" in schema_version
+    ):
+        return True
+    if isinstance(value.get("items"), (list, tuple)) and value.get("items"):
+        return True
+    return any(
+        key in value
+        for key in (
+            "failure_class",
+            "responsible_layer",
+            "repairable_by_director",
+            "requires_ce_replan",
+            "requires_pm_revision",
+            "evidence_refs",
+            "exit_code",
+            "command",
+            "stderr",
+            "stdout",
+            "diagnostics",
+            "quality_errors",
+            "failed_required_modalities",
+            "failed_checks",
+            "verifier_results",
+        )
+    )
+
+
 def summarize_workspace_quality_evidence_context_slot(value: Any) -> dict[str, Any]:
     """Project workspace-quality context evidence into the final-request slot shape.
 

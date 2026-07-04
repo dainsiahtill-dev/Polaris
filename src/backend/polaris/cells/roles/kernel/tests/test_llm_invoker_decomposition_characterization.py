@@ -175,6 +175,24 @@ def test_executor_context_snapshot_coverage_uses_structured_context_before_text_
     }
 
 
+def test_executor_context_snapshot_coverage_does_not_count_failure_or_quality_prose() -> None:
+    coverage = _coverage_flags(
+        (
+            "stderr exit_code failed retry error npm test real_run_gate "
+            "factory_workspace_quality workspace quality"
+        ),
+        context={
+            "target_files": ["src/index.ts"],
+            "failure_summary": {"message": "failure_class: TOOL_DISPATCH_DROPPED"},
+            "quality_summary": {"message": "quality_errors: ['missing README']"},
+        },
+    )
+
+    assert coverage["has_target_files"] is True
+    assert coverage["has_failure_feedback"] is False
+    assert coverage["has_workspace_quality_evidence"] is False
+
+
 def _patch_prepare(
     monkeypatch: pytest.MonkeyPatch,
     prepared: PreparedLLMRequest,
