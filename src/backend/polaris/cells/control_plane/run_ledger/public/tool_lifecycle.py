@@ -1457,6 +1457,27 @@ def project_tool_lifecycle_metadata(metadata: dict[str, Any]) -> None:
         project_lifecycle_failure_evidence_to_metadata(metadata, canonical_receipt)
     project_native_tool_call_facts_from_evidence_to_metadata(metadata, metadata)
 
+
+def project_tool_lifecycle_receipt_to_metadata(
+    metadata: dict[str, Any],
+    lifecycle_receipt: Mapping[str, Any],
+) -> None:
+    """Project one lifecycle receipt into canonical/compat metadata keys.
+
+    Boundary:
+        Run Ledger owns the metadata key projection for lifecycle receipts.
+        Completion owners may build or receive a receipt, but should not know
+        which canonical and compatibility keys must be written.
+
+    Complexity:
+        O(n) time and memory through :func:`project_tool_lifecycle_metadata`.
+    """
+
+    metadata["tool_call_lifecycle_receipt"] = normalize_tool_call_lifecycle_receipt(lifecycle_receipt)
+    metadata["tool_call_lifecycle"] = metadata["tool_call_lifecycle_receipt"]
+    project_tool_lifecycle_metadata(metadata)
+
+
 __all__ = [
     "ToolCallLifecycleReceiptV1",
     "build_tool_call_lifecycle_receipt",
@@ -1474,5 +1495,6 @@ __all__ = [
     "project_native_tool_call_facts_to_metadata",
     "project_tool_lifecycle_event",
     "project_tool_lifecycle_metadata",
+    "project_tool_lifecycle_receipt_to_metadata",
     "summarize_tool_lifecycle_events",
 ]

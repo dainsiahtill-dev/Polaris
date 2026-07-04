@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from polaris.cells.control_plane.run_ledger.public import (
     build_missing_dispatch_lifecycle_receipt,
+    project_tool_lifecycle_receipt_to_metadata,
     task_boundary_tool_dispatch_from_lifecycle_metadata,
 )
 from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
@@ -356,8 +357,7 @@ def record_missing_dispatch_lifecycle_receipt(
     )
     if lifecycle_receipt is None:
         return None
-    metadata["tool_call_lifecycle_receipt"] = lifecycle_receipt
-    metadata["tool_call_lifecycle"] = lifecycle_receipt
+    project_tool_lifecycle_receipt_to_metadata(metadata, lifecycle_receipt)
     _append_tool_call_lifecycle_event(
         role=role,
         request=request,

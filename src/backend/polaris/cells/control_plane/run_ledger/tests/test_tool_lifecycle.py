@@ -25,6 +25,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     project_native_tool_call_facts_to_metadata,
     project_tool_lifecycle_event,
     project_tool_lifecycle_metadata,
+    project_tool_lifecycle_receipt_to_metadata,
     summarize_tool_lifecycle_events,
     task_boundary_tool_dispatch_from_lifecycle_metadata,
     tool_call_lifecycle_receipts_from_metadata,
@@ -984,6 +985,26 @@ def test_project_tool_lifecycle_metadata_projects_canonical_receipt_failure_and_
     assert metadata["native_tool_call_names"] == ["write_file"]
     assert metadata["failure_evidence"][-1]["failure_class"] == "TOOL_DISPATCH_DROPPED"
     assert metadata["failure_evidence_summary"]["latest_failure_class"] == "TOOL_DISPATCH_DROPPED"
+
+
+def test_project_tool_lifecycle_receipt_to_metadata_owns_canonical_and_compat_keys() -> None:
+    metadata: dict[str, object] = {}
+    receipt = {
+        "schema_version": "tool_call_lifecycle_receipt.v1",
+        "native_tool_call_envelope_refs": [
+            {"schema_version": "native_tool_call_envelope.v1", "envelope_id": "native-write", "tool_name": "write_file"},
+        ],
+        "dispatch_status": "dropped",
+        "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+    }
+
+    project_tool_lifecycle_receipt_to_metadata(metadata, receipt)
+
+    assert metadata["tool_call_lifecycle_receipt"] == metadata["tool_call_lifecycle"]
+    assert metadata["tool_call_lifecycle_receipt"]["native_tool_calls_count"] == 1
+    assert metadata["native_tool_calls_count"] == 1
+    assert metadata["native_tool_call_names"] == ["write_file"]
+    assert metadata["failure_evidence"][0]["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
 
 
 def test_tool_lifecycle_normalizer_canonicalizes_legacy_dropped_tool_names() -> None:
