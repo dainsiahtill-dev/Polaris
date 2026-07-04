@@ -389,34 +389,8 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
             )
         ),
         "has_chief_engineer_blueprint": has_chief_engineer_blueprint,
-        "has_module_interface_contract": bool(module_interface_contract)
-        or any(
-            needle in lowered
-            for needle in (
-                "module_interface_contract",
-                "cross_file_interface_contract",
-                "cross_artifact_interface_contract",
-                "cross_artifact.interface_contract.v1",
-                "public_symbols",
-                "consumes_symbols",
-                "consumed_interfaces",
-                "interface_names",
-                "本文件必须定义/导出",
-                "跨文件导入/调用必须逐字匹配",
-            )
-        ),
-        "has_actual_sibling_exports": bool(actual_sibling_exports)
-        or any(
-            needle in lowered
-            for needle in (
-                "actual_exports",
-                "actual_public_symbols",
-                "actual exported interface",
-                "actual export summary",
-                "已生成文件的实际导出接口",
-                "真实接口",
-            )
-        ),
+        "has_module_interface_contract": bool(module_interface_contract),
+        "has_actual_sibling_exports": bool(actual_sibling_exports),
         "has_architecture_or_file_plan": bool(architecture_or_file_plan)
         or any(
             needle in lowered

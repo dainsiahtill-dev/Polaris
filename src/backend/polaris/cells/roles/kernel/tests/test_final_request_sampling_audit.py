@@ -747,6 +747,63 @@ def test_final_request_evidence_reports_missing_module_interface_contract() -> N
     assert evidence_coverage["pass"] is False
 
 
+def test_final_request_evidence_rejects_text_only_interface_contract_keywords() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 48000},
+        context={
+            "director_execution_strategy": {
+                "schema_version": "task.execution_strategy.v1",
+                "evidence_requirements": [
+                    "module_interface_contract",
+                    "actual_sibling_exports",
+                ],
+            },
+            "chat_messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Text only: module_interface_contract public_symbols "
+                        "actual_public_symbols cross_file_interface_contract."
+                    ),
+                },
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Text only: module_interface_contract public_symbols "
+                    "actual_public_symbols cross_file_interface_contract."
+                ),
+            }
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    assert audit["coverage"]["has_module_interface_contract"] is False
+    assert audit["coverage"]["has_actual_sibling_exports"] is False
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert evidence_coverage["structured_evidence"]["module_interface_contract"] is False
+    assert evidence_coverage["structured_evidence"]["actual_sibling_exports"] is False
+    assert "module_interface_contract" in evidence_coverage["missing_required_refs"]
+    assert "actual_sibling_exports" in evidence_coverage["missing_required_refs"]
+
+
 def test_final_request_evidence_aliases_verification_failure_and_architecture_plan() -> None:
     ai_request = AIRequest(
         task_type=TaskType.DIALOGUE,
