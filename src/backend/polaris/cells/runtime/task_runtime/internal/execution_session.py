@@ -19,6 +19,7 @@ _TERMINAL_SESSION_STATUS_TO_TASK_STATUS = {
     # their own terminal-status tables.
     "cancelled": "cancelled",
 }
+_TERMINAL_TASK_ROW_STATUSES = frozenset({"completed", "failed", "cancelled"})
 _TASK_ROW_STATUS_COUNT_KEYS = (
     "pending",
     "in_progress",
@@ -204,6 +205,104 @@ def build_task_runtime_metadata(
     return metadata
 
 
+def project_task_row_runtime_state(
+    row: dict[str, Any],
+    *,
+    task_status_value: Any,
+    session: TaskExecutionSession | None,
+    terminal_session_superseded: bool = False,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Project a task row and optional execution session into runtime state.
+
+    Boundary:
+        This is the read-model counterpart to :func:`build_task_runtime_metadata`.
+        It owns the augmented task-row shape consumed by runtime projections.
+        Callers still decide whether a terminal session is superseded by a
+        newer task-row retry authorization; this helper only applies that
+        already-authoritative decision.
+
+    Complexity:
+        O(m) time and memory over task-row metadata size.
+    """
+
+    raw_status = str(row.get("status") or "").strip().lower() or str(task_status_value or "").strip().lower()
+    metadata = dict(row.get("metadata") or {})
+    effective_status = raw_status
+    resume_state = ""
+    claimed_by = str(metadata.get("claimed_by") or "").strip()
+    last_claimed_by = str(metadata.get("last_claimed_by") or claimed_by).strip()
+    workflow_run_id = str(metadata.get("workflow_run_id") or "").strip()
+
+    if session is not None:
+        workflow_run_id = workflow_run_id or str(session.run_id or "").strip()
+        last_claimed_by = str(session.worker_id or "").strip() or last_claimed_by
+        session_expired = session.status == "active" and session.is_expired(now=now or utc_now())
+        if terminal_session_superseded:
+            claimed_by = ""
+            resume_state = ""
+        elif session.status == "completed":
+            effective_status = "completed"
+            claimed_by = str(session.worker_id or "").strip()
+        elif session.status == "failed":
+            effective_status = "failed"
+            claimed_by = ""
+        elif session.status == "suspended" or (session.status == "active" and session_expired):
+            effective_status = "pending"
+            resume_state = "resumable"
+            claimed_by = ""
+        elif session.status == "active":
+            effective_status = "in_progress"
+            resume_state = "resumed" if session.resume_count > 0 else ""
+            claimed_by = str(session.worker_id or "").strip()
+
+    if raw_status == "blocked" and not resume_state:
+        effective_status = "blocked"
+    if raw_status in _TERMINAL_TASK_ROW_STATUSES:
+        effective_status = raw_status
+        if raw_status != "completed":
+            claimed_by = ""
+        resume_state = ""
+
+    runtime_execution = dict(metadata.get("runtime_execution") or {})
+    if session is not None:
+        runtime_execution.update(session.to_dict())
+    if terminal_session_superseded and session is not None:
+        runtime_execution["superseded_terminal_session_status"] = str(session.status or "")
+        runtime_execution["session_projection_authority"] = "row_reset_after_terminal_session"
+    runtime_execution["effective_status"] = effective_status
+    runtime_execution["resume_state"] = resume_state
+    runtime_execution["resume_available"] = resume_state == "resumable"
+    runtime_execution["raw_status"] = raw_status
+
+    metadata["runtime_execution"] = runtime_execution
+    metadata["claimed_by"] = claimed_by
+    metadata["last_claimed_by"] = last_claimed_by
+    metadata["resume_state"] = resume_state
+    metadata["resume_available"] = resume_state == "resumable"
+    if workflow_run_id:
+        metadata["workflow_run_id"] = workflow_run_id
+
+    augmented = dict(row)
+    augmented["raw_status"] = raw_status
+    augmented["status"] = effective_status
+    augmented["metadata"] = metadata
+    augmented["claimed_by"] = claimed_by
+    augmented["last_claimed_by"] = last_claimed_by
+    augmented["resume_state"] = resume_state
+    augmented["resume_available"] = resume_state == "resumable"
+    augmented["workflow_run_id"] = workflow_run_id
+    if session is not None:
+        augmented["session_id"] = session.session_id
+        augmented["claim_attempt"] = session.attempt
+        augmented["resume_count"] = session.resume_count
+        augmented["lease_expires_at"] = session.lease_expires_at
+        augmented["last_heartbeat_at"] = session.last_heartbeat_at
+        augmented["last_error"] = session.last_error
+        augmented["last_result_summary"] = session.last_result_summary
+    return augmented
+
+
 @dataclass(slots=True)
 class TaskExecutionSession:
     """Persisted execution session for a runtime task."""
@@ -376,6 +475,7 @@ __all__ = [
     "is_terminal_session_status",
     "normalize_positive_int",
     "parse_utc_iso",
+    "project_task_row_runtime_state",
     "sanitize_summary",
     "task_row_status_counts",
     "terminal_task_status_value_for_session_status",

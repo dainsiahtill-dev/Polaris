@@ -25,6 +25,7 @@ from .execution_session import (
     build_task_runtime_metadata,
     is_terminal_session_status,
     normalize_positive_int,
+    project_task_row_runtime_state,
     sanitize_summary,
     task_row_status_counts,
     terminal_session_timestamp,
@@ -1456,86 +1457,18 @@ class TaskRuntimeService:
             return dict(row)
 
         session = self._read_session(task_id)
-        raw_status = str(row.get("status") or "").strip().lower() or task.status.value
-        metadata = dict(row.get("metadata") or {})
-        effective_status = raw_status
-        resume_state = ""
-        claimed_by = str(metadata.get("claimed_by") or "").strip()
-        last_claimed_by = str(metadata.get("last_claimed_by") or claimed_by).strip()
-        workflow_run_id = str(metadata.get("workflow_run_id") or "").strip()
-
         terminal_session_superseded = False
         if session is not None:
-            workflow_run_id = workflow_run_id or str(session.run_id or "").strip()
-            last_claimed_by = str(session.worker_id or "").strip() or last_claimed_by
-            session_expired = session.status == "active" and session.is_expired(now=utc_now())
             terminal_session_superseded = (
                 is_terminal_session_status(session.status)
                 and self._row_authorizes_retry_over_terminal_session(task, session)
             )
-            if terminal_session_superseded:
-                claimed_by = ""
-                resume_state = ""
-            elif session.status == "completed":
-                effective_status = "completed"
-                claimed_by = str(session.worker_id or "").strip()
-            elif session.status == "failed":
-                effective_status = "failed"
-                claimed_by = ""
-            elif session.status == "suspended" or (session.status == "active" and session_expired):
-                effective_status = "pending"
-                resume_state = "resumable"
-                claimed_by = ""
-            elif session.status == "active":
-                effective_status = "in_progress"
-                resume_state = "resumed" if session.resume_count > 0 else ""
-                claimed_by = str(session.worker_id or "").strip()
-
-        if raw_status == "blocked" and not resume_state:
-            effective_status = "blocked"
-        if raw_status in _TERMINAL_STATUSES:
-            effective_status = raw_status
-            if raw_status != "completed":
-                claimed_by = ""
-            resume_state = ""
-
-        runtime_execution = dict(metadata.get("runtime_execution") or {})
-        if session is not None:
-            runtime_execution.update(session.to_dict())
-        if terminal_session_superseded and session is not None:
-            runtime_execution["superseded_terminal_session_status"] = str(session.status or "")
-            runtime_execution["session_projection_authority"] = "row_reset_after_terminal_session"
-        runtime_execution["effective_status"] = effective_status
-        runtime_execution["resume_state"] = resume_state
-        runtime_execution["resume_available"] = resume_state == "resumable"
-        runtime_execution["raw_status"] = raw_status
-
-        metadata["runtime_execution"] = runtime_execution
-        metadata["claimed_by"] = claimed_by
-        metadata["last_claimed_by"] = last_claimed_by
-        metadata["resume_state"] = resume_state
-        metadata["resume_available"] = resume_state == "resumable"
-        if workflow_run_id:
-            metadata["workflow_run_id"] = workflow_run_id
-
-        augmented = dict(row)
-        augmented["raw_status"] = raw_status
-        augmented["status"] = effective_status
-        augmented["metadata"] = metadata
-        augmented["claimed_by"] = claimed_by
-        augmented["last_claimed_by"] = last_claimed_by
-        augmented["resume_state"] = resume_state
-        augmented["resume_available"] = resume_state == "resumable"
-        augmented["workflow_run_id"] = workflow_run_id
-        if session is not None:
-            augmented["session_id"] = session.session_id
-            augmented["claim_attempt"] = session.attempt
-            augmented["resume_count"] = session.resume_count
-            augmented["lease_expires_at"] = session.lease_expires_at
-            augmented["last_heartbeat_at"] = session.last_heartbeat_at
-            augmented["last_error"] = session.last_error
-            augmented["last_result_summary"] = session.last_result_summary
-        return augmented
+        return project_task_row_runtime_state(
+            row,
+            task_status_value=task.status.value,
+            session=session,
+            terminal_session_superseded=terminal_session_superseded,
+        )
 
     def _build_runtime_metadata(
         self,

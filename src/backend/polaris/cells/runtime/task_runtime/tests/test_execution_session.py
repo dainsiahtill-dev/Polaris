@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from polaris.cells.runtime.task_runtime.internal.execution_session import (
     TaskExecutionSession,
     build_task_runtime_metadata,
     is_terminal_session_status,
+    project_task_row_runtime_state,
     task_row_status_counts,
     terminal_session_timestamp,
     terminal_task_status_value_for_session_status,
@@ -179,3 +182,52 @@ def test_build_task_runtime_metadata_projects_session_state() -> None:
     assert metadata["last_execution_summary"] == "done"
     assert metadata["last_context_summary"] == "context summary"
     assert metadata["preserved"] == "value"
+
+
+def test_project_task_row_runtime_state_uses_active_session_projection() -> None:
+    payload = _valid_session_payload()
+    payload.update({"run_id": "run-active", "resume_count": 1})
+    session = TaskExecutionSession.from_dict(payload)
+
+    projected = project_task_row_runtime_state(
+        {"id": 7, "status": "pending", "metadata": {"claimed_by": "stale-worker"}},
+        task_status_value="pending",
+        session=session,
+        now=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+    )
+
+    assert projected["raw_status"] == "pending"
+    assert projected["status"] == "in_progress"
+    assert projected["claimed_by"] == "worker-1"
+    assert projected["last_claimed_by"] == "worker-1"
+    assert projected["resume_state"] == "resumed"
+    assert projected["resume_available"] is False
+    assert projected["workflow_run_id"] == "run-active"
+    assert projected["session_id"] == "tx-1"
+    assert projected["claim_attempt"] == 1
+    runtime_execution = projected["metadata"]["runtime_execution"]
+    assert runtime_execution["effective_status"] == "in_progress"
+    assert runtime_execution["resume_state"] == "resumed"
+    assert runtime_execution["raw_status"] == "pending"
+
+
+def test_project_task_row_runtime_state_marks_superseded_terminal_session() -> None:
+    payload = _valid_session_payload()
+    payload.update({"status": "failed", "run_id": "run-failed", "last_error": "old failure"})
+    session = TaskExecutionSession.from_dict(payload)
+
+    projected = project_task_row_runtime_state(
+        {"id": 7, "status": "pending", "metadata": {}},
+        task_status_value="pending",
+        session=session,
+        terminal_session_superseded=True,
+    )
+
+    assert projected["status"] == "pending"
+    assert projected["claimed_by"] == ""
+    assert projected["workflow_run_id"] == "run-failed"
+    assert projected["last_error"] == "old failure"
+    runtime_execution = projected["metadata"]["runtime_execution"]
+    assert runtime_execution["effective_status"] == "pending"
+    assert runtime_execution["superseded_terminal_session_status"] == "failed"
+    assert runtime_execution["session_projection_authority"] == "row_reset_after_terminal_session"
