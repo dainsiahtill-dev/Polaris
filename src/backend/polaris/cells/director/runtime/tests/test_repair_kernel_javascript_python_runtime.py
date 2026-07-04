@@ -1028,6 +1028,53 @@ def test_npm_script_contract_uses_typed_missing_entrypoint_metadata() -> None:
     assert plan.operations[1].value == "npm run build && node dist/index.js"
 
 
+def test_npm_script_contract_uses_typed_repairable_test_script_metadata() -> None:
+    package_text = json.dumps(
+        {
+            "name": "sample",
+            "version": "1.0.0",
+            "type": "module",
+            "devDependencies": {"typescript": "^5.0.0"},
+            "scripts": {
+                "build": "tsc -p tsconfig.json",
+                "test": "node -e \"console.log('unterminated)\"",
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    diagnostics = (
+        RepairDiagnostic(
+            source="artifact_quality",
+            code="npm_manifest_invalid",
+            message="npm manifest script contract violation",
+            path="package.json",
+            raw="typed metadata only",
+            metadata={
+                "manifest_path": "package.json",
+                "script_name": "test",
+                "script_issue": "invalid_node_eval_syntax",
+            },
+        ),
+    )
+
+    plan = build_npm_script_contract_plan(
+        base_files={
+            "package.json": package_text,
+            "tsconfig.json": "{}\n",
+            "src/verify.ts": "export {};\n",
+        },
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert [(operation.kind, operation.path, operation.json_path) for operation in plan.operations] == [
+        ("json_set", "package.json", ("scripts", "test"))
+    ]
+    assert plan.operations[0].value == "npm run build && node dist/verify.js"
+
+
 def test_npm_script_contract_repairs_strip_types_test_runner_to_compiled_verifier() -> None:
     package_text = json.dumps(
         {

@@ -57,6 +57,16 @@ _PYTHON_COMMAND_NPM_SCRIPT_RE = re.compile(
     re.IGNORECASE,
 )
 _PYTHON_COMMAND_TOKEN_RE = re.compile(r"(?<![\w.-])python(?:3|[0-9]+(?:\.[0-9]+)?)?(?![\w.-])", re.IGNORECASE)
+_REPAIRABLE_TEST_SCRIPT_ISSUES = frozenset(
+    {
+        "invalid_node_eval_syntax",
+        "invalid_shell_syntax",
+        "missing_local_entrypoint",
+        "placeholder_command",
+        "shell_command_substitution",
+        "swallows_command_failures",
+    }
+)
 _UNRESOLVED_IMPORT_SYMBOL_RE = re.compile(
     r"unresolved (?:import )?symbol ['\"](?P<symbol>[^'\"]+)['\"] "
     r"from ['\"](?P<module>[^'\"]+)['\"] in (?P<path>\S+)",
@@ -249,7 +259,10 @@ def build_npm_script_contract_plan(
 
     if has_node_test_runner_contract:
         updates[("scripts", "test")] = _node_test_runner_script(normalized_base)
-    elif has_typescript_context and _has_repairable_test_script_error(raw_errors):
+    elif has_typescript_context and (
+        _has_repairable_test_script_error(raw_errors)
+        or _has_repairable_test_script_diagnostic(matched_diagnostics)
+    ):
         updates[("scripts", "test")] = (
             _fallback_script_for_recursive_script("test", normalized_base, package_payload) or "npm run build"
         )
@@ -1230,6 +1243,16 @@ def _has_repairable_test_script_error(errors: Sequence[str]) -> bool:
         "strip-types",
     )
     return any(marker in joined for marker in markers)
+
+
+def _has_repairable_test_script_diagnostic(diagnostics: Sequence[RepairDiagnostic]) -> bool:
+    for diagnostic in diagnostics:
+        metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
+        script_name = str(metadata.get("script_name") or "").strip()
+        script_issue = str(metadata.get("script_issue") or "").strip()
+        if script_name == "test" and script_issue in _REPAIRABLE_TEST_SCRIPT_ISSUES:
+            return True
+    return False
 
 
 def _node_test_runner_script(base_files: Mapping[str, str]) -> str:
