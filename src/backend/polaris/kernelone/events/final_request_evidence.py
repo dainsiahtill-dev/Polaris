@@ -220,6 +220,44 @@ def missing_required_tools_from_tool_slots(evidence_coverage: Mapping[str, Any])
     return missing_tools
 
 
+def missing_required_refs_from_evidence_coverage(
+    evidence_coverage: Mapping[str, Any],
+    existing_evidence: Mapping[str, Any] | None = None,
+) -> list[str]:
+    """Return missing required evidence refs from coverage slots or legacy fields.
+
+    Boundary:
+        This owns the precedence for final-request missing-ref projection:
+        structured evidence slots are authoritative when present; otherwise the
+        legacy ``missing_required_refs`` field is used for compatibility.
+    """
+
+    slot_refs = missing_required_refs_from_evidence_slots(evidence_coverage)
+    if slot_refs:
+        return slot_refs
+    existing = _as_mapping(existing_evidence)
+    return _string_list(evidence_coverage.get("missing_required_refs") or existing.get("missing_required_refs"))
+
+
+def missing_required_tools_from_evidence_coverage(
+    evidence_coverage: Mapping[str, Any],
+    existing_evidence: Mapping[str, Any] | None = None,
+) -> list[str]:
+    """Return missing required tools from tool slots or legacy fields.
+
+    Boundary:
+        Structured tool slots carry the current authority. A present slot list
+        may intentionally produce an empty result; only when slots are absent do
+        we fall back to legacy ``missing_required_tools`` fields.
+    """
+
+    slot_tools = missing_required_tools_from_tool_slots(evidence_coverage)
+    if slot_tools is not None:
+        return slot_tools
+    existing = _as_mapping(existing_evidence)
+    return _string_list(evidence_coverage.get("missing_required_tools") or existing.get("missing_required_tools"))
+
+
 def build_final_request_evidence_slots(
     *,
     coverage_sources: list[dict[str, Any]],
@@ -394,20 +432,19 @@ def _build_final_request_evidence_authority(
         "included_refs": _string_list(
             existing_authority.get("included_refs") or evidence_coverage.get("included_refs")
         ),
-        "missing_required_refs": missing_required_refs_from_evidence_slots(evidence_coverage)
-        or _string_list(existing_authority.get("missing_required_refs") or evidence_coverage.get("missing_required_refs")),
+        "missing_required_refs": missing_required_refs_from_evidence_coverage(
+            evidence_coverage,
+            existing_authority,
+        ),
         "required_tools": _string_list(
             existing_authority.get("required_tools") or evidence_coverage.get("required_tools")
         ),
         "available_tools": _string_list(
             existing_authority.get("available_tools") or evidence_coverage.get("available_tools")
         ),
-        "missing_required_tools": (
-            slot_missing_tools
-            if (slot_missing_tools := missing_required_tools_from_tool_slots(evidence_coverage)) is not None
-            else _string_list(
-                existing_authority.get("missing_required_tools") or evidence_coverage.get("missing_required_tools")
-            )
+        "missing_required_tools": missing_required_tools_from_evidence_coverage(
+            evidence_coverage,
+            existing_authority,
         ),
         "unexpected_tool_pruning": _list_value(
             existing_authority.get("unexpected_tool_pruning") or evidence_coverage.get("unexpected_tool_pruning")
@@ -484,15 +521,8 @@ def build_final_request_evidence(data: Mapping[str, Any]) -> dict[str, Any]:
         evidence_coverage.get("request_hash"),
         final_request_context_audit.get("request_hash"),
     )
-    missing_required_refs = missing_required_refs_from_evidence_slots(evidence_coverage) or _string_list(
-        evidence_coverage.get("missing_required_refs") or existing_evidence.get("missing_required_refs")
-    )
-    slot_missing_tools = missing_required_tools_from_tool_slots(evidence_coverage)
-    missing_required_tools = (
-        slot_missing_tools
-        if slot_missing_tools is not None
-        else _string_list(evidence_coverage.get("missing_required_tools") or existing_evidence.get("missing_required_tools"))
-    )
+    missing_required_refs = missing_required_refs_from_evidence_coverage(evidence_coverage, existing_evidence)
+    missing_required_tools = missing_required_tools_from_evidence_coverage(evidence_coverage, existing_evidence)
     coverage_pass = (
         evidence_coverage.get("pass")
         if evidence_coverage

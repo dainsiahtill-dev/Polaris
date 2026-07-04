@@ -10,6 +10,8 @@ from polaris.kernelone.events.final_request_evidence import (
     final_request_evidence_ref_for_coverage_flag,
     final_request_evidence_ref_for_requirement,
     looks_like_workspace_quality_evidence_payload,
+    missing_required_refs_from_evidence_coverage,
+    missing_required_tools_from_evidence_coverage,
     normalize_context_snapshot_ref,
     summarize_workspace_quality_evidence_context_slot,
 )
@@ -230,6 +232,46 @@ def test_final_request_slot_builders_project_structured_coverage() -> None:
             "confidence": "tool_schema",
             "freshness": "current_turn",
         },
+    ]
+
+
+def test_missing_required_readers_prefer_structured_slots_over_legacy_fields() -> None:
+    coverage = {
+        "missing_required_refs": ["legacy_blueprint"],
+        "missing_required_tools": ["legacy_write_file"],
+        "evidence_slots": [
+            {
+                "schema_version": "polaris.final_request_evidence_slot.v1",
+                "ref_type": "ce_blueprint",
+                "required": True,
+                "missing": True,
+            }
+        ],
+        "tool_evidence_slots": [
+            {
+                "schema_version": "polaris.final_request_tool_slot.v1",
+                "tool_name": "write_file",
+                "required": True,
+                "missing": True,
+            }
+        ],
+    }
+
+    assert missing_required_refs_from_evidence_coverage(coverage) == ["ce_blueprint"]
+    assert missing_required_tools_from_evidence_coverage(coverage) == ["write_file"]
+
+
+def test_missing_required_readers_fallback_to_legacy_fields_when_slots_absent() -> None:
+    coverage = {"missing_required_refs": ["ce_blueprint", "target_files"]}
+    existing = {"missing_required_tools": ["write_file", "execute_command"]}
+
+    assert missing_required_refs_from_evidence_coverage(coverage, existing) == [
+        "ce_blueprint",
+        "target_files",
+    ]
+    assert missing_required_tools_from_evidence_coverage(coverage, existing) == [
+        "write_file",
+        "execute_command",
     ]
 
 

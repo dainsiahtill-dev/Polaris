@@ -19,8 +19,8 @@ from polaris.kernelone.events.final_request_evidence import (
     final_request_evidence_ref_for_coverage_flag,
     final_request_evidence_ref_for_requirement,
     looks_like_workspace_quality_evidence_payload,
-    missing_required_refs_from_evidence_slots,
-    missing_required_tools_from_tool_slots,
+    missing_required_refs_from_evidence_coverage,
+    missing_required_tools_from_evidence_coverage,
     summarize_workspace_quality_evidence_context_slot,
 )
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
@@ -2242,15 +2242,8 @@ def final_request_evidence_coverage_violation(
     evidence_coverage = audit.get("final_request_evidence_coverage")
     if not isinstance(evidence_coverage, dict) or evidence_coverage.get("pass") is True:
         return None
-    missing_refs = missing_required_refs_from_evidence_slots(evidence_coverage) or [
-        str(item) for item in evidence_coverage.get("missing_required_refs") or [] if str(item).strip()
-    ]
-    slot_missing_tools = missing_required_tools_from_tool_slots(evidence_coverage)
-    missing_tools = (
-        slot_missing_tools
-        if slot_missing_tools is not None
-        else [str(item) for item in evidence_coverage.get("missing_required_tools") or [] if str(item).strip()]
-    )
+    missing_refs = missing_required_refs_from_evidence_coverage(evidence_coverage)
+    missing_tools = missing_required_tools_from_evidence_coverage(evidence_coverage)
     if not missing_refs and not missing_tools and evidence_coverage.get("role_identity_ok", True):
         return None
     message_parts = ["Final provider request evidence coverage failed"]
