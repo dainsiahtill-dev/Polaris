@@ -37,7 +37,7 @@ TaskBoundary Verdict -> QA Verdict -> Runtime Projection`
 | ECC-WS1 | P0 | ToolCallEnvelope / provider tool-call fact convergence | Native tool calls, response hashes, dispatch receipts, stream/non-stream anomalies, and monitoring projections still have remaining wrapper seams. | Provider-native tool calls are normalized once into typed envelope/fact helpers, stream and non-stream consume the same projections, and lifecycle receipts are append-only projections. | Partial |
 | ECC-WS2 | P0 | Execution Ledger as single task-state source | TaskBoard/session/status projections can still become separate state writers outside the event stream. | Task status is derived from Execution Ledger projection; task-row/session writes become projections or guarded commands with a single owner. | Open |
 | ECC-WS4 | P1 | Typed QualityIssue end-to-end | Quality scan, gate, and repair paths still contain string diagnostics and regex reparsing at several boundaries. | Scanners emit typed issue rows; display strings are projections; repair planning consumes issue codes/path/symbol fields without reparsing prose. | Partial |
-| ECC-WS5 | P0 | ScopeAuthority and ownership handoff | Scope checks and deferred targets can still be local decisions without a single owner-routing protocol. | One ScopeAuthority resolves write scope and classifies out-of-scope diagnostics; ownership handoff requests route work to the owning task. | Open |
+| ECC-WS5 | P0 | ScopeAuthority and ownership handoff | Scope checks and deferred targets can still be local decisions without a single owner-routing protocol. | One ScopeAuthority resolves write scope and classifies out-of-scope diagnostics; ownership handoff requests route work to the owning task. | Partial |
 | ECC-WS6 | P1 | ContextContract and FailureEvidenceV1 propagation | Failure evidence and context coverage are partially typed, but aggregate/runtime surfaces still include local merges and summaries. | Failure evidence is produced at detection points, projected through Run Ledger public helpers, and consumed by aggregate/runtime/QA without string reclassification. | Partial |
 
 Open bucket count: 5.
@@ -64,6 +64,7 @@ Open bucket count: 5.
 | ECC-WS1-09 | `cd9b091d` | ECC-WS1 | Dropped-dispatch anomaly projection moved behind Run Ledger public `build_tool_dispatch_dropped_anomaly_projection`; `decision_pipeline` now supplies normalized response facts instead of hand-building lifecycle receipt, failure evidence, dispatch counts, and anomaly dicts. | `rtk pytest src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_decision_pipeline.py src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_stream_orchestrator_completion_evidence.py -q`; targeted ruff passed. |
 | ECC-WS6-05 | `901a490f` | ECC-WS6 | Aggregate/runtime failure-evidence payload merging moved from `roles.runtime.public.aggregate_chat` local logic into Run Ledger public `merge_failure_evidence_payload`, preserving mapping overlays and structured row projections. | `rtk pytest src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py src/backend/polaris/cells/control_plane/run_ledger/tests/test_failure_evidence.py -q`; targeted ruff passed. |
 | ECC-WS6-06 | `f28e23ba` | ECC-WS6 | Aggregate HTTP ingress now normalizes `failure_evidence` through Run Ledger public `merge_failure_evidence_payload`, so structured evidence rows are not dropped before reaching aggregate runtime. | `rtk pytest src/backend/polaris/delivery/http/routers/test_aggregate_chat.py src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py src/backend/polaris/cells/control_plane/run_ledger/tests/test_failure_evidence.py -q`; targeted ruff passed. |
+| ECC-WS5-01 | `c3052728` | ECC-WS5 | Director task-boundary scope-filter evidence now uses KernelOne `scope_authority_decision_summary` instead of hand-slicing ScopeAuthority fields in the adapter. This keeps compact evidence as a read-only projection from the ScopeAuthority decision. | `rtk pytest src/backend/polaris/tests/unit/cells/roles/adapters/internal/director/test_quality_gate_scope_filter.py src/backend/polaris/tests/unit/kernelone/quality/test_scope_authority.py -q`; targeted ruff passed. |
 
 ## Next Closure Order
 
@@ -75,7 +76,7 @@ Open bucket count: 5.
    summaries.
 3. ECC-WS4: continue moving scanner outputs from string diagnostics to typed
    `QualityIssue` fields, one scanner family at a time.
-4. ECC-WS5: introduce ScopeAuthority read-only classification before changing
-   write authorization behavior.
+4. ECC-WS5: continue routing ownership handoff requests from ScopeAuthority
+   projections to owning task rows without expanding write authorization.
 5. ECC-WS2: only after the smaller projection work is stable, migrate task-state
    writes toward event-sourced projection ownership.
