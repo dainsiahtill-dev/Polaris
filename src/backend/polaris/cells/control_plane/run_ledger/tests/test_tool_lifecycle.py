@@ -936,6 +936,44 @@ def test_tool_lifecycle_projects_task_boundary_dispatch_from_metadata() -> None:
     }
 
 
+def test_tool_lifecycle_projects_task_boundary_dispatch_from_plural_receipts() -> None:
+    dispatched = {
+        "schema_version": "tool_call_lifecycle_receipt.v1",
+        "native_tool_calls_count": 1,
+        "dispatched_tool_calls_count": 1,
+        "tool_result_count": 1,
+        "dispatch_status": "dispatched",
+        "failure_class": "",
+    }
+    dropped = {
+        "schema_version": "tool_call_lifecycle_receipt.v1",
+        "native_tool_call_envelope_refs": [
+            {"envelope_id": "native-write", "tool_name": "write_file"},
+        ],
+        "decoded_tool_calls_count": 1,
+        "dispatched_tool_calls_count": 0,
+        "provider_response_hash": "provider/plural",
+        "dispatch_status": "dropped",
+        "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        "reason": "native_tool_calls_without_dispatch",
+    }
+
+    dispatch = task_boundary_tool_dispatch_from_lifecycle_metadata(
+        {"tool_call_lifecycle_receipts": [dispatched, dropped]},
+    )
+
+    assert dispatch == {
+        "status": "dropped",
+        "dropped": True,
+        "native_tool_calls_count": 1,
+        "native_tool_call_names": ["write_file"],
+        "decoded_tool_calls_count": 1,
+        "dispatched_tool_calls_count": 0,
+        "provider_response_hash": "provider/plural",
+        "reason": "native_tool_calls_without_dispatch",
+    }
+
+
 def test_tool_lifecycle_receipts_from_metadata_deduplicates_aliases() -> None:
     receipt = {
         "schema_version": "tool_call_lifecycle_receipt.v1",
