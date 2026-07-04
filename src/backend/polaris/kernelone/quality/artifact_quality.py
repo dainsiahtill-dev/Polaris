@@ -9,7 +9,7 @@ import re
 import shlex
 import shutil
 import subprocess
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -32,6 +32,8 @@ from polaris.kernelone.quality.package_scripts import (
     PackageScriptIssue,
     check_package_scripts,
 )
+
+_LegacyIssueCodeClassifier = Callable[[str, str], str]
 
 _ARTIFACT_QUALITY_SKIP_DIRS = {
     ".git",
@@ -518,29 +520,15 @@ _ARTIFACT_QUALITY_GO_UNDEFINED_RE = re.compile(
 
 def _artifact_quality_issue_code(message: str) -> str:
     normalized = message.lower()
-    target_or_import_issue_code = _legacy_target_or_import_issue_code(normalized)
-    if target_or_import_issue_code:
-        return target_or_import_issue_code
-    explicit_compiler_issue_code = _legacy_compiler_issue_code_from_explicit_code(message)
-    if explicit_compiler_issue_code:
-        return explicit_compiler_issue_code
-    compiler_issue_code = _legacy_compiler_issue_code_from_path(message, normalized)
-    if compiler_issue_code:
-        return compiler_issue_code
-    language_or_syntax_issue_code = _legacy_language_or_syntax_issue_code(normalized)
-    if language_or_syntax_issue_code:
-        return language_or_syntax_issue_code
-    npm_issue_code = _legacy_npm_manifest_issue_code(normalized)
-    if npm_issue_code:
-        return npm_issue_code
-    hygiene_issue_code = _legacy_hygiene_issue_code(normalized)
-    if hygiene_issue_code:
-        return hygiene_issue_code
+    for classifier in _LEGACY_ARTIFACT_QUALITY_ISSUE_CODE_CLASSIFIERS:
+        issue_code = classifier(message, normalized)
+        if issue_code:
+            return issue_code
     slug = re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
     return slug[:80] or "artifact_quality_error"
 
 
-def _legacy_target_or_import_issue_code(normalized_message: str) -> str:
+def _legacy_target_or_import_issue_code(_message: str, normalized_message: str) -> str:
     """Classify legacy target-contract and import-topology diagnostics."""
 
     if "declared target file" in normalized_message and "missing" in normalized_message:
@@ -552,7 +540,7 @@ def _legacy_target_or_import_issue_code(normalized_message: str) -> str:
     return ""
 
 
-def _legacy_npm_manifest_issue_code(normalized_message: str) -> str:
+def _legacy_npm_manifest_issue_code(_message: str, normalized_message: str) -> str:
     """Classify legacy npm manifest display diagnostics."""
 
     if (
@@ -578,7 +566,7 @@ def _legacy_npm_manifest_issue_code(normalized_message: str) -> str:
     return ""
 
 
-def _legacy_language_or_syntax_issue_code(normalized_message: str) -> str:
+def _legacy_language_or_syntax_issue_code(_message: str, normalized_message: str) -> str:
     """Classify legacy broad language and syntax diagnostics."""
 
     if "typescript project typecheck failed" in normalized_message:
@@ -588,7 +576,7 @@ def _legacy_language_or_syntax_issue_code(normalized_message: str) -> str:
     return ""
 
 
-def _legacy_hygiene_issue_code(normalized_message: str) -> str:
+def _legacy_hygiene_issue_code(_message: str, normalized_message: str) -> str:
     """Classify legacy hygiene and contamination diagnostics."""
 
     if "patch residue" in normalized_message:
@@ -600,7 +588,7 @@ def _legacy_hygiene_issue_code(normalized_message: str) -> str:
     return ""
 
 
-def _legacy_compiler_issue_code_from_explicit_code(message: str) -> str:
+def _legacy_compiler_issue_code_from_explicit_code(message: str, _normalized_message: str) -> str:
     """Classify legacy compiler diagnostics with explicit TS/Rust error codes."""
 
     typescript_match = _ARTIFACT_QUALITY_TYPESCRIPT_ERROR_RE.search(message)
@@ -626,6 +614,16 @@ def _legacy_compiler_issue_code_from_path(message: str, normalized_message: str)
     if compiler_suffix in {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}:
         return "cpp_compile_error"
     return ""
+
+
+_LEGACY_ARTIFACT_QUALITY_ISSUE_CODE_CLASSIFIERS: tuple[_LegacyIssueCodeClassifier, ...] = (
+    _legacy_target_or_import_issue_code,
+    _legacy_compiler_issue_code_from_explicit_code,
+    _legacy_compiler_issue_code_from_path,
+    _legacy_language_or_syntax_issue_code,
+    _legacy_npm_manifest_issue_code,
+    _legacy_hygiene_issue_code,
+)
 
 
 def _artifact_quality_issue_path(message: str) -> str | None:
