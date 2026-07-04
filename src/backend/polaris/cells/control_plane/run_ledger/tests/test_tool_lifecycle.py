@@ -47,6 +47,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     task_boundary_tool_dispatch_from_lifecycle_receipt,
     tool_call_lifecycle_receipts_from_metadata,
     tool_dispatch_dropped_error_message,
+    tool_dispatch_dropped_guard_applies,
 )
 
 
@@ -61,6 +62,7 @@ def test_tool_lifecycle_all_exports_source_projection_helpers() -> None:
         "project_tool_lifecycle_failure_status",
         "project_tool_lifecycle_summary",
         "task_boundary_tool_dispatch_from_lifecycle_receipt",
+        "tool_dispatch_dropped_guard_applies",
         "tool_dispatch_dropped_error_message",
     }
 
@@ -2044,6 +2046,31 @@ def test_native_tool_call_count_from_facts_owns_fact_count_coercion() -> None:
     assert native_tool_call_count_from_facts({"native_tool_calls_count": 0}, fallback=3) == 3
     assert native_tool_call_count_from_facts({"native_tool_calls_count": "bad"}, fallback=4) == 4
     assert native_tool_call_count_from_facts({}, fallback=5) == 5
+
+
+def test_tool_dispatch_dropped_guard_applies_owns_native_count_gate() -> None:
+    facts = {"native_tool_calls_count": "2"}
+
+    assert tool_dispatch_dropped_guard_applies(
+        native_tool_call_facts=facts,
+        tool_definitions_present=True,
+        decoded_tool_batch_present=False,
+    )
+    assert not tool_dispatch_dropped_guard_applies(
+        native_tool_call_facts=facts,
+        tool_definitions_present=False,
+        decoded_tool_batch_present=False,
+    )
+    assert not tool_dispatch_dropped_guard_applies(
+        native_tool_call_facts=facts,
+        tool_definitions_present=True,
+        decoded_tool_batch_present=True,
+    )
+    assert not tool_dispatch_dropped_guard_applies(
+        native_tool_call_facts={"native_tool_calls_count": 0},
+        tool_definitions_present=True,
+        decoded_tool_batch_present=False,
+    )
 
 
 def test_tool_lifecycle_receipt_deduplicates_native_envelopes_by_envelope_id() -> None:

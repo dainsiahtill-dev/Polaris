@@ -29,10 +29,10 @@ from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
     build_tool_dispatch_dropped_anomaly_from_sources,
-    native_tool_call_count_from_facts,
     native_tool_call_facts_from_sources,
     project_native_tool_call_facts_to_metadata,
     tool_dispatch_dropped_error_message,
+    tool_dispatch_dropped_guard_applies,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_call_envelopes_from_response,
@@ -168,11 +168,14 @@ async def run_decision_pipeline(
         decision_metadata,
         native_tool_calls_from_response(llm_response),
     )
-    native_tool_call_count = native_tool_call_count_from_facts(native_tool_call_facts)
     decision_metadata.setdefault("provider_response_hash", provider_response_hash(llm_response, decision_metadata))
     project_native_tool_call_facts_to_metadata(decision_metadata, native_tool_call_facts)
     decision = _with_decision_metadata(decision, decision_metadata)
-    if native_tool_call_count > 0 and tool_definitions and not decision.get("tool_batch"):
+    if tool_dispatch_dropped_guard_applies(
+        native_tool_call_facts=native_tool_call_facts,
+        tool_definitions_present=bool(tool_definitions),
+        decoded_tool_batch_present=bool(decision.get("tool_batch")),
+    ):
         anomaly = build_tool_dispatch_dropped_anomaly(
             response=llm_response,
             metadata=decision_metadata,

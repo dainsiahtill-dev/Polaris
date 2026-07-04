@@ -1130,6 +1130,28 @@ def native_tool_call_count_from_facts(facts: Mapping[str, Any] | None, *, fallba
     return _int_value(fallback)
 
 
+def tool_dispatch_dropped_guard_applies(
+    *,
+    native_tool_call_facts: Mapping[str, Any] | None,
+    tool_definitions_present: bool,
+    decoded_tool_batch_present: bool,
+) -> bool:
+    """Return whether a provider tool-call response was dropped before dispatch.
+
+    Boundary:
+        Run Ledger owns native tool-call count coercion for dropped-dispatch
+        guards. Role runtimes pass canonical facts and tool-surface booleans;
+        they must not derive the count before deciding whether to fail closed.
+
+    Complexity:
+        O(1) time and memory.
+    """
+
+    if not tool_definitions_present or decoded_tool_batch_present:
+        return False
+    return native_tool_call_count_from_facts(native_tool_call_facts) > 0
+
+
 def native_tool_call_names_from_facts(
     facts: Mapping[str, Any] | None,
     *,
@@ -2144,4 +2166,5 @@ __all__ = [
     "task_boundary_tool_dispatch_from_lifecycle_receipt",
     "tool_call_lifecycle_receipts_from_metadata",
     "tool_dispatch_dropped_error_message",
+    "tool_dispatch_dropped_guard_applies",
 ]
