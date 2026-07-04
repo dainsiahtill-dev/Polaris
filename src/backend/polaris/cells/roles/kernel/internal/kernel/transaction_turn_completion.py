@@ -13,9 +13,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.control_plane.run_ledger.public import (
-    FailureClassV1,
-    build_tool_call_lifecycle_receipt,
-    native_tool_call_envelope_refs_from_metadata,
+    build_missing_dispatch_lifecycle_receipt,
     task_boundary_tool_dispatch_from_lifecycle_metadata,
 )
 from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
@@ -272,25 +270,6 @@ def _last_decision_metadata(ledger: Any) -> dict[str, Any]:
     return dict(metadata) if isinstance(metadata, Mapping) else {}
 
 
-def _native_tool_call_envelopes(metadata: Mapping[str, Any], ledger: Any) -> list[dict[str, Any]]:
-    latest_metadata = _last_decision_metadata(ledger)
-    for candidate in (metadata, latest_metadata):
-        envelopes = native_tool_call_envelope_refs_from_metadata(candidate)
-        if envelopes:
-            return [dict(item) for item in envelopes]
-    return []
-
-
-def _batch_has_dispatch_evidence(batch_receipt: Mapping[str, Any] | None) -> bool:
-    if not isinstance(batch_receipt, Mapping):
-        return False
-    for key in ("results", "raw_results", "effect_receipts"):
-        value = batch_receipt.get(key)
-        if isinstance(value, list) and value:
-            return True
-    return False
-
-
 def _build_missing_dispatch_lifecycle_receipt(
     *,
     metadata: Mapping[str, Any],
@@ -298,33 +277,13 @@ def _build_missing_dispatch_lifecycle_receipt(
     tool_results: list[dict[str, Any]],
     batch_receipt: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
-    if tool_results or _batch_has_dispatch_evidence(batch_receipt):
-        return None
-
     required_write_tools = [tool for tool in _extract_required_tools(metadata) if is_write_tool_name(tool)]
-    if not required_write_tools:
-        return None
-    native_envelopes = _native_tool_call_envelopes(metadata, ledger)
-    dropped_tool_calls = (
-        []
-        if native_envelopes
-        else [
-            {"tool_name": tool_name, "reason": "tool_dispatch_dropped"}
-            for tool_name in required_write_tools
-        ]
+    return build_missing_dispatch_lifecycle_receipt(
+        required_write_tools=required_write_tools,
+        metadata_candidates=(metadata, _last_decision_metadata(ledger)),
+        tool_results=tool_results,
+        batch_receipt=batch_receipt,
     )
-    return build_tool_call_lifecycle_receipt(
-        run_id="",
-        task_id="",
-        turn_id="",
-        role="",
-        dispatched_tool_calls_count=0,
-        dropped_tool_calls=dropped_tool_calls,
-        native_tool_call_envelopes=native_envelopes,
-        dispatch_status="dropped",
-        failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
-        reason="required_write_tool_without_dispatch_evidence",
-    ).to_dict()
 
 
 def _append_tool_call_lifecycle_event(

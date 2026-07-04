@@ -46,6 +46,7 @@ from .task_boundary import (
 )
 from .tool_lifecycle import (
     ToolCallLifecycleReceiptV1,
+    build_missing_dispatch_lifecycle_receipt,
     build_tool_call_lifecycle_receipt,
     build_tool_dispatch_dropped_anomaly_projection,
     build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
@@ -90,6 +91,7 @@ __all__ = [
     "append_run_ledger_event",
     "build_completed_task_boundary_verdict",
     "build_deferred_followup_task_boundary_verdict",
+    "build_missing_dispatch_lifecycle_receipt",
     "build_run_ledger_projection",
     "build_run_provenance_bundle",
     "build_tool_call_lifecycle_receipt",

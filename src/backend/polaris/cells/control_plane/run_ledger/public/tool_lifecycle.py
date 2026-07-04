@@ -397,6 +397,77 @@ def build_tool_call_lifecycle_receipt(
     )
 
 
+def _batch_has_dispatch_evidence(batch_receipt: Any) -> bool:
+    if not isinstance(batch_receipt, Mapping):
+        return False
+    for key in ("results", "raw_results", "effect_receipts"):
+        value = batch_receipt.get(key)
+        if isinstance(value, list) and value:
+            return True
+    return False
+
+
+def build_missing_dispatch_lifecycle_receipt(
+    *,
+    required_write_tools: Sequence[Any],
+    metadata_candidates: Sequence[Mapping[str, Any]] = (),
+    tool_results: Sequence[Mapping[str, Any]] = (),
+    batch_receipt: Mapping[str, Any] | None = None,
+    reason: str = "required_write_tool_without_dispatch_evidence",
+) -> dict[str, Any] | None:
+    """Return a dropped-dispatch lifecycle receipt for missing write dispatch.
+
+    Boundary:
+        Completion owners provide required write-tool names and already-known
+        metadata candidates. Run Ledger owns the evidence/no-evidence decision,
+        native envelope extraction, dropped-call shape, and lifecycle receipt
+        projection so stream and non-stream completion paths cannot drift.
+
+    Complexity:
+        O(t + m + e + r) over required tools, metadata candidates, native
+        envelopes, and batch receipt rows.
+    """
+
+    if tool_results or _batch_has_dispatch_evidence(batch_receipt):
+        return None
+
+    tools: list[str] = []
+    seen_tools: set[str] = set()
+    for tool_name in required_write_tools:
+        normalized = _clean_string(tool_name)
+        if not normalized or not is_write_tool_name(normalized) or normalized in seen_tools:
+            continue
+        seen_tools.add(normalized)
+        tools.append(normalized)
+    if not tools:
+        return None
+
+    native_envelopes: list[dict[str, Any]] = []
+    for candidate in metadata_candidates:
+        envelopes = native_tool_call_envelope_refs_from_metadata(candidate)
+        if envelopes:
+            native_envelopes = [dict(item) for item in envelopes]
+            break
+
+    dropped_tool_calls = (
+        []
+        if native_envelopes
+        else [{"tool_name": tool_name, "reason": "tool_dispatch_dropped"} for tool_name in tools]
+    )
+    return build_tool_call_lifecycle_receipt(
+        run_id="",
+        task_id="",
+        turn_id="",
+        role="",
+        dispatched_tool_calls_count=0,
+        dropped_tool_calls=dropped_tool_calls,
+        native_tool_call_envelopes=native_envelopes,
+        dispatch_status="dropped",
+        failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        reason=reason,
+    ).to_dict()
+
+
 def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
     """Return a safe tool lifecycle receipt mapping."""
 

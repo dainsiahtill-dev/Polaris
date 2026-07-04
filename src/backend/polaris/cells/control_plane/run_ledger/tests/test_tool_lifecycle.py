@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
+    build_missing_dispatch_lifecycle_receipt,
     build_tool_call_lifecycle_receipt,
     build_tool_dispatch_dropped_anomaly_projection,
     build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
@@ -506,6 +507,70 @@ def test_tool_lifecycle_receipt_derives_counts_from_count_only_dropped_ref() -> 
             "reason": "native_tool_calls_without_dispatch",
         }
     ]
+
+
+def test_build_missing_dispatch_lifecycle_receipt_projects_required_write_tool() -> None:
+    receipt = build_missing_dispatch_lifecycle_receipt(
+        required_write_tools=["read_file", "write_file", "write_file"],
+        metadata_candidates=(),
+        tool_results=[],
+        batch_receipt=None,
+    )
+
+    assert receipt is not None
+    assert receipt["dispatch_status"] == "dropped"
+    assert receipt["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert receipt["native_tool_calls_count"] == 1
+    assert receipt["decoded_tool_calls_count"] == 1
+    assert receipt["dispatched_tool_calls_count"] == 0
+    assert receipt["dropped_tool_calls"] == [
+        {"tool_name": "write_file", "reason": "tool_dispatch_dropped"},
+    ]
+    assert receipt["reason"] == "required_write_tool_without_dispatch_evidence"
+
+
+def test_build_missing_dispatch_lifecycle_receipt_prefers_native_envelope_metadata() -> None:
+    envelope = {
+        "schema_version": "native_tool_call_envelope.v1",
+        "envelope_id": "native_tool_call:provider:0:call-1:hash",
+        "tool_name": "write_file",
+    }
+    receipt = build_missing_dispatch_lifecycle_receipt(
+        required_write_tools=["write_file"],
+        metadata_candidates=({"native_tool_call_envelope_refs": [envelope]},),
+        tool_results=[],
+        batch_receipt=None,
+    )
+
+    assert receipt is not None
+    assert receipt["native_tool_calls_count"] == 1
+    assert receipt["native_tool_call_envelope_refs"] == [envelope]
+    assert receipt["dropped_tool_calls"] == [
+        {
+            "tool_name": "write_file",
+            "reason": "tool_dispatch_dropped",
+            "envelope_id": "native_tool_call:provider:0:call-1:hash",
+        },
+    ]
+
+
+def test_build_missing_dispatch_lifecycle_receipt_skips_existing_dispatch_evidence() -> None:
+    assert (
+        build_missing_dispatch_lifecycle_receipt(
+            required_write_tools=["write_file"],
+            tool_results=[{"tool": "write_file", "ok": True}],
+            batch_receipt=None,
+        )
+        is None
+    )
+    assert (
+        build_missing_dispatch_lifecycle_receipt(
+            required_write_tools=["write_file"],
+            tool_results=[],
+            batch_receipt={"results": [{"tool": "write_file", "ok": True}]},
+        )
+        is None
+    )
 
 
 def test_native_tool_call_facts_from_lifecycle_receipt_prefers_envelope_names() -> None:
