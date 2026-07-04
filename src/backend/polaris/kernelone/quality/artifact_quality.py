@@ -624,9 +624,7 @@ def _artifact_quality_issue_location(message: str) -> tuple[int | None, int | No
 def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict[str, Any]:
     metadata: dict[str, Any] = {"raw": text}
     if code == "declared_target_missing":
-        path = _artifact_quality_issue_path(message)
-        if path:
-            metadata["target_file"] = path
+        metadata.update(_legacy_declared_target_missing_metadata(message))
     elif code == "npm_manifest_invalid":
         metadata["manifest_path"] = "package.json"
         metadata.update(_legacy_npm_manifest_issue_metadata(message))
@@ -641,6 +639,19 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
     }:
         metadata.update(_legacy_compiler_diagnostic_metadata(message, code))
     return {key: value for key, value in metadata.items() if value}
+
+
+def _legacy_declared_target_missing_metadata(message: str) -> dict[str, str]:
+    """Project old declared-target display errors into typed metadata.
+
+    Target contract scanners should emit structured metadata directly. This
+    helper isolates the legacy display-string path while callers migrate.
+    """
+
+    path = _artifact_quality_issue_path(message)
+    if not path:
+        return {}
+    return {"target_file": path}
 
 
 def _legacy_npm_script_metadata(script_name: str, script_issue: str, *, entrypoint: str = "") -> dict[str, str]:
