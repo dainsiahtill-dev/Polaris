@@ -27,6 +27,8 @@ from typing import Any
 
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.kernelone.quality import (
+    artifact_quality_issue_key,
+    artifact_quality_issue_raw,
     artifact_quality_issues_from_errors,
     build_scope_authority_decision,
     partition_paths_by_declared_scope,
@@ -1884,8 +1886,8 @@ def _artifact_quality_issues_for_errors(
     seen_raw: set[str] = set()
 
     for issue in issue_payloads:
-        raw = _artifact_quality_issue_raw(issue)
-        key = _artifact_quality_issue_key(issue)
+        raw = artifact_quality_issue_raw(issue)
+        key = artifact_quality_issue_key(issue)
         if not raw or raw not in allowed_raw or key in seen_keys:
             continue
         merged.append(dict(issue))
@@ -1896,8 +1898,8 @@ def _artifact_quality_issues_for_errors(
         error for error in errors if (raw := str(error or "").strip()) and raw not in seen_raw
     ]
     for issue in artifact_quality_issues_from_errors(residual_errors):
-        raw = _artifact_quality_issue_raw(issue)
-        key = _artifact_quality_issue_key(issue)
+        raw = artifact_quality_issue_raw(issue)
+        key = artifact_quality_issue_key(issue)
         if key in seen_keys or (raw and raw in seen_raw):
             continue
         merged.append(dict(issue))
@@ -1905,27 +1907,6 @@ def _artifact_quality_issues_for_errors(
         if raw:
             seen_raw.add(raw)
     return tuple(merged)
-
-
-def _artifact_quality_issue_key(issue: dict[str, Any]) -> tuple[str, ...]:
-    code = str(issue.get("code") or "").strip()
-    path = str(issue.get("path") or "").strip().replace("\\", "/")
-    line = str(issue.get("line") or "").strip()
-    column = str(issue.get("column") or "").strip()
-    message = str(issue.get("message") or "").strip()
-    if code or path or line or column:
-        return ("structured", code, path, line, column, message)
-    raw = _artifact_quality_issue_raw(issue)
-    return ("legacy_raw", raw or message)
-
-
-def _artifact_quality_issue_raw(issue: dict[str, Any]) -> str:
-    metadata = issue.get("metadata")
-    if isinstance(metadata, dict):
-        raw = str(metadata.get("raw") or "").strip()
-        if raw:
-            return raw
-    return str(issue.get("message") or "").strip()
 
 
 def _materialization_quality_scan_paths_with_package_manifest(

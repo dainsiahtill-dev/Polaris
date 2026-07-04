@@ -754,6 +754,37 @@ def artifact_quality_issues_from_errors(errors: Iterable[Any]) -> tuple[dict[str
     return tuple(issue.to_dict() for issue in _artifact_quality_issues_from_errors(errors))
 
 
+def artifact_quality_issue_raw(value: Any) -> str:
+    """Return the canonical raw diagnostic text for an artifact-quality issue."""
+
+    issue = _artifact_quality_issue_from_value(value)
+    if issue is None:
+        return ""
+    metadata = issue.metadata
+    if isinstance(metadata, Mapping):
+        raw = str(metadata.get("raw") or "").strip()
+        if raw:
+            return raw
+    return str(issue.message or "").strip()
+
+
+def artifact_quality_issue_key(value: Any) -> tuple[str, ...]:
+    """Return the canonical identity key for artifact-quality issue de-duplication."""
+
+    issue = _artifact_quality_issue_from_value(value)
+    if issue is None:
+        return ("legacy_raw", "")
+    code = str(issue.code or "").strip()
+    path = str(issue.path or "").strip().replace("\\", "/")
+    line = str(issue.line or "").strip() if issue.line is not None else ""
+    column = str(issue.column or "").strip() if issue.column is not None else ""
+    message = str(issue.message or "").strip()
+    if code or path or line or column:
+        return ("structured", code, path, line, column, message)
+    raw = artifact_quality_issue_raw(issue)
+    return ("legacy_raw", raw or message)
+
+
 def _artifact_quality_evidence(
     *,
     errors: Iterable[str] = (),

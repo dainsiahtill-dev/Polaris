@@ -6,6 +6,9 @@ import os
 from pathlib import Path
 
 from polaris.kernelone.quality import (
+    ArtifactQualityIssue,
+    artifact_quality_issue_key,
+    artifact_quality_issue_raw,
     artifact_quality_issues_from_errors,
     scan_workspace_artifact_quality,
     scan_workspace_artifact_quality_evidence,
@@ -58,6 +61,28 @@ def test_artifact_quality_evidence_projects_typed_issues(tmp_path: Path) -> None
     assert evidence.issues[0].source == "package_manifest_scanner"
     assert evidence.issues[0].metadata["manifest_path"] == "package.json"
     assert evidence.to_dict()["issues"][0]["code"] == "npm_manifest_invalid"
+
+
+def test_artifact_quality_issue_identity_helpers_preserve_raw_and_structured_keys() -> None:
+    issue = ArtifactQualityIssue(
+        code="typescript_import_unresolved_symbol",
+        message="Missing export",
+        path="src\\engine\\forecast.ts",
+        line=7,
+        column=3,
+        metadata={"raw": "Artifact quality scan failed: unresolved symbol Missing"},
+    )
+
+    assert artifact_quality_issue_raw(issue) == "Artifact quality scan failed: unresolved symbol Missing"
+    assert artifact_quality_issue_key(issue) == (
+        "structured",
+        "typescript_import_unresolved_symbol",
+        "src/engine/forecast.ts",
+        "7",
+        "3",
+        "Missing export",
+    )
+    assert artifact_quality_issue_raw({"message": "legacy text"}) == "legacy text"
 
 
 def test_artifact_quality_evidence_uses_direct_typed_issue_for_missing_workspace(

@@ -5,6 +5,8 @@ from __future__ import annotations
 from polaris.kernelone.quality.artifact_quality import (
     ArtifactQualityEvidence,
     ArtifactQualityIssue,
+    artifact_quality_issue_key,
+    artifact_quality_issue_raw,
     artifact_quality_issues_from_errors,
     check_source_file_syntax,
     scan_workspace_artifact_quality,
@@ -65,6 +67,8 @@ __all__ = [
     "ScopeAuthorityDecision",
     "SymbolIndexSnapshot",
     "SyntaxCheckResult",
+    "artifact_quality_issue_key",
+    "artifact_quality_issue_raw",
     "artifact_quality_issues_from_errors",
     "build_contract_amendment_request",
     "build_scope_authority_decision",
