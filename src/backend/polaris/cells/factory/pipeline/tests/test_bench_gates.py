@@ -553,6 +553,45 @@ def test_factory_bench_taxonomy_does_not_treat_ce_full_blueprint_count_as_partia
     assert "opencode_audit" not in record
 
 
+def test_director_failure_taxonomy_ignores_unstructured_stage_history_note() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "chain_state": "partial",
+        "terminal_status": "director_partial",
+        "checks": [],
+        "chain": {
+            "exit_code": 1,
+            "stages": [
+                {
+                    "stage": "director_dispatch",
+                    "status": "failed",
+                    "output": "historical note: previous round mentioned director_no_materialized_changes",
+                }
+            ],
+            "chain_results": {
+                "director": {
+                    "total": 1,
+                    "successes": 0,
+                    "failures": 1,
+                    "blocked": 0,
+                },
+                "exit_class": "director_partial",
+            },
+            "audit_bundle": {
+                "failure": {
+                    "code": "FACTORY_STAGE_FAILED",
+                    "detail": "Director dispatch failed: error_code=director.run_status_non_success",
+                }
+            },
+        },
+    }
+
+    taxonomy = apply_factory_bench_failure_taxonomy(record)
+
+    assert taxonomy["category"] == "director_tool_execution"
+    assert taxonomy["root_cause_signature"] == "director_tool_execution:director_run_status_non_success"
+
+
 def test_role_tool_failure_taxonomy_keeps_opencode_out_of_platform_record() -> None:
     record: dict[str, Any] = {
         "all_checks_passed": False,

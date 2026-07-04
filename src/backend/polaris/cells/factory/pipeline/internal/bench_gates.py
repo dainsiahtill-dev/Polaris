@@ -2642,8 +2642,30 @@ def _director_failure_evidence(record: dict[str, Any]) -> str:
     return ""
 
 
+def _director_failure_tokens(record: dict[str, Any]) -> str:
+    chain = record.get("chain")
+    audit_bundle = chain.get("audit_bundle") if isinstance(chain, dict) else {}
+    failure = audit_bundle.get("failure") if isinstance(audit_bundle, dict) else {}
+    if not isinstance(failure, dict):
+        return ""
+    values: list[str] = []
+    for key in (
+        "detail",
+        "code",
+        "error_code",
+        "reason_code",
+        "failure_class",
+        "materialization_error",
+        "materialization_mode",
+    ):
+        value = str(failure.get(key) or "").strip()
+        if value:
+            values.append(value)
+    return "\n".join(values).lower()
+
+
 def _director_failure_reason(record: dict[str, Any]) -> str:
-    text = json.dumps(record.get("chain") or {}, ensure_ascii=False, default=str).lower()
+    text = _director_failure_tokens(record)
     if "binding fanout" in text or "quarantined" in text:
         return "director_binding_fanout_failed"
     if (
