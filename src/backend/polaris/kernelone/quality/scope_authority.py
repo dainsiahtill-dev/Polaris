@@ -85,6 +85,44 @@ def path_matches_any_declared_scope_candidate(path: str, candidates: Sequence[st
     return any(path_matches_declared_scope_candidate(normalized_path, candidate) for candidate in candidates)
 
 
+def partition_paths_by_declared_scope(
+    paths: Sequence[Any],
+    declared_scope_candidates: Sequence[Any],
+    *,
+    workspace_name: str = "",
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Partition paths into in-scope and out-of-scope buckets.
+
+    ``declared_scope_candidates`` is authoritative task scope evidence. When it
+    is empty, every non-empty path remains in-scope; this preserves existing
+    Director behavior for tasks without declared file targets while still
+    centralizing the path-matching semantics in ScopeAuthority.
+
+    Complexity:
+        O(p * c) time where ``p`` is path count and ``c`` is scope candidate
+        count; O(p + c) memory for normalized/deduplicated rows.
+    """
+
+    normalized_candidates = tuple(
+        candidate
+        for value in declared_scope_candidates
+        if (candidate := normalize_declared_scope_path(value, workspace_name=workspace_name))
+    )
+    in_scope: list[str] = []
+    out_of_scope: list[str] = []
+    seen: set[str] = set()
+    for value in paths:
+        path = _clean_token(value)
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        if not normalized_candidates or path_matches_any_declared_scope_candidate(path, normalized_candidates):
+            in_scope.append(path)
+        else:
+            out_of_scope.append(path)
+    return tuple(in_scope), tuple(out_of_scope)
+
+
 def _dedupe_targets(values: Iterable[Any]) -> tuple[str, ...]:
     output: list[str] = []
     seen: set[str] = set()
@@ -295,6 +333,7 @@ __all__ = [
     "owner_handoff_identifier_tokens",
     "owner_task_retry_handoff_requests_from_scope_payload",
     "ownership_handoff_requests_from_scope_payload",
+    "partition_paths_by_declared_scope",
     "path_matches_any_declared_scope_candidate",
     "path_matches_declared_scope_candidate",
     "task_record_identifier_tokens",

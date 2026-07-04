@@ -12,6 +12,7 @@ from polaris.kernelone.quality.scope_authority import (
     owner_handoff_identifier_tokens,
     owner_task_retry_handoff_requests_from_scope_payload,
     ownership_handoff_requests_from_scope_payload,
+    partition_paths_by_declared_scope,
     path_matches_any_declared_scope_candidate,
     task_record_identifier_tokens,
     unresolved_owner_handoff_requests_from_scope_payload,
@@ -70,6 +71,26 @@ def test_scope_authority_path_matching_is_case_insensitive_and_workspace_relativ
     assert path_matches_any_declared_scope_candidate("src/app/main.ts", ["src/**/main.ts"])
     assert path_matches_any_declared_scope_candidate("src/main.ts", ["src/**/main.ts"])
     assert not path_matches_any_declared_scope_candidate("../outside.ts", ["src/**/main.ts"])
+
+
+def test_scope_authority_partitions_paths_by_declared_scope() -> None:
+    in_scope, out_of_scope = partition_paths_by_declared_scope(
+        ["SRC/index.ts", "src/app/main.ts", "tests/app.test.ts", "src/app/main.ts"],
+        ["src/index.ts", "src/**/main.ts"],
+    )
+
+    assert in_scope == ("SRC/index.ts", "src/app/main.ts")
+    assert out_of_scope == ("tests/app.test.ts",)
+
+
+def test_scope_authority_partition_allows_all_when_scope_is_undeclared() -> None:
+    in_scope, out_of_scope = partition_paths_by_declared_scope(
+        ["src/index.ts", "", "tests/app.test.ts", "src/index.ts"],
+        [],
+    )
+
+    assert in_scope == ("src/index.ts", "tests/app.test.ts")
+    assert out_of_scope == ()
 
 
 def test_scope_authority_extracts_and_classifies_handoff_payloads() -> None:

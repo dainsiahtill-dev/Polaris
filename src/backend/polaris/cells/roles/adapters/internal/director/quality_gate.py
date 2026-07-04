@@ -26,7 +26,11 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
-from polaris.kernelone.quality import artifact_quality_issues_from_errors, build_scope_authority_decision
+from polaris.kernelone.quality import (
+    artifact_quality_issues_from_errors,
+    build_scope_authority_decision,
+    partition_paths_by_declared_scope,
+)
 
 from . import execute_method as _em
 from .artifact_quality_diagnostics import (
@@ -50,7 +54,6 @@ from .task_scope_paths import (
     _filter_diff_to_task_declared_paths,
     _normalize_declared_task_path,
     _path_candidate_exists_in_file_set,
-    _path_matches_any_declared_candidate,
     _task_has_declared_target_files,
     _task_text_blob,
     _workspace_path_exists_case_insensitive,
@@ -1459,11 +1462,12 @@ def _task_write_scope_candidates(task: dict[str, Any], *, workspace_name: str = 
 
 
 def _path_within_task_write_scope(path: str, *, task: dict[str, Any], workspace_name: str = "") -> bool:
-    scope_candidates = _task_write_scope_candidates(task, workspace_name=workspace_name)
-    if not scope_candidates:
-        return True
-    normalized = _normalize_declared_task_path(path, workspace_name=workspace_name)
-    return bool(normalized and _path_matches_any_declared_candidate(normalized, scope_candidates))
+    in_scope, _out_of_scope = partition_paths_by_declared_scope(
+        [path],
+        _task_write_scope_candidates(task, workspace_name=workspace_name),
+        workspace_name=workspace_name,
+    )
+    return bool(in_scope)
 
 
 def _partition_paths_by_task_write_scope(
@@ -1472,14 +1476,12 @@ def _partition_paths_by_task_write_scope(
     task: dict[str, Any],
     workspace_name: str = "",
 ) -> tuple[list[str], list[str]]:
-    in_scope: list[str] = []
-    out_of_scope: list[str] = []
-    for path in _dedupe_preserve_order(paths):
-        if _path_within_task_write_scope(path, task=task, workspace_name=workspace_name):
-            in_scope.append(path)
-        else:
-            out_of_scope.append(path)
-    return in_scope, out_of_scope
+    in_scope, out_of_scope = partition_paths_by_declared_scope(
+        _dedupe_preserve_order(paths),
+        _task_write_scope_candidates(task, workspace_name=workspace_name),
+        workspace_name=workspace_name,
+    )
+    return list(in_scope), list(out_of_scope)
 
 
 def _record_deferred_task_boundary_quality_errors(
