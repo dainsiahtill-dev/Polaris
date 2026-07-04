@@ -9,6 +9,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_tool_call_lifecycle_receipt,
     build_tool_call_lifecycle_run_ledger_event,
     build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt,
+    build_tool_dispatch_dropped_anomaly_from_sources,
     build_tool_dispatch_dropped_anomaly_projection,
     build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
     build_tool_dispatch_dropped_lifecycle_from_observed_calls,
@@ -431,6 +432,32 @@ def test_tool_dispatch_dropped_anomaly_projection_builds_lifecycle_and_failure_e
     assert failure_evidence["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
     assert "provider_response:provider-hash" in failure_evidence["evidence_refs"]
     assert "native_tool_call:tool-envelope-1" in failure_evidence["evidence_refs"]
+
+
+def test_tool_dispatch_dropped_anomaly_from_sources_owns_native_fact_projection() -> None:
+    anomaly = build_tool_dispatch_dropped_anomaly_from_sources(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        provider_response_hash="provider-hash",
+        metadata={},
+        native_tool_calls=[
+            {"function": {"name": "write_file"}},
+            {"function": {"name": "execute_command"}},
+        ],
+        native_tool_call_envelopes=[
+            {"envelope_id": "tool-envelope-1", "tool_name": "write_file"},
+            {"envelope_id": "tool-envelope-2", "tool_name": "execute_command"},
+        ],
+    )
+
+    lifecycle = anomaly["tool_call_lifecycle_receipt"]
+    assert anomaly["native_tool_calls_count"] == 2
+    assert anomaly["native_tool_call_envelopes"] == lifecycle["native_tool_call_envelope_refs"]
+    assert lifecycle["native_tool_calls_count"] == 2
+    assert lifecycle["decoded_tool_calls_count"] == 2
+    assert lifecycle["dispatched_tool_calls_count"] == 0
 
 
 def test_tool_dispatch_dropped_anomaly_from_lifecycle_receipt_projects_counts() -> None:

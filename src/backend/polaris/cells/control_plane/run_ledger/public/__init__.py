@@ -51,6 +51,7 @@ from .tool_lifecycle import (
     build_tool_call_lifecycle_receipt,
     build_tool_call_lifecycle_run_ledger_event,
     build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt,
+    build_tool_dispatch_dropped_anomaly_from_sources,
     build_tool_dispatch_dropped_anomaly_projection,
     build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
     build_tool_dispatch_dropped_lifecycle_from_observed_calls,

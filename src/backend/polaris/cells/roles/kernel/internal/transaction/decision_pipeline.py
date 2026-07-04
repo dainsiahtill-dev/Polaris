@@ -28,7 +28,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
-    build_tool_dispatch_dropped_anomaly_projection,
+    build_tool_dispatch_dropped_anomaly_from_sources,
     native_tool_call_count_from_facts,
     native_tool_call_facts_from_sources,
     project_native_tool_call_facts_to_metadata,
@@ -69,17 +69,16 @@ def build_tool_dispatch_dropped_anomaly(
     """Build the canonical anomaly + lifecycle receipt for dropped tool calls."""
 
     native_tool_calls = native_tool_calls_from_response(response)
-    native_facts = native_tool_call_facts_from_sources(metadata, native_tool_calls)
-    native_count = native_tool_call_count_from_facts(native_facts)
     response_hash = provider_response_hash(response, metadata)
     native_envelopes = native_tool_call_envelopes_from_response(response, metadata)
-    return build_tool_dispatch_dropped_anomaly_projection(
+    return build_tool_dispatch_dropped_anomaly_from_sources(
         run_id=str(metadata.get("run_id") or ""),
         task_id=str(metadata.get("task_id") or ""),
         turn_id=turn_id,
         role=str(metadata.get("role") or ""),
         provider_response_hash=response_hash,
-        native_tool_calls_count=native_count,
+        metadata=metadata,
+        native_tool_calls=native_tool_calls,
         native_tool_call_envelopes=native_envelopes,
         streaming=streaming,
         reason="provider_emitted_tool_calls_but_no_decoded_tool_batch",

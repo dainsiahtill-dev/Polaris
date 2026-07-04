@@ -1558,6 +1558,47 @@ def build_tool_dispatch_dropped_anomaly_projection(
     )
 
 
+def build_tool_dispatch_dropped_anomaly_from_sources(
+    *,
+    run_id: str,
+    task_id: str,
+    turn_id: str,
+    role: str,
+    provider_response_hash: str,
+    metadata: Mapping[str, Any] | None,
+    native_tool_calls: Sequence[Any],
+    native_tool_call_envelopes: Sequence[Any] = (),
+    streaming: bool = False,
+    reason: str = "provider_emitted_tool_calls_but_no_decoded_tool_batch",
+) -> dict[str, Any]:
+    """Return the dropped-dispatch anomaly from canonical native sources.
+
+    Boundary:
+        Run Ledger owns native tool-call fact precedence. Role runtimes pass
+        structured metadata/raw calls/envelope refs and append the returned
+        anomaly; they must not derive the native call count themselves.
+
+    Complexity:
+        O(r + e + n) through lifecycle receipts, envelope refs, and raw calls.
+    """
+
+    native_facts = native_tool_call_facts_from_sources(metadata, native_tool_calls)
+    envelope_refs = normalize_native_tool_call_envelope_refs(native_tool_call_envelopes)
+    if not envelope_refs:
+        envelope_refs = native_tool_call_envelope_refs_from_metadata(metadata)
+    return build_tool_dispatch_dropped_anomaly_projection(
+        run_id=run_id,
+        task_id=task_id,
+        turn_id=turn_id,
+        role=role,
+        provider_response_hash=provider_response_hash,
+        native_tool_calls_count=native_tool_call_count_from_facts(native_facts),
+        native_tool_call_envelopes=envelope_refs,
+        streaming=streaming,
+        reason=reason,
+    )
+
+
 def build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt(
     lifecycle_receipt: Mapping[str, Any],
     *,
