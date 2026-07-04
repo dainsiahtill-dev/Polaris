@@ -104,29 +104,31 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
                 merged_metadata = dict(metadata)
                 merged_metadata["pm_deduplicated"] = True
                 merged_metadata["pm_last_contract_subject"] = subject
-                existing_task = self.task_board.update(matched_id, metadata=merged_metadata)
-                task = existing_task or self.task_board.get(matched_id)
-                if task is None:
-                    task = self.task_board.create(
+                task_row = self.task_board.update_task_row(matched_id, metadata=merged_metadata)
+                if task_row is None:
+                    task_row = self.task_board.get_task(matched_id)
+                if task_row is None:
+                    task_row = self.task_board.create_task_row(
                         subject=subject,
                         description=description,
                         metadata=metadata,
                     )
             else:
-                task = self.task_board.create(
+                task_row = self.task_board.create_task_row(
                     subject=subject,
                     description=description,
                     metadata=metadata,
                 )
-                _index_task(task.to_dict())
+                _index_task(task_row)
 
-            board_task_ids_by_contract_index.append(int(task.id))
+            board_task_id = int(task_row.get("id") or 0)
+            board_task_ids_by_contract_index.append(board_task_id)
             token = str(contract.get("id") or "").strip()
             if token:
-                by_id[token] = int(task.id)
-            if int(task.id) not in created_task_ids:
-                created_task_ids.add(int(task.id))
-                created.append(task.to_dict())
+                by_id[token] = board_task_id
+            if board_task_id not in created_task_ids:
+                created_task_ids.add(board_task_id)
+                created.append(dict(task_row))
 
         for idx, contract in enumerate(task_contracts):
             dependencies = contract.get("depends_on")
@@ -140,17 +142,17 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
                 if mapped is not None and mapped != board_task_id:
                     blocked_by.append(mapped)
             if blocked_by and self._board_task_exists(board_task_id):
-                self.task_board.update(
+                refreshed_row = self.task_board.update_task_row(
                     board_task_id,
                     blocked_by=blocked_by,
                     metadata={"resolved_depends_on_task_ids": blocked_by},
                 )
-                refreshed = self.task_board.get(board_task_id)
-                if refreshed is not None:
-                    refreshed_row = refreshed.to_dict()
+                if refreshed_row is None:
+                    refreshed_row = self.task_board.get_task(board_task_id)
+                if refreshed_row is not None:
                     for position, row in enumerate(created):
                         if int(row.get("id") or 0) == board_task_id:
-                            created[position] = refreshed_row
+                            created[position] = dict(refreshed_row)
                             break
 
         return created
@@ -177,7 +179,7 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
                 status = str(row.get("status") or "").strip().lower()
                 if status not in {"pending", "blocked", "in_progress", "failed"}:
                     continue
-                self.task_board.update(
+                self.task_board.update_task_row(
                     task_id,
                     status="cancelled",
                     metadata={

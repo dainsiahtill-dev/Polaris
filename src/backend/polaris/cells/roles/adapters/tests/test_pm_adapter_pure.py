@@ -62,6 +62,81 @@ class _RowProjectionOnlyTaskBoard:
                 row["metadata"] = merged_metadata
 
 
+class _RowWriteOnlyTaskRuntime:
+    def __init__(self) -> None:
+        self._next_id = 1
+        self._rows: list[dict[str, Any]] = []
+
+    def list_task_rows(self) -> list[dict[str, Any]]:
+        return [dict(row) for row in self._rows]
+
+    def create_task_row(
+        self,
+        *,
+        subject: str,
+        description: str = "",
+        blocked_by: list[int] | None = None,
+        metadata: dict[str, Any] | None = None,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        row = {
+            "id": self._next_id,
+            "subject": subject,
+            "description": description,
+            "status": "pending",
+            "blocked_by": list(blocked_by or []),
+            "metadata": dict(metadata or {}),
+        }
+        self._next_id += 1
+        self._rows.append(row)
+        return dict(row)
+
+    def update_task_row(
+        self,
+        task_id: Any,
+        *,
+        status: str | None = None,
+        blocked_by: list[int] | None = None,
+        metadata: dict[str, Any] | None = None,
+        **_kwargs: Any,
+    ) -> dict[str, Any] | None:
+        for row in self._rows:
+            if str(row.get("id") or "") != str(task_id or ""):
+                continue
+            if status is not None:
+                row["status"] = status
+            if blocked_by is not None:
+                row["blocked_by"] = list(blocked_by)
+            if metadata is not None:
+                current_metadata = row.get("metadata")
+                merged_metadata = dict(current_metadata) if isinstance(current_metadata, dict) else {}
+                merged_metadata.update(metadata)
+                row["metadata"] = merged_metadata
+            return dict(row)
+        return None
+
+    def get_task(self, task_id: Any) -> dict[str, Any] | None:
+        for row in self._rows:
+            if str(row.get("id") or "") == str(task_id or ""):
+                return dict(row)
+        return None
+
+    def task_exists(self, task_id: Any) -> bool:
+        return self.get_task(task_id) is not None
+
+    def create(self, **_kwargs: Any) -> None:
+        raise AssertionError("PM task creation must use create_task_row()")
+
+    def update(self, *_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("PM task updates must use update_task_row()")
+
+    def get(self, *_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("PM task reads must use get_task()")
+
+    def list_all(self) -> list[Any]:
+        raise AssertionError("PM read-model consumers must use list_task_rows()")
+
+
 # ---------------------------------------------------------------------------
 # Message building
 # ---------------------------------------------------------------------------
@@ -2073,6 +2148,46 @@ class TestListBoardTaskRows:
         ]
         assert result["success"] is False
         assert result["tasks_created"] == 0
+
+
+class TestCreateBoardTasksRows:
+    def test_creates_and_links_tasks_through_runtime_row_api(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        runtime = _RowWriteOnlyTaskRuntime()
+        adapter._task_runtime = cast(Any, runtime)
+
+        created = adapter._create_board_tasks(
+            [
+                {
+                    "id": "TASK-1",
+                    "title": "Create model",
+                    "description": "Create the domain model",
+                    "goal": "model",
+                    "scope": "src/model.py",
+                    "scope_paths": ["src/model.py"],
+                    "target_files": ["src/model.py"],
+                    "steps": ["write model"],
+                    "acceptance": ["model exists"],
+                    "depends_on": [],
+                },
+                {
+                    "id": "TASK-2",
+                    "title": "Create engine",
+                    "description": "Create the engine",
+                    "goal": "engine",
+                    "scope": "src/engine.py",
+                    "scope_paths": ["src/engine.py"],
+                    "target_files": ["src/engine.py"],
+                    "steps": ["write engine"],
+                    "acceptance": ["engine exists"],
+                    "depends_on": ["TASK-1"],
+                },
+            ]
+        )
+
+        assert [row["id"] for row in created] == [1, 2]
+        assert created[1]["blocked_by"] == [1]
+        assert created[1]["metadata"]["resolved_depends_on_task_ids"] == [1]
 
 
 class TestCanonicalText:
