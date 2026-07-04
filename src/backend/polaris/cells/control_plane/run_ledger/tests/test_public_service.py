@@ -213,6 +213,11 @@ def test_projection_exposes_tool_dispatch_dropped() -> None:
     assert projection["tool_lifecycle"]["events"][0]["native_tool_call_names"] == ["write_file"]
     assert projection["tool_lifecycle"]["events"][0]["provider_response_hash"] == "provider-response-hash"
     assert projection["tool_lifecycle"]["events"][0]["receipt"]["schema_version"] == "tool_call_lifecycle_receipt.v1"
+    assert projection["tool_lifecycle"]["failure_evidence"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert projection["tool_lifecycle"]["failure_evidence"][0]["reason"] == "decode failed"
+    assert projection["tool_lifecycle"]["events"][0]["failure_evidence"] == projection["tool_lifecycle"][
+        "failure_evidence"
+    ][0]
     assert summary["detail"] == "run ledger projection tool lifecycle failed: TOOL_DISPATCH_DROPPED"
     assert summary["missing"] == []
     assert summary["failed_control_plane_events"] == ["TOOL_DISPATCH_DROPPED"]
