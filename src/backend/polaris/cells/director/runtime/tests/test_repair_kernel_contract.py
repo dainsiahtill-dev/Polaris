@@ -825,6 +825,49 @@ def test_normalizer_preserves_flat_npm_script_artifact_fields() -> None:
     assert diagnostic.metadata["target_directory"] == "tests"
 
 
+def test_normalizer_preserves_flat_scanner_artifact_fields() -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            {
+                "source": "typescript_project_typecheck",
+                "code": "typescript_project_typecheck_failed",
+                "message": "project typecheck failed",
+                "artifact_path": "package.json",
+                "collision_name": "Task",
+                "command": "tsc --noEmit --pretty false",
+                "declared_type": "module",
+                "detail": "src/app.ts(1,1): error TS1005",
+                "exit_code": 2,
+                "export_name": "Task",
+                "html_path": "index.html",
+                "package_root": ".",
+                "required_dependency": "typescript",
+                "runtime_syntax": "esm",
+                "script_src": "./src/main.ts",
+                "source_path": "src/main.ts",
+                "syntax_error": "TS1005",
+            }
+        ]
+    )
+
+    assert len(diagnostics) == 1
+    metadata = diagnostics[0].metadata
+    assert metadata["artifact_path"] == "package.json"
+    assert metadata["collision_name"] == "Task"
+    assert metadata["command"] == "tsc --noEmit --pretty false"
+    assert metadata["declared_type"] == "module"
+    assert metadata["detail"] == "src/app.ts(1,1): error TS1005"
+    assert metadata["exit_code"] == 2
+    assert metadata["export_name"] == "Task"
+    assert metadata["html_path"] == "index.html"
+    assert metadata["package_root"] == "."
+    assert metadata["required_dependency"] == "typescript"
+    assert metadata["runtime_syntax"] == "esm"
+    assert metadata["script_src"] == "./src/main.ts"
+    assert metadata["source_path"] == "src/main.ts"
+    assert metadata["syntax_error"] == "TS1005"
+
+
 def test_cross_artifact_unresolved_symbol_routes_to_python_rule_for_python_paths() -> None:
     diagnostics = normalize_artifact_quality_errors(
         [
