@@ -18,6 +18,7 @@ from typing import Any
 from polaris.kernelone.quality.scope_authority import (
     glob_declared_scope_path_matches,
     normalize_declared_scope_path,
+    partition_paths_by_declared_scope,
     path_matches_any_declared_scope_candidate,
     path_matches_declared_scope_candidate,
 )
@@ -48,10 +49,17 @@ def _filter_diff_to_task_declared_paths(
     if not normalized_candidates:
         return new_files, modified_files
 
-    return (
-        [path for path in new_files if _path_matches_any_declared_candidate(path, normalized_candidates)],
-        [path for path in modified_files if _path_matches_any_declared_candidate(path, normalized_candidates)],
+    scoped_new_files, _ = partition_paths_by_declared_scope(
+        new_files,
+        normalized_candidates,
+        workspace_name=workspace_name,
     )
+    scoped_modified_files, _ = partition_paths_by_declared_scope(
+        modified_files,
+        normalized_candidates,
+        workspace_name=workspace_name,
+    )
+    return list(scoped_new_files), list(scoped_modified_files)
 
 
 def _extract_task_target_path_candidates(task: dict[str, Any]) -> list[str]:
