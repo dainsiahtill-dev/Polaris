@@ -78,6 +78,10 @@ Typed issues are evidence, not repair authorization. Repair still flows through
   for `tsc --noEmit --pretty false` failures with
   `source="typescript_project_typecheck"`, while the legacy
   `_scan_typescript_project_typecheck()` API remains a string projection.
+- `_scan_npm_script_missing_local_config_evidence()` now owns direct typed
+  issues for npm scripts that reference missing local config files with
+  `source="npm_script_config_scanner"`, while the legacy
+  `_scan_npm_script_missing_local_configs()` API remains a string projection.
 
 ## 4. Verification
 

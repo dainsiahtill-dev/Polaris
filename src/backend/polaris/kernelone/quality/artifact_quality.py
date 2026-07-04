@@ -1525,7 +1525,14 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
             errors.extend(
                 _scan_npm_script_missing_local_entrypoints(root_full, script_text, str(script_name), relative_path)
             )
-            errors.extend(_scan_npm_script_missing_local_configs(root_full, tokens, str(script_name), relative_path))
+            config_evidence = _scan_npm_script_missing_local_config_evidence(
+                root_full,
+                tokens,
+                str(script_name),
+                relative_path,
+            )
+            errors.extend(config_evidence.errors)
+            issues.extend(config_evidence.issues)
         if _package_manifest_requires_typescript(root_full, payload) and not _package_declares_dependency(
             payload, "typescript"
         ):
@@ -1815,7 +1822,45 @@ def _scan_npm_script_missing_local_configs(
     script_name: str,
     relative_path: str,
 ) -> list[str]:
+    """Return legacy npm script missing-config string findings."""
+
+    return list(_scan_npm_script_missing_local_config_evidence(root_full, tokens, script_name, relative_path).errors)
+
+
+def _npm_script_missing_local_config_issue(
+    error: str,
+    relative_path: str,
+    *,
+    script_name: str,
+    config_path: str,
+) -> ArtifactQualityIssue:
+    message = str(error or "").strip()
+    if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
+        message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    return ArtifactQualityIssue(
+        code="npm_script_missing_local_config",
+        message=message,
+        path=relative_path,
+        source="npm_script_config_scanner",
+        metadata={
+            "raw": str(error or "").strip(),
+            "manifest_path": relative_path,
+            "script_name": script_name,
+            "config_path": config_path,
+        },
+    )
+
+
+def _scan_npm_script_missing_local_config_evidence(
+    root_full: Path,
+    tokens: list[str],
+    script_name: str,
+    relative_path: str,
+) -> _FileArtifactQualityEvidence:
+    """Return npm script missing-config findings as strings and typed issues."""
+
     errors: list[str] = []
+    issues: list[ArtifactQualityIssue] = []
     for index, token in enumerate(tokens):
         config_path = ""
         if token == "--config" and index + 1 < len(tokens):
@@ -1831,11 +1876,20 @@ def _scan_npm_script_missing_local_configs(
         if Path(normalized).suffix.lower() not in {".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"}:
             continue
         if not (root_full / normalized).is_file():
-            errors.append(
+            error = (
                 "Artifact quality scan failed: npm package manifest script "
                 f"{script_name!r} references missing config file {normalized!r} in {relative_path}"
             )
-    return errors
+            errors.append(error)
+            issues.append(
+                _npm_script_missing_local_config_issue(
+                    error,
+                    relative_path,
+                    script_name=script_name,
+                    config_path=normalized,
+                )
+            )
+    return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
 
 
 def _npm_script_entrypoint_after_command(tokens: list[str], command_index: int) -> str:

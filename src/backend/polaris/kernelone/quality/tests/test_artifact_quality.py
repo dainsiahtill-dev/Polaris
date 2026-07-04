@@ -456,6 +456,39 @@ def test_artifact_quality_evidence_uses_direct_typescript_project_typecheck_issu
     }
 
 
+def test_artifact_quality_evidence_uses_direct_npm_script_missing_config_issue(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        """
+{
+  "name": "typescript-project",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "jest --config jest.config.js --forceExit"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["package.json"])
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: npm package manifest script "
+        "'test' references missing config file 'jest.config.js' in package.json",
+    )
+    assert len(evidence.issues) == 1
+    assert evidence.issues[0].code == "npm_script_missing_local_config"
+    assert evidence.issues[0].source == "npm_script_config_scanner"
+    assert evidence.issues[0].path == "package.json"
+    assert evidence.issues[0].metadata == {
+        "raw": evidence.errors[0],
+        "manifest_path": "package.json",
+        "script_name": "test",
+        "config_path": "jest.config.js",
+    }
+
+
 def test_typescript_import_scanner_ignores_fixture_string_imports(tmp_path: Path) -> None:
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir(parents=True)
