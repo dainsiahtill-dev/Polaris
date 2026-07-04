@@ -56,6 +56,7 @@ from .tool_lifecycle import (
     project_tool_lifecycle_event,
     summarize_tool_lifecycle_events,
     task_boundary_tool_dispatch_from_lifecycle_metadata,
+    tool_call_lifecycle_receipts_from_metadata,
 )
 
 __all__ = [
@@ -107,4 +108,5 @@ __all__ = [
     "summarize_run_ledger_projection",
     "summarize_tool_lifecycle_events",
     "task_boundary_tool_dispatch_from_lifecycle_metadata",
+    "tool_call_lifecycle_receipts_from_metadata",
 ]

@@ -14,6 +14,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     project_tool_lifecycle_event,
     summarize_tool_lifecycle_events,
     task_boundary_tool_dispatch_from_lifecycle_metadata,
+    tool_call_lifecycle_receipts_from_metadata,
 )
 
 
@@ -931,6 +932,28 @@ def test_tool_lifecycle_projects_task_boundary_dispatch_from_metadata() -> None:
         "provider_response_hash": "provider/hash",
         "reason": "native_tool_calls_without_dispatch",
     }
+
+
+def test_tool_lifecycle_receipts_from_metadata_deduplicates_aliases() -> None:
+    receipt = {
+        "schema_version": "tool_call_lifecycle_receipt.v1",
+        "native_tool_call_envelope_refs": [
+            {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
+        ],
+    }
+    metadata = {
+        "tool_call_lifecycle_receipt": receipt,
+        "tool_call_lifecycle": dict(receipt),
+        "tool_call_lifecycle_receipts": [dict(receipt)],
+    }
+
+    receipts = tool_call_lifecycle_receipts_from_metadata(metadata)
+
+    assert len(receipts) == 1
+    assert receipts[0]["native_tool_calls_count"] == 1
+    assert receipts[0]["native_tool_call_envelope_refs"] == [
+        {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
+    ]
 
 
 def test_tool_lifecycle_receipt_deduplicates_native_envelopes_by_envelope_id() -> None:

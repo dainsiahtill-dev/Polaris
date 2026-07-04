@@ -16,8 +16,8 @@ from typing import Any, Mapping, Sequence
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     native_tool_call_facts_from_lifecycle_receipt,
     normalize_native_tool_call_envelope_refs,
-    normalize_tool_call_lifecycle_receipt,
     project_native_tool_call_facts_to_metadata,
+    tool_call_lifecycle_receipts_from_metadata,
 )
 from polaris.kernelone.llm.budget_policy import (
     BUDGET_STRATEGY_PAYLOAD_KEYS,
@@ -161,34 +161,8 @@ def native_tool_call_name(call: Mapping[str, Any]) -> str:
 _native_tool_call_name = native_tool_call_name
 
 
-def _tool_call_lifecycle_receipts_from_metadata(
-    metadata: Mapping[str, Any],
-) -> tuple[Mapping[str, Any], ...]:
-    receipts: list[dict[str, Any]] = []
-    seen_receipts: set[str] = set()
-
-    def append_receipt(value: Mapping[str, Any]) -> None:
-        receipt = normalize_tool_call_lifecycle_receipt(value)
-        receipt_key = json.dumps(receipt, sort_keys=True, separators=(",", ":"), default=str)
-        if receipt_key in seen_receipts:
-            return
-        seen_receipts.add(receipt_key)
-        receipts.append(receipt)
-
-    for key in ("tool_call_lifecycle_receipt", "tool_call_lifecycle"):
-        receipt = metadata.get(key)
-        if isinstance(receipt, Mapping):
-            append_receipt(receipt)
-    receipt_rows = metadata.get("tool_call_lifecycle_receipts")
-    if isinstance(receipt_rows, (list, tuple)):
-        for item in receipt_rows:
-            if isinstance(item, Mapping):
-                append_receipt(item)
-    return tuple(receipts)
-
-
 def _native_tool_call_count_from_lifecycle_receipts(metadata: Mapping[str, Any]) -> int | None:
-    receipts = _tool_call_lifecycle_receipts_from_metadata(metadata)
+    receipts = tool_call_lifecycle_receipts_from_metadata(metadata)
     if not receipts:
         return None
     for receipt in receipts:
@@ -203,7 +177,7 @@ def _native_tool_call_count_from_lifecycle_receipts(metadata: Mapping[str, Any])
 
 
 def _native_tool_call_names_from_lifecycle_receipts(metadata: Mapping[str, Any]) -> list[str] | None:
-    receipts = _tool_call_lifecycle_receipts_from_metadata(metadata)
+    receipts = tool_call_lifecycle_receipts_from_metadata(metadata)
     if not receipts:
         return None
     for receipt in receipts:
@@ -228,7 +202,7 @@ def native_tool_call_envelopes_from_metadata(metadata: Mapping[str, Any] | None)
         valid_envelopes = normalize_native_tool_call_envelope_refs(metadata.get(key))
         if valid_envelopes:
             return valid_envelopes
-    for receipt in _tool_call_lifecycle_receipts_from_metadata(metadata):
+    for receipt in tool_call_lifecycle_receipts_from_metadata(metadata):
         for key in ("native_tool_call_envelope_refs", "native_tool_call_envelopes"):
             valid_envelopes = normalize_native_tool_call_envelope_refs(receipt.get(key))
             if valid_envelopes:

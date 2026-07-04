@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from polaris.cells.roles.profile.public.service import RoleProfile
 
 import pytest
+from polaris.cells.control_plane.run_ledger.public import tool_call_lifecycle_receipts_from_metadata
 from polaris.cells.roles.kernel.internal.llm_caller.error_handling import (
     classify_error,
     is_native_tool_calling_unsupported,
@@ -44,7 +45,6 @@ from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import (
 )
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
-    _tool_call_lifecycle_receipts_from_metadata,
     build_native_tool_schemas,
     native_tool_call_envelopes_from_metadata,
     native_tool_call_envelopes_from_response,
@@ -988,7 +988,7 @@ class TestExtractNativeToolCalls:
             "tool_call_lifecycle_receipts": [dict(receipt)],
         }
 
-        receipts = _tool_call_lifecycle_receipts_from_metadata(metadata)
+        receipts = tool_call_lifecycle_receipts_from_metadata(metadata)
 
         assert len(receipts) == 1
         assert receipts[0]["native_tool_calls_count"] == 1

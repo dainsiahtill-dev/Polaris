@@ -465,6 +465,45 @@ def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
     }
 
 
+def tool_call_lifecycle_receipts_from_metadata(metadata: Mapping[str, Any] | None) -> tuple[dict[str, Any], ...]:
+    """Return deduplicated lifecycle receipts from legacy/canonical metadata keys.
+
+    Boundary:
+        The ``tool_call_lifecycle_receipt`` canonical key and older
+        ``tool_call_lifecycle`` / ``tool_call_lifecycle_receipts`` aliases are
+        all Run Ledger evidence projections. Callers should consume this helper
+        instead of reimplementing alias precedence or receipt deduplication.
+
+    Complexity:
+        O(r * s) time where ``r`` is receipt count and ``s`` is receipt size for
+        stable de-duplication; O(r) additional memory.
+    """
+
+    if not isinstance(metadata, Mapping):
+        return ()
+    receipts: list[dict[str, Any]] = []
+    seen_receipts: set[str] = set()
+
+    def append_receipt(value: Mapping[str, Any]) -> None:
+        receipt = normalize_tool_call_lifecycle_receipt(value)
+        receipt_key = _stable_json(receipt)
+        if receipt_key in seen_receipts:
+            return
+        seen_receipts.add(receipt_key)
+        receipts.append(receipt)
+
+    for key in ("tool_call_lifecycle_receipt", "tool_call_lifecycle"):
+        receipt = metadata.get(key)
+        if isinstance(receipt, Mapping):
+            append_receipt(receipt)
+    receipt_rows = metadata.get("tool_call_lifecycle_receipts")
+    if isinstance(receipt_rows, (list, tuple)):
+        for item in receipt_rows:
+            if isinstance(item, Mapping):
+                append_receipt(item)
+    return tuple(receipts)
+
+
 def native_tool_call_facts_from_lifecycle_receipt(value: Any) -> dict[str, Any]:
     """Derive native tool-call count/name facts from lifecycle receipt evidence.
 
