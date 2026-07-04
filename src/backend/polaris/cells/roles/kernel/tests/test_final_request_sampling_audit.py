@@ -1745,7 +1745,7 @@ def test_final_request_evidence_rejects_text_only_target_scope_for_required_ref(
     )
 
     evidence_coverage = audit["final_request_evidence_coverage"]
-    assert audit["coverage"]["has_target_files"] is True
+    assert audit["coverage"]["has_target_files"] is False
     assert audit["request_metadata_summary"]["has_target_scope"] is False
     assert evidence_coverage["structured_evidence"]["target_files"] is False
     assert "target_files" not in evidence_coverage["included_refs"]

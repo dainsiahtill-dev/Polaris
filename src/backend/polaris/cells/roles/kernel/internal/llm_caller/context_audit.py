@@ -433,16 +433,7 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
                 "文件计划",
             )
         ),
-        "has_target_files": bool(target_scope)
-        or any(
-            needle in lowered
-            for needle in (
-                "target_files",
-                "scope_paths",
-                "src/",
-                "tests/",
-            )
-        ),
+        "has_target_files": bool(target_scope),
         "has_failure_feedback": bool(failed_gate_evidence)
         or any(
             needle in lowered
