@@ -23,7 +23,7 @@ from polaris.cells.orchestration.pm_dispatch.internal.dispatch._lazy_imports imp
     _get_task_market_requeue_services,
     _get_tasks_utils,
 )
-from polaris.cells.qa.audit_verdict.public.contracts import build_qa_failure_classification_v1
+from polaris.cells.qa.audit_verdict.public.contracts import QaFailureClassV1, build_qa_failure_classification_v1
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -806,7 +806,7 @@ def _build_integration_qa_verification_failure_report(
     target_task_id: str,
 ) -> dict[str, Any]:
     qa_failure_classification = build_qa_failure_classification_v1(
-        failure_class="IMPLEMENTATION_DEFECT",
+        failure_class=QaFailureClassV1.IMPLEMENTATION_DEFECT.value,
         route="pending_design",
         reason=str(result.get("reason") or "integration_qa_failed"),
         repairable_by_director=False,
@@ -821,7 +821,9 @@ def _build_integration_qa_verification_failure_report(
     return {
         "schema_version": "verification.failure.v1",
         "source": "pm_dispatch.integration_qa",
-        "failure_classification": str(qa_failure_classification.get("failure_class") or "IMPLEMENTATION_DEFECT"),
+        "failure_classification": str(
+            qa_failure_classification.get("failure_class") or QaFailureClassV1.IMPLEMENTATION_DEFECT.value
+        ),
         "qa_failure_classification": qa_failure_classification,
         "gate": "integration_qa",
         "reason": str(result.get("reason") or "integration_qa_failed"),
@@ -900,7 +902,7 @@ def _generate_integration_qa_rework_blueprint(
                     "source": "pm_dispatch.integration_qa.rework",
                     "chain": "PM->ChiefEngineer->Director",
                     "failure_classification": verification_failure_report.get("qa_failure_classification")
-                    or {"failure_class": "IMPLEMENTATION_DEFECT"},
+                    or {"failure_class": QaFailureClassV1.IMPLEMENTATION_DEFECT.value},
                     "must_preserve_pm_contract": True,
                     "target_project_code_must_not_be_hardcoded_in_polaris": True,
                 },

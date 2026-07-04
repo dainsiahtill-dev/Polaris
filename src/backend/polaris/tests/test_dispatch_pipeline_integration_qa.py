@@ -22,6 +22,7 @@ from polaris.cells.orchestration.pm_dispatch.internal import dispatch_pipeline  
 from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (  # noqa: E402
     run_post_dispatch_integration_qa,
 )
+from polaris.cells.qa.audit_verdict.public import QaFailureClassV1  # noqa: E402
 from polaris.kernelone.storage import resolve_logical_path  # noqa: E402
 
 
@@ -500,13 +501,15 @@ def test_run_post_dispatch_integration_qa_failure_requeues_director_with_critiqu
     assert Path(resolve_logical_path(str(workspace), metadata["ce_rework_blueprint_path"])).is_file()
     assert metadata["chief_engineer_handoff"]["chain"] == "PM->ChiefEngineer->Director"
     assert metadata["chief_engineer_handoff"]["director_task_id"] == "TASK-A"
-    assert metadata["verification_failure_report"]["failure_classification"] == "IMPLEMENTATION_DEFECT"
+    assert metadata["verification_failure_report"]["failure_classification"] == (
+        QaFailureClassV1.IMPLEMENTATION_DEFECT.value
+    )
     assert (
         metadata["verification_failure_report"]["qa_failure_classification"]["schema_version"]
         == "polaris.qa_failure_classification.v1"
     )
     assert metadata["verification_failure_report"]["qa_failure_classification"]["failure_class"] == (
-        "IMPLEMENTATION_DEFECT"
+        QaFailureClassV1.IMPLEMENTATION_DEFECT.value
     )
     assert metadata["verification_failure_report"]["qa_failure_classification"]["route"] == "pending_design"
     assert row["metadata"]["reopen_count"] == 1

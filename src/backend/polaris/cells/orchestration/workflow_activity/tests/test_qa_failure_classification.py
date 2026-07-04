@@ -52,6 +52,19 @@ def test_workflow_classification_marks_unfinished_director_as_incomplete_materia
     assert classification["responsible_layer"] == "director"
 
 
+def test_workflow_classification_marks_passed_with_canonical_enum_value() -> None:
+    classification = _workflow_classification(
+        passed=True,
+        reason="qa_passed",
+        director_status="completed",
+    )
+
+    assert classification["failure_class"] == QaFailureClassV1.PASSED.value
+    assert classification["route"] == "resolved"
+    assert classification["repairable_by_director"] is False
+    assert classification["responsible_layer"] == "qa"
+
+
 def test_workflow_payload_classification_reads_nested_activity_payload() -> None:
     nested = {
         "schema_version": "polaris.qa_failure_classification.v1",

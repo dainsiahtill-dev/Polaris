@@ -19,7 +19,11 @@ from polaris.cells.orchestration.workflow_activity.internal.embedded_api import 
 from polaris.cells.orchestration.workflow_activity.internal.models import QAWorkflowInput, QAWorkflowResult
 from polaris.cells.orchestration.workflow_activity.internal.runtime_queries import WorkflowQueryState
 from polaris.cells.orchestration.workflow_activity.internal.workflow_client import get_activity_api
-from polaris.cells.qa.audit_verdict.public import build_qa_failure_classification_v1, normalize_qa_failure_class
+from polaris.cells.qa.audit_verdict.public import (
+    QaFailureClassV1,
+    build_qa_failure_classification_v1,
+    normalize_qa_failure_class,
+)
 from polaris.kernelone.traceability.internal.safety import safe_register_node
 from polaris.kernelone.traceability.public.service import create_traceability_service
 
@@ -58,7 +62,7 @@ def _workflow_classification(
 ) -> dict[str, Any]:
     if passed:
         return build_qa_failure_classification_v1(
-            failure_class="PASSED",
+            failure_class=QaFailureClassV1.PASSED.value,
             route="resolved",
             reason=reason or "QA workflow passed",
             repairable_by_director=False,
@@ -67,7 +71,9 @@ def _workflow_classification(
             responsible_layer="qa",
         ).to_dict()
     failure_class = (
-        "INCOMPLETE_MATERIALIZATION" if director_status and director_status != "completed" else "IMPLEMENTATION_DEFECT"
+        QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value
+        if director_status and director_status != "completed"
+        else QaFailureClassV1.IMPLEMENTATION_DEFECT.value
     )
     return build_qa_failure_classification_v1(
         failure_class=failure_class,
