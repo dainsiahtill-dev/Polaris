@@ -722,6 +722,13 @@ def test_final_request_evidence_reports_missing_module_interface_contract() -> N
                 "exit_code": 1,
                 "diagnostics": [{"code": "E_ASSERT", "path": "tests/product.test.js"}],
             },
+            "workspace_quality_evidence": {
+                "schema_version": "polaris.workspace_quality_evidence.v1",
+                "source": "factory_workspace_quality",
+                "all_checks_passed": False,
+                "quality_errors": [{"code": "behavior_assertion", "path": "tests/product.test.js"}],
+                "failed_required_modalities": ["command"],
+            },
         },
     )
     prepared = PreparedLLMRequest(
@@ -856,6 +863,13 @@ def test_final_request_evidence_aliases_verification_failure_and_architecture_pl
                 "command": "npm run test",
                 "exit_code": 1,
                 "diagnostics": [{"code": "E_ASSERT", "path": "tests/product.test.js"}],
+            },
+            "workspace_quality_evidence": {
+                "schema_version": "polaris.workspace_quality_evidence.v1",
+                "source": "factory_workspace_quality",
+                "all_checks_passed": False,
+                "quality_errors": [{"code": "behavior_assertion", "path": "tests/product.test.js"}],
+                "failed_required_modalities": ["command"],
             },
         },
     )

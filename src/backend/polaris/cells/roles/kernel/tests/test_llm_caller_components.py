@@ -239,6 +239,42 @@ def test_final_request_context_audit_requires_structured_failure_feedback() -> N
     assert "has_failure_feedback" in audit["context_quality"]["missing_coverage"]
 
 
+def test_final_request_context_audit_requires_structured_workspace_quality_evidence() -> None:
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "factory_workspace_quality workspace quality npm test step verify failed "
+                "quality errors: artifact quality real_run_gate"
+            ),
+        },
+    ]
+    ai_request = Mock()
+    ai_request.context = {
+        "chat_messages": messages,
+        "target_files": ["src/index.ts"],
+        "scope_paths": ["src/index.ts"],
+    }
+    ai_request.options = {"tools": []}
+    ai_request.input = ""
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={"tools": []},
+        ai_request=ai_request,
+        native_tool_schemas=[],
+    )
+
+    audit = build_final_request_context_audit(prepared=prepared, profile=profile)
+
+    assert audit["coverage"]["has_workspace_quality_evidence"] is False
+    assert "has_workspace_quality_evidence" in audit["context_quality"]["missing_coverage"]
+
+
 def test_final_request_context_audit_does_not_count_degraded_blueprint_fallback() -> None:
     profile = Mock()
     profile.max_context_tokens = 32768
