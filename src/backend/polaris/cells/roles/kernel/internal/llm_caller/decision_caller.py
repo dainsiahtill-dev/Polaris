@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from polaris.cells.control_plane.run_ledger.public import project_native_tool_call_facts_to_metadata
-
-from .tool_helpers import native_tool_call_facts
+from polaris.cells.control_plane.run_ledger.public import (
+    native_tool_call_facts_from_sources,
+    project_native_tool_call_facts_to_metadata,
+)
 
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
@@ -55,7 +56,7 @@ class DecisionCaller:
             raise RuntimeError(str(response.error))
         native_tool_calls = getattr(response, "tool_calls", []) or []
         metadata = dict(getattr(response, "metadata", {}) or {})
-        native_facts = native_tool_call_facts(metadata, native_tool_calls)
+        native_facts = native_tool_call_facts_from_sources(metadata, native_tool_calls)
         project_native_tool_call_facts_to_metadata(
             metadata,
             native_facts,

@@ -52,7 +52,6 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     build_native_tool_schemas,
     native_tool_call_envelopes_from_metadata,
     native_tool_call_envelopes_from_response,
-    native_tool_call_facts,
     native_tool_call_names,
     native_tool_call_provider_from_metadata,
     native_tool_calls_from_response,
@@ -818,7 +817,7 @@ class TestExtractNativeToolCalls:
         }
         raw_calls = [{"function": {"name": "write_file"}}]
 
-        assert native_tool_call_facts(metadata, raw_calls) == {
+        assert native_tool_call_facts_from_sources(metadata, raw_calls) == {
             "native_tool_calls_count": 2,
             "native_tool_call_names": ["repo_rg", "read_file"],
         }

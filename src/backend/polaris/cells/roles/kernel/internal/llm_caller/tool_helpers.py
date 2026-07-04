@@ -18,7 +18,6 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     native_tool_call_envelope_refs_from_metadata,
     native_tool_call_facts_from_metadata,
     native_tool_call_facts_from_raw_calls,
-    native_tool_call_facts_from_sources as run_ledger_native_tool_call_facts_from_sources,
     project_native_tool_call_facts_to_metadata,
 )
 from polaris.kernelone.llm.budget_policy import (
@@ -347,15 +346,6 @@ def native_tool_call_names(
         for item in (raw_names if isinstance(raw_names, (list, tuple)) else ())
         if (name := str(item or "").strip())
     ]
-
-
-def native_tool_call_facts(
-    metadata: Mapping[str, Any] | None,
-    native_tool_calls: Sequence[Any],
-) -> dict[str, Any]:
-    """Project canonical native tool-call count/name facts from one evidence path."""
-
-    return run_ledger_native_tool_call_facts_from_sources(metadata, native_tool_calls)
 
 
 def native_tool_calls_from_response(response: Any) -> list[dict[str, Any]]:
@@ -1672,7 +1662,6 @@ __all__ = [
     "native_tool_call_count_from_metadata",
     "native_tool_call_envelopes_from_metadata",
     "native_tool_call_envelopes_from_response",
-    "native_tool_call_facts",
     "native_tool_call_name",
     "native_tool_call_names",
     "native_tool_call_provider_from_metadata",
