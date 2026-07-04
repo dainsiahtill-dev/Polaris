@@ -1564,6 +1564,8 @@ def _task_boundary_scope_filter_evidence(
         "task_declared_write_targets": scope_authority["task_declared_write_targets"][:12],
         "out_of_scope_repair_target_files": scope_authority["out_of_scope_repair_target_files"][:12],
         "ownership_handoff_requests": scope_authority["ownership_handoff_requests"][:12],
+        "owner_task_retry_handoff_requests": scope_authority["owner_task_retry_handoff_requests"][:12],
+        "unresolved_owner_handoff_requests": scope_authority["unresolved_owner_handoff_requests"][:12],
         "scope_authority": scope_authority,
         "deferred": True,
     }

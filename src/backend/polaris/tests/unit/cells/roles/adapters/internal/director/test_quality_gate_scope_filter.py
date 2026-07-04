@@ -38,6 +38,8 @@ def test_scope_filter_evidence_includes_file_ownership_handoff_requests(tmp_path
     assert requests[1]["target_file"] == "src/missing.js"
     assert requests[1]["owner_found"] is False
     assert requests[1]["status"] == "owner_unknown"
+    assert evidence["owner_task_retry_handoff_requests"] == [requests[0]]
+    assert evidence["unresolved_owner_handoff_requests"] == [requests[1]]
 
     scope_authority = evidence["scope_authority"]
     assert scope_authority["schema_version"] == "scope-authority-decision/1"
