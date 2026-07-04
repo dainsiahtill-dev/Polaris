@@ -1226,6 +1226,11 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
             "exhausted": exhausted,
             "reason": rework_reason,
         }
+        if owner_handoff_request:
+            task_summary["ownership_handoff_request"] = dict(owner_handoff_request)
+            task_summary["ownership_handoff_target_file"] = str(
+                owner_handoff_request.get("target_file") or ""
+            ).strip()
         try:
             if exhausted:
                 task_board.update(task_id, metadata=metadata_update)

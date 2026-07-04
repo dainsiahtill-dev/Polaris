@@ -850,6 +850,8 @@ def test_quality_gate_task_boundary_validation_routes_scope_authority_nested_han
     assert bridge_summary["unmatched_owner_handoff_count"] == 0
     assert bridge_summary["unmatched_owner_handoff_requests"] == []
     assert bridge_summary["tasks"][0]["external_task_id"] == "PM-0001-1-S4"
+    assert bridge_summary["tasks"][0]["ownership_handoff_target_file"] == "src/index.js"
+    assert bridge_summary["tasks"][0]["ownership_handoff_request"] == handoff_request
 
 
 def test_ownership_handoff_requests_accept_flat_scope_authority_payload() -> None:
