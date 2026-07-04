@@ -18,7 +18,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from polaris.kernelone.events.final_request_evidence import (
+    looks_like_ce_blueprint_payload,
     looks_like_failed_gate_evidence_context_payload,
+    looks_like_pm_contract_payload,
+    looks_like_target_scope_payload,
     looks_like_workspace_quality_evidence_payload,
 )
 from polaris.kernelone.fs.text_ops import write_text_atomic
@@ -128,18 +131,11 @@ def _structured_coverage_flags(context: Any) -> dict[str, bool]:
         "has_workspace_quality_evidence": False,
     }
     for payload in _iter_context_mappings(context):
-        schema_version = str(payload.get("schema_version") or "").strip().lower()
-        keys = {str(key) for key in payload}
-        if keys & {"pm_contract", "pm_task_contract", "task_contract"} or schema_version.startswith(
-            "pm.task_contract."
-        ):
+        if looks_like_pm_contract_payload(payload):
             flags["has_pm_contract"] = True
-        if (
-            keys & {"ce_blueprint", "chief_engineer_blueprint", "blueprint_payload"}
-            or schema_version.startswith("chief_engineer.blueprint.")
-        ):
+        if looks_like_ce_blueprint_payload(payload):
             flags["has_chief_engineer_blueprint"] = True
-        if keys & {"target_files", "scope_paths", "allowed_write_paths", "allowed_read_paths"}:
+        if looks_like_target_scope_payload(payload):
             flags["has_target_files"] = True
         if looks_like_failed_gate_evidence_context_payload(payload):
             flags["has_failure_feedback"] = True

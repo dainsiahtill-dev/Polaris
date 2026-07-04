@@ -9,7 +9,10 @@ from polaris.kernelone.events.final_request_evidence import (
     build_final_request_tool_slots,
     final_request_evidence_ref_for_coverage_flag,
     final_request_evidence_ref_for_requirement,
+    looks_like_ce_blueprint_payload,
     looks_like_failed_gate_evidence_context_payload,
+    looks_like_pm_contract_payload,
+    looks_like_target_scope_payload,
     looks_like_workspace_quality_evidence_payload,
     missing_required_refs_from_evidence_coverage,
     missing_required_tools_from_evidence_coverage,
@@ -315,6 +318,47 @@ def test_workspace_quality_context_slot_uses_structured_payload() -> None:
         "failed_required_modalities": ["command"],
         "missing_required_modalities": ["browser", "screenshot"],
     }
+
+
+def test_contract_and_scope_predicates_require_structured_payloads() -> None:
+    assert looks_like_pm_contract_payload(
+        {
+            "schema_version": "pm.task_contract.v1",
+            "task_id": "TASK-1",
+            "target_files": ["src/index.py"],
+        }
+    )
+    assert looks_like_pm_contract_payload(
+        {
+            "pm_contract": {
+                "schema_version": "pm.task_contract.v1",
+                "goal": "Build the package",
+            }
+        }
+    )
+    assert not looks_like_pm_contract_payload({"pm_contract": {"note": "PM Task Contract"}})
+
+    assert looks_like_ce_blueprint_payload(
+        {
+            "schema_version": "chief_engineer.blueprint.v1",
+            "blueprint_id": "ce-1",
+            "construction_plan": {"phase": "implement"},
+        }
+    )
+    assert looks_like_ce_blueprint_payload(
+        {
+            "ce_blueprint": {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "target_files": ["src/index.py"],
+            }
+        }
+    )
+    assert not looks_like_ce_blueprint_payload({"ce_blueprint": {"note": "Chief Engineer Blueprint"}})
+
+    assert looks_like_target_scope_payload({"target_files": ["src/index.py"]})
+    assert looks_like_target_scope_payload({"authorization": {"allowed_write_paths": ["src/index.py"]}})
+    assert not looks_like_target_scope_payload({"target_files": "src/index.py"})
+    assert not looks_like_target_scope_payload({"target_files": []})
 
 
 def test_failed_gate_context_payload_uses_structured_payload() -> None:

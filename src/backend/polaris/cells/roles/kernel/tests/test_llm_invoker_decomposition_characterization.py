@@ -214,6 +214,22 @@ def test_executor_context_snapshot_coverage_does_not_count_contract_or_scope_pro
     assert coverage["has_target_files"] is False
 
 
+def test_executor_context_snapshot_coverage_rejects_weak_contract_and_scope_mappings() -> None:
+    coverage = _coverage_flags(
+        "build",
+        context={
+            "pm_contract": {"note": "PM Task Contract"},
+            "ce_blueprint": {"note": "Chief Engineer Blueprint"},
+            "target_files": "src/index.ts",
+            "authorization": {"allowed_write_paths": []},
+        },
+    )
+
+    assert coverage["has_pm_contract"] is False
+    assert coverage["has_chief_engineer_blueprint"] is False
+    assert coverage["has_target_files"] is False
+
+
 def _patch_prepare(
     monkeypatch: pytest.MonkeyPatch,
     prepared: PreparedLLMRequest,

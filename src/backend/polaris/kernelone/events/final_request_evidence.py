@@ -123,6 +123,98 @@ def _first_mapping(*values: Any) -> dict[str, Any]:
             return dict(value)
     return {}
 
+
+def _has_non_empty_text_sequence(value: Any) -> bool:
+    if not isinstance(value, (list, tuple, set)):
+        return False
+    return any(bool(_text(item)) for item in value)
+
+
+def looks_like_pm_contract_payload(value: Any) -> bool:
+    """Return whether *value* is structured PM task-contract evidence."""
+
+    if not isinstance(value, Mapping):
+        return False
+    for key in ("pm_contract", "pm_task_contract", "task_contract"):
+        if looks_like_pm_contract_payload(value.get(key)):
+            return True
+    schema_version = _text(value.get("schema_version")).lower()
+    has_contract_schema = (
+        "pm." in schema_version
+        or "pm_" in schema_version
+        or "task_contract" in schema_version
+        or "task.contract" in schema_version
+    )
+    has_task_identity = bool(_first_text(value.get("task_id"), value.get("id")))
+    has_scope_or_acceptance = any(
+        key in value
+        for key in (
+            "target_files",
+            "targets",
+            "target_paths",
+            "scope_paths",
+            "scope",
+            "steps",
+            "acceptance",
+            "acceptance_criteria",
+            "depends_on",
+            "dependencies",
+        )
+    )
+    has_goal_text = any(_text(value.get(key)) for key in ("goal", "title", "description"))
+    if has_contract_schema:
+        return has_task_identity or has_scope_or_acceptance or has_goal_text
+    return has_task_identity and has_scope_or_acceptance
+
+
+def looks_like_ce_blueprint_payload(value: Any) -> bool:
+    """Return whether *value* is structured Chief Engineer blueprint evidence."""
+
+    if not isinstance(value, Mapping):
+        return False
+    for key in ("ce_blueprint", "chief_engineer_blueprint", "blueprint_payload"):
+        if looks_like_ce_blueprint_payload(value.get(key)):
+            return True
+    schema_version = _text(value.get("schema_version")).lower()
+    has_blueprint_schema = (
+        "chief_engineer" in schema_version
+        or "ce_blueprint" in schema_version
+        or "blueprint" in schema_version
+    )
+    has_blueprint_identity = bool(_first_text(value.get("blueprint_id"), value.get("id"), value.get("task_id")))
+    has_plan_signal = any(
+        key in value
+        for key in (
+            "module_interface_contract",
+            "construction_plan",
+            "execution_checklist",
+            "architecture_decisions",
+            "generated_blueprints",
+            "target_files",
+            "scope_for_apply",
+            "scope_paths",
+            "acceptance",
+            "acceptance_criteria",
+        )
+    )
+    if has_blueprint_schema:
+        return has_blueprint_identity or has_plan_signal
+    return has_blueprint_identity and has_plan_signal
+
+
+def looks_like_target_scope_payload(value: Any) -> bool:
+    """Return whether *value* is structured target/scope evidence."""
+
+    if not isinstance(value, Mapping):
+        return False
+    for key in ("target_files", "scope_paths", "allowed_write_paths", "allowed_read_paths"):
+        if _has_non_empty_text_sequence(value.get(key)):
+            return True
+    authorization = value.get("authorization")
+    if isinstance(authorization, Mapping):
+        return looks_like_target_scope_payload(authorization)
+    return False
+
 def normalize_context_snapshot_ref(value: Any) -> str:
     """Return the canonical ContextStore snapshot hash for final-request refs.
 
