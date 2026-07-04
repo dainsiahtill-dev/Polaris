@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import traceback
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -1038,6 +1039,55 @@ def _owner_handoff_match_key(request: dict[str, Any]) -> tuple[str, tuple[str, .
     return target_file, tuple(sorted(_owner_handoff_identifier_tokens(request)))
 
 
+def _task_record_rework_key(record: dict[str, Any]) -> str:
+    return str(record.get("id") or record.get("task_id") or "").strip()
+
+
+@dataclass(frozen=True, slots=True)
+class _QualityGateOwnerHandoffIndex:
+    all_handoff_requests: list[dict[str, Any]]
+    owner_handoff_requests: list[dict[str, Any]]
+    unknown_owner_handoff_requests: list[dict[str, Any]]
+    matched_owner_handoff_by_task_key: dict[str, dict[str, Any]]
+    unmatched_owner_handoff_requests: list[dict[str, Any]]
+
+
+def _quality_gate_owner_handoff_index(
+    repair: dict[str, Any],
+    entries: list[Any],
+) -> _QualityGateOwnerHandoffIndex:
+    all_handoff_requests = _ownership_handoff_requests_from_repair_payload(repair)
+    owner_handoff_requests = _owned_handoff_requests_from_repair_payload(repair)
+    unknown_owner_handoff_requests = list(unresolved_owner_handoff_requests_from_scope_payload(repair))
+
+    matched_owner_handoff_keys: set[tuple[str, tuple[str, ...]]] = set()
+    matched_owner_handoff_by_task_key: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        record = entry.to_dict() if hasattr(entry, "to_dict") else entry
+        if not isinstance(record, dict):
+            continue
+        owner_handoff_request = _matching_owner_handoff_request(record, owner_handoff_requests)
+        if not owner_handoff_request:
+            continue
+        task_key = _task_record_rework_key(record)
+        if task_key:
+            matched_owner_handoff_by_task_key[task_key] = owner_handoff_request
+        matched_owner_handoff_keys.add(_owner_handoff_match_key(owner_handoff_request))
+
+    unmatched_owner_handoff_requests = [
+        dict(request)
+        for request in owner_handoff_requests
+        if _owner_handoff_match_key(request) not in matched_owner_handoff_keys
+    ]
+    return _QualityGateOwnerHandoffIndex(
+        all_handoff_requests=all_handoff_requests,
+        owner_handoff_requests=owner_handoff_requests,
+        unknown_owner_handoff_requests=unknown_owner_handoff_requests,
+        matched_owner_handoff_by_task_key=matched_owner_handoff_by_task_key,
+        unmatched_owner_handoff_requests=unmatched_owner_handoff_requests,
+    )
+
+
 def _safe_rework_int(value: Any, *, default: int = 0) -> int:
     try:
         return int(value)
@@ -1103,16 +1153,14 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
     evidence = _task_boundary_rework_evidence(payload, artifact=artifact)
     repair_raw = payload.get("repair")
     repair: dict[str, Any] = repair_raw if isinstance(repair_raw, dict) else {}
-    all_handoff_requests = _ownership_handoff_requests_from_repair_payload(repair)
-    owner_handoff_requests = _owned_handoff_requests_from_repair_payload(repair)
-    unknown_owner_handoff_requests = list(unresolved_owner_handoff_requests_from_scope_payload(repair))
-    matched_owner_handoff_keys: set[tuple[str, tuple[str, ...]]] = set()
+    owner_handoff_index = _quality_gate_owner_handoff_index(repair, entries)
     for entry in entries:
         record = entry.to_dict() if hasattr(entry, "to_dict") else entry
         if not isinstance(record, dict):
             continue
-        owner_handoff_request = _matching_owner_handoff_request(record, owner_handoff_requests)
-        if all_handoff_requests:
+        task_key = _task_record_rework_key(record)
+        owner_handoff_request = owner_handoff_index.matched_owner_handoff_by_task_key.get(task_key, {})
+        if owner_handoff_index.all_handoff_requests:
             if not owner_handoff_request:
                 continue
             rework_reason = _TASK_BOUNDARY_OWNER_REWORK_REASON
@@ -1121,7 +1169,6 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
                 "reason": rework_reason,
                 "ownership_handoff_request": owner_handoff_request,
             }
-            matched_owner_handoff_keys.add(_owner_handoff_match_key(owner_handoff_request))
         elif _task_record_needs_task_boundary_rework(record):
             rework_reason = _TASK_BOUNDARY_REWORK_REASON
             task_evidence = evidence
@@ -1195,20 +1242,15 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
         except (RuntimeError, ValueError):
             summary["skipped_count"] += 1
 
-    unmatched_owner_handoff_requests = [
-        dict(request)
-        for request in owner_handoff_requests
-        if _owner_handoff_match_key(request) not in matched_owner_handoff_keys
-    ]
-    if unmatched_owner_handoff_requests:
-        summary["skipped_count"] += len(unmatched_owner_handoff_requests)
-        summary["unmatched_owner_handoff_count"] = len(unmatched_owner_handoff_requests)
-        summary["unmatched_owner_handoff_requests"] = unmatched_owner_handoff_requests
+    if owner_handoff_index.unmatched_owner_handoff_requests:
+        summary["skipped_count"] += len(owner_handoff_index.unmatched_owner_handoff_requests)
+        summary["unmatched_owner_handoff_count"] = len(owner_handoff_index.unmatched_owner_handoff_requests)
+        summary["unmatched_owner_handoff_requests"] = owner_handoff_index.unmatched_owner_handoff_requests
 
-    if unknown_owner_handoff_requests:
-        summary["skipped_count"] += len(unknown_owner_handoff_requests)
-        summary["unknown_owner_handoff_count"] = len(unknown_owner_handoff_requests)
-        summary["unknown_owner_handoff_requests"] = unknown_owner_handoff_requests
+    if owner_handoff_index.unknown_owner_handoff_requests:
+        summary["skipped_count"] += len(owner_handoff_index.unknown_owner_handoff_requests)
+        summary["unknown_owner_handoff_count"] = len(owner_handoff_index.unknown_owner_handoff_requests)
+        summary["unknown_owner_handoff_requests"] = owner_handoff_index.unknown_owner_handoff_requests
 
     return summary
 
@@ -1281,30 +1323,13 @@ def _quality_gate_handoff_summary_from_payload(
 ) -> dict[str, Any]:
     repair_raw = payload.get("repair")
     repair: dict[str, Any] = repair_raw if isinstance(repair_raw, dict) else {}
-    all_handoff_requests = _ownership_handoff_requests_from_repair_payload(repair)
-    owner_handoff_requests = _owned_handoff_requests_from_repair_payload(repair)
-    unknown_owner_handoff_requests = list(unresolved_owner_handoff_requests_from_scope_payload(repair))
-
-    matched_owner_handoff_keys: set[tuple[str, tuple[str, ...]]] = set()
-    for entry in entries:
-        record = entry.to_dict() if hasattr(entry, "to_dict") else entry
-        if not isinstance(record, dict):
-            continue
-        owner_handoff_request = _matching_owner_handoff_request(record, owner_handoff_requests)
-        if owner_handoff_request:
-            matched_owner_handoff_keys.add(_owner_handoff_match_key(owner_handoff_request))
-
-    unmatched_owner_handoff_requests = [
-        dict(request)
-        for request in owner_handoff_requests
-        if _owner_handoff_match_key(request) not in matched_owner_handoff_keys
-    ]
+    owner_handoff_index = _quality_gate_owner_handoff_index(repair, entries)
     return {
-        "ownership_handoff_count": len(all_handoff_requests),
-        "unmatched_owner_handoff_count": len(unmatched_owner_handoff_requests),
-        "unmatched_owner_handoff_requests": unmatched_owner_handoff_requests,
-        "unknown_owner_handoff_count": len(unknown_owner_handoff_requests),
-        "unknown_owner_handoff_requests": unknown_owner_handoff_requests,
+        "ownership_handoff_count": len(owner_handoff_index.all_handoff_requests),
+        "unmatched_owner_handoff_count": len(owner_handoff_index.unmatched_owner_handoff_requests),
+        "unmatched_owner_handoff_requests": owner_handoff_index.unmatched_owner_handoff_requests,
+        "unknown_owner_handoff_count": len(owner_handoff_index.unknown_owner_handoff_requests),
+        "unknown_owner_handoff_requests": owner_handoff_index.unknown_owner_handoff_requests,
     }
 
 
