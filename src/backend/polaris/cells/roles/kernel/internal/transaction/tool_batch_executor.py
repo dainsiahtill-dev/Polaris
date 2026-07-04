@@ -17,6 +17,7 @@ from typing import Any, NoReturn, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
+    FailureClassV1,
     append_run_ledger_event,
     build_tool_call_lifecycle_receipt,
     build_tool_call_lifecycle_run_ledger_event,
@@ -827,7 +828,7 @@ def _append_tool_batch_receipts_to_run_ledger(
         decoded_tool_calls_count=decoded_count,
         receipts=receipts,
         dispatch_status="" if has_authoritative_receipt else "dropped",
-        failure_class="" if has_authoritative_receipt else "TOOL_DISPATCH_DROPPED",
+        failure_class="" if has_authoritative_receipt else FailureClassV1.TOOL_DISPATCH_DROPPED.value,
         reason="" if has_authoritative_receipt else "Decoded tool batch produced no authoritative batch receipt",
         native_tool_call_envelopes=native_tool_call_envelopes,
     )
@@ -1859,12 +1860,12 @@ class ToolBatchExecutor:
                 dropped_tool_calls=decoded_tool_calls,
                 native_tool_call_envelopes=native_tool_call_envelopes,
                 dispatch_status="dropped",
-                failure_class="TOOL_DISPATCH_DROPPED",
+                failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
                 reason="decoded_tool_batch_produced_no_authoritative_batch_receipt",
             ).to_dict()
             failure_evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
             anomaly = {
-                "type": "TOOL_DISPATCH_DROPPED",
+                "type": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
                 "turn_id": turn_id,
                 "native_tool_calls_count": lifecycle["native_tool_calls_count"],
                 "decoded_tool_calls_count": lifecycle["decoded_tool_calls_count"],
