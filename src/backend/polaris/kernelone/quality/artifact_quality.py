@@ -2382,7 +2382,15 @@ def _scan_typescript_import_evidence(
                 )
             )
     if _ts_symbol_coherence_enabled():
-        errors.extend(_scan_typescript_symbol_coherence(root_full, full_path, text, relative_path, code_mask=code_mask))
+        symbol_coherence_evidence = _scan_typescript_symbol_coherence_evidence(
+            root_full,
+            full_path,
+            text,
+            relative_path,
+            code_mask=code_mask,
+        )
+        errors.extend(symbol_coherence_evidence.errors)
+        issues.extend(symbol_coherence_evidence.issues)
     return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
 
 
@@ -2622,6 +2630,58 @@ def _scan_typescript_symbol_coherence(
     *,
     code_mask: list[bool] | None = None,
 ) -> list[str]:
+    """Return legacy TypeScript symbol-coherence string findings."""
+
+    return list(
+        _scan_typescript_symbol_coherence_evidence(
+            root_full,
+            full_path,
+            text,
+            relative_path,
+            code_mask=code_mask,
+        ).errors
+    )
+
+
+def _typescript_symbol_coherence_quality_issue(
+    *,
+    error: str,
+    relative_path: str,
+    specifier: str,
+    imported_symbol: str,
+    module_file: Path,
+    root_full: Path,
+) -> ArtifactQualityIssue:
+    message = str(error or "").strip()
+    if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
+        message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    try:
+        exporter_path = module_file.relative_to(root_full).as_posix()
+    except ValueError:
+        exporter_path = module_file.as_posix()
+    return ArtifactQualityIssue(
+        code="typescript_import_unresolved_symbol",
+        message=message,
+        path=relative_path,
+        source="typescript_symbol_coherence_scanner",
+        metadata={
+            "raw": str(error or "").strip(),
+            "importer_path": relative_path,
+            "exporter_path": exporter_path,
+            "specifier": specifier,
+            "imported_symbol": imported_symbol,
+        },
+    )
+
+
+def _scan_typescript_symbol_coherence_evidence(
+    root_full: Path,
+    full_path: Path,
+    text: str,
+    relative_path: str,
+    *,
+    code_mask: list[bool] | None = None,
+) -> _FileArtifactQualityEvidence:
     """Flag named imports of a resolvable relative sibling that the sibling never
     exports — the TS/JS analogue of the Python symbol-coherence check. Conservative
     by construction: only plain named imports of relative specifiers are checked,
@@ -2629,6 +2689,7 @@ def _scan_typescript_symbol_coherence(
     surface) is skipped, never flagged.
     """
     errors: list[str] = []
+    issues: list[ArtifactQualityIssue] = []
     seen: set[tuple[str, str]] = set()
     exports_cache: dict[Path, set[str] | None] = {}
     mask = code_mask if code_mask is not None else _ts_js_code_mask(text)
@@ -2658,11 +2719,22 @@ def _scan_typescript_symbol_coherence(
             if key in seen:
                 continue
             seen.add(key)
-            errors.append(
+            error = (
                 f"Artifact quality scan failed: unresolved import symbol {name!r} "
                 f"from {specifier!r} in {relative_path} (sibling module does not define it)"
             )
-    return errors
+            errors.append(error)
+            issues.append(
+                _typescript_symbol_coherence_quality_issue(
+                    error=error,
+                    relative_path=relative_path,
+                    specifier=specifier,
+                    imported_symbol=name,
+                    module_file=module_file,
+                    root_full=root_full,
+                )
+            )
+    return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
 
 
 def _is_test_like_artifact_path(relative_path: str) -> bool:

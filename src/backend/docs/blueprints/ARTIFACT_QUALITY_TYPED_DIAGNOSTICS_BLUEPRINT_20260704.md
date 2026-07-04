@@ -92,6 +92,10 @@ Typed issues are evidence, not repair authorization. Repair still flows through
   test files with `source="npm_script_test_target_scanner"`, while the legacy
   `_scan_npm_script_node_test_directory_targets()` API remains a string
   projection.
+- `_scan_typescript_symbol_coherence_evidence()` now owns direct typed issues
+  for TypeScript/JavaScript named imports that reference missing sibling
+  exports with `source="typescript_symbol_coherence_scanner"`, while the legacy
+  `_scan_typescript_symbol_coherence()` API remains a string projection.
 
 ## 4. Verification
 

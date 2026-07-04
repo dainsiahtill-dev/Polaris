@@ -456,6 +456,32 @@ def test_artifact_quality_evidence_uses_direct_typescript_project_typecheck_issu
     }
 
 
+def test_artifact_quality_evidence_uses_direct_typescript_symbol_coherence_issue(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("KERNELONE_TS_SYMBOL_COHERENCE", "1")
+    (tmp_path / "sibling.ts").write_text("export const Other = 1;\n", encoding="utf-8")
+    (tmp_path / "index.ts").write_text("import { Missing } from './sibling';\n", encoding="utf-8")
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["index.ts"])
+
+    issue = next(item for item in evidence.issues if item.code == "typescript_import_unresolved_symbol")
+    assert issue.source == "typescript_symbol_coherence_scanner"
+    assert issue.path == "index.ts"
+    assert issue.metadata == {
+        "raw": (
+            "Artifact quality scan failed: unresolved import symbol 'Missing' "
+            "from './sibling' in index.ts (sibling module does not define it)"
+        ),
+        "importer_path": "index.ts",
+        "exporter_path": "sibling.ts",
+        "specifier": "./sibling",
+        "imported_symbol": "Missing",
+    }
+    assert issue.metadata["raw"] in evidence.errors
+
+
 def test_artifact_quality_evidence_uses_direct_npm_script_missing_config_issue(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text(
         """
