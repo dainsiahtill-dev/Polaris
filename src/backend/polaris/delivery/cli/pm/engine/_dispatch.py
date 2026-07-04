@@ -36,6 +36,7 @@ from polaris.delivery.cli.pm.engine.helpers import (
 )
 from polaris.delivery.cli.pm.engine.taskboard import (
     _build_taskboard_runtime,
+    _finalize_taskboard_runtime_entry,
     _select_taskboard_ready_batch,
 )
 from polaris.delivery.cli.pm.engine.tri_council import (
@@ -389,6 +390,7 @@ def _dispatch_director_tasks_impl(
         *,
         record: dict[str, Any],
         board_id: int = 0,
+        task_runtime_session_id: str = "",
     ) -> None:
         """Register task record."""
         nonlocal latest_result
@@ -412,28 +414,19 @@ def _dispatch_director_tasks_impl(
             payload=payload if isinstance(payload, dict) else None,
         )
         if taskboard_enabled and board_id > 0:
-            board = taskboard_runtime.get("board")
-            module = taskboard_runtime.get("module")
-            if board is not None and module is not None:
-                # PM dispatch owns a projection of Director outcomes, not the
-                # canonical task lifecycle. Terminal writes flow through
-                # runtime.task_runtime to avoid failed->completed double writes.
-                metadata = {
-                    "last_pm_status": pm_status,
-                    "pm_dispatch_terminal_projection": pm_status in {"done", "failed", "blocked"},
-                }
-                if pm_status == "needs_continue":
-                    board.update(
-                        board_id,
-                        status=module.TaskStatus.PENDING,
-                        assignee="",
-                        metadata=metadata,
-                    )
-                else:
-                    board.update(
-                        board_id,
-                        metadata=metadata,
-                    )
+            metadata = {
+                "last_pm_status": pm_status,
+                "pm_dispatch_terminal_projection": pm_status in {"done", "failed", "blocked"},
+            }
+            _finalize_taskboard_runtime_entry(
+                taskboard_runtime,
+                board_id=board_id,
+                session_id=task_runtime_session_id,
+                pm_status=pm_status,
+                metadata=metadata,
+                result_summary=str(record.get("summary") or record.get("status") or "").strip(),
+                failure_detail=_normalize_failure_detail(record.get("failure_detail") or ""),
+            )
 
     # Dispatch loop
     if taskboard_enabled:
@@ -461,6 +454,7 @@ def _dispatch_director_tasks_impl(
                     continue
                 board_id = int(entry.get("board_id") or 0)
                 worker_id = str(entry.get("worker_id") or "").strip()
+                task_runtime_session_id = str(entry.get("task_runtime_session_id") or "").strip()
                 record = _run_single_task(
                     engine=engine,
                     args=args,
@@ -475,7 +469,11 @@ def _dispatch_director_tasks_impl(
                     dialogue_path=dialogue_path,
                     worker_id=worker_id,
                 )
-                _register_record(record=record, board_id=board_id)
+                _register_record(
+                    record=record,
+                    board_id=board_id,
+                    task_runtime_session_id=task_runtime_session_id,
+                )
                 if board_id > 0:
                     dispatched_board_ids.add(board_id)
     else:
@@ -529,9 +527,9 @@ def _dispatch_director_tasks_impl(
     taskboard_stats: dict[str, Any] = {}
     if taskboard_enabled:
         try:
-            board = taskboard_runtime.get("board")
-            if board is not None:
-                stats = board.get_stats()
+            task_runtime = taskboard_runtime.get("task_runtime")
+            if task_runtime is not None:
+                stats = task_runtime.get_task_row_stats()
                 taskboard_stats = stats if isinstance(stats, dict) else {}
         except (RuntimeError, ValueError) as exc:
             logger.warning("Failed to get taskboard stats, skipping stats in summary: %s", exc)

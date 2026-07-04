@@ -85,10 +85,8 @@ from polaris.delivery.cli.pm.engine.helpers import (
 )
 from polaris.delivery.cli.pm.engine.taskboard import (
     _build_taskboard_runtime,
-    _load_role_taskboard_module,
     _select_taskboard_ready_batch,
     _taskboard_mainline_enabled,
-    _taskboard_priority_enum,
 )
 from polaris.delivery.cli.pm.engine.tri_council import (
     _COORDINATION_ESCALATION_CHAIN,
@@ -110,14 +108,6 @@ from polaris.delivery.cli.pm.engine.tri_council import (
 _DEFAULT_ROLE_CONTEXT_HISTORY_LIMIT = 24
 _DEFAULT_MAX_DIRECTOR_RETRIES = 5
 _DEFAULT_COORDINATION_STAGE_RETRY_BUDGET = 2
-_TASKBOARD_PRIORITY_LEVELS = {
-    0: "CRITICAL",
-    1: "HIGH",
-    2: "HIGH",
-    3: "MEDIUM",
-    4: "MEDIUM",
-}
-
 __all__ = [
     # Constants
     "_ALLOWED_EXECUTION_MODES",
@@ -132,7 +122,6 @@ __all__ = [
     "_DELIVERY_FLOOR_DEFAULTS",
     "_DIRECTOR_RESULT_STATUSES",
     "_PHASE_ORDER",
-    "_TASKBOARD_PRIORITY_LEVELS",
     "_TERMINAL_TASK_STATUSES",
     "DirectorRunner",
     # Core classes
@@ -166,7 +155,6 @@ __all__ = [
     "_is_truthy_env",
     "_join_non_empty",
     "_load_completion_lock_state",
-    "_load_role_taskboard_module",
     "_looks_complex_for_council",
     "_looks_like_code_file",
     # Delivery floor functions
@@ -196,7 +184,6 @@ __all__ = [
     "_task_identity_key",
     # Taskboard functions
     "_taskboard_mainline_enabled",
-    "_taskboard_priority_enum",
     "_tri_council_action_for_failure",
     "_update_completion_lock_state",
     # Other

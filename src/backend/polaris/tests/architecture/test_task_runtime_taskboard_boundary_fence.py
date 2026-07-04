@@ -15,6 +15,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[3]
 POLARIS_ROOT = BACKEND_ROOT / "polaris"
 TASK_RUNTIME_OWNER = POLARIS_ROOT / "cells" / "runtime" / "task_runtime"
 ROLE_WORKER_POOL = POLARIS_ROOT / "cells" / "roles" / "runtime" / "internal" / "worker_pool.py"
+DELIVERY_PM_TASKBOARD = POLARIS_ROOT / "delivery" / "cli" / "pm" / "engine" / "taskboard.py"
 RAW_TASKBOARD_MODULES = {
     "polaris.cells.runtime.task_runtime.internal.task_board",
     "polaris.cells.runtime.task_runtime.public.task_board_contract",
@@ -225,4 +226,25 @@ def test_role_worker_pool_uses_task_runtime_port_not_raw_taskboard() -> None:
     assert not offenders, (
         "roles.runtime worker pool must consume TaskRuntimeService row/session APIs, "
         "not raw TaskBoard protocols: " + ", ".join(offenders)
+    )
+
+
+def test_delivery_pm_taskboard_mainline_uses_task_runtime_service() -> None:
+    source = DELIVERY_PM_TASKBOARD.read_text(encoding="utf-8")
+    blocked_tokens = (
+        "importlib.util",
+        "create_taskboard",
+        "_load_role_taskboard_module",
+        "_taskboard_priority_enum",
+        "runtime.get(\"board\")",
+        "runtime.get(\"module\")",
+        ".list_ready(",
+        ".claim(",
+        "._save_task",
+    )
+    offenders = [token for token in blocked_tokens if token in source]
+
+    assert not offenders, (
+        "delivery PM taskboard mainline must use TaskRuntimeService row/session APIs, "
+        "not the retired role taskboard loader or raw TaskBoard calls: " + ", ".join(offenders)
     )
