@@ -249,7 +249,15 @@ def build_npm_script_contract_plan(
         compile_script = str(scripts.get("compile") or "").strip()
         updates[("scripts", "build")] = "npm run compile" if compile_script else "tsc"
 
-    for missing_entrypoint in _missing_node_dist_entrypoints(raw_errors):
+    missing_node_dist_entrypoints = tuple(
+        dict.fromkeys(
+            (
+                *_missing_node_dist_entrypoints(raw_errors),
+                *_missing_node_dist_entrypoints_from_diagnostics(matched_diagnostics),
+            )
+        )
+    )
+    for missing_entrypoint in missing_node_dist_entrypoints:
         replacement_entrypoint = _compiled_typescript_entrypoint_for_missing(
             normalized_base,
             package_payload,
@@ -1478,6 +1486,17 @@ def _missing_node_dist_entrypoints(errors: Sequence[str]) -> tuple[str, ...]:
                 entrypoints.append(raw_path[dist_index + 1 :])
             elif raw_path.startswith("dist/"):
                 entrypoints.append(raw_path)
+    return tuple(dict.fromkeys(entrypoints))
+
+
+def _missing_node_dist_entrypoints_from_diagnostics(diagnostics: Sequence[RepairDiagnostic]) -> tuple[str, ...]:
+    entrypoints: list[str] = []
+    for diagnostic in diagnostics:
+        metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
+        script_issue = str(metadata.get("script_issue") or "").strip()
+        entrypoint = str(metadata.get("entrypoint") or "").strip().replace("\\", "/")
+        if script_issue == "missing_compiled_entrypoint" and entrypoint:
+            entrypoints.append(entrypoint)
     return tuple(dict.fromkeys(entrypoints))
 
 

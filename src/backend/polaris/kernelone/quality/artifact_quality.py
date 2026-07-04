@@ -483,6 +483,10 @@ _ARTIFACT_QUALITY_JAVASCRIPT_MODULE_ERROR_RE = re.compile(
     r"[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\s+is not a function)",
     re.IGNORECASE,
 )
+_ARTIFACT_QUALITY_NODE_CANNOT_FIND_MODULE_RE = re.compile(
+    r"Cannot find module ['\"](?P<path>[^'\"]+)['\"]",
+    re.IGNORECASE,
+)
 _ARTIFACT_QUALITY_UNRESOLVED_IMPORT_SYMBOL_RE = re.compile(
     r"unresolved (?:import )?symbol ['\"](?P<symbol>[^'\"]+)['\"] "
     r"from ['\"](?P<module>[^'\"]+)['\"] in (?P<path>\S+)",
@@ -724,7 +728,40 @@ def _javascript_module_error_metadata(text: str, message: str) -> dict[str, Any]
     if start_invoked and source_loader and require_cycle:
         metadata["script_name"] = "start"
         metadata["script_issue"] = "typescript_source_loader_require_cycle"
+    missing_compiled_entrypoint = _compiled_entrypoint_from_node_module_error(message)
+    if missing_compiled_entrypoint:
+        metadata["script_issue"] = "missing_compiled_entrypoint"
+        metadata["script_issue_source"] = "node_module_not_found"
+        metadata["entrypoint"] = missing_compiled_entrypoint
+        script_name = _script_name_from_npm_invocation(normalized)
+        if script_name:
+            metadata["script_name"] = script_name
     return metadata
+
+
+def _compiled_entrypoint_from_node_module_error(message: str) -> str:
+    match = _ARTIFACT_QUALITY_NODE_CANNOT_FIND_MODULE_RE.search(message)
+    if not match:
+        return ""
+    raw_path = str(match.group("path") or "").strip().replace("\\", "/")
+    normalized_path = raw_path.removeprefix("./")
+    for segment in ("dist/", "build/", "out/"):
+        if normalized_path.startswith(segment):
+            return normalized_path
+        marker = f"/{segment}"
+        marker_index = normalized_path.rfind(marker)
+        if marker_index >= 0:
+            return normalized_path[marker_index + 1 :]
+    return ""
+
+
+def _script_name_from_npm_invocation(normalized_text: str) -> str:
+    for script_name in ("start", "serve", "dev", "preview", "build", "test", "verify"):
+        if f"npm run {script_name}" in normalized_text:
+            return script_name
+    if "npm start" in normalized_text:
+        return "start"
+    return ""
 
 
 def _artifact_quality_issue_from_error(error: str) -> ArtifactQualityIssue:
@@ -884,12 +921,12 @@ def artifact_quality_issues_for_errors(
         if parsed_structural_key and parsed_structural_key in seen_structural_keys:
             continue
         residual_errors.append(raw)
-    for issue in artifact_quality_issues_from_errors(residual_errors):
-        raw = artifact_quality_issue_raw(issue)
-        key = artifact_quality_issue_key(issue)
+    for residual_issue in artifact_quality_issues_from_errors(residual_errors):
+        raw = artifact_quality_issue_raw(residual_issue)
+        key = artifact_quality_issue_key(residual_issue)
         if key in seen_keys or (raw and raw in seen_raw):
             continue
-        merged.append(dict(issue))
+        merged.append(dict(residual_issue))
         seen_keys.add(key)
         if raw:
             seen_raw.add(raw)

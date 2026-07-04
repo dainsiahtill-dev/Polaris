@@ -278,6 +278,21 @@ def test_artifact_quality_issue_projection_extracts_compiler_path() -> None:
     assert issues[0]["metadata"] == {"raw": error, "diagnostic_code": "TS2322"}
 
 
+def test_artifact_quality_issue_projection_extracts_missing_compiled_entrypoint() -> None:
+    issues = artifact_quality_issues_from_errors(
+        (
+            "npm run start failed: Error: Cannot find module "
+            "'/tmp/factory/project/dist/main.js'",
+        )
+    )
+
+    assert issues[0]["code"] == "javascript_module_error"
+    assert issues[0]["metadata"]["script_name"] == "start"
+    assert issues[0]["metadata"]["script_issue"] == "missing_compiled_entrypoint"
+    assert issues[0]["metadata"]["script_issue_source"] == "node_module_not_found"
+    assert issues[0]["metadata"]["entrypoint"] == "dist/main.js"
+
+
 def test_artifact_quality_issue_projection_extracts_colon_line_column() -> None:
     error = "src/main.py:7:13: SyntaxError: invalid syntax"
 

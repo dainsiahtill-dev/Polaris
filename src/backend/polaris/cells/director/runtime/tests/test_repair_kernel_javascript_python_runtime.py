@@ -1182,6 +1182,53 @@ def test_npm_script_contract_uses_typed_missing_entrypoint_metadata() -> None:
     assert plan.operations[1].value == "npm run build && node dist/index.js"
 
 
+def test_npm_script_contract_uses_typed_missing_compiled_entrypoint_metadata() -> None:
+    package_text = json.dumps(
+        {
+            "name": "sample",
+            "version": "1.0.0",
+            "type": "module",
+            "devDependencies": {"typescript": "^5.0.0"},
+            "scripts": {
+                "build": "tsc -p tsconfig.json",
+                "start": "node dist/main.js",
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    diagnostics = (
+        RepairDiagnostic(
+            source="artifact_quality",
+            code="javascript_module_error",
+            message="node runtime failed",
+            path=None,
+            raw="typed metadata only",
+            metadata={
+                "script_name": "start",
+                "script_issue": "missing_compiled_entrypoint",
+                "entrypoint": "dist/main.js",
+            },
+        ),
+    )
+
+    plan = build_npm_script_contract_plan(
+        base_files={
+            "package.json": package_text,
+            "tsconfig.json": "{}\n",
+            "src/index.ts": "export {};\n",
+        },
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert [(operation.kind, operation.path, operation.json_path) for operation in plan.operations] == [
+        ("json_set", "package.json", ("scripts", "start"))
+    ]
+    assert plan.operations[0].value == "node dist/index.js"
+
+
 def test_npm_script_contract_uses_typed_repairable_test_script_metadata() -> None:
     package_text = json.dumps(
         {
