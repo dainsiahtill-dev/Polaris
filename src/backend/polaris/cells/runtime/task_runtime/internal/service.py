@@ -440,27 +440,60 @@ class TaskRuntimeService:
         reason: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> Task | None:
+        task, _row, _execution_event = self._reopen_with_execution_event(
+            task_id,
+            reason=reason,
+            metadata=metadata,
+        )
+        return task
+
+    def reopen_task_row(
+        self,
+        task_id: Any,
+        *,
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Reopen a task and return the runtime row projection with event evidence."""
+
+        _task, row, execution_event = self._reopen_with_execution_event(
+            task_id,
+            reason=reason,
+            metadata=metadata,
+        )
+        if row is None:
+            return None
+        return project_task_row_execution_event(row, execution_event)
+
+    def _reopen_with_execution_event(
+        self,
+        task_id: Any,
+        *,
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[Task | None, dict[str, Any] | None, dict[str, Any] | None]:
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
-            return None
+            return None, None, None
         task = self._board.reopen(
             normalized,
             reason=reason,
             metadata=metadata,
         )
-        if task is not None:
-            session = self._read_session(normalized)
-            if session is not None:
-                session.mark_suspended(reason=reason or "task_reopened", resumable=True)
-                self._write_session(session, allow_terminal_downgrade=True)
-            row = self._augment_task_row(task.to_dict())
-            self._append_execution_event(
-                "reopened",
-                task_row=row,
-                session=session,
-                details={"reason": sanitize_summary(reason or "task_reopened")},
-            )
-        return task
+        if task is None:
+            return None, None, None
+        session = self._read_session(normalized)
+        if session is not None:
+            session.mark_suspended(reason=reason or "task_reopened", resumable=True)
+            self._write_session(session, allow_terminal_downgrade=True)
+        row = self._augment_task_row(task.to_dict())
+        execution_event = self._append_execution_event(
+            "reopened",
+            task_row=row,
+            session=session,
+            details={"reason": sanitize_summary(reason or "task_reopened")},
+        )
+        return task, row, execution_event
 
     def list_all(
         self,

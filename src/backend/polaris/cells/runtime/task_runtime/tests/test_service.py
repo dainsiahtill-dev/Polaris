@@ -1182,6 +1182,42 @@ def test_task_runtime_update_and_reopen_emit_execution_events(tmp_path: Path) ->
     assert reopened_event["payload"]["execution_state"] == "pending"
 
 
+def test_reopen_task_row_reports_event_append_failure_without_persisting_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create(subject="reopen with append evidence")
+    updated = service.update(created.id, status="completed", metadata={"qa": "failed"})
+    assert updated is not None
+    original_append_event = service_module.append_fact_event
+
+    def fail_reopened_append(command: object) -> object:
+        event_type = str(getattr(command, "event_type", "") or "")
+        if event_type == "reopened":
+            raise RuntimeError("fact stream unavailable")
+        return original_append_event(command)
+
+    monkeypatch.setattr(service_module, "append_fact_event", fail_reopened_append)
+
+    row = service.reopen_task_row(created.id, reason="qa_rework")
+
+    assert row is not None
+    assert row["status"] == "pending"
+    assert row["execution_event"] == {
+        "ok": False,
+        "event_type": "reopened",
+        "published": False,
+        "error": "fact stream unavailable",
+    }
+    persisted = service.get_task(row["id"])
+    assert persisted is not None
+    assert "execution_event" not in persisted
+    assert "execution_event" not in persisted["metadata"]
+
+
 def test_task_runtime_factory_event_projects_fact_stream_receipt(
     tmp_path: Path,
     monkeypatch,
