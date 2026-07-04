@@ -185,8 +185,11 @@ def _tool_call_lifecycle_receipts_from_metadata(
     return tuple(receipts)
 
 
-def _native_tool_call_count_from_lifecycle_receipts(metadata: Mapping[str, Any]) -> int:
-    for receipt in _tool_call_lifecycle_receipts_from_metadata(metadata):
+def _native_tool_call_count_from_lifecycle_receipts(metadata: Mapping[str, Any]) -> int | None:
+    receipts = _tool_call_lifecycle_receipts_from_metadata(metadata)
+    if not receipts:
+        return None
+    for receipt in receipts:
         normalized = normalize_tool_call_lifecycle_receipt(receipt)
         try:
             count = int(str(normalized.get("native_tool_calls_count") or "").strip())
@@ -241,7 +244,7 @@ def native_tool_call_count(
         return len(envelopes)
     if isinstance(metadata, Mapping):
         lifecycle_count = _native_tool_call_count_from_lifecycle_receipts(metadata)
-        if lifecycle_count > 0:
+        if lifecycle_count is not None:
             return lifecycle_count
     return sum(1 for item in native_tool_calls if isinstance(item, Mapping))
 
@@ -257,6 +260,9 @@ def native_tool_call_count_from_metadata(metadata: Mapping[str, Any] | None, *, 
     if envelope_count > 0:
         return envelope_count
     if isinstance(metadata, Mapping):
+        lifecycle_count = _native_tool_call_count_from_lifecycle_receipts(metadata)
+        if lifecycle_count is not None:
+            return lifecycle_count
         try:
             metadata_count = int(str(metadata.get("native_tool_calls_count") or "").strip())
         except (TypeError, ValueError):

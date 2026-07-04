@@ -783,6 +783,23 @@ class TestExtractNativeToolCalls:
         assert native_tool_call_count(metadata, ()) == 5
         assert native_tool_call_count_from_metadata(metadata, fallback=1) == 5
 
+    def test_native_tool_call_count_treats_zero_lifecycle_receipt_as_authoritative(self) -> None:
+        metadata = {
+            "tool_call_lifecycle_receipt": {
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "native_tool_calls_count": 0,
+                "decoded_tool_calls_count": 0,
+                "dispatched_tool_calls_count": 0,
+                "dispatch_status": "blocked",
+                "failure_class": "MISSING_TOOL_RESULT",
+            },
+            "native_tool_calls_count": 9,
+        }
+        raw_calls = [{"function": {"name": "write_file"}}]
+
+        assert native_tool_call_count(metadata, raw_calls) == 0
+        assert native_tool_call_count_from_metadata(metadata, fallback=3) == 0
+
     def test_native_tool_call_count_accepts_canonical_lifecycle_alias(self) -> None:
         metadata = {
             "tool_call_lifecycle": {
