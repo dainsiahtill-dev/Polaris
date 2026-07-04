@@ -193,7 +193,7 @@ class DirectorService:
     def _update_task_board(self, task_id: str, result: dict[str, Any]) -> None:
         status = "completed" if bool(result.get("success")) else "failed"
         try:
-            self._get_task_runtime().update(
+            self._get_task_runtime().update_task_row(
                 self._normalize_task_id(task_id),
                 status=status,
                 metadata=dict(result.get("metadata") or {}),

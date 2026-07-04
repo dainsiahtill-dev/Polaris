@@ -252,7 +252,7 @@ class _FakeTaskService:
         self.tasks: list[_FakeTask] = []
         self._counter = 0
 
-    def create(
+    def create_task_row(
         self,
         *,
         subject: str,
@@ -264,7 +264,7 @@ class _FakeTaskService:
         tags: list[str] | None = None,
         estimated_hours: float = 0.0,
         metadata: dict[str, Any] | None = None,
-    ) -> _FakeTask:
+    ) -> dict[str, Any]:
         del blocked_by, owner, assignee, tags, estimated_hours
         self._counter += 1
         task = _FakeTask(
@@ -275,7 +275,7 @@ class _FakeTaskService:
             priority=priority,
         )
         self.tasks.append(task)
-        return task
+        return task.to_dict()
 
     def list_task_rows(self, *, include_terminal: bool = True) -> list[dict[str, Any]]:
         del include_terminal

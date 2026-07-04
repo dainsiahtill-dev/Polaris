@@ -1005,7 +1005,7 @@ class RoleConsoleHost:
         service = self._get_task_service(required=True)
         if service is None:  # pragma: no cover - required=True raises
             raise RoleConsoleHostError("Task runtime is not available for the role console")
-        task = service.create(
+        task_row = service.create_task_row(
             subject=subject,
             description=description,
             priority=priority,
@@ -1016,7 +1016,7 @@ class RoleConsoleHost:
             blocked_by=blocked_by,
             metadata=_copy_mapping(metadata),
         )
-        return dict(task.to_dict())
+        return dict(task_row)
 
     def select_next_task(
         self,

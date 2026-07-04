@@ -1309,8 +1309,8 @@ class TestOrchestrationStageExecutor:
         plan_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/plan.json"))
         plan_path.parent.mkdir(parents=True, exist_ok=True)
         runtime = TaskRuntimeService(str(temp_workspace))
-        stale = runtime.create(subject="Stale task", description="completed in a previous run")
-        runtime.update(stale.id, status="completed", metadata={"previous_run": "old"})
+        stale = runtime.create_task_row(subject="Stale task", description="completed in a previous run")
+        runtime.update_task_row(stale["id"], status="completed", metadata={"previous_run": "old"})
         plan_path.write_text(
             """{
   "tasks": [
@@ -1339,7 +1339,7 @@ class TestOrchestrationStageExecutor:
         assert "workspace/plans/latest.plan.json" in result.artifacts
         mirrored_plan = Path(resolve_logical_path(str(temp_workspace), f"workspace/roles/pm/{run.id}/plan.json"))
         assert json.loads(mirrored_plan.read_text(encoding="utf-8"))["tasks"][0]["id"] == "TASK-1"
-        assert TaskRuntimeService(str(temp_workspace)).get_task(stale.id) is None
+        assert TaskRuntimeService(str(temp_workspace)).get_task(stale["id"]) is None
         task_row = TaskRuntimeService(str(temp_workspace)).get_task("TASK-1")
         assert task_row is not None
         assert task_row["status"] == "pending"

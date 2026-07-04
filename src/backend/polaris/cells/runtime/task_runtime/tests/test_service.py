@@ -68,6 +68,24 @@ def test_task_runtime_service_raw_list_all_is_retired(tmp_path: Path) -> None:
         service.list_all()
 
 
+def test_task_runtime_service_entity_apis_are_retired(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="row projection only")
+
+    with pytest.raises(RuntimeError, match="use create_task_row"):
+        service.create(subject="legacy entity create")
+    with pytest.raises(RuntimeError, match="use get_task"):
+        service.get(created["id"])
+    with pytest.raises(RuntimeError, match="use update_task_row"):
+        service.update(created["id"], status="in_progress")
+    with pytest.raises(RuntimeError, match="use update_task_row"):
+        service.update_task(created["id"], status="in_progress")
+    with pytest.raises(RuntimeError, match="use reopen_task_row"):
+        service.reopen(created["id"])
+
+
 def test_task_runtime_service_ready_and_stats_entity_apis_are_retired(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

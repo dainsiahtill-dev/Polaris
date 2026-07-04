@@ -12,11 +12,11 @@ def test_director_cli_status_update_writes_task_runtime_execution_fact(tmp_path:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     task_runtime = TaskRuntimeService(str(workspace))
-    task = task_runtime.create(subject="Director CLI execution projection")
+    task = task_runtime.create_task_row(subject="Director CLI execution projection")
     service = DirectorService(workspace=workspace)
 
     service._update_task_board(
-        str(task.id),
+        str(task["id"]),
         {
             "success": True,
             "metadata": {
@@ -33,7 +33,7 @@ def test_director_cli_status_update_writes_task_runtime_execution_fact(tmp_path:
     assert updated_event["payload"]["execution_state"] == "completed"
     assert updated_event["payload"]["details"]["metadata_updated"] is True
 
-    updated_row = TaskRuntimeService(str(workspace)).get_task(task.id)
+    updated_row = TaskRuntimeService(str(workspace)).get_task(task["id"])
     assert updated_row is not None
     assert updated_row["status"] == "completed"
     assert updated_row["metadata"]["adapter"] == "director.execution.public"
@@ -43,11 +43,11 @@ def test_director_cli_ready_tasks_use_task_runtime_projection(tmp_path: Path) ->
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     task_runtime = TaskRuntimeService(str(workspace))
-    ready = task_runtime.create(subject="ready task")
-    blocked = task_runtime.create(subject="blocked task", blocked_by=[ready.id])
-    claimed = task_runtime.create(subject="claimed task")
+    ready = task_runtime.create_task_row(subject="ready task")
+    blocked = task_runtime.create_task_row(subject="blocked task", blocked_by=[ready["id"]])
+    claimed = task_runtime.create_task_row(subject="claimed task")
     claim_result = task_runtime.claim_execution(
-        claimed.id,
+        claimed["id"],
         worker_id="director",
         role_id="director",
         run_id="run-director-cli-ready",
@@ -59,6 +59,6 @@ def test_director_cli_ready_tasks_use_task_runtime_projection(tmp_path: Path) ->
 
     rows = service._get_ready_tasks()
 
-    assert [row["id"] for row in rows] == [ready.id]
-    assert all(row["id"] != blocked.id for row in rows)
-    assert all(row["id"] != claimed.id for row in rows)
+    assert [row["id"] for row in rows] == [ready["id"]]
+    assert all(row["id"] != blocked["id"] for row in rows)
+    assert all(row["id"] != claimed["id"] for row in rows)

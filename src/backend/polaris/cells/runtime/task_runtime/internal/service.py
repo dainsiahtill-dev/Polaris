@@ -6,7 +6,7 @@ import shutil
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, NoReturn
 
 from polaris.cells.events.fact_stream.public.contracts import AppendFactEventCommandV1
 from polaris.cells.events.fact_stream.public.service import append_fact_event
@@ -47,6 +47,12 @@ from .execution_session import (
 logger = logging.getLogger(__name__)
 
 _TASK_ID_PATTERN = re.compile(r"^task-(\d+)(?:-|$)", re.IGNORECASE)
+
+
+def _raise_retired_entity_api(method: str, replacement: str) -> NoReturn:
+    """Fail closed when callers try to use retired Task entity APIs."""
+
+    raise RuntimeError(f"TaskRuntimeService.{method} is retired; use {replacement}()")
 
 
 def _terminal_task_status_for_session(status: Any) -> TaskStatus | None:
@@ -193,18 +199,7 @@ class TaskRuntimeService:
         estimated_hours: float = 0.0,
         metadata: dict[str, Any] | None = None,
     ) -> Task:
-        task, _row, _execution_event = self._create_with_execution_event(
-            subject=subject,
-            description=description,
-            blocked_by=blocked_by,
-            priority=priority,
-            owner=owner,
-            assignee=assignee,
-            tags=tags,
-            estimated_hours=estimated_hours,
-            metadata=metadata,
-        )
-        return task
+        _raise_retired_entity_api("create", "create_task_row")
 
     def create_task_row(
         self,
@@ -316,10 +311,7 @@ class TaskRuntimeService:
         )
 
     def get(self, task_id: Any) -> Task | None:
-        normalized = self.normalize_task_id(task_id)
-        if normalized is None:
-            return None
-        return self._board.get(normalized)
+        _raise_retired_entity_api("get", "get_task")
 
     def get_task(self, task_id: Any) -> dict[str, Any] | None:
         external_id = str(task_id or "").strip()
@@ -344,15 +336,7 @@ class TaskRuntimeService:
         blocked_by: list[int] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Task | None:
-        updated, _row, _execution_event = self._update_with_execution_event(
-            task_id,
-            status=status,
-            assignee=assignee,
-            owner=owner,
-            blocked_by=blocked_by,
-            metadata=metadata,
-        )
-        return updated
+        _raise_retired_entity_api("update", "update_task_row")
 
     def update_task_row(
         self,
@@ -428,13 +412,7 @@ class TaskRuntimeService:
         assignee: str | None = None,
         owner: str | None = None,
     ) -> Task | None:
-        return self.update(
-            task_id,
-            status=status,
-            metadata=metadata,
-            assignee=assignee,
-            owner=owner,
-        )
+        _raise_retired_entity_api("update_task", "update_task_row")
 
     def reopen(
         self,
@@ -443,12 +421,7 @@ class TaskRuntimeService:
         reason: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> Task | None:
-        task, _row, _execution_event = self._reopen_with_execution_event(
-            task_id,
-            reason=reason,
-            metadata=metadata,
-        )
-        return task
+        _raise_retired_entity_api("reopen", "reopen_task_row")
 
     def reopen_task_row(
         self,

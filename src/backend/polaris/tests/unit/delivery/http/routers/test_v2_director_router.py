@@ -838,13 +838,13 @@ async def test_director_diagnostics_does_not_count_expired_runtime_session_as_ru
     mock_settings.workspace_path = ""
 
     task_runtime = TaskRuntimeService(str(workspace))
-    task = task_runtime.create(
+    task = task_runtime.create_task_row(
         subject="Recover expired Director task",
         description="The projection row is stale but runtime lease has expired.",
         metadata={"pm_task_id": "PM-expired-runtime"},
     )
     claimed = task_runtime.claim_execution(
-        task.id,
+        task["id"],
         worker_id="director",
         role_id="director",
         run_id="run-expired-runtime",
@@ -854,7 +854,7 @@ async def test_director_diagnostics_does_not_count_expired_runtime_session_as_ru
     )
     assert claimed["success"] is True
 
-    session_path = Path(resolve_runtime_path(str(workspace), f"runtime/tasks/task_{task.id}.session.json"))
+    session_path = Path(resolve_runtime_path(str(workspace), f"runtime/tasks/task_{task['id']}.session.json"))
     session_payload = json.loads(session_path.read_text(encoding="utf-8"))
     expired_at = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
     session_payload["last_heartbeat_at"] = (datetime.now(timezone.utc) - timedelta(minutes=7)).isoformat()
@@ -878,7 +878,7 @@ async def test_director_diagnostics_does_not_count_expired_runtime_session_as_ru
             "polaris.delivery.http.v2.director.select_task_rows_from_projection",
             return_value=[
                 {
-                    "id": str(task.id),
+                    "id": str(task["id"]),
                     "subject": "Recover expired Director task",
                     "status": "RUNNING",
                     "claimed_by": "director",
@@ -921,7 +921,7 @@ async def test_director_diagnostics_does_not_count_expired_runtime_session_as_ru
     assert data["tasks"]["running"] == 0
     assert data["tasks"]["pending"] == 1
     assert data["tasks"]["ready_to_execute"] == 1
-    assert data["tasks"]["ready_task_ids"] == [str(task.id)]
+    assert data["tasks"]["ready_task_ids"] == [str(task["id"])]
     assert data["can_execute"] is True
     assert data["execution_blockers"] == []
     mock_director.list_tasks.assert_not_awaited()
@@ -2294,7 +2294,7 @@ def test_runtime_backed_task_rows_expose_projection_source_from_runtime_lineage(
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     task_runtime = TaskRuntimeService(str(workspace))
-    task = task_runtime.create(
+    task = task_runtime.create_task_row(
         subject="Runtime backed task",
         description="Runtime lineage should be visible through the HTTP task projection.",
         metadata={
@@ -2306,7 +2306,7 @@ def test_runtime_backed_task_rows_expose_projection_source_from_runtime_lineage(
     rows = _runtime_backed_task_rows(
         [
             {
-                "id": str(task.id),
+                "id": str(task["id"]),
                 "subject": "Runtime backed task",
                 "status": "RUNNING",
                 "metadata": {"pm_task_id": "PM-runtime-source"},

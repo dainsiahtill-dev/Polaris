@@ -4659,9 +4659,9 @@ class TestDirectorDispatchLoop:
             _fake_get_orchestration_service,
         )
         task_runtime = TaskRuntimeService(str(tmp_path))
-        task = task_runtime.create(subject="late director task")
+        task = task_runtime.create_task_row(subject="late director task")
         claim = task_runtime.claim_execution(
-            task.id,
+            task["id"],
             worker_id="director",
             role_id="director",
             run_id="run-1",
@@ -4686,7 +4686,7 @@ class TestDirectorDispatchLoop:
         await asyncio.sleep(0)
         assert fake_orchestration.active_task.cancelled()
         guarded_heartbeat = task_runtime.heartbeat_execution(
-            task.id,
+            task["id"],
             session_id=str(claim["session"]["session_id"]),
         )
         assert guarded_heartbeat["success"] is False
@@ -4723,9 +4723,9 @@ class TestDirectorDispatchLoop:
             _fake_get_orchestration_service,
         )
         task_runtime = TaskRuntimeService(str(tmp_path))
-        task = task_runtime.create(subject="inflight director task")
+        task = task_runtime.create_task_row(subject="inflight director task")
         claim = task_runtime.claim_execution(
-            task.id,
+            task["id"],
             worker_id="director",
             role_id="director",
             run_id="run-1",
@@ -4749,7 +4749,7 @@ class TestDirectorDispatchLoop:
         assert fake_orchestration.cancelled == []
         assert fake_orchestration.active_task.cancelled() is False
         guarded_heartbeat = task_runtime.heartbeat_execution(
-            task.id,
+            task["id"],
             session_id=str(claim["session"]["session_id"]),
         )
         assert guarded_heartbeat["success"] is True
