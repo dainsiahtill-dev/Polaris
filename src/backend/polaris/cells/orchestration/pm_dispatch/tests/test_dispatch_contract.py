@@ -510,6 +510,40 @@ class TestTaskBoardStateBridgeNotifications:
 class TestStateConsistencyChecker:
     """StateConsistencyChecker identifies mismatches between task boards."""
 
+    def test_missing_task_row_projection_is_inconsistent(self) -> None:
+        import asyncio
+
+        from polaris.cells.orchestration.pm_dispatch.internal.state_bridge import (
+            StateConsistencyChecker,
+        )
+
+        class LegacyBoard:
+            def list_all(self) -> list[object]:
+                raise AssertionError("legacy list_all must not be used for consistency checks")
+
+        mock_store = MagicMock()
+        mock_store.list_task_states = AsyncMock(return_value=[])
+
+        checker = StateConsistencyChecker(task_board=LegacyBoard(), workflow_store=mock_store)
+
+        async def run():
+            return await checker.check_consistency("wf-1")
+
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(run())
+            assert result["consistent"] is False
+            assert result["summary"]["projection_unavailable"] == 1
+            assert result["inconsistencies"] == [
+                {
+                    "type": "task_row_projection_unavailable",
+                    "workflow_id": "wf-1",
+                }
+            ]
+            mock_store.list_task_states.assert_not_called()
+        finally:
+            loop.close()
+
     def test_consistent_returns_true(self) -> None:
         import asyncio
         from dataclasses import dataclass

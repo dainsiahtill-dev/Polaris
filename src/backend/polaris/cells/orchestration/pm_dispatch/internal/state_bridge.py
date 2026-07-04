@@ -266,10 +266,25 @@ class StateConsistencyChecker:
 
     async def check_consistency(self, workflow_id: str) -> dict[str, Any]:
         list_task_rows = getattr(self._task_board, "list_task_rows", None)
-        if callable(list_task_rows):
-            board_tasks = list(list_task_rows() or [])
-        else:
-            board_tasks = list(self._task_board.list_all() or [])
+        if not callable(list_task_rows):
+            return {
+                "consistent": False,
+                "summary": {
+                    "checked": 0,
+                    "missing_in_workflow": 0,
+                    "missing_in_task_board": 0,
+                    "status_mismatch": 0,
+                    "projection_unavailable": 1,
+                },
+                "inconsistencies": [
+                    {
+                        "type": "task_row_projection_unavailable",
+                        "workflow_id": str(workflow_id),
+                    }
+                ],
+            }
+
+        board_tasks = list(list_task_rows() or [])
         workflow_states = await self._workflow_store.list_task_states(str(workflow_id))
 
         board_map: dict[str, Any] = {}
