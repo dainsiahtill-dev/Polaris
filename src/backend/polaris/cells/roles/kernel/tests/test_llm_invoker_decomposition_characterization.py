@@ -28,6 +28,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.response_types import (
 from polaris.cells.roles.profile.public.service import RoleProfile
 from polaris.kernelone.llm.engine import AIExecutor
 from polaris.kernelone.llm.engine.contracts import AIRequest, AIResponse, TaskType, Usage
+from polaris.kernelone.llm.engine.executor import _coverage_flags
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -126,6 +127,52 @@ class _ScriptedExecutor:
         if self._responses:
             return self._responses.pop(0)
         raise AssertionError("executor invoked more times than scripted")
+
+
+def test_executor_context_snapshot_coverage_uses_structured_context_before_text_needles() -> None:
+    coverage = _coverage_flags(
+        "build",
+        context={
+            "pm_contract": {
+                "schema_version": "pm.task_contract.v1",
+                "target_files": ["src/index.ts"],
+            },
+            "ce_blueprint": {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "target_files": ["src/index.ts"],
+            },
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "authorization": {
+                    "allowed_write_paths": ["src/index.ts"],
+                    "allowed_read_paths": ["src/index.ts"],
+                },
+            },
+            "run_ledger_projection": {
+                "failure_evidence": [
+                    {
+                        "schema_version": "polaris.failure_evidence.v1",
+                        "failure_class": "tool_dispatch_dropped",
+                        "responsible_layer": "platform",
+                        "evidence_refs": ["tool_lifecycle:turn-1"],
+                    }
+                ],
+                "workspace_quality_evidence": {
+                    "schema_version": "polaris.workspace_quality_evidence.v1",
+                    "quality_errors": [{"code": "MISSING_TARGET"}],
+                    "deterministic_checks": ["source_target_coverage"],
+                },
+            },
+        },
+    )
+
+    assert coverage == {
+        "has_pm_contract": True,
+        "has_chief_engineer_blueprint": True,
+        "has_target_files": True,
+        "has_failure_feedback": True,
+        "has_workspace_quality_evidence": True,
+    }
 
 
 def _patch_prepare(

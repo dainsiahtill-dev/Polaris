@@ -99,9 +99,80 @@ def _message_chars(messages: list[dict[str, str]]) -> int:
     return sum(len(message.get("role", "")) + len(message.get("content", "")) for message in messages)
 
 
-def _coverage_flags(text: str) -> dict[str, bool]:
+def _iter_context_mappings(value: Any, *, depth: int = 0) -> list[dict[str, Any]]:
+    if depth > 5:
+        return []
+    if isinstance(value, dict):
+        mappings = [value]
+        for nested in value.values():
+            mappings.extend(_iter_context_mappings(nested, depth=depth + 1))
+        return mappings
+    if isinstance(value, (list, tuple)):
+        mappings: list[dict[str, Any]] = []
+        for item in value:
+            mappings.extend(_iter_context_mappings(item, depth=depth + 1))
+        return mappings
+    return []
+
+
+def _structured_coverage_flags(context: Any) -> dict[str, bool]:
+    flags = {
+        "has_pm_contract": False,
+        "has_chief_engineer_blueprint": False,
+        "has_target_files": False,
+        "has_failure_feedback": False,
+        "has_workspace_quality_evidence": False,
+    }
+    for payload in _iter_context_mappings(context):
+        schema_version = str(payload.get("schema_version") or "").strip().lower()
+        keys = {str(key) for key in payload}
+        if keys & {"pm_contract", "pm_task_contract", "task_contract"} or schema_version.startswith(
+            "pm.task_contract."
+        ):
+            flags["has_pm_contract"] = True
+        if (
+            keys & {"ce_blueprint", "chief_engineer_blueprint", "blueprint_payload"}
+            or schema_version.startswith("chief_engineer.blueprint.")
+        ):
+            flags["has_chief_engineer_blueprint"] = True
+        if keys & {"target_files", "scope_paths", "allowed_write_paths", "allowed_read_paths"}:
+            flags["has_target_files"] = True
+        if (
+            keys
+            & {
+                "failed_gate_evidence",
+                "failure_evidence",
+                "failure_evidence_summary",
+                "verification_failure_evidence",
+                "failure_class",
+                "evidence_refs",
+            }
+            or "failure_evidence" in schema_version
+            or "failed_gate" in schema_version
+            or "verification_failure" in schema_version
+        ):
+            flags["has_failure_feedback"] = True
+        if (
+            keys
+            & {
+                "workspace_quality_evidence",
+                "factory_workspace_quality",
+                "artifact_quality_evidence",
+                "quality_errors",
+                "deterministic_checks",
+                "failed_required_modalities",
+                "missing_required_modalities",
+            }
+            or "workspace_quality" in schema_version
+            or "artifact_quality" in schema_version
+        ):
+            flags["has_workspace_quality_evidence"] = True
+    return flags
+
+
+def _coverage_flags(text: str, *, context: Any = None) -> dict[str, bool]:
     lowered = text.lower()
-    return {
+    text_flags = {
         "has_pm_contract": any(
             needle in lowered
             for needle in (
@@ -167,6 +238,8 @@ def _coverage_flags(text: str) -> dict[str, bool]:
             )
         ),
     }
+    structured_flags = _structured_coverage_flags(context)
+    return {key: bool(structured_flags.get(key) or text_flags.get(key)) for key in text_flags}
 
 
 def _context_quality_findings(
@@ -1020,7 +1093,7 @@ class AIExecutor:
             window_tokens >= _UNDERUTILIZED_WINDOW_THRESHOLD
             and final_request_token_estimate < int(window_tokens * _UNDERUTILIZED_RATIO)
         )
-        coverage = _coverage_flags(message_text)
+        coverage = _coverage_flags(message_text, context=getattr(request, "context", None))
         prompt_profile_fields = build_prompt_profile_observability_fields(getattr(request, "context", None))
 
         return {
