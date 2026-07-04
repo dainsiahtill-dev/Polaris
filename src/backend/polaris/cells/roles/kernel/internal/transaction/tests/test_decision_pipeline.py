@@ -7,14 +7,13 @@ from polaris.cells.control_plane.run_ledger.public import (
     project_native_tool_call_facts_to_metadata,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
-    native_tool_call_count,
     native_tool_calls_from_response,
     provider_response_hash,
 )
 from polaris.cells.roles.kernel.internal.transaction.decision_pipeline import build_tool_dispatch_dropped_anomaly
 
 
-def test_native_tool_call_count_prefers_metadata_envelopes() -> None:
+def test_native_tool_call_facts_prefers_metadata_envelopes() -> None:
     response = SimpleNamespace(content="", model="gpt-test", native_tool_calls=[])
     metadata = {
         "native_tool_call_envelopes": [
@@ -23,10 +22,11 @@ def test_native_tool_call_count_prefers_metadata_envelopes() -> None:
         ],
     }
 
-    assert native_tool_call_count(metadata, native_tool_calls_from_response(response)) == 2
+    facts = native_tool_call_facts_from_sources(metadata, native_tool_calls_from_response(response))
+    assert facts["native_tool_calls_count"] == 2
 
 
-def test_native_tool_call_count_accepts_lifecycle_receipt_envelopes() -> None:
+def test_native_tool_call_facts_accepts_lifecycle_receipt_envelopes() -> None:
     response = SimpleNamespace(content="", model="gpt-test", native_tool_calls=[])
     metadata = {
         "tool_call_lifecycle_receipt": {
@@ -38,17 +38,19 @@ def test_native_tool_call_count_accepts_lifecycle_receipt_envelopes() -> None:
         }
     }
 
-    assert native_tool_call_count(metadata, native_tool_calls_from_response(response)) == 2
+    facts = native_tool_call_facts_from_sources(metadata, native_tool_calls_from_response(response))
+    assert facts["native_tool_calls_count"] == 2
 
 
-def test_native_tool_call_count_falls_back_to_raw_calls() -> None:
+def test_native_tool_call_facts_falls_back_to_raw_calls() -> None:
     response = SimpleNamespace(
         content="",
         model="gpt-test",
         native_tool_calls=[{"function": {"name": "write_file"}}],
     )
 
-    assert native_tool_call_count({}, native_tool_calls_from_response(response)) == 1
+    facts = native_tool_call_facts_from_sources({}, native_tool_calls_from_response(response))
+    assert facts["native_tool_calls_count"] == 1
 
 
 def test_project_native_tool_call_facts_overwrites_stale_projection() -> None:
