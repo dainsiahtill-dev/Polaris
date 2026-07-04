@@ -6764,7 +6764,7 @@ export function summary() {
             encoding="utf-8",
         )
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Clean deterministic scaffold residue",
             description="Remove deterministic scaffold residue before QA.",
             metadata={
@@ -6775,6 +6775,7 @@ export function summary() {
                 "autofix_reason": "deterministic_scaffold_residue_cleanup",
             },
         )
+        task_id = str(task["id"])
 
         async def _unexpected_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -6783,8 +6784,8 @@ export function summary() {
         adapter._invoke_role_dialogue_with_timeout = _unexpected_dialogue  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-scaffold-marker-cleanup"},
         )
 
@@ -6801,7 +6802,7 @@ export function summary() {
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("export const combatReady = true;\n", encoding="utf-8")
         adapter = _make_adapter(tmp_path)
-        combat = adapter.task_board.create(
+        combat = adapter.task_board.create_task_row(
             subject="Audit turn based combat system scope",
             description="Materialize combat scope.",
             metadata={
@@ -6810,6 +6811,7 @@ export function summary() {
                 "target_files": ["src/combat/combat-system.ts"],
             },
         )
+        combat_id = str(combat["id"])
 
         async def _unexpected_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -6824,7 +6826,7 @@ export function summary() {
         )
 
         assert result["success"] is True
-        updated = adapter.task_board.get_task(str(combat.id))
+        updated = adapter.task_board.get_task(combat_id)
         assert updated is not None
         metadata_raw = updated.get("metadata")
         metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
@@ -6840,7 +6842,7 @@ export function summary() {
         existing_target = tmp_path / "worker_3.py"
         existing_target.write_text('MARKER = "D4-SAT-3"\n', encoding="utf-8")
         adapter = _make_adapter(tmp_path)
-        sibling = adapter.task_board.create(
+        sibling = adapter.task_board.create_task_row(
             subject="Create independent saturation Python file 3",
             description="Create worker_3.py.",
             metadata={
@@ -6850,6 +6852,7 @@ export function summary() {
                 "scope_paths": ["worker_3.py"],
             },
         )
+        sibling_id = str(sibling["id"])
 
         async def _empty_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -6880,11 +6883,11 @@ export function summary() {
             context={"run_id": "run-director-task-market-exact"},
         )
 
-        assert result["task_id"] != str(sibling.id)
+        assert result["task_id"] != sibling_id
         materialized = adapter.task_runtime.get_task("D4-SAT-2")
         assert materialized is not None
         assert materialized["metadata"]["external_task_id"] == "D4-SAT-2"
-        sibling_after = adapter.task_board.get_task(str(sibling.id))
+        sibling_after = adapter.task_board.get_task(sibling_id)
         assert sibling_after is not None
         assert sibling_after["status"] != "completed"
 
@@ -6905,7 +6908,7 @@ export function summary() {
 
     def test_get_task_resolves_external_task_id_before_queue_fallback(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        adapter.task_board.create(
+        adapter.task_board.create_task_row(
             subject="Create independent saturation Python file 3",
             description="Create worker_3.py.",
             metadata={
@@ -6914,7 +6917,7 @@ export function summary() {
                 "target_files": ["worker_3.py"],
             },
         )
-        adapter.task_board.create(
+        adapter.task_board.create_task_row(
             subject="Create independent saturation Python file 2",
             description="Create worker_2.py.",
             metadata={
@@ -6941,7 +6944,7 @@ export function summary() {
             'export const gameViewScaffoldVersion = "deterministic-declared-scope-v1";\n',
             encoding="utf-8",
         )
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Implement interactive game renderer",
             description="Quality gate repair task generated because the PM contract omitted renderer scope.",
             metadata={
@@ -6951,6 +6954,7 @@ export function summary() {
                 "autofix_reason": "game_pm_domain_coverage",
             },
         )
+        task_id = str(task["id"])
 
         async def _empty_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -6964,15 +6968,15 @@ export function summary() {
         adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-existing-scaffold"},
         )
 
         assert result["success"] is False
         assert result["error_code"] == "incomplete_materialization"
         assert result["failure_class"] == "INCOMPLETE_MATERIALIZATION"
-        updated = adapter.task_board.get_task(str(task.id))
+        updated = adapter.task_board.get_task(task_id)
         assert updated is not None
         raw_metadata = updated.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
