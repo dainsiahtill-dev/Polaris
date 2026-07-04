@@ -1163,7 +1163,6 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
     typescript_import_evidence = _scan_typescript_import_evidence(root_full, full_path, text, relative_path)
     errors.extend(typescript_import_evidence.errors)
     issues.extend(typescript_import_evidence.issues)
-    errors.extend(_scan_python_imports(root_full, full_path, text, relative_path))
     typescript_red_flag_evidence = _scan_typescript_syntax_red_flag_evidence(root_full, full_path, text, relative_path)
     errors.extend(typescript_red_flag_evidence.errors)
     issues.extend(typescript_red_flag_evidence.issues)
