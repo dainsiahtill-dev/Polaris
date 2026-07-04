@@ -152,13 +152,12 @@ class SignalSourceProvider:
         # 下游：扫描所有任务找 blocked_by 含本 task_id 的
         downstream: list[dict[str, Any]] = []
         try:
-            all_tasks = service.list_all()
-            for other in all_tasks:
-                other_dict = other.to_dict()
+            all_tasks = service.list_task_rows()
+            for other_dict in all_tasks:
                 other_blocked_by: list[int] = other_dict.get("blocked_by") or other_dict.get("blockedBy") or []
                 if int(task_id) in other_blocked_by:
                     downstream.append(other_dict)
-        except Exception as e:  # noqa: BLE001
+        except (AttributeError, RuntimeError, TypeError, ValueError) as e:
             logger.debug(f"获取下游任务失败: {e}")
 
         if not upstream_ids and not downstream:

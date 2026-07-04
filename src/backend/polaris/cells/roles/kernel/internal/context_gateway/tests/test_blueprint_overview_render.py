@@ -105,3 +105,35 @@ def test_gateway_reads_verdict_history_from_configured_provider() -> None:
     )
 
     assert gateway._signal_sources.get_verdict_history("T9") == "最新判定: FAIL (score=0.50)\n问题:\n- .:T9:gate"
+
+
+def test_dependency_graph_uses_runtime_task_row_projection() -> None:
+    gateway = RoleContextGateway(_profile("director"), workspace=".")
+
+    class _TaskRowService:
+        def list_task_rows(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "id": 2,
+                    "status": "blocked",
+                    "subject": "downstream task",
+                    "blocked_by": [1],
+                }
+            ]
+
+        def list_all(self) -> list[object]:
+            raise AssertionError("dependency graph must not read raw TaskBoard entities")
+
+        def get_task(self, task_id: object) -> dict[str, object] | None:
+            if str(task_id).strip() == "3":
+                return {"id": 3, "status": "completed", "subject": "upstream task"}
+            return None
+
+    graph = gateway._signal_sources._build_dependency_graph(
+        _TaskRowService(),
+        {"id": 1, "blocked_by": [3]},
+    )
+
+    assert graph is not None
+    assert "3: completed - upstream task" in graph
+    assert "2: blocked - downstream task" in graph
