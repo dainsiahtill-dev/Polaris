@@ -4,6 +4,7 @@ from polaris.cells.control_plane.run_ledger.public.failure_evidence import Failu
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_missing_dispatch_lifecycle_receipt,
     build_tool_call_lifecycle_receipt,
+    build_tool_call_lifecycle_run_ledger_event,
     build_tool_dispatch_dropped_anomaly_projection,
     build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
     empty_tool_lifecycle_summary,
@@ -571,6 +572,44 @@ def test_build_missing_dispatch_lifecycle_receipt_skips_existing_dispatch_eviden
         )
         is None
     )
+
+
+def test_build_tool_call_lifecycle_run_ledger_event_normalizes_receipt_and_job_token() -> None:
+    event = build_tool_call_lifecycle_run_ledger_event(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        lifecycle_receipt={
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_calls_count": 1,
+            "dispatched_tool_calls_count": 0,
+            "dispatch_status": "dropped",
+            "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        },
+        stage="director_tool_dispatch",
+        ok=False,
+    )
+
+    assert event["event_type"] == "tool_call_lifecycle"
+    assert event["stage"] == "director_tool_dispatch"
+    assert event["run_id"] == "run-1"
+    assert event["task_id"] == "TASK-1"
+    assert event["job_token"] == {
+        "run_id": "run-1",
+        "task_id": "TASK-1",
+        "project_id": "TASK-1",
+        "capability_audit": {"ok": True, "issues": []},
+        "gate_policy": {},
+    }
+    receipt = event["tool_call_lifecycle_receipt"]
+    assert receipt["run_id"] == "run-1"
+    assert receipt["task_id"] == "TASK-1"
+    assert receipt["turn_id"] == "turn-1"
+    assert receipt["role"] == "director"
+    assert receipt["ok"] is False
+    assert receipt["dispatch_status"] == "dropped"
+    assert receipt["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
 
 
 def test_native_tool_call_facts_from_lifecycle_receipt_prefers_envelope_names() -> None:

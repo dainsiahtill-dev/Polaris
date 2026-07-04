@@ -468,6 +468,59 @@ def build_missing_dispatch_lifecycle_receipt(
     ).to_dict()
 
 
+def build_tool_call_lifecycle_run_ledger_event(
+    *,
+    run_id: str,
+    task_id: str,
+    turn_id: str,
+    role: str,
+    lifecycle_receipt: Mapping[str, Any],
+    stage: str = "director_tool_dispatch",
+    project_id: str = "",
+    capability_audit: Mapping[str, Any] | None = None,
+    gate_policy: Mapping[str, Any] | None = None,
+    ok: bool | None = None,
+) -> dict[str, Any]:
+    """Return the canonical Run Ledger event for a lifecycle receipt.
+
+    Boundary:
+        Callers own append timing and workspace selection. Run Ledger owns the
+        event shape, normalized receipt identity fields, and minimal job-token
+        projection so completion and dropped-dispatch paths cannot drift.
+
+    Complexity:
+        O(e + d) through lifecycle receipt normalization where ``e`` is native
+        envelope refs and ``d`` is dropped-call refs.
+    """
+
+    receipt_seed = {
+        **dict(lifecycle_receipt),
+        "run_id": run_id,
+        "task_id": task_id,
+        "turn_id": turn_id,
+        "role": role,
+    }
+    if ok is not None:
+        receipt_seed["ok"] = ok
+    receipt = normalize_tool_call_lifecycle_receipt(receipt_seed)
+    normalized_run_id = _clean_string(run_id or receipt.get("run_id") or turn_id)
+    normalized_task_id = _clean_string(task_id or receipt.get("task_id"))
+    return {
+        "event_type": "tool_call_lifecycle",
+        "stage": _clean_string(stage) or "director_tool_dispatch",
+        "task_id": normalized_task_id,
+        "run_id": normalized_run_id,
+        "tool_call_lifecycle_receipt": receipt,
+        "job_token": {
+            "run_id": normalized_run_id,
+            "task_id": normalized_task_id,
+            "project_id": _clean_string(project_id) or normalized_task_id or "unknown",
+            "capability_audit": dict(capability_audit) if isinstance(capability_audit, Mapping) else {"ok": True, "issues": []},
+            "gate_policy": dict(gate_policy) if isinstance(gate_policy, Mapping) else {},
+        },
+    }
+
+
 def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
     """Return a safe tool lifecycle receipt mapping."""
 

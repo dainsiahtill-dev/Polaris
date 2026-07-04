@@ -300,39 +300,24 @@ def _append_tool_call_lifecycle_event(
         from polaris.cells.control_plane.run_ledger.public import (
             AppendRunLedgerEventCommandV1,
             append_run_ledger_event,
-            normalize_tool_call_lifecycle_receipt,
+            build_tool_call_lifecycle_run_ledger_event,
         )
 
         run_id = str(request.run_id or turn_id)
         task_id = str(request.task_id or "")
-        receipt = normalize_tool_call_lifecycle_receipt(
-            {
-                **dict(lifecycle_receipt),
-                "run_id": run_id,
-                "task_id": task_id,
-                "turn_id": turn_id,
-                "role": str(role or ""),
-                "ok": False,
-            }
-        )
         append_run_ledger_event(
             AppendRunLedgerEventCommandV1(
                 workspace=str(request.workspace or kernel.workspace or "."),
                 run_id=run_id,
-                event={
-                    "event_type": "tool_call_lifecycle",
-                    "stage": "director_tool_dispatch",
-                    "task_id": task_id,
-                    "run_id": run_id,
-                    "tool_call_lifecycle_receipt": receipt,
-                    "job_token": {
-                        "run_id": run_id,
-                        "task_id": task_id,
-                        "project_id": task_id or "unknown",
-                        "capability_audit": {"ok": True, "issues": []},
-                        "gate_policy": {},
-                    },
-                },
+                event=build_tool_call_lifecycle_run_ledger_event(
+                    run_id=run_id,
+                    task_id=task_id,
+                    turn_id=turn_id,
+                    role=str(role or ""),
+                    lifecycle_receipt=lifecycle_receipt,
+                    stage="director_tool_dispatch",
+                    ok=False,
+                ),
             )
         )
     except (OSError, RuntimeError, TypeError, ValueError):

@@ -96,14 +96,17 @@ def append_tool_dispatch_dropped_control_plane_events(
     from polaris.cells.control_plane.run_ledger.public import (
         AppendRunLedgerEventCommandV1,
         append_run_ledger_event,
+        build_tool_call_lifecycle_run_ledger_event,
         build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
         task_boundary_tool_dispatch_from_lifecycle_metadata,
     )
 
+    run_id = str(request.run_id or turn_id)
+    task_id = str(request.task_id or "")
     lifecycle_payload = build_tool_dispatch_dropped_lifecycle_from_anomaly_flags(
         anomaly_flags=error_metadata.get("anomaly_flags", []),
-        run_id=str(request.run_id or turn_id),
-        task_id=str(request.task_id or ""),
+        run_id=run_id,
+        task_id=task_id,
         turn_id=turn_id,
         role=str(getattr(profile, "role_id", "") or role or ""),
         reason=reason,
@@ -111,28 +114,22 @@ def append_tool_dispatch_dropped_control_plane_events(
     append_run_ledger_event(
         AppendRunLedgerEventCommandV1(
             workspace=workspace,
-            run_id=str(request.run_id or turn_id),
-            event={
-                "event_type": "tool_call_lifecycle",
-                "stage": "director_tool_dispatch",
-                "task_id": str(request.task_id or ""),
-                "run_id": str(request.run_id or turn_id),
-                "tool_call_lifecycle_receipt": lifecycle_payload,
-                "job_token": {
-                    "run_id": str(request.run_id or turn_id),
-                    "task_id": str(request.task_id or ""),
-                    "project_id": str(request.task_id or "unknown"),
-                    "capability_audit": {"ok": True, "issues": []},
-                    "gate_policy": {},
-                },
-            },
+            run_id=run_id,
+            event=build_tool_call_lifecycle_run_ledger_event(
+                run_id=run_id,
+                task_id=task_id,
+                turn_id=turn_id,
+                role=str(getattr(profile, "role_id", "") or role or ""),
+                lifecycle_receipt=lifecycle_payload,
+                stage="director_tool_dispatch",
+            ),
         )
     )
     append_director_task_boundary_verdict(
         role=role,
         workspace=workspace,
-        task_id=str(request.task_id or ""),
-        run_id=str(request.run_id or turn_id),
+        task_id=task_id,
+        run_id=run_id,
         context_override=getattr(request, "context_override", None),
         tool_results=[],
         tool_dispatch=task_boundary_tool_dispatch_from_lifecycle_metadata(
