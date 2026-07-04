@@ -225,7 +225,7 @@ def collect_pending_task_context(
     """收集待办任务上下文"""
 
     lines: list[str] = []
-    entries = task_board.list_all()
+    entries = task_board.list_task_rows() if hasattr(task_board, "list_task_rows") else task_board.list_all()
 
     for entry in entries:
         record: dict[str, Any]

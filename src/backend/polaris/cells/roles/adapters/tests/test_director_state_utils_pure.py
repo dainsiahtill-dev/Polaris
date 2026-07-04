@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from polaris.cells.roles.adapters.internal.director.state_utils import (
+    collect_pending_task_context,
     compose_projection_requirement,
     default_projection_slug,
     extract_domain_tokens,
@@ -180,6 +181,51 @@ class TestSummarizeToolResults:
         result = summarize_tool_results(tools)  # type: ignore[list-item]
         assert "ok" in result
         assert "bad" not in result
+
+
+# ---------------------------------------------------------------------------
+# Pending task context
+# ---------------------------------------------------------------------------
+
+
+class TestCollectPendingTaskContext:
+    def test_uses_task_row_projection_before_raw_entities(self) -> None:
+        class _TaskRows:
+            def list_task_rows(self) -> list[dict[str, Any]]:
+                return [
+                    {
+                        "id": 2,
+                        "status": "pending",
+                        "subject": "Implement runtime projection",
+                        "metadata": {
+                            "scope": "src/runtime",
+                            "steps": ["write projection tests"],
+                        },
+                    }
+                ]
+
+            def list_all(self) -> list[object]:
+                raise AssertionError("pending task context must prefer task-row projection")
+
+        assert collect_pending_task_context(".", _TaskRows()) == [
+            "- Implement runtime projection | scope: src/runtime | step: write projection tests"
+        ]
+
+    def test_keeps_legacy_list_all_fallback(self) -> None:
+        class _LegacyTask:
+            def to_dict(self) -> dict[str, Any]:
+                return {
+                    "id": 3,
+                    "status": "pending",
+                    "subject": "Legacy adapter task",
+                    "metadata": {},
+                }
+
+        class _LegacyBoard:
+            def list_all(self) -> list[_LegacyTask]:
+                return [_LegacyTask()]
+
+        assert collect_pending_task_context(".", _LegacyBoard()) == ["- Legacy adapter task"]
 
 
 # ---------------------------------------------------------------------------
