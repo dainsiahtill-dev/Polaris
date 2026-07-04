@@ -5641,7 +5641,7 @@ export function summary() {
         )
         _write_substantive_node_test_script(tmp_path)
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Tenant Context & Audit Log Middleware",
             description="Implement immutable audit log model with tenant context.",
             metadata={
@@ -5651,6 +5651,7 @@ export function summary() {
                 "acceptance": ["No undeclared runtime imports remain"],
             },
         )
+        task_id = str(task["id"])
         stage_labels: list[str] = []
 
         async def _mongoose_audit_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -5694,8 +5695,8 @@ export function summary() {
         adapter._invoke_role_dialogue_with_timeout = _mongoose_audit_dialogue  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-mongoose-runtime-dependency-repair"},
         )
 
@@ -5741,7 +5742,7 @@ export function summary() {
         )
         _write_substantive_node_test_script(tmp_path)
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Immutable Audit Logging Implementation",
             description="Create a TypeScript audit log service with stable event IDs and structured logging.",
             metadata={
@@ -5751,6 +5752,7 @@ export function summary() {
                 "acceptance": ["No undeclared runtime imports remain"],
             },
         )
+        task_id = str(task["id"])
         stage_labels: list[str] = []
 
         async def _audit_log_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -5792,8 +5794,8 @@ export function summary() {
         adapter._invoke_role_dialogue_with_timeout = _audit_log_dialogue  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-audit-log-runtime-dependency-repair"},
         )
 
