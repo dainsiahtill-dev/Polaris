@@ -1454,6 +1454,31 @@ def _architecture_payload_from_blueprint(value: Any) -> dict[str, Any]:
     return payload
 
 
+def _looks_like_architecture_or_file_plan_payload(value: Any) -> bool:
+    """Return whether a direct context value is structured plan evidence."""
+
+    if isinstance(value, dict):
+        payload = value.get("payload")
+        if payload is not None and _looks_like_architecture_or_file_plan_payload(payload):
+            return True
+        if _architecture_payload_from_blueprint(value):
+            return True
+        return any(
+            value.get(key) not in (None, "", [])
+            for key in (
+                "implementation_phases",
+                "module_boundaries",
+                "verification_steps",
+                "file_plan",
+                "architecture_plan",
+                "architecture_or_file_plan",
+            )
+        )
+    if isinstance(value, (list, tuple)):
+        return any(_looks_like_architecture_or_file_plan_payload(item) for item in value)
+    return False
+
+
 def _architecture_payload_from_delivery_contracts(ai_request: Any) -> dict[str, Any]:
     delivery_plan = _delivery_contract_payload(ai_request, "delivery_plan_document")
     delivery_depth = _delivery_contract_payload(ai_request, "delivery_depth_contract")
@@ -1495,7 +1520,7 @@ def _architecture_or_file_plan_payload(ai_request: Any | None) -> dict[str, Any]
     context_payload = _request_context(ai_request)
     for key in _ARCHITECTURE_OR_FILE_PLAN_KEYS:
         raw = context_payload.get(key)
-        if raw not in (None, "", []):
+        if _looks_like_architecture_or_file_plan_payload(raw):
             return {"source": f"context.{key}", "payload": raw}
     for key in ("ce_blueprint", "chief_engineer_blueprint", "blueprint", "blueprint_payload", "task_blueprint"):
         payload = _architecture_payload_from_blueprint(context_payload.get(key))
