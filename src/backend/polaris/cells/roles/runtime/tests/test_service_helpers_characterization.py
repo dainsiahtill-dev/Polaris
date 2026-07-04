@@ -477,6 +477,36 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
         }
     ]
 
+    missing_effect_receipt = runtime_service._to_contract_result(
+        role="director",
+        workspace=".",
+        task_id="t",
+        session_id="se",
+        run_id="ru",
+        result=RoleTurnResult(
+            content="write completed",
+            metadata={
+                "tool_call_lifecycle_receipt": {
+                    "schema_version": "tool_call_lifecycle_receipt.v1",
+                    "dispatch_status": "blocked",
+                    "failure_class": "MISSING_EFFECT_RECEIPT",
+                    "native_tool_calls_count": 1,
+                    "decoded_tool_calls_count": 1,
+                    "dispatched_tool_calls_count": 1,
+                    "tool_result_count": 1,
+                    "effect_receipt_count": 0,
+                }
+            },
+        ),
+    )
+    assert missing_effect_receipt.ok is False
+    assert missing_effect_receipt.status == "failed"
+    assert missing_effect_receipt.error_code == "missing_effect_receipt"
+    assert missing_effect_receipt.error_message == (
+        "missing_effect_receipt: tool lifecycle reported MISSING_EFFECT_RECEIPT"
+    )
+    assert missing_effect_receipt.metadata["tool_call_lifecycle_receipt"]["failure_class"] == "MISSING_EFFECT_RECEIPT"
+
     failed = runtime_service._to_contract_result(
         role="pm",
         workspace=".",

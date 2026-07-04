@@ -16,6 +16,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     build_tool_call_lifecycle_receipt,
     is_failure_class,
     native_tool_call_facts_from_lifecycle_receipt,
+    normalize_failure_class,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
 )
@@ -129,6 +130,18 @@ def _tool_dispatch_dropped_error(result: RoleTurnResult) -> str:
     if (not tool_calls and not native_envelopes) or _has_tool_dispatch_evidence(result):
         return ""
     return "tool_dispatch_dropped: native tool calls observed but no tool dispatch/effect receipt was committed"
+
+
+def _tool_lifecycle_failure_error(result: RoleTurnResult) -> tuple[str, str]:
+    metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
+    lifecycle = _lifecycle_receipt_from_metadata(metadata)
+    if lifecycle is None:
+        return "", ""
+    failure_class = normalize_failure_class(lifecycle.get("failure_class"))
+    if not failure_class or is_failure_class(failure_class, FailureClassV1.TOOL_DISPATCH_DROPPED):
+        return "", ""
+    error_code = str(failure_class).strip().lower()
+    return error_code, f"{error_code}: tool lifecycle reported {failure_class}"
 
 
 def _extract_artifacts(result: RoleTurnResult) -> tuple[str, ...]:
@@ -296,11 +309,13 @@ def _to_contract_result(
     result: RoleTurnResult,
 ) -> RoleExecutionResultV1:
     dispatch_error = _tool_dispatch_dropped_error(result)
-    error_message = str(result.error or result.tool_execution_error or dispatch_error or "").strip()
+    lifecycle_error_code, lifecycle_error = _tool_lifecycle_failure_error(result)
+    error_message = str(result.error or result.tool_execution_error or dispatch_error or lifecycle_error or "").strip()
     ok = not bool(error_message)
     status = "ok" if ok else "failed"
     if not result.is_complete and ok:
         status = "in_progress"
+    error_code = "tool_dispatch_dropped" if dispatch_error else (lifecycle_error_code or "role_runtime_error")
     return RoleExecutionResultV1(
         ok=ok,
         status=status,
@@ -315,7 +330,7 @@ def _to_contract_result(
         artifacts=_extract_artifacts(result),
         usage=dict(result.execution_stats or {}),
         metadata=_contract_result_metadata(result),
-        error_code=None if ok else ("tool_dispatch_dropped" if dispatch_error else "role_runtime_error"),
+        error_code=None if ok else error_code,
         error_message=None if ok else (error_message or "unknown runtime error"),
         turn_history=list(result.turn_history) if result.turn_history else [],
     )
