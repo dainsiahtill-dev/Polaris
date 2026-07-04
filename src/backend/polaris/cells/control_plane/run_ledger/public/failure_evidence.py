@@ -114,12 +114,21 @@ def merge_failure_evidence_payload(
 
     payload = dict(existing) if isinstance(existing, Mapping) else {}
     if isinstance(raw_evidence, Mapping):
-        payload.update(dict(raw_evidence))
+        raw_mapping = dict(raw_evidence)
+        payload.update(raw_mapping)
+        for nested_key in ("failure_evidence", "items"):
+            payload = _merge_failure_evidence_rows_into_payload(payload, raw_mapping.get(nested_key))
         return payload
-    if not isinstance(raw_evidence, (list, tuple)):
-        return payload
+    return _merge_failure_evidence_rows_into_payload(payload, raw_evidence)
 
-    rows = [dict(item) for item in raw_evidence if isinstance(item, Mapping)]
+
+def _merge_failure_evidence_rows_into_payload(
+    payload: dict[str, Any],
+    raw_rows: Any,
+) -> dict[str, Any]:
+    if not isinstance(raw_rows, (list, tuple)):
+        return payload
+    rows = [dict(item) for item in raw_rows if isinstance(item, Mapping)]
     if not rows:
         return payload
     payload["items"] = merge_failure_evidence_rows(payload.get("items"), *rows)

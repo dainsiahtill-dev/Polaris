@@ -106,6 +106,38 @@ def test_merge_failure_evidence_payload_overlays_mapping_projection() -> None:
     }
 
 
+def test_merge_failure_evidence_payload_projects_nested_mapping_rows() -> None:
+    payload = merge_failure_evidence_payload(
+        {"items": [{"failure_class": "TOOL_RESULT_FAILED"}]},
+        {
+            "summary": "from upstream",
+            "failure_evidence": [
+                {
+                    "failure_class": "MISSING_EFFECT_RECEIPT",
+                    "evidence_refs": ["effect:missing"],
+                }
+            ],
+        },
+    )
+
+    assert payload["items"] == [
+        {"failure_class": "TOOL_RESULT_FAILED"},
+        {
+            "failure_class": "MISSING_EFFECT_RECEIPT",
+            "evidence_refs": ["effect:missing"],
+        },
+    ]
+    assert payload["failure_classes"] == ("MISSING_EFFECT_RECEIPT",)
+    assert payload["evidence_refs"] == ("effect:missing",)
+    assert payload["failure_evidence"] == [
+        {
+            "failure_class": "MISSING_EFFECT_RECEIPT",
+            "evidence_refs": ["effect:missing"],
+        }
+    ]
+    assert payload["summary"] == "from upstream"
+
+
 def test_summarize_failure_evidence_rows_uses_structured_rows_only() -> None:
     rows = [
         "legacy text",
