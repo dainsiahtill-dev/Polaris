@@ -1111,12 +1111,6 @@ def _source_narration_contamination_error(relative_path: str, text: str) -> str:
     )
 
 
-def _scan_file(root_full: Path, full_path: Path, relative_path: str) -> list[str]:
-    """Return legacy string findings for one file."""
-
-    return list(_scan_file_evidence(root_full, full_path, relative_path).errors)
-
-
 def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) -> _FileArtifactQualityEvidence:
     """Return legacy and typed artifact-quality findings for one file."""
 
@@ -1204,12 +1198,6 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
         errors=tuple(errors),
         issues=(*issues, *string_projected_issues),
     )
-
-
-def _scan_typescript_syntax_red_flags(root_full: Path, full_path: Path, text: str, relative_path: str) -> list[str]:
-    """Return legacy TypeScript syntax red-flag string findings."""
-
-    return list(_scan_typescript_syntax_red_flag_evidence(root_full, full_path, text, relative_path).errors)
 
 
 def _typescript_syntax_red_flag_issue(
@@ -1313,12 +1301,6 @@ def _scan_typescript_syntax_red_flag_evidence(
     return _FileArtifactQualityEvidence()
 
 
-def _scan_html_typescript_module_scripts(full_path: Path, text: str, relative_path: str) -> list[str]:
-    """Return legacy HTML module-script string findings."""
-
-    return list(_scan_html_typescript_module_script_evidence(full_path, text, relative_path).errors)
-
-
 def _html_module_script_quality_issue(error: str, relative_path: str, *, src: str) -> ArtifactQualityIssue:
     message = str(error or "").strip()
     if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
@@ -1409,12 +1391,6 @@ def _typescript_line_comment_contains_escaped_newline_code(text: str) -> bool:
         if _TS_LINE_COMMENT_ESCAPED_NEWLINE_CODE_RE.search(raw_line[comment_index:]):
             return True
     return False
-
-
-def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> list[str]:
-    """Return legacy package-manifest string findings."""
-
-    return list(_scan_package_manifest_evidence(root_full, text, relative_path).errors)
 
 
 def _package_manifest_quality_issue(error: str, relative_path: str) -> ArtifactQualityIssue:
@@ -1690,16 +1666,6 @@ def _is_concrete_npm_script_entrypoint_path(value: str) -> bool:
     return not any(char in value for char in _NPM_SCRIPT_ENTRYPOINT_PATTERN_CHARS)
 
 
-def _scan_npm_script_missing_local_entrypoints(
-    root_full: Path, script_text: str, script_name: str, relative_path: str
-) -> list[str]:
-    """Return legacy npm script missing-entrypoint string findings."""
-
-    return list(
-        _scan_npm_script_missing_local_entrypoint_evidence(root_full, script_text, script_name, relative_path).errors
-    )
-
-
 def _npm_script_missing_local_entrypoint_issue(
     error: str,
     relative_path: str,
@@ -1769,19 +1735,6 @@ def _scan_npm_script_missing_local_entrypoint_evidence(
                 )
             )
     return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
-
-
-def _scan_npm_script_node_test_directory_targets(
-    root_full: Path,
-    tokens: list[str],
-    script_name: str,
-    relative_path: str,
-) -> list[str]:
-    """Return legacy npm script node-test directory target string findings."""
-
-    return list(
-        _scan_npm_script_node_test_directory_target_evidence(root_full, tokens, script_name, relative_path).errors
-    )
 
 
 def _npm_script_node_test_directory_target_issue(
@@ -1869,12 +1822,6 @@ def _directory_has_node_test_files(directory: Path) -> bool:
     return False
 
 
-def _scan_package_module_type_mismatch(root_full: Path, payload: dict[str, Any], relative_path: str) -> list[str]:
-    """Return legacy package module-type mismatch string findings."""
-
-    return list(_scan_package_module_type_mismatch_evidence(root_full, payload, relative_path).errors)
-
-
 def _package_module_type_mismatch_issue(error: str, relative_path: str, *, source_path: str) -> ArtifactQualityIssue:
     message = str(error or "").strip()
     if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
@@ -1922,17 +1869,6 @@ def _scan_package_module_type_mismatch_evidence(
             errors.append(error)
             issues.append(_package_module_type_mismatch_issue(error, relative_path, source_path=candidate))
     return _FileArtifactQualityEvidence(errors=tuple(errors[:20]), issues=tuple(issues[:20]))
-
-
-def _scan_npm_script_missing_local_configs(
-    root_full: Path,
-    tokens: list[str],
-    script_name: str,
-    relative_path: str,
-) -> list[str]:
-    """Return legacy npm script missing-config string findings."""
-
-    return list(_scan_npm_script_missing_local_config_evidence(root_full, tokens, script_name, relative_path).errors)
 
 
 def _npm_script_missing_local_config_issue(
@@ -2024,12 +1960,6 @@ def _npm_script_entrypoint_after_command(tokens: list[str], command_index: int) 
             continue
         return token
     return ""
-
-
-def _scan_typescript_project_typecheck(root_full: Path, relative_paths: list[str]) -> list[str]:
-    """Return legacy TypeScript project typecheck string findings."""
-
-    return list(_scan_typescript_project_typecheck_evidence(root_full, relative_paths).errors)
 
 
 def _typescript_project_typecheck_issue(
@@ -2275,12 +2205,6 @@ def _scan_python_imports(root_full: Path, full_path: Path, text: str, relative_p
                 f"{prefix!r} in {relative_path} (sibling module does not define it)"
             )
     return errors
-
-
-def _scan_typescript_imports(root_full: Path, full_path: Path, text: str, relative_path: str) -> list[str]:
-    """Return legacy TypeScript/JavaScript import string findings."""
-
-    return list(_scan_typescript_import_evidence(root_full, full_path, text, relative_path).errors)
 
 
 def _typescript_import_quality_issue(
@@ -2620,27 +2544,6 @@ def _read_typescript_module_exports(module_file: Path) -> set[str] | None:
     except (OSError, ValueError):
         return None
     return _typescript_module_exports(content)
-
-
-def _scan_typescript_symbol_coherence(
-    root_full: Path,
-    full_path: Path,
-    text: str,
-    relative_path: str,
-    *,
-    code_mask: list[bool] | None = None,
-) -> list[str]:
-    """Return legacy TypeScript symbol-coherence string findings."""
-
-    return list(
-        _scan_typescript_symbol_coherence_evidence(
-            root_full,
-            full_path,
-            text,
-            relative_path,
-            code_mask=code_mask,
-        ).errors
-    )
 
 
 def _typescript_symbol_coherence_quality_issue(

@@ -40,12 +40,12 @@ Typed issues are evidence, not repair authorization. Repair still flows through
   `declared_interface_signature_missing`.
 - `_scan_file_evidence()` now returns per-file legacy strings and direct
   `ArtifactQualityIssue` values together. The legacy `_scan_file()` string
-  API remains as a projection, while `scan_workspace_artifact_quality_evidence()`
+  wrapper has been removed; `scan_workspace_artifact_quality_evidence()`
   consumes direct per-file issues and avoids reparsing the same error into a
   duplicate typed issue.
 - `_scan_package_manifest_evidence()` now owns package-manifest direct typed
   issues with `source="package_manifest_scanner"`. The legacy
-  `_scan_package_manifest()` API remains a string projection, but npm manifest
+  `_scan_package_manifest()` string wrapper has been removed; npm manifest
   findings no longer need to be reparsed from prose to become
   `ArtifactQualityIssue(code="npm_manifest_invalid", path="package.json")`.
 - Source syntax failures from `check_source_file_syntax()` now emit direct
@@ -55,47 +55,47 @@ Typed issues are evidence, not repair authorization. Repair still flows through
 - `_scan_typescript_import_evidence()` now owns TypeScript/JavaScript import
   direct typed issues with `source="typescript_import_scanner"` for unresolved
   relative imports, undeclared runtime imports, and missing `@types/node`
-  obligations. The legacy `_scan_typescript_imports()` API remains a string
-  projection.
+  obligations. The legacy `_scan_typescript_imports()` string wrapper has been
+  removed.
 - `_scan_typescript_syntax_red_flag_evidence()` now owns direct typed issues
   for TypeScript syntax red flags with
-  `source="typescript_syntax_red_flag_scanner"`, while the legacy
-  `_scan_typescript_syntax_red_flags()` API remains a string projection.
+  `source="typescript_syntax_red_flag_scanner"`; the legacy
+  `_scan_typescript_syntax_red_flags()` string wrapper has been removed.
 - `_scan_html_typescript_module_script_evidence()` now owns direct typed
   issues for HTML module scripts that point at TypeScript source files with
-  `source="html_module_script_scanner"`, while the legacy
-  `_scan_html_typescript_module_scripts()` API remains a string projection.
+  `source="html_module_script_scanner"`; the legacy
+  `_scan_html_typescript_module_scripts()` string wrapper has been removed.
 - `_scan_package_module_type_mismatch_evidence()` now owns direct typed issues
   for `package.json` declaring `type=module` while workspace JavaScript uses
   CommonJS runtime syntax, with `source="package_module_type_scanner"`. The
-  legacy `_scan_package_module_type_mismatch()` API remains a string
-  projection.
+  legacy `_scan_package_module_type_mismatch()` string wrapper has been
+  removed.
 - Workspace artifact evidence no longer calls the legacy `_scan_python_imports()`
   file scanner. Python cross-file symbol drift remains owned by the typed
   `cross_artifact_consistency` scanner and its repair-plan projection, avoiding
   a second Python import fact source for the same unresolved symbol.
 - `_scan_typescript_project_typecheck_evidence()` now owns direct typed issues
   for `tsc --noEmit --pretty false` failures with
-  `source="typescript_project_typecheck"`, while the legacy
-  `_scan_typescript_project_typecheck()` API remains a string projection.
+  `source="typescript_project_typecheck"`; the legacy
+  `_scan_typescript_project_typecheck()` string wrapper has been removed.
 - `_scan_npm_script_missing_local_config_evidence()` now owns direct typed
   issues for npm scripts that reference missing local config files with
-  `source="npm_script_config_scanner"`, while the legacy
-  `_scan_npm_script_missing_local_configs()` API remains a string projection.
+  `source="npm_script_config_scanner"`; the legacy
+  `_scan_npm_script_missing_local_configs()` string wrapper has been removed.
 - `_scan_npm_script_missing_local_entrypoint_evidence()` now owns direct typed
   issues for npm scripts that reference missing local entrypoints with
-  `source="npm_script_entrypoint_scanner"`, while the legacy
-  `_scan_npm_script_missing_local_entrypoints()` API remains a string
-  projection.
+  `source="npm_script_entrypoint_scanner"`; the legacy
+  `_scan_npm_script_missing_local_entrypoints()` string wrapper has been
+  removed.
 - `_scan_npm_script_node_test_directory_target_evidence()` now owns direct typed
   issues for `node --test` scripts that target a directory instead of concrete
-  test files with `source="npm_script_test_target_scanner"`, while the legacy
-  `_scan_npm_script_node_test_directory_targets()` API remains a string
-  projection.
+  test files with `source="npm_script_test_target_scanner"`; the legacy
+  `_scan_npm_script_node_test_directory_targets()` string wrapper has been
+  removed.
 - `_scan_typescript_symbol_coherence_evidence()` now owns direct typed issues
   for TypeScript/JavaScript named imports that reference missing sibling
-  exports with `source="typescript_symbol_coherence_scanner"`, while the legacy
-  `_scan_typescript_symbol_coherence()` API remains a string projection.
+  exports with `source="typescript_symbol_coherence_scanner"`; the legacy
+  `_scan_typescript_symbol_coherence()` string wrapper has been removed.
 
 ## 4. Verification
 

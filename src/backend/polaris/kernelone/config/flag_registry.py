@@ -483,7 +483,7 @@ DYNAMIC_ENV_READ_ALLOWLIST: tuple[tuple[str, str], ...] = (
     ("polaris/kernelone/process/command_executor.py", "CommandExecutionService._build_env"),
     ("polaris/kernelone/process/ollama_utils.py", "_resolve_ollama_host"),
     ("polaris/kernelone/prompts/loader.py", "current_profile"),
-    ("polaris/kernelone/quality/artifact_quality.py", "_scan_typescript_project_typecheck"),
+    ("polaris/kernelone/quality/artifact_quality.py", "_scan_typescript_project_typecheck_evidence"),
     ("polaris/kernelone/quality/artifact_quality.py", "_ts_symbol_coherence_enabled"),
     ("polaris/kernelone/quality/cross_artifact_interfaces.py", "_ts_symbol_coherence_enabled"),
     ("polaris/kernelone/tool_state/safety.py", "read_int_env"),
