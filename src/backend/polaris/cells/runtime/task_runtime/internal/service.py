@@ -24,6 +24,7 @@ from .execution_session import (
     TaskExecutionSession,
     build_task_execution_claim_result,
     build_task_execution_heartbeat_result,
+    build_task_execution_transition_result,
     build_task_runtime_execution_event_payload,
     build_task_runtime_metadata,
     is_terminal_session_status,
@@ -763,17 +764,21 @@ class TaskRuntimeService:
         """Finalize a claimed task as completed."""
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
-            return {"success": False, "reason": "invalid_task_id"}
+            return build_task_execution_transition_result(success=False, reason="invalid_task_id")
         task = self._board.get(normalized)
         if task is None:
-            return {"success": False, "reason": "task_not_found"}
+            return build_task_execution_transition_result(success=False, reason="task_not_found")
         session_lock = self._get_session_lock(normalized)
         with session_lock:
             session = self._read_session(normalized)
             if session is None:
-                return {"success": False, "reason": "session_not_found"}
+                return build_task_execution_transition_result(success=False, reason="session_not_found")
             if str(session.session_id) != str(session_id or "").strip():
-                return {"success": False, "reason": "session_mismatch", "session": session.to_dict()}
+                return build_task_execution_transition_result(
+                    success=False,
+                    reason="session_mismatch",
+                    session=session,
+                )
 
             session.mark_completed(result_summary=result_summary)
             self._write_session(session)
@@ -794,12 +799,12 @@ class TaskRuntimeService:
             session=session,
             details={"result_summary": sanitize_summary(result_summary)},
         )
-        return {
-            "success": True,
-            "reason": "completed",
-            "task": row,
-            "session": session.to_dict(),
-        }
+        return build_task_execution_transition_result(
+            success=True,
+            reason="completed",
+            task_row=row,
+            session=session,
+        )
 
     def fail_execution(
         self,
@@ -812,17 +817,21 @@ class TaskRuntimeService:
         """Finalize a claimed task as failed."""
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
-            return {"success": False, "reason": "invalid_task_id"}
+            return build_task_execution_transition_result(success=False, reason="invalid_task_id")
         task = self._board.get(normalized)
         if task is None:
-            return {"success": False, "reason": "task_not_found"}
+            return build_task_execution_transition_result(success=False, reason="task_not_found")
         session_lock = self._get_session_lock(normalized)
         with session_lock:
             session = self._read_session(normalized)
             if session is None:
-                return {"success": False, "reason": "session_not_found"}
+                return build_task_execution_transition_result(success=False, reason="session_not_found")
             if str(session.session_id) != str(session_id or "").strip():
-                return {"success": False, "reason": "session_mismatch", "session": session.to_dict()}
+                return build_task_execution_transition_result(
+                    success=False,
+                    reason="session_mismatch",
+                    session=session,
+                )
 
             session.mark_failed(error=error)
             self._write_session(session)
@@ -843,12 +852,12 @@ class TaskRuntimeService:
             session=session,
             details={"error": sanitize_summary(error)},
         )
-        return {
-            "success": True,
-            "reason": "failed",
-            "task": row,
-            "session": session.to_dict(),
-        }
+        return build_task_execution_transition_result(
+            success=True,
+            reason="failed",
+            task_row=row,
+            session=session,
+        )
 
     def suspend_execution(
         self,
@@ -861,28 +870,32 @@ class TaskRuntimeService:
         """Suspend a claimed task so it can be resumed later."""
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
-            return {"success": False, "reason": "invalid_task_id"}
+            return build_task_execution_transition_result(success=False, reason="invalid_task_id")
         task = self._board.get(normalized)
         if task is None:
-            return {"success": False, "reason": "task_not_found"}
+            return build_task_execution_transition_result(success=False, reason="task_not_found")
         session_lock = self._get_session_lock(normalized)
         with session_lock:
             session = self._read_session(normalized)
             if session is None:
-                return {"success": False, "reason": "session_not_found"}
+                return build_task_execution_transition_result(success=False, reason="session_not_found")
             if str(session.session_id) != str(session_id or "").strip():
-                return {"success": False, "reason": "session_mismatch", "session": session.to_dict()}
+                return build_task_execution_transition_result(
+                    success=False,
+                    reason="session_mismatch",
+                    session=session,
+                )
 
             session.mark_suspended(reason=reason, resumable=True)
             session_written = self._write_session(session)
             if not session_written:
                 row = self._reconcile_terminal_task_row(normalized, session=session)
-                return {
-                    "success": False,
-                    "reason": "session_terminal_preserved",
-                    "task": row,
-                    "session": session.to_dict(),
-                }
+                return build_task_execution_transition_result(
+                    success=False,
+                    reason="session_terminal_preserved",
+                    task_row=row,
+                    session=session,
+                )
         updated = self._board.update(
             normalized,
             status=TaskStatus.BLOCKED,
@@ -901,12 +914,12 @@ class TaskRuntimeService:
             session=session,
             details={"reason": sanitize_summary(reason)},
         )
-        return {
-            "success": True,
-            "reason": "suspended",
-            "task": row,
-            "session": session.to_dict(),
-        }
+        return build_task_execution_transition_result(
+            success=True,
+            reason="suspended",
+            task_row=row,
+            session=session,
+        )
 
     def suspend_active_executions_for_run(
         self,

@@ -7,6 +7,7 @@ from polaris.cells.runtime.task_runtime.internal.execution_session import (
     TaskExecutionSession,
     build_task_execution_claim_result,
     build_task_execution_heartbeat_result,
+    build_task_execution_transition_result,
     build_task_runtime_execution_event_payload,
     build_task_runtime_metadata,
     is_terminal_session_status,
@@ -326,6 +327,39 @@ def test_build_task_execution_heartbeat_result_projects_inactive_session_shape()
     assert result["reason"] == "session_not_active"
     assert result["session"]["session_id"] == "tx-1"
     assert result["session"]["status"] == "suspended"
+    assert "task" not in result
+
+
+def test_build_task_execution_transition_result_projects_success_shape() -> None:
+    session = TaskExecutionSession.from_dict({**_valid_session_payload(), "status": "completed"})
+
+    result = build_task_execution_transition_result(
+        success=True,
+        reason="completed",
+        task_row={"id": 7, "status": "completed"},
+        session=session,
+    )
+
+    assert result["success"] is True
+    assert result["reason"] == "completed"
+    assert result["task"] == {"id": 7, "status": "completed"}
+    assert result["session"]["session_id"] == "tx-1"
+    assert result["session"]["status"] == "completed"
+
+
+def test_build_task_execution_transition_result_projects_session_mismatch_shape() -> None:
+    session = TaskExecutionSession.from_dict(_valid_session_payload())
+
+    result = build_task_execution_transition_result(
+        success=False,
+        reason="session_mismatch",
+        session=session,
+    )
+
+    assert result["success"] is False
+    assert result["reason"] == "session_mismatch"
+    assert result["session"]["session_id"] == "tx-1"
+    assert result["session"]["status"] == "active"
     assert "task" not in result
 
 

@@ -242,6 +242,34 @@ def build_task_runtime_execution_event_payload(
     return payload
 
 
+def _build_task_execution_result(
+    *,
+    success: bool,
+    reason: Any,
+    task_row: dict[str, Any] | None = None,
+    session: TaskExecutionSession | dict[str, Any] | None = None,
+    default_success_reason: str,
+) -> dict[str, Any]:
+    """Project common TaskRuntime execution result fields.
+
+    Boundary:
+        This private helper owns only the shared public result shape. Semantic
+        wrappers remain responsible for naming the lifecycle action so service
+        methods do not collapse claim, heartbeat, and terminal transitions into
+        an untyped generic call.
+    """
+
+    result: dict[str, Any] = {
+        "success": bool(success),
+        "reason": str(reason or "").strip() or (default_success_reason if success else "unknown"),
+    }
+    if task_row is not None:
+        result["task"] = dict(task_row)
+    if session is not None:
+        result["session"] = session.to_dict() if isinstance(session, TaskExecutionSession) else dict(session)
+    return result
+
+
 def build_task_execution_claim_result(
     *,
     success: bool,
@@ -265,14 +293,13 @@ def build_task_execution_claim_result(
         O(t + s) time and memory over task/session payload sizes.
     """
 
-    result: dict[str, Any] = {
-        "success": bool(success),
-        "reason": str(reason or "").strip() or ("claimed" if success else "unknown"),
-    }
-    if task_row is not None:
-        result["task"] = dict(task_row)
-    if session is not None:
-        result["session"] = session.to_dict() if isinstance(session, TaskExecutionSession) else dict(session)
+    result = _build_task_execution_result(
+        success=success,
+        reason=reason,
+        task_row=task_row,
+        session=session,
+        default_success_reason="claimed",
+    )
     if resumed is not None:
         result["resumed"] = bool(resumed)
     if claim_applied is not None:
@@ -304,15 +331,41 @@ def build_task_execution_heartbeat_result(
         O(t + s) time and memory over task/session payload sizes.
     """
 
-    result: dict[str, Any] = {
-        "success": bool(success),
-        "reason": str(reason or "").strip() or ("heartbeat_renewed" if success else "unknown"),
-    }
-    if task_row is not None:
-        result["task"] = dict(task_row)
-    if session is not None:
-        result["session"] = session.to_dict() if isinstance(session, TaskExecutionSession) else dict(session)
-    return result
+    return _build_task_execution_result(
+        success=success,
+        reason=reason,
+        task_row=task_row,
+        session=session,
+        default_success_reason="heartbeat_renewed",
+    )
+
+
+def build_task_execution_transition_result(
+    *,
+    success: bool,
+    reason: Any,
+    task_row: dict[str, Any] | None = None,
+    session: TaskExecutionSession | dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Project completed, failed, and suspended execution transitions.
+
+    Boundary:
+        Terminal/suspended transition methods decide state changes and ledger
+        events. This helper only owns the shared public result projection for
+        invalid tasks, missing sessions, session mismatches, preserved terminal
+        sessions, and successful task state transitions.
+
+    Complexity:
+        O(t + s) time and memory over task/session payload sizes.
+    """
+
+    return _build_task_execution_result(
+        success=success,
+        reason=reason,
+        task_row=task_row,
+        session=session,
+        default_success_reason="transition_applied",
+    )
 
 
 def build_task_runtime_metadata(
@@ -629,6 +682,7 @@ __all__ = [
     "TaskExecutionSession",
     "build_task_execution_claim_result",
     "build_task_execution_heartbeat_result",
+    "build_task_execution_transition_result",
     "build_task_runtime_execution_event_payload",
     "build_task_runtime_metadata",
     "is_terminal_session_status",
