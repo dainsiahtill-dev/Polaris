@@ -9,6 +9,7 @@ from polaris.kernelone.quality import (
     ArtifactQualityIssue,
     artifact_quality_issue_key,
     artifact_quality_issue_raw,
+    artifact_quality_issue_structural_key,
     artifact_quality_issues_from_errors,
     scan_workspace_artifact_quality,
     scan_workspace_artifact_quality_evidence,
@@ -82,7 +83,14 @@ def test_artifact_quality_issue_identity_helpers_preserve_raw_and_structured_key
         "3",
         "Missing export",
     )
+    assert artifact_quality_issue_structural_key(issue) == (
+        "typescript_import_unresolved_symbol",
+        "src/engine/forecast.ts",
+        "7",
+        "3",
+    )
     assert artifact_quality_issue_raw({"message": "legacy text"}) == "legacy text"
+    assert artifact_quality_issue_structural_key({"message": "legacy text"}) == ()
 
 
 def test_artifact_quality_evidence_uses_direct_typed_issue_for_missing_workspace(

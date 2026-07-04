@@ -785,6 +785,29 @@ def artifact_quality_issue_key(value: Any) -> tuple[str, ...]:
     return ("legacy_raw", raw or message)
 
 
+def artifact_quality_issue_structural_key(value: Any) -> tuple[str, ...]:
+    """Return a message-independent structured key for issue matching.
+
+    This key is intentionally coarser than :func:`artifact_quality_issue_key`.
+    It lets downstream gates match a typed issue to its source diagnostic without
+    reparsing the diagnostic message, while still requiring code and path facts.
+
+    Complexity:
+        O(1) time and memory for one issue payload.
+    """
+
+    issue = _artifact_quality_issue_from_value(value)
+    if issue is None:
+        return ()
+    code = str(issue.code or "").strip()
+    path = str(issue.path or "").strip().replace("\\", "/")
+    if not code or not path:
+        return ()
+    line = str(issue.line or "").strip() if issue.line is not None else ""
+    column = str(issue.column or "").strip() if issue.column is not None else ""
+    return code, path, line, column
+
+
 def _artifact_quality_evidence(
     *,
     errors: Iterable[str] = (),
