@@ -722,8 +722,34 @@ def test_artifact_quality_evidence_projects_test_script_placeholder_metadata(tmp
     assert [issue.metadata.get("script_issue_source") for issue in evidence.issues] == [
         "package_manifest_scanner",
         "package_manifest_scanner",
-        None,
+        "package_manifest_scanner",
     ]
+
+
+def test_artifact_quality_evidence_projects_per_script_issue_metadata_directly(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        """
+{
+  "name": "shell-substitution-project",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node --test $(find tests -name '*.js')"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["package.json"])
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: npm package manifest script 'test' uses shell command substitution in package.json",
+    )
+    assert len(evidence.issues) == 1
+    assert evidence.issues[0].metadata["script_name"] == "test"
+    assert evidence.issues[0].metadata["script_issue"] == "shell_command_substitution"
+    assert evidence.issues[0].metadata["script_issue_source"] == "package_manifest_scanner"
 
 
 def test_artifact_quality_evidence_uses_direct_npm_script_test_directory_issue(tmp_path: Path) -> None:

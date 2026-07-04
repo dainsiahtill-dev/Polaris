@@ -1771,6 +1771,11 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
                     "Artifact quality scan failed: npm package manifest script "
                     f"{str(script_name)!r} has invalid shell syntax in {relative_path}: {exc}",
                     relative_path,
+                    {
+                        "script_name": str(script_name),
+                        "script_issue": "invalid_shell_syntax",
+                        "script_issue_source": "package_manifest_scanner",
+                    },
                 )
                 continue
             placeholder_reason = _placeholder_package_script_reason(str(script_name), script_text, tokens)
@@ -1780,6 +1785,11 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
                     issues,
                     f"Artifact quality scan failed: {placeholder_reason} in {relative_path}",
                     relative_path,
+                    {
+                        "script_name": str(script_name),
+                        "script_issue": "placeholder_command",
+                        "script_issue_source": "package_manifest_scanner",
+                    },
                 )
                 continue
             if _NPM_SCRIPT_FAILURE_SWALLOW_RE.search(script_text):
@@ -1789,6 +1799,11 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
                     "Artifact quality scan failed: npm package manifest script "
                     f"{str(script_name)!r} swallows command failures in {relative_path}",
                     relative_path,
+                    {
+                        "script_name": str(script_name),
+                        "script_issue": "swallows_command_failures",
+                        "script_issue_source": "package_manifest_scanner",
+                    },
                 )
                 continue
             if _NPM_SCRIPT_SHELL_SUBSTITUTION_RE.search(script_text):
@@ -1798,6 +1813,11 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
                     "Artifact quality scan failed: npm package manifest script "
                     f"{str(script_name)!r} uses shell command substitution in {relative_path}",
                     relative_path,
+                    {
+                        "script_name": str(script_name),
+                        "script_issue": "shell_command_substitution",
+                        "script_issue_source": "package_manifest_scanner",
+                    },
                 )
                 continue
             if _PYTHON_COMMAND_IN_NPM_SCRIPT_RE.search(script_text):
@@ -1807,11 +1827,26 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
                     "Artifact quality scan failed: npm package manifest contains "
                     f"Python command in script {str(script_name)!r} in {relative_path}",
                     relative_path,
+                    {
+                        "script_name": str(script_name),
+                        "script_issue": "python_command",
+                        "script_issue_source": "package_manifest_scanner",
+                    },
                 )
                 break
             node_eval_error = _scan_npm_script_node_eval_syntax(tokens, str(script_name), relative_path)
             if node_eval_error:
-                _append_package_manifest_issue(errors, issues, node_eval_error, relative_path)
+                _append_package_manifest_issue(
+                    errors,
+                    issues,
+                    node_eval_error,
+                    relative_path,
+                    {
+                        "script_name": str(script_name),
+                        "script_issue": "invalid_node_eval_syntax",
+                        "script_issue_source": "package_manifest_scanner",
+                    },
+                )
                 continue
             test_directory_evidence = _scan_npm_script_node_test_directory_target_evidence(
                 root_full,
