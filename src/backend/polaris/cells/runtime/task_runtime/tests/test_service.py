@@ -828,6 +828,9 @@ def test_task_runtime_service_suspends_active_sessions_for_cancelled_run(tmp_pat
     assert suspended["reason"] == "suspended"
     assert suspended["suspended_count"] == 1
     assert suspended["task_ids"] == [str(cancelled_task.id)]
+    assert len(suspended["execution_events"]) == 1
+    assert suspended["execution_events"][0]["ok"] is True
+    assert suspended["execution_events"][0]["event_type"] == "suspended"
 
     cancelled_heartbeat = service.heartbeat_execution(
         cancelled_task.id,
@@ -846,6 +849,45 @@ def test_task_runtime_service_suspends_active_sessions_for_cancelled_run(tmp_pat
         session_id=str(other_claim["session"]["session_id"]),
     )
     assert other_heartbeat["success"] is True
+
+
+def test_suspend_active_executions_for_run_reports_event_append_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create(subject="cancel with append evidence")
+    claimed = service.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-cancel-append-failure",
+        selection_source="unit",
+    )
+    assert claimed["success"] is True
+
+    def fail_append_event(_command: object) -> object:
+        raise RuntimeError("fact stream unavailable")
+
+    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+
+    suspended = service.suspend_active_executions_for_run(
+        "run-cancel-append-failure",
+        reason="factory_stage_timeout",
+    )
+
+    assert suspended["success"] is True
+    assert suspended["suspended_count"] == 1
+    assert suspended["execution_events"] == [
+        {
+            "ok": False,
+            "event_type": "suspended",
+            "published": False,
+            "error": "fact stream unavailable",
+        }
+    ]
 
 
 def test_task_runtime_service_persists_sessions_under_canonical_task_namespace(tmp_path: Path) -> None:

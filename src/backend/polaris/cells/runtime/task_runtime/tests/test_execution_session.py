@@ -454,6 +454,7 @@ def test_build_task_execution_bulk_suspend_result_projects_invalid_run_shape() -
         "suspended_count": 0,
         "task_ids": [],
         "failed": [],
+        "execution_events": [],
     }
 
 
@@ -470,6 +471,20 @@ def test_build_task_execution_bulk_suspend_result_projects_aggregate_shape() -> 
     assert result["suspended_count"] == 2
     assert result["task_ids"] == ["7", "task-8"]
     assert result["failed"] == [{"task_id": 9, "reason": "task_update_failed"}]
+    assert result["execution_events"] == []
+
+
+def test_build_task_execution_bulk_suspend_result_projects_event_evidence() -> None:
+    result = build_task_execution_bulk_suspend_result(
+        run_id="run-1",
+        suspended_rows=({"id": 7, "status": "blocked"},),
+        execution_events=({"ok": False, "event_type": "suspended", "error": "append failed"},),
+    )
+
+    assert result["success"] is True
+    assert result["execution_events"] == [
+        {"ok": False, "event_type": "suspended", "error": "append failed"},
+    ]
 
 
 def test_project_task_row_runtime_state_uses_active_session_projection() -> None:

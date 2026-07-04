@@ -483,6 +483,7 @@ def build_task_execution_bulk_suspend_result(
     run_id: Any,
     suspended_rows: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     failed: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    execution_events: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     reason: Any = "",
     success: bool | None = None,
 ) -> dict[str, Any]:
@@ -490,16 +491,19 @@ def build_task_execution_bulk_suspend_result(
 
     Boundary:
         Bulk suspension owns orchestration-run cancellation results. It reports
-        aggregate row ids and per-task failures, while individual task/session
-        state transitions remain owned by the service method and ledger events.
+        aggregate row ids, per-task failures, and execution-event append
+        evidence, while individual task/session state transitions remain owned
+        by the service method and ledger events.
 
     Complexity:
-        O(s + f) time and memory for suspended rows and failed task records.
+        O(s + f + e) time and memory for suspended rows, failed task records,
+        and execution-event append evidence.
     """
 
     normalized_run_id = str(run_id or "").strip()
     suspended_payload = [dict(row) for row in suspended_rows]
     failed_payload = [dict(item) for item in failed]
+    event_payload = [dict(item) for item in execution_events]
     resolved_success = not failed_payload if success is None else bool(success)
     resolved_reason = str(reason or "").strip()
     if not resolved_reason:
@@ -511,6 +515,7 @@ def build_task_execution_bulk_suspend_result(
         "suspended_count": len(suspended_payload),
         "task_ids": [str(row.get("id") or "") for row in suspended_payload],
         "failed": failed_payload,
+        "execution_events": event_payload,
     }
 
 

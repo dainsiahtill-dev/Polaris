@@ -947,6 +947,7 @@ class TaskRuntimeService:
 
         suspended_rows: list[dict[str, Any]] = []
         failed: list[dict[str, Any]] = []
+        execution_events: list[dict[str, Any]] = []
         for task in self._board.list_all():
             task_id = self.normalize_task_id(task.id)
             if task_id is None:
@@ -990,21 +991,24 @@ class TaskRuntimeService:
                 continue
             row = self._augment_task_row(updated.to_dict())
             suspended_rows.append(row)
-            self._append_execution_event(
-                "suspended",
-                task_row=row,
-                session=session,
-                details={
-                    "reason": sanitize_summary(reason),
-                    "run_id": normalized_run_id,
-                    "source": "runtime.task_runtime.suspend_active_executions_for_run",
-                },
+            execution_events.append(
+                self._append_execution_event(
+                    "suspended",
+                    task_row=row,
+                    session=session,
+                    details={
+                        "reason": sanitize_summary(reason),
+                        "run_id": normalized_run_id,
+                        "source": "runtime.task_runtime.suspend_active_executions_for_run",
+                    },
+                )
             )
 
         return build_task_execution_bulk_suspend_result(
             run_id=normalized_run_id,
             suspended_rows=suspended_rows,
             failed=failed,
+            execution_events=execution_events,
         )
 
     def list_ready(self) -> list[Task]:
