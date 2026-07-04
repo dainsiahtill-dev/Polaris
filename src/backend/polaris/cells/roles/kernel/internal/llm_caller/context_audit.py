@@ -16,6 +16,8 @@ from polaris.kernelone.context.projection_engine import is_empty_run_card_messag
 from polaris.kernelone.events.final_request_evidence import (
     build_final_request_evidence_slots,
     build_final_request_tool_slots,
+    final_request_evidence_ref_for_coverage_flag,
+    final_request_evidence_ref_for_requirement,
     looks_like_workspace_quality_evidence_payload,
     missing_required_refs_from_evidence_slots,
     missing_required_tools_from_tool_slots,
@@ -43,79 +45,6 @@ _OPTIONAL_CONTEXT_QUALITY_FLAGS = frozenset(
         "has_actual_sibling_exports",
     }
 )
-_COVERAGE_FLAG_TO_REF = {
-    "has_pm_contract": "pm_contract",
-    "has_chief_engineer_blueprint": "ce_blueprint",
-    "has_module_interface_contract": "module_interface_contract",
-    "has_actual_sibling_exports": "actual_sibling_exports",
-    "has_architecture_or_file_plan": "architecture_or_file_plan",
-    "has_target_files": "target_files",
-    "has_failure_feedback": "failed_gate_evidence",
-    "has_workspace_quality_evidence": "workspace_quality_evidence",
-    "has_resident_agi_decision_trace": "resident_agi_decision_trace",
-    "has_resident_agi_capability_surface": "resident_agi_capability_surface",
-    "has_resident_agi_decision_boundary": "resident_agi_decision_boundary",
-}
-_EVIDENCE_REQUIREMENT_TO_REF = {
-    "pm_task_contract": "pm_contract",
-    "pm_contract": "pm_contract",
-    "pm_delivery_plan_document": "delivery_plan_document",
-    "delivery_plan_document": "delivery_plan_document",
-    "delivery_plan": "delivery_plan_document",
-    "design_intent": "delivery_plan_document",
-    "pm_delivery_depth_contract": "delivery_depth_contract",
-    "delivery_depth_contract": "delivery_depth_contract",
-    "behavior_contract": "delivery_depth_contract",
-    "behavior_matrix": "delivery_depth_contract",
-    "chief_engineer_blueprint": "ce_blueprint",
-    "ce_blueprint": "ce_blueprint",
-    "module_interface_contract": "module_interface_contract",
-    "cross_file_interface_contract": "module_interface_contract",
-    "cross_artifact_interface_contract": "module_interface_contract",
-    "cross_artifact.interface_contract.v1": "module_interface_contract",
-    "public_symbols": "module_interface_contract",
-    "consumes_symbols": "module_interface_contract",
-    "actual_sibling_exports": "actual_sibling_exports",
-    "actual_export_summary": "actual_sibling_exports",
-    "actual_public_symbols": "actual_sibling_exports",
-    "existing_target_files": "actual_sibling_exports",
-    "interface_discrepancy_context": "interface_discrepancy_context",
-    "interface_discrepancy_evidence": "interface_discrepancy_context",
-    "interface_discrepancy_receipt": "interface_discrepancy_context",
-    "interface_discrepancy_receipts": "interface_discrepancy_context",
-    "interface_delta": "interface_discrepancy_context",
-    "interface_delta_receipt": "interface_discrepancy_context",
-    "interface_discrepancy_triage": "interface_discrepancy_context",
-    "task_boundary_interface_discrepancy": "interface_discrepancy_context",
-    "task_boundary_interface_discrepancy_retry": "interface_discrepancy_context",
-    "director_interface_discrepancy_retry": "interface_discrepancy_context",
-    "pending_design_interface_contract": "interface_discrepancy_context",
-    "director_retry_with_interface_discrepancy_context": "interface_discrepancy_context",
-    "target_files_or_declared_scopes": "target_files",
-    "target_files": "target_files",
-    "declared_scopes": "target_files",
-    "language_best_practices": "language_guidance",
-    "execution_profile": "execution_profile",
-    "execution_strategy": "execution_strategy",
-    "execution_envelope": "execution_envelope",
-    "final_provider_request": "final_provider_request",
-    "final_provider_request_audit": "final_provider_request",
-    "run_ledger": "run_ledger",
-    "workspace_quality_evidence": "workspace_quality_evidence",
-    "quality_evidence": "workspace_quality_evidence",
-    "quality_gate_verdict": "workspace_quality_evidence",
-    "failed_gate_evidence": "failed_gate_evidence",
-    "failure_evidence": "failed_gate_evidence",
-    "failed_gate_or_verification_evidence": "failed_gate_evidence",
-    "verification_evidence": "failed_gate_evidence",
-    "verification_failure_evidence": "failed_gate_evidence",
-    "verifier_failure_evidence": "failed_gate_evidence",
-    "architecture_or_file_plan": "architecture_or_file_plan",
-    "architecture_plan": "architecture_or_file_plan",
-    "file_plan": "architecture_or_file_plan",
-    "construction_plan": "architecture_or_file_plan",
-    "scope_for_apply": "architecture_or_file_plan",
-}
 
 
 class FinalRequestEvidenceCoverageError(RuntimeError):
@@ -1519,8 +1448,7 @@ def _evidence_mapping_for_keys(value: Any, *, keys: tuple[str, ...]) -> dict[str
 def _evidence_ref(value: Any) -> str:
     if not isinstance(value, str):
         return ""
-    token = value.strip()
-    return _EVIDENCE_REQUIREMENT_TO_REF.get(token, token)
+    return final_request_evidence_ref_for_requirement(value)
 
 
 def _context_slot_payload(value: Any, *, keys: tuple[str, ...]) -> dict[str, Any]:
@@ -2170,8 +2098,7 @@ def _workflow_chain(
 def _mapped_evidence_requirements(raw_requirements: Any) -> list[str]:
     refs: list[str] = []
     for item in _string_list(raw_requirements):
-        key = item.strip().lower()
-        refs.append(_EVIDENCE_REQUIREMENT_TO_REF.get(key, key))
+        refs.append(final_request_evidence_ref_for_requirement(item))
     return _unique_strings(refs)
 
 
@@ -2198,8 +2125,9 @@ def _required_evidence_refs(
         else:
             refs.extend(
                 ref
-                for flag, ref in _COVERAGE_FLAG_TO_REF.items()
-                if flag in coverage and flag not in _OPTIONAL_CONTEXT_QUALITY_FLAGS
+                for flag in coverage
+                if (ref := final_request_evidence_ref_for_coverage_flag(flag))
+                if flag not in _OPTIONAL_CONTEXT_QUALITY_FLAGS
             )
     if request_metadata_summary.get("has_execution_profile"):
         refs.append("execution_profile")
@@ -2224,7 +2152,8 @@ def _included_evidence_refs(
     refs = ["final_provider_request"]
     refs.extend(
         ref
-        for flag, ref in _COVERAGE_FLAG_TO_REF.items()
+        for flag in coverage
+        if (ref := final_request_evidence_ref_for_coverage_flag(flag))
         if coverage.get(flag)
         and flag
         not in {

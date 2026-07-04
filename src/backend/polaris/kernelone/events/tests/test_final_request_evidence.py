@@ -7,6 +7,8 @@ from polaris.kernelone.events.final_request_evidence import (
     build_final_request_evidence,
     build_final_request_evidence_slots,
     build_final_request_tool_slots,
+    final_request_evidence_ref_for_coverage_flag,
+    final_request_evidence_ref_for_requirement,
     looks_like_workspace_quality_evidence_payload,
     normalize_context_snapshot_ref,
     summarize_workspace_quality_evidence_context_slot,
@@ -229,6 +231,20 @@ def test_final_request_slot_builders_project_structured_coverage() -> None:
             "freshness": "current_turn",
         },
     ]
+
+
+def test_final_request_evidence_ref_helpers_normalize_requirement_and_coverage_aliases() -> None:
+    assert final_request_evidence_ref_for_requirement("pm_task_contract") == "pm_contract"
+    assert final_request_evidence_ref_for_requirement("cross_file_interface_contract") == "module_interface_contract"
+    assert final_request_evidence_ref_for_requirement("verification_failure_evidence") == "failed_gate_evidence"
+    assert final_request_evidence_ref_for_requirement("custom_ref") == "custom_ref"
+    assert final_request_evidence_ref_for_requirement("CustomRef") == "CustomRef"
+
+    assert final_request_evidence_ref_for_coverage_flag("has_chief_engineer_blueprint") == "ce_blueprint"
+    assert final_request_evidence_ref_for_coverage_flag("has_workspace_quality_evidence") == (
+        "workspace_quality_evidence"
+    )
+    assert final_request_evidence_ref_for_coverage_flag("unknown_flag") == ""
 
 
 def test_workspace_quality_context_slot_uses_structured_payload() -> None:

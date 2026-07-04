@@ -12,6 +12,92 @@ FINAL_REQUEST_EVIDENCE_SCHEMA = "llm.final_request_evidence.v1"
 FINAL_REQUEST_EVIDENCE_AUTHORITY_SCHEMA = "polaris.final_request_evidence_authority.v1"
 AUDIT_REFS_SCHEMA = "llm.final_request_audit_refs.v1"
 _CONTEXT_SNAPSHOT_HASH_RE = re.compile(r"(?<![0-9A-Fa-f])([0-9A-Fa-f]{24})(?![0-9A-Fa-f])")
+_COVERAGE_FLAG_TO_REF = {
+    "has_pm_contract": "pm_contract",
+    "has_chief_engineer_blueprint": "ce_blueprint",
+    "has_module_interface_contract": "module_interface_contract",
+    "has_actual_sibling_exports": "actual_sibling_exports",
+    "has_architecture_or_file_plan": "architecture_or_file_plan",
+    "has_target_files": "target_files",
+    "has_failure_feedback": "failed_gate_evidence",
+    "has_workspace_quality_evidence": "workspace_quality_evidence",
+    "has_resident_agi_decision_trace": "resident_agi_decision_trace",
+    "has_resident_agi_capability_surface": "resident_agi_capability_surface",
+    "has_resident_agi_decision_boundary": "resident_agi_decision_boundary",
+}
+_EVIDENCE_REQUIREMENT_TO_REF = {
+    "pm_task_contract": "pm_contract",
+    "pm_contract": "pm_contract",
+    "pm_delivery_plan_document": "delivery_plan_document",
+    "delivery_plan_document": "delivery_plan_document",
+    "delivery_plan": "delivery_plan_document",
+    "design_intent": "delivery_plan_document",
+    "pm_delivery_depth_contract": "delivery_depth_contract",
+    "delivery_depth_contract": "delivery_depth_contract",
+    "behavior_contract": "delivery_depth_contract",
+    "behavior_matrix": "delivery_depth_contract",
+    "chief_engineer_blueprint": "ce_blueprint",
+    "ce_blueprint": "ce_blueprint",
+    "module_interface_contract": "module_interface_contract",
+    "cross_file_interface_contract": "module_interface_contract",
+    "cross_artifact_interface_contract": "module_interface_contract",
+    "cross_artifact.interface_contract.v1": "module_interface_contract",
+    "public_symbols": "module_interface_contract",
+    "consumes_symbols": "module_interface_contract",
+    "actual_sibling_exports": "actual_sibling_exports",
+    "actual_export_summary": "actual_sibling_exports",
+    "actual_public_symbols": "actual_sibling_exports",
+    "existing_target_files": "actual_sibling_exports",
+    "interface_discrepancy_context": "interface_discrepancy_context",
+    "interface_discrepancy_evidence": "interface_discrepancy_context",
+    "interface_discrepancy_receipt": "interface_discrepancy_context",
+    "interface_discrepancy_receipts": "interface_discrepancy_context",
+    "interface_delta": "interface_discrepancy_context",
+    "interface_delta_receipt": "interface_discrepancy_context",
+    "interface_discrepancy_triage": "interface_discrepancy_context",
+    "task_boundary_interface_discrepancy": "interface_discrepancy_context",
+    "task_boundary_interface_discrepancy_retry": "interface_discrepancy_context",
+    "director_interface_discrepancy_retry": "interface_discrepancy_context",
+    "pending_design_interface_contract": "interface_discrepancy_context",
+    "director_retry_with_interface_discrepancy_context": "interface_discrepancy_context",
+    "target_files_or_declared_scopes": "target_files",
+    "target_files": "target_files",
+    "declared_scopes": "target_files",
+    "language_best_practices": "language_guidance",
+    "execution_profile": "execution_profile",
+    "execution_strategy": "execution_strategy",
+    "execution_envelope": "execution_envelope",
+    "final_provider_request": "final_provider_request",
+    "final_provider_request_audit": "final_provider_request",
+    "run_ledger": "run_ledger",
+    "workspace_quality_evidence": "workspace_quality_evidence",
+    "quality_evidence": "workspace_quality_evidence",
+    "quality_gate_verdict": "workspace_quality_evidence",
+    "failed_gate_evidence": "failed_gate_evidence",
+    "failure_evidence": "failed_gate_evidence",
+    "failed_gate_or_verification_evidence": "failed_gate_evidence",
+    "verification_evidence": "failed_gate_evidence",
+    "verification_failure_evidence": "failed_gate_evidence",
+    "verifier_failure_evidence": "failed_gate_evidence",
+    "architecture_or_file_plan": "architecture_or_file_plan",
+    "architecture_plan": "architecture_or_file_plan",
+    "file_plan": "architecture_or_file_plan",
+    "construction_plan": "architecture_or_file_plan",
+    "scope_for_apply": "architecture_or_file_plan",
+}
+
+
+def final_request_evidence_ref_for_requirement(value: Any) -> str:
+    """Return the canonical evidence ref for a requirement or slot alias."""
+
+    token = _text(value)
+    return _EVIDENCE_REQUIREMENT_TO_REF.get(token.lower(), token)
+
+
+def final_request_evidence_ref_for_coverage_flag(value: Any) -> str:
+    """Return the canonical evidence ref represented by a coverage flag."""
+
+    return _COVERAGE_FLAG_TO_REF.get(_text(value), "")
 
 
 def _as_mapping(value: Any) -> Mapping[str, Any]:
