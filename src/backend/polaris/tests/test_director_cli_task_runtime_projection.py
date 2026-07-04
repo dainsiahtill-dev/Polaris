@@ -37,3 +37,28 @@ def test_director_cli_status_update_writes_task_runtime_execution_fact(tmp_path:
     assert updated_row is not None
     assert updated_row["status"] == "completed"
     assert updated_row["metadata"]["adapter"] == "director.execution.public"
+
+
+def test_director_cli_ready_tasks_use_task_runtime_projection(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    task_runtime = TaskRuntimeService(str(workspace))
+    ready = task_runtime.create(subject="ready task")
+    blocked = task_runtime.create(subject="blocked task", blocked_by=[ready.id])
+    claimed = task_runtime.create(subject="claimed task")
+    claim_result = task_runtime.claim_execution(
+        claimed.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-director-cli-ready",
+        selection_source="test",
+    )
+    assert claim_result["success"] is True
+
+    service = DirectorService(workspace=workspace)
+
+    rows = service._get_ready_tasks()
+
+    assert [row["id"] for row in rows] == [ready.id]
+    assert all(row["id"] != blocked.id for row in rows)
+    assert all(row["id"] != claimed.id for row in rows)

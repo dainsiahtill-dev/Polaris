@@ -880,17 +880,17 @@ def test_run_role_console_super_mode_architect_delivery_loops_director_until_com
 def test_persist_super_tasks_to_board_publishes_pending_design(monkeypatch) -> None:
     published: list[Any] = []
 
-    class _FakeBoard:
+    class _FakeTaskRuntime:
         def __init__(self, *, workspace: str) -> None:
             self.workspace = workspace
             self._next_id = 1
 
-        def create(self, **kwargs: Any) -> Any:
-            created = SimpleNamespace(
-                id=self._next_id,
-                subject=kwargs["subject"],
-                description=kwargs["description"],
-            )
+        def create_task_row(self, **kwargs: Any) -> dict[str, Any]:
+            created = {
+                "id": self._next_id,
+                "subject": kwargs["subject"],
+                "description": kwargs["description"],
+            }
             self._next_id += 1
             return created
 
@@ -899,7 +899,7 @@ def test_persist_super_tasks_to_board_publishes_pending_design(monkeypatch) -> N
             published.append(command)
             return SimpleNamespace(ok=True)
 
-    monkeypatch.setattr("polaris.cells.runtime.task_runtime.internal.task_board.TaskBoard", _FakeBoard)
+    monkeypatch.setattr("polaris.cells.runtime.task_runtime.public.service.TaskRuntimeService", _FakeTaskRuntime)
     monkeypatch.setattr(
         "polaris.cells.runtime.task_market.public.service.get_task_market_service",
         lambda: _FakeMarket(),

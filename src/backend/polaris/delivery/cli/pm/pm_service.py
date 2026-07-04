@@ -15,22 +15,17 @@ import sys
 from pathlib import Path
 
 
-def _bootstrap_backend_import_path():
-    """Lazy import of polaris modules after path bootstrap."""
+def _bootstrap_backend_import_path() -> None:
+    """Ensure backend package path when running the file directly."""
     if __package__:
         # Already in a package, imports should work
-        pass
+        return
     else:
         # Running as script - ensure backend is in path
         backend_root = Path(__file__).resolve().parents[4]
         backend_root_str = str(backend_root)
         if backend_root_str not in sys.path:
             sys.path.insert(0, backend_root_str)
-
-    from polaris.cells.audit.verdict.public import ArtifactService
-    from polaris.cells.runtime.task_runtime.public.task_board_contract import TaskBoard
-
-    return ArtifactService, TaskBoard
 
 
 logger = logging.getLogger(__name__)
@@ -45,8 +40,7 @@ class PMService:
         model: str = "glm-4.7-flash:latest",
         backend: str = "auto",
     ) -> None:
-        _ArtifactService, TaskBoard = _bootstrap_backend_import_path()  # noqa: N806
+        _bootstrap_backend_import_path()
         self.workspace = workspace
         self.model = model
         self.backend = backend
-        self.task_board = TaskBoard(workspace=str(workspace))

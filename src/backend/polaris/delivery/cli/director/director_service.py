@@ -1,7 +1,7 @@
 """Director CLI service.
 
 This delivery-layer service is intentionally thin.  It delegates task
-discovery to the runtime TaskBoard public contract and execution to the
+discovery to the runtime task-row projection and execution to the
 ``director.execution`` public Cell contract.
 """
 
@@ -22,7 +22,6 @@ from polaris.cells.director.execution.public import (
     execute_director_task,
 )
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
-from polaris.cells.runtime.task_runtime.public.task_board_contract import TaskBoard
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 
 logger = logging.getLogger(__name__)
@@ -55,13 +54,7 @@ class DirectorService:
         self.model = model
         self.max_workers = max_workers
         self.execution_mode = execution_mode
-        self._task_board: TaskBoard | None = None
         self._task_runtime: TaskRuntimeService | None = None
-
-    def _get_task_board(self) -> TaskBoard:
-        if self._task_board is None:
-            self._task_board = TaskBoard(workspace=str(self.workspace))
-        return self._task_board
 
     def _get_task_runtime(self) -> TaskRuntimeService:
         if self._task_runtime is None:
@@ -120,23 +113,24 @@ class DirectorService:
             "results": results,
         }
 
-    def _get_ready_tasks(self) -> list[dict]:
-        """Return ready task rows through the runtime TaskBoard public contract."""
-        raw_tasks = self._get_task_board().get_ready_tasks()
-        rows: list[dict[str, Any]] = []
-        for task in raw_tasks:
-            if hasattr(task, "to_dict"):
-                rows.append(dict(task.to_dict()))
-            elif isinstance(task, dict):
-                rows.append(dict(task))
-        return rows
+    def _get_ready_tasks(self) -> list[dict[str, Any]]:
+        """Return ready task rows through the runtime task-row projection."""
+        rows = self._get_task_runtime().list_task_rows(include_terminal=False)
+        ready_rows: list[dict[str, Any]] = []
+        for row in rows:
+            status = str(row.get("status") or "").strip().lower()
+            blocked_by = row.get("blocked_by") or row.get("blockedBy") or []
+            claimed_by = str(row.get("claimed_by") or "").strip()
+            if status in {"pending", "ready"} and not blocked_by and not claimed_by:
+                ready_rows.append(row)
+        return ready_rows
 
     @staticmethod
     def _normalize_task_id(task_id: Any) -> int:
         token = str(task_id or "").strip()
         token = re.sub(r"^(task[-_])+", "", token, flags=re.IGNORECASE)
         if not token.isdigit():
-            raise ValueError(f"Invalid TaskBoard task id: {task_id}")
+            raise ValueError(f"Invalid task runtime id: {task_id}")
         return int(token)
 
     async def _execute_task(self, task: dict) -> dict[str, Any]:

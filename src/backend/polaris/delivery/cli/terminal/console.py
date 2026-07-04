@@ -934,13 +934,11 @@ def _persist_super_tasks_to_board(
             PublishTaskWorkItemCommandV1,
         )
         from polaris.cells.runtime.task_market.public.service import get_task_market_service
-        from polaris.cells.runtime.task_runtime.internal.task_board import (
-            TaskBoard,
-        )
+        from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 
-        board = TaskBoard(workspace=workspace)
+        task_runtime = TaskRuntimeService(workspace=workspace)
         market = get_task_market_service()
-        logger.info("SUPER_MODE_PERSIST_INIT: TaskBoard and TaskMarket initialized")
+        logger.info("SUPER_MODE_PERSIST_INIT: TaskRuntimeService and TaskMarket initialized")
 
         for idx, task in enumerate(tasks, 1):
             logger.info(
@@ -948,7 +946,7 @@ def _persist_super_tasks_to_board(
                 idx,
                 task.subject,
             )
-            created = board.create(
+            created = task_runtime.create_task_row(
                 subject=task.subject,
                 description=task.description,
                 priority="high",
@@ -962,11 +960,14 @@ def _persist_super_tasks_to_board(
                     "pm_output_excerpt": pm_output[:500],
                 },
             )
-            task_ids.append(created.id)
+            created_id = int(created.get("id") or 0)
+            created_subject = str(created.get("subject") or task.subject)
+            created_description = str(created.get("description") or task.description)
+            task_ids.append(created_id)
             logger.info(
                 "SUPER_MODE_TASK_CREATED: id=%d subject=%s",
-                created.id,
-                created.subject,
+                created_id,
+                created_subject,
             )
 
             # Publish to TaskMarket for Director pickup
@@ -975,14 +976,14 @@ def _persist_super_tasks_to_board(
                 workspace=workspace,
                 trace_id=trace_id,
                 run_id=run_id,
-                task_id=str(created.id),
+                task_id=str(created_id),
                 stage=publish_stage,
                 priority="high",
                 payload={
-                    "subject": created.subject,
-                    "title": created.subject,
-                    "goal": created.description or task.description or original_request,
-                    "description": created.description,
+                    "subject": created_subject,
+                    "title": created_subject,
+                    "goal": created_description or task.description or original_request,
+                    "description": created_description,
                     "target_files": list(task.target_files),
                     "scope_paths": list(task.target_files),
                     "workspace": workspace,
@@ -1000,7 +1001,7 @@ def _persist_super_tasks_to_board(
             market.publish_work_item(cmd)
             logger.info(
                 "SUPER_MODE_TASK_PUBLISHED: id=%d stage=%s trace=%s",
-                created.id,
+                created_id,
                 publish_stage,
                 trace_id,
             )
