@@ -890,8 +890,9 @@ def test_task_runtime_external_task_id_does_not_collide_with_numeric_row(tmp_pat
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    stale = service.create(subject="stale", description="old row")
-    service.update(stale.id, status="completed", metadata={"previous_run": "old"})
+    stale = service.create_task_row(subject="stale", description="old row")
+    stale_id = stale["id"]
+    service.update_task_row(stale_id, status="completed", metadata={"previous_run": "old"})
 
     row = service.ensure_task_row(
         external_task_id="TASK-1",
@@ -899,13 +900,13 @@ def test_task_runtime_external_task_id_does_not_collide_with_numeric_row(tmp_pat
         metadata={"pm_task_id": "TASK-1"},
     )
 
-    assert row["id"] != stale.id
+    assert row["id"] != stale_id
     external_lookup = service.get_task("TASK-1")
     assert external_lookup is not None
     assert external_lookup["id"] == row["id"]
-    stale_lookup = service.get_task(f"task-{stale.id}")
+    stale_lookup = service.get_task(f"task-{stale_id}")
     assert stale_lookup is not None
-    assert stale_lookup["id"] == stale.id
+    assert stale_lookup["id"] == stale_id
 
 
 def test_task_runtime_service_surfaces_resumable_task_and_reclaims_it(tmp_path: Path) -> None:
@@ -913,14 +914,15 @@ def test_task_runtime_service_surfaces_resumable_task_and_reclaims_it(tmp_path: 
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    created = service.create(
+    created = service.create_task_row(
         subject="实现账单模型",
         description="补齐数据模型和测试",
         metadata={"scope": "src/billing, tests/"},
     )
+    created_id = created["id"]
 
     first_claim = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-1",
@@ -929,7 +931,7 @@ def test_task_runtime_service_surfaces_resumable_task_and_reclaims_it(tmp_path: 
     assert first_claim["success"] is True
 
     suspended = service.suspend_execution(
-        created.id,
+        created_id,
         session_id=str(first_claim["session"]["session_id"]),
         reason="director_execution_cancelled",
     )
@@ -939,11 +941,11 @@ def test_task_runtime_service_surfaces_resumable_task_and_reclaims_it(tmp_path: 
 
     selected = service.select_next_task(prefer_resumable=True)
     assert isinstance(selected, dict)
-    assert int(selected["id"]) == int(created.id)
+    assert int(selected["id"]) == int(created_id)
     assert selected["resume_state"] == "resumable"
 
     resumed = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-2",
@@ -955,7 +957,7 @@ def test_task_runtime_service_surfaces_resumable_task_and_reclaims_it(tmp_path: 
     assert resumed["task"]["resume_state"] == "resumed"
 
     completed = service.complete_execution(
-        created.id,
+        created_id,
         session_id=str(resumed["session"]["session_id"]),
         result_summary="implemented billing model",
     )
@@ -968,17 +970,19 @@ def test_task_runtime_service_suspends_active_sessions_for_cancelled_run(tmp_pat
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    cancelled_task = service.create(subject="cancelled run task")
-    other_task = service.create(subject="other run task")
+    cancelled_task = service.create_task_row(subject="cancelled run task")
+    cancelled_task_id = cancelled_task["id"]
+    other_task = service.create_task_row(subject="other run task")
+    other_task_id = other_task["id"]
     cancelled_claim = service.claim_execution(
-        cancelled_task.id,
+        cancelled_task_id,
         worker_id="director",
         role_id="director",
         run_id="director-cancelled",
         selection_source="task_id_lookup",
     )
     other_claim = service.claim_execution(
-        other_task.id,
+        other_task_id,
         worker_id="director",
         role_id="director",
         run_id="director-other",
@@ -996,25 +1000,25 @@ def test_task_runtime_service_suspends_active_sessions_for_cancelled_run(tmp_pat
     assert suspended["success"] is True
     assert suspended["reason"] == "suspended"
     assert suspended["suspended_count"] == 1
-    assert suspended["task_ids"] == [str(cancelled_task.id)]
+    assert suspended["task_ids"] == [str(cancelled_task_id)]
     assert len(suspended["execution_events"]) == 1
     assert suspended["execution_events"][0]["ok"] is True
     assert suspended["execution_events"][0]["event_type"] == "suspended"
 
     cancelled_heartbeat = service.heartbeat_execution(
-        cancelled_task.id,
+        cancelled_task_id,
         session_id=str(cancelled_claim["session"]["session_id"]),
     )
     assert cancelled_heartbeat["success"] is False
     assert cancelled_heartbeat["reason"] == "session_not_active"
-    cancelled_row = service.get_task(cancelled_task.id)
+    cancelled_row = service.get_task(cancelled_task_id)
     assert cancelled_row is not None
     assert cancelled_row["status"] == "pending"
     assert cancelled_row["resume_state"] == "resumable"
     assert cancelled_row["metadata"]["cancellation_reason"] == "factory_stage_timeout"
 
     other_heartbeat = service.heartbeat_execution(
-        other_task.id,
+        other_task_id,
         session_id=str(other_claim["session"]["session_id"]),
     )
     assert other_heartbeat["success"] is True
