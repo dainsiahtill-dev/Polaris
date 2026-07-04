@@ -162,6 +162,36 @@ def test_lift_completion_audit_evidence_preserves_canonical_lifecycle_receipt() 
     ]
 
 
+def test_lift_completion_audit_evidence_preserves_failure_evidence() -> None:
+    metadata: dict[str, object] = {}
+    failure_evidence = [
+        {
+            "schema_version": "polaris.failure_evidence.v1",
+            "source": "tool_lifecycle",
+            "failure_class": "MISSING_EFFECT_RECEIPT",
+            "responsible_layer": "platform",
+            "evidence_refs": ["tool_lifecycle:turn-1"],
+        }
+    ]
+
+    projection._lift_completion_audit_evidence(
+        metadata,
+        {
+            "failure_evidence": failure_evidence,
+            "failure_evidence_summary": {
+                "count": 1,
+                "latest_failure_class": "MISSING_EFFECT_RECEIPT",
+            },
+        },
+    )
+
+    assert metadata["failure_evidence"] == failure_evidence
+    assert metadata["failure_evidence_summary"] == {
+        "count": 1,
+        "latest_failure_class": "MISSING_EFFECT_RECEIPT",
+    }
+
+
 def test_lift_completion_audit_evidence_treats_zero_lifecycle_as_authoritative() -> None:
     metadata: dict[str, object] = {}
 

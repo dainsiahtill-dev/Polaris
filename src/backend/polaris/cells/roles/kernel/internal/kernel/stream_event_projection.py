@@ -344,6 +344,8 @@ _COMPLETION_AUDIT_EVIDENCE_KEYS: tuple[str, ...] = (
     "native_tool_call_envelope_refs",
     "native_tool_calls_count",
     "native_tool_call_names",
+    "failure_evidence",
+    "failure_evidence_summary",
 )
 
 
