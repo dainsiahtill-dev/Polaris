@@ -842,6 +842,28 @@ def _script_name_from_npm_invocation(normalized_text: str) -> str:
     return ""
 
 
+def _javascript_module_error_issue(
+    *,
+    text: str,
+    message: str,
+    match: re.Match[str],
+    line: int | None,
+    column: int | None,
+) -> ArtifactQualityIssue:
+    """Project old JavaScript module-loader output into a typed issue row."""
+
+    module_message = str(match.group("message") or message).strip()
+    return ArtifactQualityIssue(
+        code="javascript_module_error",
+        message=module_message,
+        path=_artifact_quality_issue_path(message),
+        source="runtime_smoke",
+        line=line,
+        column=column,
+        metadata=_javascript_module_error_metadata(text, module_message),
+    )
+
+
 def _artifact_quality_issue_from_error(error: str) -> ArtifactQualityIssue:
     text = str(error or "").strip()
     message = text
@@ -850,17 +872,12 @@ def _artifact_quality_issue_from_error(error: str) -> ArtifactQualityIssue:
     line, column = _artifact_quality_issue_location(message)
     javascript_module_error = _ARTIFACT_QUALITY_JAVASCRIPT_MODULE_ERROR_RE.search(message)
     if javascript_module_error:
-        return ArtifactQualityIssue(
-            code="javascript_module_error",
-            message=str(javascript_module_error.group("message") or message).strip(),
-            path=_artifact_quality_issue_path(message),
-            source="runtime_smoke",
+        return _javascript_module_error_issue(
+            text=text,
+            message=message,
+            match=javascript_module_error,
             line=line,
             column=column,
-            metadata=_javascript_module_error_metadata(
-                text,
-                str(javascript_module_error.group("message") or message).strip(),
-            ),
         )
     code = _artifact_quality_issue_code(message)
     path = "package.json" if code == "npm_manifest_invalid" else _artifact_quality_issue_path(message)
