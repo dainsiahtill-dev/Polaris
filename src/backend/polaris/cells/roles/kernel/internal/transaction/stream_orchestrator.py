@@ -21,9 +21,11 @@ import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Any, Literal, cast
 
-from polaris.cells.control_plane.run_ledger.public import project_native_tool_call_facts_to_metadata
+from polaris.cells.control_plane.run_ledger.public import (
+    project_completion_dispatch_evidence_to_metadata,
+    project_native_tool_call_facts_to_metadata,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
-    native_tool_call_envelopes_from_metadata,
     native_tool_call_facts_from_response,
     provider_response_hash as derive_provider_response_hash,
     restrict_tool_definitions_to_write,
@@ -73,45 +75,6 @@ from polaris.cells.roles.kernel.public.turn_events import (
 from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
 
 logger = logging.getLogger(__name__)
-
-_COMPLETION_DISPATCH_EVIDENCE_KEYS: tuple[str, ...] = (
-    "final_request_context_audit",
-    "required_tools",
-    "tool_call_lifecycle",
-    "tool_call_lifecycle_receipt",
-    "tool_call_lifecycle_receipts",
-    "native_tool_call_envelopes",
-    "native_tool_call_envelope_refs",
-)
-
-
-def _project_completion_dispatch_evidence(
-    monitoring: dict[str, Any],
-    *evidence_sources: Mapping[str, Any] | None,
-) -> None:
-    """Project stream completion dispatch evidence into monitoring metadata.
-
-    Stream completion is later converted into RoleTurnResult metadata by
-    ``StreamEventProjector``. Keep this projection structural: copy the same
-    canonical lifecycle/envelope fields used by the non-stream path and derive
-    ``native_tool_call_envelope_refs`` through the shared metadata helper.
-    """
-
-    for evidence_source in evidence_sources:
-        if not isinstance(evidence_source, Mapping):
-            continue
-        for evidence_key in _COMPLETION_DISPATCH_EVIDENCE_KEYS:
-            if evidence_key in evidence_source and evidence_key not in monitoring:
-                evidence_value = evidence_source[evidence_key]
-                monitoring[evidence_key] = (
-                    dict(evidence_value) if isinstance(evidence_value, Mapping) else evidence_value
-                )
-    native_tool_call_envelopes = native_tool_call_envelopes_from_metadata(monitoring)
-    if native_tool_call_envelopes:
-        monitoring.setdefault(
-            "native_tool_call_envelope_refs",
-            [dict(item) for item in native_tool_call_envelopes],
-        )
 
 
 def build_native_tool_call_from_stream_event(
@@ -1602,7 +1565,7 @@ class StreamOrchestrator:
         # Completion-side dispatch evidence: the stream completion owner rebuilds
         # the missing-dispatch tool_call_lifecycle receipt from these keys, using
         # the same metadata contract as the non-stream completion path.
-        _project_completion_dispatch_evidence(
+        project_completion_dispatch_evidence_to_metadata(
             monitoring,
             decision_metadata,
             result.get("llm_response_metadata"),

@@ -13,6 +13,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     native_tool_call_facts_from_metadata,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
+    project_completion_dispatch_evidence_to_metadata,
     project_lifecycle_failure_evidence_to_metadata,
     project_native_tool_call_facts_to_metadata,
     project_tool_lifecycle_event,
@@ -575,6 +576,69 @@ def test_project_native_tool_call_facts_to_metadata_can_preserve_names() -> None
         "native_tool_calls_count": 0,
         "native_tool_call_names": ["stale_tool"],
     }
+
+
+def test_project_completion_dispatch_evidence_keeps_native_envelope_refs() -> None:
+    metadata: dict[str, object] = {
+        "native_tool_call_envelopes": ["bad legacy projection"],
+    }
+    decision_metadata = {
+        "native_tool_call_envelope_refs": [
+            {
+                "schema_version": "native_tool_call_envelope.v1",
+                "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+                "tool_name": "write_file",
+            },
+            {
+                "schema_version": "native_tool_call_envelope.v1",
+                "envelope_id": "native_tool_call:openai:1:call-2:abcdef",
+                "tool_name": "execute_command",
+            },
+        ],
+        "tool_call_lifecycle_receipt": {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "dispatch_status": "dropped",
+            "failure_class": "tool_dispatch_dropped",
+            "native_tool_calls_count": 2,
+        },
+    }
+    usage_metadata = {
+        "final_request_context_audit": {"schema_version": "llm.final_request_context_audit.v1"},
+        "required_tools": ["write_file"],
+    }
+
+    project_completion_dispatch_evidence_to_metadata(metadata, decision_metadata, usage_metadata)
+
+    assert metadata["native_tool_call_envelope_refs"] == decision_metadata["native_tool_call_envelope_refs"]
+    assert metadata["tool_call_lifecycle_receipt"] == decision_metadata["tool_call_lifecycle_receipt"]
+    assert metadata["final_request_context_audit"] == usage_metadata["final_request_context_audit"]
+    assert metadata["required_tools"] == ["write_file"]
+
+
+def test_project_completion_dispatch_evidence_derives_refs_from_lifecycle_receipt() -> None:
+    metadata: dict[str, object] = {}
+    usage_metadata = {
+        "tool_call_lifecycle_receipt": {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_call_envelope_refs": [
+                {
+                    "schema_version": "native_tool_call_envelope.v1",
+                    "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+                    "tool_name": "write_file",
+                }
+            ],
+        }
+    }
+
+    project_completion_dispatch_evidence_to_metadata(metadata, usage_metadata)
+
+    assert metadata["native_tool_call_envelope_refs"] == [
+        {
+            "schema_version": "native_tool_call_envelope.v1",
+            "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+            "tool_name": "write_file",
+        }
+    ]
 
 
 def test_project_lifecycle_failure_evidence_to_metadata_appends_failed_lifecycle() -> None:

@@ -867,6 +867,51 @@ def project_native_tool_call_facts_to_metadata(
     ]
 
 
+_COMPLETION_DISPATCH_EVIDENCE_KEYS: tuple[str, ...] = (
+    "final_request_context_audit",
+    "required_tools",
+    "tool_call_lifecycle",
+    "tool_call_lifecycle_receipt",
+    "tool_call_lifecycle_receipts",
+    "native_tool_call_envelopes",
+    "native_tool_call_envelope_refs",
+)
+
+
+def project_completion_dispatch_evidence_to_metadata(
+    metadata: dict[str, Any],
+    *evidence_sources: Mapping[str, Any] | None,
+) -> None:
+    """Project stream/non-stream completion dispatch evidence into metadata.
+
+    Boundary:
+        This owns the completion-side metadata keys that are evidence for
+        lifecycle/envelope projection. Callers provide candidate source
+        mappings; this helper only copies canonical evidence fields that are
+        not already present and derives ``native_tool_call_envelope_refs`` via
+        the same lifecycle-aware metadata helper used by Run Ledger projections.
+
+    Complexity:
+        O(s * k + e) time, where ``s`` is source count, ``k`` is the fixed
+        evidence-key set, and ``e`` is native envelope count; O(e) memory.
+    """
+
+    for evidence_source in evidence_sources:
+        if not isinstance(evidence_source, Mapping):
+            continue
+        for evidence_key in _COMPLETION_DISPATCH_EVIDENCE_KEYS:
+            if evidence_key not in evidence_source or evidence_key in metadata:
+                continue
+            evidence_value = evidence_source[evidence_key]
+            metadata[evidence_key] = dict(evidence_value) if isinstance(evidence_value, Mapping) else evidence_value
+    native_tool_call_envelopes = native_tool_call_envelope_refs_from_metadata(metadata)
+    if native_tool_call_envelopes:
+        metadata.setdefault(
+            "native_tool_call_envelope_refs",
+            [dict(item) for item in native_tool_call_envelopes],
+        )
+
+
 def failure_evidence_from_lifecycle_receipt(value: Any) -> dict[str, Any]:
     """Project lifecycle failure evidence into the Run Ledger taxonomy.
 
