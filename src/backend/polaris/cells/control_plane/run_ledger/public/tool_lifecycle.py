@@ -1212,6 +1212,7 @@ def project_native_tool_call_facts_to_metadata(
     facts: Mapping[str, Any],
     *,
     project_names: bool = True,
+    project_decision_caller_count: bool = False,
 ) -> None:
     """Write canonical native tool-call facts to a metadata projection.
 
@@ -1224,7 +1225,10 @@ def project_native_tool_call_facts_to_metadata(
         O(n) time and memory for normalizing the optional tool-name list.
     """
 
-    metadata["native_tool_calls_count"] = _int_value(facts.get("native_tool_calls_count"))
+    native_count = _int_value(facts.get("native_tool_calls_count"))
+    metadata["native_tool_calls_count"] = native_count
+    if project_decision_caller_count:
+        metadata["decision_caller_native_tool_calls_count"] = native_count
     if not project_names:
         return
     names = facts.get("native_tool_call_names")

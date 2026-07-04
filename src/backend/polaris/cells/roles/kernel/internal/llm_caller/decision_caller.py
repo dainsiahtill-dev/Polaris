@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.control_plane.run_ledger.public import project_native_tool_call_facts_to_metadata
+
 from .tool_helpers import native_tool_call_facts
 
 if TYPE_CHECKING:
@@ -54,9 +56,11 @@ class DecisionCaller:
         native_tool_calls = getattr(response, "tool_calls", []) or []
         metadata = dict(getattr(response, "metadata", {}) or {})
         native_facts = native_tool_call_facts(metadata, native_tool_calls)
-        native_count = int(native_facts["native_tool_calls_count"])
-        metadata["decision_caller_native_tool_calls_count"] = native_count
-        metadata.update(native_facts)
+        project_native_tool_call_facts_to_metadata(
+            metadata,
+            native_facts,
+            project_decision_caller_count=True,
+        )
         metadata["decision_caller_tool_call_provider"] = str(
             getattr(response, "tool_call_provider", "") or metadata.get("tool_call_provider") or "auto"
         )

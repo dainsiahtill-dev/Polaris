@@ -80,6 +80,23 @@ def test_tool_lifecycle_receipt_links_batch_and_effect_refs() -> None:
     assert failure_evidence_from_lifecycle_receipt(receipt) == {}
 
 
+def test_project_native_tool_call_facts_to_metadata_can_emit_decision_caller_compat_count() -> None:
+    metadata: dict[str, object] = {}
+
+    project_native_tool_call_facts_to_metadata(
+        metadata,
+        {
+            "native_tool_calls_count": 2,
+            "native_tool_call_names": ["read_file", "write_file"],
+        },
+        project_decision_caller_count=True,
+    )
+
+    assert metadata["native_tool_calls_count"] == 2
+    assert metadata["decision_caller_native_tool_calls_count"] == 2
+    assert metadata["native_tool_call_names"] == ["read_file", "write_file"]
+
+
 def test_normalize_native_tool_call_envelope_refs_filters_and_deduplicates() -> None:
     envelope = {
         "schema_version": "native_tool_call_envelope.v1",
