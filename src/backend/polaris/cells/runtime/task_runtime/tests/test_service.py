@@ -1177,10 +1177,11 @@ def test_task_runtime_service_writes_sessions_atomically(tmp_path: Path, monkeyp
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    created = service.create(
+    created = service.create_task_row(
         subject="persist task session atomically",
         description="session readers must never observe partial JSON writes",
     )
+    created_id = created["id"]
 
     atomic_calls: list[tuple[str, object, int, bool]] = []
     original_atomic_write = service._kernel_fs.write_json_atomic
@@ -1207,7 +1208,7 @@ def test_task_runtime_service_writes_sessions_atomically(tmp_path: Path, monkeyp
     monkeypatch.setattr(service._kernel_fs, "write_json", reject_non_atomic_session_write)
 
     claimed = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-atomic-session",
@@ -1217,7 +1218,7 @@ def test_task_runtime_service_writes_sessions_atomically(tmp_path: Path, monkeyp
     assert claimed["success"] is True
     assert atomic_calls
     logical_path, payload, indent, ensure_ascii = atomic_calls[-1]
-    assert logical_path == f"runtime/tasks/task_{created.id}.session.json"
+    assert logical_path == f"runtime/tasks/task_{created_id}.session.json"
     assert isinstance(payload, dict)
     assert indent == 2
     assert ensure_ascii is False
@@ -1228,12 +1229,13 @@ def test_task_runtime_service_emits_execution_events_via_fact_stream(tmp_path: P
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    created = service.create(
+    created = service.create_task_row(
         subject="emit execution event",
         description="verify task_runtime.execution stream",
     )
+    created_id = created["id"]
     claimed = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-fact-stream",
@@ -1242,7 +1244,7 @@ def test_task_runtime_service_emits_execution_events_via_fact_stream(tmp_path: P
     assert claimed["success"] is True
 
     completed = service.complete_execution(
-        created.id,
+        created_id,
         session_id=str(claimed["session"]["session_id"]),
         result_summary="done",
     )
@@ -1276,10 +1278,11 @@ def test_task_runtime_update_and_reopen_emit_execution_events(tmp_path: Path) ->
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    created = service.create(subject="emit row update events")
-    updated = service.update(created.id, status="completed", metadata={"qa": "failed"})
+    created = service.create_task_row(subject="emit row update events")
+    created_id = created["id"]
+    updated = service.update_task_row(created_id, status="completed", metadata={"qa": "failed"})
     assert updated is not None
-    reopened = service.reopen(created.id, reason="qa_rework")
+    reopened = service.reopen_task_row(created_id, reason="qa_rework")
     assert reopened is not None
 
     events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
@@ -1303,8 +1306,9 @@ def test_reopen_task_row_reports_event_append_failure_without_persisting_evidenc
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
-    created = service.create(subject="reopen with append evidence")
-    updated = service.update(created.id, status="completed", metadata={"qa": "failed"})
+    created = service.create_task_row(subject="reopen with append evidence")
+    created_id = created["id"]
+    updated = service.update_task_row(created_id, status="completed", metadata={"qa": "failed"})
     assert updated is not None
     original_append_event = service_module.append_fact_event
 
@@ -1316,7 +1320,7 @@ def test_reopen_task_row_reports_event_append_failure_without_persisting_evidenc
 
     monkeypatch.setattr(service_module, "append_fact_event", fail_reopened_append)
 
-    row = service.reopen_task_row(created.id, reason="qa_rework")
+    row = service.reopen_task_row(created_id, reason="qa_rework")
 
     assert row is not None
     assert row["status"] == "pending"
@@ -1355,15 +1359,16 @@ def test_task_runtime_factory_event_projects_fact_stream_receipt(
         lambda: Publisher(),
     )
 
-    created = service.create(
+    created = service.create_task_row(
         subject="project fact receipt",
         description="factory execution event should point at the fact stream event",
         metadata={"factory_run_id": "factory_123456789abc"},
     )
+    created_id = created["id"]
     published.clear()
 
     claimed = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="director-123456789abc",
