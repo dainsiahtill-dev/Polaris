@@ -152,6 +152,17 @@ def test_scope_authority_partition_allows_all_when_scope_is_undeclared() -> None
     assert out_of_scope == ()
 
 
+def test_scope_authority_partition_normalizes_workspace_prefixed_paths() -> None:
+    in_scope, out_of_scope = partition_paths_by_declared_scope(
+        ["L2-08/src/Index.ts", "./L2-08/tests/app.test.ts", "../outside.ts"],
+        ["src/index.ts"],
+        workspace_name="L2-08",
+    )
+
+    assert in_scope == ("src/Index.ts",)
+    assert out_of_scope == ("tests/app.test.ts",)
+
+
 def test_scope_authority_extracts_and_classifies_handoff_payloads() -> None:
     owned_request = {
         "schema_version": "file-ownership-handoff-request/1",

@@ -48,7 +48,9 @@ def normalize_declared_scope_path(value: Any, *, workspace_name: str = "") -> st
     """Normalize a declared task-scope path without consulting the filesystem."""
 
     token = _clean_token(value).strip("'\"`")
-    token = token.replace("\\", "/").strip().lstrip("./")
+    token = token.replace("\\", "/").strip()
+    while token.startswith("./"):
+        token = token[2:]
     while token.endswith((".", ":", "，", "。", "；", ";", ",")):
         token = token[:-1].strip()
     if not token:
@@ -129,7 +131,7 @@ def partition_paths_by_declared_scope(
     out_of_scope: list[str] = []
     seen: set[str] = set()
     for value in paths:
-        path = _clean_token(value)
+        path = normalize_declared_scope_path(value, workspace_name=workspace_name)
         if not path or path in seen:
             continue
         seen.add(path)
