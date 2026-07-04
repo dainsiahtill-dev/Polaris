@@ -242,6 +242,49 @@ def build_task_runtime_execution_event_payload(
     return payload
 
 
+def build_task_execution_claim_result(
+    *,
+    success: bool,
+    reason: Any,
+    task_row: dict[str, Any] | None = None,
+    session: TaskExecutionSession | dict[str, Any] | None = None,
+    resumed: bool | None = None,
+    claim_applied: bool | None = None,
+    reconciled_from_terminal_session: bool | None = None,
+    reconcile_error: str = "",
+) -> dict[str, Any]:
+    """Project a claim attempt into the stable TaskRuntime claim-result shape.
+
+    Boundary:
+        Claim execution decides state transitions and persistence. This helper
+        only owns the public result projection so callers do not learn multiple
+        ad-hoc shapes for lease conflicts, terminal rejects, renewals, and
+        fresh claims.
+
+    Complexity:
+        O(t + s) time and memory over task/session payload sizes.
+    """
+
+    result: dict[str, Any] = {
+        "success": bool(success),
+        "reason": str(reason or "").strip() or ("claimed" if success else "unknown"),
+    }
+    if task_row is not None:
+        result["task"] = dict(task_row)
+    if session is not None:
+        result["session"] = session.to_dict() if isinstance(session, TaskExecutionSession) else dict(session)
+    if resumed is not None:
+        result["resumed"] = bool(resumed)
+    if claim_applied is not None:
+        result["claim_applied"] = bool(claim_applied)
+    if reconciled_from_terminal_session is not None:
+        result["reconciled_from_terminal_session"] = bool(reconciled_from_terminal_session)
+    clean_reconcile_error = str(reconcile_error or "").strip()
+    if clean_reconcile_error:
+        result["reconcile_error"] = clean_reconcile_error
+    return result
+
+
 def build_task_runtime_metadata(
     *,
     session: TaskExecutionSession,
@@ -554,6 +597,7 @@ class TaskExecutionSession:
 
 __all__ = [
     "TaskExecutionSession",
+    "build_task_execution_claim_result",
     "build_task_runtime_execution_event_payload",
     "build_task_runtime_metadata",
     "is_terminal_session_status",

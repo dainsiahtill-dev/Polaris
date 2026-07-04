@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 from polaris.cells.runtime.task_runtime.internal.execution_session import (
     TaskExecutionSession,
+    build_task_execution_claim_result,
     build_task_runtime_execution_event_payload,
     build_task_runtime_metadata,
     is_terminal_session_status,
@@ -249,6 +250,49 @@ def test_build_task_runtime_execution_event_payload_projects_runtime_state() -> 
     assert event_payload["factory_run_id"] == "factory-1"
     assert event_payload["factory_bench_session_id"] == "bench-1"
     assert event_payload["factory_bench_project_id"] == "L1-01"
+
+
+def test_build_task_execution_claim_result_projects_success_shape() -> None:
+    session = TaskExecutionSession.from_dict({**_valid_session_payload(), "run_id": "run-1"})
+
+    result = build_task_execution_claim_result(
+        success=True,
+        reason="claimed",
+        task_row={"id": 7, "status": "in_progress"},
+        session=session,
+        resumed=False,
+        claim_applied=True,
+    )
+
+    assert result["success"] is True
+    assert result["reason"] == "claimed"
+    assert result["task"] == {"id": 7, "status": "in_progress"}
+    assert result["session"]["session_id"] == "tx-1"
+    assert result["session"]["run_id"] == "run-1"
+    assert result["resumed"] is False
+    assert result["claim_applied"] is True
+    assert "reconcile_error" not in result
+
+
+def test_build_task_execution_claim_result_projects_terminal_reject_shape() -> None:
+    session = TaskExecutionSession.from_dict({**_valid_session_payload(), "status": "failed"})
+
+    result = build_task_execution_claim_result(
+        success=False,
+        reason="task_terminal",
+        task_row={"id": 7, "status": "failed"},
+        session=session,
+        reconciled_from_terminal_session=False,
+        reconcile_error="terminal_row_conflict",
+    )
+
+    assert result["success"] is False
+    assert result["reason"] == "task_terminal"
+    assert result["task"]["status"] == "failed"
+    assert result["session"]["status"] == "failed"
+    assert result["reconciled_from_terminal_session"] is False
+    assert result["reconcile_error"] == "terminal_row_conflict"
+    assert "claim_applied" not in result
 
 
 def test_project_task_row_runtime_state_uses_active_session_projection() -> None:

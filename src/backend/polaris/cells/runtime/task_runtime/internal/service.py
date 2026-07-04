@@ -22,6 +22,7 @@ from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_root
 
 from .execution_session import (
     TaskExecutionSession,
+    build_task_execution_claim_result,
     build_task_runtime_execution_event_payload,
     build_task_runtime_metadata,
     is_terminal_session_status,
@@ -533,11 +534,11 @@ class TaskRuntimeService:
         """Claim a task for execution and persist a lease-backed session."""
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
-            return {"success": False, "reason": "invalid_task_id"}
+            return build_task_execution_claim_result(success=False, reason="invalid_task_id")
 
         task = self._board.get(normalized)
         if task is None:
-            return {"success": False, "reason": "task_not_found"}
+            return build_task_execution_claim_result(success=False, reason="task_not_found")
 
         session_lock = self._get_session_lock(normalized)
         with session_lock:
@@ -564,21 +565,27 @@ class TaskRuntimeService:
                         )
                         if row is None:
                             row = self._augment_task_row(task.to_dict())
-                        rejection: dict[str, Any] = {
-                            "success": False,
-                            "reason": "task_terminal",
-                            "task": row,
-                            "session": existing_session.to_dict(),
-                            "reconciled_from_terminal_session": not reconcile_error,
-                        }
-                        if reconcile_error:
-                            rejection["reconcile_error"] = reconcile_error
-                        return rejection
+                        return build_task_execution_claim_result(
+                            success=False,
+                            reason="task_terminal",
+                            task_row=row,
+                            session=existing_session,
+                            reconciled_from_terminal_session=not reconcile_error,
+                            reconcile_error=reconcile_error,
+                        )
 
             if task.is_terminal:
-                return {"success": False, "reason": "task_terminal", "task": self._augment_task_row(task.to_dict())}
+                return build_task_execution_claim_result(
+                    success=False,
+                    reason="task_terminal",
+                    task_row=self._augment_task_row(task.to_dict()),
+                )
             if self._task_has_unresolved_dependencies(task):
-                return {"success": False, "reason": "task_blocked", "task": self._augment_task_row(task.to_dict())}
+                return build_task_execution_claim_result(
+                    success=False,
+                    reason="task_blocked",
+                    task_row=self._augment_task_row(task.to_dict()),
+                )
 
             if (
                 existing_session is not None
@@ -590,12 +597,12 @@ class TaskRuntimeService:
                     and existing_session.role_id == str(role_id or "").strip()
                 )
                 if not same_owner:
-                    return {
-                        "success": False,
-                        "reason": "lease_conflict",
-                        "task": self._augment_task_row(task.to_dict()),
-                        "session": existing_session.to_dict(),
-                    }
+                    return build_task_execution_claim_result(
+                        success=False,
+                        reason="lease_conflict",
+                        task_row=self._augment_task_row(task.to_dict()),
+                        session=existing_session,
+                    )
                 existing_session.renew(
                     lease_ttl_seconds=lease_ttl_seconds,
                     context_summary=context_summary,
@@ -619,14 +626,14 @@ class TaskRuntimeService:
                     session=existing_session,
                     details={"selection_source": selection_source},
                 )
-                return {
-                    "success": True,
-                    "reason": "claim_renewed",
-                    "task": row,
-                    "session": existing_session.to_dict(),
-                    "resumed": existing_session.resume_count > 0,
-                    "claim_applied": True,
-                }
+                return build_task_execution_claim_result(
+                    success=True,
+                    reason="claim_renewed",
+                    task_row=row,
+                    session=existing_session,
+                    resumed=existing_session.resume_count > 0,
+                    claim_applied=True,
+                )
 
             resume_from_previous = bool(
                 existing_session is not None
@@ -675,14 +682,14 @@ class TaskRuntimeService:
             session=session,
             details={"selection_source": selection_source, "resumed": resume_from_previous},
         )
-        return {
-            "success": True,
-            "reason": "claimed",
-            "task": row,
-            "session": session.to_dict(),
-            "resumed": resume_from_previous,
-            "claim_applied": True,
-        }
+        return build_task_execution_claim_result(
+            success=True,
+            reason="claimed",
+            task_row=row,
+            session=session,
+            resumed=resume_from_previous,
+            claim_applied=True,
+        )
 
     def heartbeat_execution(
         self,
