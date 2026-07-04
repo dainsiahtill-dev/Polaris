@@ -932,6 +932,31 @@ def test_task_runtime_service_emits_execution_events_via_fact_stream(tmp_path: P
     assert payload["lease_expires_at"]
 
 
+def test_task_runtime_update_and_reopen_emit_execution_events(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create(subject="emit row update events")
+    updated = service.update(created.id, status="completed", metadata={"qa": "failed"})
+    assert updated is not None
+    reopened = service.reopen(created.id, reason="qa_rework")
+    assert reopened is not None
+
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    event_types = [str(event.get("event_type") or "") for event in events]
+    assert "updated" in event_types
+    assert "reopened" in event_types
+
+    updated_event = next(event for event in events if event.get("event_type") == "updated")
+    assert updated_event["payload"]["status"] == "completed"
+    assert updated_event["payload"]["details"]["metadata_updated"] is True
+
+    reopened_event = next(event for event in events if event.get("event_type") == "reopened")
+    assert reopened_event["payload"]["details"]["reason"] == "qa_rework"
+    assert reopened_event["payload"]["execution_state"] == "pending"
+
+
 def test_task_runtime_factory_event_projects_fact_stream_receipt(
     tmp_path: Path,
     monkeypatch,

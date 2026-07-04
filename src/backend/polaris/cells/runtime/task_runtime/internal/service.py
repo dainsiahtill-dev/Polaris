@@ -264,7 +264,7 @@ class TaskRuntimeService:
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
             return None
-        return self._board.update(
+        updated = self._board.update(
             normalized,
             status=status,
             assignee=assignee,
@@ -272,6 +272,20 @@ class TaskRuntimeService:
             blocked_by=blocked_by,
             metadata=metadata,
         )
+        if updated is not None:
+            row = self._augment_task_row(updated.to_dict())
+            self._append_execution_event(
+                "updated",
+                task_row=row,
+                session=None,
+                details={
+                    "status": str(status.value if isinstance(status, TaskStatus) else status or ""),
+                    "assignee": str(assignee or ""),
+                    "owner": str(owner or ""),
+                    "metadata_updated": metadata is not None,
+                },
+            )
+        return updated
 
     def update_task(
         self,
@@ -310,6 +324,13 @@ class TaskRuntimeService:
             if session is not None:
                 session.mark_suspended(reason=reason or "task_reopened", resumable=True)
                 self._write_session(session, allow_terminal_downgrade=True)
+            row = self._augment_task_row(task.to_dict())
+            self._append_execution_event(
+                "reopened",
+                task_row=row,
+                session=session,
+                details={"reason": sanitize_summary(reason or "task_reopened")},
+            )
         return task
 
     def list_all(
