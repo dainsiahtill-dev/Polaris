@@ -141,6 +141,38 @@ def test_scan_detects_tool_receipt_contamination_without_echoing_receipt(tmp_pat
     assert "tests/garden.test.ts" not in errors[0]
 
 
+def test_tool_receipt_contamination_threads_direct_typed_issue_without_fallback(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    target = tmp_path / "tests" / "simulation.test.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("**write_file**: Error - {'ok': False, 'error': 'write failed'}\n", encoding="utf-8")
+    parsed_string_errors: list[str] = []
+    original = artifact_quality_module._artifact_quality_issues_from_errors
+
+    def _capture_string_fallback(values: object) -> Any:
+        rows = tuple(values) if not isinstance(values, str) else (values,)
+        parsed_string_errors.extend(str(item) for item in rows if isinstance(item, str) and item)
+        return original(rows)
+
+    monkeypatch.setattr(
+        artifact_quality_module,
+        "_artifact_quality_issues_from_errors",
+        _capture_string_fallback,
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(
+        str(tmp_path),
+        relative_paths=["tests/simulation.test.ts"],
+    )
+
+    assert evidence.errors
+    assert parsed_string_errors == []
+    assert evidence.issues[0].code == "tool_receipt_contamination"
+    assert evidence.issues[0].metadata["raw"] == evidence.errors[0]
+
+
 def test_scan_detects_source_narration_contamination(tmp_path: Path) -> None:
     target = tmp_path / "src" / "main.ts"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -156,6 +188,38 @@ def test_scan_detects_source_narration_contamination(tmp_path: Path) -> None:
         "file starts with assistant prose instead of project source code. "
         "Rewrite this artifact with real UTF-8 source only."
     ]
+
+
+def test_source_narration_contamination_threads_direct_typed_issue_without_fallback(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    target = tmp_path / "src" / "main.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "I'll address the quality repair issues immediately.\nexport const ready = true;\n",
+        encoding="utf-8",
+    )
+    parsed_string_errors: list[str] = []
+    original = artifact_quality_module._artifact_quality_issues_from_errors
+
+    def _capture_string_fallback(values: object) -> Any:
+        rows = tuple(values) if not isinstance(values, str) else (values,)
+        parsed_string_errors.extend(str(item) for item in rows if isinstance(item, str) and item)
+        return original(rows)
+
+    monkeypatch.setattr(
+        artifact_quality_module,
+        "_artifact_quality_issues_from_errors",
+        _capture_string_fallback,
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["src/main.ts"])
+
+    assert evidence.errors
+    assert parsed_string_errors == []
+    assert evidence.issues[0].code == "source_narration_contamination"
+    assert evidence.issues[0].metadata["raw"] == evidence.errors[0]
 
 
 def test_scan_detects_repair_directive_narration_contamination(tmp_path: Path) -> None:

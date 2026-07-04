@@ -1092,6 +1092,29 @@ def _tool_receipt_contamination_error(relative_path: str, text: str) -> str:
     )
 
 
+def _file_artifact_quality_issue(
+    error: str,
+    relative_path: str,
+    *,
+    code: str,
+    source: str = "file_artifact_scanner",
+) -> ArtifactQualityIssue:
+    normalized_error = str(error or "").strip()
+    message = normalized_error
+    if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
+        message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    return ArtifactQualityIssue(
+        code=code,
+        message=message,
+        path=relative_path,
+        source=source,
+        metadata={
+            "raw": normalized_error,
+            "artifact_path": relative_path,
+        },
+    )
+
+
 def _source_narration_contamination_error(relative_path: str, text: str) -> str:
     suffix = Path(relative_path).suffix.lower()
     if suffix not in _ARTIFACT_QUALITY_SOURCE_EXTS:
@@ -1123,14 +1146,26 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
     if receipt_error:
         return _FileArtifactQualityEvidence(
             errors=(receipt_error,),
-            issues=_artifact_quality_issues_from_errors((receipt_error,)),
+            issues=(
+                _file_artifact_quality_issue(
+                    receipt_error,
+                    relative_path,
+                    code="tool_receipt_contamination",
+                ),
+            ),
         )
 
     narration_error = _source_narration_contamination_error(relative_path, text)
     if narration_error:
         return _FileArtifactQualityEvidence(
             errors=(narration_error,),
-            issues=_artifact_quality_issues_from_errors((narration_error,)),
+            issues=(
+                _file_artifact_quality_issue(
+                    narration_error,
+                    relative_path,
+                    code="source_narration_contamination",
+                ),
+            ),
         )
 
     errors: list[str] = []
@@ -1140,22 +1175,8 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
         normalized_error = str(error or "").strip()
         if not normalized_error:
             return
-        message = normalized_error
-        if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
-            message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
         errors.append(normalized_error)
-        issues.append(
-            ArtifactQualityIssue(
-                code=code,
-                message=message,
-                path=relative_path,
-                source=source,
-                metadata={
-                    "raw": normalized_error,
-                    "artifact_path": relative_path,
-                },
-            )
-        )
+        issues.append(_file_artifact_quality_issue(normalized_error, relative_path, code=code, source=source))
 
     syntax = check_source_file_syntax(str(full_path))
     if syntax is not None and syntax.get("ok") is False:
