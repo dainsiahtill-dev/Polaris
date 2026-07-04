@@ -96,17 +96,36 @@ class TurnDecisionDecoder:
         3. 如果需要澄清 -> ASK_USER
         """
 
-        # Step 0: Finalization phase — tool calls are hallucinations; discard them.
+        # Step 0: Finalization phase — tool calls are hallucinations; preserve
+        # explicit filtered evidence without turning them into dispatchable calls.
         if phase == "optional_finalize" and finalize_mode_hint == FinalizeMode.LLM_ONCE:
-            all_tools, _ = self._extract_tool_calls(response)
-            if all_tools:
+            all_tools, decode_failures = self._extract_tool_calls(response)
+            native_tool_call_envelopes = self._native_tool_call_envelopes(response)
+            metadata: dict[str, Any] = {"source": "finalization_answer", "model": response.model}
+            if all_tools or native_tool_call_envelopes or decode_failures:
                 # Model hallucinated tool calls during finalization despite tool_choice=none.
-                # Log and drop them rather than panicking or handing off.
+                # Record them as filtered evidence rather than panicking, handing off, or
+                # projecting them as normal native_tool_call_envelopes.
                 logger.warning(
                     "finalization_hallucinated_tool_calls_dropped: turn_id=%s tools=%s",
                     turn_id,
                     [t.get("tool_name") for t in all_tools],
                 )
+                metadata["filtered_tool_calls_reason"] = "finalization_tool_choice_none"
+                metadata["filtered_tool_calls_count"] = len(all_tools) or len(native_tool_call_envelopes)
+            if all_tools:
+                metadata["filtered_tool_calls"] = [
+                    {
+                        "tool_name": str(tool.get("tool_name") or ""),
+                        "call_id": str(tool.get("call_id") or ""),
+                        "reason": "finalization_tool_choice_none",
+                    }
+                    for tool in all_tools
+                ]
+            if native_tool_call_envelopes:
+                metadata["filtered_native_tool_call_envelopes"] = native_tool_call_envelopes
+            if decode_failures:
+                metadata["filtered_decode_failures"] = decode_failures
             return TurnDecision(
                 turn_id=turn_id,
                 kind=TurnDecisionKind.FINAL_ANSWER,
@@ -115,7 +134,7 @@ class TurnDecisionDecoder:
                 tool_batch=None,
                 finalize_mode=FinalizeMode.NONE,
                 domain=self.config.domain,
-                metadata={"source": "finalization_answer", "model": response.model},
+                metadata=metadata,
             )
 
         # Step 1: 提取所有 native 工具调用
@@ -416,7 +435,8 @@ class TurnDecisionDecoder:
         """
         FinalizationCaller guard: enforce conceptual tool_choice=none.
         If the LLM response contains tool calls during LLM_ONCE finalization,
-        immediately return a protocol-panic HANDOFF_WORKFLOW decision.
+        return a final answer and preserve the hallucinated calls as filtered
+        evidence instead of dispatching or handing them off.
         """
         return self.decode(
             response,

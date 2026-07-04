@@ -335,6 +335,48 @@ class TestNativeToolExecutionSource:
         assert len(envelopes[0]["raw_call_hash"]) == 64
         assert len(envelopes[0]["arguments_hash"]) == 64
 
+    def test_finalization_tool_calls_are_preserved_as_filtered_evidence(self) -> None:
+        decoder = TurnDecisionDecoder(config=DecodeConfig(domain="document"))
+        envelope = {
+            "schema_version": "native_tool_call_envelope.v1",
+            "envelope_id": "native_tool_call:anthropic:0:call_final:abcdef",
+            "provider": "anthropic",
+            "tool_name": "write_file",
+            "call_id": "call_final",
+            "raw_call_hash": "a" * 64,
+            "arguments_hash": "b" * 64,
+        }
+        response = RawLLMResponse(
+            content="总结完成。",
+            thinking=None,
+            native_tool_calls=[
+                _native_tool("write_file", {"path": "x.py", "content": "1"}, call_id="call_final"),
+            ],
+            model="claude",
+            usage={"native_tool_call_envelopes": [envelope]},
+        )
+
+        decision = decoder.decode_for_finalization(
+            response,
+            TurnId("turn_finalization_filtered_tool"),
+            FinalizeMode.LLM_ONCE,
+        )
+
+        metadata = decision["metadata"]
+        assert decision["kind"] == TurnDecisionKind.FINAL_ANSWER
+        assert decision["tool_batch"] is None
+        assert decision["finalize_mode"] == FinalizeMode.NONE
+        assert "native_tool_call_envelopes" not in metadata
+        assert metadata["filtered_tool_calls_reason"] == "finalization_tool_choice_none"
+        assert metadata["filtered_tool_calls"] == [
+            {
+                "tool_name": "write_file",
+                "call_id": "call_final",
+                "reason": "finalization_tool_choice_none",
+            }
+        ]
+        assert metadata["filtered_native_tool_call_envelopes"] == [envelope]
+
 
 class TestFinalizeModeDetermination:
     """验证：finalize_mode 正确确定。"""
