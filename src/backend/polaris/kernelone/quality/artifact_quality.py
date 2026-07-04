@@ -518,12 +518,9 @@ _ARTIFACT_QUALITY_GO_UNDEFINED_RE = re.compile(
 
 def _artifact_quality_issue_code(message: str) -> str:
     normalized = message.lower()
-    if "declared target file" in normalized and "missing" in normalized:
-        return "declared_target_missing"
-    if "unresolved import symbol" in normalized:
-        return "unresolved_import_symbol"
-    if "unresolved relative import" in normalized:
-        return "unresolved_relative_import"
+    target_or_import_issue_code = _legacy_target_or_import_issue_code(normalized)
+    if target_or_import_issue_code:
+        return target_or_import_issue_code
     typescript_match = _ARTIFACT_QUALITY_TYPESCRIPT_ERROR_RE.search(message)
     if typescript_match:
         return f"typescript_{str(typescript_match.group('code') or '').lower()}"
@@ -548,6 +545,18 @@ def _artifact_quality_issue_code(message: str) -> str:
         return "source_narration_contamination"
     slug = re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
     return slug[:80] or "artifact_quality_error"
+
+
+def _legacy_target_or_import_issue_code(normalized_message: str) -> str:
+    """Classify legacy target-contract and import-topology diagnostics."""
+
+    if "declared target file" in normalized_message and "missing" in normalized_message:
+        return "declared_target_missing"
+    if "unresolved import symbol" in normalized_message:
+        return "unresolved_import_symbol"
+    if "unresolved relative import" in normalized_message:
+        return "unresolved_relative_import"
+    return ""
 
 
 def _legacy_npm_manifest_issue_code(normalized_message: str) -> str:
