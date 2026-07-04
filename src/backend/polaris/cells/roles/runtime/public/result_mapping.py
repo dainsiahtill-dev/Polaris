@@ -16,10 +16,10 @@ from polaris.cells.control_plane.run_ledger.public import (
     build_tool_dispatch_dropped_lifecycle_from_observed_calls,
     failure_evidence_from_lifecycle_receipt,
     is_failure_class,
+    native_tool_call_envelope_refs_from_metadata,
     normalize_failure_class,
-    normalize_native_tool_call_envelope_refs,
-    normalize_tool_call_lifecycle_receipt,
     project_tool_lifecycle_receipt_to_metadata,
+    tool_call_lifecycle_receipts_from_metadata,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
@@ -38,42 +38,15 @@ def _tool_name_from_call(item: Mapping[str, Any]) -> str:
     return ""
 
 
-def _envelope_refs_from_lifecycle(value: Any) -> tuple[Mapping[str, Any], ...]:
-    if not isinstance(value, Mapping):
-        return ()
-    receipt = normalize_tool_call_lifecycle_receipt(value)
-    return normalize_native_tool_call_envelope_refs(receipt.get("native_tool_call_envelope_refs"))
-
-
 def _native_tool_call_envelopes(result: RoleTurnResult) -> tuple[Mapping[str, Any], ...]:
     metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
-    for key in ("native_tool_call_envelope_refs", "native_tool_call_envelopes"):
-        envelopes = normalize_native_tool_call_envelope_refs(metadata.get(key))
-        if envelopes:
-            return envelopes
-    for key in ("tool_call_lifecycle", "tool_call_lifecycle_receipt"):
-        envelopes = _envelope_refs_from_lifecycle(metadata.get(key))
-        if envelopes:
-            return envelopes
-    receipt_rows = metadata.get("tool_call_lifecycle_receipts")
-    if isinstance(receipt_rows, (list, tuple)):
-        for receipt in receipt_rows:
-            envelopes = _envelope_refs_from_lifecycle(receipt)
-            if envelopes:
-                return envelopes
-    return ()
+    return native_tool_call_envelope_refs_from_metadata(metadata)
 
 
 def _lifecycle_receipt_from_metadata(metadata: Mapping[str, Any]) -> dict[str, Any] | None:
-    for key in ("tool_call_lifecycle_receipt", "tool_call_lifecycle"):
-        raw = metadata.get(key)
-        if isinstance(raw, Mapping):
-            return normalize_tool_call_lifecycle_receipt(raw)
-    receipt_rows = metadata.get("tool_call_lifecycle_receipts")
-    if isinstance(receipt_rows, (list, tuple)):
-        for raw in receipt_rows:
-            if isinstance(raw, Mapping):
-                return normalize_tool_call_lifecycle_receipt(raw)
+    receipts = tool_call_lifecycle_receipts_from_metadata(metadata)
+    if receipts:
+        return dict(receipts[0])
     return None
 
 
