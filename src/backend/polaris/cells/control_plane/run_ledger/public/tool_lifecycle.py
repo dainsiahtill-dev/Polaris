@@ -11,6 +11,7 @@ from typing import Any
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import (
     FailureClassV1,
     FailureEvidenceV1,
+    append_failure_evidence_to_metadata,
     normalize_failure_class,
 )
 from polaris.kernelone.tools.tool_kinds import is_write_tool_name
@@ -576,6 +577,27 @@ def failure_evidence_from_lifecycle_receipt(value: Any) -> dict[str, Any]:
     ).to_dict()
 
 
+def project_lifecycle_failure_evidence_to_metadata(
+    metadata: dict[str, Any],
+    lifecycle: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Append lifecycle-derived failure evidence to metadata.
+
+    Boundary:
+        This helper is the lifecycle-specific metadata projection entrypoint.
+        It keeps lifecycle decoding in ``tool_lifecycle`` and metadata row /
+        summary projection in ``failure_evidence``.
+
+    Complexity:
+        O(b + d + e + n*m) time from lifecycle evidence projection plus stable
+        evidence row de-duplication; O(b + d + e + n) memory.
+    """
+
+    failure_evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
+    if not failure_evidence:
+        return []
+    return append_failure_evidence_to_metadata(metadata, failure_evidence)
+
 __all__ = [
     "ToolCallLifecycleReceiptV1",
     "build_tool_call_lifecycle_receipt",
@@ -583,4 +605,6 @@ __all__ = [
     "native_tool_call_facts_from_lifecycle_receipt",
     "normalize_native_tool_call_envelope_refs",
     "normalize_tool_call_lifecycle_receipt",
+    "project_lifecycle_failure_evidence_to_metadata",
+    "project_native_tool_call_facts_to_metadata",
 ]

@@ -10,9 +10,8 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from polaris.cells.control_plane.run_ledger.public import (
-    append_failure_evidence_to_metadata,
-    failure_evidence_from_lifecycle_receipt,
     normalize_tool_call_lifecycle_receipt,
+    project_lifecycle_failure_evidence_to_metadata,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_call_facts,
@@ -200,10 +199,7 @@ def project_failure_evidence_from_tool_lifecycle(metadata: dict[str, Any]) -> No
     raw = metadata.get("tool_call_lifecycle_receipt")
     if not isinstance(raw, dict):
         return
-    failure_evidence = failure_evidence_from_lifecycle_receipt(raw)
-    if not failure_evidence:
-        return
-    append_failure_evidence_to_metadata(metadata, failure_evidence)
+    project_lifecycle_failure_evidence_to_metadata(metadata, raw)
 
 
 def role_turn_error_result(

@@ -13,14 +13,13 @@ from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
-    append_failure_evidence_to_metadata,
     build_tool_call_lifecycle_receipt,
-    failure_evidence_from_lifecycle_receipt,
     is_failure_class,
     native_tool_call_facts_from_lifecycle_receipt,
     normalize_failure_class,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
+    project_lifecycle_failure_evidence_to_metadata,
     project_native_tool_call_facts_to_metadata,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnResult
@@ -89,10 +88,7 @@ def _project_lifecycle_native_tool_facts(metadata: dict[str, Any], lifecycle: Ma
 
 
 def _project_lifecycle_failure_evidence(metadata: dict[str, Any], lifecycle: Mapping[str, Any]) -> None:
-    failure_evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
-    if not failure_evidence:
-        return
-    append_failure_evidence_to_metadata(metadata, failure_evidence)
+    project_lifecycle_failure_evidence_to_metadata(metadata, lifecycle)
 
 
 def _extract_tool_calls(result: RoleTurnResult) -> tuple[str, ...]:

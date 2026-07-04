@@ -7,6 +7,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     native_tool_call_facts_from_lifecycle_receipt,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
+    project_lifecycle_failure_evidence_to_metadata,
     project_native_tool_call_facts_to_metadata,
 )
 
@@ -300,6 +301,55 @@ def test_project_native_tool_call_facts_to_metadata_can_preserve_names() -> None
         "native_tool_calls_count": 0,
         "native_tool_call_names": ["stale_tool"],
     }
+
+
+def test_project_lifecycle_failure_evidence_to_metadata_appends_failed_lifecycle() -> None:
+    metadata = {
+        "failure_evidence": [
+            {
+                "schema_version": "failure_evidence.v1",
+                "failure_class": "TOOL_RESULT_FAILED",
+                "responsible_layer": "tool_executor",
+            }
+        ],
+        "failure_evidence_summary": {"source": "previous_projection", "count": 1},
+    }
+
+    rows = project_lifecycle_failure_evidence_to_metadata(
+        metadata,
+        {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_calls_count": 1,
+            "decoded_tool_calls_count": 1,
+            "dispatched_tool_calls_count": 0,
+            "dispatch_status": "dropped",
+            "failure_class": "TOOL_DISPATCH_DROPPED",
+            "reason": "provider emitted tool calls but none were dispatched",
+        },
+    )
+
+    assert rows[-1]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert metadata["failure_evidence_summary"] == {
+        "source": "previous_projection",
+        "count": 2,
+        "latest_failure_class": "TOOL_DISPATCH_DROPPED",
+    }
+
+
+def test_project_lifecycle_failure_evidence_to_metadata_skips_success_lifecycle() -> None:
+    metadata: dict[str, object] = {}
+
+    rows = project_lifecycle_failure_evidence_to_metadata(
+        metadata,
+        {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "ok": True,
+            "dispatch_status": "dispatched",
+        },
+    )
+
+    assert rows == []
+    assert metadata == {}
 
 
 def test_tool_lifecycle_normalizer_canonicalizes_legacy_dropped_tool_names() -> None:
