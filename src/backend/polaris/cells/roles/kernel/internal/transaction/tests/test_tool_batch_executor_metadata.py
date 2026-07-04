@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from polaris.cells.control_plane.run_ledger.public import native_tool_call_count_from_metadata
-from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import _metadata_native_tool_call_envelopes
+from polaris.cells.control_plane.run_ledger.public import (
+    native_tool_call_count_from_metadata,
+    native_tool_call_envelope_refs_from_metadata,
+)
 
 
 def test_metadata_native_tool_call_count_accepts_lifecycle_envelope_refs() -> None:
@@ -14,7 +16,7 @@ def test_metadata_native_tool_call_count_accepts_lifecycle_envelope_refs() -> No
     }
 
     assert native_tool_call_count_from_metadata(metadata, fallback=0) == 2
-    assert [item["tool_name"] for item in _metadata_native_tool_call_envelopes(metadata)] == [
+    assert [item["tool_name"] for item in native_tool_call_envelope_refs_from_metadata(metadata)] == [
         "write_file",
         "execute_command",
     ]
@@ -33,7 +35,7 @@ def test_metadata_native_tool_call_count_accepts_lifecycle_receipt_envelope_refs
     }
 
     assert native_tool_call_count_from_metadata(metadata, fallback=0) == 2
-    assert [item["tool_name"] for item in _metadata_native_tool_call_envelopes(metadata)] == [
+    assert [item["tool_name"] for item in native_tool_call_envelope_refs_from_metadata(metadata)] == [
         "write_file",
         "execute_command",
     ]
@@ -54,7 +56,7 @@ def test_metadata_native_tool_call_envelopes_deduplicates_aliases() -> None:
         ],
     }
 
-    assert [item["tool_name"] for item in _metadata_native_tool_call_envelopes(metadata)] == [
+    assert [item["tool_name"] for item in native_tool_call_envelope_refs_from_metadata(metadata)] == [
         "write_file",
         "execute_command",
     ]
