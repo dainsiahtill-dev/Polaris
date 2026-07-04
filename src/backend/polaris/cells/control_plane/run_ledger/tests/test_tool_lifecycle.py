@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_missing_dispatch_lifecycle_receipt,
@@ -20,6 +22,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     native_tool_call_facts_from_metadata,
     native_tool_call_facts_from_raw_calls,
     native_tool_call_facts_from_sources,
+    native_tool_call_names_from_facts,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
     project_completion_audit_evidence_to_metadata,
@@ -936,6 +939,16 @@ def test_project_native_tool_call_facts_to_metadata_overwrites_stale_projection(
     }
 
 
+def test_native_tool_call_names_from_facts_owns_name_coercion() -> None:
+    assert native_tool_call_names_from_facts(
+        {
+            "native_tool_calls_count": 3,
+            "native_tool_call_names": ["", " write_file ", None, "execute_command"],
+        }
+    ) == ["write_file", "execute_command"]
+    assert native_tool_call_names_from_facts({}, fallback=(" repo_tree ", "", None)) == ["repo_tree"]
+
+
 def test_project_native_tool_call_facts_to_metadata_can_preserve_names() -> None:
     metadata = {"native_tool_calls_count": 9, "native_tool_call_names": ["stale_tool"]}
 
@@ -1003,8 +1016,10 @@ def test_project_completion_audit_evidence_to_metadata_projects_lifecycle_facts(
     assert metadata["required_tools"] == ["write_file"]
     assert metadata["native_tool_calls_count"] == 1
     assert metadata["native_tool_call_names"] == ["write_file"]
-    assert metadata["tool_call_lifecycle_receipt"]["native_tool_call_envelope_refs"] == [envelope]
-    assert metadata["failure_evidence"][0]["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    lifecycle = cast(dict[str, Any], metadata["tool_call_lifecycle_receipt"])
+    failure_evidence_rows = cast(list[dict[str, Any]], metadata["failure_evidence"])
+    assert lifecycle["native_tool_call_envelope_refs"] == [envelope]
+    assert failure_evidence_rows[0]["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
 
 
 def test_project_completion_audit_evidence_to_metadata_preserves_direct_failure_evidence() -> None:
@@ -1184,11 +1199,14 @@ def test_project_tool_lifecycle_metadata_projects_canonical_receipt_failure_and_
 
     project_tool_lifecycle_metadata(metadata)
 
-    assert metadata["tool_call_lifecycle_receipt"]["dispatch_status"] == "dropped"
+    lifecycle = cast(dict[str, Any], metadata["tool_call_lifecycle_receipt"])
+    failure_evidence_rows = cast(list[dict[str, Any]], metadata["failure_evidence"])
+    failure_summary = cast(dict[str, Any], metadata["failure_evidence_summary"])
+    assert lifecycle["dispatch_status"] == "dropped"
     assert metadata["native_tool_calls_count"] == 1
     assert metadata["native_tool_call_names"] == ["write_file"]
-    assert metadata["failure_evidence"][-1]["failure_class"] == "TOOL_DISPATCH_DROPPED"
-    assert metadata["failure_evidence_summary"]["latest_failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert failure_evidence_rows[-1]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert failure_summary["latest_failure_class"] == "TOOL_DISPATCH_DROPPED"
 
 
 def test_project_tool_lifecycle_receipt_to_metadata_owns_canonical_and_compat_keys() -> None:
@@ -1205,10 +1223,12 @@ def test_project_tool_lifecycle_receipt_to_metadata_owns_canonical_and_compat_ke
     project_tool_lifecycle_receipt_to_metadata(metadata, receipt)
 
     assert metadata["tool_call_lifecycle_receipt"] == metadata["tool_call_lifecycle"]
-    assert metadata["tool_call_lifecycle_receipt"]["native_tool_calls_count"] == 1
+    lifecycle = cast(dict[str, Any], metadata["tool_call_lifecycle_receipt"])
+    failure_evidence_rows = cast(list[dict[str, Any]], metadata["failure_evidence"])
+    assert lifecycle["native_tool_calls_count"] == 1
     assert metadata["native_tool_calls_count"] == 1
     assert metadata["native_tool_call_names"] == ["write_file"]
-    assert metadata["failure_evidence"][0]["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert failure_evidence_rows[0]["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
 
 
 def test_tool_lifecycle_normalizer_canonicalizes_legacy_dropped_tool_names() -> None:

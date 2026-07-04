@@ -51,6 +51,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     build_native_tool_schemas,
     native_tool_call_envelopes_from_metadata,
     native_tool_call_envelopes_from_response,
+    native_tool_call_name,
     native_tool_call_provider_from_metadata,
     native_tool_calls_from_response,
     provider_response_hash,
@@ -93,6 +94,11 @@ def test_stream_event_native_tool_call_projection_uses_decoder_shape() -> None:
             "arguments": {"file": "src/index.ts", "content": "ok"},
         },
     }
+
+
+def test_native_tool_call_name_uses_run_ledger_name_projection() -> None:
+    assert native_tool_call_name({"functionName": " write_file ", "arguments": {"path": "x.py"}}) == "write_file"
+    assert native_tool_call_name({"function": {"name": "execute_command", "arguments": "{}"}}) == "execute_command"
 
 
 def test_stream_tool_call_signature_is_stable() -> None:

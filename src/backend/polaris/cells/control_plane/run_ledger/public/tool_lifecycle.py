@@ -955,6 +955,32 @@ def native_tool_call_count_from_facts(facts: Mapping[str, Any] | None, *, fallba
     return _int_value(fallback)
 
 
+def native_tool_call_names_from_facts(
+    facts: Mapping[str, Any] | None,
+    *,
+    fallback: Sequence[Any] = (),
+) -> list[str]:
+    """Derive native tool-call names from a Run Ledger native-fact mapping.
+
+    Boundary:
+        ``native_tool_call_facts_from_sources`` and related helpers emit the
+        native-fact shape. Consumers should call this reader instead of
+        interpreting ``native_tool_call_names`` locally, so name coercion and
+        fallback semantics stay owned by Run Ledger.
+
+    Complexity:
+        O(n) time and memory where ``n`` is the number of candidate names.
+    """
+
+    raw_names: Sequence[Any]
+    if isinstance(facts, Mapping):
+        value = facts.get("native_tool_call_names")
+        raw_names = value if isinstance(value, (list, tuple)) else ()
+        if raw_names:
+            return [name for item in raw_names if (name := _clean_string(item))]
+    return [name for item in fallback if (name := _clean_string(item))]
+
+
 _NATIVE_TOOL_FACT_EVIDENCE_KEYS: tuple[str, ...] = (
     "tool_call_lifecycle",
     "tool_call_lifecycle_receipt",

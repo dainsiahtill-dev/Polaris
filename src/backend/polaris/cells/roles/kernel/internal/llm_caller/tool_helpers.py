@@ -16,6 +16,7 @@ from typing import Any, Mapping
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     native_tool_call_envelope_refs_from_metadata,
     native_tool_call_facts_from_raw_calls,
+    native_tool_call_names_from_facts,
     project_native_tool_call_facts_to_metadata,
 )
 from polaris.kernelone.llm.budget_policy import (
@@ -146,12 +147,7 @@ class NativeToolCallEnvelopeV1:
 
 def native_tool_call_name(call: Mapping[str, Any]) -> str:
     facts = native_tool_call_facts_from_raw_calls([call])
-    raw_names = facts.get("native_tool_call_names")
-    names = [
-        name
-        for item in (raw_names if isinstance(raw_names, (list, tuple)) else ())
-        if (name := str(item or "").strip())
-    ]
+    names = native_tool_call_names_from_facts(facts)
     return names[0] if names else ""
 
 
