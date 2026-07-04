@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from polaris.cells.roles.kernel.internal.transaction.decision_pipeline import (
-    _project_native_tool_call_count,
+    _native_tool_call_facts,
+    _project_native_tool_call_facts,
 )
 from polaris.cells.roles.kernel.internal.transaction.stream_orchestrator import (
     _project_completion_dispatch_evidence,
@@ -71,9 +74,15 @@ def test_project_completion_dispatch_evidence_derives_refs_from_lifecycle_receip
     ]
 
 
-def test_project_native_tool_call_count_overwrites_stale_stream_monitoring() -> None:
-    monitoring = {"native_tool_calls_count": 7}
+def test_project_native_tool_call_facts_overwrites_stale_stream_monitoring() -> None:
+    response = SimpleNamespace(
+        content="",
+        model="gpt-test",
+        native_tool_calls=[{"function": {"name": "write_file"}}],
+    )
+    monitoring = {"native_tool_calls_count": 7, "native_tool_call_names": ["stale_tool"]}
 
-    _project_native_tool_call_count(monitoring, 0)
+    _project_native_tool_call_facts(monitoring, _native_tool_call_facts(response, {}))
 
-    assert monitoring["native_tool_calls_count"] == 0
+    assert monitoring["native_tool_calls_count"] == 1
+    assert monitoring["native_tool_call_names"] == ["write_file"]

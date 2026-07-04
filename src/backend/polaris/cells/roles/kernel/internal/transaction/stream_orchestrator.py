@@ -30,8 +30,8 @@ from polaris.cells.roles.kernel.internal.speculation.task_group import TurnScope
 from polaris.cells.roles.kernel.internal.stream_shadow_engine import StreamShadowEngine
 from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
 from polaris.cells.roles.kernel.internal.transaction.decision_pipeline import (
-    _native_tool_call_count,
-    _project_native_tool_call_count,
+    _native_tool_call_facts,
+    _project_native_tool_call_facts,
     _provider_response_hash,
     build_tool_dispatch_dropped_anomaly,
 )
@@ -1338,10 +1338,11 @@ class StreamOrchestrator:
         # (decode is pure — identical input yields an identical decision).
         decision = probe_decision if corrective_ask is None else self.decoder.decode(llm_response, TurnId(turn_id))
         decision_metadata = dict(decision.get("metadata") or {})
-        native_tool_call_count = _native_tool_call_count(llm_response, decision_metadata)
+        native_tool_call_facts = _native_tool_call_facts(llm_response, decision_metadata)
+        native_tool_call_count = int(native_tool_call_facts.get("native_tool_calls_count") or 0)
         provider_response_hash = _provider_response_hash(llm_response, decision_metadata)
         decision_metadata.setdefault("provider_response_hash", provider_response_hash)
-        _project_native_tool_call_count(decision_metadata, native_tool_call_count)
+        _project_native_tool_call_facts(decision_metadata, native_tool_call_facts)
         decision = dict(decision)
         decision["metadata"] = decision_metadata
         if native_tool_call_count > 0 and tool_definitions and not decision.get("tool_batch"):
@@ -1607,7 +1608,7 @@ class StreamOrchestrator:
             result.get("llm_response_metadata"),
             llm_response.get("usage"),
         )
-        _project_native_tool_call_count(monitoring, native_tool_call_count)
+        _project_native_tool_call_facts(monitoring, _native_tool_call_facts(llm_response, monitoring))
         yield CompletionEvent(
             turn_id=turn_id,
             status=completion_status,

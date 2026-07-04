@@ -4,7 +4,8 @@ from types import SimpleNamespace
 
 from polaris.cells.roles.kernel.internal.transaction.decision_pipeline import (
     _native_tool_call_count,
-    _project_native_tool_call_count,
+    _native_tool_call_facts,
+    _project_native_tool_call_facts,
     _provider_response_hash,
     build_tool_dispatch_dropped_anomaly,
 )
@@ -47,12 +48,21 @@ def test_native_tool_call_count_falls_back_to_raw_calls() -> None:
     assert _native_tool_call_count(response, {}) == 1
 
 
-def test_project_native_tool_call_count_overwrites_stale_projection() -> None:
-    metadata = {"native_tool_calls_count": 9}
+def test_project_native_tool_call_facts_overwrites_stale_projection() -> None:
+    response = SimpleNamespace(
+        content="",
+        model="gpt-test",
+        native_tool_calls=[
+            {"function": {"name": "write_file"}},
+            {"function": {"name": "execute_command"}},
+        ],
+    )
+    metadata = {"native_tool_calls_count": 9, "native_tool_call_names": ["stale_tool"]}
 
-    _project_native_tool_call_count(metadata, 0)
+    _project_native_tool_call_facts(metadata, _native_tool_call_facts(response, {}))
 
-    assert metadata["native_tool_calls_count"] == 0
+    assert metadata["native_tool_calls_count"] == 2
+    assert metadata["native_tool_call_names"] == ["write_file", "execute_command"]
 
 
 def test_provider_response_hash_includes_metadata_envelopes() -> None:

@@ -34,6 +34,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     build_native_tool_call_envelope_payloads,
     native_tool_call_count as derive_native_tool_call_count,
     native_tool_call_envelopes_from_metadata,
+    native_tool_call_facts as derive_native_tool_call_facts,
 )
 from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
     build_corrective_context,
@@ -58,6 +59,10 @@ logger = logging.getLogger(__name__)
 
 def _native_tool_call_count(response: RawLLMResponse, metadata: Mapping[str, Any] | None = None) -> int:
     return derive_native_tool_call_count(metadata, _native_tool_calls_from_response(response))
+
+
+def _native_tool_call_facts(response: RawLLMResponse, metadata: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    return derive_native_tool_call_facts(metadata, _native_tool_calls_from_response(response))
 
 
 def _native_tool_calls_from_response(response: Any) -> list[dict[str, Any]]:
@@ -173,10 +178,17 @@ def _with_decision_metadata(decision: TurnDecision, metadata: dict[str, Any]) ->
     )
 
 
-def _project_native_tool_call_count(metadata: dict[str, Any], native_tool_call_count: int) -> None:
-    """Project the canonical native tool-call count over legacy top-level aliases."""
+def _project_native_tool_call_facts(metadata: dict[str, Any], facts: Mapping[str, Any]) -> None:
+    """Project canonical native tool-call facts over legacy top-level aliases."""
 
-    metadata["native_tool_calls_count"] = native_tool_call_count
+    try:
+        metadata["native_tool_calls_count"] = int(str(facts.get("native_tool_calls_count") or "0").strip())
+    except (TypeError, ValueError):
+        metadata["native_tool_calls_count"] = 0
+    names = facts.get("native_tool_call_names")
+    metadata["native_tool_call_names"] = [
+        name for item in (names if isinstance(names, list) else []) if (name := str(item or "").strip())
+    ]
 
 
 async def run_decision_pipeline(
@@ -233,9 +245,10 @@ async def run_decision_pipeline(
     # === Phase 3: 解码决策 ===
     decision = probe_decision if corrective_ask is None else decoder.decode(llm_response, TurnId(turn_id))
     decision_metadata = dict(decision.get("metadata") or {})
-    native_tool_call_count = _native_tool_call_count(llm_response, decision_metadata)
+    native_tool_call_facts = _native_tool_call_facts(llm_response, decision_metadata)
+    native_tool_call_count = int(native_tool_call_facts.get("native_tool_calls_count") or 0)
     decision_metadata.setdefault("provider_response_hash", _provider_response_hash(llm_response, decision_metadata))
-    _project_native_tool_call_count(decision_metadata, native_tool_call_count)
+    _project_native_tool_call_facts(decision_metadata, native_tool_call_facts)
     decision = _with_decision_metadata(decision, decision_metadata)
     if native_tool_call_count > 0 and tool_definitions and not decision.get("tool_batch"):
         ledger.anomaly_flags.append(
