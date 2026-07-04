@@ -25,6 +25,7 @@ from .execution_session import (
     is_terminal_session_status,
     normalize_positive_int,
     sanitize_summary,
+    task_row_status_counts,
     terminal_session_timestamp,
     terminal_task_status_value_for_session_status,
     utc_now,
@@ -988,34 +989,7 @@ class TaskRuntimeService:
         return self._board.get_ready_tasks()
 
     def get_stats(self) -> dict[str, Any]:
-        rows = self.list_task_rows()
-        stats = {
-            "total": len(rows),
-            "ready": 0,
-            "pending": 0,
-            "in_progress": 0,
-            "completed": 0,
-            "failed": 0,
-            "blocked": 0,
-            "cancelled": 0,
-        }
-        for row in rows:
-            status = str(row.get("status") or "").strip().lower()
-            if status == "pending":
-                stats["pending"] += 1
-                if not row.get("blocked_by"):
-                    stats["ready"] += 1
-            elif status == "in_progress":
-                stats["in_progress"] += 1
-            elif status == "completed":
-                stats["completed"] += 1
-            elif status == "failed":
-                stats["failed"] += 1
-            elif status == "blocked":
-                stats["blocked"] += 1
-            elif status == "cancelled":
-                stats["cancelled"] += 1
-        return stats
+        return task_row_status_counts(self.list_task_rows())
 
     def refresh_dependency_unblocks(self) -> dict[str, Any]:
         """Normalize stale BLOCKED rows whose dependencies are now complete."""

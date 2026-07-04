@@ -19,6 +19,14 @@ _TERMINAL_SESSION_STATUS_TO_TASK_STATUS = {
     # their own terminal-status tables.
     "cancelled": "cancelled",
 }
+_TASK_ROW_STATUS_COUNT_KEYS = (
+    "pending",
+    "in_progress",
+    "completed",
+    "failed",
+    "blocked",
+    "cancelled",
+)
 
 
 def utc_now() -> datetime:
@@ -125,6 +133,29 @@ def terminal_session_timestamp(session: TaskExecutionSession) -> float | None:
         if parsed is not None:
             return parsed.timestamp()
     return None
+
+
+def task_row_status_counts(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Project task-row status counts for runtime read models.
+
+    This helper is a read-only projection over persisted task rows. It keeps
+    status bucket semantics beside the execution-session projections so service
+    and API callers do not maintain separate status vocabularies.
+    """
+
+    stats: dict[str, Any] = {
+        "total": len(rows),
+        "ready": 0,
+        **dict.fromkeys(_TASK_ROW_STATUS_COUNT_KEYS, 0),
+    }
+    for row in rows:
+        status = str(row.get("status") or "").strip().lower()
+        if status not in _TASK_ROW_STATUS_COUNT_KEYS:
+            continue
+        stats[status] += 1
+        if status == "pending" and not row.get("blocked_by"):
+            stats["ready"] += 1
+    return stats
 
 
 @dataclass(slots=True)

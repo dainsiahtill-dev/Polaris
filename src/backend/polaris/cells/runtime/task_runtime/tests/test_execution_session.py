@@ -4,6 +4,7 @@ import pytest
 from polaris.cells.runtime.task_runtime.internal.execution_session import (
     TaskExecutionSession,
     is_terminal_session_status,
+    task_row_status_counts,
     terminal_session_timestamp,
     terminal_task_status_value_for_session_status,
 )
@@ -114,3 +115,27 @@ def test_terminal_session_timestamp_returns_none_without_valid_projection_timest
     session = TaskExecutionSession.from_dict(payload)
 
     assert terminal_session_timestamp(session) is None
+
+
+def test_task_row_status_counts_projects_runtime_stats() -> None:
+    rows = [
+        {"id": 1, "status": "pending"},
+        {"id": 2, "status": "pending", "blocked_by": [1]},
+        {"id": 3, "status": "in_progress"},
+        {"id": 4, "status": "completed"},
+        {"id": 5, "status": "failed"},
+        {"id": 6, "status": "blocked"},
+        {"id": 7, "status": "cancelled"},
+        {"id": 8, "status": "unknown"},
+    ]
+
+    assert task_row_status_counts(rows) == {
+        "total": 8,
+        "ready": 1,
+        "pending": 2,
+        "in_progress": 1,
+        "completed": 1,
+        "failed": 1,
+        "blocked": 1,
+        "cancelled": 1,
+    }
