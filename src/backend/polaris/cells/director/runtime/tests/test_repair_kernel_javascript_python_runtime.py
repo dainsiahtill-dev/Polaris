@@ -1144,6 +1144,52 @@ def test_npm_script_contract_uses_typed_repairable_test_script_metadata() -> Non
     assert plan.operations[0].value == "npm run build && node dist/verify.js"
 
 
+def test_npm_script_contract_uses_typed_typescript_source_loader_metadata() -> None:
+    package_text = json.dumps(
+        {
+            "name": "sample",
+            "version": "1.0.0",
+            "type": "module",
+            "devDependencies": {"typescript": "^5.0.0"},
+            "scripts": {
+                "build": "tsc -p tsconfig.json",
+                "start": "node --loader ts-node/esm src/index.ts",
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    diagnostics = (
+        RepairDiagnostic(
+            source="artifact_quality",
+            code="javascript_module_error",
+            message="runtime module error",
+            path="src/index.ts",
+            raw="typed metadata only",
+            metadata={
+                "script_name": "start",
+                "script_issue": "typescript_source_loader_require_cycle",
+            },
+        ),
+    )
+
+    plan = build_npm_script_contract_plan(
+        base_files={
+            "package.json": package_text,
+            "tsconfig.json": "{}\n",
+            "src/index.ts": "export {};\n",
+        },
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert [(operation.kind, operation.path, operation.json_path) for operation in plan.operations] == [
+        ("json_set", "package.json", ("scripts", "start"))
+    ]
+    assert plan.operations[0].value == "npm run build && node dist/index.js"
+
+
 def test_npm_script_contract_repairs_strip_types_test_runner_to_compiled_verifier() -> None:
     package_text = json.dumps(
         {

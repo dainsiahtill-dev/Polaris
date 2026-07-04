@@ -665,6 +665,18 @@ def _npm_manifest_script_issue(detail: str) -> str:
     return "manifest_script_error"
 
 
+def _javascript_module_error_metadata(text: str, message: str) -> dict[str, Any]:
+    metadata: dict[str, Any] = {"raw": text}
+    normalized = f"{text}\n{message}".lower()
+    start_invoked = "npm run start" in normalized or "npm start" in normalized
+    source_loader = "ts-node" in normalized or "node --loader" in normalized or ".ts" in normalized
+    require_cycle = "err_require_cycle_module" in normalized or "cannot require() es module" in normalized
+    if start_invoked and source_loader and require_cycle:
+        metadata["script_name"] = "start"
+        metadata["script_issue"] = "typescript_source_loader_require_cycle"
+    return metadata
+
+
 def _artifact_quality_issue_from_error(error: str) -> ArtifactQualityIssue:
     text = str(error or "").strip()
     message = text
@@ -680,7 +692,10 @@ def _artifact_quality_issue_from_error(error: str) -> ArtifactQualityIssue:
             source="runtime_smoke",
             line=line,
             column=column,
-            metadata={"raw": text},
+            metadata=_javascript_module_error_metadata(
+                text,
+                str(javascript_module_error.group("message") or message).strip(),
+            ),
         )
     code = _artifact_quality_issue_code(message)
     path = "package.json" if code == "npm_manifest_invalid" else _artifact_quality_issue_path(message)

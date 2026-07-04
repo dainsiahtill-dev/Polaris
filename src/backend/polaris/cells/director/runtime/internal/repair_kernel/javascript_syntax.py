@@ -274,7 +274,10 @@ def build_npm_script_contract_plan(
             if replacement and replacement != script_text:
                 updates[("scripts", script_name)] = replacement
 
-    if has_typescript_context and _has_typescript_source_loader_start_error(raw_errors):
+    if has_typescript_context and (
+        _has_typescript_source_loader_start_error(raw_errors)
+        or _has_typescript_source_loader_start_diagnostic(matched_diagnostics)
+    ):
         replacement = _fallback_script_for_recursive_script("start", normalized_base, package_payload)
         if replacement:
             updates[("scripts", "start")] = replacement
@@ -1216,6 +1219,16 @@ def _has_typescript_source_loader_start_error(errors: Sequence[str]) -> bool:
     source_loader = "ts-node" in joined or "node --loader" in joined or ".ts" in joined
     require_cycle = "err_require_cycle_module" in joined or "cannot require() es module" in joined
     return start_invoked and source_loader and require_cycle
+
+
+def _has_typescript_source_loader_start_diagnostic(diagnostics: Sequence[RepairDiagnostic]) -> bool:
+    for diagnostic in diagnostics:
+        metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
+        script_name = str(metadata.get("script_name") or "").strip()
+        script_issue = str(metadata.get("script_issue") or "").strip()
+        if script_name == "start" and script_issue == "typescript_source_loader_require_cycle":
+            return True
+    return False
 
 
 def _http_server_dynamic_port_script(script_text: str) -> str:

@@ -363,6 +363,22 @@ def test_artifact_quality_issue_projection_extracts_npm_missing_entrypoint_metad
     }
 
 
+def test_artifact_quality_issue_projection_extracts_typescript_start_loader_metadata() -> None:
+    error = (
+        "Artifact quality scan failed: npm start :: node --loader ts-node/esm src/index.ts\n"
+        "Error [ERR_REQUIRE_CYCLE_MODULE]: Cannot require() ES Module /workspace/src/index.ts"
+    )
+
+    issues = artifact_quality_issues_from_errors((error,))
+
+    assert issues[0]["code"] == "javascript_module_error"
+    assert issues[0]["metadata"] == {
+        "raw": error,
+        "script_name": "start",
+        "script_issue": "typescript_source_loader_require_cycle",
+    }
+
+
 def test_artifact_quality_issue_projection_extracts_unresolved_import_symbol_metadata() -> None:
     error = (
         "Artifact quality scan failed: unresolved import symbol 'WeatherKind' "
