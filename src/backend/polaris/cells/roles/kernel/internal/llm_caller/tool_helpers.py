@@ -200,8 +200,11 @@ def _native_tool_call_count_from_lifecycle_receipts(metadata: Mapping[str, Any])
     return 0
 
 
-def _native_tool_call_names_from_lifecycle_receipts(metadata: Mapping[str, Any]) -> list[str]:
-    for receipt in _tool_call_lifecycle_receipts_from_metadata(metadata):
+def _native_tool_call_names_from_lifecycle_receipts(metadata: Mapping[str, Any]) -> list[str] | None:
+    receipts = _tool_call_lifecycle_receipts_from_metadata(metadata)
+    if not receipts:
+        return None
+    for receipt in receipts:
         normalized = normalize_tool_call_lifecycle_receipt(receipt)
         dropped_refs = normalized.get("dropped_tool_calls")
         if not isinstance(dropped_refs, (list, tuple)):
@@ -287,7 +290,7 @@ def native_tool_call_names(
         ]
     if isinstance(metadata, Mapping):
         lifecycle_names = _native_tool_call_names_from_lifecycle_receipts(metadata)
-        if lifecycle_names:
+        if lifecycle_names is not None:
             return lifecycle_names
     return [
         name
