@@ -168,6 +168,13 @@ class StreamEventProjector:
         tool_calls = tool_calls_from_batch_receipt(batch_receipt) or self.stream_tool_calls
         tool_results = tool_results_from_batch_receipt(batch_receipt) or self.stream_tool_results
 
+        metadata = role_result_metadata_from_profile(
+            profile=self.profile,
+            tool_filter_audit=self.tool_filter_audit,
+            monitoring=event.monitoring if isinstance(event.monitoring, dict) else None,
+        )
+        _lift_completion_audit_evidence(metadata, event.monitoring)
+
         if event.status in ("failed", "suspended"):
             self._record_projection_outcome(success=False, reason="stream failure")
             return await self._publish_result(
@@ -176,6 +183,7 @@ class StreamEventProjector:
                     "error": event.error or "execution_failed",
                     "error_type": "stream_execution_failed",
                     "turn_id": event.turn_id,
+                    "metadata": dict(metadata),
                 },
                 should_stop=True,
             )
@@ -193,12 +201,6 @@ class StreamEventProjector:
         if event.monitoring:
             event_dict["monitoring"] = dict(event.monitoring)
 
-        metadata = role_result_metadata_from_profile(
-            profile=self.profile,
-            tool_filter_audit=self.tool_filter_audit,
-            monitoring=event.monitoring if isinstance(event.monitoring, dict) else None,
-        )
-        _lift_completion_audit_evidence(metadata, event.monitoring)
         lifecycle_receipt = record_missing_dispatch_lifecycle_receipt(
             role=self.role,
             request=self.request,

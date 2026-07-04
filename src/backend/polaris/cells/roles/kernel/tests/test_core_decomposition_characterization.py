@@ -261,6 +261,35 @@ class TestStreamEventTranslationMatrix:
         assert out[0]["error_type"] == "stream_execution_failed"
 
     @pytest.mark.asyncio
+    async def test_completion_failed_preserves_lifecycle_failure_evidence(self) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        lifecycle = {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_calls_count": 1,
+            "dispatched_tool_calls_count": 0,
+            "dispatch_status": "dropped",
+            "failure_class": "tool_dispatch_dropped",
+        }
+
+        out = await _drive_stream(
+            kernel,
+            [
+                CompletionEvent(
+                    turn_id="t1",
+                    status="failed",
+                    error="boom",
+                    monitoring={"tool_call_lifecycle_receipt": lifecycle},  # type: ignore[arg-type]
+                )
+            ],
+        )
+
+        assert len(out) == 1
+        metadata = out[0]["metadata"]
+        assert metadata["tool_call_lifecycle_receipt"]["dispatch_status"] == "dropped"
+        assert metadata["failure_evidence"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+        assert metadata["native_tool_calls_count"] == 1
+
+    @pytest.mark.asyncio
     async def test_error_event_maps_to_error_dict(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         out = await _drive_stream(
