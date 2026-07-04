@@ -595,9 +595,10 @@ def test_task_runtime_stale_ready_row_reconcile_does_not_crash_claim(tmp_path: P
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    created = service.create(subject="stale ready row over failed session")
+    created = service.create_task_row(subject="stale ready row over failed session")
+    created_id = created["id"]
     claimed = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-stale-ready",
@@ -605,14 +606,14 @@ def test_task_runtime_stale_ready_row_reconcile_does_not_crash_claim(tmp_path: P
     )
     assert claimed["success"] is True
     assert service.fail_execution(
-        created.id,
+        created_id,
         session_id=str(claimed["session"]["session_id"]),
         error="genuine failure",
     )["success"]
 
     # Stale writer clobbers the row to READY without the sanctioned reset
     # marker (bypassing the state machine entirely).
-    task_path = _task_file_path(workspace, created.id)
+    task_path = _task_file_path(workspace, created_id)
     stale_payload = json.loads(task_path.read_text(encoding="utf-8"))
     stale_payload["status"] = "ready"
     stale_payload["completed_at"] = None
@@ -620,7 +621,7 @@ def test_task_runtime_stale_ready_row_reconcile_does_not_crash_claim(tmp_path: P
 
     reloaded = TaskRuntimeService(str(workspace))
     reclaimed = reloaded.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-should-not-reclaim",
@@ -640,9 +641,10 @@ def test_task_runtime_service_preserves_terminal_session_during_run_cancellation
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    created = service.create(subject="completed task with stale active session")
+    created = service.create_task_row(subject="completed task with stale active session")
+    created_id = created["id"]
     claimed = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-terminal-race",
@@ -651,13 +653,13 @@ def test_task_runtime_service_preserves_terminal_session_during_run_cancellation
     assert claimed["success"] is True
 
     completed = service.complete_execution(
-        created.id,
+        created_id,
         session_id=str(claimed["session"]["session_id"]),
         result_summary="done",
     )
     assert completed["success"] is True
 
-    session_path = _session_file_path(workspace, created.id)
+    session_path = _session_file_path(workspace, created_id)
     stale_session = json.loads(session_path.read_text(encoding="utf-8"))
     stale_session["status"] = "active"
     stale_session["resumable"] = True
@@ -674,7 +676,7 @@ def test_task_runtime_service_preserves_terminal_session_during_run_cancellation
     assert suspended["suspended_count"] == 0
     persisted_session = json.loads(session_path.read_text(encoding="utf-8"))
     assert persisted_session["status"] == "completed"
-    persisted_task = json.loads(_task_file_path(workspace, created.id).read_text(encoding="utf-8"))
+    persisted_task = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
     assert persisted_task["status"] == "completed"
 
 
@@ -683,12 +685,13 @@ def test_task_runtime_stale_metadata_update_does_not_downgrade_completed_row(tmp
     workspace.mkdir(parents=True, exist_ok=True)
     writer = TaskRuntimeService(str(workspace))
 
-    created = writer.create(subject="completed task")
+    created = writer.create_task_row(subject="completed task")
+    created_id = created["id"]
     stale_reader = TaskRuntimeService(str(workspace))
-    stale_reader.get_task(created.id)
+    stale_reader.get_task(created_id)
 
     claimed = writer.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-complete",
@@ -696,17 +699,17 @@ def test_task_runtime_stale_metadata_update_does_not_downgrade_completed_row(tmp
     )
     assert claimed["success"] is True
     completed = writer.complete_execution(
-        created.id,
+        created_id,
         session_id=str(claimed["session"]["session_id"]),
         result_summary="done",
     )
     assert completed["success"] is True
 
-    updated = stale_reader.update_task(created.id, metadata={"late_projection": "workspace_quality_gate_failed"})
+    updated = stale_reader.update_task_row(created_id, metadata={"late_projection": "workspace_quality_gate_failed"})
 
     assert updated is not None
-    assert updated.status.value == "completed"
-    task_path = _task_file_path(workspace, created.id)
+    assert updated["status"] == "completed"
+    task_path = _task_file_path(workspace, created_id)
     persisted = json.loads(task_path.read_text(encoding="utf-8"))
     assert persisted["status"] == "completed"
     assert persisted["metadata"]["late_projection"] == "workspace_quality_gate_failed"
