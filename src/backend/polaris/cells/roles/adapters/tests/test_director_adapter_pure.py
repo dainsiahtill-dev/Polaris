@@ -5844,7 +5844,7 @@ export function summary() {
         )
         _write_substantive_node_test_script(tmp_path)
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Tenant Context Middleware",
             description="Create request-scoped tenant context middleware for an Express service.",
             metadata={
@@ -5854,6 +5854,7 @@ export function summary() {
                 "acceptance": ["TypeScript exports remain reachable and Node builtin typings are declared"],
             },
         )
+        task_id = str(task["id"])
         stage_labels: list[str] = []
 
         async def _gemma_escaped_newline_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -5890,8 +5891,8 @@ export function summary() {
         adapter._invoke_role_dialogue_with_timeout = _gemma_escaped_newline_dialogue  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-tenant-middleware-escaped-newline-repair"},
         )
 
@@ -5943,7 +5944,7 @@ export function summary() {
         )
         _write_substantive_node_test_script(tmp_path)
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Task Definition Model",
             description="Create zod-backed task definition model.",
             metadata={
@@ -5953,6 +5954,7 @@ export function summary() {
                 "acceptance": ["TypeScript typecheck accepts schema and class exports"],
             },
         )
+        task_id = str(task["id"])
 
         async def _zod_collision_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -5990,8 +5992,8 @@ export function summary() {
         adapter._invoke_role_dialogue_with_timeout = _zod_collision_dialogue  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-zod-type-class-collision-repair"},
         )
 
@@ -6021,7 +6023,7 @@ export function summary() {
             encoding="utf-8",
         )
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Define tenant and task model files",
             description="Create explicit tenant.model.ts and task.model.ts model files.",
             metadata={
@@ -6031,6 +6033,7 @@ export function summary() {
                 "acceptance": ["Both declared target model files exist"],
             },
         )
+        task_id = str(task["id"])
 
         async def _tenant_only_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -6054,8 +6057,8 @@ export function summary() {
         adapter._invoke_role_dialogue_with_timeout = _tenant_only_dialogue  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-missing-target-nearby-repair"},
         )
 
