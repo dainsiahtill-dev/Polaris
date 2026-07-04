@@ -25,6 +25,7 @@ from polaris.delivery.http.routers import factory as factory_router_module
 from polaris.kernelone.quality import (
     matching_owner_handoff_request,
     owner_handoff_identifier_tokens,
+    task_record_identifier_tokens,
 )
 from polaris.kernelone.storage import resolve_logical_path
 
@@ -964,14 +965,16 @@ def test_quality_gate_task_boundary_validation_reports_unmatched_owner_handoff(t
     assert rows["PM-0001-2-step-3"]["status"] == "failed"
 
 
-def test_task_record_external_tokens_include_top_level_projection_fields() -> None:
-    tokens = factory_router_module._task_record_external_tokens(
-        {
-            "id": 12,
-            "external_task_id": "PM-0001-1-S4",
-            "source_task_id": "source-step",
-            "metadata": {"pm_task_id": "PM-0001"},
-        }
+def test_task_record_identifier_tokens_include_top_level_projection_fields() -> None:
+    tokens = set(
+        task_record_identifier_tokens(
+            {
+                "id": 12,
+                "external_task_id": "PM-0001-1-S4",
+                "source_task_id": "source-step",
+                "metadata": {"pm_task_id": "PM-0001"},
+            }
+        )
     )
 
     assert {"12", "PM-0001-1-S4", "source-step", "PM-0001"} <= tokens

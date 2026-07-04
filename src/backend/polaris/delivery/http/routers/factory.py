@@ -69,8 +69,6 @@ from polaris.kernelone.quality import (
     ScopeAuthorityOwnerHandoffIndex,
     build_owner_handoff_index,
     ownership_handoff_requests_from_scope_payload,
-    task_identifier_token_aliases,
-    task_record_identifier_tokens,
     task_record_routing_key,
 )
 from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path, resolve_storage_roots
@@ -1001,18 +999,6 @@ def _ownership_handoff_requests_from_repair_payload(repair: dict[str, Any]) -> l
     return list(ownership_handoff_requests_from_scope_payload(repair))
 
 
-def _task_record_external_tokens(record: dict[str, Any]) -> set[str]:
-    return set(task_record_identifier_tokens(record))
-
-
-def _task_identifier_token_aliases(value: Any) -> set[str]:
-    return set(task_identifier_token_aliases(value))
-
-
-def _task_record_rework_key(record: dict[str, Any]) -> str:
-    return task_record_routing_key(record)
-
-
 def _quality_gate_owner_handoff_index(
     repair: dict[str, Any],
     entries: list[Any],
@@ -1095,7 +1081,7 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
         record = entry.to_dict() if hasattr(entry, "to_dict") else entry
         if not isinstance(record, dict):
             continue
-        task_key = _task_record_rework_key(record)
+        task_key = task_record_routing_key(record)
         owner_handoff_request = owner_handoff_index.matched_owner_handoff_by_task_key.get(task_key, {})
         if owner_handoff_index.all_handoff_requests:
             if not owner_handoff_request:
