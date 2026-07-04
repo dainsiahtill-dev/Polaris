@@ -1258,6 +1258,51 @@ def test_final_request_evidence_accepts_structured_architecture_plan_without_key
     assert evidence_coverage["pass"] is True
 
 
+def test_final_request_evidence_rejects_text_only_architecture_plan_keywords() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "director_execution_strategy": {
+                "schema_version": "task.execution_strategy.v1",
+                "evidence_requirements": ["architecture_or_file_plan"],
+            },
+            "chat_messages": [
+                {
+                    "role": "system",
+                    "content": "Text only construction_plan file plan scope_for_apply module_boundaries.",
+                },
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "system",
+                "content": "Text only construction_plan file plan scope_for_apply module_boundaries.",
+            }
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    assert audit["coverage"]["has_architecture_or_file_plan"] is False
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert evidence_coverage["structured_evidence"]["architecture_or_file_plan"] is False
+    assert "architecture_or_file_plan" in evidence_coverage["missing_required_refs"]
+
+
 def test_final_request_evidence_coverage_is_ref_based_and_redacted_when_underutilized() -> None:
     secret = "sk-test-context-secret-should-not-leak"
     execution_profile = {

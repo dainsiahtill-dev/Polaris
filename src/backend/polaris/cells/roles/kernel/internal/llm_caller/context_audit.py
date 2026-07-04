@@ -391,22 +391,7 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
         "has_chief_engineer_blueprint": has_chief_engineer_blueprint,
         "has_module_interface_contract": bool(module_interface_contract),
         "has_actual_sibling_exports": bool(actual_sibling_exports),
-        "has_architecture_or_file_plan": bool(architecture_or_file_plan)
-        or any(
-            needle in lowered
-            for needle in (
-                "architecture_or_file_plan",
-                "architecture plan",
-                "file plan",
-                "construction_plan",
-                "scope_for_apply",
-                "architecture guidance/decisions",
-                "implementation_phases",
-                "module_boundaries",
-                "施工计划",
-                "文件计划",
-            )
-        ),
+        "has_architecture_or_file_plan": bool(architecture_or_file_plan),
         "has_target_files": bool(target_scope),
         "has_failure_feedback": bool(failed_gate_evidence)
         or any(
