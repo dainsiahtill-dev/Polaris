@@ -518,14 +518,6 @@ _ARTIFACT_QUALITY_GO_UNDEFINED_RE = re.compile(
 
 def _artifact_quality_issue_code(message: str) -> str:
     normalized = message.lower()
-    runtime_script_invoked = (
-        "npm run start" in normalized
-        or "npm start" in normalized
-        or "npm run serve" in normalized
-        or "npm run dev" in normalized
-        or "npm run preview" in normalized
-    )
-    runtime_port_conflict = "eaddrinuse" in normalized or "address already in use" in normalized
     if "declared target file" in normalized and "missing" in normalized:
         return "declared_target_missing"
     if "unresolved import symbol" in normalized:
@@ -545,18 +537,9 @@ def _artifact_quality_issue_code(message: str) -> str:
         return "typescript_project_typecheck_failed"
     if "syntax error" in normalized or "invalid json" in normalized:
         return "syntax_error"
-    if (
-        "npm default failing test script" in normalized
-        or "npm placeholder test script" in normalized
-        or "npm manifest-only test script" in normalized
-    ):
-        return "npm_manifest_invalid"
-    if runtime_script_invoked and runtime_port_conflict:
-        return "npm_manifest_invalid"
-    if "test script must use node --test" in normalized:
-        return "npm_manifest_invalid"
-    if "npm package manifest" in normalized:
-        return "npm_manifest_invalid"
+    npm_issue_code = _legacy_npm_manifest_issue_code(normalized)
+    if npm_issue_code:
+        return npm_issue_code
     if "patch residue" in normalized:
         return "patch_residue"
     if "tool execution receipt contamination" in normalized:
@@ -565,6 +548,32 @@ def _artifact_quality_issue_code(message: str) -> str:
         return "source_narration_contamination"
     slug = re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
     return slug[:80] or "artifact_quality_error"
+
+
+def _legacy_npm_manifest_issue_code(normalized_message: str) -> str:
+    """Classify legacy npm manifest display diagnostics."""
+
+    if (
+        "npm default failing test script" in normalized_message
+        or "npm placeholder test script" in normalized_message
+        or "npm manifest-only test script" in normalized_message
+    ):
+        return "npm_manifest_invalid"
+    runtime_script_invoked = (
+        "npm run start" in normalized_message
+        or "npm start" in normalized_message
+        or "npm run serve" in normalized_message
+        or "npm run dev" in normalized_message
+        or "npm run preview" in normalized_message
+    )
+    runtime_port_conflict = "eaddrinuse" in normalized_message or "address already in use" in normalized_message
+    if runtime_script_invoked and runtime_port_conflict:
+        return "npm_manifest_invalid"
+    if "test script must use node --test" in normalized_message:
+        return "npm_manifest_invalid"
+    if "npm package manifest" in normalized_message:
+        return "npm_manifest_invalid"
+    return ""
 
 
 def _legacy_compiler_issue_code_from_path(message: str, normalized_message: str) -> str:
