@@ -14,10 +14,9 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
-    native_tool_call_facts_from_lifecycle_receipt,
-    normalize_native_tool_call_envelope_refs,
+    native_tool_call_envelope_refs_from_metadata,
+    native_tool_call_facts_from_metadata,
     project_native_tool_call_facts_to_metadata,
-    tool_call_lifecycle_receipts_from_metadata,
 )
 from polaris.kernelone.llm.budget_policy import (
     BUDGET_STRATEGY_PAYLOAD_KEYS,
@@ -110,6 +109,13 @@ def _stable_hash(value: Any) -> str:
     return hashlib.sha256(_stable_json(value).encode("utf-8")).hexdigest()
 
 
+def _int_from_fact(value: Any) -> int:
+    try:
+        return max(0, int(str(value or "").strip()))
+    except (TypeError, ValueError):
+        return 0
+
+
 @dataclass(frozen=True)
 class NativeToolCallEnvelopeV1:
     """Stable, provider-neutral projection of one native tool call.
@@ -161,53 +167,10 @@ def native_tool_call_name(call: Mapping[str, Any]) -> str:
 _native_tool_call_name = native_tool_call_name
 
 
-def _native_tool_call_count_from_lifecycle_receipts(metadata: Mapping[str, Any]) -> int | None:
-    receipts = tool_call_lifecycle_receipts_from_metadata(metadata)
-    if not receipts:
-        return None
-    for receipt in receipts:
-        facts = native_tool_call_facts_from_lifecycle_receipt(receipt)
-        try:
-            count = int(str(facts.get("native_tool_calls_count") or "").strip())
-        except (TypeError, ValueError):
-            count = 0
-        if count > 0:
-            return count
-    return 0
-
-
-def _native_tool_call_names_from_lifecycle_receipts(metadata: Mapping[str, Any]) -> list[str] | None:
-    receipts = tool_call_lifecycle_receipts_from_metadata(metadata)
-    if not receipts:
-        return None
-    for receipt in receipts:
-        facts = native_tool_call_facts_from_lifecycle_receipt(receipt)
-        raw_names = facts.get("native_tool_call_names")
-        if not isinstance(raw_names, (list, tuple)):
-            continue
-        names = [
-            name for item in raw_names if (name := str(item or "").strip())
-        ]
-        if names:
-            return names
-    return []
-
-
 def native_tool_call_envelopes_from_metadata(metadata: Mapping[str, Any] | None) -> tuple[Mapping[str, Any], ...]:
     """Return valid native tool-call envelope payloads from response metadata."""
 
-    if not isinstance(metadata, Mapping):
-        return ()
-    for key in ("native_tool_call_envelopes", "native_tool_call_envelope_refs"):
-        valid_envelopes = normalize_native_tool_call_envelope_refs(metadata.get(key))
-        if valid_envelopes:
-            return valid_envelopes
-    for receipt in tool_call_lifecycle_receipts_from_metadata(metadata):
-        for key in ("native_tool_call_envelope_refs", "native_tool_call_envelopes"):
-            valid_envelopes = normalize_native_tool_call_envelope_refs(receipt.get(key))
-            if valid_envelopes:
-                return valid_envelopes
-    return ()
+    return native_tool_call_envelope_refs_from_metadata(metadata)
 
 
 def native_tool_call_count(
@@ -216,13 +179,10 @@ def native_tool_call_count(
 ) -> int:
     """Derive native tool-call count from envelopes, falling back to raw native calls."""
 
-    envelopes = native_tool_call_envelopes_from_metadata(metadata)
-    if envelopes:
-        return len(envelopes)
     if isinstance(metadata, Mapping):
-        lifecycle_count = _native_tool_call_count_from_lifecycle_receipts(metadata)
-        if lifecycle_count is not None:
-            return lifecycle_count
+        facts = native_tool_call_facts_from_metadata(metadata)
+        if facts:
+            return _int_from_fact(facts.get("native_tool_calls_count"))
     return sum(1 for item in native_tool_calls if isinstance(item, Mapping))
 
 
@@ -233,13 +193,10 @@ def native_tool_call_count_from_metadata(metadata: Mapping[str, Any] | None, *, 
     all envelope-derived metadata paths are resolved before consulting it.
     """
 
-    envelope_count = native_tool_call_count(metadata, ())
-    if envelope_count > 0:
-        return envelope_count
     if isinstance(metadata, Mapping):
-        lifecycle_count = _native_tool_call_count_from_lifecycle_receipts(metadata)
-        if lifecycle_count is not None:
-            return lifecycle_count
+        facts = native_tool_call_facts_from_metadata(metadata)
+        if facts:
+            return _int_from_fact(facts.get("native_tool_calls_count"))
         try:
             metadata_count = int(str(metadata.get("native_tool_calls_count") or "").strip())
         except (TypeError, ValueError):
@@ -255,17 +212,15 @@ def native_tool_call_names(
 ) -> list[str]:
     """Derive native tool names from envelopes, falling back to raw native calls."""
 
-    envelopes = native_tool_call_envelopes_from_metadata(metadata)
-    if envelopes:
-        return [
-            name
-            for envelope in envelopes
-            if (name := str(envelope.get("tool_name") or "").strip())
-        ]
     if isinstance(metadata, Mapping):
-        lifecycle_names = _native_tool_call_names_from_lifecycle_receipts(metadata)
-        if lifecycle_names is not None:
-            return lifecycle_names
+        facts = native_tool_call_facts_from_metadata(metadata)
+        if facts:
+            raw_names = facts.get("native_tool_call_names")
+            return [
+                name
+                for item in (raw_names if isinstance(raw_names, (list, tuple)) else ())
+                if (name := str(item or "").strip())
+            ]
     return [
         name
         for item in native_tool_calls

@@ -535,6 +535,81 @@ def native_tool_call_facts_from_lifecycle_receipt(value: Any) -> dict[str, Any]:
     }
 
 
+def native_tool_call_envelope_refs_from_metadata(metadata: Mapping[str, Any] | None) -> tuple[dict[str, Any], ...]:
+    """Return native tool-call envelope refs from lifecycle-aware metadata.
+
+    Boundary:
+        This helper owns the compatibility order for top-level native envelope
+        metadata and lifecycle receipt aliases. Role kernels and projections
+        should not reimplement this key order.
+
+    Complexity:
+        O(r + e) time and memory where ``r`` is lifecycle receipt count and
+        ``e`` is native envelope ref count.
+    """
+
+    if not isinstance(metadata, Mapping):
+        return ()
+    for key in ("native_tool_call_envelopes", "native_tool_call_envelope_refs"):
+        valid_envelopes = normalize_native_tool_call_envelope_refs(metadata.get(key))
+        if valid_envelopes:
+            return valid_envelopes
+    for receipt in tool_call_lifecycle_receipts_from_metadata(metadata):
+        for key in ("native_tool_call_envelope_refs", "native_tool_call_envelopes"):
+            valid_envelopes = normalize_native_tool_call_envelope_refs(receipt.get(key))
+            if valid_envelopes:
+                return valid_envelopes
+    return ()
+
+
+def native_tool_call_facts_from_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Derive native tool-call facts from lifecycle-aware metadata.
+
+    Empty mapping means no structured native-tool evidence was present. A
+    non-empty mapping with count ``0`` means lifecycle evidence was present and
+    authoritative, so callers should not fall back to raw provider call lists.
+
+    Complexity:
+        O(r + e + n) time and memory where ``r`` is receipt count, ``e`` is
+        envelope refs, and ``n`` is native tool-name count.
+    """
+
+    if not isinstance(metadata, Mapping):
+        return {}
+    envelopes = native_tool_call_envelope_refs_from_metadata(metadata)
+    if envelopes:
+        names = [
+            name
+            for envelope in envelopes
+            if (name := _clean_string(envelope.get("tool_name")))
+        ]
+        return {
+            "native_tool_calls_count": len(envelopes),
+            "native_tool_call_names": names,
+        }
+    receipts = tool_call_lifecycle_receipts_from_metadata(metadata)
+    if not receipts:
+        return {}
+    for receipt in receipts:
+        facts = native_tool_call_facts_from_lifecycle_receipt(receipt)
+        raw_names = facts.get("native_tool_call_names")
+        names = [
+            name
+            for item in (raw_names if isinstance(raw_names, (list, tuple)) else ())
+            if (name := _clean_string(item))
+        ]
+        count = _int_value(facts.get("native_tool_calls_count"))
+        if count > 0 or names:
+            return {
+                "native_tool_calls_count": count,
+                "native_tool_call_names": names,
+            }
+    return {
+        "native_tool_calls_count": 0,
+        "native_tool_call_names": [],
+    }
+
+
 def task_boundary_tool_dispatch_from_lifecycle_metadata(metadata: Mapping[str, Any]) -> dict[str, Any] | None:
     """Project TaskBoundary tool-dispatch evidence from lifecycle metadata.
 

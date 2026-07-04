@@ -6,7 +6,9 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_tool_dispatch_dropped_anomaly_projection,
     build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
     failure_evidence_from_lifecycle_receipt,
+    native_tool_call_envelope_refs_from_metadata,
     native_tool_call_facts_from_lifecycle_receipt,
+    native_tool_call_facts_from_metadata,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
     project_lifecycle_failure_evidence_to_metadata,
@@ -954,6 +956,46 @@ def test_tool_lifecycle_receipts_from_metadata_deduplicates_aliases() -> None:
     assert receipts[0]["native_tool_call_envelope_refs"] == [
         {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
     ]
+
+
+def test_native_tool_call_facts_from_metadata_prefers_top_level_envelopes() -> None:
+    top_level = [
+        {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
+    ]
+    metadata = {
+        "native_tool_call_envelopes": top_level,
+        "tool_call_lifecycle_receipt": {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_call_envelope_refs": [
+                {"schema_version": "native_tool_call_envelope.v1", "tool_name": "execute_command"},
+            ],
+        },
+    }
+
+    assert native_tool_call_envelope_refs_from_metadata(metadata) == tuple(top_level)
+    assert native_tool_call_facts_from_metadata(metadata) == {
+        "native_tool_calls_count": 1,
+        "native_tool_call_names": ["write_file"],
+    }
+
+
+def test_native_tool_call_facts_from_metadata_treats_lifecycle_zero_as_authoritative() -> None:
+    metadata = {
+        "native_tool_calls_count": 99,
+        "tool_call_lifecycle_receipt": {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_calls_count": 0,
+            "decoded_tool_calls_count": 0,
+            "dispatched_tool_calls_count": 0,
+            "dispatch_status": "dispatched",
+        },
+    }
+
+    assert native_tool_call_envelope_refs_from_metadata(metadata) == ()
+    assert native_tool_call_facts_from_metadata(metadata) == {
+        "native_tool_calls_count": 0,
+        "native_tool_call_names": [],
+    }
 
 
 def test_tool_lifecycle_receipt_deduplicates_native_envelopes_by_envelope_id() -> None:
