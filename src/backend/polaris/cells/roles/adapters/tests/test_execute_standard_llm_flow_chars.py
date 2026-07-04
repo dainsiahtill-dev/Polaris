@@ -31,11 +31,12 @@ def _make_adapter(tmp_path: Any) -> DirectorAdapter:
 async def test_execute_standard_llm_flow_success_dict_contract(tmp_path: Any) -> None:
     """Block D success epilogue: lock the full success result-dict contract."""
     adapter = _make_adapter(tmp_path)
-    task = adapter.task_board.create(
+    task = adapter.task_board.create_task_row(
         subject="Create app module",
         description="Create src/app.py with a runnable entry point.",
         metadata={"target_files": ["src/app.py"], "scope_paths": ["src/app.py"]},
     )
+    task_id = str(task["id"])
 
     async def _dialogue(message: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
         del message, args, kwargs
@@ -69,13 +70,13 @@ async def test_execute_standard_llm_flow_success_dict_contract(tmp_path: Any) ->
     adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
 
     result = await adapter.execute(
-        task_id=str(task.id),
-        input_data={"task_id": str(task.id)},
+        task_id=task_id,
+        input_data={"task_id": task_id},
         context={"run_id": "run-success-dict"},
     )
 
     assert result["success"] is True
-    assert result["task_id"] == str(task.id)
+    assert result["task_id"] == task_id
     assert result["changed_files"] == ["src/app.py"]
     assert result["new_files"] == ["src/app.py"]
     assert result["modified_files"] == []
@@ -86,7 +87,7 @@ async def test_execute_standard_llm_flow_success_dict_contract(tmp_path: Any) ->
     assert "cognitive_runtime_receipt" in result
     assert "decision_signals" in result
     # completion metadata persisted to the task board (Block D completion side)
-    updated = adapter.task_board.get_task(str(task.id))
+    updated = adapter.task_board.get_task(task_id)
     assert updated is not None
     assert str(updated.get("status") or "").lower() == "completed"
     raw_metadata = updated.get("metadata")
@@ -112,11 +113,12 @@ async def test_execute_standard_llm_flow_no_physical_files_dict_contract(
     driving the ``director.materialization.no_physical_files`` epilogue.
     """
     adapter = _make_adapter(tmp_path)
-    task = adapter.task_board.create(
+    task = adapter.task_board.create_task_row(
         subject="Create app module",
         description="Create src/app.py with a runnable entry point.",
         metadata={"target_files": ["src/app.py"], "scope_paths": ["src/app.py"]},
     )
+    task_id = str(task["id"])
 
     async def _dialogue(message: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
         del message, args, kwargs
@@ -154,8 +156,8 @@ async def test_execute_standard_llm_flow_no_physical_files_dict_contract(
     monkeypatch.setattr(execute_method, "_adapter_materialized_file_paths", _no_materialized)
 
     result = await adapter.execute(
-        task_id=str(task.id),
-        input_data={"task_id": str(task.id)},
+        task_id=task_id,
+        input_data={"task_id": task_id},
         context={"run_id": "run-no-physical-files"},
     )
 
@@ -177,6 +179,6 @@ async def test_execute_standard_llm_flow_no_physical_files_dict_contract(
         for signal in result.get("decision_signals", [])
         if isinstance(signal, dict)
     )
-    updated = adapter.task_board.get_task(str(task.id))
+    updated = adapter.task_board.get_task(task_id)
     assert updated is not None
     assert str(updated.get("status") or "").lower() == "failed"
