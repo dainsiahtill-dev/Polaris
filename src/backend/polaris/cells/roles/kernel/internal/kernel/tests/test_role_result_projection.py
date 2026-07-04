@@ -7,6 +7,7 @@ from typing import Any
 
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     project_completion_audit_evidence,
+    project_task_boundary_failure_to_metadata,
     role_result_metadata_from_profile,
     role_turn_completion_result,
     role_turn_error_result,
@@ -297,6 +298,38 @@ def test_project_completion_audit_evidence_uses_shared_lifecycle_projection() ->
     assert metadata["native_tool_call_names"] == ["write_file"]
     assert metadata["tool_call_lifecycle_receipt"]["native_tool_call_envelope_refs"] == [envelope]
     assert metadata["failure_evidence"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+
+
+def test_project_task_boundary_failure_to_metadata_projects_failure_shape() -> None:
+    metadata: dict[str, Any] = {}
+
+    error = project_task_boundary_failure_to_metadata(
+        metadata,
+        {
+            "ok": False,
+            "status": "missing_entrypoint_target",
+            "failure_class": "MISSING_ENTRYPOINT_TARGET",
+            "reason": "entrypoint is not materialized",
+        },
+    )
+
+    assert error == "task_boundary_failed:missing_entrypoint_target: entrypoint is not materialized"
+    assert metadata["task_boundary_failed"] is True
+    assert metadata["task_boundary_failure_class"] == "MISSING_ENTRYPOINT_TARGET"
+    assert metadata["task_boundary_failure_status"] == "missing_entrypoint_target"
+    assert metadata["task_boundary_verdict"]["reason"] == "entrypoint is not materialized"
+
+
+def test_project_task_boundary_failure_to_metadata_preserves_ok_verdict_without_failure() -> None:
+    metadata: dict[str, Any] = {}
+
+    error = project_task_boundary_failure_to_metadata(metadata, {"ok": True, "status": "completed_verified"})
+
+    assert error is None
+    assert metadata["task_boundary_verdict"] == {"ok": True, "status": "completed_verified"}
+    assert "task_boundary_failed" not in metadata
+    assert "task_boundary_failure_class" not in metadata
+    assert "task_boundary_failure_status" not in metadata
 
 
 def test_role_result_metadata_uses_monitoring_context_audit_when_not_already_set() -> None:

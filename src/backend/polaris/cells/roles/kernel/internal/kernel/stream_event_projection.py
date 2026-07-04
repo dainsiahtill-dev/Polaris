@@ -18,6 +18,7 @@ from polaris.cells.control_plane.run_ledger.public import task_boundary_tool_dis
 from polaris.cells.roles.kernel.internal.kernel.commit_protocol import _build_turn_history_and_events
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     project_completion_audit_evidence,
+    project_task_boundary_failure_to_metadata,
     role_result_metadata_from_profile,
     role_turn_completion_result,
     tool_calls_from_batch_receipt,
@@ -345,15 +346,4 @@ def _lift_completion_audit_evidence(metadata: dict[str, Any], monitoring: dict[s
 
 
 def _task_boundary_error_message(verdict: dict[str, Any] | None, metadata: dict[str, Any]) -> str | None:
-    if not isinstance(verdict, dict):
-        return None
-    metadata["task_boundary_verdict"] = dict(verdict)
-    if bool(verdict.get("ok")):
-        return None
-    status = str(verdict.get("status") or "failed").strip() or "failed"
-    failure_class = str(verdict.get("failure_class") or "TASK_BOUNDARY_FAILED").strip()
-    reason = str(verdict.get("reason") or "Task boundary failed").strip()
-    metadata["task_boundary_failed"] = True
-    metadata["task_boundary_failure_class"] = failure_class
-    metadata["task_boundary_failure_status"] = status
-    return f"task_boundary_failed:{status}: {reason}"
+    return project_task_boundary_failure_to_metadata(metadata, verdict)

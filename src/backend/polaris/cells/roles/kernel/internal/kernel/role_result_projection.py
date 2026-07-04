@@ -145,6 +145,34 @@ def project_completion_audit_evidence(metadata: dict[str, Any], evidence: Mappin
     project_completion_audit_evidence_to_metadata(metadata, evidence)
 
 
+def project_task_boundary_failure_to_metadata(
+    metadata: dict[str, Any],
+    verdict: Mapping[str, Any] | None,
+) -> str | None:
+    """Project task-boundary failure evidence into RoleTurnResult metadata.
+
+    Stream and non-stream completion paths both consume TaskBoundary verdicts.
+    This helper owns the shared metadata keys and error-message format so
+    failure-class/status projection cannot drift between those paths.
+
+    Complexity:
+        O(v) time and memory over the verdict mapping size.
+    """
+
+    if not isinstance(verdict, Mapping):
+        return None
+    metadata["task_boundary_verdict"] = dict(verdict)
+    if bool(verdict.get("ok")):
+        return None
+    status = str(verdict.get("status") or "failed").strip() or "failed"
+    failure_class = str(verdict.get("failure_class") or "TASK_BOUNDARY_FAILED").strip()
+    reason = str(verdict.get("reason") or "Task boundary failed").strip()
+    metadata["task_boundary_failed"] = True
+    metadata["task_boundary_failure_class"] = failure_class
+    metadata["task_boundary_failure_status"] = status
+    return f"task_boundary_failed:{status}: {reason}"
+
+
 def role_turn_error_result(
     *,
     error: str,

@@ -24,6 +24,7 @@ from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
 from polaris.cells.roles.kernel.internal.kernel.context_assembly import build_context_handoff_pack
 from polaris.cells.roles.kernel.internal.kernel.output_parser_provider import get_output_parser
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
+    project_task_boundary_failure_to_metadata,
     role_result_metadata_from_profile,
     role_turn_completion_result,
     tool_calls_from_batch_receipt,
@@ -438,17 +439,9 @@ def _apply_task_boundary_completion_gate(
     error_msg: str | None,
     is_complete: bool,
 ) -> tuple[str | None, bool]:
-    if not isinstance(verdict, dict):
+    task_boundary_error = project_task_boundary_failure_to_metadata(metadata, verdict)
+    if task_boundary_error is None:
         return error_msg, is_complete
-    metadata["task_boundary_verdict"] = dict(verdict)
-    if bool(verdict.get("ok")):
-        return error_msg, is_complete
-    status = str(verdict.get("status") or "failed").strip() or "failed"
-    failure_class = str(verdict.get("failure_class") or "TASK_BOUNDARY_FAILED").strip()
-    reason = str(verdict.get("reason") or "Task boundary failed").strip()
-    metadata["task_boundary_failed"] = True
-    metadata["task_boundary_failure_class"] = failure_class
-    metadata["task_boundary_failure_status"] = status
     if error_msg:
         return error_msg, False
-    return f"task_boundary_failed:{status}: {reason}", False
+    return task_boundary_error, False
