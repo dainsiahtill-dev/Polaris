@@ -87,10 +87,6 @@ class TaskRuntimeService:
     def workspace(self) -> str:
         return self._workspace
 
-    @property
-    def board(self) -> TaskBoard:
-        return self._board
-
     def reset_records(self, *, keep_plan: bool = False) -> dict[str, object]:
         """Clear canonical taskboard rows and execution sessions.
 

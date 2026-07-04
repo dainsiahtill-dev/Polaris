@@ -12,6 +12,14 @@ from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_runtime_path
 
 
+def _task_file_path(workspace: Path, task_id: object) -> Path:
+    return Path(resolve_runtime_path(str(workspace), f"runtime/tasks/task_{task_id}.json"))
+
+
+def _session_file_path(workspace: Path, task_id: object) -> Path:
+    return Path(resolve_runtime_path(str(workspace), f"runtime/tasks/task_{task_id}.session.json"))
+
+
 def test_task_runtime_service_normalizes_task_ids() -> None:
     assert TaskRuntimeService.normalize_task_id("task-12") == 12
     assert TaskRuntimeService.normalize_task_id("12") == 12
@@ -320,7 +328,7 @@ def test_task_runtime_service_reconciles_terminal_session_before_reclaim(tmp_pat
     )
     assert completed["success"] is True
 
-    task_path = service.board.tasks_dir / f"task_{created.id}.json"
+    task_path = _task_file_path(workspace, created.id)
     stale_payload = json.loads(task_path.read_text(encoding="utf-8"))
     stale_payload["status"] = "pending"
     stale_payload["completed_at"] = None
@@ -386,7 +394,7 @@ def test_task_runtime_ready_reset_row_with_older_terminal_session_is_claimable(t
     assert reclaimed["resumed"] is False
     assert str(reclaimed["session"]["session_id"]) != old_session_id
     assert reclaimed["task"]["status"] == "in_progress"
-    persisted = json.loads((service.board.tasks_dir / f"task_{created.id}.json").read_text(encoding="utf-8"))
+    persisted = json.loads(_task_file_path(workspace, created.id).read_text(encoding="utf-8"))
     assert persisted["status"] == "in_progress"
 
 
@@ -427,7 +435,7 @@ def test_task_runtime_deliberate_pending_retry_is_claimable_and_not_flipped_to_f
 
     assert reclaimed["success"] is True
     assert reclaimed["task"]["status"] == "in_progress"
-    persisted = json.loads((service.board.tasks_dir / f"task_{created.id}.json").read_text(encoding="utf-8"))
+    persisted = json.loads(_task_file_path(workspace, created.id).read_text(encoding="utf-8"))
     assert persisted["status"] == "in_progress"
 
     completed = service.complete_execution(
@@ -527,7 +535,7 @@ def test_task_runtime_stale_pending_row_with_newer_terminal_session_still_reject
 
     # Stale byte-level rewrite: pending row with the OLD reset marker, while
     # the terminal session on disk is NEWER than that marker.
-    task_path = service.board.tasks_dir / f"task_{created.id}.json"
+    task_path = _task_file_path(workspace, created.id)
     stale_payload = json.loads(task_path.read_text(encoding="utf-8"))
     stale_payload["status"] = "pending"
     stale_payload["completed_at"] = None
@@ -577,7 +585,7 @@ def test_task_runtime_stale_ready_row_reconcile_does_not_crash_claim(tmp_path: P
 
     # Stale writer clobbers the row to READY without the sanctioned reset
     # marker (bypassing the state machine entirely).
-    task_path = service.board.tasks_dir / f"task_{created.id}.json"
+    task_path = _task_file_path(workspace, created.id)
     stale_payload = json.loads(task_path.read_text(encoding="utf-8"))
     stale_payload["status"] = "ready"
     stale_payload["completed_at"] = None
@@ -622,7 +630,7 @@ def test_task_runtime_service_preserves_terminal_session_during_run_cancellation
     )
     assert completed["success"] is True
 
-    session_path = service.board.tasks_dir / f"task_{created.id}.session.json"
+    session_path = _session_file_path(workspace, created.id)
     stale_session = json.loads(session_path.read_text(encoding="utf-8"))
     stale_session["status"] = "active"
     stale_session["resumable"] = True
@@ -639,7 +647,7 @@ def test_task_runtime_service_preserves_terminal_session_during_run_cancellation
     assert suspended["suspended_count"] == 0
     persisted_session = json.loads(session_path.read_text(encoding="utf-8"))
     assert persisted_session["status"] == "completed"
-    persisted_task = json.loads((service.board.tasks_dir / f"task_{created.id}.json").read_text(encoding="utf-8"))
+    persisted_task = json.loads(_task_file_path(workspace, created.id).read_text(encoding="utf-8"))
     assert persisted_task["status"] == "completed"
 
 
@@ -671,7 +679,7 @@ def test_task_runtime_stale_metadata_update_does_not_downgrade_completed_row(tmp
 
     assert updated is not None
     assert updated.status.value == "completed"
-    task_path = writer.board.tasks_dir / f"task_{created.id}.json"
+    task_path = _task_file_path(workspace, created.id)
     persisted = json.loads(task_path.read_text(encoding="utf-8"))
     assert persisted["status"] == "completed"
     assert persisted["metadata"]["late_projection"] == "workspace_quality_gate_failed"
