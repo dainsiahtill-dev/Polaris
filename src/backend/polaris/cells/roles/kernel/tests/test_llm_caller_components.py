@@ -1797,6 +1797,32 @@ class TestLLMEventEmitterEmitCallEndEvent:
             kwargs = mock_emit.call_args.kwargs
             assert kwargs["completion_tokens"] == 50
 
+    def test_call_end_tool_count_uses_native_lifecycle_metadata(self) -> None:
+        """call_end 工具计数由 Run Ledger native metadata 投影，而非调用方 fallback."""
+        emitter = LLMEventEmitter(workspace="/ws")
+        with patch("polaris.cells.roles.kernel.internal.events.emit_llm_event") as mock_emit:
+            emitter.emit_call_end_event(
+                event_emitter=None,
+                role="director",
+                run_id="run_1",
+                task_id="task_1",
+                attempt=0,
+                model="claude",
+                call_id="call_1",
+                completion_tokens=50,
+                tool_calls_count=1,
+                metadata={
+                    "native_tool_call_envelope_refs": [
+                        {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
+                        {"schema_version": "native_tool_call_envelope.v1", "tool_name": "execute_command"},
+                    ]
+                },
+            )
+
+            kwargs = mock_emit.call_args.kwargs
+            assert kwargs["tool_calls_count"] == 2
+            assert kwargs["metadata"]["tool_calls_count"] == 2
+
     def test_response_content_emits_content_preview_before_end_event(self) -> None:
         """response_content 应进入实时内容预览，而不是只留在 call_end metadata."""
         emitter = LLMEventEmitter(workspace="/ws")

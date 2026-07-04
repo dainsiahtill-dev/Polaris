@@ -10,6 +10,7 @@ import asyncio
 import logging
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public import native_tool_call_count_from_metadata
 from polaris.kernelone.events.uep_publisher import UEPEventPublisher
 
 logger = logging.getLogger(__name__)
@@ -325,6 +326,7 @@ class LLMEventEmitter:
             return
 
         _payload = dict(metadata or {})
+        tool_calls_count = native_tool_call_count_from_metadata(_payload, fallback=tool_calls_count)
         _payload.setdefault("call_id", call_id)
         _payload.setdefault("workspace", self.workspace)
         if response_content is not None:
@@ -372,6 +374,7 @@ class LLMEventEmitter:
             payload = dict(metadata or {})
             payload.setdefault("call_id", call_id)
             payload.setdefault("workspace", self.workspace)
+            payload.setdefault("tool_calls_count", tool_calls_count)
             if response_content is not None:
                 payload["response_content"] = response_content
                 preview_payload = _build_content_preview_payload(payload, response_content)

@@ -25,7 +25,6 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.control_plane.run_ledger.public import (
-    native_tool_call_count_from_metadata,
     project_native_tool_call_envelopes_to_metadata,
 )
 from polaris.kernelone.llm.engine import AIExecutor
@@ -928,7 +927,6 @@ class LLMInvoker:
         )
         native_tool_metadata: dict[str, Any] = {}
         project_native_tool_call_envelopes_to_metadata(native_tool_metadata, native_tool_call_envelopes)
-        native_tool_call_count = native_tool_call_count_from_metadata(native_tool_metadata)
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         provider_usage = _normalize_provider_usage(getattr(response, "usage", None)) or _normalize_provider_usage(
@@ -1000,7 +998,7 @@ class LLMInvoker:
             context_tokens_after=final_context_tokens,
             compression_strategy=prepared.context_result.compression_strategy if prepared.context_result else None,
             response_content=response_text,
-            tool_calls_count=native_tool_call_count,
+            tool_calls_count=0,
             metadata=_with_context_os_audit(event_metadata, prepared),
         )
 
