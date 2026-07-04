@@ -265,8 +265,7 @@ def _resident_agi_audit_context(ai_request: Any) -> dict[str, Any]:
     return dict(raw_context) if isinstance(raw_context, dict) else {}
 
 
-def _resident_agi_coverage_flags(text: str, ai_request: Any | None) -> dict[str, bool]:
-    lowered = text.lower()
+def _resident_agi_coverage_flags(_text: str, ai_request: Any | None) -> dict[str, bool]:
     audit_context = _resident_agi_audit_context(ai_request) if ai_request is not None else {}
     participation = _mapping(audit_context.get("participation"))
     enabled = _bool_value(audit_context.get("enabled"), default=bool(audit_context))
@@ -276,57 +275,18 @@ def _resident_agi_coverage_flags(text: str, ai_request: Any | None) -> dict[str,
     )
     if not enabled or not final_request_participation:
         return {}
-    text_flags = {
-        "has_resident_agi_decision_trace": any(
-            needle in lowered
-            for needle in (
-                "resident_agi_decision_trace",
-                "resident agi 决策交接",
-                "resident agi decision",
-                "resident.agi_decision_trace_signal.v1",
-                "resident.decision_event.v1",
-                "source_of_truth: workspace/meta/resident/decision_trace.jsonl",
-                "workspace/meta/resident/decision_trace.jsonl",
-            )
-        ),
-        "has_resident_agi_capability_surface": any(
-            needle in lowered
-            for needle in (
-                "resident_agi_capability_surface",
-                "resident agi 能力面",
-                "resident.agi_capability_surface.v1",
-                "runtime_foundation: roles.runtime + contextos + turnengine",
-                "embedded_agi_supervisor",
-            )
-        ),
-        "has_resident_agi_decision_boundary": any(
-            needle in lowered
-            for needle in (
-                "resident.agi_decision_boundary.v1",
-                "decision_boundary_schema",
-                "decision_boundaries",
-                "platform_hard_rule",
-                "agi_decision_scope",
-                "agi_governed_execution",
-                "agi_recommendation",
-            )
-        ),
-    }
     return {
         "has_resident_agi_decision_trace": bool(
-            text_flags["has_resident_agi_decision_trace"]
-            or audit_context.get("decision_contract_schema_version")
+            audit_context.get("decision_contract_schema_version")
             or audit_context.get("audit_pack_schema_version")
             or audit_context.get("role_runtime_required")
         ),
         "has_resident_agi_capability_surface": bool(
-            text_flags["has_resident_agi_capability_surface"]
-            or audit_context.get("capability_surface_schema_version")
+            audit_context.get("capability_surface_schema_version")
             or audit_context.get("decision_capability_registry_schema_version")
         ),
         "has_resident_agi_decision_boundary": bool(
-            text_flags["has_resident_agi_decision_boundary"]
-            or audit_context.get("decision_boundary_schema")
+            audit_context.get("decision_boundary_schema")
             or _int_value(audit_context.get("decision_boundary_count")) > 0
         ),
     }

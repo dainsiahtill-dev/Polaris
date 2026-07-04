@@ -183,6 +183,12 @@ def test_final_request_context_audit_counts_tools_and_coverage() -> None:
             "enabled": True,
             "participation": {"final_request_audit": True},
             "participation_scopes": ["final_request_audit"],
+            "audit_pack_schema_version": "resident.agi_audit_pack.v1",
+            "decision_contract_schema_version": "resident.agi_decision_contract.v1",
+            "capability_surface_schema_version": "resident.agi_capability_surface.v1",
+            "decision_capability_registry_schema_version": "resident.agi_decision_capability_registry.v1",
+            "decision_boundary_schema": "resident.agi_decision_boundary.v1",
+            "decision_boundary_count": 3,
         },
     }
     ai_request.options = {"tools": [tool_schema]}
@@ -899,6 +905,54 @@ def test_final_request_context_audit_reports_missing_resident_agi_when_participa
                 "TASK-1 acceptance criteria target_files src/index.ts "
                 "Chief Engineer blueprint construction_plan scope_for_apply "
                 "stderr exit_code failed retry factory_workspace_quality npm run build"
+            ),
+        },
+    ]
+    ai_request = Mock()
+    ai_request.context = {
+        "chat_messages": messages,
+        "resident_agi_audit_context": {
+            "schema_version": "resident.agi_audit_context.v1",
+            "enabled": True,
+            "participation": {"final_request_audit": True},
+            "participation_scopes": ["final_request_audit"],
+        },
+    }
+    ai_request.options = {"tools": []}
+    ai_request.input = ""
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={"tools": []},
+        ai_request=ai_request,
+        native_tool_schemas=[],
+    )
+
+    audit = build_final_request_context_audit(prepared=prepared, profile=profile)
+
+    assert audit["coverage"]["has_resident_agi_decision_trace"] is False
+    assert audit["coverage"]["has_resident_agi_capability_surface"] is False
+    assert audit["coverage"]["has_resident_agi_decision_boundary"] is False
+    assert "has_resident_agi_decision_trace" in audit["context_quality"]["missing_coverage"]
+    assert "has_resident_agi_capability_surface" in audit["context_quality"]["missing_coverage"]
+    assert "has_resident_agi_decision_boundary" in audit["context_quality"]["missing_coverage"]
+
+
+def test_final_request_context_audit_requires_structured_resident_agi_context() -> None:
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "resident_agi_decision_trace resident.agi_decision_trace_signal.v1 "
+                "workspace/meta/resident/decision_trace.jsonl "
+                "resident_agi_capability_surface resident.agi_capability_surface.v1 "
+                "runtime_foundation: roles.runtime + ContextOS + TurnEngine "
+                "resident.agi_decision_boundary.v1 decision_boundaries platform_hard_rule "
+                "agi_decision_scope agi_governed_execution"
             ),
         },
     ]
