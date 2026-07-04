@@ -50,6 +50,38 @@ def test_task_runtime_service_manages_task_rows(tmp_path: Path) -> None:
     assert rows[0]["id"] == created.id
 
 
+def test_create_task_row_reports_event_append_failure_without_persisting_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    def fail_append_event(_command: object) -> object:
+        raise RuntimeError("fact stream unavailable")
+
+    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+
+    row = service.create_task_row(
+        subject="create with append evidence",
+        description="return projection evidence without mutating task metadata",
+        metadata={"phase": "projection"},
+    )
+
+    assert row["status"] == "pending"
+    assert row["execution_event"] == {
+        "ok": False,
+        "event_type": "created",
+        "published": False,
+        "error": "fact stream unavailable",
+    }
+    persisted = service.get_task(row["id"])
+    assert persisted is not None
+    assert "execution_event" not in persisted
+    assert "execution_event" not in persisted["metadata"]
+
+
 def test_claim_execution_reports_execution_event_append_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

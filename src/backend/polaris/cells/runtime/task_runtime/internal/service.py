@@ -201,6 +201,60 @@ class TaskRuntimeService:
         estimated_hours: float = 0.0,
         metadata: dict[str, Any] | None = None,
     ) -> Task:
+        task, _row, _execution_event = self._create_with_execution_event(
+            subject=subject,
+            description=description,
+            blocked_by=blocked_by,
+            priority=priority,
+            owner=owner,
+            assignee=assignee,
+            tags=tags,
+            estimated_hours=estimated_hours,
+            metadata=metadata,
+        )
+        return task
+
+    def create_task_row(
+        self,
+        *,
+        subject: str,
+        description: str = "",
+        blocked_by: list[int] | None = None,
+        priority: int | str = 1,
+        owner: str = "",
+        assignee: str = "",
+        tags: list[str] | None = None,
+        estimated_hours: float = 0.0,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create a task and return the runtime row projection with event evidence."""
+
+        _task, row, execution_event = self._create_with_execution_event(
+            subject=subject,
+            description=description,
+            blocked_by=blocked_by,
+            priority=priority,
+            owner=owner,
+            assignee=assignee,
+            tags=tags,
+            estimated_hours=estimated_hours,
+            metadata=metadata,
+        )
+        return project_task_row_execution_event(row, execution_event)
+
+    def _create_with_execution_event(
+        self,
+        *,
+        subject: str,
+        description: str = "",
+        blocked_by: list[int] | None = None,
+        priority: int | str = 1,
+        owner: str = "",
+        assignee: str = "",
+        tags: list[str] | None = None,
+        estimated_hours: float = 0.0,
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[Task, dict[str, Any], dict[str, Any]]:
         task = self._board.create(
             subject=subject,
             description=description,
@@ -212,13 +266,14 @@ class TaskRuntimeService:
             estimated_hours=estimated_hours,
             metadata=metadata,
         )
-        self._append_execution_event(
+        row = self._augment_task_row(task.to_dict())
+        execution_event = self._append_execution_event(
             "created",
-            task_row=self._augment_task_row(task.to_dict()),
+            task_row=row,
             session=None,
             details={"source": "runtime.task_runtime.create"},
         )
-        return task
+        return task, row, execution_event
 
     def ensure_task_row(
         self,
