@@ -5,6 +5,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
+from polaris.cells.control_plane.run_ledger.public.failure_evidence import (
+    FailureClassV1,
+    normalize_failure_class,
+)
 from polaris.kernelone.audit.error_correlator import (
     AuditFailureClass,
     ErrorCorrelationResult,
@@ -28,6 +32,13 @@ class TestAuditFailureClass:
         assert AuditFailureClass.TASK_FAILURE == "task_failure"
         assert AuditFailureClass.RESOURCE_EXHAUSTION == "resource_exhaustion"
         assert AuditFailureClass.UNKNOWN == "unknown"
+
+    def test_values_remain_local_and_do_not_alias_run_ledger_failure_classes(self) -> None:
+        run_ledger_values = {item.value for item in FailureClassV1}
+
+        for audit_class in AuditFailureClass:
+            assert audit_class.value not in run_ledger_values
+            assert normalize_failure_class(audit_class.value) == audit_class.value
 
 
 class TestClassifyEvent:
