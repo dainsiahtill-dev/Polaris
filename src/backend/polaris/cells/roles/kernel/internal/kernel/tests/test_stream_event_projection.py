@@ -160,3 +160,25 @@ def test_lift_completion_audit_evidence_preserves_canonical_lifecycle_receipt() 
             "reason": "tool_dispatch_dropped",
         }
     ]
+
+
+def test_lift_completion_audit_evidence_treats_zero_lifecycle_as_authoritative() -> None:
+    metadata: dict[str, object] = {}
+
+    projection._lift_completion_audit_evidence(
+        metadata,
+        {
+            "native_tool_calls_count": 9,
+            "native_tool_call_names": ["stale_tool"],
+            "tool_call_lifecycle_receipt": {
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "native_tool_calls_count": 0,
+                "decoded_tool_calls_count": 0,
+                "dispatched_tool_calls_count": 0,
+                "dispatch_status": "dispatched",
+            },
+        },
+    )
+
+    assert metadata["native_tool_calls_count"] == 0
+    assert metadata["native_tool_call_names"] == []

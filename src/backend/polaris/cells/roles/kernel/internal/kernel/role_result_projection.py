@@ -38,6 +38,25 @@ _LLM_RESPONSE_METADATA_KEYS: tuple[str, ...] = (
     "usage_source",
 )
 
+_NATIVE_TOOL_FACT_KEYS: tuple[str, ...] = (
+    "tool_call_lifecycle",
+    "tool_call_lifecycle_receipt",
+    "tool_call_lifecycle_receipts",
+    "native_tool_call_envelopes",
+    "native_tool_call_envelope_refs",
+    "native_tool_calls_count",
+    "native_tool_call_names",
+)
+
+_NATIVE_TOOL_NAME_FACT_KEYS: tuple[str, ...] = (
+    "tool_call_lifecycle",
+    "tool_call_lifecycle_receipt",
+    "tool_call_lifecycle_receipts",
+    "native_tool_call_envelopes",
+    "native_tool_call_envelope_refs",
+    "native_tool_call_names",
+)
+
 
 class QualityProjection(Protocol):
     """Minimal quality-result fields needed for RoleTurnResult projection."""
@@ -129,12 +148,7 @@ def role_result_metadata_from_profile(
                 dict(raw_context_os_audit) if isinstance(raw_context_os_audit, dict) else raw_context_os_audit
             )
         _project_canonical_tool_lifecycle_receipt(metadata)
-        native_count = native_tool_call_count_from_metadata(llm_response_metadata)
-        if native_count > 0:
-            metadata["native_tool_calls_count"] = native_count
-        native_names = native_tool_call_names(llm_response_metadata, ())
-        if native_names:
-            metadata["native_tool_call_names"] = native_names
+        project_native_tool_call_facts(metadata, metadata)
 
     if isinstance(monitoring, dict) and "context_os_audit" not in metadata:
         context_os_audit = monitoring.get("context_os_audit")
@@ -142,6 +156,16 @@ def role_result_metadata_from_profile(
             metadata["context_os_audit"] = dict(context_os_audit)
 
     return metadata
+
+
+def project_native_tool_call_facts(metadata: dict[str, Any], evidence: dict[str, Any]) -> None:
+    """Project canonical native tool-call facts from structured lifecycle evidence."""
+
+    if not any(key in evidence for key in _NATIVE_TOOL_FACT_KEYS):
+        return
+    metadata["native_tool_calls_count"] = native_tool_call_count_from_metadata(evidence)
+    if any(key in evidence for key in _NATIVE_TOOL_NAME_FACT_KEYS):
+        metadata["native_tool_call_names"] = native_tool_call_names(evidence, ())
 
 
 def _project_canonical_tool_lifecycle_receipt(metadata: dict[str, Any]) -> None:
