@@ -34,6 +34,7 @@ from typing import Any
 
 from polaris.kernelone.fs.jsonl.locking import file_lock
 from polaris.kernelone.fs.text_ops import write_json_atomic
+from polaris.kernelone.quality.file_ownership_ledger import normalize_file_ownership_target
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
 logger = logging.getLogger(__name__)
@@ -68,11 +69,9 @@ def _ledger_write_lock(ledger_path: str) -> Iterator[None]:
 
 
 def _normalize_target(raw: Any) -> str:
-    """Mirror normalize_construction_step's target_file shaping (./ + backslash)."""
-    target = str(raw or "").strip().replace("\\", "/")
-    while target.startswith("./"):
-        target = target[2:]
-    return target
+    """Use the same lexical key as the file-ownership ledger."""
+
+    return normalize_file_ownership_target(raw)
 
 
 def _string_list(value: Any) -> list[str]:

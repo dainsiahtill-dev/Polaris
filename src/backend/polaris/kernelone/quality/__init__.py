@@ -29,6 +29,7 @@ from polaris.kernelone.quality.cross_artifact_interfaces import (
     scan_cross_artifact_consistency_errors,
 )
 from polaris.kernelone.quality.file_ownership_ledger import (
+    normalize_file_ownership_target,
     owner_task_identifier_token_aliases,
     task_identifier_token_aliases,
 )
@@ -89,6 +90,7 @@ __all__ = [
     "glob_declared_scope_path_matches",
     "matching_owner_handoff_request",
     "normalize_declared_scope_path",
+    "normalize_file_ownership_target",
     "owner_handoff_identifier_tokens",
     "owner_task_identifier_token_aliases",
     "owner_task_retry_handoff_requests_from_scope_payload",

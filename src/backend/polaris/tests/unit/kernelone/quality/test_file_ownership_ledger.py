@@ -11,6 +11,7 @@ from pathlib import Path
 
 from polaris.kernelone.quality.file_ownership_ledger import (
     build_file_ownership_handoff_requests,
+    normalize_file_ownership_target,
     owner_task_identifier_token_aliases,
     read_file_owners,
     record_file_owners,
@@ -24,6 +25,10 @@ def _steps(*pairs: tuple[str, str]) -> list[dict[str, str]]:
 
 
 class TestRecordAndRead:
+    def test_public_target_normalization_is_shared_contract(self) -> None:
+        assert normalize_file_ownership_target(r".\src\main.py") == "src/main.py"
+        assert normalize_file_ownership_target("./src/main.py") == "src/main.py"
+
     def test_first_writer_owns(self, tmp_path: Path) -> None:
         ws = str(tmp_path)
         record_file_owners(ws, ws, _steps(("S4", "main.js")), "PM-0001-1")

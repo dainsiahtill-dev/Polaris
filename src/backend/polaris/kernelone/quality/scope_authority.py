@@ -9,6 +9,7 @@ from typing import Any
 
 from polaris.kernelone.quality.file_ownership_ledger import (
     build_file_ownership_handoff_requests,
+    normalize_file_ownership_target,
     owner_task_identifier_token_aliases,
     task_identifier_token_aliases,
 )
@@ -38,10 +39,7 @@ def _clean_token(value: Any) -> str:
 
 
 def _normalize_target(raw: Any) -> str:
-    target = _clean_token(raw).replace("\\", "/")
-    while target.startswith("./"):
-        target = target[2:]
-    return target
+    return normalize_file_ownership_target(raw)
 
 
 def normalize_declared_scope_path(value: Any, *, workspace_name: str = "") -> str:

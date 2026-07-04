@@ -165,12 +165,25 @@ def _ledger_write_lock(ledger_path: str) -> Iterator[None]:
         yield
 
 
-def _normalize_target(raw: Any) -> str:
-    """Mirror normalize_construction_step's target_file shaping (./ + backslash)."""
+def normalize_file_ownership_target(raw: Any) -> str:
+    """Return the canonical ledger key for a task target path.
+
+    File-ownership, interface-freezing, and scope-authority handoff routing must
+    agree on this normalization. The helper is intentionally lexical: it does
+    not touch the filesystem and therefore cannot authorize or deny writes by
+    itself.
+    """
+
     target = str(raw or "").strip().replace("\\", "/")
     while target.startswith("./"):
         target = target[2:]
     return target
+
+
+def _normalize_target(raw: Any) -> str:
+    """Backward-compatible private alias for existing in-module callers."""
+
+    return normalize_file_ownership_target(raw)
 
 
 def _ledger_path(workspace: str, cache_root: str) -> str:
@@ -335,6 +348,7 @@ def render_edit_contract(owned_by_other: dict[str, dict[str, str]]) -> str:
 __all__ = [
     "FileOwnershipHandoffRequest",
     "build_file_ownership_handoff_requests",
+    "normalize_file_ownership_target",
     "owner_task_identifier_token_aliases",
     "read_file_owners",
     "record_file_owners",

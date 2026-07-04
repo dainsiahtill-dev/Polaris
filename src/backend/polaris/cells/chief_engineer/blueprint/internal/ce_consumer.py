@@ -46,6 +46,7 @@ from polaris.cells.runtime.task_market.public.contracts import (
 )
 from polaris.cells.runtime.task_market.public.service import get_task_market_service
 from polaris.kernelone.quality.file_ownership_ledger import (
+    normalize_file_ownership_target,
     read_file_owners,
     record_file_owners,
     render_edit_contract,
@@ -90,11 +91,9 @@ def _ce_fission_max_output_tokens() -> int:
 
 
 def _normalize_owned_target(raw: Any) -> str:
-    """Match file_ownership_ledger._normalize_target so publish-time lookups hit."""
-    target = str(raw or "").strip().replace("\\", "/")
-    while target.startswith("./"):
-        target = target[2:]
-    return target
+    """Return the file-ownership ledger key used by publish-time lookups."""
+
+    return normalize_file_ownership_target(raw)
 
 
 def _blueprint_runtime_path(blueprint_id: str) -> str:
