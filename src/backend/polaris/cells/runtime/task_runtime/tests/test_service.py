@@ -32,22 +32,22 @@ def test_task_runtime_service_manages_task_rows(tmp_path: Path) -> None:
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    created = service.create(
+    created = service.create_task_row(
         subject="wire runtime.v2 taskboard",
         description="use snapshot.tasks as primary source",
         metadata={"phase": "projection"},
     )
-    assert created.id > 0
+    assert created["id"] > 0
 
-    updated = service.update_task(
-        f"task-{created.id}",
+    updated = service.update_task_row(
+        f"task-{created['id']}",
         status="in_progress",
         metadata={"owner_role": "director"},
     )
     assert updated is not None
-    assert str(updated.status.value) == "in_progress"
+    assert str(updated["status"]) == "in_progress"
 
-    row = service.get_task(f"task-{created.id}")
+    row = service.get_task(f"task-{created['id']}")
     assert isinstance(row, dict)
     assert row["subject"] == "wire runtime.v2 taskboard"
     assert row["status"] == "in_progress"
@@ -55,14 +55,14 @@ def test_task_runtime_service_manages_task_rows(tmp_path: Path) -> None:
 
     rows = service.list_task_rows()
     assert len(rows) == 1
-    assert rows[0]["id"] == created.id
+    assert rows[0]["id"] == created["id"]
 
 
 def test_task_runtime_service_raw_list_all_is_retired(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
-    service.create(subject="row projection only")
+    service.create_task_row(subject="row projection only")
 
     with pytest.raises(RuntimeError, match="use list_task_rows"):
         service.list_all()
@@ -138,7 +138,7 @@ def test_update_task_row_reports_event_append_failure_without_persisting_evidenc
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
-    created = service.create(subject="update with append evidence")
+    created = service.create_task_row(subject="update with append evidence")
 
     def fail_append_event(_command: object) -> object:
         raise RuntimeError("fact stream unavailable")
@@ -146,7 +146,7 @@ def test_update_task_row_reports_event_append_failure_without_persisting_evidenc
     monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
 
     row = service.update_task_row(
-        created.id,
+        created["id"],
         status="in_progress",
         metadata={"owner_role": "director"},
     )
@@ -172,7 +172,7 @@ def test_claim_execution_reports_execution_event_append_failure(
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
-    created = service.create(subject="claim with append evidence")
+    created = service.create_task_row(subject="claim with append evidence")
 
     def fail_append_event(_command: object) -> object:
         raise RuntimeError("fact stream unavailable")
@@ -180,7 +180,7 @@ def test_claim_execution_reports_execution_event_append_failure(
     monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
 
     claimed = service.claim_execution(
-        created.id,
+        created["id"],
         worker_id="director",
         role_id="director",
         run_id="run-append-failure",
@@ -205,9 +205,9 @@ def test_complete_execution_reports_execution_event_append_failure(
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
-    created = service.create(subject="complete with append evidence")
+    created = service.create_task_row(subject="complete with append evidence")
     claimed = service.claim_execution(
-        created.id,
+        created["id"],
         worker_id="director",
         role_id="director",
         run_id="run-complete-append-failure",
@@ -221,7 +221,7 @@ def test_complete_execution_reports_execution_event_append_failure(
     monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
 
     completed = service.complete_execution(
-        created.id,
+        created["id"],
         session_id=str(claimed["session"]["session_id"]),
         result_summary="done",
     )
