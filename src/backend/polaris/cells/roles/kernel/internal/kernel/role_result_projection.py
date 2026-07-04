@@ -7,6 +7,7 @@ into public RoleTurnResult values so result shape drift has one owner.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Protocol
 
 from polaris.cells.control_plane.run_ledger.public import (
@@ -39,6 +40,20 @@ _LLM_RESPONSE_METADATA_KEYS: tuple[str, ...] = (
     "contextTokens",
     "usage",
     "usage_source",
+    "failure_evidence",
+    "failure_evidence_summary",
+)
+
+_COMPLETION_AUDIT_EVIDENCE_KEYS: tuple[str, ...] = (
+    "final_request_context_audit",
+    "required_tools",
+    "tool_call_lifecycle",
+    "tool_call_lifecycle_receipt",
+    "tool_call_lifecycle_receipts",
+    "native_tool_call_envelopes",
+    "native_tool_call_envelope_refs",
+    "native_tool_calls_count",
+    "native_tool_call_names",
     "failure_evidence",
     "failure_evidence_summary",
 )
@@ -160,6 +175,28 @@ def role_result_metadata_from_profile(
             metadata["context_os_audit"] = dict(context_os_audit)
 
     return metadata
+
+
+def project_completion_audit_evidence(metadata: dict[str, Any], evidence: Mapping[str, Any] | None) -> None:
+    """Copy completion audit evidence and derive lifecycle projections.
+
+    Stream completion carries final-request audit facts inside its monitoring
+    payload. Non-stream role results receive the same facts as LLM metadata.
+    This helper keeps the stream path from maintaining a second key list or
+    lifecycle/failure projection sequence.
+
+    Complexity:
+        O(k + n) time where ``k`` is the fixed evidence key count and ``n`` is
+        the number of lifecycle-derived evidence rows.
+    """
+
+    if not isinstance(evidence, Mapping):
+        return
+    for key in _COMPLETION_AUDIT_EVIDENCE_KEYS:
+        if key in evidence and key not in metadata:
+            value = evidence[key]
+            metadata[key] = dict(value) if isinstance(value, dict) else value
+    project_tool_lifecycle_metadata(metadata)
 
 
 def project_native_tool_call_facts(metadata: dict[str, Any], evidence: dict[str, Any]) -> None:

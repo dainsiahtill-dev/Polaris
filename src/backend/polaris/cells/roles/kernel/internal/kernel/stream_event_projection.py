@@ -11,13 +11,12 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 from polaris.cells.roles.kernel.internal.kernel.commit_protocol import _build_turn_history_and_events
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
-    project_tool_lifecycle_metadata,
+    project_completion_audit_evidence,
     role_result_metadata_from_profile,
     role_turn_completion_result,
     tool_calls_from_batch_receipt,
@@ -335,35 +334,14 @@ class StreamEventProjector:
         return StreamEventProjectionResult(event=event_dict, should_stop=should_stop)
 
 
-_COMPLETION_AUDIT_EVIDENCE_KEYS: tuple[str, ...] = (
-    "final_request_context_audit",
-    "required_tools",
-    "tool_call_lifecycle",
-    "tool_call_lifecycle_receipt",
-    "tool_call_lifecycle_receipts",
-    "native_tool_call_envelopes",
-    "native_tool_call_envelope_refs",
-    "native_tool_calls_count",
-    "native_tool_call_names",
-    "failure_evidence",
-    "failure_evidence_summary",
-)
-
-
-def _lift_completion_audit_evidence(metadata: dict[str, Any], monitoring: Mapping[str, Any] | None) -> None:
+def _lift_completion_audit_evidence(metadata: dict[str, Any], monitoring: dict[str, Any] | None) -> None:
     """Copy final-request dispatch-evidence keys from stream monitoring into metadata.
 
     The stream completion event carries the final-request audit inside its
     monitoring payload; the shared missing-dispatch lifecycle receipt reads
     the same metadata keys as the non-stream completion owner.
     """
-    if not isinstance(monitoring, Mapping):
-        return
-    for key in _COMPLETION_AUDIT_EVIDENCE_KEYS:
-        if key in monitoring and key not in metadata:
-            value = monitoring[key]
-            metadata[key] = dict(value) if isinstance(value, dict) else value
-    project_tool_lifecycle_metadata(metadata)
+    project_completion_audit_evidence(metadata, monitoring)
 
 
 def _task_boundary_error_message(verdict: dict[str, Any] | None, metadata: dict[str, Any]) -> str | None:

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
+    project_completion_audit_evidence,
     role_result_metadata_from_profile,
     role_turn_completion_result,
     role_turn_error_result,
@@ -239,6 +241,33 @@ def test_role_result_metadata_treats_zero_lifecycle_as_authoritative() -> None:
 
     assert metadata["native_tool_calls_count"] == 0
     assert metadata["native_tool_call_names"] == []
+
+
+def test_project_completion_audit_evidence_uses_shared_lifecycle_projection() -> None:
+    envelope = {
+        "schema_version": "native_tool_call_envelope.v1",
+        "envelope_id": "native-tool-call-completion-1",
+        "tool_name": "write_file",
+    }
+    metadata: dict[str, Any] = {}
+
+    project_completion_audit_evidence(
+        metadata,
+        {
+            "required_tools": ["write_file"],
+            "native_tool_calls_count": 9,
+            "tool_call_lifecycle_receipt": {
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "native_tool_call_envelope_refs": [envelope],
+            },
+        },
+    )
+
+    assert metadata["required_tools"] == ["write_file"]
+    assert metadata["native_tool_calls_count"] == 1
+    assert metadata["native_tool_call_names"] == ["write_file"]
+    assert metadata["tool_call_lifecycle_receipt"]["native_tool_call_envelope_refs"] == [envelope]
+    assert metadata["failure_evidence"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
 
 
 def test_role_result_metadata_uses_monitoring_context_audit_when_not_already_set() -> None:
