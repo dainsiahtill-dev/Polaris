@@ -1015,7 +1015,9 @@ def test_final_request_evidence_accepts_context_evidence_slots_without_keywords(
     assert "workspace_quality_evidence" in evidence_coverage["included_refs"]
     assert evidence_coverage["missing_required_refs"] == []
     assert evidence_coverage["structured_evidence"]["failed_gate_evidence"] is True
+    assert evidence_coverage["structured_evidence"]["failure_evidence"] is True
     assert evidence_coverage["structured_evidence"]["workspace_quality_evidence"] is True
+    assert evidence_coverage["structured_evidence"]["quality_evidence"] is True
     assert audit["request_metadata_summary"]["failed_gate_evidence_summary"]["diagnostic_count"] == 1
     assert audit["request_metadata_summary"]["workspace_quality_evidence_summary"]["quality_error_count"] == 1
     enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)
