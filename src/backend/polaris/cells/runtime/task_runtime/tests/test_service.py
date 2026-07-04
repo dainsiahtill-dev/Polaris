@@ -60,6 +60,16 @@ def test_task_runtime_service_raw_list_all_is_retired(tmp_path: Path) -> None:
         service.list_all()
 
 
+def test_task_runtime_service_does_not_proxy_legacy_board_methods(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    for method_name in ("list_my_tasks", "get_dependency_graph", "get_critical_path"):
+        with pytest.raises(AttributeError):
+            getattr(service, method_name)
+
+
 def test_create_task_row_reports_event_append_failure_without_persisting_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

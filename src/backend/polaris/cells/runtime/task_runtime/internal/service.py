@@ -144,10 +144,6 @@ class TaskRuntimeService:
             "failed_count": len(unique_failed),
         }
 
-    def __getattr__(self, name: str) -> Any:
-        """Temporary compatibility proxy for ongoing migration call-sites."""
-        return getattr(self._board, name)
-
     @staticmethod
     def normalize_task_id(task_id: Any) -> int | None:
         token = str(task_id or "").strip()
