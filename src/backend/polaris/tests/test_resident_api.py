@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 from polaris.bootstrap.config import Settings
 from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import CommandResult
+from polaris.cells.resident.autonomy.internal.agi_tactical_chat import _blockers
 from polaris.cells.resident.autonomy.internal.resident_runtime_service import reset_resident_services
 from polaris.cells.resident.autonomy.public import record_resident_decision
 from polaris.cells.resident.autonomy.public.contracts import RunResidentAgiDecisionTurnCommandV1
@@ -524,6 +525,26 @@ def test_resident_agi_tactical_chat_endpoint_returns_evidence_backed_response(
     assert catalog_payload["schema_version"] == "resident.agi_tactical_action_catalog.v1"
     assert catalog_payload["summary"]["agi_direct_execution_allowed"] is False
     assert catalog_payload["summary"]["requires_participation"] == 2
+
+
+def test_resident_agi_tactical_chat_blockers_use_current_run_ledger_summary_field() -> None:
+    base_audit_pack: dict[str, object] = {
+        "hard_rule_gate": {"status": "pass"},
+        "evidence_gate": {"status": "pass"},
+    }
+    evidence_interfaces: dict[str, object] = {"summary": {"missing_required_interface_ids": []}}
+
+    assert _blockers(
+        audit_pack={**base_audit_pack, "run_ledger_summary": {"failed_count": 3}},
+        evidence_interfaces=evidence_interfaces,
+    ) == []
+
+    blockers = _blockers(
+        audit_pack={**base_audit_pack, "run_ledger_summary": {"failed": 2}},
+        evidence_interfaces=evidence_interfaces,
+    )
+
+    assert blockers == ["Run Ledger 中仍有 2 条失败门禁证据。"]
 
 
 def test_resident_agi_tactical_chat_respects_participation_scopes(

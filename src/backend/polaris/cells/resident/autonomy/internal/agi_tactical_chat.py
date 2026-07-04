@@ -166,11 +166,7 @@ def _blockers(
         blockers.append(f"证据门禁为 {evidence_status}，失败证据不能被当作已通过。")
 
     run_ledger_summary = _dict(audit_pack.get("run_ledger_summary"))
-    failed_count = _int(
-        run_ledger_summary.get("failed")
-        or run_ledger_summary.get("failed_count")
-        or run_ledger_summary.get("failed_gate_count")
-    )
+    failed_count = _int(run_ledger_summary.get("failed"))
     if failed_count > 0:
         blockers.append(f"Run Ledger 中仍有 {failed_count} 条失败门禁证据。")
 
