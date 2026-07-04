@@ -15,6 +15,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
     build_tool_call_lifecycle_receipt,
     is_failure_class,
+    native_tool_call_facts_from_lifecycle_receipt,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
 )
@@ -72,6 +73,14 @@ def _lifecycle_receipt_from_metadata(metadata: Mapping[str, Any]) -> dict[str, A
             if isinstance(raw, Mapping):
                 return normalize_tool_call_lifecycle_receipt(raw)
     return None
+
+
+def _project_lifecycle_native_tool_facts(metadata: dict[str, Any], lifecycle: Mapping[str, Any]) -> None:
+    facts = native_tool_call_facts_from_lifecycle_receipt(lifecycle)
+    metadata["native_tool_calls_count"] = facts["native_tool_calls_count"]
+    names = facts.get("native_tool_call_names")
+    if isinstance(names, list) and names:
+        metadata["native_tool_call_names"] = names
 
 
 def _extract_tool_calls(result: RoleTurnResult) -> tuple[str, ...]:
@@ -207,6 +216,7 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
     if lifecycle is not None:
         metadata["tool_call_lifecycle_receipt"] = lifecycle
         metadata["tool_call_lifecycle"] = lifecycle
+        _project_lifecycle_native_tool_facts(metadata, lifecycle)
     dropped_error = _tool_dispatch_dropped_error(result)
     if dropped_error:
         dropped_tool_calls = _extract_tool_calls(result)
@@ -229,6 +239,7 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
         ).to_dict()
         metadata.setdefault("tool_call_lifecycle_receipt", dropped_lifecycle)
         metadata.setdefault("tool_call_lifecycle", metadata["tool_call_lifecycle_receipt"])
+        _project_lifecycle_native_tool_facts(metadata, metadata["tool_call_lifecycle_receipt"])
     return metadata
 
 

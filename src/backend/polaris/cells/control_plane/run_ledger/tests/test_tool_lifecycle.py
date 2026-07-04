@@ -3,6 +3,7 @@ from __future__ import annotations
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_tool_call_lifecycle_receipt,
+    native_tool_call_facts_from_lifecycle_receipt,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
 )
@@ -215,6 +216,47 @@ def test_tool_lifecycle_receipt_derives_counts_from_count_only_dropped_ref() -> 
             "reason": "native_tool_calls_without_dispatch",
         }
     ]
+
+
+def test_native_tool_call_facts_from_lifecycle_receipt_prefers_envelope_names() -> None:
+    facts = native_tool_call_facts_from_lifecycle_receipt(
+        {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_calls_count": 9,
+            "native_tool_call_envelope_refs": [
+                {
+                    "schema_version": "native_tool_call_envelope.v1",
+                    "envelope_id": "native_tool_call:openai:0:call-0:abcdef",
+                    "tool_name": "write_file",
+                },
+                {
+                    "schema_version": "native_tool_call_envelope.v1",
+                    "envelope_id": "native_tool_call:openai:1:call-1:abcdef",
+                    "tool_name": "execute_command",
+                },
+            ],
+            "dispatched_tool_calls_count": 0,
+        }
+    )
+
+    assert facts == {
+        "native_tool_calls_count": 2,
+        "native_tool_call_names": ["write_file", "execute_command"],
+    }
+
+
+def test_native_tool_call_facts_from_lifecycle_receipt_uses_dropped_tool_names() -> None:
+    facts = native_tool_call_facts_from_lifecycle_receipt(
+        {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "dropped_tool_calls": ["write_file", {"tool_name": "write_file"}, {"tool_name": "edit_file"}],
+        }
+    )
+
+    assert facts == {
+        "native_tool_calls_count": 3,
+        "native_tool_call_names": ["write_file", "edit_file"],
+    }
 
 
 def test_tool_lifecycle_normalizer_canonicalizes_legacy_dropped_tool_names() -> None:

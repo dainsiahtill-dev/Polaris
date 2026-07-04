@@ -463,9 +463,41 @@ def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
     }
 
 
+def native_tool_call_facts_from_lifecycle_receipt(value: Any) -> dict[str, Any]:
+    """Derive native tool-call count/name facts from lifecycle receipt evidence.
+
+    Lifecycle receipts are the public Run Ledger evidence shape for provider
+    tool-call transactions. Downstream cells should use this helper instead of
+    re-parsing envelope refs or dropped-call refs locally.
+
+    Complexity:
+        O(e + d) time where ``e`` is envelope refs and ``d`` is dropped-call
+        refs; O(e + d) memory for the returned name list.
+    """
+
+    receipt = normalize_tool_call_lifecycle_receipt(value)
+    names: list[str] = []
+    seen: set[str] = set()
+    for envelope in _native_tool_call_envelope_refs(receipt.get("native_tool_call_envelope_refs")):
+        tool_name = _clean_string(envelope.get("tool_name"))
+        if tool_name and tool_name not in seen:
+            seen.add(tool_name)
+            names.append(tool_name)
+    for dropped in _dropped_tool_call_refs(receipt.get("dropped_tool_calls")):
+        tool_name = _clean_string(dropped.get("tool_name"))
+        if tool_name and tool_name not in seen:
+            seen.add(tool_name)
+            names.append(tool_name)
+    return {
+        "native_tool_calls_count": _int_value(receipt.get("native_tool_calls_count")),
+        "native_tool_call_names": names,
+    }
+
+
 __all__ = [
     "ToolCallLifecycleReceiptV1",
     "build_tool_call_lifecycle_receipt",
+    "native_tool_call_facts_from_lifecycle_receipt",
     "normalize_native_tool_call_envelope_refs",
     "normalize_tool_call_lifecycle_receipt",
 ]

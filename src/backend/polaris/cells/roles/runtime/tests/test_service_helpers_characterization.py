@@ -170,6 +170,38 @@ def test_contract_result_metadata_folds_tool_results_and_receipt() -> None:
     assert meta["batch_receipt"] == {"rid": "abc"}
 
 
+def test_contract_result_metadata_projects_native_tool_facts_from_lifecycle_receipt() -> None:
+    result = RoleTurnResult(
+        content="x",
+        metadata={
+            "native_tool_calls_count": 9,
+            "native_tool_call_names": ["stale_tool"],
+            "tool_call_lifecycle_receipt": {
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "native_tool_call_envelope_refs": [
+                    {
+                        "schema_version": "native_tool_call_envelope.v1",
+                        "envelope_id": "native_tool_call:openai:0:call-1:abcdef",
+                        "tool_name": "write_file",
+                    },
+                    {
+                        "schema_version": "native_tool_call_envelope.v1",
+                        "envelope_id": "native_tool_call:openai:1:call-2:abcdef",
+                        "tool_name": "execute_command",
+                    },
+                ],
+                "dispatch_status": "dropped",
+                "failure_class": "tool_dispatch_dropped",
+            },
+        },
+    )
+
+    meta = runtime_service._contract_result_metadata(result)
+
+    assert meta["native_tool_calls_count"] == 2
+    assert meta["native_tool_call_names"] == ["write_file", "execute_command"]
+
+
 def test_with_result_metadata_patch_merges_and_preserves_fields() -> None:
     result = _make_role_execution_result(metadata={"a": 1}, output="hi")
     patched = runtime_service._with_result_metadata_patch(result, {"b": 2})
