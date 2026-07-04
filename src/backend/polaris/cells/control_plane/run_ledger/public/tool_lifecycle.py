@@ -770,6 +770,75 @@ def summarize_tool_lifecycle_events(events: Sequence[Mapping[str, Any]]) -> dict
     }
 
 
+def empty_tool_lifecycle_summary() -> dict[str, Any]:
+    """Return the canonical empty tool-lifecycle summary shape."""
+
+    return {
+        "ok": True,
+        "event_count": 0,
+        "native_tool_calls_count": 0,
+        "decoded_tool_calls_count": 0,
+        "dispatched_tool_calls_count": 0,
+        "tool_result_count": 0,
+        "effect_receipt_count": 0,
+        "native_tool_call_names": [],
+        "dropped_count": 0,
+        "failed_count": 0,
+        "failure_evidence": [],
+        "events": [],
+    }
+
+
+def merge_tool_lifecycle_summaries(projects: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Merge project-level lifecycle summaries into a single read model.
+
+    Boundary:
+        This is a pure projection helper. It does not inspect ledger event rows
+        and does not create lifecycle receipts.
+
+    Complexity:
+        O(n + m) time and memory, where ``n`` is project count and ``m`` is the
+        total number of projected lifecycle events and native tool names.
+    """
+
+    totals = empty_tool_lifecycle_summary()
+    native_names: list[str] = []
+    failure_evidence: list[dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
+    for project in projects:
+        lifecycle_raw = project.get("tool_lifecycle")
+        lifecycle: Mapping[str, Any] = lifecycle_raw if isinstance(lifecycle_raw, Mapping) else {}
+        if not lifecycle:
+            continue
+        totals["ok"] = bool(totals["ok"]) and bool(lifecycle.get("ok", True))
+        for key in (
+            "event_count",
+            "native_tool_calls_count",
+            "decoded_tool_calls_count",
+            "dispatched_tool_calls_count",
+            "tool_result_count",
+            "effect_receipt_count",
+            "dropped_count",
+            "failed_count",
+        ):
+            totals[key] = _int_value(totals.get(key)) + _int_value(lifecycle.get(key))
+        native_names.extend(
+            name
+            for item in lifecycle.get("native_tool_call_names") or []
+            if (name := _clean_string(item))
+        )
+        raw_failure_evidence = lifecycle.get("failure_evidence")
+        if isinstance(raw_failure_evidence, list):
+            failure_evidence.extend(dict(item) for item in raw_failure_evidence if isinstance(item, Mapping))
+        raw_events = lifecycle.get("events")
+        if isinstance(raw_events, list):
+            events.extend(dict(item) for item in raw_events if isinstance(item, Mapping))
+    totals["native_tool_call_names"] = list(dict.fromkeys(native_names))
+    totals["failure_evidence"] = failure_evidence
+    totals["events"] = events
+    return totals
+
+
 def project_native_tool_call_facts_to_metadata(
     metadata: dict[str, Any],
     facts: Mapping[str, Any],

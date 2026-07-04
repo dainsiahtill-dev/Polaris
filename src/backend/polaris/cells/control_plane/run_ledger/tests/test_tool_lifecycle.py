@@ -5,7 +5,9 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_tool_call_lifecycle_receipt,
     build_tool_dispatch_dropped_anomaly_projection,
     build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
+    empty_tool_lifecycle_summary,
     failure_evidence_from_lifecycle_receipt,
+    merge_tool_lifecycle_summaries,
     native_tool_call_envelope_refs_from_metadata,
     native_tool_call_facts_from_lifecycle_receipt,
     native_tool_call_facts_from_metadata,
@@ -384,6 +386,76 @@ def test_summarize_tool_lifecycle_events_centralizes_projection_totals() -> None
     assert summary["failed_count"] == 1
     assert summary["failure_evidence"][0]["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
     assert [event["content_id"] for event in summary["events"]] == ["event-1", "event-2"]
+
+
+def test_merge_tool_lifecycle_summaries_centralizes_multi_project_projection() -> None:
+    failure_evidence = {"failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value}
+    merged = merge_tool_lifecycle_summaries(
+        [
+            {
+                "tool_lifecycle": {
+                    "ok": True,
+                    "event_count": 1,
+                    "native_tool_calls_count": 1,
+                    "decoded_tool_calls_count": 1,
+                    "dispatched_tool_calls_count": 1,
+                    "tool_result_count": 1,
+                    "effect_receipt_count": 1,
+                    "native_tool_call_names": ["read_file"],
+                    "dropped_count": 0,
+                    "failed_count": 0,
+                    "failure_evidence": [],
+                    "events": [{"content_id": "event-1"}],
+                }
+            },
+            {
+                "tool_lifecycle": {
+                    "ok": False,
+                    "event_count": 1,
+                    "native_tool_calls_count": 2,
+                    "decoded_tool_calls_count": 2,
+                    "dispatched_tool_calls_count": 0,
+                    "tool_result_count": 0,
+                    "effect_receipt_count": 0,
+                    "native_tool_call_names": ["write_file", "read_file"],
+                    "dropped_count": 1,
+                    "failed_count": 1,
+                    "failure_evidence": [failure_evidence],
+                    "events": [{"content_id": "event-2"}],
+                }
+            },
+        ]
+    )
+
+    assert merged["ok"] is False
+    assert merged["event_count"] == 2
+    assert merged["native_tool_calls_count"] == 3
+    assert merged["decoded_tool_calls_count"] == 3
+    assert merged["dispatched_tool_calls_count"] == 1
+    assert merged["tool_result_count"] == 1
+    assert merged["effect_receipt_count"] == 1
+    assert merged["native_tool_call_names"] == ["read_file", "write_file"]
+    assert merged["dropped_count"] == 1
+    assert merged["failed_count"] == 1
+    assert merged["failure_evidence"] == [failure_evidence]
+    assert [event["content_id"] for event in merged["events"]] == ["event-1", "event-2"]
+
+
+def test_empty_tool_lifecycle_summary_matches_public_projection_shape() -> None:
+    assert empty_tool_lifecycle_summary() == {
+        "ok": True,
+        "event_count": 0,
+        "native_tool_calls_count": 0,
+        "decoded_tool_calls_count": 0,
+        "dispatched_tool_calls_count": 0,
+        "tool_result_count": 0,
+        "effect_receipt_count": 0,
+        "native_tool_call_names": [],
+        "dropped_count": 0,
+        "failed_count": 0,
+        "failure_evidence": [],
+        "events": [],
+    }
 
 
 def test_tool_lifecycle_receipt_derives_counts_from_dropped_tool_details() -> None:

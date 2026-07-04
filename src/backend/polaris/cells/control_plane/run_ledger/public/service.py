@@ -32,6 +32,10 @@ from polaris.cells.control_plane.run_ledger.public.projection import (
     summarize_run_ledger_projection,
 )
 from polaris.cells.control_plane.run_ledger.public.provenance import build_run_provenance_bundle
+from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
+    empty_tool_lifecycle_summary,
+    merge_tool_lifecycle_summaries,
+)
 from polaris.infrastructure.log_pipeline.jetstream_publisher import get_log_jetstream_publisher
 from polaris.kernelone.storage import resolve_storage_roots
 
@@ -93,18 +97,7 @@ def _empty_projection(
         },
         "evidence_modalities": {},
         "task_boundary": {"ok": True, "verdict_count": 0, "latest": {}, "failed": []},
-        "tool_lifecycle": {
-            "ok": True,
-            "event_count": 0,
-            "native_tool_calls_count": 0,
-            "decoded_tool_calls_count": 0,
-            "dispatched_tool_calls_count": 0,
-            "tool_result_count": 0,
-            "effect_receipt_count": 0,
-            "dropped_count": 0,
-            "failed_count": 0,
-            "events": [],
-        },
+        "tool_lifecycle": empty_tool_lifecycle_summary(),
     }
 
 
@@ -225,41 +218,6 @@ def _merge_evidence_modalities(projects: list[dict[str, Any]]) -> dict[str, Any]
     return dict(sorted(merged.items()))
 
 
-def _merge_tool_lifecycle(projects: list[dict[str, Any]]) -> dict[str, Any]:
-    totals: dict[str, Any] = {
-        "ok": True,
-        "event_count": 0,
-        "native_tool_calls_count": 0,
-        "decoded_tool_calls_count": 0,
-        "dispatched_tool_calls_count": 0,
-        "tool_result_count": 0,
-        "effect_receipt_count": 0,
-        "dropped_count": 0,
-        "failed_count": 0,
-        "events": [],
-    }
-    for project in projects:
-        lifecycle = project.get("tool_lifecycle")
-        if not isinstance(lifecycle, dict):
-            continue
-        totals["ok"] = bool(totals["ok"]) and bool(lifecycle.get("ok", True))
-        for key in (
-            "event_count",
-            "native_tool_calls_count",
-            "decoded_tool_calls_count",
-            "dispatched_tool_calls_count",
-            "tool_result_count",
-            "effect_receipt_count",
-            "dropped_count",
-            "failed_count",
-        ):
-            totals[key] = _count_value(totals.get(key)) + _count_value(lifecycle.get(key))
-        events = lifecycle.get("events")
-        if isinstance(events, list):
-            totals["events"].extend(item for item in events if isinstance(item, dict))
-    return totals
-
-
 def _merge_task_boundary(projects: list[dict[str, Any]]) -> dict[str, Any]:
     latest: dict[str, Any] = {}
     failed: list[dict[str, Any]] = []
@@ -371,7 +329,7 @@ def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedg
     projected = len(projects)
     ok = projected > 0 and failed == 0
     task_boundary = _merge_task_boundary(projects)
-    tool_lifecycle = _merge_tool_lifecycle(projects)
+    tool_lifecycle = merge_tool_lifecycle_summaries(projects)
     evidence_policy = _merge_evidence_policy(projects)
     missing_required = list(evidence_policy.get("missing_required_modalities") or [])
     failed_required = list(evidence_policy.get("failed_required_modalities") or [])
