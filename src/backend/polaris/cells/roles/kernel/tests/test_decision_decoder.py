@@ -391,9 +391,11 @@ class TestNativeToolExecutionSource:
         assert metadata["filtered_tool_calls_reason"] == "finalization_tool_choice_none"
         assert metadata["filtered_tool_calls"] == [
             {
+                "reason": "finalization_tool_choice_none",
                 "tool_name": "write_file",
                 "call_id": "call_final",
-                "reason": "finalization_tool_choice_none",
+                "execution_mode": "write_serial",
+                "target_file": "x.py",
             }
         ]
         assert metadata["filtered_native_tool_call_envelopes"] == [envelope]

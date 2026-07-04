@@ -23,6 +23,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_calls_from_response,
 )
 from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
+from polaris.cells.roles.kernel.internal.transaction.tool_call_audit_refs import tool_invocation_audit_ref
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
     FinalizeMode,
@@ -116,11 +117,7 @@ class TurnDecisionDecoder:
                 metadata["filtered_tool_calls_count"] = len(all_tools) or len(native_tool_call_envelopes)
             if all_tools:
                 metadata["filtered_tool_calls"] = [
-                    {
-                        "tool_name": str(tool.get("tool_name") or ""),
-                        "call_id": str(tool.get("call_id") or ""),
-                        "reason": "finalization_tool_choice_none",
-                    }
+                    tool_invocation_audit_ref(tool, reason="finalization_tool_choice_none")
                     for tool in all_tools
                 ]
             if native_tool_call_envelopes:
