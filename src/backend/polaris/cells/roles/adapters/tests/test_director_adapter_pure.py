@@ -8539,6 +8539,33 @@ def test_materialization_quality_errors_scan_declared_target_files(tmp_path: Any
     assert any("src/declared.ts" in error for error in errors)
 
 
+def test_materialization_quality_evidence_scanner_receives_task_id(tmp_path: Any, monkeypatch: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director import execute_method
+
+    seen: dict[str, Any] = {}
+
+    def _capture_evidence(workspace: str, *, relative_paths: list[str] | None = None, task_id: str = "") -> Any:
+        seen["workspace"] = workspace
+        seen["paths"] = list(relative_paths or [])
+        seen["task_id"] = task_id
+        return SimpleNamespace(errors=[], issues=[])
+
+    monkeypatch.setattr(execute_method, "scan_workspace_artifact_quality_evidence", _capture_evidence)
+    adapter = SimpleNamespace(workspace=str(tmp_path))
+
+    execute_method._collect_materialization_quality_errors(
+        adapter,
+        task={"task_id": "TASK-FALLBACK", "target_files": ["src/entry.ts"]},
+        all_affected_files=["src/entry.ts"],
+        workspace_name=tmp_path.name,
+        context={"target_task_id": "TASK-RUNTIME"},
+    )
+
+    assert seen["workspace"] == str(tmp_path)
+    assert seen["task_id"] == "TASK-RUNTIME"
+    assert seen["paths"] == ["src/entry.ts"]
+
+
 def test_materialization_quality_errors_keep_pinned_step_single_file_scope(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.quality_gate import (
         _collect_materialization_quality_errors,

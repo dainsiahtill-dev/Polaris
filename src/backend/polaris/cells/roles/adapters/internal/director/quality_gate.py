@@ -1813,6 +1813,7 @@ def _collect_materialization_quality_findings(
     errors, scan_issues = _scan_workspace_artifact_quality_findings(
         workspace_full,
         relative_paths=quality_scan_paths,
+        task_id=_materialization_quality_task_id(task, context),
     )
     errors.extend(
         _declared_target_file_quality_errors(
@@ -1841,14 +1842,26 @@ def _scan_workspace_artifact_quality_findings(
     workspace_full: str,
     *,
     relative_paths: list[str],
+    task_id: str = "",
 ) -> tuple[list[str], tuple[dict[str, Any], ...]]:
     evidence_scanner = getattr(_em, "scan_workspace_artifact_quality_evidence", None)
     if callable(evidence_scanner) and _execute_method_artifact_quality_scanner_is_default():
-        evidence = evidence_scanner(workspace_full, relative_paths=relative_paths)
+        evidence = evidence_scanner(workspace_full, relative_paths=relative_paths, task_id=task_id)
         return list(evidence.errors), tuple(issue.to_dict() for issue in evidence.issues)
 
     errors = _em.scan_workspace_artifact_quality(workspace_full, relative_paths=relative_paths)
     return list(errors), artifact_quality_issues_from_errors(errors)
+
+
+def _materialization_quality_task_id(task: dict[str, Any], context: dict[str, Any] | None) -> str:
+    for source in (context, task):
+        if not isinstance(source, dict):
+            continue
+        for key in ("target_task_id", "task_id", "id", "pm_task_id"):
+            task_id = str(source.get(key) or "").strip()
+            if task_id:
+                return task_id
+    return ""
 
 
 def _execute_method_artifact_quality_scanner_is_default() -> bool:
