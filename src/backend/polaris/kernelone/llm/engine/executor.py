@@ -17,13 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
-from polaris.kernelone.events.final_request_evidence import (
-    looks_like_ce_blueprint_payload,
-    looks_like_failed_gate_evidence_context_payload,
-    looks_like_pm_contract_payload,
-    looks_like_target_scope_payload,
-    looks_like_workspace_quality_evidence_payload,
-)
+from polaris.kernelone.events.final_request_evidence import structured_context_coverage_flags
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.trace import get_trace_id
 
@@ -106,46 +100,8 @@ def _message_chars(messages: list[dict[str, str]]) -> int:
     return sum(len(message.get("role", "")) + len(message.get("content", "")) for message in messages)
 
 
-def _iter_context_mappings(value: Any, *, depth: int = 0) -> list[dict[str, Any]]:
-    if depth > 5:
-        return []
-    if isinstance(value, dict):
-        mappings = [value]
-        for nested in value.values():
-            mappings.extend(_iter_context_mappings(nested, depth=depth + 1))
-        return mappings
-    if isinstance(value, (list, tuple)):
-        nested_mappings: list[dict[str, Any]] = []
-        for item in value:
-            nested_mappings.extend(_iter_context_mappings(item, depth=depth + 1))
-        return nested_mappings
-    return []
-
-
-def _structured_coverage_flags(context: Any) -> dict[str, bool]:
-    flags = {
-        "has_pm_contract": False,
-        "has_chief_engineer_blueprint": False,
-        "has_target_files": False,
-        "has_failure_feedback": False,
-        "has_workspace_quality_evidence": False,
-    }
-    for payload in _iter_context_mappings(context):
-        if looks_like_pm_contract_payload(payload):
-            flags["has_pm_contract"] = True
-        if looks_like_ce_blueprint_payload(payload):
-            flags["has_chief_engineer_blueprint"] = True
-        if looks_like_target_scope_payload(payload):
-            flags["has_target_files"] = True
-        if looks_like_failed_gate_evidence_context_payload(payload):
-            flags["has_failure_feedback"] = True
-        if looks_like_workspace_quality_evidence_payload(payload):
-            flags["has_workspace_quality_evidence"] = True
-    return flags
-
-
 def _coverage_flags(*, context: Any = None) -> dict[str, bool]:
-    structured_flags = _structured_coverage_flags(context)
+    structured_flags = structured_context_coverage_flags(context)
     return {
         key: bool(structured_flags.get(key))
         for key in (

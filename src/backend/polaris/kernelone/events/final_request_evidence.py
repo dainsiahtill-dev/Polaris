@@ -879,6 +879,57 @@ def looks_like_failed_gate_evidence_context_payload(value: Any) -> bool:
     return _looks_like_failed_gate_item(value)
 
 
+def structured_context_coverage_flags(context: Any) -> dict[str, bool]:
+    """Return final-request coverage flags from structured context payloads.
+
+    Boundary:
+        This helper is the KernelOne owner for low-level final-request context
+        coverage discovery. It recursively scans structured context containers
+        and applies the same evidence-slot predicates used by final-request
+        audit. It deliberately does not parse prompt or diagnostic prose.
+
+    Complexity:
+        O(n) time over nested context mappings up to a fixed depth; O(n) memory
+        for traversal results.
+    """
+
+    flags = {
+        "has_pm_contract": False,
+        "has_chief_engineer_blueprint": False,
+        "has_target_files": False,
+        "has_failure_feedback": False,
+        "has_workspace_quality_evidence": False,
+    }
+    for payload in _iter_context_mappings(context):
+        if looks_like_pm_contract_payload(payload):
+            flags["has_pm_contract"] = True
+        if looks_like_ce_blueprint_payload(payload):
+            flags["has_chief_engineer_blueprint"] = True
+        if looks_like_target_scope_payload(payload):
+            flags["has_target_files"] = True
+        if looks_like_failed_gate_evidence_context_payload(payload):
+            flags["has_failure_feedback"] = True
+        if looks_like_workspace_quality_evidence_payload(payload):
+            flags["has_workspace_quality_evidence"] = True
+    return flags
+
+
+def _iter_context_mappings(value: Any, *, depth: int = 0) -> list[Mapping[str, Any]]:
+    if depth > 5:
+        return []
+    if isinstance(value, Mapping):
+        mappings: list[Mapping[str, Any]] = [value]
+        for nested in value.values():
+            mappings.extend(_iter_context_mappings(nested, depth=depth + 1))
+        return mappings
+    if isinstance(value, (list, tuple)):
+        nested_mappings: list[Mapping[str, Any]] = []
+        for item in value:
+            nested_mappings.extend(_iter_context_mappings(item, depth=depth + 1))
+        return nested_mappings
+    return []
+
+
 def summarize_workspace_quality_evidence_context_slot(value: Any) -> dict[str, Any]:
     """Project workspace-quality context evidence into the final-request slot shape.
 
