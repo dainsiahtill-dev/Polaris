@@ -771,6 +771,32 @@ def test_normalizer_builds_cross_artifact_unresolved_symbol_diagnostic() -> None
     assert coverage.items[0].matched_rules[0].rule_id == "typescript.unresolved_import_symbol_missing_export"
 
 
+def test_normalizer_preserves_flat_typescript_symbol_coherence_fields() -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            {
+                "source": "typescript_symbol_coherence_scanner",
+                "code": "typescript_import_unresolved_symbol",
+                "message": "Missing export WeatherReport",
+                "path": "src/forecast.ts",
+                "importer_path": "src/forecast.ts",
+                "exporter_path": "src/weather.ts",
+                "specifier": "./weather",
+                "imported_symbol": "WeatherReport",
+            }
+        ]
+    )
+
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    assert diagnostic.code == "typescript_import_unresolved_symbol"
+    assert diagnostic.path == "src/forecast.ts"
+    assert diagnostic.metadata["importer_path"] == "src/forecast.ts"
+    assert diagnostic.metadata["exporter_path"] == "src/weather.ts"
+    assert diagnostic.metadata["specifier"] == "./weather"
+    assert diagnostic.metadata["imported_symbol"] == "WeatherReport"
+
+
 def test_cross_artifact_unresolved_symbol_routes_to_python_rule_for_python_paths() -> None:
     diagnostics = normalize_artifact_quality_errors(
         [

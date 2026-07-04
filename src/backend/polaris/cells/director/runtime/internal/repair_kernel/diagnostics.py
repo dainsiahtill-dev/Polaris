@@ -143,6 +143,8 @@ def _normalize_structured_error(raw: Mapping[str, Any]) -> RepairDiagnostic | No
         "module",
         "specifier",
         "importer_path",
+        "exporter_path",
+        "imported_symbol",
         "owner_path",
         "target_file",
         "manifest_path",
