@@ -51,6 +51,7 @@ from polaris.kernelone.quality.scope_authority import (
     path_matches_declared_scope_candidate,
     scope_authority_decision_summary,
     task_record_identifier_tokens,
+    task_record_routing_key,
     unresolved_owner_handoff_requests_from_scope_payload,
 )
 from polaris.kernelone.quality.syntax_gate import (
@@ -106,5 +107,6 @@ __all__ = [
     "scope_authority_decision_summary",
     "task_identifier_token_aliases",
     "task_record_identifier_tokens",
+    "task_record_routing_key",
     "unresolved_owner_handoff_requests_from_scope_payload",
 ]

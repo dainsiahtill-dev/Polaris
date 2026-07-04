@@ -392,7 +392,7 @@ def build_owner_handoff_index(
         owner_handoff_request = matching_owner_handoff_request(record, owner_handoff_requests)
         if not owner_handoff_request:
             continue
-        task_key = _task_record_key(record)
+        task_key = task_record_routing_key(record)
         if task_key:
             matched_owner_handoff_by_task_key[task_key] = owner_handoff_request
         matched_owner_handoff_keys.add(_owner_handoff_match_key(owner_handoff_request))
@@ -411,7 +411,14 @@ def build_owner_handoff_index(
     )
 
 
-def _task_record_key(record: Mapping[str, Any]) -> str:
+def task_record_routing_key(record: Mapping[str, Any]) -> str:
+    """Return the stable task-row routing key used by owner handoff indexes.
+
+    This key is read-only routing evidence. It must not be used as a write
+    authorization source; write authorization remains scoped by the execution
+    envelope and tool guards.
+    """
+
     return _clean_token(record.get("id") or record.get("task_id"))
 
 
@@ -508,5 +515,6 @@ __all__ = [
     "path_matches_declared_scope_candidate",
     "scope_authority_decision_summary",
     "task_record_identifier_tokens",
+    "task_record_routing_key",
     "unresolved_owner_handoff_requests_from_scope_payload",
 ]

@@ -17,6 +17,7 @@ from polaris.kernelone.quality.scope_authority import (
     path_matches_any_declared_scope_candidate,
     scope_authority_decision_summary,
     task_record_identifier_tokens,
+    task_record_routing_key,
     unresolved_owner_handoff_requests_from_scope_payload,
 )
 
@@ -250,6 +251,35 @@ def test_scope_authority_matches_owner_handoff_using_projected_identifier_tokens
     assert task_record_identifier_tokens(owner_row) >= {"TASK-4", "4"}
     assert owner_handoff_identifier_tokens(request) == frozenset({"4", "TASK-04", "TASK-4"})
     assert matching_owner_handoff_request(owner_row, [request]) == request
+
+
+def test_scope_authority_owner_handoff_index_uses_public_task_record_routing_key() -> None:
+    owner_row = {
+        "id": "7",
+        "external_task_id": "TASK-7",
+        "metadata": {"external_task_id": "TASK-7"},
+    }
+    request = {
+        "schema_version": "file-ownership-handoff-request/1",
+        "target_file": "src/index.js",
+        "owner_task_identifier_tokens": ["TASK-7"],
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+    }
+    payload = {
+        "task_boundary_scope_filter": {
+            "scope_authority": {
+                "owner_task_retry_handoff_requests": [request],
+                "unresolved_owner_handoff_requests": [],
+            }
+        }
+    }
+
+    index = build_owner_handoff_index(payload, [owner_row])
+
+    routing_key = task_record_routing_key(owner_row)
+    assert routing_key == "7"
+    assert index.matched_owner_handoff_by_task_key[routing_key] == request
 
 
 def test_scope_authority_matches_owner_handoff_using_legacy_owner_fields() -> None:

@@ -73,6 +73,7 @@ from polaris.kernelone.quality import (
     ownership_handoff_requests_from_scope_payload,
     task_identifier_token_aliases,
     task_record_identifier_tokens,
+    task_record_routing_key,
 )
 from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path, resolve_storage_roots
 from polaris.kernelone.trace import create_task_with_context
@@ -1022,7 +1023,7 @@ def _owner_handoff_identifier_tokens(request: dict[str, Any]) -> set[str]:
 
 
 def _task_record_rework_key(record: dict[str, Any]) -> str:
-    return str(record.get("id") or record.get("task_id") or "").strip()
+    return task_record_routing_key(record)
 
 
 def _quality_gate_owner_handoff_index(
