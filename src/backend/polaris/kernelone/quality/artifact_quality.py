@@ -527,19 +527,15 @@ def _artifact_quality_issue_code(message: str) -> str:
     compiler_issue_code = _legacy_compiler_issue_code_from_path(message, normalized)
     if compiler_issue_code:
         return compiler_issue_code
-    if "typescript project typecheck failed" in normalized:
-        return "typescript_project_typecheck_failed"
-    if "syntax error" in normalized or "invalid json" in normalized:
-        return "syntax_error"
+    language_or_syntax_issue_code = _legacy_language_or_syntax_issue_code(normalized)
+    if language_or_syntax_issue_code:
+        return language_or_syntax_issue_code
     npm_issue_code = _legacy_npm_manifest_issue_code(normalized)
     if npm_issue_code:
         return npm_issue_code
-    if "patch residue" in normalized:
-        return "patch_residue"
-    if "tool execution receipt contamination" in normalized:
-        return "tool_receipt_contamination"
-    if "source narration contamination" in normalized:
-        return "source_narration_contamination"
+    hygiene_issue_code = _legacy_hygiene_issue_code(normalized)
+    if hygiene_issue_code:
+        return hygiene_issue_code
     slug = re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
     return slug[:80] or "artifact_quality_error"
 
@@ -579,6 +575,28 @@ def _legacy_npm_manifest_issue_code(normalized_message: str) -> str:
         return "npm_manifest_invalid"
     if "npm package manifest" in normalized_message:
         return "npm_manifest_invalid"
+    return ""
+
+
+def _legacy_language_or_syntax_issue_code(normalized_message: str) -> str:
+    """Classify legacy broad language and syntax diagnostics."""
+
+    if "typescript project typecheck failed" in normalized_message:
+        return "typescript_project_typecheck_failed"
+    if "syntax error" in normalized_message or "invalid json" in normalized_message:
+        return "syntax_error"
+    return ""
+
+
+def _legacy_hygiene_issue_code(normalized_message: str) -> str:
+    """Classify legacy hygiene and contamination diagnostics."""
+
+    if "patch residue" in normalized_message:
+        return "patch_residue"
+    if "tool execution receipt contamination" in normalized_message:
+        return "tool_receipt_contamination"
+    if "source narration contamination" in normalized_message:
+        return "source_narration_contamination"
     return ""
 
 
