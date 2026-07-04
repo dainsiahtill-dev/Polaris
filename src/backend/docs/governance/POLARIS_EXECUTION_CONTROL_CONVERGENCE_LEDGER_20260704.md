@@ -60,6 +60,7 @@ Open bucket count: 5.
 | ECC-WS1-05 | `653cd70e` | ECC-WS1 | Provider response hashing moved into `llm_caller.tool_helpers`; stream no longer imports the private decision hash helper. | Same focused WS1 test/ruff set passed. |
 | ECC-WS1-06 | `cec7628c` | ECC-WS1 | Lifecycle tests were decoupled from decision-pipeline private wrappers and now exercise shared helper / Run Ledger public projection APIs. | Same focused WS1 test/ruff set passed. |
 | ECC-WS1-07 | `d48f6bd8` | ECC-WS1 | Native tool-call envelope fallback and provider-label projection moved from `decision_pipeline` private anomaly helpers into `llm_caller.tool_helpers`; the dropped-dispatch anomaly builder now consumes the shared envelope projection. | `rtk pytest src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_helpers.py src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_decision_pipeline.py src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_stream_orchestrator_completion_evidence.py -q`; `rtk ruff check ...`. |
+| ECC-WS1-08 | `7ea37a46` | ECC-WS1 | `decision_pipeline` removed its remaining pure native tool-call count/fact/hash/projection wrapper functions and now calls the shared helper / Run Ledger projection APIs directly. | Same focused WS1 test/ruff set passed. |
 
 ## Next Closure Order
 
