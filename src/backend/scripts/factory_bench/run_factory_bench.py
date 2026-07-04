@@ -43,6 +43,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
     append_run_ledger_event,
     build_tool_call_lifecycle_receipt,
+    build_tool_call_lifecycle_run_ledger_event,
     evaluate_task_boundary_verdict,
 )
 from polaris.cells.factory.pipeline.internal.bench_gates import (
@@ -2487,13 +2488,15 @@ def _append_tool_dispatch_failure_to_run_ledger(
             AppendRunLedgerEventCommandV1(
                 workspace=str(workspace),
                 run_id=run_id,
-                event={
-                    "event_type": "tool_call_lifecycle",
-                    "stage": "director_tool_dispatch",
-                    "run_id": run_id,
-                    "task_id": task_id,
-                    "tool_call_lifecycle_receipt": receipt.to_dict(),
-                    "job_token": {
+                event=build_tool_call_lifecycle_run_ledger_event(
+                    run_id=run_id,
+                    task_id=task_id,
+                    turn_id=str(tool_dispatch.get("turn_id") or ""),
+                    role=str(tool_dispatch.get("role") or "director"),
+                    lifecycle_receipt=receipt.to_dict(),
+                    stage="director_tool_dispatch",
+                    project_id=project_id,
+                    job_token={
                         "token_id": f"tool-dispatch-{project_id}",
                         "run_id": run_id,
                         "task_id": task_id,
@@ -2501,7 +2504,7 @@ def _append_tool_dispatch_failure_to_run_ledger(
                         "capability_audit": {"ok": True, "issues": []},
                         "gate_policy": {},
                     },
-                },
+                ),
             )
         )
     except (OSError, RuntimeError, TypeError, ValueError):
