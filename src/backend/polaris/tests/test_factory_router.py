@@ -83,7 +83,7 @@ class QualityReworkStageExecutor(FakeStageExecutor):
             metadata={"external_task_id": "TASK-1", "adapter_result": {"qa_required_for_final_verdict": True}},
             priority=1,
         )
-        task_board.update(
+        task_board.update_task_row(
             row["id"],
             metadata={
                 "qa_rework_requested": True,
@@ -185,7 +185,7 @@ class TaskBoundaryQualityReworkStageExecutor(FakeStageExecutor):
             },
             priority=1,
         )
-        task_board.update(
+        task_board.update_task_row(
             row["id"],
             status="failed",
             assignee="director",
@@ -640,7 +640,7 @@ def test_quality_gate_rework_summary_reads_taskboard_requests(temp_workspace: Pa
         metadata={"external_task_id": "TASK-1"},
         priority=1,
     )
-    task_board.update(
+    task_board.update_task_row(
         row["id"],
         metadata={
             "qa_rework_requested": True,
@@ -749,7 +749,7 @@ def test_quality_gate_rework_summary_keeps_exhausted_requests(temp_workspace: Pa
         metadata={"external_task_id": "TASK-1"},
         priority=1,
     )
-    task_board.update(
+    task_board.update_task_row(
         row["id"],
         status="failed",
         metadata={
@@ -818,8 +818,8 @@ def test_quality_gate_task_boundary_validation_routes_owner_handoff_to_owner_tas
         },
         priority=2,
     )
-    task_board.update(owner_row["id"], status="completed", assignee="director")
-    task_board.update(current_row["id"], status="failed", assignee="director")
+    task_board.update_task_row(owner_row["id"], status="completed", assignee="director")
+    task_board.update_task_row(current_row["id"], status="failed", assignee="director")
 
     target = Path(resolve_logical_path(str(temp_workspace), "workspace/qa/latest.workspace-validation.json"))
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -891,7 +891,7 @@ def test_quality_gate_task_boundary_validation_routes_scope_authority_nested_han
         metadata={"external_task_id": "PM-0001-1-S4"},
         priority=1,
     )
-    task_board.update(owner_row["id"], status="completed", assignee="director")
+    task_board.update_task_row(owner_row["id"], status="completed", assignee="director")
 
     handoff_request = {
         "schema_version": "file-ownership-handoff-request/1",
@@ -992,7 +992,7 @@ def test_quality_gate_task_boundary_validation_reports_unmatched_owner_handoff(t
         },
         priority=2,
     )
-    task_board.update(current_row["id"], status="failed", assignee="director")
+    task_board.update_task_row(current_row["id"], status="failed", assignee="director")
 
     target = Path(resolve_logical_path(str(temp_workspace), "workspace/qa/latest.workspace-validation.json"))
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -1151,7 +1151,7 @@ def test_quality_gate_task_boundary_validation_reports_unknown_owner_handoff(tem
         },
         priority=2,
     )
-    task_board.update(current_row["id"], status="failed", assignee="director")
+    task_board.update_task_row(current_row["id"], status="failed", assignee="director")
 
     target = Path(resolve_logical_path(str(temp_workspace), "workspace/qa/latest.workspace-validation.json"))
     target.parent.mkdir(parents=True, exist_ok=True)
