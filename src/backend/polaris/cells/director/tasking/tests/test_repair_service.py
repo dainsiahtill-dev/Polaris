@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+from polaris.cells.qa.audit_verdict.public import QaFailureClassV1
 
 if TYPE_CHECKING:
     pass
@@ -151,7 +152,7 @@ class TestRepairService:
         [
             (
                 "scope mismatch: target file not declared by PM contract",
-                "BLUEPRINT_SCOPE_MISMATCH",
+                QaFailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
                 "ce_replan_required",
                 False,
                 True,
@@ -159,7 +160,7 @@ class TestRepairService:
             ),
             (
                 "contract ambiguous: missing acceptance for login flow",
-                "CONTRACT_AMBIGUOUS",
+                QaFailureClassV1.CONTRACT_AMBIGUOUS.value,
                 "pm_revision_required",
                 False,
                 False,
@@ -167,7 +168,7 @@ class TestRepairService:
             ),
             (
                 "test environment failure: network timeout while installing dependencies",
-                "TEST_ENVIRONMENT_FAILURE",
+                QaFailureClassV1.TEST_ENVIRONMENT_FAILURE.value,
                 "infra_retry",
                 False,
                 False,
@@ -175,7 +176,7 @@ class TestRepairService:
             ),
             (
                 "acceptance invalid: verifier expects undeclared acceptance behavior",
-                "ACCEPTANCE_INVALID",
+                QaFailureClassV1.ACCEPTANCE_INVALID.value,
                 "pm_revision_required",
                 False,
                 False,
@@ -183,7 +184,7 @@ class TestRepairService:
             ),
             (
                 "security policy violation: unauthorized path traversal attempt",
-                "SECURITY_POLICY_VIOLATION",
+                QaFailureClassV1.SECURITY_POLICY_VIOLATION.value,
                 "hard_stop",
                 False,
                 False,
