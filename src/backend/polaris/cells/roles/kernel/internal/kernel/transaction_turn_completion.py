@@ -16,6 +16,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
     build_tool_call_lifecycle_receipt,
     is_failure_class,
+    native_tool_call_facts_from_lifecycle_receipt,
     normalize_tool_call_lifecycle_receipt,
 )
 from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
@@ -521,10 +522,12 @@ def _tool_dispatch_from_lifecycle(metadata: Mapping[str, Any]) -> dict[str, Any]
     failure_class = str(lifecycle.get("failure_class") or "").strip()
     if dispatch_status != "dropped" and not is_failure_class(failure_class, FailureClassV1.TOOL_DISPATCH_DROPPED):
         return None
+    native_facts = native_tool_call_facts_from_lifecycle_receipt(lifecycle)
     return {
         "status": "dropped",
         "dropped": True,
-        "native_tool_calls_count": _safe_int(lifecycle.get("native_tool_calls_count")),
+        "native_tool_calls_count": _safe_int(native_facts.get("native_tool_calls_count")),
+        "native_tool_call_names": list(native_facts.get("native_tool_call_names") or []),
         "decoded_tool_calls_count": _safe_int(lifecycle.get("decoded_tool_calls_count")),
         "dispatched_tool_calls_count": _safe_int(lifecycle.get("dispatched_tool_calls_count")),
         "provider_response_hash": str(lifecycle.get("provider_response_hash") or "").strip(),

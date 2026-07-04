@@ -274,6 +274,7 @@ def test_task_boundary_tool_dispatch_accepts_canonical_lifecycle_receipt() -> No
         "dispatch_status": "dropped",
         "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
         "reason": "native_tool_calls_without_dispatch",
+        "dropped_tool_calls": [{"tool_name": "write_file", "reason": "tool_dispatch_dropped"}],
     }
 
     dispatch = completion._tool_dispatch_from_lifecycle({"tool_call_lifecycle_receipt": lifecycle})
@@ -282,6 +283,7 @@ def test_task_boundary_tool_dispatch_accepts_canonical_lifecycle_receipt() -> No
         "status": "dropped",
         "dropped": True,
         "native_tool_calls_count": 1,
+        "native_tool_call_names": ["write_file"],
         "decoded_tool_calls_count": 1,
         "dispatched_tool_calls_count": 0,
         "provider_response_hash": "provider/hash",
