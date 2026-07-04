@@ -152,9 +152,7 @@ def role_result_metadata_from_profile(
             metadata["context_os_audit"] = (
                 dict(raw_context_os_audit) if isinstance(raw_context_os_audit, dict) else raw_context_os_audit
             )
-        _project_canonical_tool_lifecycle_receipt(metadata)
-        project_failure_evidence_from_tool_lifecycle(metadata)
-        project_native_tool_call_facts(metadata, metadata)
+        project_tool_lifecycle_metadata(metadata)
 
     if isinstance(monitoring, dict) and "context_os_audit" not in metadata:
         context_os_audit = monitoring.get("context_os_audit")
@@ -191,6 +189,24 @@ def _project_canonical_tool_lifecycle_receipt(metadata: dict[str, Any]) -> None:
             if isinstance(raw, dict):
                 metadata["tool_call_lifecycle_receipt"] = normalize_tool_call_lifecycle_receipt(raw)
                 return
+
+
+def project_tool_lifecycle_metadata(metadata: dict[str, Any]) -> None:
+    """Project canonical lifecycle, failure, and native tool facts together.
+
+    Boundary:
+        This helper owns the RoleTurnResult metadata projection for tool-call
+        lifecycle evidence. It does not create lifecycle receipts; it only
+        canonicalizes existing receipt evidence and derives dependent metadata.
+
+    Complexity:
+        O(n) time and memory for native tool-name / failure-evidence rows, where
+        n is the number of lifecycle envelope or dropped-call references.
+    """
+
+    _project_canonical_tool_lifecycle_receipt(metadata)
+    project_failure_evidence_from_tool_lifecycle(metadata)
+    project_native_tool_call_facts(metadata, metadata)
 
 
 def project_failure_evidence_from_tool_lifecycle(metadata: dict[str, Any]) -> None:

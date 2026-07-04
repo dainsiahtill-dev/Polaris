@@ -15,11 +15,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from polaris.cells.control_plane.run_ledger.public import normalize_tool_call_lifecycle_receipt
 from polaris.cells.roles.kernel.internal.kernel.commit_protocol import _build_turn_history_and_events
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
-    project_failure_evidence_from_tool_lifecycle,
-    project_native_tool_call_facts,
+    project_tool_lifecycle_metadata,
     role_result_metadata_from_profile,
     role_turn_completion_result,
     tool_calls_from_batch_receipt,
@@ -365,11 +363,7 @@ def _lift_completion_audit_evidence(metadata: dict[str, Any], monitoring: Mappin
         if key in monitoring and key not in metadata:
             value = monitoring[key]
             metadata[key] = dict(value) if isinstance(value, dict) else value
-    lifecycle = metadata.get("tool_call_lifecycle_receipt") or metadata.get("tool_call_lifecycle")
-    if isinstance(lifecycle, Mapping):
-        metadata["tool_call_lifecycle_receipt"] = normalize_tool_call_lifecycle_receipt(lifecycle)
-    project_failure_evidence_from_tool_lifecycle(metadata)
-    project_native_tool_call_facts(metadata, metadata)
+    project_tool_lifecycle_metadata(metadata)
 
 
 def _task_boundary_error_message(verdict: dict[str, Any] | None, metadata: dict[str, Any]) -> str | None:
