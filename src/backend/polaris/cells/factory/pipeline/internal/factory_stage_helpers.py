@@ -56,6 +56,12 @@ _FILE_AS_DIRECTORY_SUFFIXES = frozenset(
 )
 _MAX_DECLARED_DELIVERY_TARGET_CHARS = 240
 _PATHLIKE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_./@+-]+$")
+_NO_MATERIALIZED_CHANGE_CODES = frozenset({"director_no_materialized_changes", "no_materialized_changes"})
+_NO_MATERIALIZED_CHANGE_ASSIGNMENT_RE = re.compile(
+    r"\b(?:error|error_code|materialization_error|materialization_mode)\s*[:=]\s*"
+    r"[\"']?(?:director_no_materialized_changes|no_materialized_changes)\b",
+    re.IGNORECASE,
+)
 
 
 def extend_artifacts(artifacts: list[str], *paths: str) -> None:
@@ -326,16 +332,43 @@ def metadata_indicates_execution(metadata: dict[str, Any]) -> bool:
 def is_director_no_materialized_changes(result: Any) -> bool:
     if str(result.status or "").strip().lower() not in {"failed", "error"}:
         return False
-    message = str(result.message or "").strip().lower()
-    if "director_no_materialized_changes" in message:
-        return True
+    for value in (
+        getattr(result, "reason_code", ""),
+        getattr(result, "error_code", ""),
+        getattr(result, "error", ""),
+        getattr(result, "materialization_error", ""),
+        getattr(result, "materialization_mode", ""),
+    ):
+        if str(value or "").strip().lower() in _NO_MATERIALIZED_CHANGE_CODES:
+            return True
     metadata = result.metadata if isinstance(result.metadata, dict) else {}
+    for value in (
+        metadata.get("reason_code"),
+        metadata.get("error_code"),
+        metadata.get("error"),
+        metadata.get("materialization_error"),
+        metadata.get("materialization_mode"),
+    ):
+        if str(value or "").strip().lower() in _NO_MATERIALIZED_CHANGE_CODES:
+            return True
+    message = str(result.message or "").strip().lower()
+    if _NO_MATERIALIZED_CHANGE_ASSIGNMENT_RE.search(message):
+        return True
     failed_tasks = metadata.get("failed_tasks")
     if isinstance(failed_tasks, list):
         for item in failed_tasks:
             if not isinstance(item, dict):
                 continue
-            if "director_no_materialized_changes" in str(item.get("error_message") or "").lower():
+            for value in (
+                item.get("reason_code"),
+                item.get("error_code"),
+                item.get("error"),
+                item.get("materialization_error"),
+                item.get("materialization_mode"),
+            ):
+                if str(value or "").strip().lower() in _NO_MATERIALIZED_CHANGE_CODES:
+                    return True
+            if _NO_MATERIALIZED_CHANGE_ASSIGNMENT_RE.search(str(item.get("error_message") or "")):
                 return True
     return False
 

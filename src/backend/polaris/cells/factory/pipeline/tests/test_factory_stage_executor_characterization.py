@@ -4492,6 +4492,22 @@ class TestDirectorEvidenceStatics:
         result = CommandResult(run_id="r", status="failed", message="error=director_no_materialized_changes")
         assert OrchestrationStageExecutor._is_director_no_materialized_changes(result) is True
 
+    def test_is_director_no_materialized_changes_from_structured_metadata(self) -> None:
+        result = CommandResult(
+            run_id="r",
+            status="failed",
+            metadata={"materialization_error": "director_no_materialized_changes"},
+        )
+        assert OrchestrationStageExecutor._is_director_no_materialized_changes(result) is True
+
+    def test_is_director_no_materialized_changes_ignores_unstructured_note(self) -> None:
+        result = CommandResult(
+            run_id="r",
+            status="failed",
+            message="unrelated failure note mentions director_no_materialized_changes for history only",
+        )
+        assert OrchestrationStageExecutor._is_director_no_materialized_changes(result) is False
+
     def test_is_director_no_materialized_changes_false_when_completed(self) -> None:
         result = CommandResult(run_id="r", status="completed", message="director_no_materialized_changes")
         assert OrchestrationStageExecutor._is_director_no_materialized_changes(result) is False
