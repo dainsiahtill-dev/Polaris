@@ -28,7 +28,10 @@ from polaris.kernelone.quality.interface_ledger import (
     read_declared_interfaces,
     validate_declared_interface_issues_against_snapshot,
 )
-from polaris.kernelone.quality.package_scripts import package_script_cycle_reasons
+from polaris.kernelone.quality.package_scripts import (
+    PackageScriptIssue,
+    check_package_scripts,
+)
 
 _ARTIFACT_QUALITY_SKIP_DIRS = {
     ".git",
@@ -256,7 +259,6 @@ _NPM_SCRIPT_ENTRYPOINT_SUBCOMMANDS = {
 _NPM_NODE_INLINE_CODE_FLAGS = {"-e", "--eval", "-p", "--print", "-c", "--check"}
 _NPM_NODE_OPTION_VALUE_FLAGS = {"--loader", "--require", "-r", "--import"}
 _NPM_SCRIPT_SEPARATORS = {"&&", "||", ";", "|"}
-_NPM_PLACEHOLDER_SCRIPT_COMMANDS = {"echo", "printf"}
 _NPM_SCRIPT_FAILURE_SWALLOW_RE = re.compile(
     r"(?:^|[\s;&|])\|\|\s*(?:echo|printf|true|exit\s+0)(?:$|[\s;&|])",
     re.IGNORECASE,
@@ -1725,6 +1727,69 @@ def _append_package_manifest_issue(
     issues.append(_package_manifest_quality_issue(normalized_error, relative_path, metadata))
 
 
+def _package_script_gate_artifact_error(issue: PackageScriptIssue, relative_path: str) -> str:
+    if issue.code == "npm_placeholder_script" and issue.script_name and issue.command:
+        return (
+            "Artifact quality scan failed: npm package manifest script "
+            f"{issue.script_name!r} is a placeholder command: {issue.command} in {relative_path}"
+        )
+    if issue.code == "npm_script_empty" and issue.script_name:
+        return f"Artifact quality scan failed: npm package manifest script {issue.script_name!r} is empty in {relative_path}"
+    return f"Artifact quality scan failed: {issue.message} in {relative_path}"
+
+
+def _append_package_script_gate_issue(
+    errors: list[str],
+    issues: list[ArtifactQualityIssue],
+    issue: PackageScriptIssue,
+    relative_path: str,
+) -> None:
+    metadata = dict(issue.metadata or {})
+    metadata.update(
+        {
+            "script_issue_source": "package_scripts",
+            "package_script_issue_code": issue.code,
+        }
+    )
+    for key, value in issue.to_dict().items():
+        if key in {"code", "message", "path", "severity", "source", "metadata"} or not value:
+            continue
+        metadata[str(key)] = value
+    _append_package_manifest_issue(
+        errors,
+        issues,
+        _package_script_gate_artifact_error(issue, relative_path),
+        relative_path,
+        metadata,
+    )
+
+
+def _package_script_gate_issues_for_code(
+    root_full: Path,
+    *codes: str,
+) -> tuple[PackageScriptIssue, ...]:
+    allowed_codes = {str(code or "").strip() for code in codes if str(code or "").strip()}
+    if not allowed_codes:
+        return ()
+    result = check_package_scripts(str(root_full))
+    return tuple(issue for issue in result.issues if issue.code in allowed_codes)
+
+
+def _first_package_script_gate_issue_for_script(
+    issues: Iterable[PackageScriptIssue],
+    *,
+    script_name: str,
+    codes: set[str],
+) -> PackageScriptIssue | None:
+    normalized_script = str(script_name or "").strip()
+    for issue in issues:
+        if issue.code not in codes:
+            continue
+        if str(issue.script_name or "").strip() == normalized_script:
+            return issue
+    return None
+
+
 def _package_manifest_evidence_from_errors(
     errors: list[str],
     relative_path: str,
@@ -1756,11 +1821,19 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
     issues: list[ArtifactQualityIssue] = []
     scripts = payload.get("scripts")
     if isinstance(scripts, dict):
-        for reason in package_script_cycle_reasons(scripts):
-            _append_package_manifest_issue(
+        package_script_gate_issues = _package_script_gate_issues_for_code(
+            root_full,
+            "npm_script_cycle",
+            "npm_placeholder_script",
+            "npm_script_empty",
+        )
+        for issue in package_script_gate_issues:
+            if issue.code != "npm_script_cycle":
+                continue
+            _append_package_script_gate_issue(
                 errors,
                 issues,
-                f"Artifact quality scan failed: {reason} in {relative_path}",
+                issue,
                 relative_path,
             )
         test_script = str(scripts.get("test") or "")
@@ -1836,18 +1909,17 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
                     },
                 )
                 continue
-            placeholder_reason = _placeholder_package_script_reason(str(script_name), script_text, tokens)
-            if placeholder_reason:
-                _append_package_manifest_issue(
+            placeholder_issue = _first_package_script_gate_issue_for_script(
+                package_script_gate_issues,
+                script_name=str(script_name),
+                codes={"npm_placeholder_script", "npm_script_empty"},
+            )
+            if placeholder_issue is not None:
+                _append_package_script_gate_issue(
                     errors,
                     issues,
-                    f"Artifact quality scan failed: {placeholder_reason} in {relative_path}",
+                    placeholder_issue,
                     relative_path,
-                    {
-                        "script_name": str(script_name),
-                        "script_issue": "placeholder_command",
-                        "script_issue_source": "package_manifest_scanner",
-                    },
                 )
                 continue
             if _NPM_SCRIPT_FAILURE_SWALLOW_RE.search(script_text):
@@ -2039,21 +2111,6 @@ def _check_javascript_snippet_syntax(source: str) -> str:
     if proc.returncode == 0:
         return ""
     return _compress_node_syntax_error(proc.stderr or proc.stdout, "[stdin]")
-
-
-def _placeholder_package_script_reason(script_name: str, command: str, tokens: list[str]) -> str:
-    if not tokens:
-        return f"npm package manifest script {script_name!r} is empty"
-    first_command = os.path.basename(str(tokens[0] or ""))
-    if first_command not in _NPM_PLACEHOLDER_SCRIPT_COMMANDS:
-        return ""
-    for index, token in enumerate(tokens):
-        if token not in _NPM_SCRIPT_SEPARATORS or index + 1 >= len(tokens):
-            continue
-        next_command = os.path.basename(str(tokens[index + 1] or ""))
-        if next_command not in {*_NPM_PLACEHOLDER_SCRIPT_COMMANDS, "exit", "true"}:
-            return ""
-    return f"npm package manifest script {script_name!r} is a placeholder command: {command}"
 
 
 def _package_declares_dependency(payload: dict[str, Any], package_name: str) -> bool:

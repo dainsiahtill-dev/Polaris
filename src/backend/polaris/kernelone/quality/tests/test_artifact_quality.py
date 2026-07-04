@@ -776,8 +776,41 @@ def test_artifact_quality_evidence_projects_test_script_placeholder_metadata(tmp
     assert [issue.metadata.get("script_issue_source") for issue in evidence.issues] == [
         "package_manifest_scanner",
         "package_manifest_scanner",
-        "package_manifest_scanner",
+        "package_scripts",
     ]
+    assert evidence.issues[2].metadata["package_script_issue_code"] == "npm_placeholder_script"
+
+
+def test_artifact_quality_evidence_projects_package_script_cycle_from_typed_gate(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        """
+{
+  "name": "recursive-script-project",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "npm run verify",
+    "verify": "npm run build"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["package.json"])
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: npm package manifest script 'build' "
+        "recursively invokes itself via build -> verify -> build in package.json",
+    )
+    assert len(evidence.issues) == 1
+    issue = evidence.issues[0]
+    assert issue.code == "npm_manifest_invalid"
+    assert issue.source == "package_manifest_scanner"
+    assert issue.metadata["script_issue"] == "recursive_invocation"
+    assert issue.metadata["script_issue_source"] == "package_scripts"
+    assert issue.metadata["package_script_issue_code"] == "npm_script_cycle"
+    assert issue.metadata["cycle"] == ["build", "verify", "build"]
 
 
 def test_artifact_quality_evidence_projects_per_script_issue_metadata_directly(tmp_path: Path) -> None:
