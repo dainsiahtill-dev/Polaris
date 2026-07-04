@@ -655,7 +655,8 @@ def build_runtime_snapshot_v2(
     # 构建任务列表
     tasks = []
     payload = snapshot_payload if isinstance(snapshot_payload, dict) else {}
-    pm_tasks = payload.get("tasks", []) if isinstance(payload, dict) else []
+    workflow_tasks = workflow_summary.get("tasks") if isinstance(workflow_summary, dict) else None
+    pm_tasks = workflow_tasks if isinstance(workflow_tasks, list) else payload.get("tasks", [])
 
     for idx, t in enumerate(pm_tasks):
         if not isinstance(t, dict):
