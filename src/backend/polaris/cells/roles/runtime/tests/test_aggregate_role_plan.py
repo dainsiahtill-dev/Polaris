@@ -167,6 +167,40 @@ async def test_aggregate_plan_records_structured_failure_evidence_for_takeover(t
 
 
 @pytest.mark.asyncio
+async def test_aggregate_plan_preserves_failure_evidence_list_from_context(tmp_path) -> None:
+    runtime = RoleRuntimeService()
+
+    result = await runtime.build_aggregate_role_plan(
+        BuildAggregateRolePlanQueryV1(
+            workspace=str(tmp_path),
+            objective="Recover after a platform lifecycle failure.",
+            context={
+                "failure_evidence": [
+                    {
+                        "schema_version": "polaris.failure_evidence.v1",
+                        "failure_class": "MISSING_EFFECT_RECEIPT",
+                        "responsible_layer": "platform",
+                        "evidence_refs": ["tool_lifecycle:turn-1"],
+                    }
+                ]
+            },
+        )
+    )
+
+    failure_evidence = result.metadata["failure_evidence"]
+    assert failure_evidence["items"] == [
+        {
+            "schema_version": "polaris.failure_evidence.v1",
+            "failure_class": "MISSING_EFFECT_RECEIPT",
+            "responsible_layer": "platform",
+            "evidence_refs": ["tool_lifecycle:turn-1"],
+        }
+    ]
+    assert failure_evidence["failure_classes"] == ("MISSING_EFFECT_RECEIPT",)
+    assert failure_evidence["evidence_refs"] == ("tool_lifecycle:turn-1",)
+
+
+@pytest.mark.asyncio
 async def test_aggregate_chat_completions_returns_model_shaped_plan(tmp_path) -> None:
     runtime = RoleRuntimeService()
 
