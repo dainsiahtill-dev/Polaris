@@ -6466,7 +6466,7 @@ export function summary() {
             encoding="utf-8",
         )
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Strengthen multiplayer card integration tests",
             description="Verify multiplayer card integration tests according to acceptance criteria.",
             metadata={
@@ -6476,6 +6476,7 @@ export function summary() {
                 "acceptance": ["No placeholder tests remain"],
             },
         )
+        task_id = str(task["id"])
 
         async def _unexpected_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -6484,8 +6485,8 @@ export function summary() {
         adapter._invoke_role_dialogue_with_timeout = _unexpected_dialogue  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-existing-verification-scope-preflight"},
         )
 
@@ -6553,7 +6554,7 @@ export function summary() {
             )
 
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Strengthen multiplayer card integration test runner",
             description="Replace the brittle scripts/test.mjs validation-contract gate with substantive test checks.",
             metadata={
@@ -6563,6 +6564,7 @@ export function summary() {
                 "acceptance": ["npm run test verifies the Card3D behavior test suite"],
             },
         )
+        task_id = str(task["id"])
 
         async def _unexpected_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -6571,8 +6573,8 @@ export function summary() {
         adapter._invoke_role_dialogue_with_timeout = _unexpected_dialogue  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-node-test-script-contract-repair"},
         )
 
