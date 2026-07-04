@@ -51,6 +51,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_call_facts_from_response,
     native_tool_call_names,
     native_tool_calls_from_response,
+    provider_response_hash,
 )
 from polaris.cells.roles.profile.public.service import load_core_roles
 from polaris.kernelone.context.contracts import TurnEngineContextResult
@@ -757,6 +758,26 @@ class TestExtractNativeToolCalls:
             "native_tool_calls_count": 1,
             "native_tool_call_names": ["read_file"],
         }
+
+    def test_provider_response_hash_binds_tool_call_payload_and_metadata(self) -> None:
+        response = SimpleNamespace(
+            content="ok",
+            model="model-a",
+            native_tool_calls=[{"function": {"name": "write_file"}}],
+            thinking=None,
+        )
+        metadata = {
+            "native_tool_call_envelopes": [
+                {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"}
+            ]
+        }
+
+        first_hash = provider_response_hash(response, metadata)
+        second_hash = provider_response_hash(response, metadata)
+        changed_hash = provider_response_hash(response, {"native_tool_call_envelopes": []})
+
+        assert first_hash == second_hash
+        assert first_hash != changed_hash
 
     def test_native_tool_call_envelopes_deduplicate_by_envelope_identity(self) -> None:
         metadata = {

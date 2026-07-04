@@ -347,6 +347,30 @@ def native_tool_call_facts_from_response(
     return native_tool_call_facts(metadata, native_tool_calls_from_response(response))
 
 
+def provider_response_hash(response: Any, metadata: Mapping[str, Any] | None = None) -> str:
+    """Return the stable hash used to bind response facts to dispatch evidence.
+
+    Boundary:
+        The hash covers provider response content, model identity, thinking
+        payload, native tool-call envelopes, and already-decoded native tool
+        calls. It intentionally does not inspect assistant prose for synthetic
+        tool calls or include mutable downstream decision metadata.
+
+    Complexity:
+        O(n) over native tool-call/envelope payload size.
+    """
+
+    payload = {
+        "content": getattr(response, "content", ""),
+        "model": getattr(response, "model", ""),
+        "native_tool_call_envelopes": native_tool_call_envelopes_from_metadata(metadata),
+        "native_tool_calls": native_tool_calls_from_response(response),
+        "thinking": getattr(response, "thinking", None),
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def _native_tool_call_arguments(call: Mapping[str, Any]) -> Any:
     function = call.get("function")
     if isinstance(function, Mapping) and "arguments" in function:
@@ -1575,5 +1599,6 @@ __all__ = [
     "native_tool_call_names",
     "native_tool_calls_from_response",
     "project_native_tool_call_facts_to_metadata",
+    "provider_response_hash",
     "resolve_tool_call_provider",
 ]

@@ -25,6 +25,7 @@ from polaris.cells.control_plane.run_ledger.public import project_native_tool_ca
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_call_envelopes_from_metadata,
     native_tool_call_facts_from_response,
+    provider_response_hash as derive_provider_response_hash,
     restrict_tool_definitions_to_write,
 )
 from polaris.cells.roles.kernel.internal.speculation.cancel import CancellationCoordinator
@@ -32,7 +33,6 @@ from polaris.cells.roles.kernel.internal.speculation.task_group import TurnScope
 from polaris.cells.roles.kernel.internal.stream_shadow_engine import StreamShadowEngine
 from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
 from polaris.cells.roles.kernel.internal.transaction.decision_pipeline import (
-    _provider_response_hash,
     build_tool_dispatch_dropped_anomaly,
 )
 from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
@@ -1340,7 +1340,7 @@ class StreamOrchestrator:
         decision_metadata = dict(decision.get("metadata") or {})
         native_tool_call_facts = native_tool_call_facts_from_response(llm_response, decision_metadata)
         native_tool_call_count = int(native_tool_call_facts.get("native_tool_calls_count") or 0)
-        provider_response_hash = _provider_response_hash(llm_response, decision_metadata)
+        provider_response_hash = derive_provider_response_hash(llm_response, decision_metadata)
         decision_metadata.setdefault("provider_response_hash", provider_response_hash)
         project_native_tool_call_facts_to_metadata(decision_metadata, native_tool_call_facts)
         decision = dict(decision)

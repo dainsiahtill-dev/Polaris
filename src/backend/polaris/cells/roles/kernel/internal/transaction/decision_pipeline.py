@@ -22,8 +22,6 @@ existing controller-level test seams still penetrate.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -40,6 +38,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_call_facts_from_response as derive_native_tool_call_facts_from_response,
     native_tool_calls_from_response,
     project_native_tool_call_facts_to_metadata,
+    provider_response_hash as derive_provider_response_hash,
 )
 from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
     build_corrective_context,
@@ -75,15 +74,7 @@ def _native_tool_calls_from_response(response: Any) -> list[dict[str, Any]]:
 
 
 def _provider_response_hash(response: RawLLMResponse, metadata: Mapping[str, Any] | None = None) -> str:
-    payload = {
-        "content": getattr(response, "content", ""),
-        "model": getattr(response, "model", ""),
-        "native_tool_call_envelopes": native_tool_call_envelopes_from_metadata(metadata),
-        "native_tool_calls": _native_tool_calls_from_response(response),
-        "thinking": getattr(response, "thinking", None),
-    }
-    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return derive_provider_response_hash(response, metadata)
 
 
 def _native_tool_call_provider(metadata: Mapping[str, Any]) -> str:
