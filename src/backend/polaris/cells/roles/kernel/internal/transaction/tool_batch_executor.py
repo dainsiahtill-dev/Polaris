@@ -68,6 +68,7 @@ from polaris.cells.roles.kernel.internal.transaction.task_contract_builder impor
     platform_tool_contract_bypasses_read_write_barrier,
     platform_tool_contract_disables_phase_manager,
 )
+from polaris.cells.roles.kernel.internal.transaction.tool_call_audit_refs import tool_invocation_audit_ref
 from polaris.cells.roles.kernel.internal.transaction.tool_failure_circuit_breaker import (
     ToolFailureCircuitBreaker,
 )
@@ -1831,11 +1832,12 @@ class ToolBatchExecutor:
 
         if invocations and _batch_result_count(receipts_as_dicts) <= 0:
             decoded_tool_calls = [
-                {
-                    "tool_name": extract_invocation_tool_name(invocation),
-                    "call_id": str(invocation.get("call_id", "") or ""),
-                    "reason": "decoded_tool_batch_without_authoritative_receipt",
-                }
+                tool_invocation_audit_ref(
+                    invocation,
+                    reason="decoded_tool_batch_without_authoritative_receipt",
+                    tool_name=extract_invocation_tool_name(invocation),
+                    target_file=extract_target_file_from_invocation_args(invocation),
+                )
                 for invocation in invocations
             ]
             lifecycle = build_tool_batch_lifecycle_receipt_from_sources(

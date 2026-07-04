@@ -4,6 +4,8 @@ from polaris.cells.control_plane.run_ledger.public import (
     native_tool_call_count_from_metadata,
     native_tool_call_envelope_refs_from_metadata,
 )
+from polaris.cells.roles.kernel.internal.transaction.tool_call_audit_refs import tool_invocation_audit_ref
+from polaris.cells.roles.kernel.public.turn_contracts import ToolExecutionMode
 
 
 def test_metadata_native_tool_call_count_accepts_lifecycle_envelope_refs() -> None:
@@ -60,3 +62,23 @@ def test_metadata_native_tool_call_envelopes_deduplicates_aliases() -> None:
         "write_file",
         "execute_command",
     ]
+
+
+def test_tool_invocation_audit_ref_preserves_decoded_invocation_evidence() -> None:
+    invocation = {
+        "call_id": "call-1",
+        "tool_name": "write_file",
+        "execution_mode": ToolExecutionMode.WRITE_SERIAL,
+        "arguments": {"file": "src/main.py"},
+    }
+
+    assert tool_invocation_audit_ref(
+        invocation,
+        reason="decoded_tool_batch_without_authoritative_receipt",
+    ) == {
+        "reason": "decoded_tool_batch_without_authoritative_receipt",
+        "tool_name": "write_file",
+        "call_id": "call-1",
+        "execution_mode": "write_serial",
+        "target_file": "src/main.py",
+    }

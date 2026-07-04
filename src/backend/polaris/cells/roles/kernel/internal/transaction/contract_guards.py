@@ -29,6 +29,7 @@ from polaris.cells.roles.kernel.internal.transaction.constants import (
 )
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
+from polaris.cells.roles.kernel.internal.transaction.tool_call_audit_refs import tool_invocation_audit_ref
 from polaris.cells.roles.kernel.internal.transaction.write_authority import (
     is_authoritative_write_invocation as _is_authoritative_write_invocation,
     is_authoritative_write_path,
@@ -1089,18 +1090,13 @@ def is_safe_readonly_bootstrap_invocations(invocations: list[Any]) -> bool:
 def _delivery_mode_filtered_tool_call_ref(invocation: Any) -> dict[str, str]:
     """Return audit-safe evidence for a write invocation filtered by delivery mode."""
 
-    call_id = invocation.get("call_id") if isinstance(invocation, Mapping) else getattr(invocation, "call_id", "")
-    target_file = extract_target_file_from_invocation_args(invocation)
-    ref = {
-        "reason": "delivery_mode_write_tool_filtered",
-        "tool_name": extract_invocation_tool_name(invocation),
-        "execution_mode": extract_invocation_execution_mode(invocation),
-    }
-    if call_id:
-        ref["call_id"] = str(call_id)
-    if target_file:
-        ref["target_file"] = target_file
-    return ref
+    return tool_invocation_audit_ref(
+        invocation,
+        reason="delivery_mode_write_tool_filtered",
+        tool_name=extract_invocation_tool_name(invocation),
+        execution_mode=extract_invocation_execution_mode(invocation),
+        target_file=extract_target_file_from_invocation_args(invocation),
+    )
 
 
 def apply_delivery_mode_filter(decision: TurnDecision, ledger: TurnLedger) -> TurnDecision:

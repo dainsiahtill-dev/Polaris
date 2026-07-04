@@ -47,6 +47,7 @@ from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     extract_allowed_tool_names_from_definitions,
 )
+from polaris.cells.roles.kernel.internal.transaction.tool_call_audit_refs import tool_invocation_audit_ref
 from polaris.cells.roles.kernel.internal.turn_decision_decoder import TurnDecisionDecoder
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.public.turn_contracts import (
@@ -110,45 +111,19 @@ def _with_decision_metadata(decision: TurnDecision, metadata: dict[str, Any]) ->
     )
 
 
-def _mapping_value(source: Any, key: str) -> Any:
-    if isinstance(source, Mapping):
-        return source.get(key)
-    return getattr(source, key, None)
-
-
-def _enum_value(value: Any) -> str:
-    raw_value = getattr(value, "value", value)
-    return str(raw_value or "")
-
-
 def _suppressed_tool_batch_tool_refs(decision: Mapping[str, Any]) -> list[dict[str, str]]:
     """Return audit-safe references for decoded tool calls suppressed by policy."""
 
     tool_batch = decision.get("tool_batch")
-    invocations = _mapping_value(tool_batch, "invocations")
+    invocations = tool_batch.get("invocations") if isinstance(tool_batch, Mapping) else getattr(tool_batch, "invocations", None)
     if not isinstance(invocations, list):
         return []
 
     suppressed_tool_calls: list[dict[str, str]] = []
     for invocation in invocations:
-        tool_name = _enum_value(_mapping_value(invocation, "tool_name"))
-        if not tool_name:
+        tool_ref = tool_invocation_audit_ref(invocation, reason="no_tool_definitions_exposed")
+        if not tool_ref.get("tool_name"):
             continue
-        tool_ref = {
-            "reason": "no_tool_definitions_exposed",
-            "tool_name": tool_name,
-        }
-        call_id = _enum_value(_mapping_value(invocation, "call_id"))
-        if call_id:
-            tool_ref["call_id"] = call_id
-        execution_mode = _enum_value(_mapping_value(invocation, "execution_mode"))
-        if execution_mode:
-            tool_ref["execution_mode"] = execution_mode
-        arguments = _mapping_value(invocation, "arguments")
-        if isinstance(arguments, Mapping):
-            target_file = _enum_value(arguments.get("file") or arguments.get("path"))
-            if target_file:
-                tool_ref["target_file"] = target_file
         suppressed_tool_calls.append(tool_ref)
     return suppressed_tool_calls
 
