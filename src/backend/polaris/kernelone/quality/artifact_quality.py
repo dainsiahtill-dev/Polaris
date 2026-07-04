@@ -521,12 +521,9 @@ def _artifact_quality_issue_code(message: str) -> str:
     target_or_import_issue_code = _legacy_target_or_import_issue_code(normalized)
     if target_or_import_issue_code:
         return target_or_import_issue_code
-    typescript_match = _ARTIFACT_QUALITY_TYPESCRIPT_ERROR_RE.search(message)
-    if typescript_match:
-        return f"typescript_{str(typescript_match.group('code') or '').lower()}"
-    rust_match = _ARTIFACT_QUALITY_RUST_ERROR_RE.search(message)
-    if rust_match:
-        return f"rust_{str(rust_match.group('code') or '').lower()}"
+    explicit_compiler_issue_code = _legacy_compiler_issue_code_from_explicit_code(message)
+    if explicit_compiler_issue_code:
+        return explicit_compiler_issue_code
     compiler_issue_code = _legacy_compiler_issue_code_from_path(message, normalized)
     if compiler_issue_code:
         return compiler_issue_code
@@ -582,6 +579,18 @@ def _legacy_npm_manifest_issue_code(normalized_message: str) -> str:
         return "npm_manifest_invalid"
     if "npm package manifest" in normalized_message:
         return "npm_manifest_invalid"
+    return ""
+
+
+def _legacy_compiler_issue_code_from_explicit_code(message: str) -> str:
+    """Classify legacy compiler diagnostics with explicit TS/Rust error codes."""
+
+    typescript_match = _ARTIFACT_QUALITY_TYPESCRIPT_ERROR_RE.search(message)
+    if typescript_match:
+        return f"typescript_{str(typescript_match.group('code') or '').lower()}"
+    rust_match = _ARTIFACT_QUALITY_RUST_ERROR_RE.search(message)
+    if rust_match:
+        return f"rust_{str(rust_match.group('code') or '').lower()}"
     return ""
 
 
