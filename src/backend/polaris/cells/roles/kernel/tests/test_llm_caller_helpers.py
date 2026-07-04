@@ -47,9 +47,11 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     _tool_call_lifecycle_receipts_from_metadata,
     build_native_tool_schemas,
     native_tool_call_envelopes_from_metadata,
+    native_tool_call_envelopes_from_response,
     native_tool_call_facts,
     native_tool_call_facts_from_response,
     native_tool_call_names,
+    native_tool_call_provider_from_metadata,
     native_tool_calls_from_response,
     provider_response_hash,
 )
@@ -778,6 +780,32 @@ class TestExtractNativeToolCalls:
 
         assert first_hash == second_hash
         assert first_hash != changed_hash
+
+    def test_native_tool_call_envelopes_from_response_prefers_metadata_then_raw_calls(self) -> None:
+        response = SimpleNamespace(
+            native_tool_calls=[
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "write_file", "arguments": {"file": "src/main.py"}},
+                }
+            ]
+        )
+        metadata = {
+            "tool_call_provider": "OpenAI",
+            "native_tool_call_envelopes": [
+                {"schema_version": "native_tool_call_envelope.v1", "tool_name": "read_file"}
+            ],
+        }
+
+        assert native_tool_call_provider_from_metadata(metadata) == "openai"
+        assert native_tool_call_envelopes_from_response(response, metadata) == [
+            {"schema_version": "native_tool_call_envelope.v1", "tool_name": "read_file"}
+        ]
+
+        raw_envelopes = native_tool_call_envelopes_from_response(response, {"provider_id": "anthropic"})
+        assert raw_envelopes[0]["provider"] == "anthropic"
+        assert raw_envelopes[0]["tool_name"] == "write_file"
 
     def test_native_tool_call_envelopes_deduplicate_by_envelope_identity(self) -> None:
         metadata = {

@@ -371,6 +371,46 @@ def provider_response_hash(response: Any, metadata: Mapping[str, Any] | None = N
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def native_tool_call_provider_from_metadata(metadata: Mapping[str, Any] | None) -> str:
+    """Return the canonical provider label for native tool-call envelopes.
+
+    Boundary:
+        Provider identity is read only from already-structured metadata. This
+        helper does not infer provider identity from response prose or model
+        names.
+    """
+
+    if not isinstance(metadata, Mapping):
+        return "auto"
+    for key in ("tool_call_provider", "decision_caller_tool_call_provider", "provider", "provider_id"):
+        token = str(metadata.get(key) or "").strip().lower()
+        if token:
+            return token
+    return "auto"
+
+
+def native_tool_call_envelopes_from_response(
+    response: Any,
+    metadata: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Return envelope payloads for native tool calls in a response-like object.
+
+    Existing metadata/lifecycle envelopes remain authoritative. Raw response
+    calls are wrapped only when no structured envelope evidence is present.
+    """
+
+    metadata_envelopes = [dict(item) for item in native_tool_call_envelopes_from_metadata(metadata)]
+    if metadata_envelopes:
+        return metadata_envelopes
+    raw_calls = native_tool_calls_from_response(response)
+    if not raw_calls:
+        return []
+    return build_native_tool_call_envelope_payloads(
+        raw_calls,
+        provider=native_tool_call_provider_from_metadata(metadata),
+    )
+
+
 def _native_tool_call_arguments(call: Mapping[str, Any]) -> Any:
     function = call.get("function")
     if isinstance(function, Mapping) and "arguments" in function:
@@ -1593,10 +1633,12 @@ __all__ = [
     "native_tool_call_count",
     "native_tool_call_count_from_metadata",
     "native_tool_call_envelopes_from_metadata",
+    "native_tool_call_envelopes_from_response",
     "native_tool_call_facts",
     "native_tool_call_facts_from_response",
     "native_tool_call_name",
     "native_tool_call_names",
+    "native_tool_call_provider_from_metadata",
     "native_tool_calls_from_response",
     "project_native_tool_call_facts_to_metadata",
     "provider_response_hash",

@@ -32,9 +32,8 @@ from polaris.cells.control_plane.run_ledger.public import (
     failure_evidence_from_lifecycle_receipt,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
-    build_native_tool_call_envelope_payloads,
     native_tool_call_count as derive_native_tool_call_count,
-    native_tool_call_envelopes_from_metadata,
+    native_tool_call_envelopes_from_response,
     native_tool_call_facts_from_response as derive_native_tool_call_facts_from_response,
     native_tool_calls_from_response,
     project_native_tool_call_facts_to_metadata,
@@ -77,27 +76,6 @@ def _provider_response_hash(response: RawLLMResponse, metadata: Mapping[str, Any
     return derive_provider_response_hash(response, metadata)
 
 
-def _native_tool_call_provider(metadata: Mapping[str, Any]) -> str:
-    for key in ("tool_call_provider", "decision_caller_tool_call_provider", "provider", "provider_id"):
-        token = str(metadata.get(key) or "").strip().lower()
-        if token:
-            return token
-    return "auto"
-
-
-def _native_tool_call_envelopes_for_anomaly(
-    response: RawLLMResponse,
-    metadata: Mapping[str, Any],
-) -> list[dict[str, Any]]:
-    metadata_envelopes = [dict(item) for item in native_tool_call_envelopes_from_metadata(metadata)]
-    if metadata_envelopes:
-        return metadata_envelopes
-    raw_calls = _native_tool_calls_from_response(response)
-    if not raw_calls:
-        return []
-    return build_native_tool_call_envelope_payloads(raw_calls, provider=_native_tool_call_provider(metadata))
-
-
 def build_tool_dispatch_dropped_anomaly(
     *,
     response: RawLLMResponse,
@@ -109,7 +87,7 @@ def build_tool_dispatch_dropped_anomaly(
 
     native_count = _native_tool_call_count(response, metadata)
     provider_response_hash = _provider_response_hash(response, metadata)
-    native_envelopes = _native_tool_call_envelopes_for_anomaly(response, metadata)
+    native_envelopes = native_tool_call_envelopes_from_response(response, metadata)
     lifecycle = build_tool_call_lifecycle_receipt(
         run_id=str(metadata.get("run_id") or ""),
         task_id=str(metadata.get("task_id") or ""),
