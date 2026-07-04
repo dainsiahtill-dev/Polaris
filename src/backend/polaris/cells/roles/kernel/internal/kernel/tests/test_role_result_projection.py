@@ -198,6 +198,35 @@ def test_role_result_metadata_projects_canonical_lifecycle_from_plural_receipts(
     assert metadata["native_tool_call_names"] == ["write_file"]
 
 
+def test_role_result_metadata_uses_run_ledger_lifecycle_alias_precedence() -> None:
+    profile = SimpleNamespace(provider_id="", model="")
+    canonical = {
+        "schema_version": "tool_call_lifecycle_receipt.v1",
+        "native_tool_call_envelope_refs": [
+            {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
+        ],
+    }
+    stale_plural = {
+        "schema_version": "tool_call_lifecycle_receipt.v1",
+        "native_tool_call_envelope_refs": [
+            {"schema_version": "native_tool_call_envelope.v1", "tool_name": "read_file"},
+        ],
+    }
+
+    metadata = role_result_metadata_from_profile(
+        profile=profile,
+        llm_response_metadata={
+            "tool_call_lifecycle_receipt": canonical,
+            "tool_call_lifecycle_receipts": [stale_plural],
+        },
+    )
+
+    assert metadata["tool_call_lifecycle_receipt"]["native_tool_call_envelope_refs"] == [
+        {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"}
+    ]
+    assert metadata["native_tool_call_names"] == ["write_file"]
+
+
 def test_role_result_metadata_prefers_envelope_facts_over_legacy_native_counts() -> None:
     profile = SimpleNamespace(provider_id="", model="")
     lifecycle = {

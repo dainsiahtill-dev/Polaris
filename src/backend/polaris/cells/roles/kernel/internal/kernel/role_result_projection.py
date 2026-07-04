@@ -12,9 +12,9 @@ from typing import Any, Protocol
 
 from polaris.cells.control_plane.run_ledger.public import (
     native_tool_call_facts_from_metadata,
-    normalize_tool_call_lifecycle_receipt,
     project_lifecycle_failure_evidence_to_metadata,
     project_native_tool_call_facts_to_metadata,
+    tool_call_lifecycle_receipts_from_metadata,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
@@ -215,17 +215,9 @@ def project_native_tool_call_facts(metadata: dict[str, Any], evidence: dict[str,
 def _project_canonical_tool_lifecycle_receipt(metadata: dict[str, Any]) -> None:
     """Ensure RoleTurnResult metadata exposes the canonical lifecycle receipt key."""
 
-    for key in ("tool_call_lifecycle_receipt", "tool_call_lifecycle"):
-        raw = metadata.get(key)
-        if isinstance(raw, dict):
-            metadata["tool_call_lifecycle_receipt"] = normalize_tool_call_lifecycle_receipt(raw)
-            return
-    receipt_rows = metadata.get("tool_call_lifecycle_receipts")
-    if isinstance(receipt_rows, (list, tuple)):
-        for raw in receipt_rows:
-            if isinstance(raw, dict):
-                metadata["tool_call_lifecycle_receipt"] = normalize_tool_call_lifecycle_receipt(raw)
-                return
+    receipts = tool_call_lifecycle_receipts_from_metadata(metadata)
+    if receipts:
+        metadata["tool_call_lifecycle_receipt"] = dict(receipts[0])
 
 
 def project_tool_lifecycle_metadata(metadata: dict[str, Any]) -> None:
