@@ -173,6 +173,55 @@ def test_v1_chat_completions_passes_lobe_chain_command_to_service(monkeypatch, t
     assert response.json()["execution_results"][0]["role"] == "architect"
 
 
+def test_v1_chat_completions_normalizes_failure_evidence_rows(monkeypatch, tmp_path) -> None:
+    client = _build_client(str(tmp_path))
+    captured: dict[str, Any] = {}
+
+    async def fake_aggregate_chat_completions(command):
+        captured["command"] = command
+        return AggregateChatCompletionsResultV1(
+            id="aggcmpl-evidence-test",
+            object="chat.completion",
+            model=command.model,
+            choices=(
+                AggregateChatChoiceV1(
+                    index=0,
+                    message=AggregateChatMessageV1(role="assistant", content="{}"),
+                ),
+            ),
+            metadata={"execution_mode": command.execution_mode},
+        )
+
+    monkeypatch.setattr(aggregate_chat, "aggregate_chat_completions", fake_aggregate_chat_completions)
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test"},
+        json={
+            "messages": [
+                {"role": "user", "content": "Explain the failed tool dispatch."},
+            ],
+            "failure_evidence": [
+                {
+                    "failure_class": "TOOL_DISPATCH_DROPPED",
+                    "evidence_refs": ["provider_response:abc"],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    command = captured["command"]
+    assert command.failure_evidence["items"] == [
+        {
+            "failure_class": "TOOL_DISPATCH_DROPPED",
+            "evidence_refs": ["provider_response:abc"],
+        }
+    ]
+    assert command.failure_evidence["failure_classes"] == ("TOOL_DISPATCH_DROPPED",)
+    assert command.failure_evidence["evidence_refs"] == ("provider_response:abc",)
+
+
 def test_v1_chat_completions_lobe_chain_materializes_runtime_evidence_via_service(monkeypatch, tmp_path) -> None:
     client = _build_client(str(tmp_path))
     captured: list[Any] = []

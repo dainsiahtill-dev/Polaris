@@ -7,6 +7,7 @@ from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
+from polaris.cells.control_plane.run_ledger.public import merge_failure_evidence_payload
 from polaris.cells.roles.runtime.public.contracts import (
     AggregateChatCompletionsCommandV1,
     AggregateChatMessageV1,
@@ -80,7 +81,7 @@ def _normalize_failure_signals(payload: Mapping[str, Any]) -> tuple[str, ...]:
 
 def _normalize_failure_evidence(payload: Mapping[str, Any]) -> dict[str, Any]:
     raw_evidence = payload.get("failure_evidence")
-    return dict(raw_evidence) if isinstance(raw_evidence, Mapping) else {}
+    return merge_failure_evidence_payload({}, raw_evidence)
 
 
 @router.post("/v1/chat/completions", dependencies=[Depends(require_auth)])
