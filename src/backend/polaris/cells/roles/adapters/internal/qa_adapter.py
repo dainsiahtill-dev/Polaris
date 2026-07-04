@@ -549,8 +549,10 @@ class QAAdapter(BaseRoleAdapter):
         """Return QA task-board rows through the runtime read model when available."""
 
         list_task_rows = getattr(self.task_board, "list_task_rows", None)
+        if not callable(list_task_rows):
+            return []
         try:
-            entries = list_task_rows() if callable(list_task_rows) else self.task_board.list_all()
+            entries = list_task_rows()
         except (RuntimeError, ValueError):
             return []
 

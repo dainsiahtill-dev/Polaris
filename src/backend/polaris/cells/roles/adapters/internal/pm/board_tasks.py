@@ -18,21 +18,10 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
         """Return PM task-board rows through the runtime read model when available."""
 
         list_task_rows = getattr(self.task_board, "list_task_rows", None)
-        if callable(list_task_rows):
-            rows = list_task_rows()
-            return [dict(row) for row in rows if isinstance(row, dict)]
-
-        legacy_rows: list[dict[str, Any]] = []
-        for task in self.task_board.list_all():
-            if isinstance(task, dict):
-                legacy_rows.append(dict(task))
-                continue
-            to_dict = getattr(task, "to_dict", None)
-            if callable(to_dict):
-                row = to_dict()
-                if isinstance(row, dict):
-                    legacy_rows.append(dict(row))
-        return legacy_rows
+        if not callable(list_task_rows):
+            return []
+        rows = list_task_rows()
+        return [dict(row) for row in rows if isinstance(row, dict)]
 
     def _create_board_tasks(self, task_contracts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         created: list[dict[str, Any]] = []

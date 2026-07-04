@@ -1991,6 +1991,17 @@ class TestSynthesizeTaskContractsFromDirective:
 
 
 class TestListBoardTaskRows:
+    def test_missing_runtime_task_row_projection_returns_empty_rows(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+
+        class LegacyBoard:
+            def list_all(self) -> list[object]:
+                raise AssertionError("PM read-model consumers must not use legacy list_all")
+
+        adapter._task_runtime = cast(Any, LegacyBoard())
+
+        assert adapter._list_board_task_rows() == []
+
     def test_prefers_runtime_task_row_projection(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         adapter._task_runtime = cast(

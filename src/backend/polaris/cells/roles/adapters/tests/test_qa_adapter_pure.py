@@ -118,6 +118,23 @@ class TestCoerceTaskRecord:
 
 
 class TestTaskboardQaVerdict:
+    def test_missing_task_row_projection_returns_empty_verdict_scan(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+
+        class LegacyBoard:
+            def list_all(self) -> list[object]:
+                raise AssertionError("QA read-model consumers must not use legacy list_all")
+
+        adapter._task_runtime = cast(Any, LegacyBoard())
+
+        summary = adapter._apply_taskboard_qa_verdict(
+            review_result={"passed": True, "score": 100},
+            context={},
+        )
+
+        assert summary["evaluated"] == 0
+        assert summary["passed_marked"] == 0
+
     def test_uses_runtime_task_row_projection_before_raw_task_entities(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         task_board = _QaRowProjectionOnlyTaskBoard(
