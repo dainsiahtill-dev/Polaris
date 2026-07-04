@@ -500,6 +500,10 @@ _ARTIFACT_QUALITY_UNRESOLVED_RELATIVE_IMPORT_RE = re.compile(
     r"unresolved relative import ['\"](?P<specifier>[^'\"]+)['\"] in (?P<path>\S+)",
     re.IGNORECASE,
 )
+_ARTIFACT_QUALITY_UNDECLARED_RUNTIME_IMPORT_RE = re.compile(
+    r"undeclared runtime import ['\"](?P<specifier>[^'\"]+)['\"] in (?P<path>\S+)",
+    re.IGNORECASE,
+)
 _ARTIFACT_QUALITY_NPM_SCRIPT_RE = re.compile(
     r"npm package manifest script ['\"](?P<script>[^'\"]+)['\"] (?P<detail>.+)",
     re.IGNORECASE,
@@ -574,6 +578,8 @@ def _legacy_target_or_import_issue_code(_message: str, normalized_message: str) 
         return "unresolved_import_symbol"
     if "unresolved relative import" in normalized_message:
         return "unresolved_relative_import"
+    if "undeclared runtime import" in normalized_message:
+        return "undeclared_runtime_import"
     return ""
 
 
@@ -722,6 +728,8 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
         metadata.update(_legacy_unresolved_import_symbol_metadata(message))
     elif code == "unresolved_relative_import":
         metadata.update(_legacy_unresolved_relative_import_metadata(message))
+    elif code == "undeclared_runtime_import":
+        metadata.update(_legacy_undeclared_runtime_import_metadata(message))
     elif code.startswith(("typescript_ts", "rust_e")) or code in {
         "go_compile_error",
         "java_compile_error",
@@ -836,6 +844,27 @@ def _legacy_unresolved_relative_import_metadata(message: str) -> dict[str, str]:
         for key, value in {
             "specifier": str(match.group("specifier") or "").strip(),
             "importer_path": str(match.group("path") or "").strip(),
+        }.items()
+        if value
+    }
+
+
+def _legacy_undeclared_runtime_import_metadata(message: str) -> dict[str, str]:
+    """Project old undeclared-runtime-import display text into metadata."""
+
+    match = _ARTIFACT_QUALITY_UNDECLARED_RUNTIME_IMPORT_RE.search(message)
+    if not match:
+        return {}
+    specifier = str(match.group("specifier") or "").strip()
+    package_root = _package_root_name(specifier) if specifier else ""
+    return {
+        key: value
+        for key, value in {
+            "specifier": specifier,
+            "package_root": package_root,
+            "path": str(match.group("path") or "").strip(),
+            "diagnostic_kind": "undeclared_runtime_import",
+            "archetype": "missing_dependency",
         }.items()
         if value
     }

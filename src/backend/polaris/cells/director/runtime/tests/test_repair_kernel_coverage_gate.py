@@ -18,6 +18,7 @@ from polaris.cells.director.runtime.public import (
     QueryDirectorRepairCoverageV1,
     query_director_repair_coverage,
 )
+from polaris.kernelone.quality import artifact_quality_issues_from_errors
 
 TS_COMMA_SOURCE_TOOL = "deterministic_typescript_return_object_semicolon_repair"
 RUST_MISSING_FIELDS_SOURCE_TOOL = "deterministic_rust_missing_fields_repair"
@@ -119,6 +120,25 @@ def test_public_coverage_routes_node_typescript_configuration_diagnostics_to_run
         assert item["known_rule_matched"] is True
         assert item["executable_runtime_plan_matched"] is True
         assert item["coverage_status"] == "executable_runtime"
+
+
+def test_public_coverage_routes_typed_undeclared_runtime_import_issue_to_dependency_repair() -> None:
+    raw_error = "Artifact quality scan failed: undeclared runtime import 'mongoose' in src/models/auditlog.ts"
+    typed_issues = artifact_quality_issues_from_errors((raw_error,))
+
+    payload = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(
+            artifact_quality_errors=(raw_error,),
+            artifact_quality_issues=typed_issues,
+        )
+    ).to_dict()
+
+    assert payload["coverage_gap_count"] == 0
+    assert payload["covered_diagnostic_count"] == 1
+    assert payload["executable_runtime_plan_diagnostic_count"] == 1
+    item = payload["items"][0]
+    assert item["matched_source_tools"] == ["deterministic_runtime_dependency_repair"]
+    assert item["coverage_status"] == "executable_runtime"
 
 
 def test_convergence_gate_distinguishes_unselected_executable_runtime_match_from_metadata_only(

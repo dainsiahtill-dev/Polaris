@@ -460,10 +460,18 @@ def run_declared_target_contract_repairs(
             artifact_quality_errors=(),
         )
     workspace_name = workspace_path.name
-    artifact_quality_errors = (
-        *_adapter_artifact_quality_errors(adapter),
-        *_missing_declared_target_errors(workspace_path, task, workspace_name=workspace_name),
+    artifact_quality_errors = _missing_declared_target_errors(
+        workspace_path,
+        task,
+        workspace_name=workspace_name,
     )
+    if not artifact_quality_errors:
+        empty_tool_results: list[dict[str, Any]] = []
+        return empty_tool_results, _runtime_repair_summary(
+            stage="declared_target_contract_repair",
+            tool_results=empty_tool_results,
+            artifact_quality_errors=artifact_quality_errors,
+        )
     tool_results = _runtime_repair_tool_results(
         adapter,
         task=task,

@@ -336,6 +336,23 @@ def test_artifact_quality_issue_projection_extracts_go_undefined_identifier() ->
     assert issues[0]["metadata"]["identifier"] == "errString"
 
 
+def test_artifact_quality_issue_projection_extracts_undeclared_runtime_import() -> None:
+    error = "Artifact quality scan failed: undeclared runtime import 'mongoose' in src/models/auditlog.ts"
+
+    issues = artifact_quality_issues_from_errors((error,))
+
+    assert issues[0]["code"] == "undeclared_runtime_import"
+    assert issues[0]["path"] == "src/models/auditlog.ts"
+    assert issues[0]["metadata"] == {
+        "raw": error,
+        "specifier": "mongoose",
+        "package_root": "mongoose",
+        "path": "src/models/auditlog.ts",
+        "diagnostic_kind": "undeclared_runtime_import",
+        "archetype": "missing_dependency",
+    }
+
+
 def test_artifact_quality_issue_projection_extracts_colon_line_column() -> None:
     error = "src/main.py:7:13: SyntaxError: invalid syntax"
 

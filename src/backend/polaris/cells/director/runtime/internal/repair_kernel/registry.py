@@ -760,7 +760,10 @@ class RepairRuleDefinition:
         """Return whether this rule claims coverage for a diagnostic."""
 
         diagnostic_language = _infer_diagnostic_language(diagnostic)
-        if self.language not in {"generic", "unknown"} and diagnostic_language not in {"unknown", self.language}:
+        if self.language not in {"generic", "unknown", "dependency"} and diagnostic_language not in {
+            "unknown",
+            self.language,
+        }:
             return False
         diagnostic_code = diagnostic.code.lower()
         if self.diagnostic_codes and diagnostic_code not in self.diagnostic_codes:
