@@ -141,25 +141,21 @@ def append_tool_call_lifecycle_control_plane_event(
     """Commit a tool lifecycle receipt to the Run Ledger."""
 
     from polaris.cells.control_plane.run_ledger.public import (
-        AppendRunLedgerEventCommandV1,
-        append_run_ledger_event,
-        build_tool_call_lifecycle_run_ledger_event,
+        AppendToolCallLifecycleEventCommandV1,
+        append_tool_call_lifecycle_event,
     )
 
     run_id = str(request.run_id or turn_id)
     task_id = str(request.task_id or "")
-    append_run_ledger_event(
-        AppendRunLedgerEventCommandV1(
+    append_tool_call_lifecycle_event(
+        AppendToolCallLifecycleEventCommandV1(
             workspace=workspace,
             run_id=run_id,
-            event=build_tool_call_lifecycle_run_ledger_event(
-                run_id=run_id,
-                task_id=task_id,
-                turn_id=turn_id,
-                role=str(role or ""),
-                lifecycle_receipt=lifecycle_receipt,
-                stage=stage,
-                ok=ok,
-            ),
+            task_id=task_id,
+            turn_id=turn_id,
+            role=str(role or ""),
+            lifecycle_receipt=dict(lifecycle_receipt),
+            stage=stage,
+            ok=ok,
         )
     )

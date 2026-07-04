@@ -18,6 +18,7 @@ from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public.contracts import (
     AppendRunLedgerEventCommandV1,
+    AppendToolCallLifecycleEventCommandV1,
     ReadRunLedgerProjectionBarrierQueryV1,
     ReadRunLedgerProjectionQueryV1,
     ReadRunProvenanceBundleQueryV1,
@@ -33,6 +34,7 @@ from polaris.cells.control_plane.run_ledger.public.projection import (
 )
 from polaris.cells.control_plane.run_ledger.public.provenance import build_run_provenance_bundle
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
+    build_tool_call_lifecycle_run_ledger_event,
     empty_tool_lifecycle_summary,
     merge_tool_lifecycle_summaries,
 )
@@ -507,6 +509,43 @@ def append_run_ledger_event(command: AppendRunLedgerEventCommandV1) -> RunLedger
             event=event,
         )
     return RunLedgerAppendResultV1(receipt=persisted)
+
+
+def append_tool_call_lifecycle_event(command: AppendToolCallLifecycleEventCommandV1) -> RunLedgerAppendResultV1:
+    """Append a canonical tool-call lifecycle event through Run Ledger public APIs.
+
+    Boundary:
+        This is the single public append path for tool lifecycle receipts.
+        Callers may build different receipt payloads, but they do not own the
+        Run Ledger event envelope, job-token projection, or append command
+        construction.
+
+    Complexity:
+        O(e + d) through lifecycle normalization, matching
+        ``build_tool_call_lifecycle_run_ledger_event`` where ``e`` is native
+        envelope refs and ``d`` is dropped-call refs.
+    """
+
+    event = build_tool_call_lifecycle_run_ledger_event(
+        run_id=command.run_id,
+        task_id=command.task_id,
+        turn_id=command.turn_id,
+        role=command.role,
+        lifecycle_receipt=command.lifecycle_receipt,
+        stage=command.stage,
+        project_id=command.project_id,
+        capability_audit=command.capability_audit,
+        gate_policy=command.gate_policy,
+        job_token=command.job_token,
+        ok=command.ok,
+    )
+    return append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=command.workspace,
+            run_id=command.run_id,
+            event=event,
+        )
+    )
 
 
 def read_run_provenance_bundle(query: ReadRunProvenanceBundleQueryV1) -> RunProvenanceBundleResultV1:

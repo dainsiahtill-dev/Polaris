@@ -82,7 +82,7 @@ def test_append_tool_dispatch_dropped_events_preserves_native_envelopes(
         captured["event"] = command.event
 
     monkeypatch.setattr(
-        "polaris.cells.control_plane.run_ledger.public.append_run_ledger_event",
+        "polaris.cells.control_plane.run_ledger.public.service.append_run_ledger_event",
         fake_append_run_ledger_event,
     )
     monkeypatch.setattr(
@@ -139,7 +139,7 @@ def test_append_tool_call_lifecycle_control_plane_event_uses_public_event_shape(
         captured["event"] = command.event
 
     monkeypatch.setattr(
-        "polaris.cells.control_plane.run_ledger.public.append_run_ledger_event",
+        "polaris.cells.control_plane.run_ledger.public.service.append_run_ledger_event",
         fake_append_run_ledger_event,
     )
 
@@ -177,7 +177,7 @@ def test_append_tool_dispatch_dropped_events_accepts_lifecycle_envelope_refs(
         captured["event"] = command.event
 
     monkeypatch.setattr(
-        "polaris.cells.control_plane.run_ledger.public.append_run_ledger_event",
+        "polaris.cells.control_plane.run_ledger.public.service.append_run_ledger_event",
         fake_append_run_ledger_event,
     )
     monkeypatch.setattr(
@@ -232,7 +232,7 @@ def test_append_tool_dispatch_dropped_events_prefers_lifecycle_receipt_over_lega
         captured["event"] = command.event
 
     monkeypatch.setattr(
-        "polaris.cells.control_plane.run_ledger.public.append_run_ledger_event",
+        "polaris.cells.control_plane.run_ledger.public.service.append_run_ledger_event",
         fake_append_run_ledger_event,
     )
     monkeypatch.setattr(

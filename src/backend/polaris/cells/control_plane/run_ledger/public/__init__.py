@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .contracts import (
     AppendRunLedgerEventCommandV1,
+    AppendToolCallLifecycleEventCommandV1,
     ControlPlaneRunLedgerV1Error,
     ReadRunLedgerProjectionBarrierQueryV1,
     ReadRunLedgerProjectionQueryV1,
@@ -32,6 +33,7 @@ from .projection import build_run_ledger_projection, summarize_run_ledger_projec
 from .provenance import build_run_provenance_bundle
 from .service import (
     append_run_ledger_event,
+    append_tool_call_lifecycle_event,
     read_run_ledger_projection,
     read_run_ledger_projection_barrier,
     read_run_provenance_bundle,
@@ -89,6 +91,7 @@ from .tool_lifecycle import (
 
 __all__ = [
     "AppendRunLedgerEventCommandV1",
+    "AppendToolCallLifecycleEventCommandV1",
     "ControlPlaneRunLedgerV1Error",
     "FailureClassV1",
     "FailureEvidenceV1",
@@ -106,6 +109,7 @@ __all__ = [
     "ToolCallLifecycleReceiptV1",
     "append_failure_evidence_to_metadata",
     "append_run_ledger_event",
+    "append_tool_call_lifecycle_event",
     "build_completed_task_boundary_verdict",
     "build_deferred_followup_task_boundary_verdict",
     "build_missing_dispatch_lifecycle_receipt",

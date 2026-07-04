@@ -6,11 +6,13 @@ from types import SimpleNamespace
 
 from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
+    AppendToolCallLifecycleEventCommandV1,
     ReadRunLedgerProjectionBarrierQueryV1,
     ReadRunLedgerProjectionQueryV1,
     ReadRunProvenanceBundleQueryV1,
     RunLedger,
     append_run_ledger_event,
+    append_tool_call_lifecycle_event,
     build_run_ledger_projection,
     build_tool_call_lifecycle_receipt,
     read_run_ledger_projection,
@@ -116,6 +118,44 @@ def test_append_run_ledger_event_public_service_projects_event(tmp_path: Path) -
     assert projection["ok"] is True
     assert projection["projects"][0]["project_id"] == "P1"
     assert projection["evidence_modalities"]["tool_receipt"]["present"] == 1
+
+
+def test_append_tool_call_lifecycle_event_public_service_projects_event(tmp_path: Path) -> None:
+    result = append_tool_call_lifecycle_event(
+        AppendToolCallLifecycleEventCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-1",
+            task_id="TASK-1",
+            turn_id="turn-1",
+            role="director",
+            lifecycle_receipt={
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "provider_response_hash": "hash-1",
+                "native_tool_calls_count": 1,
+                "decoded_tool_calls_count": 1,
+                "dispatched_tool_calls_count": 0,
+                "dropped_tool_calls": [
+                    {"tool_name": "write_file", "reason": "tool_dispatch_dropped"}
+                ],
+                "dispatch_status": "dropped",
+                "failure_class": "TOOL_DISPATCH_DROPPED",
+            },
+            stage="director_tool_dispatch",
+            project_id="TASK-1",
+        )
+    )
+
+    ledger_path = Path(str(result.receipt["ledger_path"]))
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-1")
+    ).projection
+
+    assert ledger_path.parent == tmp_path / "runtime" / "control_plane" / "ledger"
+    assert result.receipt["event"]["event_type"] == "tool_call_lifecycle"
+    assert result.receipt["event"]["tool_call_lifecycle_receipt"]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert projection["ok"] is False
+    assert projection["tool_lifecycle"]["dropped_count"] == 1
+    assert projection["tool_lifecycle"]["failure_evidence"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
 
 
 def test_required_evidence_distinguishes_missing_from_failed() -> None:

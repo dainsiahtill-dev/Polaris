@@ -17,9 +17,10 @@ from typing import Any, NoReturn, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
+    AppendToolCallLifecycleEventCommandV1,
     append_run_ledger_event,
+    append_tool_call_lifecycle_event,
     build_tool_batch_lifecycle_receipt_from_sources,
-    build_tool_call_lifecycle_run_ledger_event,
     build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt,
 )
 from polaris.cells.roles.kernel.internal.speculation.models import CancelToken
@@ -833,20 +834,17 @@ def _append_tool_batch_receipts_to_run_ledger(
                 run_id=resolved_lifecycle_run_id,
                 stage=stage,
             )
-        append_run_ledger_event(
-            AppendRunLedgerEventCommandV1(
+        append_tool_call_lifecycle_event(
+            AppendToolCallLifecycleEventCommandV1(
                 workspace=workspace,
                 run_id=resolved_lifecycle_run_id,
-                event=build_tool_call_lifecycle_run_ledger_event(
-                    run_id=resolved_lifecycle_run_id,
-                    task_id=task_id,
-                    turn_id=turn_id,
-                    role=role_id,
-                    lifecycle_receipt=lifecycle.to_dict(),
-                    stage="tool_batch",
-                    project_id=task_id,
-                    job_token=job_token,
-                ),
+                task_id=task_id,
+                turn_id=turn_id,
+                role=role_id,
+                lifecycle_receipt=lifecycle.to_dict(),
+                stage="tool_batch",
+                project_id=task_id,
+                job_token=job_token,
             )
         )
     if not merged_receipt:

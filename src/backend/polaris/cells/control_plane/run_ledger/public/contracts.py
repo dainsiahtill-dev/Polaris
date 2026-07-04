@@ -102,6 +102,62 @@ class AppendRunLedgerEventCommandV1:
 
 
 @dataclass(frozen=True)
+class AppendToolCallLifecycleEventCommandV1:
+    """Append one canonical tool-call lifecycle event.
+
+    Callers own when a lifecycle receipt is emitted. The Run Ledger public
+    service owns the event shape and receipt normalization so normal batches,
+    dropped dispatches, and completion-path evidence cannot drift.
+    """
+
+    workspace: str
+    run_id: str
+    task_id: str
+    turn_id: str
+    role: str
+    lifecycle_receipt: dict[str, Any]
+    stage: str = "director_tool_dispatch"
+    project_id: str = ""
+    capability_audit: dict[str, Any] | None = None
+    gate_policy: dict[str, Any] | None = None
+    job_token: dict[str, Any] | None = None
+    ok: bool | None = None
+
+    def __post_init__(self) -> None:
+        workspace = str(self.workspace or "").strip()
+        if not workspace:
+            raise ValueError("workspace must be a non-empty string")
+        run_id = str(self.run_id or self.turn_id or "").strip()
+        if not run_id:
+            raise ValueError("run_id must be a non-empty string")
+        if not isinstance(self.lifecycle_receipt, dict) or not self.lifecycle_receipt:
+            raise ValueError("lifecycle_receipt must be a non-empty mapping")
+        object.__setattr__(self, "workspace", workspace)
+        object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(self, "task_id", str(self.task_id or "").strip())
+        object.__setattr__(self, "turn_id", str(self.turn_id or "").strip())
+        object.__setattr__(self, "role", str(self.role or "").strip())
+        object.__setattr__(self, "lifecycle_receipt", dict(self.lifecycle_receipt))
+        object.__setattr__(self, "stage", str(self.stage or "director_tool_dispatch").strip())
+        object.__setattr__(self, "project_id", str(self.project_id or "").strip())
+        object.__setattr__(
+            self,
+            "capability_audit",
+            dict(self.capability_audit) if isinstance(self.capability_audit, dict) else None,
+        )
+        object.__setattr__(
+            self,
+            "gate_policy",
+            dict(self.gate_policy) if isinstance(self.gate_policy, dict) else None,
+        )
+        object.__setattr__(
+            self,
+            "job_token",
+            dict(self.job_token) if isinstance(self.job_token, dict) else None,
+        )
+
+
+@dataclass(frozen=True)
 class RunLedgerProjectionResultV1:
     """Platform read model returned by the control-plane ledger service."""
 
@@ -136,6 +192,7 @@ class ControlPlaneRunLedgerV1Error(Exception):
 
 __all__ = [
     "AppendRunLedgerEventCommandV1",
+    "AppendToolCallLifecycleEventCommandV1",
     "ControlPlaneRunLedgerV1Error",
     "ReadRunLedgerProjectionBarrierQueryV1",
     "ReadRunLedgerProjectionQueryV1",
