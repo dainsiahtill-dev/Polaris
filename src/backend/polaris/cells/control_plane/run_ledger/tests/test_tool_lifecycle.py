@@ -6,6 +6,8 @@ from polaris.cells.control_plane.run_ledger.public import tool_lifecycle
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_missing_dispatch_lifecycle_receipt,
+    build_native_tool_call_envelope_payloads,
+    build_native_tool_call_envelopes,
     build_tool_batch_lifecycle_receipt,
     build_tool_batch_lifecycle_receipt_from_sources,
     build_tool_call_lifecycle_receipt,
@@ -49,6 +51,8 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
 
 def test_tool_lifecycle_all_exports_source_projection_helpers() -> None:
     required_exports = {
+        "build_native_tool_call_envelope_payloads",
+        "build_native_tool_call_envelopes",
         "build_tool_batch_lifecycle_receipt_from_sources",
         "build_tool_dispatch_dropped_anomaly_from_sources",
         "native_tool_call_names_from_facts",
@@ -61,6 +65,46 @@ def test_tool_lifecycle_all_exports_source_projection_helpers() -> None:
     assert required_exports <= set(tool_lifecycle.__all__)
     for name in required_exports:
         assert hasattr(tool_lifecycle, name)
+
+
+def test_build_native_tool_call_envelopes_owns_public_envelope_shape() -> None:
+    envelopes = build_native_tool_call_envelope_payloads(
+        [
+            {
+                "id": "call-write",
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "arguments": {"path": "src/index.ts", "content": "secret payload"},
+                },
+            }
+        ],
+        provider="OpenAI",
+    )
+    typed_envelopes = build_native_tool_call_envelopes(
+        [
+            {
+                "id": "call-write",
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "arguments": {"path": "src/index.ts", "content": "secret payload"},
+                },
+            }
+        ],
+        provider="OpenAI",
+    )
+
+    assert len(typed_envelopes) == 1
+    assert envelopes == [typed_envelopes[0].to_dict()]
+    assert envelopes[0]["schema_version"] == "native_tool_call_envelope.v1"
+    assert envelopes[0]["provider"] == "openai"
+    assert envelopes[0]["tool_name"] == "write_file"
+    assert envelopes[0]["call_id"] == "call-write"
+    assert envelopes[0]["metadata"] == {"has_tool_name": True}
+    assert "content" not in envelopes[0]
+    assert len(envelopes[0]["raw_call_hash"]) == 64
+    assert len(envelopes[0]["arguments_hash"]) == 64
 
 
 def test_tool_lifecycle_receipt_links_batch_and_effect_refs() -> None:

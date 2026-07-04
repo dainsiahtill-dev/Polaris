@@ -47,8 +47,11 @@ from .task_boundary import (
     normalize_task_boundary_verdict,
 )
 from .tool_lifecycle import (
+    NativeToolCallEnvelopeV1,
     ToolCallLifecycleReceiptV1,
     build_missing_dispatch_lifecycle_receipt,
+    build_native_tool_call_envelope_payloads,
+    build_native_tool_call_envelopes,
     build_tool_batch_lifecycle_receipt,
     build_tool_batch_lifecycle_receipt_from_sources,
     build_tool_call_lifecycle_receipt,
@@ -96,6 +99,7 @@ __all__ = [
     "FailureClassV1",
     "FailureEvidenceV1",
     "JobToken",
+    "NativeToolCallEnvelopeV1",
     "ReadRunLedgerProjectionBarrierQueryV1",
     "ReadRunLedgerProjectionQueryV1",
     "ReadRunProvenanceBundleQueryV1",
@@ -113,6 +117,8 @@ __all__ = [
     "build_completed_task_boundary_verdict",
     "build_deferred_followup_task_boundary_verdict",
     "build_missing_dispatch_lifecycle_receipt",
+    "build_native_tool_call_envelope_payloads",
+    "build_native_tool_call_envelopes",
     "build_run_ledger_projection",
     "build_run_provenance_bundle",
     "build_tool_batch_lifecycle_receipt",

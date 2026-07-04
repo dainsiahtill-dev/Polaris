@@ -145,6 +145,43 @@ def normalize_native_tool_call_envelope_refs(value: Any) -> tuple[dict[str, Any]
     return tuple(_native_tool_call_envelope_refs(value))
 
 
+@dataclass(frozen=True, slots=True)
+class NativeToolCallEnvelopeV1:
+    """Stable provider-neutral reference for one native tool call.
+
+    Boundary:
+        Native tool-call envelopes are observational lifecycle evidence. They
+        bind raw provider calls to stable hashes and identifiers without
+        copying full arguments into metadata. Provider adapters may supply raw
+        calls, but Run Ledger owns this reference shape.
+    """
+
+    envelope_id: str
+    provider: str
+    index: int
+    tool_name: str
+    call_id: str
+    raw_call_hash: str
+    arguments_hash: str
+    source: str = "provider_native_tool_call"
+    schema_version: str = "native_tool_call_envelope.v1"
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "envelope_id": self.envelope_id,
+            "provider": self.provider,
+            "index": self.index,
+            "tool_name": self.tool_name,
+            "call_id": self.call_id,
+            "raw_call_hash": self.raw_call_hash,
+            "arguments_hash": self.arguments_hash,
+            "source": self.source,
+            "metadata": dict(self.metadata),
+        }
+
+
 def _mapping_ref_key(value: Mapping[str, Any]) -> str:
     for key in ("receipt_hash", "batch_id", "effect_receipt_hash", "id"):
         token = _clean_string(value.get(key))
@@ -917,6 +954,77 @@ def native_tool_call_facts_from_raw_calls(native_tool_calls: Sequence[Any]) -> d
         "native_tool_calls_count": count,
         "native_tool_call_names": names,
     }
+
+
+def _native_tool_call_arguments(call: Mapping[str, Any]) -> Any:
+    function = call.get("function")
+    if isinstance(function, Mapping) and "arguments" in function:
+        return function.get("arguments")
+    for key in ("arguments", "input", "args", "parameters"):
+        if key in call:
+            return call.get(key)
+    return {}
+
+
+def _native_tool_call_id(call: Mapping[str, Any], *, index: int, raw_call_hash: str) -> str:
+    for key in ("id", "call_id", "tool_call_id", "toolUseId"):
+        value = call.get(key)
+        if value:
+            return _clean_string(value)
+    return f"native_tool_call_{index}_{raw_call_hash[:12]}"
+
+
+def build_native_tool_call_envelopes(
+    native_tool_calls: Sequence[Any],
+    *,
+    provider: str,
+) -> tuple[NativeToolCallEnvelopeV1, ...]:
+    """Build stable envelope refs for provider-native tool calls.
+
+    Boundary:
+        Run Ledger owns the native tool-call envelope shape and hashing rules.
+        Callers supply raw provider call mappings and a provider label; this
+        helper does not authorize, dispatch, or infer tool calls from prose.
+
+    Complexity:
+        O(n * k) time over native calls and argument/hash serialization size;
+        O(n) memory for the returned envelope refs.
+    """
+
+    provider_label = _clean_string(provider).lower() or "auto"
+    envelopes: list[NativeToolCallEnvelopeV1] = []
+    for index, item in enumerate(native_tool_calls):
+        if not isinstance(item, Mapping):
+            continue
+        call = dict(item)
+        raw_call_hash = _stable_hash(call)
+        arguments_hash = _stable_hash(_native_tool_call_arguments(call))
+        call_id = _native_tool_call_id(call, index=index, raw_call_hash=raw_call_hash)
+        tool_name = _raw_native_tool_call_name(call)
+        envelope_id = f"native_tool_call:{provider_label}:{index}:{call_id}:{raw_call_hash[:16]}"
+        envelopes.append(
+            NativeToolCallEnvelopeV1(
+                envelope_id=envelope_id,
+                provider=provider_label,
+                index=index,
+                tool_name=tool_name,
+                call_id=call_id,
+                raw_call_hash=raw_call_hash,
+                arguments_hash=arguments_hash,
+                metadata={"has_tool_name": bool(tool_name)},
+            )
+        )
+    return tuple(envelopes)
+
+
+def build_native_tool_call_envelope_payloads(
+    native_tool_calls: Sequence[Any],
+    *,
+    provider: str,
+) -> list[dict[str, Any]]:
+    """Return JSON-ready native tool-call envelope refs."""
+
+    return [envelope.to_dict() for envelope in build_native_tool_call_envelopes(native_tool_calls, provider=provider)]
 
 
 def native_tool_call_facts_from_sources(
@@ -1968,8 +2076,11 @@ def project_tool_lifecycle_receipt_to_metadata(
 
 
 __all__ = [
+    "NativeToolCallEnvelopeV1",
     "ToolCallLifecycleReceiptV1",
     "build_missing_dispatch_lifecycle_receipt",
+    "build_native_tool_call_envelope_payloads",
+    "build_native_tool_call_envelopes",
     "build_tool_batch_lifecycle_receipt",
     "build_tool_batch_lifecycle_receipt_from_sources",
     "build_tool_call_lifecycle_receipt",
