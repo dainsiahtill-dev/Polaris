@@ -1763,7 +1763,7 @@ def test_final_request_evidence_rejects_text_only_pm_and_ce_for_required_refs() 
     )
 
     evidence_coverage = audit["final_request_evidence_coverage"]
-    assert audit["coverage"]["has_pm_contract"] is True
+    assert audit["coverage"]["has_pm_contract"] is False
     assert audit["coverage"]["has_chief_engineer_blueprint"] is True
     assert evidence_coverage["structured_evidence"]["pm_contract"] is False
     assert evidence_coverage["structured_evidence"]["ce_blueprint"] is False

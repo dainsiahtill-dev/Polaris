@@ -157,6 +157,12 @@ def test_final_request_context_audit_counts_tools_and_coverage() -> None:
     ai_request = Mock()
     ai_request.context = {
         "chat_messages": messages,
+        "pm_contract": {
+            "schema_version": "pm.task_contract.v1",
+            "task_id": "TASK-1",
+            "target_files": ["src/index.ts"],
+            "acceptance": ["npm test"],
+        },
         "target_files": ["src/index.ts"],
         "scope_paths": ["src/index.ts"],
         "failed_gate_evidence": {
@@ -298,6 +304,12 @@ def test_final_request_context_audit_does_not_count_degraded_blueprint_fallback(
     ai_request = Mock()
     ai_request.context = {
         "chat_messages": messages,
+        "pm_contract": {
+            "schema_version": "pm.task_contract.v1",
+            "task_id": "TASK-1",
+            "target_files": ["src/engine/SimulationEngine.ts"],
+            "acceptance": ["npm run build"],
+        },
         "target_files": ["src/engine/SimulationEngine.ts"],
         "scope_paths": ["src/engine/SimulationEngine.ts"],
         "workspace_quality_evidence": {
@@ -828,6 +840,12 @@ def test_final_request_context_audit_skips_resident_agi_coverage_when_disabled()
     ai_request = Mock()
     ai_request.context = {
         "chat_messages": messages,
+        "pm_contract": {
+            "schema_version": "pm.task_contract.v1",
+            "task_id": "TASK-1",
+            "target_files": ["src/engine/SimulationEngine.ts"],
+            "acceptance": ["npm run build"],
+        },
         "target_files": ["src/engine/SimulationEngine.ts"],
         "scope_paths": ["src/engine/SimulationEngine.ts"],
         "workspace_quality_evidence": {
@@ -998,6 +1016,12 @@ def test_final_request_context_audit_recognizes_director_contract_and_blueprint_
     ai_request = Mock()
     ai_request.context = {
         "chat_messages": messages,
+        "pm_contract": {
+            "schema_version": "pm.task_contract.v1",
+            "task_id": "TASK-1",
+            "target_files": ["src/engine/SimulationEngine.ts"],
+            "acceptance": ["npm run build"],
+        },
         "target_files": ["src/engine/SimulationEngine.ts"],
         "scope_paths": ["src/engine/SimulationEngine.ts"],
         "workspace_quality_evidence": {
@@ -1051,6 +1075,11 @@ def test_final_request_context_audit_uses_active_fallback_request_options() -> N
     fallback_request = Mock()
     fallback_request.options = {}
     fallback_request.context = {
+        "pm_contract": {
+            "schema_version": "pm.task_contract.v1",
+            "task_id": "TASK-1",
+            "target_files": ["src/index.ts"],
+        },
         "chat_messages": [
             {
                 "role": "user",

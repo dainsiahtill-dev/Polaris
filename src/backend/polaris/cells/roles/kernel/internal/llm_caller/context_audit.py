@@ -371,23 +371,7 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
     )
     has_chief_engineer_blueprint = bool(ce_blueprint or (strong_blueprint_evidence and not blueprint_absent))
     coverage = {
-        "has_pm_contract": bool(pm_contract)
-        or any(
-            needle in lowered
-            for needle in (
-                "task-",
-                "acceptance",
-                "acceptance criteria",
-                "depends_on",
-                "pm task contract",
-                "quality gates",
-                "verification commands",
-                "任务:",
-                "任务合同",
-                "执行步骤",
-                "验收标准",
-            )
-        ),
+        "has_pm_contract": bool(pm_contract),
         "has_chief_engineer_blueprint": has_chief_engineer_blueprint,
         "has_module_interface_contract": bool(module_interface_contract),
         "has_actual_sibling_exports": bool(actual_sibling_exports),
