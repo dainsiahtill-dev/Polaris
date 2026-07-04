@@ -16,12 +16,10 @@ from polaris.cells.control_plane.run_ledger.public import (
     build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
     failure_evidence_from_lifecycle_receipt,
     is_failure_class,
-    native_tool_call_facts_from_lifecycle_receipt,
     normalize_failure_class,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
-    project_lifecycle_failure_evidence_to_metadata,
-    project_native_tool_call_facts_to_metadata,
+    project_tool_lifecycle_metadata,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
@@ -85,19 +83,6 @@ def _lifecycle_failure_evidence_from_metadata(metadata: Mapping[str, Any]) -> di
         return None
     evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
     return dict(evidence) if isinstance(evidence, Mapping) and evidence.get("failure_class") else None
-
-
-def _project_lifecycle_native_tool_facts(metadata: dict[str, Any], lifecycle: Mapping[str, Any]) -> None:
-    facts = native_tool_call_facts_from_lifecycle_receipt(lifecycle)
-    project_native_tool_call_facts_to_metadata(
-        metadata,
-        facts,
-        project_names=bool(facts.get("native_tool_call_names")),
-    )
-
-
-def _project_lifecycle_failure_evidence(metadata: dict[str, Any], lifecycle: Mapping[str, Any]) -> None:
-    project_lifecycle_failure_evidence_to_metadata(metadata, lifecycle)
 
 
 def _extract_tool_calls(result: RoleTurnResult) -> tuple[str, ...]:
@@ -242,8 +227,7 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
     if lifecycle is not None:
         metadata["tool_call_lifecycle_receipt"] = lifecycle
         metadata["tool_call_lifecycle"] = lifecycle
-        _project_lifecycle_native_tool_facts(metadata, lifecycle)
-        _project_lifecycle_failure_evidence(metadata, lifecycle)
+        project_tool_lifecycle_metadata(metadata)
     dropped_error = _tool_dispatch_dropped_error(result)
     if dropped_error:
         dropped_tool_calls = _extract_tool_calls(result)
@@ -269,8 +253,7 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
         )
         metadata.setdefault("tool_call_lifecycle_receipt", dropped_lifecycle)
         metadata.setdefault("tool_call_lifecycle", metadata["tool_call_lifecycle_receipt"])
-        _project_lifecycle_native_tool_facts(metadata, metadata["tool_call_lifecycle_receipt"])
-        _project_lifecycle_failure_evidence(metadata, metadata["tool_call_lifecycle_receipt"])
+        project_tool_lifecycle_metadata(metadata)
     return metadata
 
 
