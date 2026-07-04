@@ -333,9 +333,10 @@ def test_task_runtime_service_reconciles_terminal_session_before_reclaim(tmp_pat
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    created = service.create(subject="completed task with stale row")
+    created = service.create_task_row(subject="completed task with stale row")
+    created_id = created["id"]
     claimed = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-terminal-session",
@@ -344,13 +345,13 @@ def test_task_runtime_service_reconciles_terminal_session_before_reclaim(tmp_pat
     assert claimed["success"] is True
 
     completed = service.complete_execution(
-        created.id,
+        created_id,
         session_id=str(claimed["session"]["session_id"]),
         result_summary="done",
     )
     assert completed["success"] is True
 
-    task_path = _task_file_path(workspace, created.id)
+    task_path = _task_file_path(workspace, created_id)
     stale_payload = json.loads(task_path.read_text(encoding="utf-8"))
     stale_payload["status"] = "pending"
     stale_payload["completed_at"] = None
@@ -358,7 +359,7 @@ def test_task_runtime_service_reconciles_terminal_session_before_reclaim(tmp_pat
 
     reloaded = TaskRuntimeService(str(workspace))
     reclaimed = reloaded.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-should-not-reclaim",
@@ -384,9 +385,10 @@ def test_task_runtime_ready_reset_row_with_older_terminal_session_is_claimable(t
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    created = service.create(subject="retry after failure via ready reset")
+    created = service.create_task_row(subject="retry after failure via ready reset")
+    created_id = created["id"]
     claimed = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-retry-ready",
@@ -395,16 +397,16 @@ def test_task_runtime_ready_reset_row_with_older_terminal_session_is_claimable(t
     assert claimed["success"] is True
     old_session_id = str(claimed["session"]["session_id"])
 
-    failed = service.fail_execution(created.id, session_id=old_session_id, error="transient failure")
+    failed = service.fail_execution(created_id, session_id=old_session_id, error="transient failure")
     assert failed["success"] is True
 
     time.sleep(0.02)
-    reset = service.update_task(created.id, status="ready")
+    reset = service.update_task_row(created_id, status="ready")
     assert reset is not None
-    assert reset.status.value == "ready"
+    assert reset["status"] == "ready"
 
     reclaimed = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-retry-ready-2",
@@ -416,7 +418,7 @@ def test_task_runtime_ready_reset_row_with_older_terminal_session_is_claimable(t
     assert reclaimed["resumed"] is False
     assert str(reclaimed["session"]["session_id"]) != old_session_id
     assert reclaimed["task"]["status"] == "in_progress"
-    persisted = json.loads(_task_file_path(workspace, created.id).read_text(encoding="utf-8"))
+    persisted = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
     assert persisted["status"] == "in_progress"
 
 
@@ -426,9 +428,10 @@ def test_task_runtime_deliberate_pending_retry_is_claimable_and_not_flipped_to_f
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    created = service.create(subject="retry after failure via pending reset")
+    created = service.create_task_row(subject="retry after failure via pending reset")
+    created_id = created["id"]
     claimed = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-retry-pending",
@@ -436,19 +439,19 @@ def test_task_runtime_deliberate_pending_retry_is_claimable_and_not_flipped_to_f
     )
     assert claimed["success"] is True
     failed = service.fail_execution(
-        created.id,
+        created_id,
         session_id=str(claimed["session"]["session_id"]),
         error="transient failure",
     )
     assert failed["success"] is True
 
     time.sleep(0.02)
-    reset = service.update_task(created.id, status="pending")
+    reset = service.update_task_row(created_id, status="pending")
     assert reset is not None
-    assert reset.status.value == "pending"
+    assert reset["status"] == "pending"
 
     reclaimed = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-retry-pending-2",
@@ -457,11 +460,11 @@ def test_task_runtime_deliberate_pending_retry_is_claimable_and_not_flipped_to_f
 
     assert reclaimed["success"] is True
     assert reclaimed["task"]["status"] == "in_progress"
-    persisted = json.loads(_task_file_path(workspace, created.id).read_text(encoding="utf-8"))
+    persisted = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
     assert persisted["status"] == "in_progress"
 
     completed = service.complete_execution(
-        created.id,
+        created_id,
         session_id=str(reclaimed["session"]["session_id"]),
         result_summary="second attempt worked",
     )
@@ -475,9 +478,10 @@ def test_task_runtime_claim_next_honors_deliberate_retry_projection(tmp_path: Pa
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    created = service.create(subject="retry should be visible to queue")
+    created = service.create_task_row(subject="retry should be visible to queue")
+    created_id = created["id"]
     claimed = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-queue-retry",
@@ -485,19 +489,19 @@ def test_task_runtime_claim_next_honors_deliberate_retry_projection(tmp_path: Pa
     )
     assert claimed["success"] is True
     failed = service.fail_execution(
-        created.id,
+        created_id,
         session_id=str(claimed["session"]["session_id"]),
         error="temporary platform failure",
     )
     assert failed["success"] is True
 
     time.sleep(0.02)
-    reset = service.update_task(created.id, status="pending")
+    reset = service.update_task_row(created_id, status="pending")
     assert reset is not None
-    assert reset.status.value == "pending"
+    assert reset["status"] == "pending"
 
     queued_rows = service.list_task_rows(include_terminal=False)
-    assert [row["id"] for row in queued_rows] == [created.id]
+    assert [row["id"] for row in queued_rows] == [created_id]
     assert queued_rows[0]["status"] == "pending"
     assert (
         queued_rows[0]["metadata"]["runtime_execution"]["session_projection_authority"]
@@ -512,7 +516,7 @@ def test_task_runtime_claim_next_honors_deliberate_retry_projection(tmp_path: Pa
     )
 
     assert reclaimed["success"] is True
-    assert reclaimed["task"]["id"] == created.id
+    assert reclaimed["task"]["id"] == created_id
     assert reclaimed["task"]["status"] == "in_progress"
 
 
@@ -522,9 +526,10 @@ def test_task_runtime_stale_pending_row_with_newer_terminal_session_still_reject
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    created = service.create(subject="stale row after second failure")
+    created = service.create_task_row(subject="stale row after second failure")
+    created_id = created["id"]
     first_claim = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-first",
@@ -532,16 +537,16 @@ def test_task_runtime_stale_pending_row_with_newer_terminal_session_still_reject
     )
     assert first_claim["success"] is True
     assert service.fail_execution(
-        created.id,
+        created_id,
         session_id=str(first_claim["session"]["session_id"]),
         error="first failure",
     )["success"]
 
     time.sleep(0.02)
     # Sanctioned retry: stamps the terminal-reset marker.
-    assert service.update_task(created.id, status="pending") is not None
+    assert service.update_task_row(created_id, status="pending") is not None
     second_claim = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-second",
@@ -550,14 +555,14 @@ def test_task_runtime_stale_pending_row_with_newer_terminal_session_still_reject
     assert second_claim["success"] is True
     time.sleep(0.02)
     assert service.fail_execution(
-        created.id,
+        created_id,
         session_id=str(second_claim["session"]["session_id"]),
         error="second failure",
     )["success"]
 
     # Stale byte-level rewrite: pending row with the OLD reset marker, while
     # the terminal session on disk is NEWER than that marker.
-    task_path = _task_file_path(workspace, created.id)
+    task_path = _task_file_path(workspace, created_id)
     stale_payload = json.loads(task_path.read_text(encoding="utf-8"))
     stale_payload["status"] = "pending"
     stale_payload["completed_at"] = None
@@ -565,7 +570,7 @@ def test_task_runtime_stale_pending_row_with_newer_terminal_session_still_reject
 
     reloaded = TaskRuntimeService(str(workspace))
     reclaimed = reloaded.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-should-not-reclaim",
