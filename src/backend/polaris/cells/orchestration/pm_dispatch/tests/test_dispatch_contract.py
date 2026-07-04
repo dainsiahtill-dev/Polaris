@@ -529,10 +529,12 @@ class TestStateConsistencyChecker:
             status: str
 
         mock_board = MagicMock()
-        mock_board.list_all.return_value = [
+        task_rows = [
             FakeTask(id="t-1", status="running"),
             FakeTask(id="t-2", status="completed"),
         ]
+        mock_board.list_all.return_value = task_rows
+        mock_board.list_task_rows.return_value = task_rows
 
         mock_store = MagicMock()
         mock_store.list_task_states = AsyncMock(
@@ -575,10 +577,12 @@ class TestStateConsistencyChecker:
             status: str
 
         mock_board = MagicMock()
-        mock_board.list_all.return_value = [
+        task_rows = [
             FakeTask(id="t-1", status="running"),
             FakeTask(id="t-2", status="running"),  # t-2 missing in workflow
         ]
+        mock_board.list_all.return_value = task_rows
+        mock_board.list_task_rows.return_value = task_rows
 
         mock_store = MagicMock()
         mock_store.list_task_states = AsyncMock(
@@ -621,9 +625,11 @@ class TestStateConsistencyChecker:
             status: str
 
         mock_board = MagicMock()
-        mock_board.list_all.return_value = [
+        task_rows = [
             FakeTask(id="t-1", status="running"),
         ]
+        mock_board.list_all.return_value = task_rows
+        mock_board.list_task_rows.return_value = task_rows
 
         mock_store = MagicMock()
         mock_store.list_task_states = AsyncMock(
@@ -642,6 +648,42 @@ class TestStateConsistencyChecker:
             result = loop.run_until_complete(run())
             assert result["consistent"] is False
             assert result["summary"]["status_mismatch"] == 1
+        finally:
+            loop.close()
+
+    def test_uses_task_row_projection_before_raw_task_entities(self) -> None:
+        import asyncio
+        from dataclasses import dataclass
+
+        from polaris.cells.orchestration.pm_dispatch.internal.state_bridge import (
+            StateConsistencyChecker,
+        )
+
+        @dataclass
+        class FakeState:
+            task_id: str
+            status: str
+
+        class TaskRowBoard:
+            def list_task_rows(self) -> list[dict[str, str]]:
+                return [{"id": "t-1", "status": "in_progress"}]
+
+            def list_all(self) -> list[object]:
+                raise AssertionError("consistency checker must prefer task-row projection")
+
+        mock_store = MagicMock()
+        mock_store.list_task_states = AsyncMock(return_value=[FakeState(task_id="t-1", status="running")])
+
+        checker = StateConsistencyChecker(task_board=TaskRowBoard(), workflow_store=mock_store)
+
+        async def run():
+            return await checker.check_consistency("wf-1")
+
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(run())
+            assert result["consistent"] is True
+            assert result["summary"]["checked"] == 1
         finally:
             loop.close()
 

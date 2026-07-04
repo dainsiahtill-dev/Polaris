@@ -34,6 +34,14 @@ def _normalize_status(value: Any) -> str:
     return token or "pending"
 
 
+def _record_value(record: Any, key: str) -> Any:
+    """Return a field from a runtime task-row dict or legacy task object."""
+
+    if isinstance(record, dict):
+        return record.get(key)
+    return getattr(record, key, None)
+
+
 @dataclass(slots=True)
 class StateSyncEvent:
     """Internal event used by TaskBoardStateBridge."""
@@ -257,10 +265,18 @@ class StateConsistencyChecker:
         self._workflow_store = workflow_store
 
     async def check_consistency(self, workflow_id: str) -> dict[str, Any]:
-        board_tasks = list(self._task_board.list_all() or [])
+        list_task_rows = getattr(self._task_board, "list_task_rows", None)
+        if callable(list_task_rows):
+            board_tasks = list(list_task_rows() or [])
+        else:
+            board_tasks = list(self._task_board.list_all() or [])
         workflow_states = await self._workflow_store.list_task_states(str(workflow_id))
 
-        board_map: dict[str, Any] = {str(task.id): task for task in board_tasks if hasattr(task, "id")}
+        board_map: dict[str, Any] = {}
+        for task in board_tasks:
+            task_id = str(_record_value(task, "id") or "").strip()
+            if task_id:
+                board_map[task_id] = task
         workflow_map: dict[str, Any] = {
             str(getattr(state, "task_id", "")): state for state in workflow_states if getattr(state, "task_id", None)
         }
@@ -280,7 +296,7 @@ class StateConsistencyChecker:
             state = workflow_map.get(task_id)
             if state is None:
                 continue
-            board_status = _normalize_status(getattr(task, "status", ""))
+            board_status = _normalize_status(_record_value(task, "status"))
             workflow_status = _normalize_status(getattr(state, "status", ""))
             if board_status != workflow_status:
                 status_mismatch += 1
