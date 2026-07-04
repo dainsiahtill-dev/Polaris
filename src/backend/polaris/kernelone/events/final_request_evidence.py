@@ -365,6 +365,42 @@ def looks_like_workspace_quality_evidence_payload(value: Any) -> bool:
     )
 
 
+def _looks_like_command_failure_record(value: Mapping[str, Any]) -> bool:
+    if "exit_code" not in value:
+        return False
+    return any(key in value for key in ("command", "stderr", "stdout", "script", "tool"))
+
+
+def _looks_like_failed_gate_item(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    schema_version = _text(value.get("schema_version")).lower()
+    if (
+        "failed_gate" in schema_version
+        or "verification_failure" in schema_version
+        or "failure_evidence" in schema_version
+    ):
+        return True
+    if _looks_like_command_failure_record(value):
+        return True
+    return any(
+        key in value
+        for key in (
+            "failure_class",
+            "responsible_layer",
+            "repairable_by_director",
+            "requires_ce_replan",
+            "requires_pm_revision",
+            "evidence_refs",
+            "failed_required_modalities",
+            "failed_checks",
+            "verifier_results",
+            "quality_errors",
+            "diagnostics",
+        )
+    )
+
+
 def looks_like_failed_gate_evidence_context_payload(value: Any) -> bool:
     """Return whether *value* is structured failed-gate evidence.
 
@@ -386,28 +422,10 @@ def looks_like_failed_gate_evidence_context_payload(value: Any) -> bool:
         or "failure_evidence" in schema_version
     ):
         return True
-    if isinstance(value.get("items"), (list, tuple)) and value.get("items"):
-        return True
-    return any(
-        key in value
-        for key in (
-            "failure_class",
-            "responsible_layer",
-            "repairable_by_director",
-            "requires_ce_replan",
-            "requires_pm_revision",
-            "evidence_refs",
-            "exit_code",
-            "command",
-            "stderr",
-            "stdout",
-            "diagnostics",
-            "quality_errors",
-            "failed_required_modalities",
-            "failed_checks",
-            "verifier_results",
-        )
-    )
+    items = value.get("items")
+    if isinstance(items, (list, tuple)) and items:
+        return any(_looks_like_failed_gate_item(item) for item in items)
+    return _looks_like_failed_gate_item(value)
 
 
 def summarize_workspace_quality_evidence_context_slot(value: Any) -> dict[str, Any]:

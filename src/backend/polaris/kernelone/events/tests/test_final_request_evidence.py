@@ -332,10 +332,14 @@ def test_failed_gate_context_payload_uses_structured_payload() -> None:
         }
     )
     assert looks_like_failed_gate_evidence_context_payload({"failed_required_modalities": ["command"]})
+    assert looks_like_failed_gate_evidence_context_payload({"exit_code": 1, "command": "npm test"})
     assert not looks_like_failed_gate_evidence_context_payload("failure_class: TOOL_DISPATCH_DROPPED")
     assert not looks_like_failed_gate_evidence_context_payload(
         {"message": "failure_class: TOOL_DISPATCH_DROPPED"}
     )
+    assert not looks_like_failed_gate_evidence_context_payload({"stderr": "test failed"})
+    assert not looks_like_failed_gate_evidence_context_payload({"command": "npm test"})
+    assert not looks_like_failed_gate_evidence_context_payload({"items": ["failure_class: TOOL_DISPATCH_DROPPED"]})
 
 
 def test_build_final_request_evidence_preserves_existing_lightweight_projection() -> None:
