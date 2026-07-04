@@ -221,6 +221,8 @@ def test_projection_exposes_tool_dispatch_dropped() -> None:
     assert summary["detail"] == "run ledger projection tool lifecycle failed: TOOL_DISPATCH_DROPPED"
     assert summary["missing"] == []
     assert summary["failed_control_plane_events"] == ["TOOL_DISPATCH_DROPPED"]
+    assert summary["failure_evidence"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert summary["failure_evidence"][0]["metadata"]["source"] == "tool_call_lifecycle_receipt.v1"
 
 
 def test_task_boundary_plan_probe_projects_failed_required_evidence() -> None:

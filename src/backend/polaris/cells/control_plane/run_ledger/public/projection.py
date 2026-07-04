@@ -991,6 +991,12 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
         events = tool_lifecycle_map.get("events")
         event_rows = events if isinstance(events, list) else []
         failed_events = [item for item in event_rows if isinstance(item, dict) and bool(item.get("failed"))]
+        failure_evidence_raw = tool_lifecycle_map.get("failure_evidence")
+        failure_evidence = [
+            dict(item)
+            for item in failure_evidence_raw
+            if isinstance(item, dict)
+        ] if isinstance(failure_evidence_raw, list) else []
         failure = normalize_failure_class(
             failed_events[-1].get("failure_class") if failed_events else "",
             default=FailureClassV1.TOOL_LIFECYCLE_FAILED,
@@ -1000,6 +1006,7 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
             "detail": "run ledger projection tool lifecycle failed: " + failure,
             "missing": [],
             "failed_control_plane_events": [failure],
+            "failure_evidence": failure_evidence,
             "capability": capability_map,
             "tool_lifecycle": tool_lifecycle_map,
         }
