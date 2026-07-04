@@ -538,15 +538,9 @@ def _artifact_quality_issue_code(message: str) -> str:
     rust_match = _ARTIFACT_QUALITY_RUST_ERROR_RE.search(message)
     if rust_match:
         return f"rust_{str(rust_match.group('code') or '').lower()}"
-    compiler_path = _artifact_quality_issue_path(message)
-    if compiler_path:
-        compiler_suffix = Path(compiler_path).suffix.lower()
-        if compiler_suffix == ".go":
-            return "go_compile_error"
-        if compiler_suffix == ".java" and "error:" in normalized:
-            return "java_compile_error"
-        if compiler_suffix in {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}:
-            return "cpp_compile_error"
+    compiler_issue_code = _legacy_compiler_issue_code_from_path(message, normalized)
+    if compiler_issue_code:
+        return compiler_issue_code
     if "typescript project typecheck failed" in normalized:
         return "typescript_project_typecheck_failed"
     if "syntax error" in normalized or "invalid json" in normalized:
@@ -571,6 +565,22 @@ def _artifact_quality_issue_code(message: str) -> str:
         return "source_narration_contamination"
     slug = re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
     return slug[:80] or "artifact_quality_error"
+
+
+def _legacy_compiler_issue_code_from_path(message: str, normalized_message: str) -> str:
+    """Classify legacy compiler diagnostics that only expose a source path."""
+
+    compiler_path = _artifact_quality_issue_path(message)
+    if not compiler_path:
+        return ""
+    compiler_suffix = Path(compiler_path).suffix.lower()
+    if compiler_suffix == ".go":
+        return "go_compile_error"
+    if compiler_suffix == ".java" and "error:" in normalized_message:
+        return "java_compile_error"
+    if compiler_suffix in {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}:
+        return "cpp_compile_error"
+    return ""
 
 
 def _artifact_quality_issue_path(message: str) -> str | None:
