@@ -19,7 +19,7 @@ from polaris.kernelone.events.final_request_evidence import (
     build_final_request_tool_slots,
     final_request_evidence_ref_for_requirement,
     final_request_evidence_refs_for_coverage_flags,
-    final_request_evidence_refs_for_metadata_summary,
+    final_request_included_evidence_refs,
     final_request_structured_evidence_from_metadata_summary,
     looks_like_ce_blueprint_payload,
     looks_like_pm_contract_payload,
@@ -1942,30 +1942,6 @@ def _required_evidence_refs(
     return _unique_strings(refs)
 
 
-def _included_evidence_refs(
-    *,
-    coverage: dict[str, bool],
-    request_metadata_summary: dict[str, Any],
-    receipt_refs: list[str] | None = None,
-) -> list[str]:
-    refs = ["final_provider_request"]
-    refs.extend(
-        final_request_evidence_refs_for_coverage_flags(
-            coverage,
-            require_present=True,
-            excluded_flags={
-                "has_pm_contract",
-                "has_chief_engineer_blueprint",
-                "has_target_files",
-            },
-        )
-    )
-    refs.extend(final_request_evidence_refs_for_metadata_summary(request_metadata_summary))
-    if receipt_refs:
-        refs.append("receipt_store_refs")
-    return _unique_strings(refs)
-
-
 def _final_request_evidence_enforcement_source(ai_request: Any) -> str:
     context_payload = _request_context(ai_request)
     option_payload = getattr(ai_request, "options", None)
@@ -2111,7 +2087,7 @@ def _final_request_evidence_coverage(
         prepared=prepared,
         messages=messages,
     )
-    included_refs = _included_evidence_refs(
+    included_refs = final_request_included_evidence_refs(
         coverage=coverage,
         request_metadata_summary=request_metadata_summary,
         receipt_refs=receipt_refs,

@@ -12,6 +12,7 @@ from polaris.kernelone.events.final_request_evidence import (
     final_request_evidence_ref_for_requirement,
     final_request_evidence_refs_for_coverage_flags,
     final_request_evidence_refs_for_metadata_summary,
+    final_request_included_evidence_refs,
     final_request_structured_evidence_from_metadata_summary,
     looks_like_ce_blueprint_payload,
     looks_like_failed_gate_evidence_context_payload,
@@ -430,6 +431,35 @@ def test_final_request_evidence_ref_helpers_normalize_requirement_and_coverage_a
     assert structured["workspace_quality_evidence"] is True
     assert structured["quality_evidence"] is True
     assert structured["target_files"] is False
+
+
+def test_final_request_included_evidence_refs_are_kernelone_projection() -> None:
+    included_refs = final_request_included_evidence_refs(
+        coverage={
+            "has_pm_contract": True,
+            "has_chief_engineer_blueprint": True,
+            "has_target_files": True,
+            "has_workspace_quality_evidence": True,
+            "unknown_flag": True,
+        },
+        request_metadata_summary={
+            "has_pm_contract": True,
+            "has_chief_engineer_blueprint": True,
+            "has_target_scope": True,
+            "has_execution_profile": True,
+        },
+        receipt_refs=["receipt-1"],
+    )
+
+    assert included_refs == [
+        "final_provider_request",
+        "workspace_quality_evidence",
+        "execution_profile",
+        "pm_contract",
+        "ce_blueprint",
+        "target_files",
+        "receipt_store_refs",
+    ]
 
 
 def test_workspace_quality_context_slot_uses_structured_payload() -> None:

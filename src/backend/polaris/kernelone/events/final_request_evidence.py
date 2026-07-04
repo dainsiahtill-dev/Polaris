@@ -106,6 +106,13 @@ _COVERAGE_SOURCE_DETAIL_KEYS = {
     "workspace_quality_evidence": "workspace_quality_evidence_summary",
     "target_files": "target_scope_summary",
 }
+_INCLUDED_EVIDENCE_COVERAGE_EXCLUDED_FLAGS = frozenset(
+    {
+        "has_pm_contract",
+        "has_chief_engineer_blueprint",
+        "has_target_files",
+    }
+)
 _EVIDENCE_REQUIREMENT_TO_REF = {
     "pm_task_contract": "pm_contract",
     "pm_contract": "pm_contract",
@@ -221,6 +228,35 @@ def final_request_structured_evidence_from_metadata_summary(summary: Mapping[str
     """Project request metadata summary flags to structured evidence booleans."""
 
     return {key: bool(summary.get(flag)) for flag, key in _STRUCTURED_EVIDENCE_FLAG_TO_KEY}
+
+
+def final_request_included_evidence_refs(
+    *,
+    coverage: Mapping[str, Any],
+    request_metadata_summary: Mapping[str, Any],
+    receipt_refs: Iterable[Any] = (),
+) -> list[str]:
+    """Return canonical evidence refs present in the final provider request.
+
+    Boundary:
+        Included evidence is a KernelOne final-request projection. Role callers
+        may provide coverage flags, structured metadata summary, and receipt
+        references, but should not locally duplicate how those inputs become
+        canonical included refs.
+    """
+
+    refs = ["final_provider_request"]
+    refs.extend(
+        final_request_evidence_refs_for_coverage_flags(
+            coverage,
+            require_present=True,
+            excluded_flags=_INCLUDED_EVIDENCE_COVERAGE_EXCLUDED_FLAGS,
+        )
+    )
+    refs.extend(final_request_evidence_refs_for_metadata_summary(request_metadata_summary))
+    if list(receipt_refs):
+        refs.append("receipt_store_refs")
+    return _unique_texts(refs)
 
 
 def build_final_request_coverage_sources(
