@@ -10,7 +10,10 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_calls_from_response,
     provider_response_hash,
 )
-from polaris.cells.roles.kernel.internal.transaction.decision_pipeline import build_tool_dispatch_dropped_anomaly
+from polaris.cells.roles.kernel.internal.transaction.decision_pipeline import (
+    _suppressed_tool_batch_tool_refs,
+    build_tool_dispatch_dropped_anomaly,
+)
 
 
 def test_native_tool_call_facts_prefers_metadata_envelopes() -> None:
@@ -216,5 +219,43 @@ def test_build_tool_dispatch_dropped_anomaly_builds_envelopes_from_raw_response(
             "tool_name": "execute_command",
             "envelope_id": anomaly["native_tool_call_envelopes"][1]["envelope_id"],
             "reason": "tool_dispatch_dropped",
+        },
+    ]
+
+
+def test_suppressed_tool_batch_refs_capture_decoded_invocation_evidence() -> None:
+    decision = {
+        "tool_batch": {
+            "invocations": [
+                {
+                    "call_id": "call-write",
+                    "tool_name": "write_file",
+                    "execution_mode": "write_serial",
+                    "arguments": {"file": "src/main.py"},
+                },
+                {
+                    "call_id": "call-read",
+                    "tool_name": "read_file",
+                    "execution_mode": "readonly_serial",
+                    "arguments": {"path": "src/main.py"},
+                },
+            ]
+        }
+    }
+
+    assert _suppressed_tool_batch_tool_refs(decision) == [
+        {
+            "reason": "no_tool_definitions_exposed",
+            "tool_name": "write_file",
+            "call_id": "call-write",
+            "execution_mode": "write_serial",
+            "target_file": "src/main.py",
+        },
+        {
+            "reason": "no_tool_definitions_exposed",
+            "tool_name": "read_file",
+            "call_id": "call-read",
+            "execution_mode": "readonly_serial",
+            "target_file": "src/main.py",
         },
     ]

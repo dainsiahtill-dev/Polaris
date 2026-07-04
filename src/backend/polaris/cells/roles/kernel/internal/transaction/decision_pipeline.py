@@ -110,6 +110,49 @@ def _with_decision_metadata(decision: TurnDecision, metadata: dict[str, Any]) ->
     )
 
 
+def _mapping_value(source: Any, key: str) -> Any:
+    if isinstance(source, Mapping):
+        return source.get(key)
+    return getattr(source, key, None)
+
+
+def _enum_value(value: Any) -> str:
+    raw_value = getattr(value, "value", value)
+    return str(raw_value or "")
+
+
+def _suppressed_tool_batch_tool_refs(decision: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Return audit-safe references for decoded tool calls suppressed by policy."""
+
+    tool_batch = decision.get("tool_batch")
+    invocations = _mapping_value(tool_batch, "invocations")
+    if not isinstance(invocations, list):
+        return []
+
+    suppressed_tool_calls: list[dict[str, str]] = []
+    for invocation in invocations:
+        tool_name = _enum_value(_mapping_value(invocation, "tool_name"))
+        if not tool_name:
+            continue
+        tool_ref = {
+            "reason": "no_tool_definitions_exposed",
+            "tool_name": tool_name,
+        }
+        call_id = _enum_value(_mapping_value(invocation, "call_id"))
+        if call_id:
+            tool_ref["call_id"] = call_id
+        execution_mode = _enum_value(_mapping_value(invocation, "execution_mode"))
+        if execution_mode:
+            tool_ref["execution_mode"] = execution_mode
+        arguments = _mapping_value(invocation, "arguments")
+        if isinstance(arguments, Mapping):
+            target_file = _enum_value(arguments.get("file") or arguments.get("path"))
+            if target_file:
+                tool_ref["target_file"] = target_file
+        suppressed_tool_calls.append(tool_ref)
+    return suppressed_tool_calls
+
+
 async def run_decision_pipeline(
     *,
     turn_id: str,
@@ -188,6 +231,7 @@ async def run_decision_pipeline(
     decision = apply_delivery_mode_filter(decision, ledger)
     allowed_tool_names_for_turn = extract_allowed_tool_names_from_definitions(tool_definitions)
     if decision.get("kind") == TurnDecisionKind.TOOL_BATCH and not allowed_tool_names_for_turn:
+        suppressed_tool_calls = _suppressed_tool_batch_tool_refs(decision)
         logger.warning(
             "text-only-tool-batch-suppressed: turn_id=%s no tool definitions were exposed; "
             "treating decoded tool call text as final answer",
@@ -198,6 +242,7 @@ async def run_decision_pipeline(
                 "type": "TEXT_ONLY_TOOL_BATCH_SUPPRESSED",
                 "turn_id": turn_id,
                 "reason": "no_tool_definitions_exposed",
+                "suppressed_tool_calls": suppressed_tool_calls,
             }
         )
         decision = TurnDecision(
@@ -211,6 +256,7 @@ async def run_decision_pipeline(
             metadata={
                 **dict(decision.get("metadata") or {}),
                 "suppressed_tool_batch_due_to_no_tools": True,
+                "suppressed_tool_calls": suppressed_tool_calls,
             },
         )
 
