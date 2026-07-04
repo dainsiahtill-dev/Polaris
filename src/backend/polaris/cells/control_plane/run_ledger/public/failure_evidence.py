@@ -81,6 +81,28 @@ def merge_failure_evidence_rows(
     return rows
 
 
+def summarize_failure_evidence_rows(
+    rows: Any,
+    *,
+    existing_summary: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the canonical metadata summary for failure evidence rows.
+
+    Boundary:
+        This helper summarizes already-structured evidence. It does not parse
+        prose diagnostics and intentionally ignores malformed legacy rows.
+
+    Complexity:
+        O(n) time and memory for normalizing the row list.
+    """
+
+    evidence_rows = merge_failure_evidence_rows(rows)
+    summary = dict(existing_summary) if isinstance(existing_summary, Mapping) else {}
+    summary["count"] = len(evidence_rows)
+    summary["latest_failure_class"] = evidence_rows[-1].get("failure_class") if evidence_rows else None
+    return summary
+
+
 @dataclass(frozen=True)
 class FailureEvidenceV1:
     """Structured failure evidence suitable for Run Ledger and QA projections."""
@@ -109,4 +131,5 @@ __all__ = [
     "is_failure_class",
     "merge_failure_evidence_rows",
     "normalize_failure_class",
+    "summarize_failure_evidence_rows",
 ]

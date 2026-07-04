@@ -19,6 +19,7 @@ from .failure_evidence import (
     is_failure_class,
     merge_failure_evidence_rows,
     normalize_failure_class,
+    summarize_failure_evidence_rows,
 )
 from .job_token import JobToken
 from .ledger import RunLedger, stable_hash, stable_json
@@ -86,5 +87,6 @@ __all__ = [
     "read_run_provenance_bundle",
     "stable_hash",
     "stable_json",
+    "summarize_failure_evidence_rows",
     "summarize_run_ledger_projection",
 ]

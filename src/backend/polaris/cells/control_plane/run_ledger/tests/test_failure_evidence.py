@@ -6,6 +6,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     is_failure_class,
     merge_failure_evidence_rows,
     normalize_failure_class,
+    summarize_failure_evidence_rows,
 )
 
 
@@ -61,3 +62,30 @@ def test_merge_failure_evidence_rows_keeps_structured_rows_and_dedupes() -> None
     rows = merge_failure_evidence_rows([existing, "legacy text"], lifecycle, lifecycle)
 
     assert rows == [existing, lifecycle]
+
+
+def test_summarize_failure_evidence_rows_uses_structured_rows_only() -> None:
+    rows = [
+        "legacy text",
+        {
+            "schema_version": "failure_evidence.v1",
+            "failure_class": "TOOL_RESULT_FAILED",
+            "responsible_layer": "tool_executor",
+        },
+        {
+            "schema_version": "failure_evidence.v1",
+            "failure_class": "TOOL_DISPATCH_DROPPED",
+            "responsible_layer": "execution_control_plane",
+        },
+    ]
+
+    summary = summarize_failure_evidence_rows(
+        rows,
+        existing_summary={"source": "previous_projection", "count": 99},
+    )
+
+    assert summary == {
+        "source": "previous_projection",
+        "count": 2,
+        "latest_failure_class": "TOOL_DISPATCH_DROPPED",
+    }

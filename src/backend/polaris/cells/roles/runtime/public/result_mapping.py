@@ -22,6 +22,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
     project_native_tool_call_facts_to_metadata,
+    summarize_failure_evidence_rows,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
@@ -94,15 +95,12 @@ def _project_lifecycle_failure_evidence(metadata: dict[str, Any], lifecycle: Map
         return
     rows = merge_failure_evidence_rows(metadata.get("failure_evidence"), failure_evidence)
     metadata["failure_evidence"] = rows
-    metadata["failure_evidence_summary"] = {
-        **(
-            metadata.get("failure_evidence_summary")
-            if isinstance(metadata.get("failure_evidence_summary"), Mapping)
-            else {}
-        ),
-        "count": len(rows),
-        "latest_failure_class": rows[-1].get("failure_class") if rows else None,
-    }
+    metadata["failure_evidence_summary"] = summarize_failure_evidence_rows(
+        rows,
+        existing_summary=metadata.get("failure_evidence_summary")
+        if isinstance(metadata.get("failure_evidence_summary"), Mapping)
+        else None,
+    )
 
 
 def _extract_tool_calls(result: RoleTurnResult) -> tuple[str, ...]:
