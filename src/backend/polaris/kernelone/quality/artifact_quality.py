@@ -1766,6 +1766,11 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
                 "Artifact quality scan failed: npm package manifest has test runner script "
                 f"but no test/spec files exist in {relative_path}",
                 relative_path,
+                {
+                    "script_name": "test",
+                    "script_issue": "missing_node_test_files",
+                    "script_issue_source": "package_manifest_scanner",
+                },
             )
         for script_name, script_value in scripts.items():
             script_text = str(script_value or "")
@@ -1888,6 +1893,12 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
                 "Artifact quality scan failed: TypeScript project requires 'typescript' "
                 f"devDependency in {relative_path}",
                 relative_path,
+                {
+                    "manifest_issue": "typescript_dependency_missing",
+                    "manifest_issue_source": "package_manifest_scanner",
+                    "package_name": "typescript",
+                    "dependency_section": "devDependencies",
+                },
             )
     main_entry = str(payload.get("main") or "").strip().replace("\\", "/").lower()
     if main_entry.endswith(".py"):
@@ -1896,6 +1907,11 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
             issues,
             f"Artifact quality scan failed: npm package manifest contains Python runtime entrypoint in {relative_path}",
             relative_path,
+            {
+                "manifest_issue": "python_runtime_entrypoint",
+                "manifest_issue_source": "package_manifest_scanner",
+                "entrypoint": main_entry,
+            },
         )
     module_type_evidence = _scan_package_module_type_mismatch_evidence(root_full, payload, relative_path)
     errors.extend(module_type_evidence.errors)
@@ -1913,6 +1929,12 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
                     "Artifact quality scan failed: npm package manifest declares "
                     f"Python package dependency {package_name!r} in {relative_path}",
                     relative_path,
+                    {
+                        "manifest_issue": "python_package_dependency",
+                        "manifest_issue_source": "package_manifest_scanner",
+                        "package_name": str(package_name),
+                        "dependency_section": section_name,
+                    },
                 )
                 return _package_manifest_evidence_from_errors(errors, relative_path, issues)
     return _package_manifest_evidence_from_errors(errors, relative_path, issues)

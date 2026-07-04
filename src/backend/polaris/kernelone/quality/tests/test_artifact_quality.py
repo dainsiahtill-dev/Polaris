@@ -774,6 +774,64 @@ def test_artifact_quality_evidence_projects_per_script_issue_metadata_directly(t
     assert evidence.issues[0].metadata["script_issue_source"] == "package_manifest_scanner"
 
 
+def test_artifact_quality_evidence_projects_typescript_dependency_metadata_directly(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"name":"typescript-project","version":"1.0.0","scripts":{"build":"tsc"}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text('{"compilerOptions":{"strict":true}}\n', encoding="utf-8")
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "index.ts").write_text("export const value: number = 1;\n", encoding="utf-8")
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["package.json"])
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: TypeScript project requires 'typescript' devDependency in package.json",
+    )
+    assert len(evidence.issues) == 1
+    assert evidence.issues[0].metadata["manifest_issue"] == "typescript_dependency_missing"
+    assert evidence.issues[0].metadata["manifest_issue_source"] == "package_manifest_scanner"
+    assert evidence.issues[0].metadata["package_name"] == "typescript"
+    assert evidence.issues[0].metadata["dependency_section"] == "devDependencies"
+
+
+def test_artifact_quality_evidence_projects_python_runtime_entrypoint_metadata_directly(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"name":"python-entrypoint-project","version":"1.0.0","main":"main.py"}\n',
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["package.json"])
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: npm package manifest contains Python runtime entrypoint in package.json",
+    )
+    assert len(evidence.issues) == 1
+    assert evidence.issues[0].metadata["manifest_issue"] == "python_runtime_entrypoint"
+    assert evidence.issues[0].metadata["manifest_issue_source"] == "package_manifest_scanner"
+    assert evidence.issues[0].metadata["entrypoint"] == "main.py"
+
+
+def test_artifact_quality_evidence_projects_python_dependency_metadata_directly(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"name":"python-dependency-project","version":"1.0.0","dependencies":{"pytest":"latest"}}\n',
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["package.json"])
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: npm package manifest declares Python package dependency 'pytest' "
+        "in package.json",
+    )
+    assert len(evidence.issues) == 1
+    assert evidence.issues[0].metadata["manifest_issue"] == "python_package_dependency"
+    assert evidence.issues[0].metadata["manifest_issue_source"] == "package_manifest_scanner"
+    assert evidence.issues[0].metadata["package_name"] == "pytest"
+    assert evidence.issues[0].metadata["dependency_section"] == "dependencies"
+
+
 def test_artifact_quality_evidence_uses_direct_npm_script_test_directory_issue(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text(
         """
