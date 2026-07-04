@@ -104,6 +104,57 @@ def test_attach_final_request_evidence_adds_stable_top_level_audit_refs() -> Non
     assert payload["audit_refs"]["final_request_evidence_authority_hash"]
 
 
+def test_build_final_request_evidence_derives_missing_refs_from_structured_slots() -> None:
+    audit = {
+        "schema_version": "llm.final_request_context_audit.v1",
+        "final_request_evidence_coverage": {
+            "request_hash": "request-hash-slots",
+            "pass": False,
+            "role_id": "director",
+            "expected_role_id": "director",
+            "role_identity_ok": True,
+            "required_refs": ["pm_contract", "ce_blueprint"],
+            "included_refs": ["pm_contract"],
+            "evidence_slots": [
+                {
+                    "schema_version": "polaris.final_request_evidence_slot.v1",
+                    "ref_type": "ce_blueprint",
+                    "required": True,
+                    "missing": True,
+                },
+                {
+                    "schema_version": "polaris.final_request_evidence_slot.v1",
+                    "ref_type": "optional_context",
+                    "required": False,
+                    "missing": True,
+                },
+            ],
+            "tool_evidence_slots": [
+                {
+                    "schema_version": "polaris.final_request_tool_slot.v1",
+                    "tool_name": "write_file",
+                    "required": True,
+                    "missing": True,
+                }
+            ],
+        },
+    }
+
+    evidence = build_final_request_evidence(
+        {
+            "metadata": {
+                "context_snapshot_ref": "runtime/contexts/aa/aaaabbbbccccddddeeeeffff.json",
+                "final_request_context_audit": audit,
+            }
+        }
+    )
+
+    assert evidence["missing_required_refs"] == ["ce_blueprint"]
+    assert evidence["missing_required_tools"] == ["write_file"]
+    assert evidence["final_request_evidence_authority"]["missing_required_refs"] == ["ce_blueprint"]
+    assert evidence["final_request_evidence_authority"]["missing_required_tools"] == ["write_file"]
+
+
 def test_build_final_request_evidence_preserves_existing_lightweight_projection() -> None:
     evidence = build_final_request_evidence(
         {

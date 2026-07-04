@@ -68,6 +68,50 @@ def _bool_or_none(value: Any) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
+def missing_required_refs_from_evidence_slots(evidence_coverage: Mapping[str, Any]) -> list[str]:
+    """Return required evidence refs marked missing by structured evidence slots."""
+
+    slots = evidence_coverage.get("evidence_slots")
+    if not isinstance(slots, list):
+        return []
+    missing_refs: list[str] = []
+    seen: set[str] = set()
+    for item in slots:
+        if not isinstance(item, Mapping):
+            continue
+        if _text(item.get("schema_version")) != "polaris.final_request_evidence_slot.v1":
+            continue
+        if item.get("required") is not True or item.get("missing") is not True:
+            continue
+        ref_type = _text(item.get("ref_type"))
+        if ref_type and ref_type not in seen:
+            seen.add(ref_type)
+            missing_refs.append(ref_type)
+    return missing_refs
+
+
+def missing_required_tools_from_tool_slots(evidence_coverage: Mapping[str, Any]) -> list[str] | None:
+    """Return required tools marked missing by structured tool-evidence slots."""
+
+    slots = evidence_coverage.get("tool_evidence_slots")
+    if not isinstance(slots, list):
+        return None
+    missing_tools: list[str] = []
+    seen: set[str] = set()
+    for item in slots:
+        if not isinstance(item, Mapping):
+            continue
+        if _text(item.get("schema_version")) != "polaris.final_request_tool_slot.v1":
+            continue
+        if item.get("required") is not True or item.get("missing") is not True:
+            continue
+        tool_name = _text(item.get("tool_name"))
+        if tool_name and tool_name not in seen:
+            seen.add(tool_name)
+            missing_tools.append(tool_name)
+    return missing_tools
+
+
 def _stable_hash(value: Any) -> str:
     try:
         payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -106,17 +150,20 @@ def _build_final_request_evidence_authority(
         "included_refs": _string_list(
             existing_authority.get("included_refs") or evidence_coverage.get("included_refs")
         ),
-        "missing_required_refs": _string_list(
-            existing_authority.get("missing_required_refs") or evidence_coverage.get("missing_required_refs")
-        ),
+        "missing_required_refs": missing_required_refs_from_evidence_slots(evidence_coverage)
+        or _string_list(existing_authority.get("missing_required_refs") or evidence_coverage.get("missing_required_refs")),
         "required_tools": _string_list(
             existing_authority.get("required_tools") or evidence_coverage.get("required_tools")
         ),
         "available_tools": _string_list(
             existing_authority.get("available_tools") or evidence_coverage.get("available_tools")
         ),
-        "missing_required_tools": _string_list(
-            existing_authority.get("missing_required_tools") or evidence_coverage.get("missing_required_tools")
+        "missing_required_tools": (
+            slot_missing_tools
+            if (slot_missing_tools := missing_required_tools_from_tool_slots(evidence_coverage)) is not None
+            else _string_list(
+                existing_authority.get("missing_required_tools") or evidence_coverage.get("missing_required_tools")
+            )
         ),
         "unexpected_tool_pruning": _list_value(
             existing_authority.get("unexpected_tool_pruning") or evidence_coverage.get("unexpected_tool_pruning")
@@ -193,11 +240,14 @@ def build_final_request_evidence(data: Mapping[str, Any]) -> dict[str, Any]:
         evidence_coverage.get("request_hash"),
         final_request_context_audit.get("request_hash"),
     )
-    missing_required_refs = _string_list(
+    missing_required_refs = missing_required_refs_from_evidence_slots(evidence_coverage) or _string_list(
         evidence_coverage.get("missing_required_refs") or existing_evidence.get("missing_required_refs")
     )
-    missing_required_tools = _string_list(
-        evidence_coverage.get("missing_required_tools") or existing_evidence.get("missing_required_tools")
+    slot_missing_tools = missing_required_tools_from_tool_slots(evidence_coverage)
+    missing_required_tools = (
+        slot_missing_tools
+        if slot_missing_tools is not None
+        else _string_list(evidence_coverage.get("missing_required_tools") or existing_evidence.get("missing_required_tools"))
     )
     coverage_pass = (
         evidence_coverage.get("pass")

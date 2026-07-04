@@ -12,6 +12,10 @@ from polaris.cells.control_plane.run_ledger.public import (
     summarize_failed_gate_evidence_context_slot,
 )
 from polaris.kernelone.context.projection_engine import is_empty_run_card_message
+from polaris.kernelone.events.final_request_evidence import (
+    missing_required_refs_from_evidence_slots,
+    missing_required_tools_from_tool_slots,
+)
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 from .response_types import PreparedLLMRequest
@@ -2356,42 +2360,6 @@ def _final_request_evidence_enforcement_source(ai_request: Any) -> str:
     return ""
 
 
-def _missing_required_refs_from_evidence_slots(evidence_coverage: dict[str, Any]) -> list[str]:
-    slots = evidence_coverage.get("evidence_slots")
-    if not isinstance(slots, list):
-        return []
-    missing_refs: list[str] = []
-    for item in slots:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("schema_version") or "") != "polaris.final_request_evidence_slot.v1":
-            continue
-        if item.get("required") is not True or item.get("missing") is not True:
-            continue
-        ref_type = str(item.get("ref_type") or "").strip()
-        if ref_type:
-            missing_refs.append(ref_type)
-    return _unique_strings(missing_refs)
-
-
-def _missing_required_tools_from_tool_slots(evidence_coverage: dict[str, Any]) -> list[str] | None:
-    slots = evidence_coverage.get("tool_evidence_slots")
-    if not isinstance(slots, list):
-        return None
-    missing_tools: list[str] = []
-    for item in slots:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("schema_version") or "") != "polaris.final_request_tool_slot.v1":
-            continue
-        if item.get("required") is not True or item.get("missing") is not True:
-            continue
-        tool_name = str(item.get("tool_name") or "").strip()
-        if tool_name:
-            missing_tools.append(tool_name)
-    return _unique_strings(missing_tools)
-
-
 def final_request_evidence_coverage_violation(
     *,
     ai_request: Any,
@@ -2405,10 +2373,10 @@ def final_request_evidence_coverage_violation(
     evidence_coverage = audit.get("final_request_evidence_coverage")
     if not isinstance(evidence_coverage, dict) or evidence_coverage.get("pass") is True:
         return None
-    missing_refs = _missing_required_refs_from_evidence_slots(evidence_coverage) or [
+    missing_refs = missing_required_refs_from_evidence_slots(evidence_coverage) or [
         str(item) for item in evidence_coverage.get("missing_required_refs") or [] if str(item).strip()
     ]
-    slot_missing_tools = _missing_required_tools_from_tool_slots(evidence_coverage)
+    slot_missing_tools = missing_required_tools_from_tool_slots(evidence_coverage)
     missing_tools = (
         slot_missing_tools
         if slot_missing_tools is not None
