@@ -409,6 +409,58 @@ async def test_call_end_event_prefers_provider_usage_over_text_estimate(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_call_end_tool_count_uses_run_ledger_envelope_projection(monkeypatch: pytest.MonkeyPatch) -> None:
+    rec = _EventRecorder()
+    rec.install(monkeypatch)
+    profile = _profile(provider_id="openai", model="gpt-test")
+    prepared = _prepared(profile)
+    _patch_prepare(monkeypatch, prepared)
+    executor = _ScriptedExecutor(
+        [
+            AIResponse.success(
+                output="tool decision",
+                model="gpt-test",
+                provider_id="openai",
+                raw={
+                    "model": "gpt-test",
+                    "provider": "openai",
+                    # Legacy provider metadata can be stale; the Run Ledger
+                    # envelope projection is the authoritative count source.
+                    "native_tool_calls_count": 99,
+                    "tool_calls": [
+                        {
+                            "id": "call_one",
+                            "type": "function",
+                            "function": {"name": "read_file", "arguments": "{}"},
+                        },
+                        {
+                            "id": "call_two",
+                            "type": "function",
+                            "function": {"name": "repo_rg", "arguments": "{}"},
+                        },
+                    ],
+                },
+            )
+        ]
+    )
+    invoker = LLMInvoker(workspace="ws", enable_cache=False, executor=executor)
+
+    resp = await invoker.call(
+        profile=profile,
+        system_prompt="sys",
+        context=_ctx(None),
+        run_id="run-native-tool-count",
+    )
+
+    assert resp.error is None
+    assert resp.metadata["native_tool_calls_count"] == 2
+    assert len(resp.metadata["native_tool_call_envelopes"]) == 2
+    assert len(rec.end) == 1
+    assert rec.end[0]["tool_calls_count"] == 2
+    assert rec.end[0]["metadata"]["native_tool_calls_count"] == 2
+
+
+@pytest.mark.asyncio
 async def test_call_start_event_persists_context_snapshot_before_emit(monkeypatch: pytest.MonkeyPatch) -> None:
     rec = _EventRecorder()
     rec.install(monkeypatch)
