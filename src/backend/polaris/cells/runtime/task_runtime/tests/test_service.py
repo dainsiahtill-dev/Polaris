@@ -1033,9 +1033,10 @@ def test_heartbeat_execution_reports_event_append_failure(
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
-    created = service.create(subject="heartbeat append evidence")
+    created = service.create_task_row(subject="heartbeat append evidence")
+    created_id = created["id"]
     claimed = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-heartbeat-append-failure",
@@ -1049,7 +1050,7 @@ def test_heartbeat_execution_reports_event_append_failure(
     monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
 
     heartbeat = service.heartbeat_execution(
-        created.id,
+        created_id,
         session_id=str(claimed["session"]["session_id"]),
         context_summary="renew lease after tool dispatch",
     )
@@ -1071,9 +1072,10 @@ def test_suspend_active_executions_for_run_reports_event_append_failure(
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
-    created = service.create(subject="cancel with append evidence")
+    created = service.create_task_row(subject="cancel with append evidence")
+    created_id = created["id"]
     claimed = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-cancel-append-failure",
@@ -1108,13 +1110,14 @@ def test_task_runtime_service_persists_sessions_under_canonical_task_namespace(t
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    created = service.create(
+    created = service.create_task_row(
         subject="persist task session canonically",
         description="ensure runtime/tasks owns both rows and sessions",
     )
+    created_id = created["id"]
 
     claimed = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-canonical-session",
@@ -1122,8 +1125,8 @@ def test_task_runtime_service_persists_sessions_under_canonical_task_namespace(t
     )
     assert claimed["success"] is True
 
-    canonical_path = f"runtime/tasks/task_{created.id}.session.json"
-    legacy_path = f"runtime/tasks/sessions/task_{created.id}.session.json"
+    canonical_path = f"runtime/tasks/task_{created_id}.session.json"
+    legacy_path = f"runtime/tasks/sessions/task_{created_id}.session.json"
 
     assert service._kernel_fs.exists(canonical_path)
     assert not service._kernel_fs.exists(legacy_path)
@@ -1137,12 +1140,13 @@ def test_task_runtime_service_ignores_corrupt_session_snapshot(
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    created = service.create(subject="recover corrupt session")
+    created = service.create_task_row(subject="recover corrupt session")
+    created_id = created["id"]
     service._kernel_fs.write_json_atomic(
-        f"runtime/tasks/task_{created.id}.session.json",
+        f"runtime/tasks/task_{created_id}.session.json",
         {
             "session_id": "tx-corrupt",
-            "task_id": created.id,
+            "task_id": created_id,
             "role_id": "director",
             "status": "active",
             "lease_expires_at": "2026-01-01T00:02:00+00:00",
@@ -1153,7 +1157,7 @@ def test_task_runtime_service_ignores_corrupt_session_snapshot(
 
     with caplog.at_level("WARNING"):
         claimed = service.claim_execution(
-            created.id,
+            created_id,
             worker_id="director",
             role_id="director",
             run_id="run-recovered",
@@ -1162,7 +1166,7 @@ def test_task_runtime_service_ignores_corrupt_session_snapshot(
 
     assert claimed["success"] is True
     assert claimed["reason"] == "claimed"
-    assert claimed["session"]["task_id"] == created.id
+    assert claimed["session"]["task_id"] == created_id
     assert claimed["session"]["session_id"] != "tx-corrupt"
     assert "Failed to parse task runtime session" in caplog.text
     assert "worker_id" in caplog.text
