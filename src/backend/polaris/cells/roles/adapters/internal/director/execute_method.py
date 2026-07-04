@@ -19,6 +19,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1, is_failure_class
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.cells.director.runtime.public.service import (
     AttachDirectorRepairRevalidationEvidenceV1,
@@ -3569,13 +3570,29 @@ async def _phase_semantic_quality_repair_loop(
     )
 
 
+def _summary_field_matches_failure_class(value: Any, expected: FailureClassV1) -> bool:
+    if is_failure_class(value, expected):
+        return True
+    raw = str(value or "").strip()
+    if not raw:
+        return False
+    for separator in (":", ";", "\n"):
+        candidate = raw.split(separator, 1)[0].strip()
+        if candidate != raw and is_failure_class(candidate, expected):
+            return True
+    return False
+
+
 def _primary_llm_tool_dispatch_failure(primary_llm_summary: dict[str, Any] | None) -> dict[str, str] | None:
     if not isinstance(primary_llm_summary, dict):
         return None
-    error_text = " ".join(
-        str(primary_llm_summary.get(key) or "") for key in ("error", "error_code", "failure_class")
-    ).lower()
-    if "tool_dispatch_dropped" not in error_text:
+    if not any(
+        _summary_field_matches_failure_class(
+            primary_llm_summary.get(key),
+            FailureClassV1.TOOL_DISPATCH_DROPPED,
+        )
+        for key in ("error", "error_code", "failure_class")
+    ):
         return None
     return {
         "error": "tool_dispatch_dropped",

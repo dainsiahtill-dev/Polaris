@@ -5110,6 +5110,31 @@ class TestDirectorFailureClosure:
         assert result["root_cause_hint"] == "required_tool_without_dispatch_receipt"
         assert result["decision_signals"][0]["detail"].startswith("Director role runtime reported")
 
+    def test_primary_tool_dispatch_failure_does_not_substring_match_error_text(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _primary_llm_tool_dispatch_failure,
+        )
+
+        assert (
+            _primary_llm_tool_dispatch_failure(
+                {
+                    "success": False,
+                    "error": "unrelated failure text mentions tool_dispatch_dropped only as a note",
+                }
+            )
+            is None
+        )
+        assert _primary_llm_tool_dispatch_failure({"error_code": "tool-dispatch-dropped"}) == {
+            "error": "tool_dispatch_dropped",
+            "error_code": "tool_dispatch_dropped",
+            "failure_class": "TOOL_DISPATCH_DROPPED",
+            "responsible_layer": "execution_control_plane",
+            "materialization_mode": "tool_dispatch_dropped",
+            "failure_stage": "director_tool_lifecycle",
+            "root_cause_hint": "required_tool_without_dispatch_receipt",
+            "detail": "Director role runtime reported required/native tool calls without dispatch/effect receipt.",
+        }
+
     @pytest.mark.asyncio
     async def test_execute_fails_when_changed_test_file_keeps_placeholder_arithmetic(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
