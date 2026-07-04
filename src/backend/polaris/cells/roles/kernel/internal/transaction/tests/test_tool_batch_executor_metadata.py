@@ -82,3 +82,24 @@ def test_tool_invocation_audit_ref_preserves_decoded_invocation_evidence() -> No
         "execution_mode": "write_serial",
         "target_file": "src/main.py",
     }
+
+
+def test_tool_invocation_audit_ref_accepts_provider_native_call_shape() -> None:
+    invocation = {
+        "id": "call-native",
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "arguments": '{"path": "src/generated.py", "content": "print(1)"}',
+        },
+    }
+
+    assert tool_invocation_audit_ref(
+        invocation,
+        reason="finalization_tool_calls_blocked",
+    ) == {
+        "reason": "finalization_tool_calls_blocked",
+        "tool_name": "write_file",
+        "call_id": "call-native",
+        "target_file": "src/generated.py",
+    }

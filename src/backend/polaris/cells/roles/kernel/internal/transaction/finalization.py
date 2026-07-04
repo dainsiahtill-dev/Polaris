@@ -21,6 +21,7 @@ from polaris.cells.roles.kernel.internal.transaction.delivery_contract import Bl
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import detect_inline_patch_escape
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger, VisibleOutput
 from polaris.cells.roles.kernel.internal.transaction.receipt_utils import merge_batch_receipts
+from polaris.cells.roles.kernel.internal.transaction.tool_call_audit_refs import tool_invocation_audit_ref
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.public.turn_contracts import (
     FinalizeMode,
@@ -147,6 +148,14 @@ class FinalizationHandler:
         finalization_tool_calls = native_tool_calls_from_response(response)
         blocked_tool_names = _finalization_tool_call_names(finalization_tool_calls)
         if blocked_tool_names:
+            blocked_tool_calls = [
+                tool_invocation_audit_ref(
+                    tool_call,
+                    reason="finalization_tool_calls_blocked",
+                    tool_name=blocked_tool_names[index] if index < len(blocked_tool_names) else "",
+                )
+                for index, tool_call in enumerate(finalization_tool_calls)
+            ]
             self.guard_assert_no_finalization_tool_calls(
                 turn_id=str(turn_id or ""),
                 tool_calls=list(finalization_tool_calls)
@@ -168,6 +177,7 @@ class FinalizationHandler:
                     "turn_id": turn_id,
                     "tool_count": len(blocked_tool_names),
                     "tool_names": blocked_tool_names,
+                    "blocked_tool_calls": blocked_tool_calls,
                 }
             )
 
@@ -177,7 +187,11 @@ class FinalizationHandler:
                 TurnPhaseEvent.create(
                     turn_id,
                     "finalization_tool_calls_blocked",
-                    {"tool_count": len(blocked_tool_names), "tool_names": blocked_tool_names},
+                    {
+                        "tool_count": len(blocked_tool_names),
+                        "tool_names": blocked_tool_names,
+                        "blocked_tool_calls": blocked_tool_calls,
+                    },
                 )
             )
             state_machine.transition_to(TurnState.COMPLETED)
@@ -227,6 +241,7 @@ class FinalizationHandler:
                     "workflow_reason": "finalization_tool_calls_blocked",
                     "tool_calls_blocked": True,
                     "tool_names": blocked_tool_names,
+                    "blocked_tool_calls": blocked_tool_calls,
                 },
             }
 

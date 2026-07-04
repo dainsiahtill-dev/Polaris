@@ -594,6 +594,13 @@ class TestLLMOnceFinalization:
         assert result["finalization"]["mode"] == "blocked"
         assert result["finalization"]["tool_calls_blocked"] is True
         assert result["finalization"]["workflow_reason"] == "finalization_tool_calls_blocked"
+        assert result["finalization"]["blocked_tool_calls"] == [
+            {
+                "reason": "finalization_tool_calls_blocked",
+                "tool_name": "bad_tool",
+                "call_id": "call_violation",
+            }
+        ]
 
 
 # ============ Test NONE Finalize Mode ============

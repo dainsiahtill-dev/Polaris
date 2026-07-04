@@ -5,6 +5,7 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8。
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from enum import Enum
 from typing import Any
@@ -24,6 +25,16 @@ def _clean_string(value: Any) -> str:
 
 def _target_file_from_arguments(invocation: Any) -> str:
     arguments = _mapping_value(invocation, "arguments")
+    if not isinstance(arguments, Mapping):
+        function_payload = _mapping_value(invocation, "function")
+        if isinstance(function_payload, Mapping):
+            arguments = function_payload.get("arguments")
+    if isinstance(arguments, str):
+        try:
+            parsed_arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            parsed_arguments = None
+        arguments = parsed_arguments
     if not isinstance(arguments, Mapping):
         return ""
     for key in ("file", "path", "filepath", "target"):
@@ -47,13 +58,14 @@ def tool_invocation_audit_ref(
     normalized_tool_name = (
         _clean_string(tool_name)
         or _clean_string(_mapping_value(invocation, "tool_name"))
+        or _clean_string(_mapping_value(_mapping_value(invocation, "function"), "name"))
         or _clean_string(_mapping_value(invocation, "tool"))
         or _clean_string(_mapping_value(invocation, "name"))
     )
     if normalized_tool_name:
         ref["tool_name"] = normalized_tool_name
 
-    call_id = _clean_string(_mapping_value(invocation, "call_id"))
+    call_id = _clean_string(_mapping_value(invocation, "call_id")) or _clean_string(_mapping_value(invocation, "id"))
     if call_id:
         ref["call_id"] = call_id
 
