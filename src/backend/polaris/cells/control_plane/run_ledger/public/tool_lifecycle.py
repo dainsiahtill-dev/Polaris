@@ -1508,6 +1508,57 @@ def build_tool_dispatch_dropped_lifecycle_from_anomaly_flags(
     ).to_dict()
 
 
+def build_tool_dispatch_dropped_lifecycle_from_observed_calls(
+    *,
+    tool_names: Sequence[Any] = (),
+    native_tool_call_envelopes: Sequence[Any] = (),
+    run_id: str = "",
+    task_id: str = "",
+    turn_id: str = "",
+    role: str = "",
+    reason: str = "tool_dispatch_dropped",
+) -> dict[str, Any]:
+    """Return a dropped-dispatch lifecycle for observed calls without results.
+
+    Boundary:
+        Runtime callers provide observed tool names and/or native envelopes.
+        Run Ledger owns the compatibility ``dropped_tool_calls`` shape and
+        lifecycle projection.
+
+    Complexity:
+        O(t + e) over observed tool names and native envelope refs.
+    """
+
+    envelopes = _native_tool_call_envelope_refs(native_tool_call_envelopes)
+    dropped_tool_calls: list[dict[str, Any]] = []
+    if not envelopes:
+        seen_tools: set[str] = set()
+        for tool_name in tool_names:
+            normalized = _clean_string(tool_name)
+            if not normalized or normalized in seen_tools:
+                continue
+            seen_tools.add(normalized)
+            dropped_tool_calls.append(
+                {
+                    "tool_name": normalized,
+                    "reason": "tool_dispatch_dropped",
+                }
+            )
+    return build_tool_call_lifecycle_receipt(
+        run_id=run_id,
+        task_id=task_id,
+        turn_id=turn_id,
+        role=role,
+        native_tool_calls_count=len(envelopes) or len(dropped_tool_calls),
+        receipts=[],
+        dropped_tool_calls=dropped_tool_calls,
+        native_tool_call_envelopes=envelopes,
+        dispatch_status="dropped",
+        failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        reason=reason,
+    ).to_dict()
+
+
 def project_lifecycle_failure_evidence_to_metadata(
     metadata: dict[str, Any],
     lifecycle: Mapping[str, Any],

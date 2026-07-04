@@ -13,7 +13,7 @@ from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
-    build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
+    build_tool_dispatch_dropped_lifecycle_from_observed_calls,
     failure_evidence_from_lifecycle_receipt,
     is_failure_class,
     normalize_failure_class,
@@ -230,19 +230,9 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
     if dropped_error:
         dropped_tool_calls = _extract_tool_calls(result)
         native_envelopes = _native_tool_call_envelopes(result)
-        dropped_lifecycle = build_tool_dispatch_dropped_lifecycle_from_anomaly_flags(
-            anomaly_flags=[
-                {
-                    "type": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
-                    "native_tool_call_envelopes": list(native_envelopes),
-                    "dropped_tool_calls": [
-                        {"tool_name": tool_name, "reason": "tool_dispatch_dropped"}
-                        for tool_name in dropped_tool_calls
-                    ]
-                    if not native_envelopes
-                    else [],
-                }
-            ],
+        dropped_lifecycle = build_tool_dispatch_dropped_lifecycle_from_observed_calls(
+            tool_names=dropped_tool_calls,
+            native_tool_call_envelopes=native_envelopes,
             run_id="",
             task_id="",
             turn_id="",

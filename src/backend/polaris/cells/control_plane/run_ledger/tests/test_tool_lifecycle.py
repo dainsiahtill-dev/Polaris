@@ -9,6 +9,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt,
     build_tool_dispatch_dropped_anomaly_projection,
     build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
+    build_tool_dispatch_dropped_lifecycle_from_observed_calls,
     empty_tool_lifecycle_summary,
     failure_evidence_from_lifecycle_receipt,
     merge_tool_lifecycle_summaries,
@@ -279,6 +280,39 @@ def test_build_dropped_lifecycle_from_anomaly_flags_prefers_lifecycle_receipt() 
     assert lifecycle["native_tool_call_envelope_refs"] == [envelope]
     assert lifecycle["dropped_tool_calls"] == [
         {"tool_name": "write_file", "reason": "tool_dispatch_dropped"}
+    ]
+
+
+def test_build_dropped_lifecycle_from_observed_calls_owns_dropped_refs() -> None:
+    lifecycle = build_tool_dispatch_dropped_lifecycle_from_observed_calls(
+        tool_names=["write_file", "write_file", "execute_command", ""],
+        reason="observed calls had no result receipt",
+    )
+
+    assert lifecycle["dispatch_status"] == "dropped"
+    assert lifecycle["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert lifecycle["native_tool_calls_count"] == 2
+    assert lifecycle["dropped_tool_calls"] == [
+        {"tool_name": "write_file", "reason": "tool_dispatch_dropped"},
+        {"tool_name": "execute_command", "reason": "tool_dispatch_dropped"},
+    ]
+    assert lifecycle["reason"] == "observed calls had no result receipt"
+
+
+def test_build_dropped_lifecycle_from_observed_calls_prefers_native_envelopes() -> None:
+    lifecycle = build_tool_dispatch_dropped_lifecycle_from_observed_calls(
+        tool_names=["ignored"],
+        native_tool_call_envelopes=[
+            {"envelope_id": "native-1", "tool_name": "write_file"},
+        ],
+    )
+
+    assert lifecycle["native_tool_calls_count"] == 1
+    assert lifecycle["native_tool_call_envelope_refs"] == [
+        {"envelope_id": "native-1", "tool_name": "write_file"}
+    ]
+    assert lifecycle["dropped_tool_calls"] == [
+        {"tool_name": "write_file", "envelope_id": "native-1", "reason": "tool_dispatch_dropped"}
     ]
 
 
