@@ -3115,11 +3115,12 @@ def test_target_candidates_include_explicit_scope_directories_with_target_files(
 @pytest.mark.asyncio
 async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_path: Any) -> None:
     adapter = _make_adapter(tmp_path)
-    task = adapter.task_board.create(
+    task = adapter.task_board.create_task_row(
         subject="Create app module",
         description="Create src/app.py with a runnable entry point.",
         metadata={"target_files": ["src/app.py"], "scope_paths": ["src/app.py"]},
     )
+    task_id = str(task["id"])
     seen_messages: list[str] = []
     seen_contexts: list[dict[str, Any]] = []
 
@@ -3179,8 +3180,8 @@ async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_p
     adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
 
     result = await adapter.execute(
-        task_id=str(task.id),
-        input_data={"task_id": str(task.id)},
+        task_id=task_id,
+        input_data={"task_id": task_id},
         context={"run_id": "run-empty-write-retry"},
     )
 
@@ -3200,7 +3201,7 @@ async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_p
     }
     _assert_retry_text_fallback_is_non_authoritative(
         adapter=adapter,
-        task_id=str(task.id),
+        task_id=task_id,
         result=result,
         summary_key="empty_write_content_retry",
     )
@@ -3209,11 +3210,12 @@ async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_p
 @pytest.mark.asyncio
 async def test_execute_retries_no_write_probe_with_write_only_materialize_prompt(tmp_path: Any) -> None:
     adapter = _make_adapter(tmp_path)
-    task = adapter.task_board.create(
+    task = adapter.task_board.create_task_row(
         subject="Create app module",
         description="Create src/app.py with a runnable entry point.",
         metadata={"target_files": ["src/app.py"], "scope_paths": ["src/app.py"], "phase": "implementation"},
     )
+    task_id = str(task["id"])
     seen_messages: list[str] = []
     seen_contexts: list[dict[str, Any]] = []
 
@@ -3269,8 +3271,8 @@ async def test_execute_retries_no_write_probe_with_write_only_materialize_prompt
     adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
 
     result = await adapter.execute(
-        task_id=str(task.id),
-        input_data={"task_id": str(task.id)},
+        task_id=task_id,
+        input_data={"task_id": task_id},
         context={"run_id": "run-no-write-probe-retry"},
     )
 
@@ -3292,7 +3294,7 @@ async def test_execute_retries_no_write_probe_with_write_only_materialize_prompt
     }
     _assert_retry_text_fallback_is_non_authoritative(
         adapter=adapter,
-        task_id=str(task.id),
+        task_id=task_id,
         result=result,
         summary_key="no_write_materialization_retry",
     )
@@ -3301,7 +3303,7 @@ async def test_execute_retries_no_write_probe_with_write_only_materialize_prompt
 @pytest.mark.asyncio
 async def test_execute_retries_multi_file_no_write_with_mutation_tools_only(tmp_path: Any) -> None:
     adapter = _make_adapter(tmp_path)
-    task = adapter.task_board.create(
+    task = adapter.task_board.create_task_row(
         subject="Create application modules",
         description="Create src/app.py and src/utils.py with a runnable entry point.",
         metadata={
@@ -3310,6 +3312,7 @@ async def test_execute_retries_multi_file_no_write_with_mutation_tools_only(tmp_
             "phase": "implementation",
         },
     )
+    task_id = str(task["id"])
     seen_messages: list[str] = []
     seen_contexts: list[dict[str, Any]] = []
 
@@ -3360,8 +3363,8 @@ async def test_execute_retries_multi_file_no_write_with_mutation_tools_only(tmp_
     adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
 
     result = await adapter.execute(
-        task_id=str(task.id),
-        input_data={"task_id": str(task.id)},
+        task_id=task_id,
+        input_data={"task_id": task_id},
         context={"run_id": "run-multi-no-write-probe-retry"},
     )
 
@@ -3390,7 +3393,7 @@ async def test_execute_retries_multi_file_no_write_with_mutation_tools_only(tmp_
     }
     _assert_retry_text_fallback_is_non_authoritative(
         adapter=adapter,
-        task_id=str(task.id),
+        task_id=task_id,
         result=result,
         summary_key="no_write_materialization_retry",
     )
@@ -3399,11 +3402,12 @@ async def test_execute_retries_multi_file_no_write_with_mutation_tools_only(tmp_
 @pytest.mark.asyncio
 async def test_execute_retries_read_only_materialization_with_forced_write(tmp_path: Any) -> None:
     adapter = _make_adapter(tmp_path)
-    task = adapter.task_board.create(
+    task = adapter.task_board.create_task_row(
         subject="Create app module",
         description="Create src/app.py with a runnable entry point.",
         metadata={"target_files": ["src/app.py"], "scope_paths": ["src/app.py"]},
     )
+    task_id = str(task["id"])
     seen_messages: list[str] = []
     seen_contexts: list[dict[str, Any]] = []
 
@@ -3440,8 +3444,8 @@ async def test_execute_retries_read_only_materialization_with_forced_write(tmp_p
     adapter._invoke_role_dialogue_with_timeout = _dialogue  # type: ignore[method-assign]
 
     result = await adapter.execute(
-        task_id=str(task.id),
-        input_data={"task_id": str(task.id)},
+        task_id=task_id,
+        input_data={"task_id": task_id},
         context={"run_id": "run-no-write-retry"},
     )
 
@@ -3462,7 +3466,7 @@ async def test_execute_retries_read_only_materialization_with_forced_write(tmp_p
     }
     _assert_retry_text_fallback_is_non_authoritative(
         adapter=adapter,
-        task_id=str(task.id),
+        task_id=task_id,
         result=result,
         summary_key="no_write_materialization_retry",
     )
