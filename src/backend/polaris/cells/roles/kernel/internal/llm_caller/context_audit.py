@@ -14,6 +14,8 @@ from polaris.cells.control_plane.run_ledger.public import (
 )
 from polaris.kernelone.context.projection_engine import is_empty_run_card_message
 from polaris.kernelone.events.final_request_evidence import (
+    build_final_request_evidence_slots,
+    build_final_request_tool_slots,
     looks_like_workspace_quality_evidence_payload,
     missing_required_refs_from_evidence_slots,
     missing_required_tools_from_tool_slots,
@@ -2433,73 +2435,6 @@ def _coverage_source(
     return result
 
 
-def _evidence_slots(
-    *,
-    coverage_sources: list[dict[str, Any]],
-    required_refs: list[str],
-    included_refs: list[str],
-    missing_required_refs: list[str],
-) -> list[dict[str, Any]]:
-    """Build typed evidence slots from final-request coverage refs.
-
-    This additive WS6 projection keeps current pass/fail behavior unchanged
-    while giving downstream audit code a structured target instead of forcing it
-    to re-derive required/present/missing state from free-form text.
-    """
-
-    required = set(required_refs)
-    included = set(included_refs)
-    missing = set(missing_required_refs)
-    slots: list[dict[str, Any]] = []
-    for source in coverage_sources:
-        ref_type = str(source.get("ref_type") or "").strip()
-        if not ref_type:
-            continue
-        slot = {
-            "schema_version": "polaris.final_request_evidence_slot.v1",
-            "ref_type": ref_type,
-            "required": ref_type in required,
-            "present": ref_type in included,
-            "missing": ref_type in missing,
-            "source": str(source.get("source") or "final_provider_request"),
-            "confidence": str(source.get("confidence") or "absent"),
-            "freshness": str(source.get("freshness") or "unknown"),
-        }
-        if source.get("hash"):
-            slot["hash"] = str(source.get("hash"))
-        details = source.get("details")
-        if isinstance(details, dict) and details:
-            slot["details"] = dict(details)
-        slots.append(slot)
-    return slots
-
-
-def _tool_evidence_slots(
-    *,
-    required_tools: list[str],
-    available_tools: list[str],
-    missing_required_tools: list[str],
-) -> list[dict[str, Any]]:
-    required = set(required_tools)
-    available = set(available_tools)
-    missing = set(missing_required_tools)
-    slots: list[dict[str, Any]] = []
-    for tool_name in _unique_strings([*required_tools, *available_tools]):
-        slots.append(
-            {
-                "schema_version": "polaris.final_request_tool_slot.v1",
-                "tool_name": tool_name,
-                "required": tool_name in required,
-                "present": tool_name in available,
-                "missing": tool_name in missing,
-                "source": "final_provider_request.tools",
-                "confidence": "tool_schema" if tool_name in available else "absent",
-                "freshness": "current_turn" if tool_name in available else "unknown",
-            }
-        )
-    return slots
-
-
 def _ledger_evidence(ai_request: Any, *, receipt_refs: list[str] | None = None) -> dict[str, Any]:
     context_payload = _request_context(ai_request)
     ledger = _mapping(context_payload.get("run_ledger")) or _mapping(context_payload.get("run_ledger_projection"))
@@ -2633,7 +2568,7 @@ def _final_request_evidence_coverage(
         "included_refs": included_refs,
         "missing_required_refs": missing_required_refs,
         "coverage_sources": coverage_sources,
-        "evidence_slots": _evidence_slots(
+        "evidence_slots": build_final_request_evidence_slots(
             coverage_sources=coverage_sources,
             required_refs=required_refs,
             included_refs=included_refs,
@@ -2643,7 +2578,7 @@ def _final_request_evidence_coverage(
         "allowed_tools": allowed_tools,
         "available_tools": available_tools,
         "missing_required_tools": missing_required_tools,
-        "tool_evidence_slots": _tool_evidence_slots(
+        "tool_evidence_slots": build_final_request_tool_slots(
             required_tools=required_tools,
             available_tools=available_tools,
             missing_required_tools=missing_required_tools,

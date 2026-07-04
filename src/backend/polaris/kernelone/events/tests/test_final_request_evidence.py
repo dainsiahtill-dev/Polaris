@@ -5,6 +5,8 @@ from polaris.kernelone.events.final_request_evidence import (
     FINAL_REQUEST_EVIDENCE_SCHEMA,
     attach_final_request_evidence,
     build_final_request_evidence,
+    build_final_request_evidence_slots,
+    build_final_request_tool_slots,
     looks_like_workspace_quality_evidence_payload,
     normalize_context_snapshot_ref,
     summarize_workspace_quality_evidence_context_slot,
@@ -155,6 +157,78 @@ def test_build_final_request_evidence_derives_missing_refs_from_structured_slots
     assert evidence["missing_required_tools"] == ["write_file"]
     assert evidence["final_request_evidence_authority"]["missing_required_refs"] == ["ce_blueprint"]
     assert evidence["final_request_evidence_authority"]["missing_required_tools"] == ["write_file"]
+
+
+def test_final_request_slot_builders_project_structured_coverage() -> None:
+    evidence_slots = build_final_request_evidence_slots(
+        coverage_sources=[
+            {
+                "ref_type": "pm_contract",
+                "present": True,
+                "source": "final_provider_request",
+                "confidence": "structured_metadata",
+                "freshness": "current_turn",
+                "hash": "pm-hash",
+                "details": {"task_id": "TASK-1"},
+            },
+            {"ref_type": "ce_blueprint", "present": False},
+        ],
+        required_refs=["pm_contract", "ce_blueprint"],
+        included_refs=["pm_contract"],
+        missing_required_refs=["ce_blueprint"],
+    )
+    tool_slots = build_final_request_tool_slots(
+        required_tools=["write_file", "read_file"],
+        available_tools=["read_file", "read_file"],
+        missing_required_tools=["write_file"],
+    )
+
+    assert evidence_slots == [
+        {
+            "schema_version": "polaris.final_request_evidence_slot.v1",
+            "ref_type": "pm_contract",
+            "required": True,
+            "present": True,
+            "missing": False,
+            "source": "final_provider_request",
+            "confidence": "structured_metadata",
+            "freshness": "current_turn",
+            "hash": "pm-hash",
+            "details": {"task_id": "TASK-1"},
+        },
+        {
+            "schema_version": "polaris.final_request_evidence_slot.v1",
+            "ref_type": "ce_blueprint",
+            "required": True,
+            "present": False,
+            "missing": True,
+            "source": "final_provider_request",
+            "confidence": "absent",
+            "freshness": "unknown",
+        },
+    ]
+    assert tool_slots == [
+        {
+            "schema_version": "polaris.final_request_tool_slot.v1",
+            "tool_name": "write_file",
+            "required": True,
+            "present": False,
+            "missing": True,
+            "source": "final_provider_request.tools",
+            "confidence": "absent",
+            "freshness": "unknown",
+        },
+        {
+            "schema_version": "polaris.final_request_tool_slot.v1",
+            "tool_name": "read_file",
+            "required": True,
+            "present": True,
+            "missing": False,
+            "source": "final_provider_request.tools",
+            "confidence": "tool_schema",
+            "freshness": "current_turn",
+        },
+    ]
 
 
 def test_workspace_quality_context_slot_uses_structured_payload() -> None:

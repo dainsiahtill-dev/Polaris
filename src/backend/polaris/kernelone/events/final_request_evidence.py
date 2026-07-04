@@ -134,6 +134,82 @@ def missing_required_tools_from_tool_slots(evidence_coverage: Mapping[str, Any])
     return missing_tools
 
 
+def build_final_request_evidence_slots(
+    *,
+    coverage_sources: list[dict[str, Any]],
+    required_refs: list[str],
+    included_refs: list[str],
+    missing_required_refs: list[str],
+) -> list[dict[str, Any]]:
+    """Build typed final-request evidence slots from coverage refs.
+
+    Boundary:
+        The slot schema is the KernelOne final-request evidence contract.
+        Callers may decide which refs are required/present/missing, but should
+        not locally duplicate the slot shape.
+    """
+
+    required = set(required_refs)
+    included = set(included_refs)
+    missing = set(missing_required_refs)
+    slots: list[dict[str, Any]] = []
+    for source in coverage_sources:
+        ref_type = _text(source.get("ref_type"))
+        if not ref_type:
+            continue
+        slot = {
+            "schema_version": "polaris.final_request_evidence_slot.v1",
+            "ref_type": ref_type,
+            "required": ref_type in required,
+            "present": ref_type in included,
+            "missing": ref_type in missing,
+            "source": _text(source.get("source") or "final_provider_request"),
+            "confidence": _text(source.get("confidence") or "absent"),
+            "freshness": _text(source.get("freshness") or "unknown"),
+        }
+        hash_value = _text(source.get("hash"))
+        if hash_value:
+            slot["hash"] = hash_value
+        details = source.get("details")
+        if isinstance(details, Mapping) and details:
+            slot["details"] = dict(details)
+        slots.append(slot)
+    return slots
+
+
+def build_final_request_tool_slots(
+    *,
+    required_tools: list[str],
+    available_tools: list[str],
+    missing_required_tools: list[str],
+) -> list[dict[str, Any]]:
+    """Build typed final-request tool slots from tool coverage facts."""
+
+    required = set(required_tools)
+    available = set(available_tools)
+    missing = set(missing_required_tools)
+    slots: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for tool_name in [*required_tools, *available_tools]:
+        token = _text(tool_name)
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        slots.append(
+            {
+                "schema_version": "polaris.final_request_tool_slot.v1",
+                "tool_name": token,
+                "required": token in required,
+                "present": token in available,
+                "missing": token in missing,
+                "source": "final_provider_request.tools",
+                "confidence": "tool_schema" if token in available else "absent",
+                "freshness": "current_turn" if token in available else "unknown",
+            }
+        )
+    return slots
+
+
 def looks_like_workspace_quality_evidence_payload(value: Any) -> bool:
     """Return whether *value* is structured workspace-quality evidence.
 
