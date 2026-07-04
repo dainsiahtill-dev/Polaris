@@ -10,6 +10,7 @@ from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import (
     FailureClassV1,
+    FailureEvidenceV1,
     normalize_failure_class,
 )
 from polaris.kernelone.tools.tool_kinds import is_write_tool_name
@@ -494,9 +495,63 @@ def native_tool_call_facts_from_lifecycle_receipt(value: Any) -> dict[str, Any]:
     }
 
 
+def failure_evidence_from_lifecycle_receipt(value: Any) -> dict[str, Any]:
+    """Project lifecycle failure evidence into the Run Ledger taxonomy.
+
+    Success receipts return an empty mapping. Callers should use this helper
+    instead of reinterpreting ``failure_class`` or ``dispatch_status`` locally.
+
+    Complexity:
+        O(b + d + e) time and memory where ``b`` is batch receipt refs, ``d`` is
+        dropped-call refs, and ``e`` is native envelope refs.
+    """
+
+    receipt = normalize_tool_call_lifecycle_receipt(value)
+    failure_class = normalize_failure_class(receipt.get("failure_class"))
+    dispatch_status = _clean_string(receipt.get("dispatch_status"))
+    if not failure_class:
+        if bool(receipt.get("ok")) and dispatch_status == "dispatched":
+            return {}
+        failure_class = FailureClassV1.TOOL_LIFECYCLE_UNKNOWN.value
+
+    evidence_refs: list[str] = []
+    provider_response_hash = _clean_string(receipt.get("provider_response_hash"))
+    if provider_response_hash:
+        evidence_refs.append(f"provider_response:{provider_response_hash}")
+    for batch_ref in _mapping_refs(receipt.get("batch_receipt_refs")):
+        receipt_hash = _clean_string(batch_ref.get("receipt_hash"))
+        if receipt_hash:
+            evidence_refs.append(f"batch_receipt:{receipt_hash}")
+    for envelope in _native_tool_call_envelope_refs(receipt.get("native_tool_call_envelope_refs")):
+        envelope_id = _clean_string(envelope.get("envelope_id"))
+        if envelope_id:
+            evidence_refs.append(f"native_tool_call:{envelope_id}")
+    for dropped in _dropped_tool_call_refs(receipt.get("dropped_tool_calls")):
+        evidence_refs.append(f"dropped_tool_call:{_stable_hash(dropped)}")
+
+    reason = _clean_string(receipt.get("reason")) or dispatch_status or failure_class
+    return FailureEvidenceV1(
+        failure_class=failure_class,
+        responsible_layer="execution_control_plane",
+        reason=reason,
+        evidence_refs=tuple(evidence_refs),
+        metadata={
+            "source": "tool_call_lifecycle_receipt.v1",
+            "dispatch_status": dispatch_status,
+            "native_tool_calls_count": _int_value(receipt.get("native_tool_calls_count")),
+            "decoded_tool_calls_count": _int_value(receipt.get("decoded_tool_calls_count")),
+            "dispatched_tool_calls_count": _int_value(receipt.get("dispatched_tool_calls_count")),
+            "tool_result_count": _int_value(receipt.get("tool_result_count")),
+            "effect_receipt_count": _int_value(receipt.get("effect_receipt_count")),
+            "dropped_tool_calls": _dropped_tool_call_refs(receipt.get("dropped_tool_calls")),
+        },
+    ).to_dict()
+
+
 __all__ = [
     "ToolCallLifecycleReceiptV1",
     "build_tool_call_lifecycle_receipt",
+    "failure_evidence_from_lifecycle_receipt",
     "native_tool_call_facts_from_lifecycle_receipt",
     "normalize_native_tool_call_envelope_refs",
     "normalize_tool_call_lifecycle_receipt",

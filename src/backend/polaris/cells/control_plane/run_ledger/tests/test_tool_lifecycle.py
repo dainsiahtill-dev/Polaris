@@ -3,6 +3,7 @@ from __future__ import annotations
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_tool_call_lifecycle_receipt,
+    failure_evidence_from_lifecycle_receipt,
     native_tool_call_facts_from_lifecycle_receipt,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
@@ -49,6 +50,7 @@ def test_tool_lifecycle_receipt_links_batch_and_effect_refs() -> None:
     assert receipt["effect_receipt_count"] == 1
     assert receipt["effect_receipt_refs"][0]["file"] == "src/index.js"
     assert receipt["effect_receipt_refs"][0]["tool_name"] == "write_file"
+    assert failure_evidence_from_lifecycle_receipt(receipt) == {}
 
 
 def test_normalize_native_tool_call_envelope_refs_filters_and_deduplicates() -> None:
@@ -152,6 +154,14 @@ def test_tool_lifecycle_receipt_preserves_dropped_tool_details() -> None:
             "reason": "tool_dispatch_dropped",
         }
     ]
+    failure_evidence = failure_evidence_from_lifecycle_receipt(receipt)
+    assert failure_evidence["schema_version"] == "failure_evidence.v1"
+    assert failure_evidence["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert failure_evidence["responsible_layer"] == "execution_control_plane"
+    assert failure_evidence["reason"] == "dropped"
+    assert failure_evidence["metadata"]["source"] == "tool_call_lifecycle_receipt.v1"
+    assert failure_evidence["metadata"]["dropped_tool_calls"] == receipt["dropped_tool_calls"]
+    assert failure_evidence["evidence_refs"][0].startswith("dropped_tool_call:")
 
 
 def test_tool_lifecycle_receipt_derives_dropped_status_from_native_without_dispatch() -> None:
