@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import (
@@ -327,40 +328,63 @@ class QaFailureClassificationV1:
         }
 
 
+class QaFailureClassV1(str, Enum):
+    """Canonical QA failure classes carried by QA verdict envelopes."""
+
+    PASSED = "PASSED"
+    INCOMPLETE_MATERIALIZATION = "INCOMPLETE_MATERIALIZATION"
+    MISSING_ENTRYPOINT_TARGET = "MISSING_ENTRYPOINT_TARGET"
+    TOOL_DISPATCH_DROPPED = "TOOL_DISPATCH_DROPPED"
+    EXECUTION_EVIDENCE_MISSING = "EXECUTION_EVIDENCE_MISSING"
+    IMPLEMENTATION_DEFECT = "IMPLEMENTATION_DEFECT"
+    DEPENDENCY_NOT_UNLOCKED = "DEPENDENCY_NOT_UNLOCKED"
+    BLUEPRINT_SCOPE_MISMATCH = "BLUEPRINT_SCOPE_MISMATCH"
+    CONTRACT_AMBIGUOUS = "CONTRACT_AMBIGUOUS"
+    TEST_ENVIRONMENT_FAILURE = "TEST_ENVIRONMENT_FAILURE"
+    ACCEPTANCE_INVALID = "ACCEPTANCE_INVALID"
+    SECURITY_POLICY_VIOLATION = "SECURITY_POLICY_VIOLATION"
+    RESOURCE_BUDGET_EXHAUSTED = "RESOURCE_BUDGET_EXHAUSTED"
+    PROGRESS_STALLED = "PROGRESS_STALLED"
+    TASK_BOUNDARY_FAILED = "TASK_BOUNDARY_FAILED"
+    TOOL_LIFECYCLE_FAILED = "TOOL_LIFECYCLE_FAILED"
+    TASKBOARD_DEADLOCK = "TASKBOARD_DEADLOCK"
+    LEDGER_PROJECTION_INCOMPLETE = "LEDGER_PROJECTION_INCOMPLETE"
+
+
 _QA_FAILURE_CLASS_ALIASES = {
-    "passed": "PASSED",
-    "incomplete_materialization": "INCOMPLETE_MATERIALIZATION",
-    "missing_entrypoint_target": "MISSING_ENTRYPOINT_TARGET",
-    "tool_dispatch_dropped": "TOOL_DISPATCH_DROPPED",
-    "execution_evidence_missing": "EXECUTION_EVIDENCE_MISSING",
-    "implementation_defect": "IMPLEMENTATION_DEFECT",
-    "dependency_not_unlocked": "DEPENDENCY_NOT_UNLOCKED",
-    "scope_mismatch": "BLUEPRINT_SCOPE_MISMATCH",
-    "blueprint_scope_mismatch": "BLUEPRINT_SCOPE_MISMATCH",
-    "contract_ambiguous": "CONTRACT_AMBIGUOUS",
-    "test_environment_failure": "TEST_ENVIRONMENT_FAILURE",
-    "acceptance_invalid": "ACCEPTANCE_INVALID",
-    "security_policy_violation": "SECURITY_POLICY_VIOLATION",
-    "resource_budget_exhausted": "RESOURCE_BUDGET_EXHAUSTED",
-    "progress_stalled": "PROGRESS_STALLED",
+    "passed": QaFailureClassV1.PASSED.value,
+    "incomplete_materialization": QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value,
+    "missing_entrypoint_target": QaFailureClassV1.MISSING_ENTRYPOINT_TARGET.value,
+    "tool_dispatch_dropped": QaFailureClassV1.TOOL_DISPATCH_DROPPED.value,
+    "execution_evidence_missing": QaFailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
+    "implementation_defect": QaFailureClassV1.IMPLEMENTATION_DEFECT.value,
+    "dependency_not_unlocked": QaFailureClassV1.DEPENDENCY_NOT_UNLOCKED.value,
+    "scope_mismatch": QaFailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
+    "blueprint_scope_mismatch": QaFailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
+    "contract_ambiguous": QaFailureClassV1.CONTRACT_AMBIGUOUS.value,
+    "test_environment_failure": QaFailureClassV1.TEST_ENVIRONMENT_FAILURE.value,
+    "acceptance_invalid": QaFailureClassV1.ACCEPTANCE_INVALID.value,
+    "security_policy_violation": QaFailureClassV1.SECURITY_POLICY_VIOLATION.value,
+    "resource_budget_exhausted": QaFailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+    "progress_stalled": QaFailureClassV1.PROGRESS_STALLED.value,
 }
 
 QA_ARTIFACT_FAILURE_CLASSES = frozenset(
     {
-        "INCOMPLETE_MATERIALIZATION",
-        "MISSING_ENTRYPOINT_TARGET",
-        "IMPLEMENTATION_DEFECT",
+        QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value,
+        QaFailureClassV1.MISSING_ENTRYPOINT_TARGET.value,
+        QaFailureClassV1.IMPLEMENTATION_DEFECT.value,
     }
 )
 
-QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS = "TASK_BOUNDARY_FAILED"
-QA_DEFAULT_TOOL_LIFECYCLE_FAILURE_CLASS = "TOOL_LIFECYCLE_FAILED"
+QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS = QaFailureClassV1.TASK_BOUNDARY_FAILED.value
+QA_DEFAULT_TOOL_LIFECYCLE_FAILURE_CLASS = QaFailureClassV1.TOOL_LIFECYCLE_FAILED.value
 
 QA_PLATFORM_FAILURE_CLASSES = frozenset(
     {
-        "TOOL_DISPATCH_DROPPED",
-        "TASKBOARD_DEADLOCK",
-        "LEDGER_PROJECTION_INCOMPLETE",
+        QaFailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        QaFailureClassV1.TASKBOARD_DEADLOCK.value,
+        QaFailureClassV1.LEDGER_PROJECTION_INCOMPLETE.value,
         QA_DEFAULT_TOOL_LIFECYCLE_FAILURE_CLASS,
     }
 )
@@ -587,6 +611,7 @@ __all__ = [
     "QaAuditError",
     "QaAuditErrorV1",
     "QaAuditResultV1",
+    "QaFailureClassV1",
     "QaFailureClassificationV1",
     "QaVerdictEnvelopeV1",
     "QaVerdictIssuedEventV1",

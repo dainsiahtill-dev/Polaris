@@ -10,6 +10,7 @@ from polaris.cells.orchestration.workflow_activity.internal.workflows.qa_workflo
     _register_traceability_verdict_activity,
     _workflow_classification,
 )
+from polaris.cells.qa.audit_verdict.public import QaFailureClassV1
 
 
 def test_qa_activity_classification_uses_canonical_failure_class() -> None:
@@ -29,7 +30,7 @@ def test_qa_activity_classification_routes_test_environment_failures_to_qa() -> 
     classification = _qa_activity_classification(
         passed=False,
         reason="QA command runtime error",
-        failure_class="TEST_ENVIRONMENT_FAILURE",
+        failure_class=QaFailureClassV1.TEST_ENVIRONMENT_FAILURE.value,
     )
 
     assert classification["failure_class"] == "TEST_ENVIRONMENT_FAILURE"

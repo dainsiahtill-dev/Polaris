@@ -15,7 +15,7 @@ from polaris.cells.orchestration.pm_planning.public.service import (
     run_integration_verify_runner,
 )
 from polaris.cells.orchestration.workflow_activity.internal.workflow_client import get_activity_api
-from polaris.cells.qa.audit_verdict.public import build_qa_failure_classification_v1
+from polaris.cells.qa.audit_verdict.public import QaFailureClassV1, build_qa_failure_classification_v1
 from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.process.command_executor import CommandExecutionService
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
@@ -34,11 +34,11 @@ def _qa_activity_classification(
     *,
     passed: bool,
     reason: str,
-    failure_class: str = "IMPLEMENTATION_DEFECT",
+    failure_class: str = QaFailureClassV1.IMPLEMENTATION_DEFECT.value,
 ) -> dict[str, Any]:
     if passed:
         return build_qa_failure_classification_v1(
-            failure_class="PASSED",
+            failure_class=QaFailureClassV1.PASSED.value,
             route="resolved",
             reason=reason or "Workflow QA activity passed",
             repairable_by_director=False,
@@ -46,13 +46,14 @@ def _qa_activity_classification(
             owner="qa",
             responsible_layer="qa",
         ).to_dict()
+    is_test_environment_failure = failure_class == QaFailureClassV1.TEST_ENVIRONMENT_FAILURE.value
     return build_qa_failure_classification_v1(
         failure_class=failure_class,
-        route="pending_qa" if failure_class == "TEST_ENVIRONMENT_FAILURE" else "pending_exec",
+        route="pending_qa" if is_test_environment_failure else "pending_exec",
         reason=reason or "Workflow QA activity failed",
-        repairable_by_director=failure_class != "TEST_ENVIRONMENT_FAILURE",
-        owner="qa_infra" if failure_class == "TEST_ENVIRONMENT_FAILURE" else "director",
-        responsible_layer="qa_infra" if failure_class == "TEST_ENVIRONMENT_FAILURE" else "director",
+        repairable_by_director=not is_test_environment_failure,
+        owner="qa_infra" if is_test_environment_failure else "director",
+        responsible_layer="qa_infra" if is_test_environment_failure else "director",
     ).to_dict()
 
 
@@ -135,7 +136,7 @@ async def run_integration_qa(payload: dict[str, Any]) -> dict[str, Any]:
         classification = _qa_activity_classification(
             passed=False,
             reason="Integration QA payload is missing workspace",
-            failure_class="EXECUTION_EVIDENCE_MISSING",
+            failure_class=QaFailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
         )
         return ActivityExecutionResult(
             success=False,
@@ -150,7 +151,7 @@ async def run_integration_qa(payload: dict[str, Any]) -> dict[str, Any]:
         classification = _qa_activity_classification(
             passed=False,
             reason=f"Integration QA runtime error: {exc}",
-            failure_class="TEST_ENVIRONMENT_FAILURE",
+            failure_class=QaFailureClassV1.TEST_ENVIRONMENT_FAILURE.value,
         )
         return ActivityExecutionResult(
             success=False,
@@ -206,7 +207,7 @@ async def run_unit_qa(payload: dict[str, Any]) -> dict[str, Any]:
         classification = _qa_activity_classification(
             passed=False,
             reason="Unit QA payload is missing workspace",
-            failure_class="EXECUTION_EVIDENCE_MISSING",
+            failure_class=QaFailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
         )
         return ActivityExecutionResult(
             success=False,

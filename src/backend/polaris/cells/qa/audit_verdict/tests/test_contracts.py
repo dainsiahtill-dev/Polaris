@@ -17,6 +17,7 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     ParseTracebackFramesResultV1,
     QaAuditError,
     QaAuditResultV1,
+    QaFailureClassV1,
     QaVerdictEnvelopeV1,
     QaVerdictIssuedEventV1,
     RunQaAuditCommandV1,
@@ -96,6 +97,11 @@ class TestGetQaVerdictQueryV1:
 
 class TestQaFailureClassificationBuilder:
     """Shared QA failure classification builder."""
+
+    def test_public_failure_class_enum_values_are_canonical(self) -> None:
+        assert QaFailureClassV1.PASSED.value == "PASSED"
+        assert QaFailureClassV1.IMPLEMENTATION_DEFECT.value == "IMPLEMENTATION_DEFECT"
+        assert QaFailureClassV1.TEST_ENVIRONMENT_FAILURE.value == "TEST_ENVIRONMENT_FAILURE"
 
     def test_builds_canonical_classification(self) -> None:
         classification = build_qa_failure_classification_v1(
