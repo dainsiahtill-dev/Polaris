@@ -9,6 +9,7 @@ from polaris.kernelone.events.final_request_evidence import (
     build_final_request_tool_slots,
     final_request_evidence_ref_for_coverage_flag,
     final_request_evidence_ref_for_requirement,
+    final_request_evidence_refs_for_coverage_flags,
     looks_like_ce_blueprint_payload,
     looks_like_failed_gate_evidence_context_payload,
     looks_like_pm_contract_payload,
@@ -293,6 +294,28 @@ def test_final_request_evidence_ref_helpers_normalize_requirement_and_coverage_a
         "workspace_quality_evidence"
     )
     assert final_request_evidence_ref_for_coverage_flag("unknown_flag") == ""
+
+    refs = final_request_evidence_refs_for_coverage_flags(
+        {
+            "has_chief_engineer_blueprint": False,
+            "has_workspace_quality_evidence": True,
+            "has_target_files": True,
+            "unknown_flag": True,
+        },
+        excluded_flags={"has_target_files"},
+    )
+    assert refs == ["ce_blueprint", "workspace_quality_evidence"]
+
+    included_refs = final_request_evidence_refs_for_coverage_flags(
+        {
+            "has_chief_engineer_blueprint": False,
+            "has_workspace_quality_evidence": True,
+            "has_target_files": True,
+        },
+        require_present=True,
+        excluded_flags={"has_target_files"},
+    )
+    assert included_refs == ["workspace_quality_evidence"]
 
 
 def test_workspace_quality_context_slot_uses_structured_payload() -> None:

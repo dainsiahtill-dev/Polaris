@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Iterable, Mapping, MutableMapping
 from typing import Any
 
 FINAL_REQUEST_EVIDENCE_SCHEMA = "llm.final_request_evidence.v1"
@@ -98,6 +98,32 @@ def final_request_evidence_ref_for_coverage_flag(value: Any) -> str:
     """Return the canonical evidence ref represented by a coverage flag."""
 
     return _COVERAGE_FLAG_TO_REF.get(_text(value), "")
+
+
+def final_request_evidence_refs_for_coverage_flags(
+    coverage: Mapping[str, Any],
+    *,
+    require_present: bool = False,
+    excluded_flags: Iterable[Any] = (),
+) -> list[str]:
+    """Project coverage flags to canonical evidence refs.
+
+    `require_present` is used for included evidence. Required-ref fallback can
+    intentionally project the configured coverage surface regardless of value.
+    """
+
+    excluded = {_text(flag) for flag in excluded_flags if _text(flag)}
+    refs: list[str] = []
+    for flag, present in coverage.items():
+        normalized_flag = _text(flag)
+        if not normalized_flag or normalized_flag in excluded:
+            continue
+        if require_present and not bool(present):
+            continue
+        ref = final_request_evidence_ref_for_coverage_flag(normalized_flag)
+        if ref and ref not in refs:
+            refs.append(ref)
+    return refs
 
 
 def _as_mapping(value: Any) -> Mapping[str, Any]:

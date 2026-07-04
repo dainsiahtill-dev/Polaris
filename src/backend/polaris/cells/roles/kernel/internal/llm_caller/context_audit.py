@@ -16,8 +16,8 @@ from polaris.kernelone.context.projection_engine import is_empty_run_card_messag
 from polaris.kernelone.events.final_request_evidence import (
     build_final_request_evidence_slots,
     build_final_request_tool_slots,
-    final_request_evidence_ref_for_coverage_flag,
     final_request_evidence_ref_for_requirement,
+    final_request_evidence_refs_for_coverage_flags,
     looks_like_ce_blueprint_payload,
     looks_like_pm_contract_payload,
     looks_like_workspace_quality_evidence_payload,
@@ -1920,10 +1920,10 @@ def _required_evidence_refs(
             refs.extend(["pm_raw_intent"])
         else:
             refs.extend(
-                ref
-                for flag in coverage
-                if (ref := final_request_evidence_ref_for_coverage_flag(flag))
-                if flag not in _OPTIONAL_CONTEXT_QUALITY_FLAGS
+                final_request_evidence_refs_for_coverage_flags(
+                    coverage,
+                    excluded_flags=_OPTIONAL_CONTEXT_QUALITY_FLAGS,
+                )
             )
     if request_metadata_summary.get("has_execution_profile"):
         refs.append("execution_profile")
@@ -1947,16 +1947,15 @@ def _included_evidence_refs(
 ) -> list[str]:
     refs = ["final_provider_request"]
     refs.extend(
-        ref
-        for flag in coverage
-        if (ref := final_request_evidence_ref_for_coverage_flag(flag))
-        if coverage.get(flag)
-        and flag
-        not in {
-            "has_pm_contract",
-            "has_chief_engineer_blueprint",
-            "has_target_files",
-        }
+        final_request_evidence_refs_for_coverage_flags(
+            coverage,
+            require_present=True,
+            excluded_flags={
+                "has_pm_contract",
+                "has_chief_engineer_blueprint",
+                "has_target_files",
+            },
+        )
     )
     if request_metadata_summary.get("has_execution_profile"):
         refs.append("execution_profile")
