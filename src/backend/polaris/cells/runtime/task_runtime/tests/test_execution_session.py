@@ -409,6 +409,7 @@ def test_build_task_execution_transition_result_projects_success_shape() -> None
         reason="completed",
         task_row={"id": 7, "status": "completed"},
         session=session,
+        execution_event={"ok": True, "event_type": "completed", "fact_event_id": "evt-2"},
     )
 
     assert result["success"] is True
@@ -416,6 +417,11 @@ def test_build_task_execution_transition_result_projects_success_shape() -> None
     assert result["task"] == {"id": 7, "status": "completed"}
     assert result["session"]["session_id"] == "tx-1"
     assert result["session"]["status"] == "completed"
+    assert result["execution_event"] == {
+        "ok": True,
+        "event_type": "completed",
+        "fact_event_id": "evt-2",
+    }
 
 
 def test_build_task_execution_transition_result_projects_session_mismatch_shape() -> None:

@@ -83,6 +83,45 @@ def test_claim_execution_reports_execution_event_append_failure(
     assert claimed["task"]["status"] == "in_progress"
 
 
+def test_complete_execution_reports_execution_event_append_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create(subject="complete with append evidence")
+    claimed = service.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-complete-append-failure",
+        selection_source="unit",
+    )
+    assert claimed["success"] is True
+
+    def fail_append_event(_command: object) -> object:
+        raise RuntimeError("fact stream unavailable")
+
+    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+
+    completed = service.complete_execution(
+        created.id,
+        session_id=str(claimed["session"]["session_id"]),
+        result_summary="done",
+    )
+
+    assert completed["success"] is True
+    assert completed["reason"] == "completed"
+    assert completed["execution_event"] == {
+        "ok": False,
+        "event_type": "completed",
+        "published": False,
+        "error": "fact stream unavailable",
+    }
+    assert completed["task"]["status"] == "completed"
+
+
 def test_task_runtime_service_wakes_ready_waiters_on_create(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

@@ -791,7 +791,7 @@ class TaskRuntimeService:
             ),
         )
         row = self._augment_task_row(updated.to_dict() if updated is not None else task.to_dict())
-        self._append_execution_event(
+        execution_event = self._append_execution_event(
             "completed",
             task_row=row,
             session=session,
@@ -802,6 +802,7 @@ class TaskRuntimeService:
             reason="completed",
             task_row=row,
             session=session,
+            execution_event=execution_event,
         )
 
     def fail_execution(
@@ -844,7 +845,7 @@ class TaskRuntimeService:
             ),
         )
         row = self._augment_task_row(updated.to_dict() if updated is not None else task.to_dict())
-        self._append_execution_event(
+        execution_event = self._append_execution_event(
             "failed",
             task_row=row,
             session=session,
@@ -855,6 +856,7 @@ class TaskRuntimeService:
             reason="failed",
             task_row=row,
             session=session,
+            execution_event=execution_event,
         )
 
     def suspend_execution(
@@ -906,7 +908,7 @@ class TaskRuntimeService:
             ),
         )
         row = self._augment_task_row(updated.to_dict() if updated is not None else task.to_dict())
-        self._append_execution_event(
+        execution_event = self._append_execution_event(
             "suspended",
             task_row=row,
             session=session,
@@ -917,6 +919,7 @@ class TaskRuntimeService:
             reason="suspended",
             task_row=row,
             session=session,
+            execution_event=execution_event,
         )
 
     def suspend_active_executions_for_run(

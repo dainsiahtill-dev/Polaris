@@ -452,6 +452,7 @@ def build_task_execution_transition_result(
     reason: Any,
     task_row: dict[str, Any] | None = None,
     session: TaskExecutionSession | dict[str, Any] | None = None,
+    execution_event: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Project completed, failed, and suspended execution transitions.
 
@@ -465,13 +466,16 @@ def build_task_execution_transition_result(
         O(t + s) time and memory over task/session payload sizes.
     """
 
-    return _build_task_execution_result(
+    result = _build_task_execution_result(
         success=success,
         reason=reason,
         task_row=task_row,
         session=session,
         default_success_reason="transition_applied",
     )
+    if execution_event is not None:
+        result["execution_event"] = dict(execution_event)
+    return result
 
 
 def build_task_execution_bulk_suspend_result(
