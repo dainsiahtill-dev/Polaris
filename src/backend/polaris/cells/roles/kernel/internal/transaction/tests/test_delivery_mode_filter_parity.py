@@ -124,6 +124,16 @@ class TestApplyDeliveryModeFilterShared:
         assert len(anomalies) == 1
         assert anomalies[0]["dropped_count"] == 1
         assert anomalies[0]["delivery_mode"] == DeliveryMode.ANALYZE_ONLY.value
+        assert anomalies[0]["filtered_tool_calls"] == [
+            {
+                "reason": "delivery_mode_write_tool_filtered",
+                "tool_name": "write_file",
+                "execution_mode": ToolExecutionMode.WRITE_SERIAL.value,
+                "call_id": "call_write_1",
+                "target_file": "app.py",
+            }
+        ]
+        assert filtered["metadata"]["filtered_tool_calls"] == anomalies[0]["filtered_tool_calls"]
 
     def test_propose_patch_strips_writes_keeps_reads(self) -> None:
         ledger = _ledger_with_mode(DeliveryMode.PROPOSE_PATCH)
@@ -136,7 +146,10 @@ class TestApplyDeliveryModeFilterShared:
         assert batch is not None
         names = [inv.get("tool_name") for inv in batch.get("invocations", [])]
         assert names == ["read_file"]
-        assert any(a["type"] == "DELIVERY_MODE_WRITE_TOOL_FILTERED" for a in ledger.anomaly_flags)
+        anomalies = [a for a in ledger.anomaly_flags if a["type"] == "DELIVERY_MODE_WRITE_TOOL_FILTERED"]
+        assert anomalies[0]["filtered_tool_calls"][0]["tool_name"] == "write_file"
+        assert anomalies[0]["filtered_tool_calls"][0]["target_file"] == "app.py"
+        assert filtered["metadata"]["filtered_tool_calls"] == anomalies[0]["filtered_tool_calls"]
 
     def test_materialize_changes_passthrough(self) -> None:
         ledger = _ledger_with_mode(DeliveryMode.MATERIALIZE_CHANGES)

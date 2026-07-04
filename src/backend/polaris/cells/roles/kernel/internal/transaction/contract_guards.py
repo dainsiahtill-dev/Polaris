@@ -1086,6 +1086,23 @@ def is_safe_readonly_bootstrap_invocations(invocations: list[Any]) -> bool:
     return True
 
 
+def _delivery_mode_filtered_tool_call_ref(invocation: Any) -> dict[str, str]:
+    """Return audit-safe evidence for a write invocation filtered by delivery mode."""
+
+    call_id = invocation.get("call_id") if isinstance(invocation, Mapping) else getattr(invocation, "call_id", "")
+    target_file = extract_target_file_from_invocation_args(invocation)
+    ref = {
+        "reason": "delivery_mode_write_tool_filtered",
+        "tool_name": extract_invocation_tool_name(invocation),
+        "execution_mode": extract_invocation_execution_mode(invocation),
+    }
+    if call_id:
+        ref["call_id"] = str(call_id)
+    if target_file:
+        ref["target_file"] = target_file
+    return ref
+
+
 def apply_delivery_mode_filter(decision: TurnDecision, ledger: TurnLedger) -> TurnDecision:
     """根据 delivery_contract 过滤决策中的 write tools。
 
@@ -1105,11 +1122,19 @@ def apply_delivery_mode_filter(decision: TurnDecision, ledger: TurnLedger) -> Tu
         return decision
 
     invocations = list(tool_batch.get("invocations", []) or [])
-    filtered = [inv for inv in invocations if not is_write_invocation(inv)]
-    dropped = len(invocations) - len(filtered)
+    dropped_invocations: list[Any] = []
+    filtered: list[Any] = []
+    for invocation in invocations:
+        if is_write_invocation(invocation):
+            dropped_invocations.append(invocation)
+        else:
+            filtered.append(invocation)
+    dropped = len(dropped_invocations)
 
     if dropped == 0:
         return decision
+
+    filtered_tool_calls = [_delivery_mode_filtered_tool_call_ref(inv) for inv in dropped_invocations]
 
     logger.warning(
         "delivery-mode-filter: dropped %d write tool(s) in %s mode. turn_id=%s",
@@ -1124,6 +1149,7 @@ def apply_delivery_mode_filter(decision: TurnDecision, ledger: TurnLedger) -> Tu
             "dropped_count": dropped,
             "delivery_mode": contract.mode.value,
             "original_tool_count": len(invocations),
+            "filtered_tool_calls": filtered_tool_calls,
         }
     )
 
@@ -1141,6 +1167,7 @@ def apply_delivery_mode_filter(decision: TurnDecision, ledger: TurnLedger) -> Tu
                 **(decision.get("metadata") or {}),
                 "delivery_mode_filter_applied": True,
                 "dropped_write_tools": dropped,
+                "filtered_tool_calls": filtered_tool_calls,
             },
         )
 
@@ -1166,5 +1193,6 @@ def apply_delivery_mode_filter(decision: TurnDecision, ledger: TurnLedger) -> Tu
             **(decision.get("metadata") or {}),
             "delivery_mode_filter_applied": True,
             "dropped_write_tools": dropped,
+            "filtered_tool_calls": filtered_tool_calls,
         },
     )
