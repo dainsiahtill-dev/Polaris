@@ -1,27 +1,21 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from polaris.cells.control_plane.run_ledger.public import (
-    native_tool_call_facts_from_sources,
-    project_native_tool_call_facts_to_metadata,
-)
-from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
-    native_tool_calls_from_response,
+    project_completion_audit_evidence_to_metadata,
 )
 
 
-def test_project_native_tool_call_facts_overwrites_stale_stream_monitoring() -> None:
-    response = SimpleNamespace(
-        content="",
-        model="gpt-test",
-        native_tool_calls=[{"function": {"name": "write_file"}}],
-    )
+def test_project_completion_audit_evidence_overwrites_stale_stream_monitoring() -> None:
     monitoring = {"native_tool_calls_count": 7, "native_tool_call_names": ["stale_tool"]}
+    decision_metadata = {
+        "native_tool_calls_count": 1,
+        "native_tool_call_names": ["write_file"],
+    }
 
-    project_native_tool_call_facts_to_metadata(
+    project_completion_audit_evidence_to_metadata(
         monitoring,
-        native_tool_call_facts_from_sources({}, native_tool_calls_from_response(response)),
+        decision_metadata,
+        overwrite_native_facts=True,
     )
 
     assert monitoring["native_tool_calls_count"] == 1

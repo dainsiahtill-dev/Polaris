@@ -24,7 +24,7 @@ from typing import Any, Literal, cast
 from polaris.cells.control_plane.run_ledger.public import (
     native_tool_call_count_from_facts,
     native_tool_call_facts_from_sources,
-    project_completion_dispatch_evidence_to_metadata,
+    project_completion_audit_evidence_to_metadata,
     project_native_tool_call_facts_to_metadata,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
@@ -1446,21 +1446,15 @@ class StreamOrchestrator:
         context_os_audit_summary = summarize_context_os_audit_from_ledger(ledger)
         if context_os_audit_summary:
             monitoring["context_os_audit"] = context_os_audit_summary
-        # Completion-side dispatch evidence: the stream completion owner rebuilds
-        # the missing-dispatch tool_call_lifecycle receipt from these keys, using
-        # the same metadata contract as the non-stream completion path.
-        project_completion_dispatch_evidence_to_metadata(
+        # Completion-side audit evidence: the stream completion owner rebuilds
+        # lifecycle/native/failure metadata from the same Run Ledger projection
+        # contract as the non-stream completion path.
+        project_completion_audit_evidence_to_metadata(
             monitoring,
             decision_metadata,
             result.get("llm_response_metadata"),
             llm_response.get("usage"),
-        )
-        project_native_tool_call_facts_to_metadata(
-            monitoring,
-            native_tool_call_facts_from_sources(
-                monitoring,
-                native_tool_calls_from_response(llm_response),
-            ),
+            overwrite_native_facts=True,
         )
         yield CompletionEvent(
             turn_id=turn_id,

@@ -1363,6 +1363,7 @@ def project_completion_dispatch_evidence_to_metadata(
 def project_completion_audit_evidence_to_metadata(
     metadata: dict[str, Any],
     *evidence_sources: Mapping[str, Any] | None,
+    overwrite_native_facts: bool = False,
 ) -> None:
     """Project completion audit evidence and lifecycle-derived facts.
 
@@ -1382,7 +1383,11 @@ def project_completion_audit_evidence_to_metadata(
         if not isinstance(evidence_source, Mapping):
             continue
         for evidence_key in _COMPLETION_AUDIT_EVIDENCE_KEYS:
-            if evidence_key not in evidence_source or evidence_key in metadata:
+            if evidence_key not in evidence_source:
+                continue
+            if evidence_key in metadata and not (
+                overwrite_native_facts and evidence_key in {"native_tool_calls_count", "native_tool_call_names"}
+            ):
                 continue
             evidence_value = evidence_source[evidence_key]
             metadata[evidence_key] = dict(evidence_value) if isinstance(evidence_value, Mapping) else evidence_value

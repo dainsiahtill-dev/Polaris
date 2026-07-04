@@ -1033,6 +1033,25 @@ def test_project_completion_audit_evidence_to_metadata_preserves_direct_failure_
     assert metadata["failure_evidence_summary"] == {"count": 1, "latest_failure_class": "TOOL_RESULT_FAILED"}
 
 
+def test_project_completion_audit_evidence_to_metadata_can_overwrite_stale_native_facts() -> None:
+    metadata: dict[str, object] = {
+        "native_tool_calls_count": 9,
+        "native_tool_call_names": ["stale_tool"],
+    }
+
+    project_completion_audit_evidence_to_metadata(
+        metadata,
+        {
+            "native_tool_calls_count": 1,
+            "native_tool_call_names": ["write_file"],
+        },
+        overwrite_native_facts=True,
+    )
+
+    assert metadata["native_tool_calls_count"] == 1
+    assert metadata["native_tool_call_names"] == ["write_file"]
+
+
 def test_project_completion_dispatch_evidence_keeps_native_envelope_refs() -> None:
     metadata: dict[str, object] = {
         "native_tool_call_envelopes": ["bad legacy projection"],
