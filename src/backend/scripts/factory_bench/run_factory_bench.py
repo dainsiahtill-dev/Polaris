@@ -41,8 +41,9 @@ sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
 
 from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
+    AppendToolCallLifecycleEventCommandV1,
     append_run_ledger_event,
-    build_tool_call_lifecycle_run_ledger_event,
+    append_tool_call_lifecycle_event,
     build_tool_dispatch_dropped_lifecycle_from_observed_calls,
     evaluate_task_boundary_verdict,
 )
@@ -2477,27 +2478,24 @@ def _append_tool_dispatch_failure_to_run_ledger(
         reason=str(tool_dispatch.get("reason") or "tool_dispatch_dropped").strip(),
     )
     try:
-        append_run_ledger_event(
-            AppendRunLedgerEventCommandV1(
+        append_tool_call_lifecycle_event(
+            AppendToolCallLifecycleEventCommandV1(
                 workspace=str(workspace),
                 run_id=run_id,
-                event=build_tool_call_lifecycle_run_ledger_event(
-                    run_id=run_id,
-                    task_id=task_id,
-                    turn_id=str(tool_dispatch.get("turn_id") or ""),
-                    role=str(tool_dispatch.get("role") or "director"),
-                    lifecycle_receipt=lifecycle_receipt,
-                    stage="director_tool_dispatch",
-                    project_id=project_id,
-                    job_token={
-                        "token_id": f"tool-dispatch-{project_id}",
-                        "run_id": run_id,
-                        "task_id": task_id,
-                        "project_id": project_id,
-                        "capability_audit": {"ok": True, "issues": []},
-                        "gate_policy": {},
-                    },
-                ),
+                task_id=task_id,
+                turn_id=str(tool_dispatch.get("turn_id") or ""),
+                role=str(tool_dispatch.get("role") or "director"),
+                lifecycle_receipt=lifecycle_receipt,
+                stage="director_tool_dispatch",
+                project_id=project_id,
+                job_token={
+                    "token_id": f"tool-dispatch-{project_id}",
+                    "run_id": run_id,
+                    "task_id": task_id,
+                    "project_id": project_id,
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
             )
         )
     except (OSError, RuntimeError, TypeError, ValueError):
