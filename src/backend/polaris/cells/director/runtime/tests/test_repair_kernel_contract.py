@@ -680,6 +680,27 @@ def test_normalizer_preserves_structured_typescript_issue_kind_metadata() -> Non
     assert diagnostic.metadata["raw_path"] == "/tmp/factory-bench/src/middleware/auth.ts"
 
 
+def test_normalizer_preserves_structured_javascript_runtime_global_metadata() -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            {
+                "source": "runtime_smoke",
+                "code": "javascript_dom_global_in_node_runtime",
+                "message": "Browser DOM global window is not available in Node.",
+                "path": "dist/web.js",
+                "runtime_global": "window",
+                "raw": "typed runtime smoke metadata only",
+            }
+        ]
+    )
+
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    assert diagnostic.code == "javascript_dom_global_in_node_runtime"
+    assert diagnostic.path == "dist/web.js"
+    assert diagnostic.metadata["runtime_global"] == "window"
+
+
 def test_public_normalizer_preserves_structured_diagnostic_payload() -> None:
     diagnostics = normalize_director_repair_diagnostics(
         [
@@ -6135,6 +6156,51 @@ def test_public_javascript_dom_global_runtime_guard_covers_browser_bundle_start(
     assert planning_payload["composition_summary"]["changed_paths"] == ["src/web.ts"]
     content_after = planning_payload["composition_summary"]["patches"][0]["content_after"]
     assert 'if (typeof document !== "undefined") {' in content_after
+    assert "  whenReady();" in content_after
+
+
+def test_public_javascript_dom_global_runtime_guard_uses_typed_runtime_global() -> None:
+    source_tool = js_syntax.JAVASCRIPT_DOM_GLOBAL_RUNTIME_SOURCE_TOOL
+    diagnostic = {
+        "source": "runtime_smoke",
+        "code": "javascript_dom_global_in_node_runtime",
+        "message": "Browser DOM global window is not available in Node.",
+        "path": "src/web.ts",
+        "runtime_global": "window",
+        "raw": "typed runtime smoke metadata only",
+    }
+
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={
+                "package.json": (
+                    '{"type":"module","main":"dist/web.js","scripts":{'
+                    '"build":"esbuild src/web.ts --bundle --outfile=dist/web.js",'
+                    '"start":"npm run build && node dist/web.js"}}\n'
+                ),
+                "src/web.ts": (
+                    "function bootstrap(): void {\n"
+                    '  window.dispatchEvent(new Event("polaris-ready"));\n'
+                    "}\n\n"
+                    "function whenReady(): void {\n"
+                    "  bootstrap();\n"
+                    "}\n\n"
+                    "whenReady();\n"
+                ),
+            },
+            artifact_quality_issues=(diagnostic,),
+            mode="shadow",
+        )
+    )
+    planning_payload = planning_result.to_dict()
+
+    assert planning_payload["ok"] is True
+    assert planning_payload["planned"] is True
+    assert planning_payload["plan_summary"]["rule_id"] == "javascript.dom_global_runtime_guard"
+    content_after = planning_payload["composition_summary"]["patches"][0]["content_after"]
+    assert 'if (typeof window !== "undefined") {' in content_after
+    assert 'if (typeof document !== "undefined") {' not in content_after
     assert "  whenReady();" in content_after
 
 

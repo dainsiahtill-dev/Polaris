@@ -1261,6 +1261,23 @@ def _plan_javascript_dom_global_runtime_guard(
     return _runtime_planning_from_javascript(planning)
 
 
+def _plan_javascript_dom_global_runtime_guard_typed(
+    base_files: Mapping[str, str],
+    repair_diagnostics: Sequence[RepairDiagnostic],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_javascript_dom_global_runtime_guard_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_javascript(planning)
+
+
 def _plan_javascript_missing_method_runtime(
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
@@ -4403,6 +4420,7 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         rule_id="javascript.dom_global_runtime_guard",
         planner=_plan_javascript_dom_global_runtime_guard,
         runner=_run_javascript_dom_global_runtime_guard,
+        typed_planner=_plan_javascript_dom_global_runtime_guard_typed,
     ),
     JAVASCRIPT_MISSING_METHOD_RUNTIME_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=JAVASCRIPT_MISSING_METHOD_RUNTIME_SOURCE_TOOL,

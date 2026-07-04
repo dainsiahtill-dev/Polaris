@@ -181,6 +181,7 @@ def plan_javascript_dom_global_runtime_guard_repair(
     *,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
 ) -> JavaScriptRepairPlanning:
@@ -190,6 +191,7 @@ def plan_javascript_dom_global_runtime_guard_repair(
         source_tool=JAVASCRIPT_DOM_GLOBAL_RUNTIME_SOURCE_TOOL,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
         advisor_notes=advisor_notes,
         mode=mode,
         builder=build_javascript_dom_global_runtime_guard_plan,
@@ -444,12 +446,13 @@ def _plan_javascript_repair(
     source_tool: str,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
     advisor_notes: Sequence[RepairAdvisorNote] | None,
     mode: str,
     builder: PlanBuilderFn,
 ) -> JavaScriptRepairPlanning:
     normalized_base = _normalize_base_files(base_files)
-    diagnostics = tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
+    diagnostics = tuple(repair_diagnostics or normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
     notes = tuple(advisor_notes or ())
     plan = builder(base_files=normalized_base, diagnostics=diagnostics, mode=mode)
     if plan is None:

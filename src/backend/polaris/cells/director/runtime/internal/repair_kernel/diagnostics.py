@@ -152,6 +152,7 @@ def _normalize_structured_error(raw: Mapping[str, Any]) -> RepairDiagnostic | No
         "suggestion",
         "issue_kind",
         "raw_path",
+        "runtime_global",
         "language",
         "confidence",
         "archetype",
