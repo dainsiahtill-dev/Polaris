@@ -26,6 +26,7 @@ from polaris.kernelone.events.final_request_evidence import (
     looks_like_workspace_quality_evidence_payload,
     missing_required_refs_from_evidence_coverage,
     missing_required_tools_from_evidence_coverage,
+    structured_context_coverage_flags,
     summarize_target_scope_evidence_payload,
     summarize_workspace_quality_evidence_context_slot,
     target_scope_evidence_entry,
@@ -305,25 +306,21 @@ def _resident_agi_coverage_flags(ai_request: Any | None) -> dict[str, bool]:
 
 
 def _coverage_flags(*, ai_request: Any | None = None) -> dict[str, bool]:
-    pm_contract = _pm_contract_payload(ai_request) if ai_request is not None else {}
-    ce_blueprint = _ce_blueprint_payload(ai_request) if ai_request is not None else {}
+    structured_flags = structured_context_coverage_flags(_request_context(ai_request)) if ai_request is not None else {}
     module_interface_contract = _module_interface_contract_payload(ai_request) if ai_request is not None else {}
     actual_sibling_exports = (
         _actual_sibling_exports_payload(ai_request, module_interface_contract) if ai_request is not None else {}
     )
-    target_scope = _target_scope_payload(ai_request) if ai_request is not None else {}
     architecture_or_file_plan = _architecture_or_file_plan_payload(ai_request) if ai_request is not None else {}
-    failed_gate_evidence = _failed_gate_evidence_payload(ai_request) if ai_request is not None else {}
-    workspace_quality_evidence = _workspace_quality_evidence_payload(ai_request) if ai_request is not None else {}
     coverage = {
-        "has_pm_contract": bool(pm_contract),
-        "has_chief_engineer_blueprint": bool(ce_blueprint),
+        "has_pm_contract": bool(structured_flags.get("has_pm_contract")),
+        "has_chief_engineer_blueprint": bool(structured_flags.get("has_chief_engineer_blueprint")),
         "has_module_interface_contract": bool(module_interface_contract),
         "has_actual_sibling_exports": bool(actual_sibling_exports),
         "has_architecture_or_file_plan": bool(architecture_or_file_plan),
-        "has_target_files": bool(target_scope),
-        "has_failure_feedback": bool(failed_gate_evidence),
-        "has_workspace_quality_evidence": bool(workspace_quality_evidence),
+        "has_target_files": bool(structured_flags.get("has_target_files")),
+        "has_failure_feedback": bool(structured_flags.get("has_failure_feedback")),
+        "has_workspace_quality_evidence": bool(structured_flags.get("has_workspace_quality_evidence")),
     }
     coverage.update(_resident_agi_coverage_flags(ai_request))
     return coverage
