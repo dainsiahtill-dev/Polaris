@@ -149,6 +149,21 @@ def test_scope_authority_extracts_and_classifies_handoff_payloads() -> None:
     assert owner_task_retry_handoff_requests_from_scope_payload(classified_payload) == (owned_request,)
     assert unresolved_owner_handoff_requests_from_scope_payload(classified_payload) == (unknown_request,)
 
+    classified_only_payload = {
+        "task_boundary_scope_filter": {
+            "scope_authority": {
+                "owner_task_retry_handoff_requests": [owned_request],
+                "unresolved_owner_handoff_requests": [unknown_request],
+            }
+        }
+    }
+    assert ownership_handoff_requests_from_scope_payload(classified_only_payload) == (
+        owned_request,
+        unknown_request,
+    )
+    assert owner_task_retry_handoff_requests_from_scope_payload(classified_only_payload) == (owned_request,)
+    assert unresolved_owner_handoff_requests_from_scope_payload(classified_only_payload) == (unknown_request,)
+
 
 def test_scope_authority_matches_owner_handoff_using_projected_identifier_tokens() -> None:
     owner_row = {

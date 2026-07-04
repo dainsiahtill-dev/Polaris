@@ -197,7 +197,10 @@ def ownership_handoff_requests_from_scope_payload(payload: Mapping[str, Any]) ->
     shape knowledge.
     """
 
-    return _handoff_requests_from_scope_payload(payload, "ownership_handoff_requests")
+    requests = _handoff_requests_from_scope_payload(payload, "ownership_handoff_requests")
+    if requests:
+        return requests
+    return _classified_handoff_requests_from_scope_payload(payload)
 
 
 def owner_task_retry_handoff_requests_from_scope_payload(payload: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
@@ -319,6 +322,15 @@ def _handoff_requests_from_scope_payload(payload: Mapping[str, Any], key: str) -
     if empty_list_seen:
         return ()
     return ()
+
+
+def _classified_handoff_requests_from_scope_payload(payload: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
+    requests: list[dict[str, Any]] = []
+    for key in ("owner_task_retry_handoff_requests", "unresolved_owner_handoff_requests"):
+        for request in _handoff_requests_from_scope_payload(payload, key):
+            if request not in requests:
+                requests.append(dict(request))
+    return tuple(requests)
 
 
 def build_scope_authority_decision(

@@ -830,7 +830,7 @@ def test_quality_gate_task_boundary_validation_routes_scope_authority_nested_han
                         "reason": "quality_repair_targets_outside_current_task_target_files",
                         "scope_authority": {
                             "schema_version": "scope-authority-decision/1",
-                            "ownership_handoff_requests": [handoff_request],
+                            "owner_task_retry_handoff_requests": [handoff_request],
                         },
                     },
                 },
