@@ -1492,15 +1492,19 @@ def _record_deferred_task_boundary_quality_errors(
     errors: list[str],
     target_files: list[str],
     reason: str,
+    issue_payloads: tuple[dict[str, Any], ...] = (),
 ) -> None:
     if not isinstance(context, dict) or not errors:
         return
+    issues = _artifact_quality_issues_for_errors(errors, issue_payloads)
     record = {
         "schema_version": "director.task_boundary.deferred_quality_errors.v1",
         "reason": reason,
         "artifact_quality_errors": errors[:20],
         "target_files": target_files[:20],
     }
+    if issues:
+        record["artifact_quality_issues"] = [dict(issue) for issue in issues[:20]]
     existing = context.get("director_task_boundary_deferred_quality_errors")
     if isinstance(existing, list):
         existing.append(record)
@@ -1654,6 +1658,7 @@ def _filter_npm_script_entrypoint_errors_to_task_write_scope(
     task: dict[str, Any],
     workspace_name: str = "",
     context: dict[str, Any] | None = None,
+    issue_payloads: tuple[dict[str, Any], ...] = (),
 ) -> list[str]:
     """Defer package-script entrypoint diagnostics that belong to another task."""
 
@@ -1695,6 +1700,7 @@ def _filter_npm_script_entrypoint_errors_to_task_write_scope(
         errors=_dedupe_preserve_order(deferred_errors),
         target_files=_dedupe_preserve_order(deferred_targets),
         reason="npm_script_entrypoint_outside_current_task_target_files",
+        issue_payloads=issue_payloads,
     )
     return _dedupe_preserve_order(retained)
 
@@ -1706,6 +1712,7 @@ def _filter_missing_workspace_file_errors_to_task_write_scope(
     workspace_full: str,
     workspace_name: str = "",
     context: dict[str, Any] | None = None,
+    issue_payloads: tuple[dict[str, Any], ...] = (),
 ) -> list[str]:
     """Defer verifier missing-file diagnostics that belong to another task."""
 
@@ -1752,6 +1759,7 @@ def _filter_missing_workspace_file_errors_to_task_write_scope(
         errors=_dedupe_preserve_order(deferred_errors),
         target_files=_dedupe_preserve_order(deferred_targets),
         reason="missing_workspace_file_outside_current_task_target_files",
+        issue_payloads=issue_payloads,
     )
     return _dedupe_preserve_order(retained)
 
@@ -1833,6 +1841,7 @@ def _collect_materialization_quality_findings(
         task=task,
         workspace_name=workspace_name,
         context=context,
+        issue_payloads=scan_issues,
     )
     filtered_errors = _filter_missing_workspace_file_errors_to_task_write_scope(
         scoped_errors,
@@ -1840,6 +1849,7 @@ def _collect_materialization_quality_findings(
         workspace_full=workspace_full,
         workspace_name=workspace_name,
         context=context,
+        issue_payloads=scan_issues,
     )
     return filtered_errors, _artifact_quality_issues_for_errors(filtered_errors, scan_issues)
 

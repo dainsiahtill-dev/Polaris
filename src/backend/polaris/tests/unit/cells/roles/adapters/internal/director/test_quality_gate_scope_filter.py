@@ -4,6 +4,7 @@ from pathlib import Path
 
 from polaris.cells.roles.adapters.internal.director.quality_gate import (
     _artifact_quality_issues_for_errors,
+    _filter_missing_workspace_file_errors_to_task_write_scope,
     _task_boundary_scope_filter_evidence,
 )
 from polaris.kernelone.quality.file_ownership_ledger import record_file_owners
@@ -68,3 +69,31 @@ def test_artifact_quality_issue_merge_preserves_structured_issue_when_raw_differ
     issues = _artifact_quality_issues_for_errors([error], (typed_issue,))
 
     assert issues == (typed_issue,)
+
+
+def test_deferred_scope_filter_record_preserves_typed_artifact_quality_issue(tmp_path: Path) -> None:
+    error = "Artifact quality scan failed: No such file or directory: src/index.js"
+    typed_issue = {
+        "code": "missing_workspace_file",
+        "message": "Missing workspace file src/index.js",
+        "path": "src/index.js",
+        "source": "artifact_quality_scan",
+        "metadata": {"raw": error},
+    }
+    context: dict[str, object] = {}
+
+    retained = _filter_missing_workspace_file_errors_to_task_write_scope(
+        [error],
+        task={"task_id": "TASK-2", "target_files": ["tests/behavior.test.js"]},
+        workspace_full=str(tmp_path),
+        context=context,
+        issue_payloads=(typed_issue,),
+    )
+
+    assert retained == []
+    records = context["director_task_boundary_deferred_quality_errors"]
+    assert isinstance(records, list)
+    record = records[0]
+    assert record["artifact_quality_errors"] == [error]
+    assert record["target_files"] == ["src/index.js"]
+    assert record["artifact_quality_issues"] == [typed_issue]
