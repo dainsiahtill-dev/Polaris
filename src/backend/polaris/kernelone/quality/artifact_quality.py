@@ -541,6 +541,12 @@ def _artifact_quality_issue_code(message: str) -> str:
         return "typescript_project_typecheck_failed"
     if "syntax error" in normalized or "invalid json" in normalized:
         return "syntax_error"
+    if (
+        "npm default failing test script" in normalized
+        or "npm placeholder test script" in normalized
+        or "npm manifest-only test script" in normalized
+    ):
+        return "npm_manifest_invalid"
     if runtime_script_invoked and runtime_port_conflict:
         return "npm_manifest_invalid"
     if "test script must use node --test" in normalized:
@@ -642,6 +648,15 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
                 if script_name and port_conflict:
                     metadata["script_name"] = script_name
                     metadata["script_issue"] = "fixed_port_conflict"
+                elif "npm default failing test script" in normalized_message:
+                    metadata["script_name"] = "test"
+                    metadata["script_issue"] = "default_failing_test_script"
+                elif "npm placeholder test script" in normalized_message:
+                    metadata["script_name"] = "test"
+                    metadata["script_issue"] = "placeholder_test_script"
+                elif "npm manifest-only test script" in normalized_message:
+                    metadata["script_name"] = "test"
+                    metadata["script_issue"] = "manifest_only_test_script"
     elif code == "unresolved_import_symbol":
         match = _ARTIFACT_QUALITY_UNRESOLVED_IMPORT_SYMBOL_RE.search(message)
         if match:
@@ -1626,15 +1641,14 @@ def _package_manifest_quality_issue(error: str, relative_path: str) -> ArtifactQ
     message = str(error or "").strip()
     if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
         message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    metadata = _artifact_quality_issue_metadata(str(error or "").strip(), message, "npm_manifest_invalid")
+    metadata["manifest_path"] = relative_path
     return ArtifactQualityIssue(
         code="npm_manifest_invalid",
         message=message,
         path=relative_path,
         source="package_manifest_scanner",
-        metadata={
-            "raw": str(error or "").strip(),
-            "manifest_path": relative_path,
-        },
+        metadata=metadata,
     )
 
 

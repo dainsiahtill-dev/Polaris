@@ -59,10 +59,13 @@ _PYTHON_COMMAND_NPM_SCRIPT_RE = re.compile(
 _PYTHON_COMMAND_TOKEN_RE = re.compile(r"(?<![\w.-])python(?:3|[0-9]+(?:\.[0-9]+)?)?(?![\w.-])", re.IGNORECASE)
 _REPAIRABLE_TEST_SCRIPT_ISSUES = frozenset(
     {
+        "default_failing_test_script",
         "invalid_node_eval_syntax",
         "invalid_shell_syntax",
+        "manifest_only_test_script",
         "missing_local_entrypoint",
         "placeholder_command",
+        "placeholder_test_script",
         "shell_command_substitution",
         "swallows_command_failures",
     }

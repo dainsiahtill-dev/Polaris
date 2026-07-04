@@ -378,6 +378,21 @@ def test_artifact_quality_issue_projection_extracts_node_test_runner_contract_me
     }
 
 
+def test_artifact_quality_issue_projection_extracts_manifest_only_test_script_metadata() -> None:
+    error = "Artifact quality scan failed: npm manifest-only test script in package.json"
+
+    issues = artifact_quality_issues_from_errors((error,))
+
+    assert issues[0]["code"] == "npm_manifest_invalid"
+    assert issues[0]["path"] == "package.json"
+    assert issues[0]["metadata"] == {
+        "raw": error,
+        "manifest_path": "package.json",
+        "script_name": "test",
+        "script_issue": "manifest_only_test_script",
+    }
+
+
 def test_artifact_quality_issue_projection_extracts_fixed_port_conflict_metadata() -> None:
     error = (
         "Artifact quality scan failed: step verify failed (exit 1): npm run serve :: "
@@ -670,6 +685,40 @@ def test_artifact_quality_evidence_uses_direct_npm_script_missing_entrypoint_iss
         "script_name": "start",
         "entrypoint": "src/index.js",
     }
+
+
+def test_artifact_quality_evidence_projects_test_script_placeholder_metadata(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        """
+{
+  "name": "placeholder-test-project",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "echo \\"Error: no test specified\\" && exit 1"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["package.json"])
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: npm default failing test script in package.json",
+        "Artifact quality scan failed: npm placeholder test script in package.json",
+        "Artifact quality scan failed: npm package manifest script 'test' is a placeholder command: "
+        'echo "Error: no test specified" && exit 1 in package.json',
+    )
+    assert [issue.metadata["script_issue"] for issue in evidence.issues] == [
+        "default_failing_test_script",
+        "placeholder_test_script",
+        "placeholder_command",
+    ]
+    assert all(issue.code == "npm_manifest_invalid" for issue in evidence.issues)
+    assert all(issue.source == "package_manifest_scanner" for issue in evidence.issues)
+    assert all(issue.path == "package.json" for issue in evidence.issues)
+    assert all(issue.metadata["script_name"] == "test" for issue in evidence.issues)
 
 
 def test_artifact_quality_evidence_uses_direct_npm_script_test_directory_issue(tmp_path: Path) -> None:
