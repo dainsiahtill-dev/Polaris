@@ -29,6 +29,7 @@ from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
     build_tool_dispatch_dropped_anomaly_projection,
+    native_tool_call_count_from_facts,
     native_tool_call_facts_from_sources,
     project_native_tool_call_facts_to_metadata,
 )
@@ -69,7 +70,7 @@ def build_tool_dispatch_dropped_anomaly(
 
     native_tool_calls = native_tool_calls_from_response(response)
     native_facts = native_tool_call_facts_from_sources(metadata, native_tool_calls)
-    native_count = int(native_facts.get("native_tool_calls_count") or 0)
+    native_count = native_tool_call_count_from_facts(native_facts)
     response_hash = provider_response_hash(response, metadata)
     native_envelopes = native_tool_call_envelopes_from_response(response, metadata)
     return build_tool_dispatch_dropped_anomaly_projection(
@@ -167,7 +168,7 @@ async def run_decision_pipeline(
         decision_metadata,
         native_tool_calls_from_response(llm_response),
     )
-    native_tool_call_count = int(native_tool_call_facts.get("native_tool_calls_count") or 0)
+    native_tool_call_count = native_tool_call_count_from_facts(native_tool_call_facts)
     decision_metadata.setdefault("provider_response_hash", provider_response_hash(llm_response, decision_metadata))
     project_native_tool_call_facts_to_metadata(decision_metadata, native_tool_call_facts)
     decision = _with_decision_metadata(decision, decision_metadata)

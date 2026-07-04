@@ -916,6 +916,26 @@ def native_tool_call_count_from_metadata(metadata: Mapping[str, Any] | None, *, 
     return _int_value(fallback)
 
 
+def native_tool_call_count_from_facts(facts: Mapping[str, Any] | None, *, fallback: int = 0) -> int:
+    """Derive native tool-call count from a Run Ledger native-fact mapping.
+
+    Boundary:
+        ``native_tool_call_facts_from_sources`` and related helpers emit the
+        native-fact shape. Consumers should call this reader instead of
+        interpreting ``native_tool_calls_count`` locally, so count coercion and
+        fallback semantics stay owned by Run Ledger.
+
+    Complexity:
+        O(1) time and memory.
+    """
+
+    if isinstance(facts, Mapping):
+        count = _int_value(facts.get("native_tool_calls_count"))
+        if count > 0:
+            return count
+    return _int_value(fallback)
+
+
 _NATIVE_TOOL_FACT_EVIDENCE_KEYS: tuple[str, ...] = (
     "tool_call_lifecycle",
     "tool_call_lifecycle_receipt",

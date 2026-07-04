@@ -13,6 +13,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     empty_tool_lifecycle_summary,
     failure_evidence_from_lifecycle_receipt,
     merge_tool_lifecycle_summaries,
+    native_tool_call_count_from_facts,
     native_tool_call_count_from_metadata,
     native_tool_call_envelope_refs_from_metadata,
     native_tool_call_facts_from_lifecycle_receipt,
@@ -1696,6 +1697,13 @@ def test_native_tool_call_count_from_metadata_uses_envelopes_before_numeric_fall
     assert native_tool_call_count_from_metadata(metadata, fallback=1) == 2
     assert native_tool_call_count_from_metadata({"native_tool_calls_count": 3}, fallback=1) == 3
     assert native_tool_call_count_from_metadata({}, fallback=2) == 2
+
+
+def test_native_tool_call_count_from_facts_owns_fact_count_coercion() -> None:
+    assert native_tool_call_count_from_facts({"native_tool_calls_count": 2}, fallback=1) == 2
+    assert native_tool_call_count_from_facts({"native_tool_calls_count": 0}, fallback=3) == 3
+    assert native_tool_call_count_from_facts({"native_tool_calls_count": "bad"}, fallback=4) == 4
+    assert native_tool_call_count_from_facts({}, fallback=5) == 5
 
 
 def test_tool_lifecycle_receipt_deduplicates_native_envelopes_by_envelope_id() -> None:

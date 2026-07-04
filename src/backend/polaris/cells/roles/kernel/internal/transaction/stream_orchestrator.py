@@ -22,6 +22,7 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Any, Literal, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
+    native_tool_call_count_from_facts,
     native_tool_call_facts_from_sources,
     project_completion_dispatch_evidence_to_metadata,
     project_native_tool_call_facts_to_metadata,
@@ -1185,7 +1186,7 @@ class StreamOrchestrator:
             decision_metadata,
             native_tool_calls_from_response(llm_response),
         )
-        native_tool_call_count = int(native_tool_call_facts.get("native_tool_calls_count") or 0)
+        native_tool_call_count = native_tool_call_count_from_facts(native_tool_call_facts)
         provider_response_hash = derive_provider_response_hash(llm_response, decision_metadata)
         decision_metadata.setdefault("provider_response_hash", provider_response_hash)
         project_native_tool_call_facts_to_metadata(decision_metadata, native_tool_call_facts)
