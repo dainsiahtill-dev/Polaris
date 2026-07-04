@@ -211,21 +211,12 @@ class TestCollectPendingTaskContext:
             "- Implement runtime projection | scope: src/runtime | step: write projection tests"
         ]
 
-    def test_keeps_legacy_list_all_fallback(self) -> None:
-        class _LegacyTask:
-            def to_dict(self) -> dict[str, Any]:
-                return {
-                    "id": 3,
-                    "status": "pending",
-                    "subject": "Legacy adapter task",
-                    "metadata": {},
-                }
-
+    def test_missing_task_row_projection_returns_empty_context(self) -> None:
         class _LegacyBoard:
-            def list_all(self) -> list[_LegacyTask]:
-                return [_LegacyTask()]
+            def list_all(self) -> list[object]:
+                raise AssertionError("pending task context must not use legacy list_all")
 
-        assert collect_pending_task_context(".", _LegacyBoard()) == ["- Legacy adapter task"]
+        assert collect_pending_task_context(".", _LegacyBoard()) == []
 
 
 # ---------------------------------------------------------------------------
