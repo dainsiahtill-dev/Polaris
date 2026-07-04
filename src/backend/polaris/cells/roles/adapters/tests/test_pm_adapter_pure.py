@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.adapters.internal.pm_adapter import PMAdapter
 
@@ -28,6 +28,38 @@ from polaris.cells.roles.adapters.internal.pm_adapter import PMAdapter
 
 def _make_adapter(tmp_path: Any) -> PMAdapter:
     return PMAdapter(workspace=str(tmp_path))
+
+
+class _RowProjectionOnlyTaskBoard:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self._rows = [dict(row) for row in rows]
+
+    def list_task_rows(self) -> list[dict[str, Any]]:
+        return [dict(row) for row in self._rows]
+
+    def list_all(self) -> list[Any]:
+        raise AssertionError("PM read-model consumers must use list_task_rows()")
+
+    def task_exists(self, task_id: Any) -> bool:
+        return any(str(row.get("id") or "") == str(task_id or "") for row in self._rows)
+
+    def update_task(
+        self,
+        task_id: Any,
+        *,
+        status: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        for row in self._rows:
+            if str(row.get("id") or "") != str(task_id or ""):
+                continue
+            if status is not None:
+                row["status"] = status
+            if metadata is not None:
+                current_metadata = row.get("metadata")
+                merged_metadata = dict(current_metadata) if isinstance(current_metadata, dict) else {}
+                merged_metadata.update(metadata)
+                row["metadata"] = merged_metadata
 
 
 # ---------------------------------------------------------------------------
@@ -1956,6 +1988,80 @@ class TestSynthesizeTaskContractsFromDirective:
 # ---------------------------------------------------------------------------
 # Deduplication helpers
 # ---------------------------------------------------------------------------
+
+
+class TestListBoardTaskRows:
+    def test_prefers_runtime_task_row_projection(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        adapter._task_runtime = cast(
+            Any,
+            _RowProjectionOnlyTaskBoard(
+                [{"id": 1, "subject": "Existing", "status": "pending", "metadata": {"goal": "Ship"}}]
+            ),
+        )
+
+        rows = adapter._list_board_task_rows()
+
+        assert rows == [{"id": 1, "subject": "Existing", "status": "pending", "metadata": {"goal": "Ship"}}]
+
+    def test_pm_stage_prompt_snapshot_uses_runtime_task_rows(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        adapter._task_runtime = cast(
+            Any,
+            _RowProjectionOnlyTaskBoard(
+                [{"id": 1, "subject": "Existing", "status": "pending", "metadata": {"goal": "Ship"}}]
+            ),
+        )
+        captured: dict[str, Any] = {}
+
+        def fake_build_pm_message(
+            tasks: list[dict[str, Any]],
+            directive: str,
+            *,
+            projection_hint: dict[str, Any] | None = None,
+            directive_analysis: dict[str, Any] | None = None,
+        ) -> str:
+            captured["tasks"] = tasks
+            return "message"
+
+        def fake_synthesize(
+            *,
+            directive: str,
+            projection_hint: dict[str, Any] | None = None,
+        ) -> list[dict[str, Any]]:
+            return [{"id": "TASK-1", "title": "Bad task", "goal": "Bad task"}]
+
+        def fake_quality(
+            contracts: list[dict[str, Any]],
+            *,
+            directive: str = "",
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            return contracts, {
+                "ok": False,
+                "score": 10,
+                "critical_issues": ["missing_target_files"],
+                "warnings": [],
+                "summary": "blocked",
+            }
+
+        adapter._build_pm_message = fake_build_pm_message
+        adapter._synthesize_task_contracts_from_directive = fake_synthesize
+        adapter._evaluate_contract_quality = fake_quality
+
+        result = asyncio.run(
+            adapter._run_pm_stage(
+                "pm-task",
+                "Create implementation tasks",
+                {"deterministic_pm_contracts": True},
+                {"deterministic_pm_contracts": True},
+            )
+        )
+
+        assert captured["tasks"] == [
+            {"id": 1, "subject": "Existing", "status": "pending", "metadata": {"goal": "Ship"}}
+        ]
+        assert result["success"] is False
+        assert result["tasks_created"] == 0
 
 
 class TestCanonicalText:

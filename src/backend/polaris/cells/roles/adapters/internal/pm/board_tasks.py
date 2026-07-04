@@ -14,13 +14,33 @@ from ._protocol import _PMAdapterMixinBase
 class PMBoardTaskMixin(_PMAdapterMixinBase):
     """PM 任务板 mixin：在 TaskBoard 上创建/去重/匹配任务，并回填依赖关系。"""
 
+    def _list_board_task_rows(self) -> list[dict[str, Any]]:
+        """Return PM task-board rows through the runtime read model when available."""
+
+        list_task_rows = getattr(self.task_board, "list_task_rows", None)
+        if callable(list_task_rows):
+            rows = list_task_rows()
+            return [dict(row) for row in rows if isinstance(row, dict)]
+
+        legacy_rows: list[dict[str, Any]] = []
+        for task in self.task_board.list_all():
+            if isinstance(task, dict):
+                legacy_rows.append(dict(task))
+                continue
+            to_dict = getattr(task, "to_dict", None)
+            if callable(to_dict):
+                row = to_dict()
+                if isinstance(row, dict):
+                    legacy_rows.append(dict(row))
+        return legacy_rows
+
     def _create_board_tasks(self, task_contracts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         created: list[dict[str, Any]] = []
         by_id: dict[str, int] = {}
         board_task_ids_by_contract_index: list[int] = []
         created_task_ids: set[int] = set()
         self._deduplicate_existing_board_tasks()
-        existing_tasks = self.task_board.list_all()
+        existing_tasks = self._list_board_task_rows()
         signature_index: dict[str, list[dict[str, Any]]] = {}
         title_index: dict[str, list[dict[str, Any]]] = {}
 
@@ -54,7 +74,7 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
                 title_index.setdefault(title_key, []).append(task_row)
 
         for existing in existing_tasks:
-            _index_task(existing.to_dict())
+            _index_task(existing)
 
         for contract in task_contracts:
             _raw_contract_meta = contract.get("metadata")
@@ -147,7 +167,7 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
         return created
 
     def _deduplicate_existing_board_tasks(self) -> None:
-        tasks = [task.to_dict() for task in self.task_board.list_all()]
+        tasks = self._list_board_task_rows()
         grouped: dict[str, list[dict[str, Any]]] = {}
         for row in tasks:
             subject_key = self._canonical_text(str(row.get("subject") or ""))
