@@ -96,6 +96,43 @@ def test_artifact_quality_issues_for_errors_dedupes_scanner_issues_by_structured
     assert issues == (first_issue, second_issue)
 
 
+def test_collect_materialization_quality_findings_projects_missing_declared_target_as_typed_issue(
+    tmp_path: Any,
+    monkeypatch: Any,
+) -> None:
+    captured_errors: list[str] = []
+
+    def _unexpected_fallback(errors: list[str]) -> tuple[dict[str, Any], ...]:
+        captured_errors.extend(errors)
+        return ()
+
+    monkeypatch.setattr(quality_gate, "artifact_quality_issues_from_errors", _unexpected_fallback)
+
+    errors, issues = quality_gate._collect_materialization_quality_findings(
+        _Adapter(str(tmp_path)),
+        task={"target_files": ["src/main.py"]},
+        all_affected_files=[],
+        workspace_name=tmp_path.name,
+    )
+
+    diagnostic = "Artifact quality scan failed: declared target file missing 'src/main.py'"
+    assert errors == [diagnostic]
+    assert captured_errors == []
+    assert issues == (
+        {
+            "code": "declared_target_missing",
+            "message": "declared target file missing 'src/main.py'",
+            "path": "src/main.py",
+            "severity": "error",
+            "source": "declared_target_contract",
+            "metadata": {
+                "raw": diagnostic,
+                "declared_target_path": "src/main.py",
+            },
+        },
+    )
+
+
 def test_post_llm_materialization_guard_routes_runtime_covered_errors(monkeypatch: Any, tmp_path: Any) -> None:
     captured: dict[str, Any] = {}
     diagnostic = "npm package manifest script 'build' recursively invokes itself via build -> build"

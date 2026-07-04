@@ -1815,13 +1815,13 @@ def _collect_materialization_quality_findings(
         relative_paths=quality_scan_paths,
         task_id=_materialization_quality_task_id(task, context),
     )
-    errors.extend(
-        _declared_target_file_quality_errors(
-            workspace_full=workspace_full,
-            task=task,
-            workspace_name=workspace_name,
-        )
+    declared_errors, declared_issues = _declared_target_file_quality_findings(
+        workspace_full=workspace_full,
+        task=task,
+        workspace_name=workspace_name,
     )
+    errors.extend(declared_errors)
+    scan_issues = (*scan_issues, *declared_issues)
     scoped_errors = _filter_npm_script_entrypoint_errors_to_task_write_scope(
         _dedupe_preserve_order(errors),
         task=task,
@@ -1983,14 +1983,29 @@ def _declared_target_file_quality_errors(
     task: dict[str, Any],
     workspace_name: str = "",
 ) -> list[str]:
+    errors, _issues = _declared_target_file_quality_findings(
+        workspace_full=workspace_full,
+        task=task,
+        workspace_name=workspace_name,
+    )
+    return errors
+
+
+def _declared_target_file_quality_findings(
+    *,
+    workspace_full: str,
+    task: dict[str, Any],
+    workspace_name: str = "",
+) -> tuple[list[str], tuple[dict[str, Any], ...]]:
     try:
         workspace_path = Path(workspace_full).resolve()
     except (OSError, RuntimeError, ValueError):
-        return []
+        return [], ()
     if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
+        return [], ()
 
     errors: list[str] = []
+    issues: list[dict[str, Any]] = []
     for candidate in _extract_task_target_path_candidates(task):
         normalized = _normalize_declared_task_path(candidate, workspace_name=workspace_name)
         if not normalized or any(ch in normalized for ch in ("*", "?")):
@@ -2003,8 +2018,22 @@ def _declared_target_file_quality_errors(
         if not Path(normalized).suffix:
             continue
         if not target_path.is_file() and not _case_insensitive_file_match(target_path):
-            errors.append(f"Artifact quality scan failed: declared target file missing {normalized!r}")
-    return errors
+            raw_error = f"Artifact quality scan failed: declared target file missing {normalized!r}"
+            errors.append(raw_error)
+            issues.append(
+                {
+                    "code": "declared_target_missing",
+                    "message": f"declared target file missing {normalized!r}",
+                    "path": normalized,
+                    "severity": "error",
+                    "source": "declared_target_contract",
+                    "metadata": {
+                        "raw": raw_error,
+                        "declared_target_path": normalized,
+                    },
+                }
+            )
+    return errors, tuple(issues)
 
 
 def _extract_successful_write_paths(tool_results: list[dict[str, Any]]) -> list[str]:
