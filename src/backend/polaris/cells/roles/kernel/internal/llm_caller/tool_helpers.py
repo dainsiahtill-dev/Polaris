@@ -17,6 +17,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     native_tool_call_facts_from_lifecycle_receipt,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
+    project_native_tool_call_facts_to_metadata,
 )
 from polaris.kernelone.llm.budget_policy import (
     BUDGET_STRATEGY_PAYLOAD_KEYS,
@@ -308,39 +309,6 @@ def native_tool_call_facts(
         "native_tool_calls_count": native_tool_call_count(metadata, native_tool_calls),
         "native_tool_call_names": native_tool_call_names(metadata, native_tool_calls),
     }
-
-
-def project_native_tool_call_facts_to_metadata(
-    metadata: dict[str, Any],
-    facts: Mapping[str, Any],
-    *,
-    project_names: bool = True,
-) -> None:
-    """Write canonical native tool-call facts to a metadata projection.
-
-    Boundary:
-        This helper owns only the legacy metadata projection shape. Callers
-        still own where facts are derived from, and may suppress name projection
-        when their source evidence did not contain names.
-
-    Complexity:
-        O(n) time and memory for normalizing the optional tool-name list.
-    """
-
-    try:
-        metadata["native_tool_calls_count"] = int(
-            str(facts.get("native_tool_calls_count") or "0").strip()
-        )
-    except (TypeError, ValueError):
-        metadata["native_tool_calls_count"] = 0
-    if not project_names:
-        return
-    names = facts.get("native_tool_call_names")
-    metadata["native_tool_call_names"] = [
-        name
-        for item in (names if isinstance(names, (list, tuple)) else [])
-        if (name := str(item or "").strip())
-    ]
 
 
 def _native_tool_call_arguments(call: Mapping[str, Any]) -> Any:

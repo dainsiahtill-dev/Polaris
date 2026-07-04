@@ -21,6 +21,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     normalize_failure_class,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
+    project_native_tool_call_facts_to_metadata,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
@@ -80,10 +81,11 @@ def _lifecycle_receipt_from_metadata(metadata: Mapping[str, Any]) -> dict[str, A
 
 def _project_lifecycle_native_tool_facts(metadata: dict[str, Any], lifecycle: Mapping[str, Any]) -> None:
     facts = native_tool_call_facts_from_lifecycle_receipt(lifecycle)
-    metadata["native_tool_calls_count"] = facts["native_tool_calls_count"]
-    names = facts.get("native_tool_call_names")
-    if isinstance(names, list) and names:
-        metadata["native_tool_call_names"] = names
+    project_native_tool_call_facts_to_metadata(
+        metadata,
+        facts,
+        project_names=bool(facts.get("native_tool_call_names")),
+    )
 
 
 def _project_lifecycle_failure_evidence(metadata: dict[str, Any], lifecycle: Mapping[str, Any]) -> None:

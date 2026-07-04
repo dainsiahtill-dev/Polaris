@@ -45,6 +45,7 @@ from .tool_lifecycle import (
     native_tool_call_facts_from_lifecycle_receipt,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
+    project_native_tool_call_facts_to_metadata,
 )
 
 __all__ = [
@@ -79,6 +80,7 @@ __all__ = [
     "normalize_native_tool_call_envelope_refs",
     "normalize_task_boundary_verdict",
     "normalize_tool_call_lifecycle_receipt",
+    "project_native_tool_call_facts_to_metadata",
     "read_run_ledger_projection",
     "read_run_ledger_projection_barrier",
     "read_run_provenance_bundle",

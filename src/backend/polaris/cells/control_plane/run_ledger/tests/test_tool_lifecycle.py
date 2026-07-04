@@ -7,6 +7,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     native_tool_call_facts_from_lifecycle_receipt,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
+    project_native_tool_call_facts_to_metadata,
 )
 
 
@@ -266,6 +267,38 @@ def test_native_tool_call_facts_from_lifecycle_receipt_uses_dropped_tool_names()
     assert facts == {
         "native_tool_calls_count": 3,
         "native_tool_call_names": ["write_file", "edit_file"],
+    }
+
+
+def test_project_native_tool_call_facts_to_metadata_overwrites_stale_projection() -> None:
+    metadata = {"native_tool_calls_count": 9, "native_tool_call_names": ["stale_tool"]}
+
+    project_native_tool_call_facts_to_metadata(
+        metadata,
+        {
+            "native_tool_calls_count": 2,
+            "native_tool_call_names": ["write_file", "", "execute_command"],
+        },
+    )
+
+    assert metadata == {
+        "native_tool_calls_count": 2,
+        "native_tool_call_names": ["write_file", "execute_command"],
+    }
+
+
+def test_project_native_tool_call_facts_to_metadata_can_preserve_names() -> None:
+    metadata = {"native_tool_calls_count": 9, "native_tool_call_names": ["stale_tool"]}
+
+    project_native_tool_call_facts_to_metadata(
+        metadata,
+        {"native_tool_calls_count": 0, "native_tool_call_names": []},
+        project_names=False,
+    )
+
+    assert metadata == {
+        "native_tool_calls_count": 0,
+        "native_tool_call_names": ["stale_tool"],
     }
 
 

@@ -495,6 +495,34 @@ def native_tool_call_facts_from_lifecycle_receipt(value: Any) -> dict[str, Any]:
     }
 
 
+def project_native_tool_call_facts_to_metadata(
+    metadata: dict[str, Any],
+    facts: Mapping[str, Any],
+    *,
+    project_names: bool = True,
+) -> None:
+    """Write canonical native tool-call facts to a metadata projection.
+
+    Boundary:
+        This helper owns only the legacy metadata projection shape. Callers own
+        where facts are derived from, and may suppress name projection when the
+        source evidence did not contain names.
+
+    Complexity:
+        O(n) time and memory for normalizing the optional tool-name list.
+    """
+
+    metadata["native_tool_calls_count"] = _int_value(facts.get("native_tool_calls_count"))
+    if not project_names:
+        return
+    names = facts.get("native_tool_call_names")
+    metadata["native_tool_call_names"] = [
+        name
+        for item in (names if isinstance(names, (list, tuple)) else [])
+        if (name := _clean_string(item))
+    ]
+
+
 def failure_evidence_from_lifecycle_receipt(value: Any) -> dict[str, Any]:
     """Project lifecycle failure evidence into the Run Ledger taxonomy.
 
