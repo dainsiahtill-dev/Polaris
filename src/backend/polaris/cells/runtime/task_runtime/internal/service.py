@@ -23,6 +23,8 @@ from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_root
 from .execution_session import (
     TaskExecutionSession,
     build_task_execution_bulk_suspend_result,
+    build_task_execution_claim_attempt,
+    build_task_execution_claim_next_result,
     build_task_execution_claim_result,
     build_task_execution_heartbeat_result,
     build_task_execution_transition_result,
@@ -451,13 +453,10 @@ class TaskRuntimeService:
         rows = self.list_task_rows(include_terminal=False)
         candidates = [row for row in rows if self._is_row_claimable(row)]
         if not candidates:
-            return {
-                "success": False,
-                "task": None,
-                "session": None,
-                "attempts": [],
-                "reason": "no_claimable_tasks",
-            }
+            return build_task_execution_claim_next_result(
+                success=False,
+                reason="no_claimable_tasks",
+            )
 
         def _candidate_key(row: dict[str, Any]) -> tuple[int, int, float, int]:
             resume_state = str(row.get("resume_state") or "").strip().lower()
@@ -489,21 +488,18 @@ class TaskRuntimeService:
                 metadata=metadata,
             )
 
-            attempt_info = {
-                "task_id": task_id,
-                "success": bool(claim_result.get("success")),
-                "reason": str(claim_result.get("reason") or "").strip(),
-            }
-            attempts.append(attempt_info)
+            attempts.append(build_task_execution_claim_attempt(task_id=task_id, claim_result=claim_result))
 
             if claim_result.get("success"):
-                return {
-                    "success": True,
-                    "task": claim_result.get("task"),
-                    "session": claim_result.get("session"),
-                    "attempts": attempts,
-                    "reason": "",
-                }
+                claim_task = claim_result.get("task")
+                claim_session = claim_result.get("session")
+                return build_task_execution_claim_next_result(
+                    success=True,
+                    reason="",
+                    task_row=claim_task if isinstance(claim_task, dict) else None,
+                    session=claim_session if isinstance(claim_session, dict) else None,
+                    attempts=attempts,
+                )
 
             # Continue to next candidate on lease_conflict, task_terminal, task_blocked
             reason = str(claim_result.get("reason") or "").strip()
@@ -513,13 +509,11 @@ class TaskRuntimeService:
             # For other failures (invalid_task_id, task_not_found), also continue
             continue
 
-        return {
-            "success": False,
-            "task": None,
-            "session": None,
-            "attempts": attempts,
-            "reason": "all_candidates_unavailable",
-        }
+        return build_task_execution_claim_next_result(
+            success=False,
+            reason="all_candidates_unavailable",
+            attempts=attempts,
+        )
 
     def claim_execution(
         self,

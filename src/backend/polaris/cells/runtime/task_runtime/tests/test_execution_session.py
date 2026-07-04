@@ -6,6 +6,8 @@ import pytest
 from polaris.cells.runtime.task_runtime.internal.execution_session import (
     TaskExecutionSession,
     build_task_execution_bulk_suspend_result,
+    build_task_execution_claim_attempt,
+    build_task_execution_claim_next_result,
     build_task_execution_claim_result,
     build_task_execution_heartbeat_result,
     build_task_execution_transition_result,
@@ -296,6 +298,53 @@ def test_build_task_execution_claim_result_projects_terminal_reject_shape() -> N
     assert result["reconciled_from_terminal_session"] is False
     assert result["reconcile_error"] == "terminal_row_conflict"
     assert "claim_applied" not in result
+
+
+def test_build_task_execution_claim_attempt_projects_candidate_result() -> None:
+    result = build_task_execution_claim_attempt(
+        task_id=7,
+        claim_result={"success": False, "reason": "lease_conflict", "session": {"session_id": "tx-1"}},
+    )
+
+    assert result == {
+        "task_id": 7,
+        "success": False,
+        "reason": "lease_conflict",
+    }
+
+
+def test_build_task_execution_claim_next_result_projects_empty_queue_shape() -> None:
+    result = build_task_execution_claim_next_result(
+        success=False,
+        reason="no_claimable_tasks",
+    )
+
+    assert result == {
+        "success": False,
+        "task": None,
+        "session": None,
+        "attempts": [],
+        "reason": "no_claimable_tasks",
+    }
+
+
+def test_build_task_execution_claim_next_result_projects_success_shape() -> None:
+    session = TaskExecutionSession.from_dict({**_valid_session_payload(), "run_id": "run-claim-next"})
+
+    result = build_task_execution_claim_next_result(
+        success=True,
+        reason="",
+        task_row={"id": 7, "status": "in_progress"},
+        session=session,
+        attempts=({"task_id": 7, "success": True, "reason": "claimed"},),
+    )
+
+    assert result["success"] is True
+    assert result["reason"] == ""
+    assert result["task"] == {"id": 7, "status": "in_progress"}
+    assert result["session"]["session_id"] == "tx-1"
+    assert result["session"]["run_id"] == "run-claim-next"
+    assert result["attempts"] == [{"task_id": 7, "success": True, "reason": "claimed"}]
 
 
 def test_build_task_execution_heartbeat_result_projects_success_shape() -> None:

@@ -312,6 +312,66 @@ def build_task_execution_claim_result(
     return result
 
 
+def build_task_execution_claim_attempt(
+    *,
+    task_id: Any,
+    claim_result: dict[str, Any],
+) -> dict[str, Any]:
+    """Project one candidate claim attempt into the claim-next shape.
+
+    Boundary:
+        Candidate enumeration decides which tasks are attempted. This helper
+        owns only the per-attempt result projection consumed by Director claim
+        fanout and tests.
+
+    Complexity:
+        O(1) time and memory.
+    """
+
+    return {
+        "task_id": task_id,
+        "success": bool(claim_result.get("success")),
+        "reason": str(claim_result.get("reason") or "").strip(),
+    }
+
+
+def build_task_execution_claim_next_result(
+    *,
+    success: bool,
+    reason: Any,
+    task_row: dict[str, Any] | None = None,
+    session: TaskExecutionSession | dict[str, Any] | None = None,
+    attempts: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+) -> dict[str, Any]:
+    """Project atomic claim-next aggregation into its stable result shape.
+
+    Boundary:
+        ``claim_next_execution`` owns candidate ordering and state changes.
+        This helper owns the aggregate response shape so dispatcher consumers
+        do not learn separate ad-hoc formats for empty queues, successful
+        claims, and exhausted candidate sets.
+
+    Complexity:
+        O(a + t + s) time and memory over attempts and optional payload sizes.
+    """
+
+    if isinstance(session, TaskExecutionSession):
+        session_payload: dict[str, Any] | None = session.to_dict()
+    elif session is not None:
+        session_payload = dict(session)
+    else:
+        session_payload = None
+
+    result: dict[str, Any] = {
+        "success": bool(success),
+        "task": dict(task_row) if task_row is not None else None,
+        "session": session_payload,
+        "attempts": [dict(attempt) for attempt in attempts],
+        "reason": str(reason or "").strip(),
+    }
+    return result
+
+
 def build_task_execution_heartbeat_result(
     *,
     success: bool,
@@ -717,6 +777,8 @@ class TaskExecutionSession:
 __all__ = [
     "TaskExecutionSession",
     "build_task_execution_bulk_suspend_result",
+    "build_task_execution_claim_attempt",
+    "build_task_execution_claim_next_result",
     "build_task_execution_claim_result",
     "build_task_execution_heartbeat_result",
     "build_task_execution_transition_result",
