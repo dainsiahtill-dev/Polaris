@@ -960,14 +960,9 @@ def _apply_run_ledger_director_status_overlay(
             }
         )
     elif latest_boundary_map and not bool(latest_boundary_map.get("ok", True)):
-        failure_class = normalize_qa_failure_class(
-            str(latest_boundary_map.get("failure_class") or QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS).strip()
-        )
-        execution_state = "BLOCKED_WITH_REASON"
-        if failure_class in QA_ARTIFACT_FAILURE_CLASSES:
-            execution_state = "FAILED_ARTIFACT"
-        elif failure_class in QA_PLATFORM_FAILURE_CLASSES:
-            execution_state = "FAILED_PLATFORM"
+        boundary_status = _task_boundary_status_projection(latest_boundary_map)
+        failure_class = str(boundary_status["failure_class"])
+        execution_state = str(boundary_status["execution_state"])
         merged.update(
             {
                 "source": "run_ledger_projection",
@@ -975,7 +970,7 @@ def _apply_run_ledger_director_status_overlay(
                 "running": False,
                 "execution_state": execution_state,
                 "error_code": failure_class.lower(),
-                "last_error": str(latest_boundary_map.get("reason") or failure_class),
+                "last_error": str(boundary_status["reason"]),
                 "blocked_reason": failure_class.lower(),
             }
         )
@@ -993,6 +988,24 @@ def _task_boundary_execution_state(failure_class: str) -> str:
     if normalized:
         return "BLOCKED_WITH_REASON"
     return "PENDING"
+
+
+def _task_boundary_status_projection(latest_boundary: dict[str, Any]) -> dict[str, Any]:
+    """Project one Run Ledger task-boundary verdict into runtime status fields."""
+
+    boundary_ok = bool(latest_boundary.get("ok", True))
+    failure_class = normalize_qa_failure_class(
+        str(latest_boundary.get("failure_class") or QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS).strip()
+    )
+    execution_state = "COMPLETED_VERIFIED" if boundary_ok else _task_boundary_execution_state(failure_class)
+    reason = str(latest_boundary.get("reason") or failure_class or execution_state).strip()
+    return {
+        "boundary_ok": boundary_ok,
+        "failure_class": failure_class,
+        "execution_state": execution_state,
+        "reason": reason,
+        "responsible_layer": str(latest_boundary.get("responsible_layer") or "").strip(),
+    }
 
 
 def _latest_task_boundary(run_ledger_projection: dict[str, Any] | None) -> dict[str, Any]:
@@ -1133,12 +1146,11 @@ def _task_boundary_row_from_latest(latest_boundary: dict[str, Any]) -> dict[str,
     boundary_task_id = str(latest_boundary.get("task_id") or latest_boundary.get("taskId") or "").strip()
     if not boundary_task_id:
         return {}
-    boundary_ok = bool(latest_boundary.get("ok", True))
-    failure_class = normalize_qa_failure_class(
-        str(latest_boundary.get("failure_class") or QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS).strip()
-    )
-    execution_state = "COMPLETED_VERIFIED" if boundary_ok else _task_boundary_execution_state(failure_class)
-    reason = str(latest_boundary.get("reason") or failure_class or execution_state).strip()
+    boundary_status = _task_boundary_status_projection(latest_boundary)
+    boundary_ok = bool(boundary_status["boundary_ok"])
+    failure_class = str(boundary_status["failure_class"])
+    execution_state = str(boundary_status["execution_state"])
+    reason = str(boundary_status["reason"])
     metadata = {
         "source": "run_ledger_projection",
         "status_source": "run_ledger_projection",
@@ -1152,7 +1164,7 @@ def _task_boundary_row_from_latest(latest_boundary: dict[str, Any]) -> dict[str,
         "execution_state": execution_state,
         "running": False,
         "failure_class": "" if boundary_ok else failure_class,
-        "responsible_layer": str(latest_boundary.get("responsible_layer") or "").strip(),
+        "responsible_layer": str(boundary_status["responsible_layer"]),
         "blocked_reason": "" if boundary_ok else failure_class.lower(),
         "error_message": "" if boundary_ok else reason,
         "run_ledger_projection": {"task_boundary": latest_boundary},
@@ -1182,12 +1194,11 @@ def _apply_run_ledger_task_rows_overlay(
     if not boundary_task_id and len(rows) != 1:
         return rows
 
-    boundary_ok = bool(latest_boundary.get("ok", True))
-    failure_class = normalize_qa_failure_class(
-        str(latest_boundary.get("failure_class") or QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS).strip()
-    )
-    execution_state = "COMPLETED_VERIFIED" if boundary_ok else _task_boundary_execution_state(failure_class)
-    reason = str(latest_boundary.get("reason") or failure_class or execution_state).strip()
+    boundary_status = _task_boundary_status_projection(latest_boundary)
+    boundary_ok = bool(boundary_status["boundary_ok"])
+    failure_class = str(boundary_status["failure_class"])
+    execution_state = str(boundary_status["execution_state"])
+    reason = str(boundary_status["reason"])
     overlay_metadata = {
         "status_source": "run_ledger_projection",
         "run_ledger_task_boundary": latest_boundary,
@@ -1214,7 +1225,7 @@ def _apply_run_ledger_task_rows_overlay(
                 "execution_state": execution_state,
                 "running": False,
                 "failure_class": "" if boundary_ok else failure_class,
-                "responsible_layer": str(latest_boundary.get("responsible_layer") or "").strip(),
+                "responsible_layer": str(boundary_status["responsible_layer"]),
                 "blocked_reason": "" if boundary_ok else failure_class.lower(),
                 "error_message": "" if boundary_ok else reason,
                 "run_ledger_projection": {"task_boundary": latest_boundary},
