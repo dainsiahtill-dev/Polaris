@@ -274,6 +274,12 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
             "reason": "tool_dispatch_dropped",
         }
     ]
+    assert dropped.metadata["failure_evidence"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert dropped.metadata["failure_evidence"][0]["responsible_layer"] == "execution_control_plane"
+    assert dropped.metadata["failure_evidence_summary"] == {
+        "count": 1,
+        "latest_failure_class": "TOOL_DISPATCH_DROPPED",
+    }
 
     dropped_from_metadata = runtime_service._to_contract_result(
         role="director",
@@ -309,6 +315,7 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
             "reason": "tool_dispatch_dropped",
         }
     ]
+    assert dropped_from_metadata.metadata["failure_evidence"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
 
     dropped_from_canonical_receipt = runtime_service._to_contract_result(
         role="director",
@@ -345,6 +352,7 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
             "reason": "tool_dispatch_dropped",
         }
     ]
+    assert dropped_from_canonical_receipt.metadata["failure_evidence"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
 
     dropped_from_envelope_metadata = runtime_service._to_contract_result(
         role="director",

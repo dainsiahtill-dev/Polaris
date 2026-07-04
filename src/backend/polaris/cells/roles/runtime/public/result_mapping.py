@@ -14,6 +14,7 @@ from typing import Any
 from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
     build_tool_call_lifecycle_receipt,
+    failure_evidence_from_lifecycle_receipt,
     is_failure_class,
     native_tool_call_facts_from_lifecycle_receipt,
     normalize_failure_class,
@@ -82,6 +83,22 @@ def _project_lifecycle_native_tool_facts(metadata: dict[str, Any], lifecycle: Ma
     names = facts.get("native_tool_call_names")
     if isinstance(names, list) and names:
         metadata["native_tool_call_names"] = names
+
+
+def _project_lifecycle_failure_evidence(metadata: dict[str, Any], lifecycle: Mapping[str, Any]) -> None:
+    if "failure_evidence" in metadata:
+        return
+    failure_evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
+    if not failure_evidence:
+        return
+    metadata["failure_evidence"] = [failure_evidence]
+    metadata.setdefault(
+        "failure_evidence_summary",
+        {
+            "count": 1,
+            "latest_failure_class": failure_evidence.get("failure_class"),
+        },
+    )
 
 
 def _extract_tool_calls(result: RoleTurnResult) -> tuple[str, ...]:
@@ -230,6 +247,7 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
         metadata["tool_call_lifecycle_receipt"] = lifecycle
         metadata["tool_call_lifecycle"] = lifecycle
         _project_lifecycle_native_tool_facts(metadata, lifecycle)
+        _project_lifecycle_failure_evidence(metadata, lifecycle)
     dropped_error = _tool_dispatch_dropped_error(result)
     if dropped_error:
         dropped_tool_calls = _extract_tool_calls(result)
@@ -253,6 +271,7 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
         metadata.setdefault("tool_call_lifecycle_receipt", dropped_lifecycle)
         metadata.setdefault("tool_call_lifecycle", metadata["tool_call_lifecycle_receipt"])
         _project_lifecycle_native_tool_facts(metadata, metadata["tool_call_lifecycle_receipt"])
+        _project_lifecycle_failure_evidence(metadata, metadata["tool_call_lifecycle_receipt"])
     return metadata
 
 
