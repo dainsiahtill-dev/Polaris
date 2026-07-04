@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import (
+    looks_like_failure_evidence_payload,
     merge_failure_evidence_payload,
     summarize_failed_gate_evidence_context_slot,
 )
@@ -1541,40 +1542,6 @@ def _context_slot_payload(value: Any, *, keys: tuple[str, ...]) -> dict[str, Any
     return dict(value)
 
 
-def _looks_like_failed_gate_evidence(value: Any) -> bool:
-    if not isinstance(value, dict):
-        return False
-    schema_version = str(value.get("schema_version") or "").strip().lower()
-    if (
-        "failed_gate" in schema_version
-        or "verification_failure" in schema_version
-        or "failure_evidence" in schema_version
-    ):
-        return True
-    if isinstance(value.get("items"), (list, tuple)) and value.get("items"):
-        return True
-    return any(
-        key in value
-        for key in (
-            "failure_class",
-            "responsible_layer",
-            "repairable_by_director",
-            "requires_ce_replan",
-            "requires_pm_revision",
-            "evidence_refs",
-            "exit_code",
-            "command",
-            "stderr",
-            "stdout",
-            "diagnostics",
-            "quality_errors",
-            "failed_required_modalities",
-            "failed_checks",
-            "verifier_results",
-        )
-    )
-
-
 def _looks_like_workspace_quality_evidence(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
@@ -1681,7 +1648,7 @@ def _failed_gate_evidence_payload(ai_request: Any | None) -> dict[str, Any]:
         found = _find_structured_evidence_context(
             payload,
             keys=_FAILED_GATE_EVIDENCE_CONTEXT_KEYS,
-            predicate=_looks_like_failed_gate_evidence,
+            predicate=looks_like_failure_evidence_payload,
         )
         if found:
             return summarize_failed_gate_evidence_context_slot(found)

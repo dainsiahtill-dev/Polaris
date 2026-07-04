@@ -143,6 +143,51 @@ def merge_failure_evidence_payload(
     return _merge_failure_evidence_rows_into_payload(payload, raw_evidence)
 
 
+def looks_like_failure_evidence_payload(value: Any) -> bool:
+    """Return whether *value* is structured failure evidence.
+
+    Boundary:
+        This predicate recognizes already-shaped failure evidence payloads and
+        rows for ContextOS/final-request evidence discovery. It deliberately
+        checks schema/field structure only; it does not parse diagnostic prose.
+
+    Complexity:
+        O(k) time over a fixed key set; O(1) memory.
+    """
+
+    if not isinstance(value, Mapping):
+        return False
+    schema_version = str(value.get("schema_version") or "").strip().lower()
+    if (
+        "failed_gate" in schema_version
+        or "verification_failure" in schema_version
+        or "failure_evidence" in schema_version
+    ):
+        return True
+    if isinstance(value.get("items"), (list, tuple)) and value.get("items"):
+        return True
+    return any(
+        key in value
+        for key in (
+            "failure_class",
+            "responsible_layer",
+            "repairable_by_director",
+            "requires_ce_replan",
+            "requires_pm_revision",
+            "evidence_refs",
+            "exit_code",
+            "command",
+            "stderr",
+            "stdout",
+            "diagnostics",
+            "quality_errors",
+            "failed_required_modalities",
+            "failed_checks",
+            "verifier_results",
+        )
+    )
+
+
 def _merge_failure_evidence_rows_into_payload(
     payload: dict[str, Any],
     raw_rows: Any,
@@ -296,6 +341,7 @@ __all__ = [
     "FailureEvidenceV1",
     "append_failure_evidence_to_metadata",
     "is_failure_class",
+    "looks_like_failure_evidence_payload",
     "merge_failure_evidence_payload",
     "merge_failure_evidence_rows",
     "normalize_failure_class",

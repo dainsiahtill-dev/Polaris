@@ -5,6 +5,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     FailureEvidenceV1,
     append_failure_evidence_to_metadata,
     is_failure_class,
+    looks_like_failure_evidence_payload,
     merge_failure_evidence_payload,
     merge_failure_evidence_rows,
     normalize_failure_class,
@@ -92,6 +93,27 @@ def test_merge_failure_evidence_payload_projects_structured_rows() -> None:
     ]
     assert payload["failure_classes"] == ("TOOL_RESULT_FAILED", "TOOL_DISPATCH_DROPPED")
     assert payload["evidence_refs"] == ("receipt:1", "provider_response:abc", "native_tool_call:def")
+
+
+def test_looks_like_failure_evidence_payload_uses_structure_not_prose() -> None:
+    assert looks_like_failure_evidence_payload(
+        {
+            "schema_version": "polaris.failed_gate_evidence.context_slot.v1",
+        }
+    )
+    assert looks_like_failure_evidence_payload(
+        {
+            "items": [
+                {
+                    "schema_version": "failure_evidence.v1",
+                    "failure_class": "TOOL_DISPATCH_DROPPED",
+                }
+            ]
+        }
+    )
+    assert looks_like_failure_evidence_payload({"failed_required_modalities": ["command"]})
+    assert not looks_like_failure_evidence_payload("failure_class: TOOL_DISPATCH_DROPPED")
+    assert not looks_like_failure_evidence_payload({"message": "failure_class: TOOL_DISPATCH_DROPPED"})
 
 
 def test_merge_failure_evidence_payload_overlays_mapping_projection() -> None:
