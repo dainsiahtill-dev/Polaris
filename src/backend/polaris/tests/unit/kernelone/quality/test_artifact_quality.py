@@ -86,6 +86,41 @@ def test_scan_detects_generated_structural_marker(tmp_path: Path) -> None:
     assert "structural build passed" in errors[0]
 
 
+def test_file_scanner_only_fallback_parses_residual_string_errors(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    target = tmp_path / "src" / "client" / "generated.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "export const note = 'structural build passed';\n",
+        encoding="utf-8",
+    )
+    parsed_string_errors: list[str] = []
+    original = artifact_quality_module._artifact_quality_issues_from_errors
+
+    def _capture_string_fallback(values: object) -> Any:
+        rows = tuple(values) if not isinstance(values, str) else (values,)
+        parsed_string_errors.extend(str(item) for item in rows if isinstance(item, str) and item)
+        return original(rows)
+
+    monkeypatch.setattr(
+        artifact_quality_module,
+        "_artifact_quality_issues_from_errors",
+        _capture_string_fallback,
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(
+        str(tmp_path),
+        relative_paths=["src/client/generated.ts"],
+    )
+
+    assert evidence.errors
+    assert "structural build passed" in evidence.errors[0]
+    assert parsed_string_errors == []
+    assert evidence.issues[0].code == "deterministic_scaffold_marker"
+
+
 def test_scan_detects_tool_receipt_contamination_without_echoing_receipt(tmp_path: Path) -> None:
     target = tmp_path / "tests" / "simulation.test.ts"
     target.parent.mkdir(parents=True, exist_ok=True)

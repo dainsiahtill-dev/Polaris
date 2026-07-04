@@ -775,12 +775,13 @@ def _artifact_quality_evidence(
         str((issue.metadata or {}).get("raw") or issue.message).strip()
         for issue in direct_issues
     }
-    string_projected_issues = tuple(
-        issue
-        for issue in _artifact_quality_issues_from_errors(deduped_errors)
-        if str((issue.metadata or {}).get("raw") or issue.message).strip()
+    residual_errors = tuple(
+        error
+        for error in deduped_errors
+        if str(error or "").strip()
         not in (*cross_artifact_error_messages, *direct_issue_messages)
     )
+    string_projected_issues = _artifact_quality_issues_from_errors(residual_errors)
     projected_cross_artifact_issues = tuple(
         _artifact_quality_issue_from_cross_artifact_issue(issue)
         for issue in deduped_cross_artifact_issues
@@ -1134,6 +1135,28 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
 
     errors: list[str] = []
     issues: list[ArtifactQualityIssue] = []
+
+    def append_file_issue(error: str, *, code: str, source: str = "file_artifact_scanner") -> None:
+        normalized_error = str(error or "").strip()
+        if not normalized_error:
+            return
+        message = normalized_error
+        if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
+            message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+        errors.append(normalized_error)
+        issues.append(
+            ArtifactQualityIssue(
+                code=code,
+                message=message,
+                path=relative_path,
+                source=source,
+                metadata={
+                    "raw": normalized_error,
+                    "artifact_path": relative_path,
+                },
+            )
+        )
+
     syntax = check_source_file_syntax(str(full_path))
     if syntax is not None and syntax.get("ok") is False:
         syntax_detail = str(syntax.get("error"))[:200]
@@ -1166,33 +1189,45 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
     issues.extend(html_module_script_evidence.issues)
     for marker in _DETERMINISTIC_SCAFFOLD_MARKERS:
         if marker in text:
-            errors.append(f"Artifact quality scan failed: deterministic scaffold marker {marker!r} in {relative_path}")
+            append_file_issue(
+                f"Artifact quality scan failed: deterministic scaffold marker {marker!r} in {relative_path}",
+                code="deterministic_scaffold_marker",
+            )
             break
     helper_count = len(_NUMERIC_HELPER_FILLER_RE.findall(text))
     if helper_count >= 5:
-        errors.append(
-            f"Artifact quality scan failed: repeated numeric helper filler in {relative_path} (count={helper_count})"
+        append_file_issue(
+            f"Artifact quality scan failed: repeated numeric helper filler in {relative_path} (count={helper_count})",
+            code="repeated_numeric_helper_filler",
         )
     if helper_count >= 3 and _GENERIC_STORE_RECORD_RE.search(text) and _GENERIC_STORE_MAP_RE.search(text):
-        errors.append(f"Artifact quality scan failed: generic payload/index store scaffold in {relative_path}")
+        append_file_issue(
+            f"Artifact quality scan failed: generic payload/index store scaffold in {relative_path}",
+            code="generic_payload_index_store_scaffold",
+        )
     if _PATCH_RESIDUE_RE.search(text):
-        errors.append(f"Artifact quality scan failed: patch residue marker in {relative_path}")
+        append_file_issue(
+            f"Artifact quality scan failed: patch residue marker in {relative_path}",
+            code="patch_residue_marker",
+        )
     if _is_test_like_artifact_path(relative_path):
         trivial_count = len(_TRIVIAL_ARITHMETIC_EXPECT_RE.findall(text))
         if trivial_count >= 3:
-            errors.append(
+            append_file_issue(
                 "Artifact quality scan failed: repeated trivial arithmetic placeholder "
-                f"tests in {relative_path} (count={trivial_count})"
+                f"tests in {relative_path} (count={trivial_count})",
+                code="repeated_trivial_arithmetic_tests",
             )
     direct_issue_messages = {
         str((issue.metadata or {}).get("raw") or issue.message).strip()
         for issue in issues
     }
-    string_projected_issues = tuple(
-        issue
-        for issue in _artifact_quality_issues_from_errors(errors)
-        if str((issue.metadata or {}).get("raw") or issue.message).strip() not in direct_issue_messages
+    residual_errors = tuple(
+        error
+        for error in errors
+        if str(error or "").strip() not in direct_issue_messages
     )
+    string_projected_issues = _artifact_quality_issues_from_errors(residual_errors)
     return _FileArtifactQualityEvidence(
         errors=tuple(errors),
         issues=(*issues, *string_projected_issues),
