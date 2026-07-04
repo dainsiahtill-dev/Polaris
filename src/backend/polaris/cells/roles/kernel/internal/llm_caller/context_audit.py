@@ -18,6 +18,8 @@ from polaris.kernelone.events.final_request_evidence import (
     build_final_request_tool_slots,
     final_request_evidence_ref_for_coverage_flag,
     final_request_evidence_ref_for_requirement,
+    looks_like_ce_blueprint_payload,
+    looks_like_pm_contract_payload,
     looks_like_workspace_quality_evidence_payload,
     missing_required_refs_from_evidence_coverage,
     missing_required_tools_from_evidence_coverage,
@@ -820,56 +822,6 @@ def _find_module_interface_contract(value: Any, *, depth: int = 0) -> dict[str, 
     return {}
 
 
-def _looks_like_ce_blueprint(value: Any) -> bool:
-    if not isinstance(value, dict):
-        return False
-    schema_version = str(value.get("schema_version") or "").strip().lower()
-    if "chief_engineer" in schema_version or "ce_blueprint" in schema_version or "blueprint" in schema_version:
-        return True
-    return any(
-        key in value
-        for key in (
-            "module_interface_contract",
-            "construction_plan",
-            "execution_checklist",
-            "architecture_decisions",
-            "generated_blueprints",
-        )
-    )
-
-
-def _looks_like_pm_contract(value: Any) -> bool:
-    if not isinstance(value, dict):
-        return False
-    schema_version = str(value.get("schema_version") or "").strip().lower()
-    has_contract_schema = (
-        "pm." in schema_version
-        or "pm_" in schema_version
-        or "task_contract" in schema_version
-        or "task.contract" in schema_version
-    )
-    has_task_identity = bool(str(value.get("task_id") or value.get("id") or "").strip())
-    has_scope_or_acceptance = any(
-        key in value
-        for key in (
-            "target_files",
-            "targets",
-            "target_paths",
-            "scope_paths",
-            "scope",
-            "steps",
-            "acceptance",
-            "acceptance_criteria",
-            "depends_on",
-            "dependencies",
-        )
-    )
-    has_goal_text = any(key in value for key in ("goal", "title", "description"))
-    if has_contract_schema:
-        return has_task_identity or has_scope_or_acceptance or has_goal_text
-    return has_task_identity and has_scope_or_acceptance
-
-
 def _pm_contract_payload(ai_request: Any | None) -> dict[str, Any]:
     if ai_request is None:
         return {}
@@ -885,7 +837,7 @@ def _pm_contract_payload(ai_request: Any | None) -> dict[str, Any]:
     ):
         for key in _PM_CONTRACT_CONTEXT_KEYS:
             candidate = container.get(key)
-            if isinstance(candidate, dict) and _looks_like_pm_contract(candidate):
+            if isinstance(candidate, dict) and looks_like_pm_contract_payload(candidate):
                 return dict(candidate)
     return {}
 
@@ -905,7 +857,7 @@ def _ce_blueprint_payload(ai_request: Any | None) -> dict[str, Any]:
     ):
         for key in _CE_BLUEPRINT_CONTEXT_KEYS:
             candidate = container.get(key)
-            if isinstance(candidate, dict) and _looks_like_ce_blueprint(candidate):
+            if isinstance(candidate, dict) and looks_like_ce_blueprint_payload(candidate):
                 return dict(candidate)
     return {}
 
