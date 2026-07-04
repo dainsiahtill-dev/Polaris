@@ -101,6 +101,9 @@ class TestQaFailureClassificationBuilder:
     def test_public_failure_class_enum_values_are_canonical(self) -> None:
         assert QaFailureClassV1.PASSED.value == "PASSED"
         assert QaFailureClassV1.IMPLEMENTATION_DEFECT.value == "IMPLEMENTATION_DEFECT"
+        assert QaFailureClassV1.IMPLEMENTATION_DEFECT_BOUNCE_LIMIT.value == "IMPLEMENTATION_DEFECT_BOUNCE_LIMIT"
+        assert QaFailureClassV1.DEFERRED_FOLLOWUP_REQUIRED.value == "DEFERRED_FOLLOWUP_REQUIRED"
+        assert QaFailureClassV1.BLUEPRINT_VERIFY_INVALID.value == "BLUEPRINT_VERIFY_INVALID"
         assert QaFailureClassV1.TEST_ENVIRONMENT_FAILURE.value == "TEST_ENVIRONMENT_FAILURE"
 
     def test_builds_canonical_classification(self) -> None:

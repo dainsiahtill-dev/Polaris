@@ -337,8 +337,11 @@ class QaFailureClassV1(str, Enum):
     TOOL_DISPATCH_DROPPED = "TOOL_DISPATCH_DROPPED"
     EXECUTION_EVIDENCE_MISSING = "EXECUTION_EVIDENCE_MISSING"
     IMPLEMENTATION_DEFECT = "IMPLEMENTATION_DEFECT"
+    IMPLEMENTATION_DEFECT_BOUNCE_LIMIT = "IMPLEMENTATION_DEFECT_BOUNCE_LIMIT"
     DEPENDENCY_NOT_UNLOCKED = "DEPENDENCY_NOT_UNLOCKED"
+    DEFERRED_FOLLOWUP_REQUIRED = "DEFERRED_FOLLOWUP_REQUIRED"
     BLUEPRINT_SCOPE_MISMATCH = "BLUEPRINT_SCOPE_MISMATCH"
+    BLUEPRINT_VERIFY_INVALID = "BLUEPRINT_VERIFY_INVALID"
     CONTRACT_AMBIGUOUS = "CONTRACT_AMBIGUOUS"
     TEST_ENVIRONMENT_FAILURE = "TEST_ENVIRONMENT_FAILURE"
     ACCEPTANCE_INVALID = "ACCEPTANCE_INVALID"
@@ -358,9 +361,12 @@ _QA_FAILURE_CLASS_ALIASES = {
     "tool_dispatch_dropped": QaFailureClassV1.TOOL_DISPATCH_DROPPED.value,
     "execution_evidence_missing": QaFailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
     "implementation_defect": QaFailureClassV1.IMPLEMENTATION_DEFECT.value,
+    "implementation_defect_bounce_limit": QaFailureClassV1.IMPLEMENTATION_DEFECT_BOUNCE_LIMIT.value,
     "dependency_not_unlocked": QaFailureClassV1.DEPENDENCY_NOT_UNLOCKED.value,
+    "deferred_followup_required": QaFailureClassV1.DEFERRED_FOLLOWUP_REQUIRED.value,
     "scope_mismatch": QaFailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
     "blueprint_scope_mismatch": QaFailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
+    "blueprint_verify_invalid": QaFailureClassV1.BLUEPRINT_VERIFY_INVALID.value,
     "contract_ambiguous": QaFailureClassV1.CONTRACT_AMBIGUOUS.value,
     "test_environment_failure": QaFailureClassV1.TEST_ENVIRONMENT_FAILURE.value,
     "acceptance_invalid": QaFailureClassV1.ACCEPTANCE_INVALID.value,
