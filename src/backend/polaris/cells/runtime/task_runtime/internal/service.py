@@ -28,6 +28,7 @@ from .execution_session import (
     build_task_execution_claim_result,
     build_task_execution_heartbeat_result,
     build_task_execution_transition_result,
+    build_task_runtime_execution_event_append_result,
     build_task_runtime_execution_event_payload,
     build_task_runtime_metadata,
     is_terminal_session_status,
@@ -617,7 +618,7 @@ class TaskRuntimeService:
                     ),
                 )
                 row = self._augment_task_row(updated.to_dict() if updated is not None else task.to_dict())
-                self._append_execution_event(
+                execution_event = self._append_execution_event(
                     "claim_renewed",
                     task_row=row,
                     session=existing_session,
@@ -630,6 +631,7 @@ class TaskRuntimeService:
                     session=existing_session,
                     resumed=existing_session.resume_count > 0,
                     claim_applied=True,
+                    execution_event=execution_event,
                 )
 
             resume_from_previous = bool(
@@ -673,7 +675,7 @@ class TaskRuntimeService:
             ),
         )
         row = self._augment_task_row(updated_task.to_dict() if updated_task is not None else task.to_dict())
-        self._append_execution_event(
+        execution_event = self._append_execution_event(
             "claimed",
             task_row=row,
             session=session,
@@ -686,6 +688,7 @@ class TaskRuntimeService:
             session=session,
             resumed=resume_from_previous,
             claim_applied=True,
+            execution_event=execution_event,
         )
 
     def heartbeat_execution(
@@ -1356,7 +1359,7 @@ class TaskRuntimeService:
         task_row: dict[str, Any],
         session: TaskExecutionSession | None,
         details: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> dict[str, Any]:
         payload = build_task_runtime_execution_event_payload(
             event_type=event_type,
             workspace=self.workspace,
@@ -1377,12 +1380,41 @@ class TaskRuntimeService:
                 correlation_id=str(payload.get("session_id") or "").strip() or None,
             )
             appended = append_fact_event(command)
-            payload["fact_event_id"] = appended.event_id
-            payload["fact_stream"] = appended.stream
-            payload["fact_storage_path"] = appended.storage_path
+        except (RuntimeError, ValueError) as exc:
+            logger.warning(
+                "Failed to append task runtime execution event %s: %s",
+                event_type_str,
+                exc,
+            )
+            return build_task_runtime_execution_event_append_result(
+                event_type=event_type_str,
+                append_error=str(exc),
+            )
+        payload["fact_event_id"] = appended.event_id
+        payload["fact_stream"] = appended.stream
+        payload["fact_storage_path"] = appended.storage_path
+        try:
             self._publish_factory_execution_event(payload)
         except (RuntimeError, ValueError) as exc:
-            logger.debug("Failed to append task runtime execution event: %s", exc)
+            logger.warning(
+                "Failed to publish task runtime execution event %s: %s",
+                event_type_str,
+                exc,
+            )
+            return build_task_runtime_execution_event_append_result(
+                event_type=event_type_str,
+                fact_event_id=appended.event_id,
+                fact_stream=appended.stream,
+                fact_storage_path=appended.storage_path,
+                publish_error=str(exc),
+            )
+        return build_task_runtime_execution_event_append_result(
+            event_type=event_type_str,
+            fact_event_id=appended.event_id,
+            fact_stream=appended.stream,
+            fact_storage_path=appended.storage_path,
+            published=True,
+        )
 
     def _publish_factory_execution_event(self, payload: dict[str, Any]) -> bool:
         factory_run_id = str(payload.get("factory_run_id") or "").strip()

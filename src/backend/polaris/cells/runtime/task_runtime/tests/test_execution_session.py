@@ -11,6 +11,7 @@ from polaris.cells.runtime.task_runtime.internal.execution_session import (
     build_task_execution_claim_result,
     build_task_execution_heartbeat_result,
     build_task_execution_transition_result,
+    build_task_runtime_execution_event_append_result,
     build_task_runtime_execution_event_payload,
     build_task_runtime_metadata,
     is_terminal_session_status,
@@ -257,6 +258,20 @@ def test_build_task_runtime_execution_event_payload_projects_runtime_state() -> 
     assert event_payload["factory_bench_project_id"] == "L1-01"
 
 
+def test_build_task_runtime_execution_event_append_result_projects_failure_evidence() -> None:
+    result = build_task_runtime_execution_event_append_result(
+        event_type="claimed",
+        append_error="fact stream unavailable",
+    )
+
+    assert result == {
+        "ok": False,
+        "event_type": "claimed",
+        "published": False,
+        "error": "fact stream unavailable",
+    }
+
+
 def test_build_task_execution_claim_result_projects_success_shape() -> None:
     session = TaskExecutionSession.from_dict({**_valid_session_payload(), "run_id": "run-1"})
 
@@ -267,6 +282,7 @@ def test_build_task_execution_claim_result_projects_success_shape() -> None:
         session=session,
         resumed=False,
         claim_applied=True,
+        execution_event={"ok": True, "event_type": "claimed", "fact_event_id": "evt-1"},
     )
 
     assert result["success"] is True
@@ -276,6 +292,11 @@ def test_build_task_execution_claim_result_projects_success_shape() -> None:
     assert result["session"]["run_id"] == "run-1"
     assert result["resumed"] is False
     assert result["claim_applied"] is True
+    assert result["execution_event"] == {
+        "ok": True,
+        "event_type": "claimed",
+        "fact_event_id": "evt-1",
+    }
     assert "reconcile_error" not in result
 
 

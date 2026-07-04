@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from polaris.cells.events.fact_stream.public.service import QueryFactEventsV1, query_fact_events
+from polaris.cells.runtime.task_runtime.internal import service as service_module
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService, reset_runtime_task_records
 from polaris.kernelone.storage import resolve_runtime_path
 
@@ -47,6 +48,39 @@ def test_task_runtime_service_manages_task_rows(tmp_path: Path) -> None:
     rows = service.list_task_rows()
     assert len(rows) == 1
     assert rows[0]["id"] == created.id
+
+
+def test_claim_execution_reports_execution_event_append_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create(subject="claim with append evidence")
+
+    def fail_append_event(_command: object) -> object:
+        raise RuntimeError("fact stream unavailable")
+
+    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+
+    claimed = service.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-append-failure",
+        selection_source="unit",
+    )
+
+    assert claimed["success"] is True
+    assert claimed["reason"] == "claimed"
+    assert claimed["execution_event"] == {
+        "ok": False,
+        "event_type": "claimed",
+        "published": False,
+        "error": "fact stream unavailable",
+    }
+    assert claimed["task"]["status"] == "in_progress"
 
 
 def test_task_runtime_service_wakes_ready_waiters_on_create(tmp_path: Path) -> None:

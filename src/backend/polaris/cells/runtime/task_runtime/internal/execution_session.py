@@ -242,6 +242,49 @@ def build_task_runtime_execution_event_payload(
     return payload
 
 
+def build_task_runtime_execution_event_append_result(
+    *,
+    event_type: Any,
+    fact_event_id: Any = "",
+    fact_stream: Any = "",
+    fact_storage_path: Any = "",
+    published: bool = False,
+    append_error: Any = "",
+    publish_error: Any = "",
+) -> dict[str, Any]:
+    """Project fact-stream append evidence for a task-runtime execution event.
+
+    Boundary:
+        The task runtime service owns state transitions and persistence. This
+        helper owns the stable append-evidence shape so ledger failures do not
+        disappear behind debug logs or grow ad-hoc result fields per caller.
+    """
+
+    clean_event_type = str(event_type or "unknown").strip() or "unknown"
+    clean_fact_event_id = str(fact_event_id or "").strip()
+    clean_fact_stream = str(fact_stream or "").strip()
+    clean_storage_path = str(fact_storage_path or "").strip()
+    clean_append_error = str(append_error or "").strip()
+    clean_publish_error = str(publish_error or "").strip()
+
+    result: dict[str, Any] = {
+        "ok": bool(clean_fact_event_id) and not clean_append_error,
+        "event_type": clean_event_type,
+        "published": bool(published),
+    }
+    if clean_fact_event_id:
+        result["fact_event_id"] = clean_fact_event_id
+    if clean_fact_stream:
+        result["fact_stream"] = clean_fact_stream
+    if clean_storage_path:
+        result["fact_storage_path"] = clean_storage_path
+    if clean_append_error:
+        result["error"] = sanitize_summary(clean_append_error, max_chars=300)
+    if clean_publish_error:
+        result["publish_error"] = sanitize_summary(clean_publish_error, max_chars=300)
+    return result
+
+
 def _build_task_execution_result(
     *,
     success: bool,
@@ -280,6 +323,7 @@ def build_task_execution_claim_result(
     claim_applied: bool | None = None,
     reconciled_from_terminal_session: bool | None = None,
     reconcile_error: str = "",
+    execution_event: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Project a claim attempt into the stable TaskRuntime claim-result shape.
 
@@ -309,6 +353,8 @@ def build_task_execution_claim_result(
     clean_reconcile_error = str(reconcile_error or "").strip()
     if clean_reconcile_error:
         result["reconcile_error"] = clean_reconcile_error
+    if execution_event is not None:
+        result["execution_event"] = dict(execution_event)
     return result
 
 
