@@ -797,6 +797,34 @@ def test_normalizer_preserves_flat_typescript_symbol_coherence_fields() -> None:
     assert diagnostic.metadata["imported_symbol"] == "WeatherReport"
 
 
+def test_normalizer_preserves_flat_npm_script_artifact_fields() -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            {
+                "source": "npm_script_entrypoint_scanner",
+                "code": "npm_script_missing_local_entrypoint",
+                "message": "start script references a missing entrypoint",
+                "path": "package.json",
+                "manifest_path": "package.json",
+                "script_name": "start",
+                "script_issue": "missing_local_entrypoint",
+                "entrypoint": "src/index.js",
+                "config_path": "tsconfig.json",
+                "target_directory": "tests",
+            }
+        ]
+    )
+
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    assert diagnostic.metadata["manifest_path"] == "package.json"
+    assert diagnostic.metadata["script_name"] == "start"
+    assert diagnostic.metadata["script_issue"] == "missing_local_entrypoint"
+    assert diagnostic.metadata["entrypoint"] == "src/index.js"
+    assert diagnostic.metadata["config_path"] == "tsconfig.json"
+    assert diagnostic.metadata["target_directory"] == "tests"
+
+
 def test_cross_artifact_unresolved_symbol_routes_to_python_rule_for_python_paths() -> None:
     diagnostics = normalize_artifact_quality_errors(
         [
