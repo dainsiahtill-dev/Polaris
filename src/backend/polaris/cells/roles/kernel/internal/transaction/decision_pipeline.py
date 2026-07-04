@@ -27,13 +27,15 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, cast
 
-from polaris.cells.control_plane.run_ledger.public import build_tool_dispatch_dropped_anomaly_projection
+from polaris.cells.control_plane.run_ledger.public import (
+    build_tool_dispatch_dropped_anomaly_projection,
+    project_native_tool_call_facts_to_metadata,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_call_count,
     native_tool_call_envelopes_from_response,
     native_tool_call_facts_from_response,
     native_tool_calls_from_response,
-    project_native_tool_call_facts_to_metadata,
     provider_response_hash,
 )
 from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
@@ -222,6 +224,15 @@ async def run_decision_pipeline(
         turn_id,
         decision_kind_str,
     )
+    decision_completed_metadata = {
+        "decode_failure_count": len(decision_metadata.get("decode_failures") or []),
+        "provider_response_hash": decision_metadata.get("provider_response_hash", ""),
+    }
+    project_native_tool_call_facts_to_metadata(
+        decision_completed_metadata,
+        native_tool_call_facts,
+        project_names=False,
+    )
     emit_event(
         TurnPhaseEvent.create(
             turn_id,
@@ -231,9 +242,7 @@ async def run_decision_pipeline(
                 "finalize_mode": decision.get("finalize_mode").value
                 if hasattr(decision.get("finalize_mode"), "value")
                 else str(decision.get("finalize_mode")),
-                "native_tool_calls_count": native_tool_call_count,
-                "decode_failure_count": len(decision_metadata.get("decode_failures") or []),
-                "provider_response_hash": decision_metadata.get("provider_response_hash", ""),
+                **decision_completed_metadata,
             },
         )
     )
