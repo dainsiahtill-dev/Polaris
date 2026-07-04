@@ -715,6 +715,13 @@ def test_final_request_evidence_reports_missing_module_interface_contract() -> N
                 "target_files": ["src/models/Fairy.ts"],
                 "construction_plan": {"phase": "quality_repair"},
             },
+            "failed_gate_evidence": {
+                "schema_version": "polaris.failed_gate_evidence.v1",
+                "source": "run_ledger.verifier",
+                "command": "npm run test",
+                "exit_code": 1,
+                "diagnostics": [{"code": "E_ASSERT", "path": "tests/product.test.js"}],
+            },
         },
     )
     prepared = PreparedLLMRequest(
@@ -842,6 +849,13 @@ def test_final_request_evidence_aliases_verification_failure_and_architecture_pl
                 "blueprint_id": "ce_TASK-1",
                 "target_files": ["src/models/Fairy.ts"],
                 "construction_plan": {"phase": "quality_repair"},
+            },
+            "failed_gate_evidence": {
+                "schema_version": "polaris.failed_gate_evidence.v1",
+                "source": "run_ledger.verifier",
+                "command": "npm run test",
+                "exit_code": 1,
+                "diagnostics": [{"code": "E_ASSERT", "path": "tests/product.test.js"}],
             },
         },
     )

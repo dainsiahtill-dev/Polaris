@@ -393,22 +393,7 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
         "has_actual_sibling_exports": bool(actual_sibling_exports),
         "has_architecture_or_file_plan": bool(architecture_or_file_plan),
         "has_target_files": bool(target_scope),
-        "has_failure_feedback": bool(failed_gate_evidence)
-        or any(
-            needle in lowered
-            for needle in (
-                "exit_code",
-                "stderr",
-                "stdout",
-                "failed",
-                "error",
-                "retry",
-                "step verify failed",
-                "quality errors:",
-                "artifact quality",
-                "工具执行返回失败",
-            )
-        ),
+        "has_failure_feedback": bool(failed_gate_evidence),
         "has_workspace_quality_evidence": bool(workspace_quality_evidence)
         or any(
             needle in lowered

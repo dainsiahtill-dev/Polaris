@@ -86,6 +86,35 @@ def _minimal_director_evidence_context() -> dict[str, object]:
         "target_files": target_files,
         "scope_paths": target_files,
         "file_plan": [{"path": "src/index.ts", "purpose": "application entrypoint"}],
+        "module_interface_contract": {
+            "schema_version": "chief_engineer.module_interface_contract.v1",
+            "modules": [
+                {
+                    "path": "src/index.ts",
+                    "planned_public_symbols": [{"name": "createEntrypoint"}],
+                    "actual_public_symbols": [{"name": "createEntrypoint"}],
+                    "consumes_symbols": [],
+                }
+            ],
+        },
+        "actual_sibling_exports": {
+            "schema_version": "actual_sibling_exports.v1",
+            "exports": [{"path": "src/index.ts", "name": "createEntrypoint"}],
+        },
+        "failed_gate_evidence": {
+            "schema_version": "polaris.failed_gate_evidence.v1",
+            "source": "run_ledger.verifier",
+            "command": "npm run build",
+            "exit_code": 1,
+            "diagnostics": [{"code": "TS1005", "path": "src/index.ts"}],
+        },
+        "workspace_quality_evidence": {
+            "schema_version": "polaris.workspace_quality_evidence.v1",
+            "source": "factory_workspace_quality",
+            "all_checks_passed": False,
+            "quality_errors": [{"code": "typescript_syntax"}],
+            "failed_required_modalities": ["command"],
+        },
     }
 
 
@@ -128,6 +157,15 @@ def test_final_request_context_audit_counts_tools_and_coverage() -> None:
     ai_request = Mock()
     ai_request.context = {
         "chat_messages": messages,
+        "target_files": ["src/index.ts"],
+        "scope_paths": ["src/index.ts"],
+        "failed_gate_evidence": {
+            "schema_version": "polaris.failed_gate_evidence.v1",
+            "source": "run_ledger.verifier",
+            "command": "npm test",
+            "exit_code": 1,
+            "diagnostics": [{"code": "E_ASSERT", "path": "tests/verify.test.ts"}],
+        },
         "resident_agi_audit_context": {
             "schema_version": "resident.agi_audit_context.v1",
             "enabled": True,
@@ -168,6 +206,39 @@ def test_final_request_context_audit_counts_tools_and_coverage() -> None:
     assert audit["context_quality"]["context_needs_review"] is True
 
 
+def test_final_request_context_audit_requires_structured_failure_feedback() -> None:
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    messages = [
+        {
+            "role": "user",
+            "content": "stderr exit_code failed retry error quality errors: artifact quality",
+        },
+    ]
+    ai_request = Mock()
+    ai_request.context = {
+        "chat_messages": messages,
+        "target_files": ["src/index.ts"],
+        "scope_paths": ["src/index.ts"],
+    }
+    ai_request.options = {"tools": []}
+    ai_request.input = ""
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={"tools": []},
+        ai_request=ai_request,
+        native_tool_schemas=[],
+    )
+
+    audit = build_final_request_context_audit(prepared=prepared, profile=profile)
+
+    assert audit["coverage"]["has_failure_feedback"] is False
+    assert "has_failure_feedback" in audit["context_quality"]["missing_coverage"]
+
+
 def test_final_request_context_audit_does_not_count_degraded_blueprint_fallback() -> None:
     profile = Mock()
     profile.max_context_tokens = 32768
@@ -189,7 +260,17 @@ def test_final_request_context_audit_does_not_count_degraded_blueprint_fallback(
         },
     ]
     ai_request = Mock()
-    ai_request.context = {"chat_messages": messages}
+    ai_request.context = {
+        "chat_messages": messages,
+        "target_files": ["src/engine/SimulationEngine.ts"],
+        "scope_paths": ["src/engine/SimulationEngine.ts"],
+        "workspace_quality_evidence": {
+            "schema_version": "polaris.workspace_quality_evidence.v1",
+            "source": "factory_workspace_quality",
+            "all_checks_passed": False,
+            "quality_errors": [{"code": "build_failed"}],
+        },
+    }
     ai_request.options = {}
     ai_request.input = ""
     prepared = PreparedLLMRequest(
@@ -709,7 +790,17 @@ def test_final_request_context_audit_skips_resident_agi_coverage_when_disabled()
         },
     ]
     ai_request = Mock()
-    ai_request.context = {"chat_messages": messages}
+    ai_request.context = {
+        "chat_messages": messages,
+        "target_files": ["src/engine/SimulationEngine.ts"],
+        "scope_paths": ["src/engine/SimulationEngine.ts"],
+        "workspace_quality_evidence": {
+            "schema_version": "polaris.workspace_quality_evidence.v1",
+            "source": "factory_workspace_quality",
+            "all_checks_passed": False,
+            "quality_errors": [{"code": "build_failed"}],
+        },
+    }
     ai_request.options = {"tools": []}
     ai_request.input = ""
     prepared = PreparedLLMRequest(
@@ -869,7 +960,17 @@ def test_final_request_context_audit_recognizes_director_contract_and_blueprint_
         }
     ]
     ai_request = Mock()
-    ai_request.context = {"chat_messages": messages}
+    ai_request.context = {
+        "chat_messages": messages,
+        "target_files": ["src/engine/SimulationEngine.ts"],
+        "scope_paths": ["src/engine/SimulationEngine.ts"],
+        "workspace_quality_evidence": {
+            "schema_version": "polaris.workspace_quality_evidence.v1",
+            "source": "factory_workspace_quality",
+            "all_checks_passed": False,
+            "quality_errors": [{"code": "build_failed"}],
+        },
+    }
     ai_request.options = {}
     ai_request.input = ""
     prepared = PreparedLLMRequest(
