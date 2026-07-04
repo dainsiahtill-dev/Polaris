@@ -500,6 +500,10 @@ _ARTIFACT_QUALITY_NPM_MISSING_ENTRYPOINT_RE = re.compile(
     r"references missing local entrypoint ['\"](?P<entrypoint>[^'\"]+)['\"]",
     re.IGNORECASE,
 )
+_ARTIFACT_QUALITY_NPM_PYTHON_COMMAND_RE = re.compile(
+    r"npm package manifest contains Python command in script ['\"](?P<script>[^'\"]+)['\"]",
+    re.IGNORECASE,
+)
 
 
 def _artifact_quality_issue_code(message: str) -> str:
@@ -605,6 +609,11 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
             entrypoint_match = _ARTIFACT_QUALITY_NPM_MISSING_ENTRYPOINT_RE.search(detail)
             if entrypoint_match:
                 metadata["entrypoint"] = str(entrypoint_match.group("entrypoint") or "").strip()
+        else:
+            python_command_match = _ARTIFACT_QUALITY_NPM_PYTHON_COMMAND_RE.search(message)
+            if python_command_match:
+                metadata["script_name"] = str(python_command_match.group("script") or "").strip()
+                metadata["script_issue"] = "python_command"
     elif code == "unresolved_import_symbol":
         match = _ARTIFACT_QUALITY_UNRESOLVED_IMPORT_SYMBOL_RE.search(message)
         if match:

@@ -820,6 +820,53 @@ def test_npm_script_contract_repairs_python_commands_with_structured_json() -> N
     assert "python" not in composition.patches[0].content_after.lower()
 
 
+def test_npm_script_contract_repairs_python_commands_from_typed_metadata() -> None:
+    package_text = json.dumps(
+        {
+            "name": "sample",
+            "version": "1.0.0",
+            "type": "module",
+            "scripts": {
+                "test": "node --test tests/product.test.js",
+                "test:py": "python -m unittest discover -s tests",
+                "test:all": "node --test tests/product.test.js && python -m unittest discover -s tests",
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    diagnostics = (
+        RepairDiagnostic(
+            source="artifact_quality",
+            code="npm_manifest_invalid",
+            message="npm manifest script contract violation",
+            path="package.json",
+            metadata={
+                "manifest_path": "package.json",
+                "script_name": "test:py",
+                "script_issue": "python_command",
+            },
+        ),
+    )
+    base_files = {
+        "package.json": package_text,
+        "tests/product.test.js": "import test from 'node:test';\ntest('ok', () => {});\n",
+    }
+
+    plan = build_npm_script_contract_plan(
+        base_files=base_files,
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert [(operation.kind, operation.path, operation.json_path) for operation in plan.operations] == [
+        ("json_set", "package.json", ("scripts", "test:all")),
+        ("json_set", "package.json", ("scripts", "test:py")),
+    ]
+    assert {operation.value for operation in plan.operations} == {"node --test tests/product.test.js"}
+
+
 def test_npm_script_contract_declines_plain_javascript_placeholder_without_source() -> None:
     package_text = json.dumps(
         {

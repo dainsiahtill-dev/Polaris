@@ -202,7 +202,15 @@ def build_npm_script_contract_plan(
         if replacement:
             updates[("scripts", script_name)] = replacement
 
-    for script_name in _python_command_scripts(raw_errors, scripts):
+    python_command_script_names = _script_names_for_manifest_issue(
+        matched_diagnostics,
+        "python_command",
+    )
+    for script_name in _python_command_scripts(
+        raw_errors,
+        scripts,
+        known_script_names=python_command_script_names,
+    ):
         replacement = _fallback_script_for_python_command_script(
             script_name,
             normalized_base,
@@ -1248,8 +1256,15 @@ def _placeholder_scripts(errors: Sequence[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(scripts))
 
 
-def _python_command_scripts(errors: Sequence[str], scripts: Mapping[str, Any]) -> tuple[str, ...]:
-    script_names: list[str] = []
+def _python_command_scripts(
+    errors: Sequence[str],
+    scripts: Mapping[str, Any],
+    *,
+    known_script_names: Sequence[str] = (),
+) -> tuple[str, ...]:
+    script_names: list[str] = [
+        str(script_name or "").strip() for script_name in known_script_names if str(script_name or "").strip()
+    ]
     for error in errors:
         for match in _PYTHON_COMMAND_NPM_SCRIPT_RE.finditer(str(error or "")):
             script_name = str(match.group(1) or "").strip()

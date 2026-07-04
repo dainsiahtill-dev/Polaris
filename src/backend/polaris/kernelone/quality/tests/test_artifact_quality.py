@@ -187,6 +187,18 @@ def test_artifact_quality_issue_projection_preserves_typed_issue_payload() -> No
     assert issues == (issue,)
 
 
+def test_artifact_quality_issue_projection_extracts_python_command_npm_script_metadata() -> None:
+    error = "Artifact quality scan failed: npm package manifest contains Python command in script 'test:py' in package.json"
+
+    issues = artifact_quality_issues_from_errors((error,))
+
+    assert issues[0]["code"] == "npm_manifest_invalid"
+    assert issues[0]["path"] == "package.json"
+    assert issues[0]["metadata"]["manifest_path"] == "package.json"
+    assert issues[0]["metadata"]["script_name"] == "test:py"
+    assert issues[0]["metadata"]["script_issue"] == "python_command"
+
+
 def test_artifact_quality_issues_for_errors_matches_typed_and_residual_rows() -> None:
     typed_raw = "src/main.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'."
     residual_raw = "src/other.ts(2,3): error TS2304: Cannot find name 'Weather'."
