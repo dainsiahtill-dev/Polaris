@@ -17,6 +17,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     native_tool_call_count_from_metadata as run_ledger_native_tool_call_count_from_metadata,
     native_tool_call_envelope_refs_from_metadata,
     native_tool_call_facts_from_metadata,
+    native_tool_call_facts_from_raw_calls,
     project_native_tool_call_facts_to_metadata,
 )
 from polaris.kernelone.llm.budget_policy import (
@@ -153,16 +154,14 @@ class NativeToolCallEnvelopeV1:
 
 
 def native_tool_call_name(call: Mapping[str, Any]) -> str:
-    function = call.get("function")
-    if isinstance(function, Mapping):
-        name = function.get("name")
-        if name:
-            return str(name).strip()
-    for key in ("name", "tool_name", "toolName", "function_name", "functionName"):
-        name = call.get(key)
-        if name:
-            return str(name).strip()
-    return ""
+    facts = native_tool_call_facts_from_raw_calls([call])
+    raw_names = facts.get("native_tool_call_names")
+    names = [
+        name
+        for item in (raw_names if isinstance(raw_names, (list, tuple)) else ())
+        if (name := str(item or "").strip())
+    ]
+    return names[0] if names else ""
 
 
 _native_tool_call_name = native_tool_call_name
@@ -315,7 +314,8 @@ def native_tool_call_count(
         facts = native_tool_call_facts_from_metadata(metadata)
         if facts:
             return _int_from_fact(facts.get("native_tool_calls_count"))
-    return sum(1 for item in native_tool_calls if isinstance(item, Mapping))
+    raw_facts = native_tool_call_facts_from_raw_calls(native_tool_calls)
+    return _int_from_fact(raw_facts.get("native_tool_calls_count"))
 
 
 def native_tool_call_count_from_metadata(metadata: Mapping[str, Any] | None, *, fallback: int = 0) -> int:
@@ -339,10 +339,12 @@ def native_tool_call_names(
                 for item in (raw_names if isinstance(raw_names, (list, tuple)) else ())
                 if (name := str(item or "").strip())
             ]
+    raw_facts = native_tool_call_facts_from_raw_calls(native_tool_calls)
+    raw_names = raw_facts.get("native_tool_call_names")
     return [
         name
-        for item in native_tool_calls
-        if isinstance(item, Mapping) and (name := native_tool_call_name(item))
+        for item in (raw_names if isinstance(raw_names, (list, tuple)) else ())
+        if (name := str(item or "").strip())
     ]
 
 
@@ -352,9 +354,30 @@ def native_tool_call_facts(
 ) -> dict[str, Any]:
     """Project canonical native tool-call count/name facts from one evidence path."""
 
+    if isinstance(metadata, Mapping):
+        facts = native_tool_call_facts_from_metadata(metadata)
+        if facts:
+            return {
+                "native_tool_calls_count": _int_from_fact(facts.get("native_tool_calls_count")),
+                "native_tool_call_names": [
+                    name
+                    for item in (
+                        facts.get("native_tool_call_names")
+                        if isinstance(facts.get("native_tool_call_names"), (list, tuple))
+                        else ()
+                    )
+                    if (name := str(item or "").strip())
+                ],
+            }
+    raw_facts = native_tool_call_facts_from_raw_calls(native_tool_calls)
+    raw_names = raw_facts.get("native_tool_call_names")
     return {
-        "native_tool_calls_count": native_tool_call_count(metadata, native_tool_calls),
-        "native_tool_call_names": native_tool_call_names(metadata, native_tool_calls),
+        "native_tool_calls_count": _int_from_fact(raw_facts.get("native_tool_calls_count")),
+        "native_tool_call_names": [
+            name
+            for item in (raw_names if isinstance(raw_names, (list, tuple)) else ())
+            if (name := str(item or "").strip())
+        ],
     }
 
 

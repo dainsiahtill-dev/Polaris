@@ -14,6 +14,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     native_tool_call_envelope_refs_from_metadata,
     native_tool_call_facts_from_lifecycle_receipt,
     native_tool_call_facts_from_metadata,
+    native_tool_call_facts_from_raw_calls,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
     project_completion_dispatch_evidence_to_metadata,
@@ -685,6 +686,23 @@ def test_native_tool_call_facts_from_lifecycle_receipt_uses_dropped_tool_names()
     assert facts == {
         "native_tool_calls_count": 3,
         "native_tool_call_names": ["write_file", "edit_file"],
+    }
+
+
+def test_native_tool_call_facts_from_raw_calls_owns_provider_aliases() -> None:
+    facts = native_tool_call_facts_from_raw_calls(
+        [
+            {"function": {"name": "write_file", "arguments": {"file": "src/index.js"}}},
+            {"toolName": "execute_command"},
+            {"function_name": "repo_tree"},
+            {"tool_name": ""},
+            "not-a-call",
+        ]
+    )
+
+    assert facts == {
+        "native_tool_calls_count": 4,
+        "native_tool_call_names": ["write_file", "execute_command", "repo_tree"],
     }
 
 

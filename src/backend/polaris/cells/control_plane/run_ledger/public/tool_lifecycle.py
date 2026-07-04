@@ -756,6 +756,47 @@ def native_tool_call_facts_from_metadata(metadata: Mapping[str, Any] | None) -> 
     }
 
 
+def _raw_native_tool_call_name(call: Mapping[str, Any]) -> str:
+    function = call.get("function")
+    if isinstance(function, Mapping):
+        name = _clean_string(function.get("name"))
+        if name:
+            return name
+    for key in ("name", "tool_name", "toolName", "function_name", "functionName"):
+        name = _clean_string(call.get(key))
+        if name:
+            return name
+    return ""
+
+
+def native_tool_call_facts_from_raw_calls(native_tool_calls: Sequence[Any]) -> dict[str, Any]:
+    """Derive native tool-call facts from provider-native raw call payloads.
+
+    Boundary:
+        Run Ledger owns count/name alias handling for provider-native call
+        facts. Role kernels may still extract response-shaped raw call rows,
+        but should not maintain a second alias table for count/name facts.
+
+    Complexity:
+        O(n) time where ``n`` is raw call count; O(n) additional memory for the
+        returned name list.
+    """
+
+    names: list[str] = []
+    count = 0
+    for item in native_tool_calls:
+        if not isinstance(item, Mapping):
+            continue
+        count += 1
+        name = _raw_native_tool_call_name(item)
+        if name:
+            names.append(name)
+    return {
+        "native_tool_calls_count": count,
+        "native_tool_call_names": names,
+    }
+
+
 def native_tool_call_count_from_metadata(metadata: Mapping[str, Any] | None, *, fallback: int = 0) -> int:
     """Derive native tool-call count from lifecycle-aware metadata.
 
