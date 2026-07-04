@@ -70,8 +70,8 @@ Typed issues are evidence, not repair authorization. Repair still flows through
   CommonJS runtime syntax, with `source="package_module_type_scanner"`. The
   legacy `_scan_package_module_type_mismatch()` string wrapper has been
   removed.
-- Workspace artifact evidence no longer calls the legacy `_scan_python_imports()`
-  file scanner. Python cross-file symbol drift remains owned by the typed
+- The legacy `_scan_python_imports()` file scanner has been removed. Python
+  cross-file symbol drift is owned only by the typed
   `cross_artifact_consistency` scanner and its repair-plan projection, avoiding
   a second Python import fact source for the same unresolved symbol.
 - `_scan_typescript_project_typecheck_evidence()` now owns direct typed issues
