@@ -19,6 +19,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
     append_run_ledger_event,
     build_tool_call_lifecycle_receipt,
+    build_tool_call_lifecycle_run_ledger_event,
     failure_evidence_from_lifecycle_receipt,
     native_tool_call_count_from_metadata,
     native_tool_call_envelope_refs_from_metadata,
@@ -832,15 +833,9 @@ def _append_tool_batch_receipts_to_run_ledger(
     )
     resolved_lifecycle_run_id = str(run_id or lifecycle.run_id or turn_id or "").strip()
     if resolved_lifecycle_run_id:
-        lifecycle_event = {
-            "event_type": "tool_call_lifecycle",
-            "stage": "tool_batch",
-            "task_id": task_id,
-            "run_id": resolved_lifecycle_run_id,
-            "tool_call_lifecycle_receipt": lifecycle.to_dict(),
-        }
+        job_token = None
         if token:
-            lifecycle_event["job_token"] = _job_token_from_capability_token(
+            job_token = _job_token_from_capability_token(
                 token,
                 run_id=resolved_lifecycle_run_id,
                 stage=stage,
@@ -849,7 +844,16 @@ def _append_tool_batch_receipts_to_run_ledger(
             AppendRunLedgerEventCommandV1(
                 workspace=workspace,
                 run_id=resolved_lifecycle_run_id,
-                event=lifecycle_event,
+                event=build_tool_call_lifecycle_run_ledger_event(
+                    run_id=resolved_lifecycle_run_id,
+                    task_id=task_id,
+                    turn_id=turn_id,
+                    role=role_id,
+                    lifecycle_receipt=lifecycle.to_dict(),
+                    stage="tool_batch",
+                    project_id=task_id,
+                    job_token=job_token,
+                ),
             )
         )
     if not merged_receipt:

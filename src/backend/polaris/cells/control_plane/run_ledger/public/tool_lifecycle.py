@@ -479,6 +479,7 @@ def build_tool_call_lifecycle_run_ledger_event(
     project_id: str = "",
     capability_audit: Mapping[str, Any] | None = None,
     gate_policy: Mapping[str, Any] | None = None,
+    job_token: Mapping[str, Any] | None = None,
     ok: bool | None = None,
 ) -> dict[str, Any]:
     """Return the canonical Run Ledger event for a lifecycle receipt.
@@ -505,19 +506,40 @@ def build_tool_call_lifecycle_run_ledger_event(
     receipt = normalize_tool_call_lifecycle_receipt(receipt_seed)
     normalized_run_id = _clean_string(run_id or receipt.get("run_id") or turn_id)
     normalized_task_id = _clean_string(task_id or receipt.get("task_id"))
+    if isinstance(job_token, Mapping):
+        token_payload = dict(job_token)
+        token_payload["run_id"] = _clean_string(token_payload.get("run_id")) or normalized_run_id
+        token_payload["task_id"] = _clean_string(token_payload.get("task_id")) or normalized_task_id
+        token_payload["project_id"] = (
+            _clean_string(token_payload.get("project_id"))
+            or _clean_string(project_id)
+            or normalized_task_id
+            or "unknown"
+        )
+        token_payload["stage"] = _clean_string(token_payload.get("stage")) or _clean_string(stage) or "director_tool_dispatch"
+        if not isinstance(token_payload.get("capability_audit"), Mapping):
+            token_payload["capability_audit"] = (
+                dict(capability_audit) if isinstance(capability_audit, Mapping) else {"ok": True, "issues": []}
+            )
+        if not isinstance(token_payload.get("gate_policy"), Mapping):
+            token_payload["gate_policy"] = dict(gate_policy) if isinstance(gate_policy, Mapping) else {}
+    else:
+        token_payload = {
+            "run_id": normalized_run_id,
+            "task_id": normalized_task_id,
+            "project_id": _clean_string(project_id) or normalized_task_id or "unknown",
+            "capability_audit": dict(capability_audit)
+            if isinstance(capability_audit, Mapping)
+            else {"ok": True, "issues": []},
+            "gate_policy": dict(gate_policy) if isinstance(gate_policy, Mapping) else {},
+        }
     return {
         "event_type": "tool_call_lifecycle",
         "stage": _clean_string(stage) or "director_tool_dispatch",
         "task_id": normalized_task_id,
         "run_id": normalized_run_id,
         "tool_call_lifecycle_receipt": receipt,
-        "job_token": {
-            "run_id": normalized_run_id,
-            "task_id": normalized_task_id,
-            "project_id": _clean_string(project_id) or normalized_task_id or "unknown",
-            "capability_audit": dict(capability_audit) if isinstance(capability_audit, Mapping) else {"ok": True, "issues": []},
-            "gate_policy": dict(gate_policy) if isinstance(gate_policy, Mapping) else {},
-        },
+        "job_token": token_payload,
     }
 
 

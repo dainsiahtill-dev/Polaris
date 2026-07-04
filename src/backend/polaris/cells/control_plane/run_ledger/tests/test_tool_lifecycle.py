@@ -612,6 +612,41 @@ def test_build_tool_call_lifecycle_run_ledger_event_normalizes_receipt_and_job_t
     assert receipt["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
 
 
+def test_build_tool_call_lifecycle_run_ledger_event_preserves_supplied_job_token() -> None:
+    event = build_tool_call_lifecycle_run_ledger_event(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        lifecycle_receipt={"schema_version": "tool_call_lifecycle_receipt.v1", "ok": True},
+        stage="tool_batch",
+        job_token={
+            "schema_version": 1,
+            "source": "control_plane.job_token",
+            "token_id": "token-1",
+            "run_id": "",
+            "task_id": "",
+            "project_id": "",
+            "stage": "",
+            "contract_hash": "contract-hash",
+            "blueprint_hash": "blueprint-hash",
+            "execution_envelope_hash": "envelope-hash",
+            "capability_audit": {"ok": True, "issues": []},
+            "gate_policy": {"enabled_evidence_modalities": ["tool_receipt"]},
+        },
+    )
+
+    assert event["stage"] == "tool_batch"
+    assert event["job_token"]["token_id"] == "token-1"
+    assert event["job_token"]["run_id"] == "run-1"
+    assert event["job_token"]["task_id"] == "TASK-1"
+    assert event["job_token"]["project_id"] == "TASK-1"
+    assert event["job_token"]["stage"] == "tool_batch"
+    assert event["job_token"]["contract_hash"] == "contract-hash"
+    assert event["job_token"]["blueprint_hash"] == "blueprint-hash"
+    assert event["job_token"]["execution_envelope_hash"] == "envelope-hash"
+
+
 def test_native_tool_call_facts_from_lifecycle_receipt_prefers_envelope_names() -> None:
     facts = native_tool_call_facts_from_lifecycle_receipt(
         {
