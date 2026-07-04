@@ -30,6 +30,9 @@ from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     tool_results_from_batch_receipt,
 )
 from polaris.cells.roles.kernel.internal.kernel.task_boundary import append_role_turn_task_boundary_verdict
+from polaris.cells.roles.kernel.internal.kernel.tool_dispatch_projection import (
+    append_tool_call_lifecycle_control_plane_event,
+)
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest, RoleTurnResult
 from polaris.kernelone.tools import is_write_tool_name, normalize_tool_name
 
@@ -298,28 +301,12 @@ def _append_tool_call_lifecycle_event(
     """Commit completion-path tool lifecycle evidence to the Run Ledger."""
 
     try:
-        from polaris.cells.control_plane.run_ledger.public import (
-            AppendRunLedgerEventCommandV1,
-            append_run_ledger_event,
-            build_tool_call_lifecycle_run_ledger_event,
-        )
-
-        run_id = str(request.run_id or turn_id)
-        task_id = str(request.task_id or "")
-        append_run_ledger_event(
-            AppendRunLedgerEventCommandV1(
-                workspace=str(request.workspace or kernel.workspace or "."),
-                run_id=run_id,
-                event=build_tool_call_lifecycle_run_ledger_event(
-                    run_id=run_id,
-                    task_id=task_id,
-                    turn_id=turn_id,
-                    role=str(role or ""),
-                    lifecycle_receipt=lifecycle_receipt,
-                    stage="director_tool_dispatch",
-                    ok=False,
-                ),
-            )
+        append_tool_call_lifecycle_control_plane_event(
+            role=role,
+            request=request,
+            workspace=str(request.workspace or kernel.workspace or "."),
+            turn_id=turn_id,
+            lifecycle_receipt=lifecycle_receipt,
         )
     except (OSError, RuntimeError, TypeError, ValueError):
         logger.debug("failed to append completion tool-call lifecycle event", exc_info=True)

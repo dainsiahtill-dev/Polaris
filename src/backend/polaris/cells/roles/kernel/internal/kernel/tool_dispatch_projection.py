@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
@@ -134,4 +135,41 @@ def append_tool_dispatch_dropped_control_plane_events(
         tool_results=[],
         tool_dispatch=task_boundary_tool_dispatch_from_lifecycle_receipt(lifecycle_payload),
         evidence_refs=[str(error_metadata.get("context_snapshot_ref") or "").strip()],
+    )
+
+
+def append_tool_call_lifecycle_control_plane_event(
+    *,
+    role: str,
+    request: RoleTurnRequest,
+    workspace: str,
+    turn_id: str,
+    lifecycle_receipt: Mapping[str, Any],
+    stage: str = "director_tool_dispatch",
+    ok: bool = False,
+) -> None:
+    """Commit a tool lifecycle receipt to the Run Ledger."""
+
+    from polaris.cells.control_plane.run_ledger.public import (
+        AppendRunLedgerEventCommandV1,
+        append_run_ledger_event,
+        build_tool_call_lifecycle_run_ledger_event,
+    )
+
+    run_id = str(request.run_id or turn_id)
+    task_id = str(request.task_id or "")
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=workspace,
+            run_id=run_id,
+            event=build_tool_call_lifecycle_run_ledger_event(
+                run_id=run_id,
+                task_id=task_id,
+                turn_id=turn_id,
+                role=str(role or ""),
+                lifecycle_receipt=lifecycle_receipt,
+                stage=stage,
+                ok=ok,
+            ),
+        )
     )

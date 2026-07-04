@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from polaris.cells.roles.kernel.internal.kernel.tool_dispatch_projection import (
+    append_tool_call_lifecycle_control_plane_event,
     append_tool_dispatch_dropped_control_plane_events,
     llm_metadata_from_ledger_on_error,
     tool_schema_names_for_error_audit,
@@ -124,6 +125,46 @@ def test_append_tool_dispatch_dropped_events_preserves_native_envelopes(
     assert captured["task_boundary"]["tool_dispatch"]["dispatched_tool_calls_count"] == 0
     assert captured["task_boundary"]["tool_dispatch"]["native_tool_call_names"] == ["read_file", "write_file"]
     assert captured["task_boundary"]["tool_dispatch"]["provider_response_hash"] == "hash-1"
+
+
+def test_append_tool_call_lifecycle_control_plane_event_uses_public_event_shape(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_append_run_ledger_event(command: Any) -> None:
+        captured["workspace"] = command.workspace
+        captured["run_id"] = command.run_id
+        captured["event"] = command.event
+
+    monkeypatch.setattr(
+        "polaris.cells.control_plane.run_ledger.public.append_run_ledger_event",
+        fake_append_run_ledger_event,
+    )
+
+    lifecycle_receipt = {
+        "schema_version": "tool_call_lifecycle_receipt.v1",
+        "dispatch_status": "dropped",
+        "failure_class": "TOOL_DISPATCH_DROPPED",
+        "native_tool_calls_count": 1,
+        "decoded_tool_calls_count": 1,
+        "dispatched_tool_calls_count": 0,
+    }
+    append_tool_call_lifecycle_control_plane_event(
+        role="director",
+        request=SimpleNamespace(run_id="run-1", task_id="TASK-1"),
+        workspace=str(tmp_path),
+        turn_id="turn-1",
+        lifecycle_receipt=lifecycle_receipt,
+    )
+
+    assert captured["workspace"] == str(tmp_path)
+    assert captured["run_id"] == "run-1"
+    assert captured["event"]["event_type"] == "tool_call_lifecycle"
+    assert captured["event"]["stage"] == "director_tool_dispatch"
+    assert captured["event"]["tool_call_lifecycle_receipt"]["ok"] is False
+    assert captured["event"]["tool_call_lifecycle_receipt"]["failure_class"] == "TOOL_DISPATCH_DROPPED"
 
 
 def test_append_tool_dispatch_dropped_events_accepts_lifecycle_envelope_refs(
