@@ -409,6 +409,35 @@ def test_python_unresolved_import_symbol_allows_real_similar_alias_only() -> Non
     assert "class Registry" not in str(plan.operations[0].replacement)
 
 
+def test_python_unresolved_import_symbol_uses_typed_metadata_without_raw_message() -> None:
+    diagnostics = (
+        RepairDiagnostic(
+            source="artifact_quality",
+            code="unresolved_import_symbol",
+            message="typed unresolved import symbol",
+            path="shared/__init__.py",
+            raw="typed metadata only",
+            metadata={
+                "symbol": "Registry",
+                "module": "shared.registry",
+                "importer_path": "shared/__init__.py",
+            },
+        ),
+    )
+
+    plan = build_python_unresolved_import_symbol_plan(
+        base_files={
+            "shared/__init__.py": "from shared.registry import Registry\n",
+            "shared/registry.py": "class ServiceRegistry:\n    pass\n",
+        },
+        diagnostics=diagnostics,
+    )
+
+    assert plan is not None
+    assert plan.operations[0].path == "shared/registry.py"
+    assert "Registry = ServiceRegistry" in str(plan.operations[0].replacement)
+
+
 def test_python_unresolved_import_symbol_runtime_appends_alias_and_receipt(tmp_path: Path) -> None:
     (tmp_path / "shared").mkdir(parents=True)
     (tmp_path / "shared" / "__init__.py").write_text(

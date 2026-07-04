@@ -646,13 +646,18 @@ __all__ = _polaris_existing_all
 
 
 def _python_unresolved_import_symbol_targets(diagnostic: RepairDiagnostic) -> tuple[dict[str, str], ...]:
-    raw = str(diagnostic.raw or diagnostic.message or "")
-    match = _UNRESOLVED_IMPORT_SYMBOL_RE.search(raw)
-    if not match:
-        return ()
-    symbol = str(match.group("symbol") or "").strip()
-    module = str(match.group("module") or "").strip()
-    importer = _normalize_repair_path(str(match.group("path") or ""))
+    metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
+    symbol = str(metadata.get("symbol") or "").strip()
+    module = str(metadata.get("module") or "").strip()
+    importer = _normalize_repair_path(str(metadata.get("importer_path") or ""))
+    if not symbol or not module or not importer:
+        raw = str(diagnostic.raw or diagnostic.message or "")
+        match = _UNRESOLVED_IMPORT_SYMBOL_RE.search(raw)
+        if not match:
+            return ()
+        symbol = str(match.group("symbol") or "").strip()
+        module = str(match.group("module") or "").strip()
+        importer = _normalize_repair_path(str(match.group("path") or ""))
     if not _PYTHON_IDENTIFIER_RE.match(symbol) or not module or not importer.endswith(".py"):
         return ()
     return (
