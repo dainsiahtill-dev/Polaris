@@ -397,6 +397,61 @@ def build_tool_call_lifecycle_receipt(
     )
 
 
+def build_tool_batch_lifecycle_receipt(
+    *,
+    run_id: str,
+    task_id: str,
+    turn_id: str,
+    role: str,
+    provider_response_hash: str = "",
+    native_tool_calls_count: int = 0,
+    decoded_tool_calls_count: int = 0,
+    receipts: list[dict[str, Any]] | None = None,
+    dropped_tool_calls: list[Any] | tuple[Any, ...] | None = None,
+    native_tool_call_envelopes: list[Any] | tuple[Any, ...] | None = None,
+    missing_receipt_reason: str = "decoded_tool_batch_produced_no_authoritative_batch_receipt",
+) -> ToolCallLifecycleReceiptV1:
+    """Build the lifecycle receipt for a decoded transaction tool batch.
+
+    Boundary:
+        Transaction callers provide facts: decoded count, native envelopes, and
+        batch receipts. Run Ledger owns the dispatch classification so callers
+        do not hand-write dropped/blocked status or failure-class projection.
+
+    Complexity:
+        O(r + e + d) over batch receipt rows, native envelopes, and supplied
+        dropped-call refs.
+    """
+
+    receipt_rows = [dict(item) for item in receipts or [] if isinstance(item, dict)]
+    result_count = len(_result_items(receipt_rows))
+    decoded_count = _int_value(decoded_tool_calls_count)
+    dropped_refs = _dropped_tool_call_refs(dropped_tool_calls)
+    native_envelope_refs = _native_tool_call_envelope_refs(native_tool_call_envelopes)
+    native_count = len(native_envelope_refs) if native_envelope_refs else _int_value(native_tool_calls_count)
+    if decoded_count > 0 and result_count <= 0 and not dropped_refs and native_count <= 0:
+        dropped_refs.append(
+            {
+                "count": decoded_count,
+                "reason": "decoded_tool_batch_without_authoritative_receipt",
+            }
+        )
+
+    return build_tool_call_lifecycle_receipt(
+        run_id=run_id,
+        task_id=task_id,
+        turn_id=turn_id,
+        role=role,
+        provider_response_hash=provider_response_hash,
+        native_tool_calls_count=native_tool_calls_count,
+        decoded_tool_calls_count=decoded_count,
+        receipts=receipt_rows,
+        dropped_tool_calls=dropped_refs,
+        native_tool_call_envelopes=native_envelope_refs,
+        reason=missing_receipt_reason if decoded_count > 0 and result_count <= 0 else "",
+    )
+
+
 def _batch_has_dispatch_evidence(batch_receipt: Any) -> bool:
     if not isinstance(batch_receipt, Mapping):
         return False

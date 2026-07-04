@@ -19,7 +19,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
     FailureClassV1,
     append_run_ledger_event,
-    build_tool_call_lifecycle_receipt,
+    build_tool_batch_lifecycle_receipt,
     build_tool_call_lifecycle_run_ledger_event,
     failure_evidence_from_lifecycle_receipt,
     native_tool_call_count_from_metadata,
@@ -802,7 +802,6 @@ def _append_tool_batch_receipts_to_run_ledger(
 ) -> None:
     decoded_count = len(invocations or [])
     merged_receipt = _merge_batch_receipts(receipts)
-    has_authoritative_receipt = bool(merged_receipt and _batch_result_count(receipts) > 0)
     effect_receipts = _effect_receipts_from_batch_receipts(receipts) if merged_receipt else []
     token = next(
         (
@@ -818,7 +817,7 @@ def _append_tool_batch_receipts_to_run_ledger(
     if envelope_hash and token and not token.get("execution_envelope_hash"):
         token["execution_envelope_hash"] = envelope_hash
     stage = str(token.get("stage") or "tool_batch").strip() or "tool_batch"
-    lifecycle = build_tool_call_lifecycle_receipt(
+    lifecycle = build_tool_batch_lifecycle_receipt(
         run_id=str(run_id or turn_id or ""),
         task_id=task_id,
         turn_id=turn_id,
@@ -827,9 +826,7 @@ def _append_tool_batch_receipts_to_run_ledger(
         native_tool_calls_count=native_tool_calls_count,
         decoded_tool_calls_count=decoded_count,
         receipts=receipts,
-        dispatch_status="" if has_authoritative_receipt else "dropped",
-        failure_class="" if has_authoritative_receipt else FailureClassV1.TOOL_DISPATCH_DROPPED.value,
-        reason="" if has_authoritative_receipt else "Decoded tool batch produced no authoritative batch receipt",
+        missing_receipt_reason="decoded_tool_batch_produced_no_authoritative_batch_receipt",
         native_tool_call_envelopes=native_tool_call_envelopes,
     )
     resolved_lifecycle_run_id = str(run_id or lifecycle.run_id or turn_id or "").strip()
@@ -1849,19 +1846,16 @@ class ToolBatchExecutor:
                 for invocation in invocations
             ]
             native_tool_call_envelopes = native_tool_call_envelope_refs_from_metadata(metadata)
-            lifecycle = build_tool_call_lifecycle_receipt(
+            lifecycle = build_tool_batch_lifecycle_receipt(
                 run_id=str(metadata.get("run_id") or ""),
                 task_id=str(metadata.get("task_id") or ""),
                 turn_id=turn_id,
                 role=str(getattr(self.config, "role_id", "") or ""),
                 provider_response_hash=str(metadata.get("provider_response_hash") or ""),
                 decoded_tool_calls_count=len(invocations),
-                dispatched_tool_calls_count=0,
                 dropped_tool_calls=decoded_tool_calls,
                 native_tool_call_envelopes=native_tool_call_envelopes,
-                dispatch_status="dropped",
-                failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
-                reason="decoded_tool_batch_produced_no_authoritative_batch_receipt",
+                missing_receipt_reason="decoded_tool_batch_produced_no_authoritative_batch_receipt",
             ).to_dict()
             failure_evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
             anomaly = {

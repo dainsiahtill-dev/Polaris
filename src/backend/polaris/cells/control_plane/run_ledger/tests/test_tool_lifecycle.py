@@ -3,6 +3,7 @@ from __future__ import annotations
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_missing_dispatch_lifecycle_receipt,
+    build_tool_batch_lifecycle_receipt,
     build_tool_call_lifecycle_receipt,
     build_tool_call_lifecycle_run_ledger_event,
     build_tool_dispatch_dropped_anomaly_projection,
@@ -152,6 +153,59 @@ def test_tool_lifecycle_receipt_detects_missing_batch_receipt() -> None:
     assert receipt["ok"] is False
     assert receipt["dispatch_status"] == "blocked"
     assert receipt["failure_class"] == "MISSING_BATCH_RECEIPT"
+
+
+def test_tool_batch_lifecycle_receipt_classifies_decoded_batch_without_receipt() -> None:
+    receipt = build_tool_batch_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        provider_response_hash="provider-response-hash",
+        decoded_tool_calls_count=2,
+        receipts=[],
+    ).to_dict()
+
+    assert receipt["ok"] is False
+    assert receipt["dispatch_status"] == "dropped"
+    assert receipt["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert receipt["native_tool_calls_count"] == 2
+    assert receipt["decoded_tool_calls_count"] == 2
+    assert receipt["dropped_tool_calls"] == [
+        {
+            "count": 2,
+            "reason": "decoded_tool_batch_without_authoritative_receipt",
+        }
+    ]
+    assert receipt["reason"] == "decoded_tool_batch_produced_no_authoritative_batch_receipt"
+
+
+def test_tool_batch_lifecycle_receipt_keeps_authoritative_receipt_dispatched() -> None:
+    receipt = build_tool_batch_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        decoded_tool_calls_count=1,
+        receipts=[
+            {
+                "batch_id": "batch-1",
+                "results": [
+                    {
+                        "call_id": "call-1",
+                        "tool_name": "read_file",
+                        "status": "success",
+                        "result": {"ok": True},
+                    }
+                ],
+            }
+        ],
+    ).to_dict()
+
+    assert receipt["ok"] is True
+    assert receipt["dispatch_status"] == "dispatched"
+    assert receipt["failure_class"] == ""
+    assert receipt["reason"] == ""
 
 
 def test_build_dropped_lifecycle_from_anomaly_flags_preserves_legacy_envelopes() -> None:
