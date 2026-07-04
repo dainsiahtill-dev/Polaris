@@ -197,6 +197,23 @@ def test_artifact_quality_issue_projection_extracts_python_command_npm_script_me
     assert issues[0]["metadata"]["manifest_path"] == "package.json"
     assert issues[0]["metadata"]["script_name"] == "test:py"
     assert issues[0]["metadata"]["script_issue"] == "python_command"
+    assert issues[0]["metadata"]["script_issue_source"] == "legacy_error_text"
+
+
+def test_artifact_quality_issue_projection_marks_legacy_npm_script_issue_source() -> None:
+    error = (
+        "Artifact quality scan failed: npm package manifest script 'test' "
+        "uses shell command substitution in package.json"
+    )
+
+    issues = artifact_quality_issues_from_errors((error,))
+
+    assert issues[0]["code"] == "npm_manifest_invalid"
+    assert issues[0]["path"] == "package.json"
+    assert issues[0]["metadata"]["manifest_path"] == "package.json"
+    assert issues[0]["metadata"]["script_name"] == "test"
+    assert issues[0]["metadata"]["script_issue"] == "shell_command_substitution"
+    assert issues[0]["metadata"]["script_issue_source"] == "legacy_error_text"
 
 
 def test_artifact_quality_issues_for_errors_matches_typed_and_residual_rows() -> None:
@@ -341,6 +358,7 @@ def test_artifact_quality_issue_projection_extracts_npm_script_metadata() -> Non
         "manifest_path": "package.json",
         "script_name": "test",
         "script_issue": "placeholder_command",
+        "script_issue_source": "legacy_error_text",
     }
 
 
@@ -359,6 +377,7 @@ def test_artifact_quality_issue_projection_extracts_npm_missing_entrypoint_metad
         "manifest_path": "package.json",
         "script_name": "start",
         "script_issue": "missing_local_entrypoint",
+        "script_issue_source": "legacy_error_text",
         "entrypoint": "src/index.js",
     }
 
@@ -375,6 +394,7 @@ def test_artifact_quality_issue_projection_extracts_node_test_runner_contract_me
         "manifest_path": "package.json",
         "script_name": "test",
         "script_issue": "node_test_runner_contract",
+        "script_issue_source": "legacy_error_text",
     }
 
 
@@ -390,6 +410,7 @@ def test_artifact_quality_issue_projection_extracts_manifest_only_test_script_me
         "manifest_path": "package.json",
         "script_name": "test",
         "script_issue": "manifest_only_test_script",
+        "script_issue_source": "legacy_error_text",
     }
 
 
@@ -408,6 +429,7 @@ def test_artifact_quality_issue_projection_extracts_fixed_port_conflict_metadata
         "manifest_path": "package.json",
         "script_name": "serve",
         "script_issue": "fixed_port_conflict",
+        "script_issue_source": "legacy_error_text",
     }
 
 

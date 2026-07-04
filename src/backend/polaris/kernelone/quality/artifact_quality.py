@@ -624,6 +624,7 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
             detail = str(script_match.group("detail") or "").strip()
             metadata["script_name"] = str(script_match.group("script") or "").strip()
             metadata["script_issue"] = _npm_manifest_script_issue(detail)
+            metadata["script_issue_source"] = "legacy_error_text"
             entrypoint_match = _ARTIFACT_QUALITY_NPM_MISSING_ENTRYPOINT_RE.search(detail)
             if entrypoint_match:
                 metadata["entrypoint"] = str(entrypoint_match.group("entrypoint") or "").strip()
@@ -632,9 +633,11 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
             if python_command_match:
                 metadata["script_name"] = str(python_command_match.group("script") or "").strip()
                 metadata["script_issue"] = "python_command"
+                metadata["script_issue_source"] = "legacy_error_text"
             elif "test script must use node --test" in message.lower():
                 metadata["script_name"] = "test"
                 metadata["script_issue"] = "node_test_runner_contract"
+                metadata["script_issue_source"] = "legacy_error_text"
             else:
                 normalized_message = message.lower()
                 script_name = ""
@@ -648,15 +651,19 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
                 if script_name and port_conflict:
                     metadata["script_name"] = script_name
                     metadata["script_issue"] = "fixed_port_conflict"
+                    metadata["script_issue_source"] = "legacy_error_text"
                 elif "npm default failing test script" in normalized_message:
                     metadata["script_name"] = "test"
                     metadata["script_issue"] = "default_failing_test_script"
+                    metadata["script_issue_source"] = "legacy_error_text"
                 elif "npm placeholder test script" in normalized_message:
                     metadata["script_name"] = "test"
                     metadata["script_issue"] = "placeholder_test_script"
+                    metadata["script_issue_source"] = "legacy_error_text"
                 elif "npm manifest-only test script" in normalized_message:
                     metadata["script_name"] = "test"
                     metadata["script_issue"] = "manifest_only_test_script"
+                    metadata["script_issue_source"] = "legacy_error_text"
     elif code == "unresolved_import_symbol":
         match = _ARTIFACT_QUALITY_UNRESOLVED_IMPORT_SYMBOL_RE.search(message)
         if match:
