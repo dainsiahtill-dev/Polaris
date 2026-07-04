@@ -716,6 +716,43 @@ def test_task_runtime_service_materializes_legacy_task_and_claims_it(tmp_path: P
     assert str(claim["session"]["session_id"])
 
 
+def test_ensure_task_row_reports_materialized_event_append_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    append_count = 0
+    original_append_event = service_module.append_fact_event
+
+    def fail_materialized_append(command: object) -> object:
+        nonlocal append_count
+        append_count += 1
+        event_type = str(getattr(command, "event_type", "") or "")
+        if event_type == "materialized":
+            raise RuntimeError("fact stream unavailable")
+        return original_append_event(command)
+
+    monkeypatch.setattr(service_module, "append_fact_event", fail_materialized_append)
+
+    row = service.ensure_task_row(
+        external_task_id="task-0-director",
+        subject="实现账单导出接口",
+        description="生成导出模块并补充测试",
+        metadata={"scope": "src/billing, tests/"},
+    )
+
+    assert append_count >= 2
+    assert row["status"] == "pending"
+    assert row["execution_event"] == {
+        "ok": False,
+        "event_type": "materialized",
+        "published": False,
+        "error": "fact stream unavailable",
+    }
+
+
 def test_task_runtime_external_task_id_does_not_collide_with_numeric_row(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

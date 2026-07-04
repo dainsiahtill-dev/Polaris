@@ -16,6 +16,7 @@ from polaris.cells.runtime.task_runtime.internal.execution_session import (
     build_task_runtime_metadata,
     is_terminal_session_status,
     is_terminal_task_row_status,
+    project_task_row_execution_event,
     project_task_row_runtime_state,
     task_row_status_counts,
     terminal_session_timestamp,
@@ -270,6 +271,25 @@ def test_build_task_runtime_execution_event_append_result_projects_failure_evide
         "published": False,
         "error": "fact stream unavailable",
     }
+
+
+def test_project_task_row_execution_event_adds_append_evidence_without_mutating_source() -> None:
+    row = {"id": 7, "status": "pending"}
+    result = project_task_row_execution_event(
+        row,
+        {"ok": False, "event_type": "materialized", "error": "append failed"},
+    )
+
+    assert result == {
+        "id": 7,
+        "status": "pending",
+        "execution_event": {
+            "ok": False,
+            "event_type": "materialized",
+            "error": "append failed",
+        },
+    }
+    assert "execution_event" not in row
 
 
 def test_build_task_execution_claim_result_projects_success_shape() -> None:

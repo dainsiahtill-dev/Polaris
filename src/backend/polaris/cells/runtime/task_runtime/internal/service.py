@@ -34,6 +34,7 @@ from .execution_session import (
     is_terminal_session_status,
     is_terminal_task_row_status,
     normalize_positive_int,
+    project_task_row_execution_event,
     project_task_row_runtime_state,
     sanitize_summary,
     task_row_status_counts,
@@ -252,13 +253,13 @@ class TaskRuntimeService:
             metadata=created_metadata,
         )
         row = self._augment_task_row(task.to_dict())
-        self._append_execution_event(
+        execution_event = self._append_execution_event(
             "materialized",
             task_row=row,
             session=None,
             details={"external_task_id": external_id},
         )
-        return row
+        return project_task_row_execution_event(row, execution_event)
 
     def get(self, task_id: Any) -> Task | None:
         normalized = self.normalize_task_id(task_id)

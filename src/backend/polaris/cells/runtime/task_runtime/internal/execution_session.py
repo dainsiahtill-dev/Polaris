@@ -285,6 +285,18 @@ def build_task_runtime_execution_event_append_result(
     return result
 
 
+def project_task_row_execution_event(
+    task_row: dict[str, Any],
+    execution_event: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Return a task-row projection with optional execution-event evidence."""
+
+    projected = dict(task_row)
+    if execution_event is not None:
+        projected["execution_event"] = dict(execution_event)
+    return projected
+
+
 def _build_task_execution_result(
     *,
     success: bool,
