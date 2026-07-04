@@ -131,6 +131,42 @@ def test_role_result_metadata_projects_tool_lifecycle_and_derived_tool_facts() -
     assert metadata["tool_call_lifecycle_receipt"]["dispatch_status"] == "dropped"
     assert metadata["native_tool_calls_count"] == 2
     assert metadata["native_tool_call_names"] == ["write_file", "execute_command"]
+    assert metadata["failure_evidence"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert metadata["failure_evidence"][0]["responsible_layer"] == "execution_control_plane"
+    assert metadata["failure_evidence"][0]["metadata"]["source"] == "tool_call_lifecycle_receipt.v1"
+    assert metadata["failure_evidence_summary"] == {
+        "count": 1,
+        "latest_failure_class": "TOOL_DISPATCH_DROPPED",
+    }
+
+
+def test_role_result_metadata_preserves_explicit_failure_evidence_over_lifecycle() -> None:
+    profile = SimpleNamespace(provider_id="", model="")
+    explicit_evidence = [
+        {
+            "schema_version": "failure_evidence.v1",
+            "failure_class": "TOOL_RESULT_FAILED",
+            "responsible_layer": "tool_executor",
+        }
+    ]
+
+    metadata = role_result_metadata_from_profile(
+        profile=profile,
+        llm_response_metadata={
+            "failure_evidence": explicit_evidence,
+            "failure_evidence_summary": {"count": 1, "latest_failure_class": "TOOL_RESULT_FAILED"},
+            "tool_call_lifecycle_receipt": {
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "native_tool_calls_count": 1,
+                "decoded_tool_calls_count": 1,
+                "dispatched_tool_calls_count": 0,
+                "dispatch_status": "dropped",
+            },
+        },
+    )
+
+    assert metadata["failure_evidence"] == explicit_evidence
+    assert metadata["failure_evidence_summary"] == {"count": 1, "latest_failure_class": "TOOL_RESULT_FAILED"}
 
 
 def test_role_result_metadata_projects_canonical_lifecycle_from_plural_receipts() -> None:

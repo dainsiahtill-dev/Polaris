@@ -9,7 +9,10 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from polaris.cells.control_plane.run_ledger.public import normalize_tool_call_lifecycle_receipt
+from polaris.cells.control_plane.run_ledger.public import (
+    failure_evidence_from_lifecycle_receipt,
+    normalize_tool_call_lifecycle_receipt,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_call_facts
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
@@ -147,6 +150,7 @@ def role_result_metadata_from_profile(
                 dict(raw_context_os_audit) if isinstance(raw_context_os_audit, dict) else raw_context_os_audit
             )
         _project_canonical_tool_lifecycle_receipt(metadata)
+        _project_failure_evidence_from_tool_lifecycle(metadata)
         project_native_tool_call_facts(metadata, metadata)
 
     if isinstance(monitoring, dict) and "context_os_audit" not in metadata:
@@ -182,6 +186,27 @@ def _project_canonical_tool_lifecycle_receipt(metadata: dict[str, Any]) -> None:
             if isinstance(raw, dict):
                 metadata["tool_call_lifecycle_receipt"] = normalize_tool_call_lifecycle_receipt(raw)
                 return
+
+
+def _project_failure_evidence_from_tool_lifecycle(metadata: dict[str, Any]) -> None:
+    """Project failure evidence from canonical lifecycle receipt if absent."""
+
+    if "failure_evidence" in metadata:
+        return
+    raw = metadata.get("tool_call_lifecycle_receipt")
+    if not isinstance(raw, dict):
+        return
+    failure_evidence = failure_evidence_from_lifecycle_receipt(raw)
+    if not failure_evidence:
+        return
+    metadata["failure_evidence"] = [failure_evidence]
+    metadata.setdefault(
+        "failure_evidence_summary",
+        {
+            "count": 1,
+            "latest_failure_class": failure_evidence.get("failure_class"),
+        },
+    )
 
 
 def role_turn_error_result(
