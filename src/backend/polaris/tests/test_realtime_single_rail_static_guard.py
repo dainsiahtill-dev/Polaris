@@ -901,8 +901,8 @@ def test_director_execution_loop_uses_event_wakeup_not_interval_polling() -> Non
     assert findings == []
 
 
-def test_role_worker_pool_uses_taskboard_ready_events_not_interval_polling() -> None:
-    """Role worker pools must wake on direct submissions or TaskBoard ready events."""
+def test_role_worker_pool_uses_task_runtime_ready_events_not_interval_polling() -> None:
+    """Role worker pools must wake on direct submissions or task-runtime ready events."""
 
     findings: list[str] = []
     for path in ROLE_WORKER_POOL_EVENT_WAKE_FILES:
@@ -920,6 +920,9 @@ def test_role_worker_pool_uses_taskboard_ready_events_not_interval_polling() -> 
     for token in ("_register_ready_listener", "_wake_condition", "_wake_event"):
         if token not in pool_text:
             findings.append(f"worker_pool.py missing {token!r}")
+    for token in ("list_ready_task_rows", "claim_execution", "complete_execution", "fail_execution"):
+        if token not in pool_text:
+            findings.append(f"worker_pool.py missing task-runtime token {token!r}")
 
     assert findings == []
 

@@ -14,6 +14,7 @@ from pathlib import Path
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 POLARIS_ROOT = BACKEND_ROOT / "polaris"
 TASK_RUNTIME_OWNER = POLARIS_ROOT / "cells" / "runtime" / "task_runtime"
+ROLE_WORKER_POOL = POLARIS_ROOT / "cells" / "roles" / "runtime" / "internal" / "worker_pool.py"
 RAW_TASKBOARD_MODULES = {
     "polaris.cells.runtime.task_runtime.internal.task_board",
     "polaris.cells.runtime.task_runtime.public.task_board_contract",
@@ -205,4 +206,23 @@ def test_production_code_uses_task_runtime_alias() -> None:
     assert not offenders, (
         "Production code must access TaskRuntimeService through task_runtime, "
         "not legacy taskboard/task_board aliases:\n" + "\n".join(offenders)
+    )
+
+
+def test_role_worker_pool_uses_task_runtime_port_not_raw_taskboard() -> None:
+    source = ROLE_WORKER_POOL.read_text(encoding="utf-8")
+    blocked_tokens = (
+        "TaskBoardPort",
+        "ReadyTaskLike",
+        "taskboard",
+        "list_ready(",
+        ".claim(",
+        ".complete(",
+        ".fail(",
+    )
+    offenders = [token for token in blocked_tokens if token in source]
+
+    assert not offenders, (
+        "roles.runtime worker pool must consume TaskRuntimeService row/session APIs, "
+        "not raw TaskBoard protocols: " + ", ".join(offenders)
     )

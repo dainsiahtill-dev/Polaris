@@ -71,19 +71,35 @@ def _resolve_worker_runtime_path(workspace: Path, rel_path: str) -> Path:
         return workspace / ".polaris" / "runtime" / suffix
 
 
-class ReadyTaskLike(Protocol):
-    id: int
-    metadata: dict[str, Any]
-
-
-class TaskBoardPort(Protocol):
-    def complete(self, task_id: int) -> Any: ...
-    def fail(self, task_id: int, error: str) -> Any: ...
-    def list_ready(self) -> list[ReadyTaskLike]: ...
-    def claim(self, task_id: int, worker_id: str) -> bool: ...
-
-
-class ReadyTaskNotifier(Protocol):
+class TaskRuntimePort(Protocol):
+    def list_ready_task_rows(self) -> list[dict[str, Any]]: ...
+    def claim_execution(
+        self,
+        task_id: Any,
+        *,
+        worker_id: str,
+        role_id: str,
+        run_id: str = "",
+        lease_ttl_seconds: int = 120,
+        selection_source: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+    def complete_execution(
+        self,
+        task_id: Any,
+        *,
+        session_id: str,
+        result_summary: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+    def fail_execution(
+        self,
+        task_id: Any,
+        *,
+        session_id: str,
+        error: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
     def add_ready_listener(self, listener: Callable[[], None]) -> Callable[[], None]: ...
 
 
@@ -114,6 +130,7 @@ class WorkerTask:
     env: dict = field(default_factory=dict)
     timeout: int = 300
     metadata: dict = field(default_factory=dict)
+    session_id: str = ""
 
 
 @dataclass
@@ -129,6 +146,53 @@ class WorkerResult:
     metadata: dict = field(default_factory=dict)
 
 
+def _row_task_id(row: dict[str, Any]) -> int | None:
+    try:
+        return int(row.get("id") or 0)
+    except (TypeError, ValueError):
+        return None
+
+
+def _row_metadata(row: dict[str, Any]) -> dict[str, Any]:
+    raw_metadata = row.get("metadata")
+    return dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+
+
+def _session_id_from_claim(claim_result: dict[str, Any]) -> str:
+    raw_session = claim_result.get("session")
+    if not isinstance(raw_session, dict):
+        return ""
+    return str(raw_session.get("session_id") or "").strip()
+
+
+def _worker_timeout(metadata: dict[str, Any]) -> int:
+    try:
+        return int(metadata.get("timeout") or 300)
+    except (TypeError, ValueError):
+        return 300
+
+
+def _worker_task_from_runtime_row(
+    row: dict[str, Any],
+    *,
+    session_id: str,
+    work_dir: Path,
+) -> WorkerTask | None:
+    task_id = _row_task_id(row)
+    if task_id is None:
+        return None
+    metadata = _row_metadata(row)
+    return WorkerTask(
+        task_id=task_id,
+        command=str(metadata.get("command") or ""),
+        work_dir=work_dir,
+        env=dict(metadata.get("env") or {}),
+        timeout=_worker_timeout(metadata),
+        metadata=metadata,
+        session_id=session_id,
+    )
+
+
 # =============================================================================
 # Sync Worker (Backward Compatible)
 # =============================================================================
@@ -141,18 +205,18 @@ class Worker:
     Each Worker:
     - Has independent work directory
     - Runs in independent thread
-    - Wakes from direct submissions or TaskBoard ready events
+    - Wakes from direct submissions or task-runtime ready events
     - Can send messages back to main process
     """
 
     def __init__(
         self,
         config: WorkerConfig,
-        taskboard: TaskBoardPort | None = None,
+        task_runtime: TaskRuntimePort | None = None,
         message_callback: Callable | None = None,
     ) -> None:
         self.config = config
-        self.taskboard = taskboard
+        self.task_runtime = task_runtime
         self.message_callback = message_callback
         self.state = WorkerState.IDLE
 
@@ -228,29 +292,40 @@ class Worker:
             self._wake_condition.notify_all()
 
     def _register_ready_listener(self) -> Callable[[], None] | None:
-        if self.taskboard is None:
+        if self.task_runtime is None:
             return None
-        add_listener = getattr(self.taskboard, "add_ready_listener", None)
+        add_listener = getattr(self.task_runtime, "add_ready_listener", None)
         if not callable(add_listener):
             return None
         return add_listener(self._wake)
 
     def _has_ready_task(self) -> bool:
-        return bool(self.taskboard and self.taskboard.list_ready())
+        return bool(self.task_runtime and self.task_runtime.list_ready_task_rows())
 
     def _claim_ready_task(self) -> WorkerTask | None:
-        if not self.taskboard:
+        if not self.task_runtime:
             return None
-        for task in self.taskboard.list_ready():
-            if self.taskboard.claim(task.id, self.config.worker_id):
-                return WorkerTask(
-                    task_id=task.id,
-                    command=task.metadata.get("command", ""),
-                    work_dir=self.config.work_dir,
-                    env=task.metadata.get("env", {}),
-                    timeout=task.metadata.get("timeout", 300),
-                    metadata=task.metadata,
-                )
+        for row in self.task_runtime.list_ready_task_rows():
+            task_id = _row_task_id(row)
+            if task_id is None:
+                continue
+            claim_result = self.task_runtime.claim_execution(
+                task_id,
+                worker_id=self.config.worker_id,
+                role_id="worker_pool",
+                selection_source="roles.runtime.worker_pool",
+            )
+            if not bool(claim_result.get("success")):
+                continue
+            claim_row = claim_result.get("task")
+            runtime_row = claim_row if isinstance(claim_row, dict) else row
+            task = _worker_task_from_runtime_row(
+                runtime_row,
+                session_id=_session_id_from_claim(claim_result),
+                work_dir=self.config.work_dir,
+            )
+            if task is not None:
+                return task
         return None
 
     def _next_task(self) -> WorkerTask | None:
@@ -290,11 +365,21 @@ class Worker:
         with self._state_lock:
             self._current_task = None
 
-        if self.taskboard:
+        if self.task_runtime and task.session_id:
             if result.success:
-                self.taskboard.complete(task.task_id)
+                self.task_runtime.complete_execution(
+                    task.task_id,
+                    session_id=task.session_id,
+                    result_summary=result.output,
+                    metadata={"worker_id": self.config.worker_id},
+                )
             else:
-                self.taskboard.fail(task.task_id, result.error)
+                self.task_runtime.fail_execution(
+                    task.task_id,
+                    session_id=task.session_id,
+                    error=result.error,
+                    metadata={"worker_id": self.config.worker_id},
+                )
 
         if self.message_callback:
             self.message_callback(result)
@@ -391,11 +476,11 @@ class AsyncWorker:
     def __init__(
         self,
         config: AsyncWorkerConfig,
-        taskboard: TaskBoardPort | None = None,
+        task_runtime: TaskRuntimePort | None = None,
         message_callback: Callable[[WorkerResult], Any] | None = None,
     ) -> None:
         self.config = config
-        self.taskboard = taskboard
+        self.task_runtime = task_runtime
         self.message_callback = message_callback
         self.state = WorkerState.IDLE
 
@@ -492,29 +577,40 @@ class AsyncWorker:
         self._loop.call_soon_threadsafe(self._wake_event.set)
 
     def _register_ready_listener(self) -> Callable[[], None] | None:
-        if self.taskboard is None:
+        if self.task_runtime is None:
             return None
-        add_listener = getattr(self.taskboard, "add_ready_listener", None)
+        add_listener = getattr(self.task_runtime, "add_ready_listener", None)
         if not callable(add_listener):
             return None
         return add_listener(self._wake_threadsafe)
 
     def _has_ready_task(self) -> bool:
-        return bool(self.taskboard and self.taskboard.list_ready())
+        return bool(self.task_runtime and self.task_runtime.list_ready_task_rows())
 
     def _claim_ready_task(self) -> WorkerTask | None:
-        if not self.taskboard:
+        if not self.task_runtime:
             return None
-        for task in self.taskboard.list_ready():
-            if self.taskboard.claim(task.id, self.config.worker_id):
-                return WorkerTask(
-                    task_id=task.id,
-                    command=task.metadata.get("command", ""),
-                    work_dir=self.config.work_dir,
-                    env=task.metadata.get("env", {}),
-                    timeout=task.metadata.get("timeout", 300),
-                    metadata=task.metadata,
-                )
+        for row in self.task_runtime.list_ready_task_rows():
+            task_id = _row_task_id(row)
+            if task_id is None:
+                continue
+            claim_result = self.task_runtime.claim_execution(
+                task_id,
+                worker_id=self.config.worker_id,
+                role_id="async_worker_pool",
+                selection_source="roles.runtime.async_worker_pool",
+            )
+            if not bool(claim_result.get("success")):
+                continue
+            claim_row = claim_result.get("task")
+            runtime_row = claim_row if isinstance(claim_row, dict) else row
+            task = _worker_task_from_runtime_row(
+                runtime_row,
+                session_id=_session_id_from_claim(claim_result),
+                work_dir=self.config.work_dir,
+            )
+            if task is not None:
+                return task
         return None
 
     async def _next_task(self) -> WorkerTask | None:
@@ -552,11 +648,21 @@ class AsyncWorker:
         async with self._state_lock:
             self._current_task = None
 
-        if self.taskboard:
+        if self.task_runtime and task.session_id:
             if result.success:
-                self.taskboard.complete(task.task_id)
+                self.task_runtime.complete_execution(
+                    task.task_id,
+                    session_id=task.session_id,
+                    result_summary=result.output,
+                    metadata={"worker_id": self.config.worker_id},
+                )
             else:
-                self.taskboard.fail(task.task_id, result.error)
+                self.task_runtime.fail_execution(
+                    task.task_id,
+                    session_id=task.session_id,
+                    error=result.error,
+                    metadata={"worker_id": self.config.worker_id},
+                )
 
         if self.message_callback:
             self.message_callback(result)
@@ -718,11 +824,11 @@ class WorkerPool:
     def __init__(
         self,
         work_base_dir: Path,
-        taskboard: TaskBoardPort | None = None,
+        task_runtime: TaskRuntimePort | None = None,
         max_workers: int = 4,
     ) -> None:
         self.work_base_dir = work_base_dir
-        self.taskboard = taskboard
+        self.task_runtime = task_runtime
         self.max_workers = max_workers
 
         self._workers: dict[str, Worker] = {}
@@ -747,7 +853,7 @@ class WorkerPool:
                 work_dir=work_dir,
             )
 
-            worker = Worker(config, self.taskboard, self._on_worker_message)
+            worker = Worker(config, self.task_runtime, self._on_worker_message)
             worker.start()
 
             self._workers[worker_id] = worker
@@ -845,11 +951,11 @@ class AsyncWorkerPool:
     def __init__(
         self,
         work_base_dir: Path,
-        taskboard: TaskBoardPort | None = None,
+        task_runtime: TaskRuntimePort | None = None,
         max_workers: int = 4,
     ) -> None:
         self.work_base_dir = work_base_dir
-        self.taskboard = taskboard
+        self.task_runtime = task_runtime
         self.max_workers = max_workers
 
         self._workers: dict[str, AsyncWorker] = {}
@@ -883,7 +989,7 @@ class AsyncWorkerPool:
                 work_dir=work_dir,
             )
 
-            worker = AsyncWorker(config, self.taskboard, self._on_worker_message)
+            worker = AsyncWorker(config, self.task_runtime, self._on_worker_message)
             await worker.start()
 
             self._workers[worker_id] = worker
@@ -999,17 +1105,17 @@ class AsyncWorkerPool:
 
 def create_worker_pool(
     work_base_dir: Path,
-    taskboard: TaskBoardPort | None = None,
+    task_runtime: TaskRuntimePort | None = None,
     max_workers: int = 4,
 ) -> WorkerPool:
-    """Create sync Worker pool (backward compatible)"""
-    return WorkerPool(work_base_dir, taskboard, max_workers)
+    """Create sync Worker pool."""
+    return WorkerPool(work_base_dir, task_runtime, max_workers)
 
 
 async def create_async_worker_pool(
     work_base_dir: Path,
-    taskboard: TaskBoardPort | None = None,
+    task_runtime: TaskRuntimePort | None = None,
     max_workers: int = 4,
 ) -> AsyncWorkerPool:
     """Create async Worker pool using execution_broker"""
-    return AsyncWorkerPool(work_base_dir, taskboard, max_workers)
+    return AsyncWorkerPool(work_base_dir, task_runtime, max_workers)

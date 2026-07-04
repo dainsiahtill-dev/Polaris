@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 import pytest
 from polaris.cells.roles.runtime.internal.worker_pool import (
@@ -35,6 +35,43 @@ def work_dir(tmp_path: Path) -> Path:
     work_dir = tmp_path / "worker_test"
     work_dir.mkdir(parents=True, exist_ok=True)
     return work_dir
+
+
+class _FakeTaskRuntime:
+    def __init__(self) -> None:
+        self.completed: list[dict[str, Any]] = []
+        self.failed: list[dict[str, Any]] = []
+
+    def add_ready_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        self.listener = listener
+        return lambda: None
+
+    def list_ready_task_rows(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": 7,
+                "metadata": {
+                    "command": f"{sys.executable} -c \"print('runtime-row-ok')\"",
+                    "env": {},
+                    "timeout": 30,
+                },
+            }
+        ]
+
+    def claim_execution(self, task_id: Any, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "success": True,
+            "task": self.list_ready_task_rows()[0],
+            "session": {"session_id": f"session-{task_id}"},
+        }
+
+    def complete_execution(self, task_id: Any, **kwargs: Any) -> dict[str, Any]:
+        self.completed.append({"task_id": task_id, **kwargs})
+        return {"success": True}
+
+    def fail_execution(self, task_id: Any, **kwargs: Any) -> dict[str, Any]:
+        self.failed.append({"task_id": task_id, **kwargs})
+        return {"success": True}
 
 
 @pytest.mark.asyncio
@@ -74,6 +111,31 @@ async def test_async_worker_normal_execution(work_dir: Path) -> None:
         assert result.metadata.get("workspace") == str(work_dir)
     finally:
         await worker.stop(graceful=True)
+
+
+@pytest.mark.asyncio
+async def test_async_worker_consumes_task_runtime_rows(work_dir: Path) -> None:
+    runtime = _FakeTaskRuntime()
+    config = AsyncWorkerConfig(
+        worker_id="test-worker-runtime",
+        work_dir=work_dir,
+        max_idle_time=10,
+        poll_interval=1.0,
+    )
+    worker = AsyncWorker(config, task_runtime=runtime)
+
+    task = worker._claim_ready_task()
+
+    assert task is not None
+    assert task.task_id == 7
+    assert task.session_id == "session-7"
+
+    await worker._execute_worker_task(task)
+
+    assert len(runtime.completed) == 1
+    assert runtime.completed[0]["task_id"] == 7
+    assert runtime.completed[0]["session_id"] == "session-7"
+    assert runtime.failed == []
 
 
 @pytest.mark.asyncio
