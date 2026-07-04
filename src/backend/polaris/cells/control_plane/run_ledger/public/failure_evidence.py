@@ -55,6 +55,32 @@ def is_failure_class(value: Any, expected: FailureClassV1) -> bool:
     return normalize_failure_class(value).casefold() == expected.value.casefold()
 
 
+def merge_failure_evidence_rows(
+    existing: Any,
+    *new_rows: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Return JSON-safe failure evidence rows with stable de-duplication.
+
+    Existing metadata fields may carry a single mapping, a list/tuple of
+    mappings, or malformed legacy values. Only mapping rows are authoritative
+    evidence; malformed values are ignored instead of being string-parsed.
+    Complexity is O(n*m) in row count and row width for equality checks; current
+    evidence lists are tiny, and preserving exact row dictionaries avoids
+    lossy hashes or ad-hoc identity keys.
+    """
+
+    rows: list[dict[str, Any]] = []
+    if isinstance(existing, Mapping):
+        rows.append(dict(existing))
+    elif isinstance(existing, (list, tuple)):
+        rows.extend(dict(item) for item in existing if isinstance(item, Mapping))
+    for row in new_rows:
+        candidate = dict(row)
+        if candidate not in rows:
+            rows.append(candidate)
+    return rows
+
+
 @dataclass(frozen=True)
 class FailureEvidenceV1:
     """Structured failure evidence suitable for Run Ledger and QA projections."""
@@ -81,5 +107,6 @@ __all__ = [
     "FailureClassV1",
     "FailureEvidenceV1",
     "is_failure_class",
+    "merge_failure_evidence_rows",
     "normalize_failure_class",
 ]

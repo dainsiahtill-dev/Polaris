@@ -7,10 +7,12 @@ into public RoleTurnResult values so result shape drift has one owner.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Protocol
 
 from polaris.cells.control_plane.run_ledger.public import (
     failure_evidence_from_lifecycle_receipt,
+    merge_failure_evidence_rows,
     normalize_tool_call_lifecycle_receipt,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_call_facts
@@ -189,24 +191,22 @@ def _project_canonical_tool_lifecycle_receipt(metadata: dict[str, Any]) -> None:
 
 
 def project_failure_evidence_from_tool_lifecycle(metadata: dict[str, Any]) -> None:
-    """Project failure evidence from canonical lifecycle receipt if absent."""
+    """Project failure evidence from canonical lifecycle receipt without dropping existing evidence."""
 
-    if "failure_evidence" in metadata:
-        return
     raw = metadata.get("tool_call_lifecycle_receipt")
     if not isinstance(raw, dict):
         return
     failure_evidence = failure_evidence_from_lifecycle_receipt(raw)
     if not failure_evidence:
         return
-    metadata["failure_evidence"] = [failure_evidence]
-    metadata.setdefault(
-        "failure_evidence_summary",
-        {
-            "count": 1,
-            "latest_failure_class": failure_evidence.get("failure_class"),
-        },
-    )
+    rows = merge_failure_evidence_rows(metadata.get("failure_evidence"), failure_evidence)
+    metadata["failure_evidence"] = rows
+    summary = metadata.get("failure_evidence_summary")
+    metadata["failure_evidence_summary"] = {
+        **(summary if isinstance(summary, Mapping) else {}),
+        "count": len(rows),
+        "latest_failure_class": rows[-1].get("failure_class") if rows else None,
+    }
 
 
 def role_turn_error_result(

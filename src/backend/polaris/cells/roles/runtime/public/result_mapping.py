@@ -16,6 +16,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     build_tool_call_lifecycle_receipt,
     failure_evidence_from_lifecycle_receipt,
     is_failure_class,
+    merge_failure_evidence_rows,
     native_tool_call_facts_from_lifecycle_receipt,
     normalize_failure_class,
     normalize_native_tool_call_envelope_refs,
@@ -89,14 +90,7 @@ def _project_lifecycle_failure_evidence(metadata: dict[str, Any], lifecycle: Map
     failure_evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
     if not failure_evidence:
         return
-    rows: list[dict[str, Any]] = []
-    existing = metadata.get("failure_evidence")
-    if isinstance(existing, Mapping):
-        rows.append(dict(existing))
-    elif isinstance(existing, (list, tuple)):
-        rows.extend(dict(item) for item in existing if isinstance(item, Mapping))
-    if failure_evidence not in rows:
-        rows.append(failure_evidence)
+    rows = merge_failure_evidence_rows(metadata.get("failure_evidence"), failure_evidence)
     metadata["failure_evidence"] = rows
     metadata["failure_evidence_summary"] = {
         **(

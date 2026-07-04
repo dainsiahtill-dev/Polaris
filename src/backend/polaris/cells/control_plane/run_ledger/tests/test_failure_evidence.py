@@ -4,6 +4,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
     FailureEvidenceV1,
     is_failure_class,
+    merge_failure_evidence_rows,
     normalize_failure_class,
 )
 
@@ -43,3 +44,20 @@ def test_failure_evidence_to_dict_normalizes_failure_class_and_refs() -> None:
         "evidence_refs": ["receipt-1", "receipt-2"],
         "metadata": {"turn_id": "turn-1"},
     }
+
+
+def test_merge_failure_evidence_rows_keeps_structured_rows_and_dedupes() -> None:
+    existing = {
+        "schema_version": "failure_evidence.v1",
+        "failure_class": "TOOL_RESULT_FAILED",
+        "responsible_layer": "tool_executor",
+    }
+    lifecycle = {
+        "schema_version": "failure_evidence.v1",
+        "failure_class": "TOOL_DISPATCH_DROPPED",
+        "responsible_layer": "execution_control_plane",
+    }
+
+    rows = merge_failure_evidence_rows([existing, "legacy text"], lifecycle, lifecycle)
+
+    assert rows == [existing, lifecycle]

@@ -17,6 +17,7 @@ from .failure_evidence import (
     FailureClassV1,
     FailureEvidenceV1,
     is_failure_class,
+    merge_failure_evidence_rows,
     normalize_failure_class,
 )
 from .job_token import JobToken
@@ -72,6 +73,7 @@ __all__ = [
     "evaluate_task_boundary_verdict",
     "failure_evidence_from_lifecycle_receipt",
     "is_failure_class",
+    "merge_failure_evidence_rows",
     "native_tool_call_facts_from_lifecycle_receipt",
     "normalize_failure_class",
     "normalize_native_tool_call_envelope_refs",

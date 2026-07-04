@@ -140,7 +140,7 @@ def test_role_result_metadata_projects_tool_lifecycle_and_derived_tool_facts() -
     }
 
 
-def test_role_result_metadata_preserves_explicit_failure_evidence_over_lifecycle() -> None:
+def test_role_result_metadata_appends_lifecycle_failure_evidence() -> None:
     profile = SimpleNamespace(provider_id="", model="")
     explicit_evidence = [
         {
@@ -165,8 +165,13 @@ def test_role_result_metadata_preserves_explicit_failure_evidence_over_lifecycle
         },
     )
 
-    assert metadata["failure_evidence"] == explicit_evidence
-    assert metadata["failure_evidence_summary"] == {"count": 1, "latest_failure_class": "TOOL_RESULT_FAILED"}
+    assert metadata["failure_evidence"][0] == explicit_evidence[0]
+    assert metadata["failure_evidence"][1]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert metadata["failure_evidence"][1]["metadata"]["source"] == "tool_call_lifecycle_receipt.v1"
+    assert metadata["failure_evidence_summary"] == {
+        "count": 2,
+        "latest_failure_class": "TOOL_DISPATCH_DROPPED",
+    }
 
 
 def test_role_result_metadata_projects_canonical_lifecycle_from_plural_receipts() -> None:
