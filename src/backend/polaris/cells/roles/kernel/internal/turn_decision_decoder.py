@@ -20,6 +20,7 @@ from polaris.cells.control_plane.run_ledger.public import (
 )
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     build_native_tool_call_envelope_payloads,
+    native_tool_calls_from_response,
 )
 from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
 from polaris.cells.roles.kernel.public.turn_contracts import (
@@ -273,19 +274,7 @@ class TurnDecisionDecoder:
 
     @staticmethod
     def _native_tool_calls(response: RawLLMResponse) -> list[dict[str, Any]]:
-        native_calls = getattr(response, "native_tool_calls", None)
-        if isinstance(native_calls, list):
-            return [dict(item) for item in native_calls if isinstance(item, Mapping)]
-        alias_calls = getattr(response, "tool_calls", None)
-        if isinstance(alias_calls, list):
-            return [dict(item) for item in alias_calls if isinstance(item, Mapping)]
-        if isinstance(response, Mapping):
-            raw_calls = response.get("native_tool_calls")
-            if not isinstance(raw_calls, list):
-                raw_calls = response.get("tool_calls")
-            if isinstance(raw_calls, list):
-                return [dict(item) for item in raw_calls if isinstance(item, Mapping)]
-        return []
+        return native_tool_calls_from_response(response)
 
     @staticmethod
     def _native_tool_call_envelopes(response: RawLLMResponse) -> list[dict[str, Any]]:

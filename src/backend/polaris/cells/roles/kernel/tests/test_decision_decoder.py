@@ -335,6 +335,27 @@ class TestNativeToolExecutionSource:
         assert len(envelopes[0]["raw_call_hash"]) == 64
         assert len(envelopes[0]["arguments_hash"]) == 64
 
+    def test_tool_calls_alias_response_uses_shared_native_tool_normalizer(self) -> None:
+        decoder = TurnDecisionDecoder(config=DecodeConfig(domain="document"))
+        response = SimpleNamespace(
+            content="read server.py",
+            thinking=None,
+            tool_calls=[
+                _native_tool("read_file", {"path": "server.py"}, call_id="call_alias"),
+            ],
+            model="gpt-4",
+            usage={"tool_call_provider": "openai"},
+        )
+
+        decision = decoder.decode(response, TurnId("turn_tool_calls_alias"))
+        envelopes = decision["metadata"]["native_tool_call_envelopes"]
+
+        assert decision["kind"] == TurnDecisionKind.TOOL_BATCH
+        assert decision["tool_batch"] is not None
+        assert decision["tool_batch"]["invocations"][0]["call_id"] == "call_alias"
+        assert envelopes[0]["tool_name"] == "read_file"
+        assert envelopes[0]["call_id"] == "call_alias"
+
     def test_finalization_tool_calls_are_preserved_as_filtered_evidence(self) -> None:
         decoder = TurnDecisionDecoder(config=DecodeConfig(domain="document"))
         envelope = {
