@@ -5178,7 +5178,7 @@ class TestDirectorFailureClosure:
             "\n".join(f"test('case {idx}', () => expect({idx} + 1).toBe({idx + 1}));" for idx in range(4)) + "\n",
             encoding="utf-8",
         )
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Replace placeholder Card3D unit tests",
             description="Remove trivial arithmetic placeholder tests and replace them with domain assertions.",
             metadata={
@@ -5187,6 +5187,7 @@ class TestDirectorFailureClosure:
                 "acceptance": ["No trivial arithmetic placeholder tests remain"],
             },
         )
+        task_id = str(task["id"])
 
         async def _append_only_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -5212,15 +5213,15 @@ class TestDirectorFailureClosure:
         adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-artifact-quality"},
         )
 
         assert result["success"] is False
         assert result["error_code"] == "director_materialization_quality_failed"
         assert any("tests/unit/card-rules.test.ts" in item for item in result["artifact_quality_errors"])
-        updated = adapter.task_board.get_task(str(task.id))
+        updated = adapter.task_board.get_task(task_id)
         assert updated is not None
         assert str(updated.get("status") or "").lower() == "failed"
         raw_metadata = updated.get("metadata")
@@ -5235,7 +5236,7 @@ class TestDirectorFailureClosure:
         tmp_path: Any,
     ) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Build web e2e testing workspace",
             description="Create a runnable web e2e workspace with source code and tests.",
             metadata={
@@ -5250,6 +5251,7 @@ class TestDirectorFailureClosure:
                 "acceptance": ["npm test exits 0 and exercises the web e2e source module"],
             },
         )
+        task_id = str(task["id"])
         stage_labels: list[str] = []
 
         async def _gemma_like_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -5338,8 +5340,8 @@ class TestDirectorFailureClosure:
         adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-package-quality-repair"},
         )
 
