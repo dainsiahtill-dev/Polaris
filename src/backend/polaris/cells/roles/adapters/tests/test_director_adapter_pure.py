@@ -5112,6 +5112,27 @@ class TestDirectorFailureClosure:
         assert result["failure_stage"] == "director_tool_lifecycle"
         assert result["root_cause_hint"] == "required_tool_without_dispatch_receipt"
         assert result["decision_signals"][0]["detail"].startswith("Director role runtime reported")
+        failure_evidence = result["failure_evidence"][0]
+        assert failure_evidence["schema_version"] == "failure_evidence.v1"
+        assert failure_evidence["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+        assert failure_evidence["responsible_layer"] == "execution_control_plane"
+        assert failure_evidence["reason"] == (
+            "Director role runtime reported required/native tool calls without dispatch/effect receipt."
+        )
+        assert failure_evidence["evidence_refs"]
+        assert failure_evidence["metadata"] == {
+            "error": "tool_dispatch_dropped",
+            "error_code": "tool_dispatch_dropped",
+            "failure_stage": "director_tool_lifecycle",
+            "root_cause_hint": "required_tool_without_dispatch_receipt",
+            "materialization_mode": "tool_dispatch_dropped",
+            "run_id": "run-tool-dispatch-dropped",
+            "task_id": str(task.id),
+        }
+        assert result["failure_evidence_summary"] == {
+            "count": 1,
+            "latest_failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        }
 
     def test_primary_tool_dispatch_failure_does_not_substring_match_error_text(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

@@ -19,7 +19,12 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.control_plane.run_ledger.public import FailureClassV1, is_failure_class
+from polaris.cells.control_plane.run_ledger.public import (
+    FailureClassV1,
+    FailureEvidenceV1,
+    append_failure_evidence_to_metadata,
+    is_failure_class,
+)
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.cells.director.runtime.public.service import (
     AttachDirectorRepairRevalidationEvidenceV1,
@@ -3607,6 +3612,50 @@ def _primary_llm_tool_dispatch_failure(primary_llm_summary: dict[str, Any] | Non
     }
 
 
+def _materialization_failure_evidence_row(
+    *,
+    error: str,
+    error_code: str,
+    failure_class: str,
+    responsible_layer: str,
+    failure_stage: str,
+    root_cause_hint: str,
+    detail: str,
+    materialization_mode: str,
+    run_id: str,
+    target_task_id: str,
+    cognitive_receipt: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build structured failure evidence for Director materialization failures.
+
+    The Director adapter still owns the materialization decision, but the
+    evidence row shape belongs to Run Ledger public contracts.
+    """
+
+    evidence_refs: list[str] = []
+    if isinstance(cognitive_receipt, dict):
+        for key in ("receipt_ref", "receipt_id", "id"):
+            value = str(cognitive_receipt.get(key) or "").strip()
+            if value:
+                evidence_refs.append(value)
+                break
+    return FailureEvidenceV1(
+        failure_class=failure_class,
+        responsible_layer=responsible_layer,
+        reason=detail,
+        evidence_refs=tuple(evidence_refs),
+        metadata={
+            "error": error,
+            "error_code": error_code,
+            "failure_stage": failure_stage,
+            "root_cause_hint": root_cause_hint,
+            "materialization_mode": materialization_mode,
+            "run_id": run_id,
+            "task_id": target_task_id,
+        },
+    ).to_dict()
+
+
 def _phase_no_materialized_changes(
     adapter: Any,
     *,
@@ -3751,6 +3800,25 @@ def _phase_no_materialized_changes(
                 "write_tool_evidence": write_tool_evidence,
             },
         )
+        failure_evidence_row = _materialization_failure_evidence_row(
+            error=error,
+            error_code=public_error_code,
+            failure_class=failure_class,
+            responsible_layer=responsible_layer,
+            failure_stage=failure_stage,
+            root_cause_hint=root_cause_hint,
+            detail=failure_detail,
+            materialization_mode=materialization_mode,
+            run_id=run_id,
+            target_task_id=target_task_id,
+            cognitive_receipt=cognitive_receipt if isinstance(cognitive_receipt, dict) else None,
+        )
+        failure_evidence_rows = append_failure_evidence_to_metadata(completion_metadata, failure_evidence_row)
+        completion_metadata["adapter_result"]["failure_evidence"] = failure_evidence_rows
+        completion_metadata["adapter_result"]["failure_evidence_summary"] = completion_metadata.get(
+            "failure_evidence_summary",
+            {},
+        )
         completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
         if board_claim_applied and task_claim_session_id:
             _finalize_claimed_execution(
@@ -3773,6 +3841,8 @@ def _phase_no_materialized_changes(
             "responsible_layer": responsible_layer,
             "failure_stage": failure_stage,
             "root_cause_hint": root_cause_hint,
+            "failure_evidence": failure_evidence_rows,
+            "failure_evidence_summary": completion_metadata.get("failure_evidence_summary", {}),
             "cognitive_runtime_receipt": cognitive_receipt,
             "decision_signals": [
                 {
