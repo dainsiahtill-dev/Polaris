@@ -11,11 +11,9 @@ from collections.abc import Mapping
 from typing import Any, Protocol
 
 from polaris.cells.control_plane.run_ledger.public import (
+    native_tool_call_facts_from_lifecycle_receipt,
     normalize_tool_call_lifecycle_receipt,
     project_lifecycle_failure_evidence_to_metadata,
-)
-from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
-    native_tool_call_facts,
     project_native_tool_call_facts_to_metadata,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnResult
@@ -204,7 +202,8 @@ def project_native_tool_call_facts(metadata: dict[str, Any], evidence: dict[str,
 
     if not any(key in evidence for key in _NATIVE_TOOL_FACT_KEYS):
         return
-    facts = native_tool_call_facts(evidence, ())
+    receipt = evidence.get("tool_call_lifecycle_receipt")
+    facts = native_tool_call_facts_from_lifecycle_receipt(receipt if isinstance(receipt, dict) else evidence)
     project_native_tool_call_facts_to_metadata(
         metadata,
         facts,
