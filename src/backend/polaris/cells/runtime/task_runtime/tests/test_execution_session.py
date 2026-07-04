@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from polaris.cells.runtime.task_runtime.internal.execution_session import (
     TaskExecutionSession,
+    build_task_runtime_metadata,
     is_terminal_session_status,
     task_row_status_counts,
     terminal_session_timestamp,
@@ -139,3 +140,42 @@ def test_task_row_status_counts_projects_runtime_stats() -> None:
         "blocked": 1,
         "cancelled": 1,
     }
+
+
+def test_build_task_runtime_metadata_projects_session_state() -> None:
+    payload = _valid_session_payload()
+    payload.update(
+        {
+            "external_task_id": "external-task-7",
+            "context_summary": "context summary",
+            "last_error": "last error",
+            "last_result_summary": "done",
+            "attempt": 3,
+            "resume_count": 2,
+            "run_id": "run-123",
+        }
+    )
+    session = TaskExecutionSession.from_dict(payload)
+
+    metadata = build_task_runtime_metadata(
+        session=session,
+        effective_status="IN_PROGRESS",
+        resume_state="RESUMABLE",
+        extra_metadata={"external_task_id": "", "preserved": "value"},
+    )
+
+    runtime_execution = metadata["runtime_execution"]
+    assert runtime_execution["session_id"] == "tx-1"
+    assert runtime_execution["effective_status"] == "in_progress"
+    assert runtime_execution["resume_state"] == "resumable"
+    assert runtime_execution["resume_available"] is True
+    assert metadata["claimed_by"] == "worker-1"
+    assert metadata["last_claimed_by"] == "worker-1"
+    assert metadata["claim_attempt"] == 3
+    assert metadata["resume_count"] == 2
+    assert metadata["workflow_run_id"] == "run-123"
+    assert metadata["external_task_id"] == "external-task-7"
+    assert metadata["last_execution_error"] == "last error"
+    assert metadata["last_execution_summary"] == "done"
+    assert metadata["last_context_summary"] == "context summary"
+    assert metadata["preserved"] == "value"

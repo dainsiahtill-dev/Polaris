@@ -22,6 +22,7 @@ from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_root
 
 from .execution_session import (
     TaskExecutionSession,
+    build_task_runtime_metadata,
     is_terminal_session_status,
     normalize_positive_int,
     sanitize_summary,
@@ -1544,28 +1545,12 @@ class TaskRuntimeService:
         resume_state: str,
         extra_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        runtime_execution = session.to_dict()
-        runtime_execution["effective_status"] = str(effective_status or "").strip().lower() or "pending"
-        runtime_execution["resume_state"] = str(resume_state or "").strip().lower()
-        runtime_execution["resume_available"] = runtime_execution["resume_state"] == "resumable"
-        metadata: dict[str, Any] = dict(extra_metadata or {})
-        metadata["runtime_execution"] = runtime_execution
-        metadata["claimed_by"] = session.worker_id if effective_status == "in_progress" else ""
-        metadata["last_claimed_by"] = session.worker_id
-        metadata["claimed_at"] = session.claimed_at
-        metadata["claim_attempt"] = int(session.attempt)
-        metadata["resume_count"] = int(session.resume_count)
-        metadata["resume_state"] = runtime_execution["resume_state"]
-        metadata["resume_available"] = runtime_execution["resume_available"]
-        metadata["workflow_run_id"] = session.run_id
-        metadata["external_task_id"] = (
-            str(metadata.get("external_task_id") or "").strip() or str(session.external_task_id or "").strip()
+        return build_task_runtime_metadata(
+            session=session,
+            effective_status=effective_status,
+            resume_state=resume_state,
+            extra_metadata=extra_metadata,
         )
-        metadata["last_execution_error"] = sanitize_summary(session.last_error)
-        metadata["last_execution_summary"] = sanitize_summary(session.last_result_summary)
-        if session.context_summary:
-            metadata["last_context_summary"] = sanitize_summary(session.context_summary)
-        return metadata
 
 
 def reset_runtime_task_records(workspace: str) -> dict[str, object]:
