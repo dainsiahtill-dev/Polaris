@@ -1881,22 +1881,46 @@ def _artifact_quality_issues_for_errors(
     issue_payloads: tuple[dict[str, Any], ...],
 ) -> tuple[dict[str, Any], ...]:
     allowed_raw = {str(error or "").strip() for error in errors if str(error or "").strip()}
+    allowed_issue_payloads = artifact_quality_issues_from_errors(errors)
+    allowed_structural_keys = {
+        key
+        for issue in allowed_issue_payloads
+        if (key := _artifact_quality_issue_structural_key(issue))
+    }
     merged: list[dict[str, Any]] = []
     seen_keys: set[tuple[str, ...]] = set()
     seen_raw: set[str] = set()
+    seen_structural_keys: set[tuple[str, ...]] = set()
 
     for issue in issue_payloads:
         raw = artifact_quality_issue_raw(issue)
         key = artifact_quality_issue_key(issue)
-        if not raw or raw not in allowed_raw or key in seen_keys:
+        structural_key = _artifact_quality_issue_structural_key(issue)
+        if key in seen_keys:
+            continue
+        if raw not in allowed_raw and (not structural_key or structural_key not in allowed_structural_keys):
             continue
         merged.append(dict(issue))
         seen_keys.add(key)
-        seen_raw.add(raw)
+        if raw:
+            seen_raw.add(raw)
+        if structural_key:
+            seen_structural_keys.add(structural_key)
 
-    residual_errors = [
-        error for error in errors if (raw := str(error or "").strip()) and raw not in seen_raw
-    ]
+    residual_errors: list[str] = []
+    for error in errors:
+        raw = str(error or "").strip()
+        if not raw or raw in seen_raw:
+            continue
+        parsed_issue_payloads = artifact_quality_issues_from_errors((raw,))
+        parsed_structural_key = (
+            _artifact_quality_issue_structural_key(parsed_issue_payloads[0])
+            if parsed_issue_payloads
+            else ()
+        )
+        if parsed_structural_key and parsed_structural_key in seen_structural_keys:
+            continue
+        residual_errors.append(raw)
     for issue in artifact_quality_issues_from_errors(residual_errors):
         raw = artifact_quality_issue_raw(issue)
         key = artifact_quality_issue_key(issue)
@@ -1907,6 +1931,16 @@ def _artifact_quality_issues_for_errors(
         if raw:
             seen_raw.add(raw)
     return tuple(merged)
+
+
+def _artifact_quality_issue_structural_key(issue: dict[str, Any]) -> tuple[str, ...]:
+    code = str(issue.get("code") or "").strip()
+    path = str(issue.get("path") or "").strip().replace("\\", "/")
+    if not code or not path:
+        return ()
+    line = str(issue.get("line") or "").strip()
+    column = str(issue.get("column") or "").strip()
+    return code, path, line, column
 
 
 def _materialization_quality_scan_paths_with_package_manifest(

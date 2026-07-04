@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from polaris.cells.roles.adapters.internal.director.quality_gate import (
+    _artifact_quality_issues_for_errors,
     _task_boundary_scope_filter_evidence,
 )
 from polaris.kernelone.quality.file_ownership_ledger import record_file_owners
@@ -48,3 +49,20 @@ def test_scope_filter_evidence_includes_file_ownership_handoff_requests(tmp_path
     assert scope_authority["owner_found_count"] == 1
     assert scope_authority["owner_unknown_count"] == 1
     assert scope_authority["recommended_routes"] == ["owner_task_retry", "scope_authority_resolution"]
+
+
+def test_artifact_quality_issue_merge_preserves_structured_issue_when_raw_differs() -> None:
+    error = "Artifact quality scan failed: src/app.ts(7,3): error TS2304: Cannot find name 'Widget'."
+    typed_issue = {
+        "code": "typescript_ts2304",
+        "message": "Cannot find name 'Widget'.",
+        "path": "src/app.ts",
+        "line": 7,
+        "column": 3,
+        "source": "typescript_diagnostic",
+        "metadata": {"raw": "tsc-json:src/app.ts:7:3:TS2304"},
+    }
+
+    issues = _artifact_quality_issues_for_errors([error], (typed_issue,))
+
+    assert issues == (typed_issue,)
