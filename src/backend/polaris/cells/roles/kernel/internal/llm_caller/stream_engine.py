@@ -12,6 +12,12 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.control_plane.run_ledger.public import (
+    build_native_tool_call_envelope_payloads,
+    native_tool_call_count_from_metadata,
+    project_native_tool_call_envelopes_to_metadata,
+)
+
 from .context_audit import (
     build_final_provider_request_snapshot,
     build_final_request_context_audit_for_request,
@@ -217,6 +223,7 @@ class StreamEngine:
         emitted_content = ""
         reconnect_prefix = ""
         emitted_tool_signatures: set[str] = set()
+        emitted_tool_call_payloads: list[dict[str, Any]] = []
         active_request = prepared.ai_request
         request_context = getattr(active_request, "context", None)
         if isinstance(request_context, dict):
@@ -533,6 +540,13 @@ class StreamEngine:
                             "metadata": metadata,
                             "iteration": turn_round,
                         }
+                        emitted_tool_call_payloads.append(
+                            {
+                                "id": normalized.tool_call_id,
+                                "name": normalized.tool_name,
+                                "arguments": dict(normalized.tool_args),
+                            }
+                        )
                         total_backpressure_wait_ms += (time.perf_counter() - yield_started_at) * 1000
                         continue
 
@@ -727,6 +741,13 @@ class StreamEngine:
         if provider_usage is not None:
             call_end_metadata["usage"] = provider_usage
             call_end_metadata["usage_source"] = "provider"
+        if emitted_tool_call_payloads:
+            provider_label = str(getattr(profile, "provider_id", "") or active_tool_protocol or "stream").strip()
+            envelopes = build_native_tool_call_envelope_payloads(
+                emitted_tool_call_payloads,
+                provider=provider_label,
+            )
+            project_native_tool_call_envelopes_to_metadata(call_end_metadata, envelopes)
 
         self._emit_call_end(
             event_emitter=event_emitter,
@@ -741,7 +762,7 @@ class StreamEngine:
             context_tokens_after=final_context_tokens,
             compression_strategy=context_result.compression_strategy if context_result else None,
             response_content=_effective_content,
-            tool_calls_count=len(emitted_tool_signatures),
+            tool_calls_count=native_tool_call_count_from_metadata(call_end_metadata, fallback=0),
             metadata=_with_context_os_audit(call_end_metadata),
         )
 

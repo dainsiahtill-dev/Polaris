@@ -2139,6 +2139,88 @@ class TestStreamEngineRunStream:
         # Should have at least context_metadata event
         assert any(e.get("type") == "context_metadata" for e in events)
 
+    async def test_stream_call_end_projects_native_tool_envelopes_to_metadata(self) -> None:
+        """Stream call-end tool counts must come from Run Ledger native metadata."""
+
+        emit_end = Mock()
+        engine = StreamEngine(
+            workspace="/ws",
+            get_executor=Mock(),
+            allow_native_tool_text_fallback_fn=Mock(return_value=False),
+            emit_call_start_event=Mock(),
+            emit_call_error_event=Mock(),
+            emit_call_end_event=emit_end,
+            emit_call_retry_event=Mock(),
+        )
+
+        context = Mock()
+        context.context_override = {}
+        context.stream_cancelled = False
+        context.temperature = 0.2
+        context.max_tokens = 256
+
+        profile = Mock()
+        profile.role_id = "director"
+        profile.provider_id = "provider-stream"
+
+        prepared = Mock()
+        prepared.messages = [{"role": "user", "content": "create files"}]
+        prepared.ai_request = Mock()
+        prepared.native_tool_mode = "native_tools_streaming"
+        prepared.response_format_mode = "none"
+        prepared.context_result = None
+
+        mock_executor = Mock()
+
+        async def _tool_stream(_request):
+            yield {
+                "type": "tool_call",
+                "tool_call": {
+                    "id": "call-1",
+                    "name": "write_file",
+                    "arguments": {"file": "src/a.py", "content": "a"},
+                },
+            }
+            yield {
+                "type": "tool_call",
+                "tool_call": {
+                    "id": "call-2",
+                    "name": "write_file",
+                    "arguments": {"file": "src/b.py", "content": "b"},
+                },
+            }
+
+        mock_executor.invoke_stream = _tool_stream
+        engine._get_executor = lambda: mock_executor
+
+        events = []
+        async for event in engine.run_stream(
+            profile=profile,
+            prepared=prepared,
+            context=context,
+            start_time=0.0,
+            role_id="director",
+            run_id="run_1",
+            task_id="task_1",
+            attempt=0,
+            model="claude",
+            call_id="call_1",
+            event_emitter=None,
+            turn_round=0,
+        ):
+            events.append(event)
+
+        assert [event.get("type") for event in events].count("tool_call") == 2
+        end_kwargs = emit_end.call_args.kwargs
+        end_metadata = end_kwargs["metadata"]
+        assert end_kwargs["tool_calls_count"] == 2
+        assert end_metadata["native_tool_calls_count"] == 2
+        assert end_metadata["native_tool_call_names"] == ["write_file", "write_file"]
+        assert [item["call_id"] for item in end_metadata["native_tool_call_envelopes"]] == [
+            "call-1",
+            "call-2",
+        ]
+
     async def test_stream_call_start_emits_context_snapshot_ref(self) -> None:
         """Phase 1 critical fix: StreamEngine must call store_context_messages
         BEFORE the call_start event so the event metadata carries a non-empty
