@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.adapters.internal.qa_adapter import (
     QAAdapter,
@@ -30,6 +30,49 @@ from polaris.cells.roles.adapters.internal.qa_adapter import (
 
 def _make_adapter(tmp_path: Any) -> QAAdapter:
     return QAAdapter(workspace=str(tmp_path))
+
+
+class _QaRowProjectionOnlyTaskBoard:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = [dict(row) for row in rows]
+        self.reopened: list[dict[str, Any]] = []
+        self.updated: list[dict[str, Any]] = []
+
+    def list_task_rows(self) -> list[dict[str, Any]]:
+        return [dict(row) for row in self.rows]
+
+    def list_all(self) -> list[Any]:
+        raise AssertionError("QA read-model consumers must use list_task_rows()")
+
+    def reopen(
+        self,
+        task_id: Any,
+        *,
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.reopened.append(
+            {
+                "task_id": task_id,
+                "reason": reason,
+                "metadata": dict(metadata or {}),
+            }
+        )
+
+    def update(
+        self,
+        task_id: Any,
+        *,
+        status: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.updated.append(
+            {
+                "task_id": task_id,
+                "status": status,
+                "metadata": dict(metadata or {}),
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +115,44 @@ class TestCoerceTaskRecord:
                 raise RuntimeError("fail")
 
         assert adapter._coerce_task_record(Obj()) == {}
+
+
+class TestTaskboardQaVerdict:
+    def test_uses_runtime_task_row_projection_before_raw_task_entities(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        task_board = _QaRowProjectionOnlyTaskBoard(
+            [
+                {
+                    "id": 7,
+                    "status": "completed",
+                    "metadata": {
+                        "adapter_result": {
+                            "qa_required_for_final_verdict": True,
+                            "qa_passed": None,
+                        }
+                    },
+                }
+            ]
+        )
+        adapter._task_runtime = cast(Any, task_board)
+
+        summary = adapter._apply_taskboard_qa_verdict(
+            review_result={
+                "passed": False,
+                "score": 50,
+                "critical_issues": ["integration failed"],
+                "evidence": ["src/main.py:integration failed"],
+            },
+            context={"run_id": "qa-run"},
+        )
+
+        assert summary["evaluated"] == 1
+        assert summary["reopened"] == 1
+        assert task_board.reopened[0]["task_id"] == 7
+        assert task_board.reopened[0]["reason"] == "integration failed"
+        metadata = task_board.reopened[0]["metadata"]
+        assert metadata["qa_rework_requested"] is True
+        assert metadata["adapter_result"]["qa_review_run_id"] == "qa-run"
 
 
 class TestSafeInt:

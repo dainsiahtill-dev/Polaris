@@ -454,13 +454,7 @@ class QAAdapter(BaseRoleAdapter):
             "max_retries_default": default_max_retries,
         }
 
-        try:
-            entries = self.task_board.list_all()
-        except (RuntimeError, ValueError):
-            return summary
-
-        for entry in entries:
-            record = self._coerce_task_record(entry)
+        for record in self._list_taskboard_rows():
             task_id = self._safe_int(record.get("id"), default=0)
             if task_id <= 0:
                 summary["skipped"] += 1
@@ -550,6 +544,22 @@ class QAAdapter(BaseRoleAdapter):
                 summary["skipped"] += 1
 
         return summary
+
+    def _list_taskboard_rows(self) -> list[dict[str, Any]]:
+        """Return QA task-board rows through the runtime read model when available."""
+
+        list_task_rows = getattr(self.task_board, "list_task_rows", None)
+        try:
+            entries = list_task_rows() if callable(list_task_rows) else self.task_board.list_all()
+        except (RuntimeError, ValueError):
+            return []
+
+        rows: list[dict[str, Any]] = []
+        for entry in entries:
+            record = self._coerce_task_record(entry)
+            if record:
+                rows.append(record)
+        return rows
 
     @staticmethod
     def _coerce_task_record(entry: Any) -> dict[str, Any]:
