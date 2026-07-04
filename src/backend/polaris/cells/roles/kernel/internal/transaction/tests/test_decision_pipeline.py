@@ -126,6 +126,36 @@ def test_build_tool_dispatch_dropped_anomaly_derives_lifecycle_from_envelopes() 
     assert lifecycle["run_id"] == "run-1"
     assert lifecycle["task_id"] == "TASK-1"
     assert lifecycle["role"] == "director"
+    failure_evidence = anomaly["failure_evidence"][0]
+    assert failure_evidence["schema_version"] == "failure_evidence.v1"
+    assert failure_evidence["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert failure_evidence["responsible_layer"] == "execution_control_plane"
+    assert failure_evidence["reason"] == "provider_emitted_tool_calls_but_no_decoded_tool_batch"
+    assert f"provider_response:{lifecycle['provider_response_hash']}" in failure_evidence["evidence_refs"]
+    assert "native_tool_call:tool-envelope-1" in failure_evidence["evidence_refs"]
+    assert "native_tool_call:tool-envelope-2" in failure_evidence["evidence_refs"]
+    assert any(str(item).startswith("dropped_tool_call:") for item in failure_evidence["evidence_refs"])
+    assert failure_evidence["metadata"] == {
+        "source": "tool_call_lifecycle_receipt.v1",
+        "dispatch_status": "dropped",
+        "native_tool_calls_count": 2,
+        "decoded_tool_calls_count": 2,
+        "dispatched_tool_calls_count": 0,
+        "tool_result_count": 0,
+        "effect_receipt_count": 0,
+        "dropped_tool_calls": [
+            {
+                "tool_name": "write_file",
+                "envelope_id": "tool-envelope-1",
+                "reason": "tool_dispatch_dropped",
+            },
+            {
+                "tool_name": "execute_command",
+                "envelope_id": "tool-envelope-2",
+                "reason": "tool_dispatch_dropped",
+            },
+        ],
+    }
 
 
 def test_build_tool_dispatch_dropped_anomaly_builds_envelopes_from_raw_response() -> None:

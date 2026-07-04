@@ -29,7 +29,10 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, cast
 
-from polaris.cells.control_plane.run_ledger.public import build_tool_call_lifecycle_receipt
+from polaris.cells.control_plane.run_ledger.public import (
+    build_tool_call_lifecycle_receipt,
+    failure_evidence_from_lifecycle_receipt,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     build_native_tool_call_envelope_payloads,
     native_tool_call_count as derive_native_tool_call_count,
@@ -149,6 +152,9 @@ def build_tool_dispatch_dropped_anomaly(
         "dropped_tool_calls": lifecycle["dropped_tool_calls"],
         "tool_call_lifecycle_receipt": lifecycle,
     }
+    failure_evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
+    if failure_evidence:
+        anomaly["failure_evidence"] = [failure_evidence]
     if streaming:
         anomaly["streaming"] = True
     return anomaly
