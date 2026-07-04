@@ -22,11 +22,12 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Any, Literal, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
+    native_tool_call_facts_from_sources,
     project_completion_dispatch_evidence_to_metadata,
     project_native_tool_call_facts_to_metadata,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
-    native_tool_call_facts_from_response,
+    native_tool_calls_from_response,
     provider_response_hash as derive_provider_response_hash,
     restrict_tool_definitions_to_write,
     stream_tool_call_signature,
@@ -1180,7 +1181,10 @@ class StreamOrchestrator:
         # (decode is pure — identical input yields an identical decision).
         decision = probe_decision if corrective_ask is None else self.decoder.decode(llm_response, TurnId(turn_id))
         decision_metadata = dict(decision.get("metadata") or {})
-        native_tool_call_facts = native_tool_call_facts_from_response(llm_response, decision_metadata)
+        native_tool_call_facts = native_tool_call_facts_from_sources(
+            decision_metadata,
+            native_tool_calls_from_response(llm_response),
+        )
         native_tool_call_count = int(native_tool_call_facts.get("native_tool_calls_count") or 0)
         provider_response_hash = derive_provider_response_hash(llm_response, decision_metadata)
         decision_metadata.setdefault("provider_response_hash", provider_response_hash)
@@ -1452,7 +1456,10 @@ class StreamOrchestrator:
         )
         project_native_tool_call_facts_to_metadata(
             monitoring,
-            native_tool_call_facts_from_response(llm_response, monitoring),
+            native_tool_call_facts_from_sources(
+                monitoring,
+                native_tool_calls_from_response(llm_response),
+            ),
         )
         yield CompletionEvent(
             turn_id=turn_id,

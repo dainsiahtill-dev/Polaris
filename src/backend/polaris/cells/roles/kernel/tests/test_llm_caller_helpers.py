@@ -20,7 +20,10 @@ if TYPE_CHECKING:
     from polaris.cells.roles.profile.public.service import RoleProfile
 
 import pytest
-from polaris.cells.control_plane.run_ledger.public import tool_call_lifecycle_receipts_from_metadata
+from polaris.cells.control_plane.run_ledger.public import (
+    native_tool_call_facts_from_sources,
+    tool_call_lifecycle_receipts_from_metadata,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.error_handling import (
     classify_error,
     is_native_tool_calling_unsupported,
@@ -50,7 +53,6 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_call_envelopes_from_metadata,
     native_tool_call_envelopes_from_response,
     native_tool_call_facts,
-    native_tool_call_facts_from_response,
     native_tool_call_names,
     native_tool_call_provider_from_metadata,
     native_tool_calls_from_response,
@@ -821,14 +823,14 @@ class TestExtractNativeToolCalls:
             "native_tool_call_names": ["repo_rg", "read_file"],
         }
 
-    def test_native_tool_call_facts_from_response_accepts_object_and_mapping(self) -> None:
+    def test_native_tool_call_sources_accept_response_object_and_mapping(self) -> None:
         object_response = SimpleNamespace(native_tool_calls=[{"function": {"name": "write_file"}}])
         mapping_response = {"tool_calls": [{"function": {"name": "read_file"}}]}
 
         assert native_tool_calls_from_response(object_response) == [
             {"function": {"name": "write_file"}},
         ]
-        assert native_tool_call_facts_from_response(mapping_response) == {
+        assert native_tool_call_facts_from_sources({}, native_tool_calls_from_response(mapping_response)) == {
             "native_tool_calls_count": 1,
             "native_tool_call_names": ["read_file"],
         }

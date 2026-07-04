@@ -385,15 +385,6 @@ def native_tool_calls_from_response(response: Any) -> list[dict[str, Any]]:
     return []
 
 
-def native_tool_call_facts_from_response(
-    response: Any,
-    metadata: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Project canonical native tool-call facts from one response-like object."""
-
-    return native_tool_call_facts(metadata, native_tool_calls_from_response(response))
-
-
 def provider_response_hash(response: Any, metadata: Mapping[str, Any] | None = None) -> str:
     """Return the stable hash used to bind response facts to dispatch evidence.
 
@@ -1682,7 +1673,6 @@ __all__ = [
     "native_tool_call_envelopes_from_metadata",
     "native_tool_call_envelopes_from_response",
     "native_tool_call_facts",
-    "native_tool_call_facts_from_response",
     "native_tool_call_name",
     "native_tool_call_names",
     "native_tool_call_provider_from_metadata",

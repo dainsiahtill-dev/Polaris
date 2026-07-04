@@ -29,12 +29,12 @@ from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
     build_tool_dispatch_dropped_anomaly_projection,
+    native_tool_call_facts_from_sources,
     project_native_tool_call_facts_to_metadata,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_call_count,
     native_tool_call_envelopes_from_response,
-    native_tool_call_facts_from_response,
     native_tool_calls_from_response,
     provider_response_hash,
 )
@@ -162,7 +162,10 @@ async def run_decision_pipeline(
     # === Phase 3: 解码决策 ===
     decision = probe_decision if corrective_ask is None else decoder.decode(llm_response, TurnId(turn_id))
     decision_metadata = dict(decision.get("metadata") or {})
-    native_tool_call_facts = native_tool_call_facts_from_response(llm_response, decision_metadata)
+    native_tool_call_facts = native_tool_call_facts_from_sources(
+        decision_metadata,
+        native_tool_calls_from_response(llm_response),
+    )
     native_tool_call_count = int(native_tool_call_facts.get("native_tool_calls_count") or 0)
     decision_metadata.setdefault("provider_response_hash", provider_response_hash(llm_response, decision_metadata))
     project_native_tool_call_facts_to_metadata(decision_metadata, native_tool_call_facts)

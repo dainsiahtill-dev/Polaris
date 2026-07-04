@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from polaris.cells.control_plane.run_ledger.public import project_native_tool_call_facts_to_metadata
+from polaris.cells.control_plane.run_ledger.public import (
+    native_tool_call_facts_from_sources,
+    project_native_tool_call_facts_to_metadata,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_call_count,
-    native_tool_call_facts_from_response,
     native_tool_calls_from_response,
     provider_response_hash,
 )
@@ -60,7 +62,10 @@ def test_project_native_tool_call_facts_overwrites_stale_projection() -> None:
     )
     metadata = {"native_tool_calls_count": 9, "native_tool_call_names": ["stale_tool"]}
 
-    project_native_tool_call_facts_to_metadata(metadata, native_tool_call_facts_from_response(response, {}))
+    project_native_tool_call_facts_to_metadata(
+        metadata,
+        native_tool_call_facts_from_sources({}, native_tool_calls_from_response(response)),
+    )
 
     assert metadata["native_tool_calls_count"] == 2
     assert metadata["native_tool_call_names"] == ["write_file", "execute_command"]
