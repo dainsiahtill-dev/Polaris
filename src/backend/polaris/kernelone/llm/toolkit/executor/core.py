@@ -92,7 +92,16 @@ class _LRUHandlerCache:
 
 def _copy_handler_failure_evidence(payload: dict[str, Any], handler_result: dict[str, Any]) -> None:
     """Preserve structured handler evidence when executor wraps a failed result."""
-    for key in ("director_policy", "director_policy_denials", "effect_receipt"):
+    for key in (
+        "director_policy",
+        "director_policy_denials",
+        "effect_receipt",
+        "failure_evidence",
+        "failure_evidence_summary",
+        "failure_class",
+        "responsible_layer",
+        "evidence_refs",
+    ):
         if key in handler_result:
             payload[key] = handler_result[key]
     if "blocked" in handler_result:

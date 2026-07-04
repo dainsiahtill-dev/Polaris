@@ -140,6 +140,49 @@ def test_read_file_does_not_emit_file_written(tmp_path) -> None:
     assert _read_file_edit_events(tmp_path) == [], "read_file should not emit file_written events"
 
 
+def test_failed_tool_result_preserves_structured_failure_evidence(tmp_path, monkeypatch) -> None:
+    executor = AgentAccelToolExecutor(str(tmp_path))
+
+    def _fake_read_file(_executor: AgentAccelToolExecutor, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "error": "receipt missing",
+            "error_type": "missing_effect_receipt",
+            "failure_evidence": [
+                {
+                    "schema_version": "polaris.failure_evidence.v1",
+                    "failure_class": "MISSING_EFFECT_RECEIPT",
+                    "responsible_layer": "platform",
+                    "evidence_refs": ["tool_lifecycle:turn-1"],
+                }
+            ],
+            "failure_evidence_summary": {
+                "count": 1,
+                "latest_failure_class": "MISSING_EFFECT_RECEIPT",
+            },
+        }
+
+    monkeypatch.setattr(executor, "_load_handler_modules", lambda: None)
+    executor._handler_modules.set("read_file", _fake_read_file)
+
+    result = executor.execute("read_file", {"file": "src/missing.py"})
+
+    assert result["ok"] is False
+    assert result["handler_error_type"] == "missing_effect_receipt"
+    assert result["failure_evidence"] == [
+        {
+            "schema_version": "polaris.failure_evidence.v1",
+            "failure_class": "MISSING_EFFECT_RECEIPT",
+            "responsible_layer": "platform",
+            "evidence_refs": ["tool_lifecycle:turn-1"],
+        }
+    ]
+    assert result["failure_evidence_summary"] == {
+        "count": 1,
+        "latest_failure_class": "MISSING_EFFECT_RECEIPT",
+    }
+
+
 def test_execute_command_emits_no_file_event(tmp_path) -> None:
     """execute_command does not emit FILE_WRITTEN events."""
     executor = AgentAccelToolExecutor(str(tmp_path))
