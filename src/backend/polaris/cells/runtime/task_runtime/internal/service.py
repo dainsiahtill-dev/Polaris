@@ -345,9 +345,53 @@ class TaskRuntimeService:
         blocked_by: list[int] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Task | None:
+        updated, _row, _execution_event = self._update_with_execution_event(
+            task_id,
+            status=status,
+            assignee=assignee,
+            owner=owner,
+            blocked_by=blocked_by,
+            metadata=metadata,
+        )
+        return updated
+
+    def update_task_row(
+        self,
+        task_id: Any,
+        *,
+        status: TaskStatus | str | None = None,
+        assignee: str | None = None,
+        owner: str | None = None,
+        blocked_by: list[int] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Update a task and return the runtime row projection with event evidence."""
+
+        _updated, row, execution_event = self._update_with_execution_event(
+            task_id,
+            status=status,
+            assignee=assignee,
+            owner=owner,
+            blocked_by=blocked_by,
+            metadata=metadata,
+        )
+        if row is None:
+            return None
+        return project_task_row_execution_event(row, execution_event)
+
+    def _update_with_execution_event(
+        self,
+        task_id: Any,
+        *,
+        status: TaskStatus | str | None = None,
+        assignee: str | None = None,
+        owner: str | None = None,
+        blocked_by: list[int] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[Task | None, dict[str, Any] | None, dict[str, Any] | None]:
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
-            return None
+            return None, None, None
         updated = self._board.update(
             normalized,
             status=status,
@@ -356,20 +400,21 @@ class TaskRuntimeService:
             blocked_by=blocked_by,
             metadata=metadata,
         )
-        if updated is not None:
-            row = self._augment_task_row(updated.to_dict())
-            self._append_execution_event(
-                "updated",
-                task_row=row,
-                session=None,
-                details={
-                    "status": str(status.value if isinstance(status, TaskStatus) else status or ""),
-                    "assignee": str(assignee or ""),
-                    "owner": str(owner or ""),
-                    "metadata_updated": metadata is not None,
-                },
-            )
-        return updated
+        if updated is None:
+            return None, None, None
+        row = self._augment_task_row(updated.to_dict())
+        execution_event = self._append_execution_event(
+            "updated",
+            task_row=row,
+            session=None,
+            details={
+                "status": str(status.value if isinstance(status, TaskStatus) else status or ""),
+                "assignee": str(assignee or ""),
+                "owner": str(owner or ""),
+                "metadata_updated": metadata is not None,
+            },
+        )
+        return updated, row, execution_event
 
     def update_task(
         self,

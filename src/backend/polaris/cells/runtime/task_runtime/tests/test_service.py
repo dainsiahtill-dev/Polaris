@@ -82,6 +82,40 @@ def test_create_task_row_reports_event_append_failure_without_persisting_evidenc
     assert "execution_event" not in persisted["metadata"]
 
 
+def test_update_task_row_reports_event_append_failure_without_persisting_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create(subject="update with append evidence")
+
+    def fail_append_event(_command: object) -> object:
+        raise RuntimeError("fact stream unavailable")
+
+    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+
+    row = service.update_task_row(
+        created.id,
+        status="in_progress",
+        metadata={"owner_role": "director"},
+    )
+
+    assert row is not None
+    assert row["status"] == "in_progress"
+    assert row["execution_event"] == {
+        "ok": False,
+        "event_type": "updated",
+        "published": False,
+        "error": "fact stream unavailable",
+    }
+    persisted = service.get_task(row["id"])
+    assert persisted is not None
+    assert "execution_event" not in persisted
+    assert "execution_event" not in persisted["metadata"]
+
+
 def test_claim_execution_reports_execution_event_append_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
