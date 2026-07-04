@@ -1885,7 +1885,10 @@ def _artifact_quality_issues_for_errors(
         seen_keys.add(key)
         seen_raw.add(raw)
 
-    for issue in artifact_quality_issues_from_errors(errors):
+    residual_errors = [
+        error for error in errors if (raw := str(error or "").strip()) and raw not in seen_raw
+    ]
+    for issue in artifact_quality_issues_from_errors(residual_errors):
         raw = _artifact_quality_issue_raw(issue)
         key = _artifact_quality_issue_key(issue)
         if key in seen_keys or (raw and raw in seen_raw):

@@ -35,6 +35,42 @@ def test_artifact_quality_issues_for_errors_preserves_typed_issue_without_fallba
     assert issues == (typed_issue,)
 
 
+def test_artifact_quality_issues_for_errors_only_fallback_parses_residual_errors(monkeypatch: Any) -> None:
+    typed_diagnostic = "Artifact quality scan failed: declared target file missing 'src/main.py'"
+    residual_diagnostic = "Artifact quality scan failed: syntax error in src/main.py: invalid syntax"
+    typed_issue = {
+        "code": "declared_target_missing",
+        "message": "declared target file missing 'src/main.py'",
+        "path": "src/main.py",
+        "severity": "error",
+        "source": "artifact_quality",
+        "metadata": {"raw": typed_diagnostic},
+    }
+    fallback_issue = {
+        "code": "syntax_error",
+        "message": "syntax error in src/main.py: invalid syntax",
+        "path": "src/main.py",
+        "severity": "error",
+        "source": "fallback",
+        "metadata": {"raw": residual_diagnostic},
+    }
+    captured_errors: list[str] = []
+
+    def _fallback(errors: list[str]) -> tuple[dict[str, Any], ...]:
+        captured_errors.extend(errors)
+        return (fallback_issue,)
+
+    monkeypatch.setattr(quality_gate, "artifact_quality_issues_from_errors", _fallback)
+
+    issues = quality_gate._artifact_quality_issues_for_errors(
+        [typed_diagnostic, residual_diagnostic],
+        (typed_issue,),
+    )
+
+    assert captured_errors == [residual_diagnostic]
+    assert issues == (typed_issue, fallback_issue)
+
+
 def test_artifact_quality_issues_for_errors_dedupes_scanner_issues_by_structured_key() -> None:
     diagnostic = "shared raw diagnostic"
     first_issue = {
