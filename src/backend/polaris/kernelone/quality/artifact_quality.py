@@ -530,6 +530,41 @@ def _legacy_artifact_quality_issue_code_from_message(message: str) -> str:
     return slug[:80] or "artifact_quality_error"
 
 
+def _artifact_quality_issue_code_from_typed_metadata(
+    metadata: Mapping[str, Any],
+    *,
+    source: str,
+) -> str:
+    """Classify structured issue metadata before legacy message parsing.
+
+    Only stable scanner-owned metadata fields are mapped here. Display strings
+    remain a compatibility fallback rather than the primary source of issue
+    identity.
+    """
+
+    source_token = str(source or "").strip()
+    script_issue = str(metadata.get("script_issue") or "").strip()
+    script_issue_source = str(metadata.get("script_issue_source") or "").strip()
+    package_script_issue_code = str(metadata.get("package_script_issue_code") or "").strip()
+    if package_script_issue_code or (
+        script_issue
+        and source_token in {"package_manifest_scanner", "package_scripts"}
+        and script_issue_source in {"", "package_manifest_scanner", "package_scripts"}
+    ):
+        return "npm_manifest_invalid"
+    if (
+        script_issue in {"missing_compiled_entrypoint", "typescript_source_loader_require_cycle"}
+        and source_token == "runtime_smoke"
+    ):
+        return "javascript_module_error"
+
+    diagnostic_kind = str(metadata.get("diagnostic_kind") or "").strip()
+    language = str(metadata.get("language") or "").strip().lower()
+    if diagnostic_kind == "undefined_identifier" and language == "go":
+        return "go_compile_error"
+    return ""
+
+
 def _legacy_target_or_import_issue_code(_message: str, normalized_message: str) -> str:
     """Classify legacy target-contract and import-topology diagnostics."""
 
@@ -960,12 +995,15 @@ def _artifact_quality_issue_from_mapping(payload: Mapping[str, Any]) -> Artifact
             metadata[str(key)] = value
     path_raw = payload.get("path")
     path = str(path_raw).strip().replace("\\", "/") if path_raw is not None else None
+    source = str(payload.get("source") or "artifact_quality").strip() or "artifact_quality"
     return ArtifactQualityIssue(
-        code=code or _legacy_artifact_quality_issue_code_from_message(message),
+        code=code
+        or _artifact_quality_issue_code_from_typed_metadata(metadata, source=source)
+        or _legacy_artifact_quality_issue_code_from_message(message),
         message=message or code,
         path=path or None,
         severity=str(payload.get("severity") or "error").strip() or "error",
-        source=str(payload.get("source") or "artifact_quality").strip() or "artifact_quality",
+        source=source,
         line=_artifact_quality_optional_int(payload.get("line")),
         column=_artifact_quality_optional_int(payload.get("column")),
         metadata=metadata,

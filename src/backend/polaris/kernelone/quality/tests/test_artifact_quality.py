@@ -94,6 +94,40 @@ def test_artifact_quality_issue_identity_helpers_preserve_raw_and_structured_key
     assert artifact_quality_issue_structural_key({"message": "legacy text"}) == ()
 
 
+def test_artifact_quality_issue_mapping_prefers_typed_metadata_code() -> None:
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "message": "typed package script issue",
+                "source": "package_manifest_scanner",
+                "metadata": {
+                    "script_issue": "shell_command_substitution",
+                    "script_issue_source": "package_manifest_scanner",
+                },
+            },
+            {
+                "message": "typed runtime module issue",
+                "source": "runtime_smoke",
+                "metadata": {"script_issue": "missing_compiled_entrypoint"},
+            },
+            {
+                "message": "typed go issue",
+                "metadata": {
+                    "diagnostic_kind": "undefined_identifier",
+                    "language": "go",
+                    "identifier": "errString",
+                },
+            },
+        )
+    )
+
+    assert [issue["code"] for issue in issues] == [
+        "npm_manifest_invalid",
+        "javascript_module_error",
+        "go_compile_error",
+    ]
+
+
 def test_artifact_quality_evidence_uses_direct_typed_issue_for_missing_workspace(
     tmp_path: Path,
 ) -> None:
