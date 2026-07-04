@@ -629,51 +629,7 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
             metadata["target_file"] = path
     elif code == "npm_manifest_invalid":
         metadata["manifest_path"] = "package.json"
-        script_match = _ARTIFACT_QUALITY_NPM_SCRIPT_RE.search(message)
-        if script_match:
-            detail = str(script_match.group("detail") or "").strip()
-            metadata["script_name"] = str(script_match.group("script") or "").strip()
-            metadata["script_issue"] = _npm_manifest_script_issue(detail)
-            metadata["script_issue_source"] = "legacy_error_text"
-            entrypoint_match = _ARTIFACT_QUALITY_NPM_MISSING_ENTRYPOINT_RE.search(detail)
-            if entrypoint_match:
-                metadata["entrypoint"] = str(entrypoint_match.group("entrypoint") or "").strip()
-        else:
-            python_command_match = _ARTIFACT_QUALITY_NPM_PYTHON_COMMAND_RE.search(message)
-            if python_command_match:
-                metadata["script_name"] = str(python_command_match.group("script") or "").strip()
-                metadata["script_issue"] = "python_command"
-                metadata["script_issue_source"] = "legacy_error_text"
-            elif "test script must use node --test" in message.lower():
-                metadata["script_name"] = "test"
-                metadata["script_issue"] = "node_test_runner_contract"
-                metadata["script_issue_source"] = "legacy_error_text"
-            else:
-                normalized_message = message.lower()
-                script_name = ""
-                for candidate in ("start", "serve", "dev", "preview"):
-                    if f"npm run {candidate}" in normalized_message:
-                        script_name = candidate
-                        break
-                if not script_name and "npm start" in normalized_message:
-                    script_name = "start"
-                port_conflict = "eaddrinuse" in normalized_message or "address already in use" in normalized_message
-                if script_name and port_conflict:
-                    metadata["script_name"] = script_name
-                    metadata["script_issue"] = "fixed_port_conflict"
-                    metadata["script_issue_source"] = "legacy_error_text"
-                elif "npm default failing test script" in normalized_message:
-                    metadata["script_name"] = "test"
-                    metadata["script_issue"] = "default_failing_test_script"
-                    metadata["script_issue_source"] = "legacy_error_text"
-                elif "npm placeholder test script" in normalized_message:
-                    metadata["script_name"] = "test"
-                    metadata["script_issue"] = "placeholder_test_script"
-                    metadata["script_issue_source"] = "legacy_error_text"
-                elif "npm manifest-only test script" in normalized_message:
-                    metadata["script_name"] = "test"
-                    metadata["script_issue"] = "manifest_only_test_script"
-                    metadata["script_issue_source"] = "legacy_error_text"
+        metadata.update(_legacy_npm_manifest_issue_metadata(message))
     elif code == "unresolved_import_symbol":
         match = _ARTIFACT_QUALITY_UNRESOLVED_IMPORT_SYMBOL_RE.search(message)
         if match:
@@ -709,6 +665,65 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
                 metadata["identifier"] = str(go_undefined_match.group("identifier") or "").strip()
                 metadata["diagnostic_kind"] = "undefined_identifier"
     return {key: value for key, value in metadata.items() if value}
+
+
+def _legacy_npm_script_metadata(script_name: str, script_issue: str, *, entrypoint: str = "") -> dict[str, str]:
+    """Project old display-only npm script errors into typed metadata.
+
+    New package-script scanner paths should construct ArtifactQualityIssue rows
+    directly from PackageScriptIssue. This compatibility helper is only for
+    legacy diagnostic strings that still reach _artifact_quality_issue_metadata.
+    """
+
+    metadata = {
+        "script_name": script_name.strip(),
+        "script_issue": script_issue.strip(),
+        "script_issue_source": "legacy_error_text",
+    }
+    if entrypoint:
+        metadata["entrypoint"] = entrypoint.strip()
+    return {key: value for key, value in metadata.items() if value}
+
+
+def _legacy_npm_manifest_issue_metadata(message: str) -> dict[str, str]:
+    script_match = _ARTIFACT_QUALITY_NPM_SCRIPT_RE.search(message)
+    if script_match:
+        detail = str(script_match.group("detail") or "").strip()
+        entrypoint = ""
+        entrypoint_match = _ARTIFACT_QUALITY_NPM_MISSING_ENTRYPOINT_RE.search(detail)
+        if entrypoint_match:
+            entrypoint = str(entrypoint_match.group("entrypoint") or "").strip()
+        return _legacy_npm_script_metadata(
+            str(script_match.group("script") or ""),
+            _npm_manifest_script_issue(detail),
+            entrypoint=entrypoint,
+        )
+
+    python_command_match = _ARTIFACT_QUALITY_NPM_PYTHON_COMMAND_RE.search(message)
+    if python_command_match:
+        return _legacy_npm_script_metadata(str(python_command_match.group("script") or ""), "python_command")
+
+    normalized_message = message.lower()
+    if "test script must use node --test" in normalized_message:
+        return _legacy_npm_script_metadata("test", "node_test_runner_contract")
+
+    script_name = ""
+    for candidate in ("start", "serve", "dev", "preview"):
+        if f"npm run {candidate}" in normalized_message:
+            script_name = candidate
+            break
+    if not script_name and "npm start" in normalized_message:
+        script_name = "start"
+    port_conflict = "eaddrinuse" in normalized_message or "address already in use" in normalized_message
+    if script_name and port_conflict:
+        return _legacy_npm_script_metadata(script_name, "fixed_port_conflict")
+    if "npm default failing test script" in normalized_message:
+        return _legacy_npm_script_metadata("test", "default_failing_test_script")
+    if "npm placeholder test script" in normalized_message:
+        return _legacy_npm_script_metadata("test", "placeholder_test_script")
+    if "npm manifest-only test script" in normalized_message:
+        return _legacy_npm_script_metadata("test", "manifest_only_test_script")
+    return {}
 
 
 def _npm_manifest_script_issue(detail: str) -> str:
