@@ -880,6 +880,50 @@ def test_npm_script_contract_uses_typed_node_test_runner_contract_metadata() -> 
     assert plan.operations[0].value == "node --test tests/product.test.js"
 
 
+def test_npm_script_contract_uses_typed_fixed_port_conflict_metadata() -> None:
+    package_text = json.dumps(
+        {
+            "name": "sample",
+            "version": "1.0.0",
+            "scripts": {
+                "start": "npx --yes http-server . -p 8080 -c-1",
+                "serve": "npx --yes http-server . --port 8080 -c-1",
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    diagnostics = (
+        RepairDiagnostic(
+            source="artifact_quality",
+            code="npm_manifest_invalid",
+            message="typed npm script issue",
+            path="package.json",
+            metadata={
+                "manifest_path": "package.json",
+                "script_name": "serve",
+                "script_issue": "fixed_port_conflict",
+            },
+        ),
+    )
+
+    plan = build_npm_script_contract_plan(
+        base_files={"package.json": package_text},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert [(operation.kind, operation.path, operation.json_path) for operation in plan.operations] == [
+        ("json_set", "package.json", ("scripts", "serve")),
+        ("json_set", "package.json", ("scripts", "start")),
+    ]
+    assert {operation.value for operation in plan.operations} == {
+        "npx --yes http-server . --port ${PORT:-0} -c-1",
+        "npx --yes http-server . -p ${PORT:-0} -c-1",
+    }
+
+
 def test_npm_script_contract_repairs_python_commands_with_structured_json() -> None:
     package_text = json.dumps(
         {

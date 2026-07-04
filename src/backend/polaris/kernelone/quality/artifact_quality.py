@@ -508,6 +508,14 @@ _ARTIFACT_QUALITY_NPM_PYTHON_COMMAND_RE = re.compile(
 
 def _artifact_quality_issue_code(message: str) -> str:
     normalized = message.lower()
+    runtime_script_invoked = (
+        "npm run start" in normalized
+        or "npm start" in normalized
+        or "npm run serve" in normalized
+        or "npm run dev" in normalized
+        or "npm run preview" in normalized
+    )
+    runtime_port_conflict = "eaddrinuse" in normalized or "address already in use" in normalized
     if "declared target file" in normalized and "missing" in normalized:
         return "declared_target_missing"
     if "unresolved import symbol" in normalized:
@@ -533,6 +541,8 @@ def _artifact_quality_issue_code(message: str) -> str:
         return "typescript_project_typecheck_failed"
     if "syntax error" in normalized or "invalid json" in normalized:
         return "syntax_error"
+    if runtime_script_invoked and runtime_port_conflict:
+        return "npm_manifest_invalid"
     if "test script must use node --test" in normalized:
         return "npm_manifest_invalid"
     if "npm package manifest" in normalized:
@@ -619,6 +629,19 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
             elif "test script must use node --test" in message.lower():
                 metadata["script_name"] = "test"
                 metadata["script_issue"] = "node_test_runner_contract"
+            else:
+                normalized_message = message.lower()
+                script_name = ""
+                for candidate in ("start", "serve", "dev", "preview"):
+                    if f"npm run {candidate}" in normalized_message:
+                        script_name = candidate
+                        break
+                if not script_name and "npm start" in normalized_message:
+                    script_name = "start"
+                port_conflict = "eaddrinuse" in normalized_message or "address already in use" in normalized_message
+                if script_name and port_conflict:
+                    metadata["script_name"] = script_name
+                    metadata["script_issue"] = "fixed_port_conflict"
     elif code == "unresolved_import_symbol":
         match = _ARTIFACT_QUALITY_UNRESOLVED_IMPORT_SYMBOL_RE.search(message)
         if match:

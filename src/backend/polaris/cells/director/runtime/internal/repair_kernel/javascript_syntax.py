@@ -269,7 +269,9 @@ def build_npm_script_contract_plan(
             _fallback_script_for_recursive_script("test", normalized_base, package_payload) or "npm run build"
         )
 
-    if _has_fixed_port_start_script_error(raw_errors):
+    if _has_fixed_port_start_script_error(raw_errors) or _has_fixed_port_start_script_diagnostic(
+        matched_diagnostics
+    ):
         for script_name in ("start", "serve", "dev", "preview"):
             script_text = str(scripts.get(script_name) or "").strip()
             replacement = _http_server_dynamic_port_script(script_text)
@@ -1223,6 +1225,16 @@ def _has_fixed_port_start_script_error(errors: Sequence[str]) -> bool:
     start_invoked = "npm run start" in joined or "npm start" in joined or "npm run serve" in joined
     port_conflict = "eaddrinuse" in joined or "address already in use" in joined
     return start_invoked and port_conflict
+
+
+def _has_fixed_port_start_script_diagnostic(diagnostics: Sequence[RepairDiagnostic]) -> bool:
+    for diagnostic in diagnostics:
+        metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
+        script_name = str(metadata.get("script_name") or "").strip()
+        script_issue = str(metadata.get("script_issue") or "").strip()
+        if script_name in {"start", "serve", "dev", "preview"} and script_issue == "fixed_port_conflict":
+            return True
+    return False
 
 
 def _has_typescript_source_loader_start_error(errors: Sequence[str]) -> bool:

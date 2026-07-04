@@ -378,6 +378,24 @@ def test_artifact_quality_issue_projection_extracts_node_test_runner_contract_me
     }
 
 
+def test_artifact_quality_issue_projection_extracts_fixed_port_conflict_metadata() -> None:
+    error = (
+        "Artifact quality scan failed: step verify failed (exit 1): npm run serve :: "
+        "Error: listen EADDRINUSE: address already in use 0.0.0.0:8080"
+    )
+
+    issues = artifact_quality_issues_from_errors((error,))
+
+    assert issues[0]["code"] == "npm_manifest_invalid"
+    assert issues[0]["path"] == "package.json"
+    assert issues[0]["metadata"] == {
+        "raw": error,
+        "manifest_path": "package.json",
+        "script_name": "serve",
+        "script_issue": "fixed_port_conflict",
+    }
+
+
 def test_artifact_quality_issue_projection_extracts_typescript_start_loader_metadata() -> None:
     error = (
         "Artifact quality scan failed: npm start :: node --loader ts-node/esm src/index.ts\n"
