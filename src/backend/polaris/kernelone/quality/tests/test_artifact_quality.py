@@ -779,6 +779,8 @@ def test_artifact_quality_evidence_projects_test_script_placeholder_metadata(tmp
         "package_scripts",
     ]
     assert evidence.issues[2].metadata["package_script_issue_code"] == "npm_placeholder_script"
+    assert evidence.issues[2].metadata["raw"] == evidence.errors[2]
+    assert "placeholder command" in evidence.issues[2].message
 
 
 def test_artifact_quality_evidence_projects_package_script_cycle_from_typed_gate(tmp_path: Path) -> None:
@@ -811,6 +813,7 @@ def test_artifact_quality_evidence_projects_package_script_cycle_from_typed_gate
     assert issue.metadata["script_issue_source"] == "package_scripts"
     assert issue.metadata["package_script_issue_code"] == "npm_script_cycle"
     assert issue.metadata["cycle"] == ["build", "verify", "build"]
+    assert issue.metadata["raw"] == evidence.errors[0]
 
 
 def test_artifact_quality_evidence_projects_per_script_issue_metadata_directly(tmp_path: Path) -> None:

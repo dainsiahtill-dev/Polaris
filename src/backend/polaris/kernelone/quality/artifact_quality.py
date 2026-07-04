@@ -1738,30 +1738,43 @@ def _package_script_gate_artifact_error(issue: PackageScriptIssue, relative_path
     return f"Artifact quality scan failed: {issue.message} in {relative_path}"
 
 
+def _package_script_gate_artifact_issue(
+    issue: PackageScriptIssue,
+    relative_path: str,
+    display_error: str,
+) -> ArtifactQualityIssue:
+    metadata = {
+        "raw": display_error,
+        "manifest_path": relative_path,
+        **dict(issue.metadata or {}),
+        "script_issue_source": "package_scripts",
+        "package_script_issue_code": issue.code,
+    }
+    for key, value in issue.to_dict().items():
+        if key in {"code", "message", "path", "severity", "source", "metadata"} or not value:
+            continue
+        metadata[str(key)] = value
+    message = display_error
+    if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
+        message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    return ArtifactQualityIssue(
+        code="npm_manifest_invalid",
+        message=message,
+        path=relative_path,
+        source="package_manifest_scanner",
+        metadata=metadata,
+    )
+
+
 def _append_package_script_gate_issue(
     errors: list[str],
     issues: list[ArtifactQualityIssue],
     issue: PackageScriptIssue,
     relative_path: str,
 ) -> None:
-    metadata = dict(issue.metadata or {})
-    metadata.update(
-        {
-            "script_issue_source": "package_scripts",
-            "package_script_issue_code": issue.code,
-        }
-    )
-    for key, value in issue.to_dict().items():
-        if key in {"code", "message", "path", "severity", "source", "metadata"} or not value:
-            continue
-        metadata[str(key)] = value
-    _append_package_manifest_issue(
-        errors,
-        issues,
-        _package_script_gate_artifact_error(issue, relative_path),
-        relative_path,
-        metadata,
-    )
+    display_error = _package_script_gate_artifact_error(issue, relative_path)
+    errors.append(display_error)
+    issues.append(_package_script_gate_artifact_issue(issue, relative_path, display_error))
 
 
 def _package_script_gate_issues_for_code(
