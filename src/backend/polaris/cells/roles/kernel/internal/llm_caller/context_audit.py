@@ -838,6 +838,38 @@ def _looks_like_ce_blueprint(value: Any) -> bool:
     )
 
 
+def _looks_like_pm_contract(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    schema_version = str(value.get("schema_version") or "").strip().lower()
+    has_contract_schema = (
+        "pm." in schema_version
+        or "pm_" in schema_version
+        or "task_contract" in schema_version
+        or "task.contract" in schema_version
+    )
+    has_task_identity = bool(str(value.get("task_id") or value.get("id") or "").strip())
+    has_scope_or_acceptance = any(
+        key in value
+        for key in (
+            "target_files",
+            "targets",
+            "target_paths",
+            "scope_paths",
+            "scope",
+            "steps",
+            "acceptance",
+            "acceptance_criteria",
+            "depends_on",
+            "dependencies",
+        )
+    )
+    has_goal_text = any(key in value for key in ("goal", "title", "description"))
+    if has_contract_schema:
+        return has_task_identity or has_scope_or_acceptance or has_goal_text
+    return has_task_identity and has_scope_or_acceptance
+
+
 def _pm_contract_payload(ai_request: Any | None) -> dict[str, Any]:
     if ai_request is None:
         return {}
@@ -853,7 +885,7 @@ def _pm_contract_payload(ai_request: Any | None) -> dict[str, Any]:
     ):
         for key in _PM_CONTRACT_CONTEXT_KEYS:
             candidate = container.get(key)
-            if isinstance(candidate, dict):
+            if isinstance(candidate, dict) and _looks_like_pm_contract(candidate):
                 return dict(candidate)
     return {}
 
@@ -873,9 +905,7 @@ def _ce_blueprint_payload(ai_request: Any | None) -> dict[str, Any]:
     ):
         for key in _CE_BLUEPRINT_CONTEXT_KEYS:
             candidate = container.get(key)
-            if not isinstance(candidate, dict):
-                continue
-            if key in {"ce_blueprint", "chief_engineer_blueprint"} or _looks_like_ce_blueprint(candidate):
+            if isinstance(candidate, dict) and _looks_like_ce_blueprint(candidate):
                 return dict(candidate)
     return {}
 

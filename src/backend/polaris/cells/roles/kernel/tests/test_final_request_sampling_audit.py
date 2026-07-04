@@ -1808,6 +1808,65 @@ def test_final_request_evidence_rejects_text_only_pm_and_ce_for_required_refs() 
     assert evidence_coverage["missing_required_refs"] == ["pm_contract", "ce_blueprint"]
 
 
+def test_final_request_evidence_rejects_weak_pm_and_ce_context_dicts() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "final_request_evidence_required": True,
+            "required_evidence": [
+                "pm_task_contract",
+                "chief_engineer_blueprint",
+                "target_files_or_declared_scopes",
+            ],
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+                "authorization": {
+                    "target_files": ["src/main.py"],
+                    "scope_paths": ["src/main.py"],
+                },
+            },
+            "pm_contract": {
+                "note": "PM Task Contract / 任务合同: TASK-1 target_files src/main.py",
+            },
+            "ce_blueprint": {
+                "note": "Chief Engineer Blueprint / CE 蓝图交接: blueprint_id ce_TASK-1",
+            },
+            "chat_messages": [
+                {
+                    "role": "system",
+                    "content": "You are Director. Implement src/main.py.",
+                }
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[{"role": "system", "content": "You are Director. Implement src/main.py."}],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert audit["coverage"]["has_pm_contract"] is False
+    assert audit["coverage"]["has_chief_engineer_blueprint"] is False
+    assert evidence_coverage["structured_evidence"]["pm_contract"] is False
+    assert evidence_coverage["structured_evidence"]["ce_blueprint"] is False
+    assert evidence_coverage["structured_evidence"]["target_files"] is True
+    assert evidence_coverage["missing_required_refs"] == ["pm_contract", "ce_blueprint"]
+
+
 def test_final_request_evidence_uses_structured_target_scope_without_text_needle() -> None:
     ai_request = AIRequest(
         task_type=TaskType.DIALOGUE,
