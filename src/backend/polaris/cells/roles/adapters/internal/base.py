@@ -215,12 +215,12 @@ class BaseRoleAdapter(RoleOrchestrationAdapter):
             return False
         if not self.task_runtime.task_exists(normalized):
             return False
-        self.task_runtime.update_task(
+        updated = self.task_runtime.update_task_row(
             normalized,
             status=status,
             metadata=metadata or {},
         )
-        return True
+        return updated is not None
 
     def _update_task_progress(
         self,

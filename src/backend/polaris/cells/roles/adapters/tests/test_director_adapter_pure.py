@@ -7783,7 +7783,7 @@ class TestPersistExecutionBackendMetadata:
 
         req = DirectorExecutionBackendRequest(execution_backend="code_edit")
         adapter._persist_execution_backend_metadata("t1", req)
-        mock_runtime.update_task.assert_called_once()
+        mock_runtime.update_task_row.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

@@ -2159,13 +2159,14 @@ class DirectorAdapter(BaseRoleAdapter):
         metadata: dict[str, Any] | None = None,
     ) -> bool:
         """更新 TaskBoard 任务"""
-        if metadata:
-            self.task_board.update_task(task_id, metadata=metadata)
-            return True
-        elif status:
-            self.task_board.update_task(task_id, status=status)
-            return True
-        return False
+        if not metadata and not status:
+            return False
+        updated = self.task_board.update_task_row(
+            task_id,
+            status=status,
+            metadata=metadata or {},
+        )
+        return updated is not None
 
     async def _emit_task_trace_event(
         self,

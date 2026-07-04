@@ -1154,10 +1154,10 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
             ).strip()
         try:
             if exhausted:
-                task_board.update(task_id, metadata=metadata_update)
+                task_board.update_task_row(task_id, metadata=metadata_update)
                 summary["exhausted_count"] += 1
             else:
-                task_board.reopen(
+                task_board.reopen_task_row(
                     task_id,
                     reason=rework_reason,
                     metadata=metadata_update,

@@ -7,7 +7,7 @@ import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from polaris.bootstrap import config as bootstrap_config_module
@@ -124,6 +124,42 @@ def test_task_runtime_execution_event_publishes_factory_progress_channel(
     assert envelope["payload"]["type"] == "task_runtime_execution"
     assert envelope["payload"]["run_id"] == "director-1"
     assert envelope["payload"]["factory_bench_session_id"] == "bench-1"
+
+
+def test_role_adapter_update_board_task_uses_runtime_row_api(tmp_path: Path) -> None:
+    adapter = DirectorAdapter(workspace=str(tmp_path))
+
+    class _RowWriteRuntime:
+        def __init__(self) -> None:
+            self.updated: list[dict[str, Any]] = []
+
+        def task_exists(self, task_id: Any) -> bool:
+            return str(task_id or "") == "7"
+
+        def update_task_row(
+            self,
+            task_id: Any,
+            *,
+            status: str | None = None,
+            metadata: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            normalized_id = int(str(task_id).removeprefix("task-"))
+            row = {
+                "id": normalized_id,
+                "status": status or "pending",
+                "metadata": dict(metadata or {}),
+            }
+            self.updated.append(row)
+            return dict(row)
+
+        def update_task(self, *_args: Any, **_kwargs: Any) -> None:
+            raise AssertionError("role adapters must use update_task_row()")
+
+    runtime = _RowWriteRuntime()
+    adapter._task_runtime = cast(Any, runtime)
+
+    assert adapter._update_board_task("task-7", status="in_progress", metadata={"phase": "execute"}) is True
+    assert runtime.updated == [{"id": 7, "status": "in_progress", "metadata": {"phase": "execute"}}]
 
 
 def test_director_snapshot_uses_nanosecond_mtime(tmp_path: Path) -> None:
