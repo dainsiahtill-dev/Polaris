@@ -165,6 +165,83 @@ def task_row_status_counts(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return stats
 
 
+def build_task_runtime_execution_event_payload(
+    *,
+    event_type: Any,
+    workspace: str,
+    task_row: dict[str, Any],
+    session: TaskExecutionSession | None,
+    details: dict[str, Any] | None = None,
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    """Project a task row/session pair into a task-runtime execution event.
+
+    Boundary:
+        This helper owns the structured event payload shape. The service layer
+        owns I/O: fact-stream append, runtime.v2 publish, and error handling.
+        Keeping the projection pure prevents TaskBoard/session status readers
+        from rebuilding execution-state, resume, attempt, and factory metadata
+        fields independently.
+
+    Complexity:
+        O(m + d) time and memory over task-row metadata and details size.
+    """
+
+    event_type_str = str(event_type or "").strip().lower() or "unknown"
+    task_metadata_raw = task_row.get("metadata")
+    task_metadata: dict[str, Any] = task_metadata_raw if isinstance(task_metadata_raw, dict) else {}
+    runtime_execution_raw = task_metadata.get("runtime_execution")
+    runtime_execution: dict[str, Any] = runtime_execution_raw if isinstance(runtime_execution_raw, dict) else {}
+    effective_status = str(
+        runtime_execution.get("effective_status")
+        or task_row.get("status")
+        or ""
+    ).strip()
+    resume_state = str(
+        runtime_execution.get("resume_state")
+        or task_row.get("resume_state")
+        or ""
+    ).strip()
+    payload: dict[str, Any] = {
+        "event_type": event_type_str,
+        "workspace": str(workspace or "").strip(),
+        "task_id": str(task_row.get("id") or ""),
+        "status": str(task_row.get("status") or ""),
+        "execution_state": effective_status,
+        "subject": str(task_row.get("subject") or ""),
+        "session_id": session.session_id if session is not None else "",
+        "run_id": session.run_id if session is not None else str(task_row.get("workflow_run_id") or ""),
+        "claimed_by": str(task_row.get("claimed_by") or ""),
+        "last_claimed_by": str(task_row.get("last_claimed_by") or ""),
+        "attempt": int(session.attempt)
+        if session is not None
+        else normalize_positive_int(runtime_execution.get("attempt"), default=0, minimum=0),
+        "resume_count": int(session.resume_count)
+        if session is not None
+        else normalize_positive_int(runtime_execution.get("resume_count"), default=0, minimum=0),
+        "resume_state": resume_state,
+        "resume_available": bool(task_row.get("resume_available")) or bool(runtime_execution.get("resume_available")),
+        "lease_expires_at": session.lease_expires_at if session is not None else str(task_row.get("lease_expires_at") or ""),
+        "last_heartbeat_at": session.last_heartbeat_at if session is not None else str(task_row.get("last_heartbeat_at") or ""),
+        "last_error": sanitize_summary(session.last_error if session is not None else task_row.get("last_error")),
+        "last_result_summary": sanitize_summary(
+            session.last_result_summary if session is not None else task_row.get("last_result_summary")
+        ),
+        "details": dict(details or {}),
+        "timestamp": str(timestamp or "").strip() or utc_now_iso(),
+    }
+    factory_run_id = str(task_metadata.get("factory_run_id") or "").strip()
+    if factory_run_id:
+        payload["factory_run_id"] = factory_run_id
+    bench_session_id = str(task_metadata.get("factory_bench_session_id") or "").strip()
+    if bench_session_id:
+        payload["factory_bench_session_id"] = bench_session_id
+    factory_project_id = str(task_metadata.get("factory_bench_project_id") or "").strip()
+    if factory_project_id:
+        payload["factory_bench_project_id"] = factory_project_id
+    return payload
+
+
 def build_task_runtime_metadata(
     *,
     session: TaskExecutionSession,
@@ -477,8 +554,10 @@ class TaskExecutionSession:
 
 __all__ = [
     "TaskExecutionSession",
+    "build_task_runtime_execution_event_payload",
     "build_task_runtime_metadata",
     "is_terminal_session_status",
+    "is_terminal_task_row_status",
     "normalize_positive_int",
     "parse_utc_iso",
     "project_task_row_runtime_state",

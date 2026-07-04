@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 from polaris.cells.runtime.task_runtime.internal.execution_session import (
     TaskExecutionSession,
+    build_task_runtime_execution_event_payload,
     build_task_runtime_metadata,
     is_terminal_session_status,
     is_terminal_task_row_status,
@@ -194,6 +195,60 @@ def test_build_task_runtime_metadata_projects_session_state() -> None:
     assert metadata["last_execution_summary"] == "done"
     assert metadata["last_context_summary"] == "context summary"
     assert metadata["preserved"] == "value"
+
+
+def test_build_task_runtime_execution_event_payload_projects_runtime_state() -> None:
+    payload = _valid_session_payload()
+    payload.update(
+        {
+            "run_id": "run-123",
+            "last_error": "ignored when summary exists",
+            "last_result_summary": "done",
+            "attempt": 2,
+            "resume_count": 1,
+        }
+    )
+    session = TaskExecutionSession.from_dict(payload)
+    event_payload = build_task_runtime_execution_event_payload(
+        event_type="CLAIMED",
+        workspace="/tmp/workspace",
+        task_row={
+            "id": 7,
+            "status": "in_progress",
+            "subject": "task subject",
+            "claimed_by": "worker-1",
+            "last_claimed_by": "worker-1",
+            "metadata": {
+                "runtime_execution": {
+                    "effective_status": "in_progress",
+                    "resume_state": "resumed",
+                    "resume_available": False,
+                },
+                "factory_run_id": "factory-1",
+                "factory_bench_session_id": "bench-1",
+                "factory_bench_project_id": "L1-01",
+            },
+        },
+        session=session,
+        details={"source": "unit"},
+        timestamp="2026-01-01T00:00:00+00:00",
+    )
+
+    assert event_payload["event_type"] == "claimed"
+    assert event_payload["workspace"] == "/tmp/workspace"
+    assert event_payload["task_id"] == "7"
+    assert event_payload["execution_state"] == "in_progress"
+    assert event_payload["session_id"] == "tx-1"
+    assert event_payload["run_id"] == "run-123"
+    assert event_payload["attempt"] == 2
+    assert event_payload["resume_count"] == 1
+    assert event_payload["resume_state"] == "resumed"
+    assert event_payload["last_result_summary"] == "done"
+    assert event_payload["details"] == {"source": "unit"}
+    assert event_payload["timestamp"] == "2026-01-01T00:00:00+00:00"
+    assert event_payload["factory_run_id"] == "factory-1"
+    assert event_payload["factory_bench_session_id"] == "bench-1"
+    assert event_payload["factory_bench_project_id"] == "L1-01"
 
 
 def test_project_task_row_runtime_state_uses_active_session_projection() -> None:
