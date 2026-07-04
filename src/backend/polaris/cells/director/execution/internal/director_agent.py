@@ -262,7 +262,7 @@ class DirectorAgent(RoleAgent):
         self._risk_registry: RiskRegistry | None = None
         self._quality_tracker: QualityTracker | None = None
         self._worker_pool: WorkerPool | None = None
-        self._taskboard: TaskRuntimeService | None = None
+        self._task_runtime: TaskRuntimeService | None = None
         self._current_execution: ExecutionRecord | None = None
         self._execution_history: list[dict[str, Any]] = []
         self._message_bus = message_bus
@@ -297,11 +297,11 @@ class DirectorAgent(RoleAgent):
         return self._worker_pool
 
     @property
-    def taskboard(self) -> TaskRuntimeService:
+    def task_runtime(self) -> TaskRuntimeService:
         """Get unified task runtime service for task coordination."""
-        if self._taskboard is None:
-            self._taskboard = TaskRuntimeService(self.workspace)
-        return self._taskboard
+        if self._task_runtime is None:
+            self._task_runtime = TaskRuntimeService(self.workspace)
+        return self._task_runtime
 
     @property
     def risk_registry(self) -> RiskRegistry:

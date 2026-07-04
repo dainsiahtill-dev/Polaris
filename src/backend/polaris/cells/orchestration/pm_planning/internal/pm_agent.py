@@ -205,18 +205,18 @@ class PMAgent(RoleAgent):
     def __init__(self, workspace: str) -> None:
         super().__init__(workspace, "PM")
         self._task_store: PMTaskStore | None = None
-        self._taskboard: TaskRuntimeService | None = None
+        self._task_runtime: TaskRuntimeService | None = None
         self._protocol_fsm: ProtocolFSM | None = None
         self._current_iteration: int = 0
         self._dispatch_history: list[dict[str, Any]] = []
         self._decisions: list[dict[str, Any]] = []
 
     @property
-    def taskboard(self) -> TaskRuntimeService:
+    def task_runtime(self) -> TaskRuntimeService:
         """Get unified task runtime service for long-term task management."""
-        if self._taskboard is None:
-            self._taskboard = TaskRuntimeService(self.workspace)
-        return self._taskboard
+        if self._task_runtime is None:
+            self._task_runtime = TaskRuntimeService(self.workspace)
+        return self._task_runtime
 
     @property
     def protocol_fsm(self) -> ProtocolFSM:
@@ -776,7 +776,7 @@ class PMAgent(RoleAgent):
             "critical": TBPriority.CRITICAL,
         }
 
-        task = self.taskboard.create(
+        row = self.task_runtime.create_task_row(
             subject=kwargs.get("subject", ""),
             description=kwargs.get("description", ""),
             priority=priority_map.get(kwargs.get("priority", "medium"), TBPriority.MEDIUM),
@@ -786,31 +786,31 @@ class PMAgent(RoleAgent):
 
         return {
             "ok": True,
-            "task_id": task.id,
-            "subject": task.subject,
-            "status": task.status.value,
+            "task_id": row.get("id"),
+            "subject": row.get("subject"),
+            "status": row.get("status"),
         }
 
     def _tool_taskboard_list_ready(self) -> dict[str, Any]:
         """List tasks ready for execution."""
-        ready = self.taskboard.list_ready()
+        ready = self.task_runtime.list_ready_task_rows()
         return {
             "ok": True,
             "tasks": [
                 {
-                    "id": t.id,
-                    "subject": t.subject,
-                    "priority": t.priority,
-                    "blocked_by": t.blocked_by,
+                    "id": row.get("id"),
+                    "subject": row.get("subject"),
+                    "priority": row.get("priority"),
+                    "blocked_by": row.get("blocked_by"),
                 }
-                for t in ready
+                for row in ready
             ],
             "count": len(ready),
         }
 
     def _tool_taskboard_stats(self) -> dict[str, Any]:
         """Get TaskBoard statistics."""
-        stats = self.taskboard.get_stats()
+        stats = self.task_runtime.get_task_row_stats()
         return {"ok": True, "stats": stats}
 
     def _tool_request_approval(self, **kwargs) -> dict[str, Any]:

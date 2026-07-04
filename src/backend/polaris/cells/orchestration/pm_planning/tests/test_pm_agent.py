@@ -293,6 +293,37 @@ class TestPMAgentGovernanceTools:
         assert result["ok"] is True
         assert result["count"] == 0
 
+    def test_taskboard_tools_use_task_runtime_row_api(self, tmp_path) -> None:
+        agent = PMAgent(str(tmp_path))
+
+        created = agent._tool_taskboard_create(
+            subject="Implement status projection",
+            description="Keep PM tools on task runtime rows",
+            priority="high",
+            blocked_by=[],
+        )
+
+        assert created == {
+            "ok": True,
+            "task_id": 1,
+            "subject": "Implement status projection",
+            "status": "pending",
+        }
+        assert not hasattr(agent, "taskboard")
+
+        ready = agent._tool_taskboard_list_ready()
+        assert ready["ok"] is True
+        assert ready["count"] == 1
+        assert ready["tasks"][0]["id"] == 1
+        assert ready["tasks"][0]["subject"] == "Implement status projection"
+        assert ready["tasks"][0]["blocked_by"] == []
+
+        stats = agent._tool_taskboard_stats()
+        assert stats["ok"] is True
+        assert stats["stats"]["total"] == 1
+        assert stats["stats"]["ready"] == 1
+        assert stats["stats"]["pending"] == 1
+
     def test_project_status_report_empty_workspace(self, tmp_path) -> None:
         agent = PMAgent(str(tmp_path))
         result = agent._tool_project_status_report(current_iteration=0)

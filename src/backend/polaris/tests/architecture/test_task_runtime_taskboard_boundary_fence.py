@@ -108,6 +108,50 @@ def _legacy_task_board_alias_references(path: Path) -> list[str]:
     return offenders
 
 
+def _annotation_name(node: ast.AST | None) -> str:
+    if node is None:
+        return ""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        prefix = _annotation_name(node.value)
+        return f"{prefix}.{node.attr}" if prefix else node.attr
+    if isinstance(node, ast.Subscript):
+        return _annotation_name(node.value)
+    if isinstance(node, ast.Constant):
+        return str(node.value or "")
+    return ""
+
+
+def _target_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return ""
+
+
+def _legacy_task_runtime_symbol_aliases(path: Path) -> list[str]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AnnAssign):
+            annotation = _annotation_name(node.annotation)
+            target = _target_name(node.target)
+            if annotation.endswith("TaskRuntimeService") and target in {"taskboard", "_taskboard", "task_board"}:
+                offenders.append(
+                    f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} names TaskRuntimeService as {target}"
+                )
+        if isinstance(node, ast.FunctionDef):
+            returns = _annotation_name(node.returns)
+            if node.name == "taskboard" and returns.endswith("TaskRuntimeService"):
+                offenders.append(
+                    f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} exposes TaskRuntimeService as taskboard"
+                )
+    return offenders
+
+
 def test_raw_taskboard_is_private_to_task_runtime_cell() -> None:
     offenders: list[str] = []
     this_file = Path(__file__).resolve()
@@ -156,8 +200,9 @@ def test_production_code_uses_task_runtime_alias() -> None:
         if _is_allowed_owner_path(path):
             continue
         offenders.extend(_legacy_task_board_alias_references(path))
+        offenders.extend(_legacy_task_runtime_symbol_aliases(path))
 
     assert not offenders, (
         "Production code must access TaskRuntimeService through task_runtime, "
-        "not the legacy task_board alias:\n" + "\n".join(offenders)
+        "not legacy taskboard/task_board aliases:\n" + "\n".join(offenders)
     )
