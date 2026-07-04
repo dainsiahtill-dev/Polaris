@@ -60,6 +60,7 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Any
 
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_calls_from_response
 from polaris.cells.roles.kernel.internal.metrics import get_metrics_collector
 from polaris.cells.roles.kernel.internal.speculation.chain_speculator import ChainSpeculator
 from polaris.cells.roles.kernel.internal.speculation.metrics import SpeculationMetrics
@@ -1074,7 +1075,7 @@ class TurnTransactionController:
         return RawLLMResponse(
             content=response.get("content", ""),
             thinking=thinking,
-            native_tool_calls=response.get("native_tool_calls") or response.get("tool_calls", []),
+            native_tool_calls=native_tool_calls_from_response(response),
             model=response.get("model", "unknown"),
             usage=response_usage,
         )

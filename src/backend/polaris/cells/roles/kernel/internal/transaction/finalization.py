@@ -15,6 +15,7 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Any, cast
 
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_calls_from_response
 from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import BlockedReason
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import detect_inline_patch_escape
@@ -236,7 +237,7 @@ class FinalizationHandler:
             RawLLMResponse(
                 content=response.get("content", ""),
                 thinking=finalize_thinking,
-                native_tool_calls=response.get("native_tool_calls") or response.get("tool_calls", []),
+                native_tool_calls=native_tool_calls_from_response(response),
                 model=response.get("model", "unknown"),
                 usage=response_usage,
             ),
