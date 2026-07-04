@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from polaris.cells.control_plane.run_ledger.public import tool_lifecycle
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_missing_dispatch_lifecycle_receipt,
@@ -42,6 +43,20 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     task_boundary_tool_dispatch_from_lifecycle_receipt,
     tool_call_lifecycle_receipts_from_metadata,
 )
+
+
+def test_tool_lifecycle_all_exports_source_projection_helpers() -> None:
+    required_exports = {
+        "build_tool_batch_lifecycle_receipt_from_sources",
+        "build_tool_dispatch_dropped_anomaly_from_sources",
+        "native_tool_call_names_from_facts",
+        "observed_tool_call_names_from_sources",
+        "task_boundary_tool_dispatch_from_lifecycle_receipt",
+    }
+
+    assert required_exports <= set(tool_lifecycle.__all__)
+    for name in required_exports:
+        assert hasattr(tool_lifecycle, name)
 
 
 def test_tool_lifecycle_receipt_links_batch_and_effect_refs() -> None:
