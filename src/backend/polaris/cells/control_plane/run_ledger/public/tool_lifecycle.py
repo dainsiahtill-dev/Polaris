@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -590,6 +590,67 @@ def project_tool_lifecycle_event(
     return row
 
 
+def summarize_tool_lifecycle_events(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Summarize canonical lifecycle event rows for Run Ledger projections.
+
+    Boundary:
+        Input rows must already come from :func:`project_tool_lifecycle_event`.
+        This helper owns aggregate lifecycle counters so Run Ledger projections
+        do not maintain a second hand-written interpretation of event fields.
+
+    Complexity:
+        O(n + m) time and memory where ``n`` is lifecycle event count and ``m``
+        is the number of native tool names / failure evidence rows.
+    """
+
+    native_count = 0
+    decoded_count = 0
+    dispatched_count = 0
+    result_count = 0
+    effect_count = 0
+    dropped_count = 0
+    failed_count = 0
+    native_names: list[str] = []
+    failure_evidence: list[dict[str, Any]] = []
+    projected_events: list[dict[str, Any]] = []
+    for raw_event in events:
+        if not isinstance(raw_event, Mapping):
+            continue
+        event = dict(raw_event)
+        projected_events.append(event)
+        native_count += _int_value(event.get("native_tool_calls_count"))
+        decoded_count += _int_value(event.get("decoded_tool_calls_count"))
+        dispatched_count += _int_value(event.get("dispatched_tool_calls_count"))
+        result_count += _int_value(event.get("tool_result_count"))
+        effect_count += _int_value(event.get("effect_receipt_count"))
+        native_names.extend(
+            name
+            for item in event.get("native_tool_call_names") or []
+            if (name := _clean_string(item))
+        )
+        if bool(event.get("dropped")):
+            dropped_count += 1
+        if bool(event.get("failed")):
+            failed_count += 1
+        evidence = event.get("failure_evidence")
+        if isinstance(evidence, Mapping):
+            failure_evidence.append(dict(evidence))
+    return {
+        "ok": failed_count == 0 and dropped_count == 0,
+        "event_count": len(projected_events),
+        "native_tool_calls_count": native_count,
+        "decoded_tool_calls_count": decoded_count,
+        "dispatched_tool_calls_count": dispatched_count,
+        "tool_result_count": result_count,
+        "effect_receipt_count": effect_count,
+        "native_tool_call_names": list(dict.fromkeys(native_names)),
+        "dropped_count": dropped_count,
+        "failed_count": failed_count,
+        "failure_evidence": failure_evidence,
+        "events": projected_events,
+    }
+
+
 def project_native_tool_call_facts_to_metadata(
     metadata: dict[str, Any],
     facts: Mapping[str, Any],
@@ -828,4 +889,5 @@ __all__ = [
     "project_lifecycle_failure_evidence_to_metadata",
     "project_native_tool_call_facts_to_metadata",
     "project_tool_lifecycle_event",
+    "summarize_tool_lifecycle_events",
 ]

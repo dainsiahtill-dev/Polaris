@@ -54,6 +54,7 @@ from .tool_lifecycle import (
     project_lifecycle_failure_evidence_to_metadata,
     project_native_tool_call_facts_to_metadata,
     project_tool_lifecycle_event,
+    summarize_tool_lifecycle_events,
     task_boundary_tool_dispatch_from_lifecycle_metadata,
 )
 
@@ -104,5 +105,6 @@ __all__ = [
     "summarize_failed_gate_evidence_context_slot",
     "summarize_failure_evidence_rows",
     "summarize_run_ledger_projection",
+    "summarize_tool_lifecycle_events",
     "task_boundary_tool_dispatch_from_lifecycle_metadata",
 ]
