@@ -17,6 +17,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     TaskBoundaryFailureClassV1,
     is_failure_class,
     normalize_failure_class,
+    project_tool_lifecycle_failure_status,
 )
 from polaris.cells.control_plane.run_ledger.public.contracts import (
     ReadRunLedgerProjectionBarrierQueryV1,
@@ -50,13 +51,6 @@ def _stable_hash(value: Any) -> str:
 
 def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
-
-
-def _int_value(value: Any) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
 
 
 def _string_list(value: Any) -> list[str]:
@@ -177,12 +171,19 @@ def _route_classification(
             evidence_refs=evidence_refs,
         )
         return "BLOCKED", False, "pending_qa", "", classification
-    tool_lifecycle = _mapping(ledger.get("tool_lifecycle"))
-    if tool_lifecycle and _int_value(tool_lifecycle.get("dropped_count")) > 0:
+    lifecycle_failure = project_tool_lifecycle_failure_status(_mapping(ledger.get("tool_lifecycle")))
+    lifecycle_failure_class = normalize_failure_class(
+        lifecycle_failure.get("failure_class"),
+        default=FailureClassV1.TOOL_LIFECYCLE_FAILED,
+    )
+    if is_failure_class(lifecycle_failure_class, FailureClassV1.TOOL_DISPATCH_DROPPED):
         classification = build_qa_failure_classification_v1(
             failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
             route="waiting_human",
-            reason="LLM emitted tool calls but the execution control plane did not commit dispatch receipts",
+            reason=str(
+                lifecycle_failure.get("reason")
+                or "LLM emitted tool calls but the execution control plane did not commit dispatch receipts"
+            ),
             repairable_by_director=False,
             severity="critical",
             owner="platform",
@@ -190,18 +191,10 @@ def _route_classification(
             evidence_refs=evidence_refs,
         )
         return "BLOCKED", False, "waiting_human", "", classification
-    if tool_lifecycle and _int_value(tool_lifecycle.get("failed_count")) > 0:
-        events = tool_lifecycle.get("events")
-        event_rows = events if isinstance(events, list) else []
-        failed_events = [item for item in event_rows if isinstance(item, dict) and bool(item.get("failed"))]
-        latest_failure = failed_events[-1] if failed_events else {}
-        failure_class = normalize_failure_class(
-            latest_failure.get("failure_class"),
-            default=FailureClassV1.TOOL_LIFECYCLE_FAILED,
-        )
-        reason = str(latest_failure.get("reason") or "Tool lifecycle receipt failed").strip()
+    if bool(lifecycle_failure.get("failed")):
+        reason = str(lifecycle_failure.get("reason") or "Tool lifecycle receipt failed").strip()
         classification = build_qa_failure_classification_v1(
-            failure_class=failure_class,
+            failure_class=lifecycle_failure_class,
             route="waiting_human",
             reason=reason,
             repairable_by_director=False,

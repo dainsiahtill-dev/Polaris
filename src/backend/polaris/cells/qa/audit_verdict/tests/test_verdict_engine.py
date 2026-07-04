@@ -56,3 +56,65 @@ def test_typed_artifact_quality_defect_routes_to_director_repair(tmp_path: Path)
     assert envelope.classification.repairable_by_director is True
     assert "npm_manifest_invalid" in envelope.classification.reason
 
+
+def test_tool_lifecycle_dropped_projection_blocks_as_platform_failure(tmp_path: Path) -> None:
+    engine = QAVerdictEngine(str(tmp_path))
+
+    envelope = engine.build_envelope(
+        task_id="TASK-3",
+        payload={"task_id": "TASK-3"},
+        ledger_projection={
+            "tool_lifecycle": {
+                "ok": False,
+                "dropped_count": 1,
+                "failed_count": 1,
+                "events": [
+                    {
+                        "dropped": True,
+                        "failed": True,
+                        "status": "dropped",
+                        "failure_class": "TOOL_DISPATCH_DROPPED",
+                        "reason": "provider emitted a write_file call but dispatch was not committed",
+                    }
+                ],
+            }
+        },
+    )
+
+    assert envelope.verdict == "BLOCKED"
+    assert envelope.next_stage == "waiting_human"
+    assert envelope.classification.failure_class == "TOOL_DISPATCH_DROPPED"
+    assert envelope.classification.responsible_layer == "execution_control_plane"
+    assert envelope.classification.repairable_by_director is False
+    assert "dispatch was not committed" in envelope.classification.reason
+
+
+def test_tool_lifecycle_failed_projection_blocks_with_projected_failure_class(tmp_path: Path) -> None:
+    engine = QAVerdictEngine(str(tmp_path))
+
+    envelope = engine.build_envelope(
+        task_id="TASK-4",
+        payload={"task_id": "TASK-4"},
+        ledger_projection={
+            "tool_lifecycle": {
+                "ok": False,
+                "dropped_count": 0,
+                "failed_count": 1,
+                "events": [
+                    {
+                        "failed": True,
+                        "status": "failed",
+                        "failure_class": "MISSING_EFFECT_RECEIPT",
+                        "reason": "write_file returned without authoritative effect receipt",
+                    }
+                ],
+            }
+        },
+    )
+
+    assert envelope.verdict == "BLOCKED"
+    assert envelope.next_stage == "waiting_human"
+    assert envelope.classification.failure_class == "MISSING_EFFECT_RECEIPT"
+    assert envelope.classification.responsible_layer == "execution_control_plane"
+    assert envelope.classification.repairable_by_director is False
+    assert "effect receipt" in envelope.classification.reason
