@@ -12,6 +12,7 @@ from typing import Any, Protocol
 
 from polaris.cells.control_plane.run_ledger.public import (
     native_tool_call_facts_from_metadata,
+    project_completion_dispatch_evidence_to_metadata,
     project_lifecycle_failure_evidence_to_metadata,
     project_native_tool_call_facts_to_metadata,
     tool_call_lifecycle_receipts_from_metadata,
@@ -42,14 +43,7 @@ _LLM_RESPONSE_METADATA_KEYS: tuple[str, ...] = (
     "failure_evidence_summary",
 )
 
-_COMPLETION_AUDIT_EVIDENCE_KEYS: tuple[str, ...] = (
-    "final_request_context_audit",
-    "required_tools",
-    "tool_call_lifecycle",
-    "tool_call_lifecycle_receipt",
-    "tool_call_lifecycle_receipts",
-    "native_tool_call_envelopes",
-    "native_tool_call_envelope_refs",
+_ROLE_RESULT_COMPLETION_EVIDENCE_KEYS: tuple[str, ...] = (
     "native_tool_calls_count",
     "native_tool_call_names",
     "failure_evidence",
@@ -190,7 +184,8 @@ def project_completion_audit_evidence(metadata: dict[str, Any], evidence: Mappin
 
     if not isinstance(evidence, Mapping):
         return
-    for key in _COMPLETION_AUDIT_EVIDENCE_KEYS:
+    project_completion_dispatch_evidence_to_metadata(metadata, evidence)
+    for key in _ROLE_RESULT_COMPLETION_EVIDENCE_KEYS:
         if key in evidence and key not in metadata:
             value = evidence[key]
             metadata[key] = dict(value) if isinstance(value, dict) else value
