@@ -1252,6 +1252,47 @@ class TestProtocolPanicHandoff:
         assert call_count == 2
 
     @pytest.mark.asyncio
+    async def test_finalize_native_tool_reentry_is_blocked(
+        self, mock_llm_provider, mock_tool_runtime, basic_context, basic_tool_definitions
+    ) -> None:
+        """Finalization must block provider-native tool calls even without the tool_calls alias."""
+        call_count = 0
+
+        async def panic_provider(request):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {
+                    "content": "读取 main.py。",
+                    "tool_calls": [_native_tool_call("read_file", {"path": "main.py"})],
+                    "model": "claude",
+                    "usage": {"prompt_tokens": 100, "completion_tokens": 30},
+                }
+            return {
+                "content": "我再调用一个工具。",
+                "native_tool_calls": [_native_tool_call("write_file", {"path": "out.py", "content": "x"})],
+                "model": "claude",
+                "usage": {"prompt_tokens": 200, "completion_tokens": 30},
+            }
+
+        controller = TurnTransactionController(
+            llm_provider=panic_provider,
+            tool_runtime=mock_tool_runtime,
+            config=TransactionConfig(domain="code"),
+        )
+        mock_tool_runtime.return_value = {"success": True, "result": "content"}
+
+        result = await controller.execute(
+            turn_id="turn_native_panic", context=basic_context, tool_definitions=basic_tool_definitions
+        )
+
+        assert result["kind"] == "finalization_tool_calls_blocked"
+        assert result["finalization"]["tool_calls_blocked"] is True
+        assert result["finalization"]["tool_names"] == ["write_file"]
+        assert result["finalization"]["workflow_reason"] == "finalization_tool_calls_blocked"
+        assert call_count == 2
+
+    @pytest.mark.asyncio
     async def test_finalize_tool_reentry_includes_receipts(
         self, mock_llm_provider, mock_tool_runtime, basic_context, basic_tool_definitions
     ) -> None:

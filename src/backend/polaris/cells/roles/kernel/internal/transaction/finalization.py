@@ -144,7 +144,7 @@ class FinalizationHandler:
             ),
         )
 
-        finalization_tool_calls = response.get("tool_calls")
+        finalization_tool_calls = native_tool_calls_from_response(response)
         blocked_tool_names = _finalization_tool_call_names(finalization_tool_calls)
         if blocked_tool_names:
             self.guard_assert_no_finalization_tool_calls(
@@ -261,7 +261,7 @@ class FinalizationHandler:
 
         self.guard_assert_no_finalization_tool_calls(
             turn_id=str(turn_id or ""),
-            tool_calls=response.get("tool_calls"),
+            tool_calls=finalization_tool_calls,
             ledger=ledger,
         )
 
