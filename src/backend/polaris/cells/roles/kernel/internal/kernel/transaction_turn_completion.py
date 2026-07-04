@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
     build_tool_call_lifecycle_receipt,
+    native_tool_call_envelope_refs_from_metadata,
     task_boundary_tool_dispatch_from_lifecycle_metadata,
 )
 from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
@@ -30,9 +31,6 @@ from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     tool_results_from_batch_receipt,
 )
 from polaris.cells.roles.kernel.internal.kernel.task_boundary import append_role_turn_task_boundary_verdict
-from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
-    native_tool_call_envelopes_from_metadata,
-)
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest, RoleTurnResult
 from polaris.kernelone.tools import is_write_tool_name, normalize_tool_name
 
@@ -277,7 +275,7 @@ def _last_decision_metadata(ledger: Any) -> dict[str, Any]:
 def _native_tool_call_envelopes(metadata: Mapping[str, Any], ledger: Any) -> list[dict[str, Any]]:
     latest_metadata = _last_decision_metadata(ledger)
     for candidate in (metadata, latest_metadata):
-        envelopes = native_tool_call_envelopes_from_metadata(candidate)
+        envelopes = native_tool_call_envelope_refs_from_metadata(candidate)
         if envelopes:
             return [dict(item) for item in envelopes]
     return []
