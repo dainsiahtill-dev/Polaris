@@ -19,6 +19,18 @@ RAW_TASKBOARD_MODULES = {
     "polaris.cells.runtime.task_runtime.public.task_board_contract",
 }
 RAW_TASKBOARD_NAMES = {"TaskBoard", "TaskBoardToolInterface", "create_taskboard"}
+LEGACY_TASK_RUNTIME_METHODS = {
+    "create",
+    "update",
+    "get",
+    "reopen",
+    "update_task",
+    "list_all",
+    "list_ready",
+    "get_ready_tasks",
+    "get_stats",
+}
+TASK_RUNTIME_RECEIVER_NAMES = {"task_runtime", "task_board"}
 
 
 def _is_allowed_owner_path(path: Path) -> bool:
@@ -46,6 +58,43 @@ def _raw_taskboard_imports(path: Path) -> list[str]:
     return offenders
 
 
+def _is_task_runtime_constructor_call(node: ast.AST) -> bool:
+    return isinstance(node, ast.Call) and (
+        (isinstance(node.func, ast.Name) and node.func.id == "TaskRuntimeService")
+        or (isinstance(node.func, ast.Attribute) and node.func.attr == "TaskRuntimeService")
+    )
+
+
+def _is_legacy_task_runtime_receiver(node: ast.AST) -> bool:
+    if _is_task_runtime_constructor_call(node):
+        return True
+    if isinstance(node, ast.Name):
+        return node.id in TASK_RUNTIME_RECEIVER_NAMES
+    if isinstance(node, ast.Attribute):
+        return node.attr in TASK_RUNTIME_RECEIVER_NAMES
+    return False
+
+
+def _legacy_task_runtime_method_calls(path: Path) -> list[str]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute):
+            continue
+        if func.attr not in LEGACY_TASK_RUNTIME_METHODS:
+            continue
+        if not _is_legacy_task_runtime_receiver(func.value):
+            continue
+        offenders.append(
+            f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} calls legacy task-runtime method {func.attr}()"
+        )
+    return offenders
+
+
 def test_raw_taskboard_is_private_to_task_runtime_cell() -> None:
     offenders: list[str] = []
     this_file = Path(__file__).resolve()
@@ -61,4 +110,23 @@ def test_raw_taskboard_is_private_to_task_runtime_cell() -> None:
     assert not offenders, (
         "Raw TaskBoard access is private to polaris.cells.runtime.task_runtime. "
         "Use TaskRuntimeService task-row APIs outside the owner cell:\n" + "\n".join(offenders)
+    )
+
+
+def test_production_code_uses_task_runtime_row_apis() -> None:
+    offenders: list[str] = []
+    this_file = Path(__file__).resolve()
+    for path in POLARIS_ROOT.rglob("*.py"):
+        if path.resolve() == this_file or "__pycache__" in path.parts:
+            continue
+        if "tests" in path.parts:
+            continue
+        if _is_allowed_owner_path(path):
+            continue
+        offenders.extend(_legacy_task_runtime_method_calls(path))
+
+    assert not offenders, (
+        "Production task-runtime consumers must use row APIs such as "
+        "create_task_row(), update_task_row(), get_task(), list_task_rows(), "
+        "list_ready_task_rows(), or get_task_row_stats():\n" + "\n".join(offenders)
     )
