@@ -508,6 +508,10 @@ _ARTIFACT_QUALITY_NPM_PYTHON_COMMAND_RE = re.compile(
     r"npm package manifest contains Python command in script ['\"](?P<script>[^'\"]+)['\"]",
     re.IGNORECASE,
 )
+_ARTIFACT_QUALITY_GO_UNDEFINED_RE = re.compile(
+    r"\bundefined:\s*(?P<identifier>[A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE,
+)
 
 
 def _artifact_quality_issue_code(message: str) -> str:
@@ -697,6 +701,11 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
             metadata["diagnostic_code"] = str(rust_match.group("code") or "").strip()
     elif code in {"go_compile_error", "java_compile_error", "cpp_compile_error"}:
         metadata["language"] = code.removesuffix("_compile_error")
+        if code == "go_compile_error":
+            go_undefined_match = _ARTIFACT_QUALITY_GO_UNDEFINED_RE.search(message)
+            if go_undefined_match:
+                metadata["identifier"] = str(go_undefined_match.group("identifier") or "").strip()
+                metadata["diagnostic_kind"] = "undefined_identifier"
     return {key: value for key, value in metadata.items() if value}
 
 

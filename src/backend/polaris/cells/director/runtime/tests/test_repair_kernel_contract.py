@@ -8971,6 +8971,42 @@ def test_go_error_string_helper_rule_inserts_narrow_error_type() -> None:
     assert repaired.index("type errString string") < repaired.index("var (")
 
 
+def test_go_error_string_helper_rule_uses_typed_identifier_metadata() -> None:
+    relative_path = "models/gallery.go"
+    content = (
+        "package models\n"
+        "\n"
+        "var (\n"
+        '    ErrDuplicateCapsule = errString("capsule id already exists")\n'
+        ")\n"
+    )
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="go_compile_error",
+        message="typed metadata only",
+        path=relative_path,
+        raw="typed metadata only",
+        metadata={
+            "language": "go",
+            "diagnostic_kind": "undefined_identifier",
+            "identifier": "errString",
+        },
+    )
+
+    plan = build_go_error_string_helper_plan(
+        base_files={relative_path: content},
+        diagnostics=(diagnostic,),
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert len(plan.operations) == 1
+    operation = plan.operations[0]
+    assert operation.path == relative_path
+    assert operation.metadata["identifier"] == "errString"
+    assert "type errString string" in operation.replacement
+
+
 def test_go_error_string_helper_coverage_matches_executable_runtime_plan() -> None:
     raw = "models/gallery.go:52:24: undefined: errString"
     diagnostics = normalize_artifact_quality_errors([raw])

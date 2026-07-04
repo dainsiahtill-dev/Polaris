@@ -293,6 +293,15 @@ def test_artifact_quality_issue_projection_extracts_missing_compiled_entrypoint(
     assert issues[0]["metadata"]["entrypoint"] == "dist/main.js"
 
 
+def test_artifact_quality_issue_projection_extracts_go_undefined_identifier() -> None:
+    issues = artifact_quality_issues_from_errors(("models/gallery.go:6:27: undefined: errString",))
+
+    assert issues[0]["code"] == "go_compile_error"
+    assert issues[0]["metadata"]["language"] == "go"
+    assert issues[0]["metadata"]["diagnostic_kind"] == "undefined_identifier"
+    assert issues[0]["metadata"]["identifier"] == "errString"
+
+
 def test_artifact_quality_issue_projection_extracts_colon_line_column() -> None:
     error = "src/main.py:7:13: SyntaxError: invalid syntax"
 
@@ -345,7 +354,15 @@ def test_artifact_quality_issue_projection_extracts_language_compile_errors() ->
             assert "column" not in issues[0]
         else:
             assert issues[0]["column"] == column
-        assert issues[0]["metadata"] == {"raw": error, "language": language}
+        expected_metadata = {"raw": error, "language": language}
+        if language == "go":
+            expected_metadata.update(
+                {
+                    "diagnostic_kind": "undefined_identifier",
+                    "identifier": "Weather",
+                }
+            )
+        assert issues[0]["metadata"] == expected_metadata
 
 
 def test_artifact_quality_issue_projection_extracts_declared_target_metadata() -> None:

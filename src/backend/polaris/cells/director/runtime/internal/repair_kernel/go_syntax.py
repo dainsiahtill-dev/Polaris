@@ -667,6 +667,11 @@ def _go_unused_import_path(diagnostic: RepairDiagnostic) -> str:
 
 
 def _go_undefined_identifier_name(diagnostic: RepairDiagnostic) -> str:
+    metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
+    if str(metadata.get("diagnostic_kind") or "").strip() == "undefined_identifier":
+        identifier = str(metadata.get("identifier") or "").strip()
+        if identifier:
+            return identifier
     for candidate in (diagnostic.message, diagnostic.raw):
         match = _GO_UNDEFINED_IDENTIFIER_RE.search(str(candidate or ""))
         if match is not None:
