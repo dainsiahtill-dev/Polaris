@@ -27,6 +27,7 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     VisualQaAuditResultV1,
     build_qa_failure_classification_v1,
     normalize_qa_failure_class,
+    project_qa_failure_execution_state,
 )
 from polaris.cells.qa.audit_verdict.public.service import (
     get_qa_verdict_envelope,
@@ -138,6 +139,14 @@ class TestQaFailureClassificationBuilder:
         assert normalize_qa_failure_class("missing-effect-receipt") == FailureClassV1.MISSING_EFFECT_RECEIPT.value
         assert normalize_qa_failure_class("incomplete-materialization") == "INCOMPLETE_MATERIALIZATION"
         assert normalize_qa_failure_class("missing entrypoint target") == "MISSING_ENTRYPOINT_TARGET"
+
+    def test_projects_failure_class_to_runtime_execution_state(self) -> None:
+        assert project_qa_failure_execution_state("incomplete_materialization") == "FAILED_ARTIFACT"
+        assert project_qa_failure_execution_state("missing_entrypoint_target") == "FAILED_ARTIFACT"
+        assert project_qa_failure_execution_state("implementation_defect") == "FAILED_ARTIFACT"
+        assert project_qa_failure_execution_state("tool_dispatch_dropped") == "FAILED_PLATFORM"
+        assert project_qa_failure_execution_state("execution_evidence_missing") == "BLOCKED_WITH_REASON"
+        assert project_qa_failure_execution_state("dependency_not_unlocked") == "BLOCKED_WITH_REASON"
 
 
 class TestQaVerdictIssuedEventV1:

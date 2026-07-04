@@ -415,6 +415,23 @@ def normalize_qa_failure_class(value: str) -> str:
     return _normalize_qa_failure_class(value)
 
 
+def project_qa_failure_execution_state(
+    failure_class: str,
+    *,
+    default: str = QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS,
+) -> str:
+    """Project a QA failure class into the runtime execution-state vocabulary."""
+
+    normalized = normalize_qa_failure_class(str(failure_class or default))
+    if normalized in QA_ARTIFACT_FAILURE_CLASSES:
+        return "FAILED_ARTIFACT"
+    if normalized in QA_PLATFORM_FAILURE_CLASSES:
+        return "FAILED_PLATFORM"
+    if normalized:
+        return "BLOCKED_WITH_REASON"
+    return "PENDING"
+
+
 def build_qa_failure_classification_v1(
     *,
     failure_class: str,
@@ -629,4 +646,5 @@ __all__ = [
     "VisualQaAuditResultV1",
     "build_qa_failure_classification_v1",
     "normalize_qa_failure_class",
+    "project_qa_failure_execution_state",
 ]

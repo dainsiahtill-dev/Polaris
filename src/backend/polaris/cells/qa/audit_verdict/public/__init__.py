@@ -24,6 +24,7 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     VisualQaAuditResultV1,
     build_qa_failure_classification_v1,
     normalize_qa_failure_class,
+    project_qa_failure_execution_state,
 )
 from polaris.cells.qa.audit_verdict.public.service import (
     AuditResult,
@@ -78,6 +79,7 @@ __all__ = [
     "get_review_gate",
     "normalize_qa_failure_class",
     "parse_traceback_frames",
+    "project_qa_failure_execution_state",
     "run_qa_audit",
     "run_visual_qa_audit",
 ]

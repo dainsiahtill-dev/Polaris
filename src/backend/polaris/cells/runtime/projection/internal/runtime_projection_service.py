@@ -42,11 +42,10 @@ from polaris.cells.events.fact_stream.public.service import (
     query_fact_events,
 )
 from polaris.cells.qa.audit_verdict.public import (
-    QA_ARTIFACT_FAILURE_CLASSES,
     QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS,
     QA_DEFAULT_TOOL_LIFECYCLE_FAILURE_CLASS,
-    QA_PLATFORM_FAILURE_CLASSES,
     normalize_qa_failure_class,
+    project_qa_failure_execution_state,
 )
 from polaris.cells.runtime.projection.internal.constants import DEFAULT_WORKSPACE
 from polaris.cells.runtime.projection.internal.io_helpers import (
@@ -980,14 +979,10 @@ def _apply_run_ledger_director_status_overlay(
 
 
 def _task_boundary_execution_state(failure_class: str) -> str:
-    normalized = normalize_qa_failure_class(str(failure_class or QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS))
-    if normalized in QA_ARTIFACT_FAILURE_CLASSES:
-        return "FAILED_ARTIFACT"
-    if normalized in QA_PLATFORM_FAILURE_CLASSES:
-        return "FAILED_PLATFORM"
-    if normalized:
-        return "BLOCKED_WITH_REASON"
-    return "PENDING"
+    return project_qa_failure_execution_state(
+        failure_class,
+        default=QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS,
+    )
 
 
 def _task_boundary_status_projection(latest_boundary: dict[str, Any]) -> dict[str, Any]:
