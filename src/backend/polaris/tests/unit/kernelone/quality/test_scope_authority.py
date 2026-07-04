@@ -45,6 +45,8 @@ def test_scope_authority_projects_owner_handoffs(tmp_path: Path) -> None:
     assert decision["owner_unknown_count"] == 1
     assert decision["recommended_routes"] == ["owner_task_retry", "scope_authority_resolution"]
     assert decision["ownership_handoff_requests"][0]["owner_step_id"] == "S4"
+    assert decision["owner_task_retry_handoff_requests"] == [decision["ownership_handoff_requests"][0]]
+    assert decision["unresolved_owner_handoff_requests"] == [decision["ownership_handoff_requests"][1]]
 
 
 def test_scope_authority_without_workspace_still_records_defer_decision() -> None:
@@ -63,6 +65,8 @@ def test_scope_authority_without_workspace_still_records_defer_decision() -> Non
     assert decision["owner_found_count"] == 0
     assert decision["owner_unknown_count"] == 0
     assert decision["recommended_routes"] == []
+    assert decision["owner_task_retry_handoff_requests"] == []
+    assert decision["unresolved_owner_handoff_requests"] == []
 
 
 def test_scope_authority_path_matching_is_case_insensitive_and_workspace_relative() -> None:
@@ -125,6 +129,25 @@ def test_scope_authority_extracts_and_classifies_handoff_payloads() -> None:
     )
     assert owner_task_retry_handoff_requests_from_scope_payload(payload) == (owned_request,)
     assert unresolved_owner_handoff_requests_from_scope_payload(payload) == (unknown_request,)
+
+    classified_payload = {
+        "task_boundary_scope_filter": {
+            "scope_authority": {
+                "ownership_handoff_requests": [
+                    owned_request,
+                    unknown_request,
+                ],
+                "owner_task_retry_handoff_requests": [owned_request],
+                "unresolved_owner_handoff_requests": [unknown_request],
+            }
+        }
+    }
+    assert ownership_handoff_requests_from_scope_payload(classified_payload) == (
+        owned_request,
+        unknown_request,
+    )
+    assert owner_task_retry_handoff_requests_from_scope_payload(classified_payload) == (owned_request,)
+    assert unresolved_owner_handoff_requests_from_scope_payload(classified_payload) == (unknown_request,)
 
 
 def test_scope_authority_matches_owner_handoff_using_projected_identifier_tokens() -> None:

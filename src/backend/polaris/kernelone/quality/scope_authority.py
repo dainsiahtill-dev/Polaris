@@ -151,6 +151,17 @@ class ScopeAuthorityDecision:
 
     def to_dict(self) -> dict[str, Any]:
         requests = [dict(item) for item in self.ownership_handoff_requests]
+        owner_task_retry_requests = [
+            dict(item)
+            for item in requests
+            if bool(item.get("owner_found")) and _clean_token(item.get("recommended_route")) == "owner_task_retry"
+        ]
+        unresolved_owner_requests = [
+            dict(item)
+            for item in requests
+            if not bool(item.get("owner_found"))
+            or _clean_token(item.get("recommended_route")) == "scope_authority_resolution"
+        ]
         owner_found_count = sum(1 for item in requests if bool(item.get("owner_found")))
         owner_unknown_count = sum(1 for item in requests if not bool(item.get("owner_found")))
         return {
@@ -161,6 +172,8 @@ class ScopeAuthorityDecision:
             "task_declared_write_targets": list(self.task_declared_write_targets),
             "out_of_scope_repair_target_files": list(self.out_of_scope_repair_target_files),
             "ownership_handoff_requests": requests,
+            "owner_task_retry_handoff_requests": owner_task_retry_requests,
+            "unresolved_owner_handoff_requests": unresolved_owner_requests,
             "handoff_request_count": len(requests),
             "owner_found_count": owner_found_count,
             "owner_unknown_count": owner_unknown_count,
@@ -184,28 +197,15 @@ def ownership_handoff_requests_from_scope_payload(payload: Mapping[str, Any]) ->
     shape knowledge.
     """
 
-    candidates: list[Any] = []
-    scope_filter_raw = payload.get("task_boundary_scope_filter")
-    if isinstance(scope_filter_raw, Mapping):
-        candidates.extend(_ownership_handoff_candidate_values(scope_filter_raw))
-    candidates.extend(_ownership_handoff_candidate_values(payload))
-
-    empty_list_seen = False
-    for candidate in candidates:
-        if not isinstance(candidate, list):
-            continue
-        requests = tuple(dict(item) for item in candidate if isinstance(item, Mapping) and item)
-        if requests:
-            return requests
-        empty_list_seen = True
-    if empty_list_seen:
-        return ()
-    return ()
+    return _handoff_requests_from_scope_payload(payload, "ownership_handoff_requests")
 
 
 def owner_task_retry_handoff_requests_from_scope_payload(payload: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
     """Return handoff requests that can be routed to the owning task."""
 
+    projected = _handoff_requests_from_scope_payload(payload, "owner_task_retry_handoff_requests")
+    if projected:
+        return projected
     return tuple(
         request
         for request in ownership_handoff_requests_from_scope_payload(payload)
@@ -216,6 +216,9 @@ def owner_task_retry_handoff_requests_from_scope_payload(payload: Mapping[str, A
 def unresolved_owner_handoff_requests_from_scope_payload(payload: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
     """Return handoff requests that still need ownership resolution."""
 
+    projected = _handoff_requests_from_scope_payload(payload, "unresolved_owner_handoff_requests")
+    if projected:
+        return projected
     return tuple(
         request
         for request in ownership_handoff_requests_from_scope_payload(payload)
@@ -286,12 +289,36 @@ def matching_owner_handoff_request(
 
 
 def _ownership_handoff_candidate_values(payload: Mapping[str, Any]) -> tuple[Any, ...]:
+    return _handoff_candidate_values(payload, "ownership_handoff_requests")
+
+
+def _handoff_candidate_values(payload: Mapping[str, Any], key: str) -> tuple[Any, ...]:
     scope_authority_raw = payload.get("scope_authority")
     scope_authority: Mapping[str, Any] = scope_authority_raw if isinstance(scope_authority_raw, Mapping) else {}
     return (
-        payload.get("ownership_handoff_requests"),
-        scope_authority.get("ownership_handoff_requests"),
+        payload.get(key),
+        scope_authority.get(key),
     )
+
+
+def _handoff_requests_from_scope_payload(payload: Mapping[str, Any], key: str) -> tuple[dict[str, Any], ...]:
+    candidates: list[Any] = []
+    scope_filter_raw = payload.get("task_boundary_scope_filter")
+    if isinstance(scope_filter_raw, Mapping):
+        candidates.extend(_handoff_candidate_values(scope_filter_raw, key))
+    candidates.extend(_handoff_candidate_values(payload, key))
+
+    empty_list_seen = False
+    for candidate in candidates:
+        if not isinstance(candidate, list):
+            continue
+        requests = tuple(dict(item) for item in candidate if isinstance(item, Mapping) and item)
+        if requests:
+            return requests
+        empty_list_seen = True
+    if empty_list_seen:
+        return ()
+    return ()
 
 
 def build_scope_authority_decision(
