@@ -893,11 +893,22 @@ class TaskRuntimeService:
             ),
         )
         row = self._augment_task_row(task.to_dict()) if task is not None else self.get_task(normalized)
+        event_row = row if isinstance(row, dict) else {"id": normalized, "status": "in_progress"}
+        execution_event = self._append_execution_event(
+            "heartbeat_renewed",
+            task_row=event_row,
+            session=session,
+            details={
+                "lease_ttl_seconds": lease_ttl_seconds,
+                "context_summary": sanitize_summary(context_summary),
+            },
+        )
         return build_task_execution_heartbeat_result(
             success=True,
             reason="heartbeat_renewed",
             task_row=row,
             session=session,
+            execution_event=execution_event,
         )
 
     def complete_execution(

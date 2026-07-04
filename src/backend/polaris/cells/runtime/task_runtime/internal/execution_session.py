@@ -451,6 +451,7 @@ def build_task_execution_heartbeat_result(
     reason: Any,
     task_row: dict[str, Any] | None = None,
     session: TaskExecutionSession | dict[str, Any] | None = None,
+    execution_event: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Project a heartbeat attempt into the stable TaskRuntime result shape.
 
@@ -470,6 +471,7 @@ def build_task_execution_heartbeat_result(
         task_row=task_row,
         session=session,
         default_success_reason="heartbeat_renewed",
+        execution_event=execution_event,
     )
 
 

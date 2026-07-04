@@ -405,6 +405,7 @@ def test_build_task_execution_heartbeat_result_projects_success_shape() -> None:
         reason="heartbeat_renewed",
         task_row={"id": 7, "status": "in_progress"},
         session=session,
+        execution_event={"ok": True, "event_type": "heartbeat_renewed", "published": False},
     )
 
     assert result["success"] is True
@@ -412,6 +413,11 @@ def test_build_task_execution_heartbeat_result_projects_success_shape() -> None:
     assert result["task"] == {"id": 7, "status": "in_progress"}
     assert result["session"]["session_id"] == "tx-1"
     assert result["session"]["run_id"] == "run-heartbeat"
+    assert result["execution_event"] == {
+        "ok": True,
+        "event_type": "heartbeat_renewed",
+        "published": False,
+    }
 
 
 def test_build_task_execution_heartbeat_result_projects_inactive_session_shape() -> None:

@@ -956,6 +956,46 @@ def test_task_runtime_service_suspends_active_sessions_for_cancelled_run(tmp_pat
         session_id=str(other_claim["session"]["session_id"]),
     )
     assert other_heartbeat["success"] is True
+    assert other_heartbeat["execution_event"]["ok"] is True
+    assert other_heartbeat["execution_event"]["event_type"] == "heartbeat_renewed"
+
+
+def test_heartbeat_execution_reports_event_append_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create(subject="heartbeat append evidence")
+    claimed = service.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-heartbeat-append-failure",
+        selection_source="unit",
+    )
+    assert claimed["success"] is True
+
+    def fail_append_event(_command: object) -> object:
+        raise RuntimeError("fact stream unavailable")
+
+    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+
+    heartbeat = service.heartbeat_execution(
+        created.id,
+        session_id=str(claimed["session"]["session_id"]),
+        context_summary="renew lease after tool dispatch",
+    )
+
+    assert heartbeat["success"] is True
+    assert heartbeat["reason"] == "heartbeat_renewed"
+    assert heartbeat["execution_event"] == {
+        "ok": False,
+        "event_type": "heartbeat_renewed",
+        "published": False,
+        "error": "fact stream unavailable",
+    }
 
 
 def test_suspend_active_executions_for_run_reports_event_append_failure(
