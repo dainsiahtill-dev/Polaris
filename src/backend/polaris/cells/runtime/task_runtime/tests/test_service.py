@@ -720,14 +720,16 @@ def test_task_runtime_service_refreshes_stale_blocked_row_with_completed_depende
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    parent = service.create(subject="completed prerequisite")
-    child = service.create(
+    parent = service.create_task_row(subject="completed prerequisite")
+    parent_id = int(parent["id"])
+    child = service.create_task_row(
         subject="stale blocked child",
-        blocked_by=[parent.id],
-        metadata={"resolved_depends_on_task_ids": [parent.id]},
+        blocked_by=[parent_id],
+        metadata={"resolved_depends_on_task_ids": [parent_id]},
     )
+    child_id = child["id"]
     claim_parent = service.claim_execution(
-        parent.id,
+        parent_id,
         worker_id="director",
         role_id="director",
         run_id="run-stale-unblock",
@@ -735,19 +737,19 @@ def test_task_runtime_service_refreshes_stale_blocked_row_with_completed_depende
     )
     assert claim_parent["success"] is True
     completed = service.complete_execution(
-        parent.id,
+        parent_id,
         session_id=str(claim_parent["session"]["session_id"]),
         result_summary="parent done",
     )
     assert completed["success"] is True
 
-    stale = service.update_task(child.id, status="blocked")
+    stale = service.update_task_row(child_id, status="blocked")
     assert stale is not None
-    assert str(stale.status.value) == "blocked"
-    assert stale.blocked_by == []
+    assert str(stale["status"]) == "blocked"
+    assert stale["blocked_by"] == []
 
     refresh = service.refresh_dependency_unblocks()
-    assert refresh["unblocked_task_ids"] == [child.id]
+    assert refresh["unblocked_task_ids"] == [child_id]
     claim_child = service.claim_next_execution(
         worker_id="director",
         role_id="director",
@@ -756,7 +758,7 @@ def test_task_runtime_service_refreshes_stale_blocked_row_with_completed_depende
     )
 
     assert claim_child["success"] is True
-    assert claim_child["task"]["id"] == child.id
+    assert claim_child["task"]["id"] == child_id
 
 
 def test_task_runtime_service_blocks_missing_dependency_fail_closed(tmp_path: Path) -> None:
@@ -764,10 +766,11 @@ def test_task_runtime_service_blocks_missing_dependency_fail_closed(tmp_path: Pa
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    child = service.create(subject="child with missing dependency", blocked_by=[999])
+    child = service.create_task_row(subject="child with missing dependency", blocked_by=[999])
+    child_id = child["id"]
 
     claim = service.claim_execution(
-        child.id,
+        child_id,
         worker_id="director",
         role_id="director",
         run_id="run-missing-dependency",
@@ -783,9 +786,10 @@ def test_task_runtime_reset_records_clears_rows_sessions_and_events(tmp_path: Pa
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    created = service.create(subject="reset stale taskboard rows", metadata={"scope": "src/App.tsx"})
+    created = service.create_task_row(subject="reset stale taskboard rows", metadata={"scope": "src/App.tsx"})
+    created_id = created["id"]
     claim = service.claim_execution(
-        created.id,
+        created_id,
         worker_id="director",
         role_id="director",
         run_id="run-reset",
