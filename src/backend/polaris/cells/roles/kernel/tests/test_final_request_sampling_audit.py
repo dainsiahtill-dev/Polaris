@@ -627,6 +627,8 @@ def test_final_request_evidence_tracks_direct_actual_sibling_exports_payload() -
             "ce_blueprint": {
                 "schema_version": "chief_engineer.blueprint.v1",
                 "blueprint_id": "ce_TASK-2",
+                "construction_plan": {"phase": "implement"},
+                "target_files": ["src/main.ts"],
             },
             "pm_contract": {
                 "schema_version": "pm.task_contract.v1",

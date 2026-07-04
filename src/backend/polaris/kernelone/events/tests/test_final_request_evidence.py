@@ -330,11 +330,20 @@ def test_contract_and_scope_predicates_require_structured_payloads() -> None:
             "target_files": ["src/index.py"],
         }
     )
-    assert looks_like_pm_contract_payload(
+    assert not looks_like_pm_contract_payload(
         {
             "pm_contract": {
                 "schema_version": "pm.task_contract.v1",
                 "goal": "Build the package",
+            }
+        }
+    )
+    assert not looks_like_pm_contract_payload(
+        {
+            "pm_contract": {
+                "schema_version": "pm.task_contract.v1",
+                "task_id": "TASK-1",
+                "title": "Build the package",
             }
         }
     )
@@ -352,6 +361,15 @@ def test_contract_and_scope_predicates_require_structured_payloads() -> None:
             "ce_blueprint": {
                 "schema_version": "chief_engineer.blueprint.v1",
                 "target_files": ["src/index.py"],
+            }
+        }
+    )
+    assert not looks_like_ce_blueprint_payload(
+        {
+            "ce_blueprint": {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": "ce-1",
+                "title": "Implement the package",
             }
         }
     )

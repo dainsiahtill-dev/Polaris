@@ -134,6 +134,22 @@ def _has_non_empty_text_sequence(value: Any) -> bool:
     return bool(_string_sequence(value))
 
 
+def _has_non_empty_mapping(value: Any) -> bool:
+    return isinstance(value, Mapping) and bool(value)
+
+
+def _has_structural_field(payload: Mapping[str, Any], keys: tuple[str, ...]) -> bool:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str) and _text(value):
+            return True
+        if isinstance(value, (list, tuple, set)) and _string_sequence(value):
+            return True
+        if _has_non_empty_mapping(value):
+            return True
+    return False
+
+
 def _unique_texts(values: Any) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
@@ -161,9 +177,9 @@ def looks_like_pm_contract_payload(value: Any) -> bool:
         or "task.contract" in schema_version
     )
     has_task_identity = bool(_first_text(value.get("task_id"), value.get("id")))
-    has_scope_or_acceptance = any(
-        key in value
-        for key in (
+    has_structured_contract = _has_structural_field(
+        value,
+        (
             "target_files",
             "targets",
             "target_paths",
@@ -174,12 +190,17 @@ def looks_like_pm_contract_payload(value: Any) -> bool:
             "acceptance_criteria",
             "depends_on",
             "dependencies",
-        )
+            "deterministic_checks",
+            "execution_checklist",
+            "delivery_plan_document",
+            "delivery_depth_contract",
+            "behavior_contract",
+            "acceptance_contract",
+        ),
     )
-    has_goal_text = any(_text(value.get(key)) for key in ("goal", "title", "description"))
     if has_contract_schema:
-        return has_task_identity or has_scope_or_acceptance or has_goal_text
-    return has_task_identity and has_scope_or_acceptance
+        return has_structured_contract
+    return has_task_identity and has_structured_contract
 
 
 def looks_like_ce_blueprint_payload(value: Any) -> bool:
@@ -197,10 +218,13 @@ def looks_like_ce_blueprint_payload(value: Any) -> bool:
         or "blueprint" in schema_version
     )
     has_blueprint_identity = bool(_first_text(value.get("blueprint_id"), value.get("id"), value.get("task_id")))
-    has_plan_signal = any(
-        key in value
-        for key in (
+    has_structured_blueprint = _has_structural_field(
+        value,
+        (
             "module_interface_contract",
+            "cross_file_interface_contract",
+            "public_symbols",
+            "consumes_symbols",
             "construction_plan",
             "execution_checklist",
             "architecture_decisions",
@@ -210,11 +234,13 @@ def looks_like_ce_blueprint_payload(value: Any) -> bool:
             "scope_paths",
             "acceptance",
             "acceptance_criteria",
-        )
+            "verification_steps",
+            "handoff_evidence",
+        ),
     )
     if has_blueprint_schema:
-        return has_blueprint_identity or has_plan_signal
-    return has_blueprint_identity and has_plan_signal
+        return has_structured_blueprint
+    return has_blueprint_identity and has_structured_blueprint
 
 
 def looks_like_target_scope_payload(value: Any) -> bool:
