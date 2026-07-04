@@ -411,6 +411,44 @@ def build_owner_handoff_index(
     )
 
 
+def owner_handoff_index_summary(
+    index: ScopeAuthorityOwnerHandoffIndex | None = None,
+    *,
+    limit: int = 12,
+) -> dict[str, Any]:
+    """Return a bounded display/audit projection for owner handoff routing.
+
+    The index is still a read-only projection; this helper centralizes the
+    public summary shape so orchestration layers do not rebuild count/list
+    fields with local owner-routing knowledge.
+
+    Complexity:
+        O(k) time and memory where ``k`` is the bounded number of projected
+        handoff requests.
+    """
+
+    bounded_limit = max(0, int(limit))
+    if index is None:
+        return {
+            "ownership_handoff_count": 0,
+            "unmatched_owner_handoff_count": 0,
+            "unmatched_owner_handoff_requests": [],
+            "unknown_owner_handoff_count": 0,
+            "unknown_owner_handoff_requests": [],
+        }
+    return {
+        "ownership_handoff_count": len(index.all_handoff_requests),
+        "unmatched_owner_handoff_count": len(index.unmatched_owner_handoff_requests),
+        "unmatched_owner_handoff_requests": [
+            dict(request) for request in index.unmatched_owner_handoff_requests[:bounded_limit]
+        ],
+        "unknown_owner_handoff_count": len(index.unknown_owner_handoff_requests),
+        "unknown_owner_handoff_requests": [
+            dict(request) for request in index.unknown_owner_handoff_requests[:bounded_limit]
+        ],
+    }
+
+
 def task_record_routing_key(record: Mapping[str, Any]) -> str:
     """Return the stable task-row routing key used by owner handoff indexes.
 

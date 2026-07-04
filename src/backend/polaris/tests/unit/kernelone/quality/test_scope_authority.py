@@ -11,6 +11,7 @@ from polaris.kernelone.quality.scope_authority import (
     matching_owner_handoff_request,
     normalize_declared_scope_path,
     owner_handoff_identifier_tokens,
+    owner_handoff_index_summary,
     owner_task_retry_handoff_requests_from_scope_payload,
     ownership_handoff_requests_from_scope_payload,
     partition_paths_by_declared_scope,
@@ -336,3 +337,48 @@ def test_scope_authority_builds_owner_handoff_index() -> None:
     assert index.unknown_owner_handoff_requests == (unknown_request,)
     assert index.matched_owner_handoff_by_task_key["12"] == matched_request
     assert index.unmatched_owner_handoff_requests == (unmatched_request,)
+
+
+def test_scope_authority_summarizes_owner_handoff_index() -> None:
+    unmatched_request = {
+        "target_file": "src/missing.js",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+        "owner_step_id": "TASK-99",
+    }
+    unknown_request = {
+        "target_file": "src/unknown.js",
+        "owner_found": False,
+        "recommended_route": "scope_authority_resolution",
+    }
+
+    empty_summary = owner_handoff_index_summary()
+    assert empty_summary == {
+        "ownership_handoff_count": 0,
+        "unmatched_owner_handoff_count": 0,
+        "unmatched_owner_handoff_requests": [],
+        "unknown_owner_handoff_count": 0,
+        "unknown_owner_handoff_requests": [],
+    }
+
+    index = build_owner_handoff_index(
+        {
+            "task_boundary_scope_filter": {
+                "ownership_handoff_requests": [
+                    unmatched_request,
+                    unknown_request,
+                ]
+            }
+        },
+        [],
+    )
+
+    summary = owner_handoff_index_summary(index, limit=1)
+
+    assert summary["ownership_handoff_count"] == 2
+    assert summary["unmatched_owner_handoff_count"] == 1
+    assert summary["unmatched_owner_handoff_requests"] == [unmatched_request]
+    assert summary["unmatched_owner_handoff_requests"][0] is not unmatched_request
+    assert summary["unknown_owner_handoff_count"] == 1
+    assert summary["unknown_owner_handoff_requests"] == [unknown_request]
+    assert summary["unknown_owner_handoff_requests"][0] is not unknown_request

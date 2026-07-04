@@ -68,6 +68,7 @@ from polaris.kernelone.llm.budget_policy import resolve_director_dispatch_timeou
 from polaris.kernelone.quality import (
     ScopeAuthorityOwnerHandoffIndex,
     build_owner_handoff_index,
+    owner_handoff_index_summary,
     ownership_handoff_requests_from_scope_payload,
     task_record_routing_key,
 )
@@ -1053,10 +1054,7 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
         "reopened_count": 0,
         "exhausted_count": 0,
         "skipped_count": 0,
-        "unmatched_owner_handoff_count": 0,
-        "unmatched_owner_handoff_requests": [],
-        "unknown_owner_handoff_count": 0,
-        "unknown_owner_handoff_requests": [],
+        **owner_handoff_index_summary(),
         "tasks": [],
         "reason": _TASK_BOUNDARY_REWORK_REASON,
         "artifact": artifact,
@@ -1170,15 +1168,12 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
         except (RuntimeError, ValueError):
             summary["skipped_count"] += 1
 
-    if owner_handoff_index.unmatched_owner_handoff_requests:
-        summary["skipped_count"] += len(owner_handoff_index.unmatched_owner_handoff_requests)
-        summary["unmatched_owner_handoff_count"] = len(owner_handoff_index.unmatched_owner_handoff_requests)
-        summary["unmatched_owner_handoff_requests"] = list(owner_handoff_index.unmatched_owner_handoff_requests)
-
-    if owner_handoff_index.unknown_owner_handoff_requests:
-        summary["skipped_count"] += len(owner_handoff_index.unknown_owner_handoff_requests)
-        summary["unknown_owner_handoff_count"] = len(owner_handoff_index.unknown_owner_handoff_requests)
-        summary["unknown_owner_handoff_requests"] = list(owner_handoff_index.unknown_owner_handoff_requests)
+    owner_handoff_summary = owner_handoff_index_summary(owner_handoff_index)
+    summary.update(owner_handoff_summary)
+    summary["skipped_count"] += (
+        int(owner_handoff_summary["unmatched_owner_handoff_count"])
+        + int(owner_handoff_summary["unknown_owner_handoff_count"])
+    )
 
     return summary
 
@@ -1252,13 +1247,7 @@ def _quality_gate_handoff_summary_from_payload(
     repair_raw = payload.get("repair")
     repair: dict[str, Any] = repair_raw if isinstance(repair_raw, dict) else {}
     owner_handoff_index = _quality_gate_owner_handoff_index(repair, entries)
-    return {
-        "ownership_handoff_count": len(owner_handoff_index.all_handoff_requests),
-        "unmatched_owner_handoff_count": len(owner_handoff_index.unmatched_owner_handoff_requests),
-        "unmatched_owner_handoff_requests": list(owner_handoff_index.unmatched_owner_handoff_requests),
-        "unknown_owner_handoff_count": len(owner_handoff_index.unknown_owner_handoff_requests),
-        "unknown_owner_handoff_requests": list(owner_handoff_index.unknown_owner_handoff_requests),
-    }
+    return owner_handoff_index_summary(owner_handoff_index)
 
 
 def _read_quality_gate_rework_summary(workspace: str) -> dict[str, Any]:
@@ -1267,11 +1256,7 @@ def _read_quality_gate_rework_summary(workspace: str) -> dict[str, Any]:
         "requested_count": 0,
         "exhausted_count": 0,
         "ready_count": 0,
-        "ownership_handoff_count": 0,
-        "unmatched_owner_handoff_count": 0,
-        "unmatched_owner_handoff_requests": [],
-        "unknown_owner_handoff_count": 0,
-        "unknown_owner_handoff_requests": [],
+        **owner_handoff_index_summary(),
         "tasks": [],
     }
     try:
