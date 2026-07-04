@@ -631,6 +631,76 @@ def build_tool_dispatch_dropped_anomaly_projection(
     return anomaly
 
 
+def build_tool_dispatch_dropped_lifecycle_from_anomaly_flags(
+    *,
+    anomaly_flags: Any,
+    run_id: str,
+    task_id: str,
+    turn_id: str,
+    role: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Return a canonical dropped-dispatch lifecycle from anomaly flags.
+
+    Boundary:
+        Older kernel paths may carry dropped-dispatch evidence as anomaly flag
+        dictionaries. This helper is the Run Ledger public adapter for that
+        compatibility shape, so callers do not reimplement lifecycle seed,
+        envelope, count, or dropped-call extraction.
+
+    Complexity:
+        O(f + e + d) for anomaly flags, envelope refs, and dropped-call refs.
+    """
+
+    native_count = 1
+    decoded_count = 0
+    provider_response_hash = ""
+    native_tool_call_envelopes: list[dict[str, Any]] = []
+    dropped_tool_calls: list[dict[str, Any]] = []
+    flags = anomaly_flags if isinstance(anomaly_flags, (list, tuple)) else ()
+    for flag in flags:
+        if not isinstance(flag, Mapping):
+            continue
+        if _clean_string(flag.get("type")) != FailureClassV1.TOOL_DISPATCH_DROPPED.value:
+            continue
+        lifecycle_raw = flag.get("tool_call_lifecycle_receipt") or flag.get("tool_call_lifecycle")
+        if isinstance(lifecycle_raw, Mapping):
+            lifecycle_seed = normalize_tool_call_lifecycle_receipt(lifecycle_raw)
+            native_count = 0
+            decoded_count = 0
+            native_tool_call_envelopes = list(
+                _native_tool_call_envelope_refs(lifecycle_seed.get("native_tool_call_envelope_refs"))
+            )
+            dropped_tool_calls = _dropped_tool_call_refs(lifecycle_seed.get("dropped_tool_calls"))
+            provider_response_hash = _clean_string(lifecycle_seed.get("provider_response_hash"))
+        else:
+            native_tool_call_envelopes = list(
+                _native_tool_call_envelope_refs(
+                    flag.get("native_tool_call_envelope_refs") or flag.get("native_tool_call_envelopes")
+                )
+            )
+            dropped_tool_calls = _dropped_tool_call_refs(flag.get("dropped_tool_calls"))
+            native_count = len(native_tool_call_envelopes) or _int_value(flag.get("native_tool_calls_count")) or 1
+            decoded_count = _int_value(flag.get("decoded_tool_calls_count"))
+            provider_response_hash = _clean_string(flag.get("provider_response_hash"))
+        break
+    return build_tool_call_lifecycle_receipt(
+        run_id=run_id,
+        task_id=task_id,
+        turn_id=turn_id,
+        role=role,
+        provider_response_hash=provider_response_hash,
+        native_tool_calls_count=native_count,
+        decoded_tool_calls_count=decoded_count,
+        receipts=[],
+        dropped_tool_calls=dropped_tool_calls,
+        native_tool_call_envelopes=native_tool_call_envelopes,
+        dispatch_status="dropped",
+        failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        reason=reason,
+    ).to_dict()
+
+
 def project_lifecycle_failure_evidence_to_metadata(
     metadata: dict[str, Any],
     lifecycle: Mapping[str, Any],
@@ -656,6 +726,7 @@ __all__ = [
     "ToolCallLifecycleReceiptV1",
     "build_tool_call_lifecycle_receipt",
     "build_tool_dispatch_dropped_anomaly_projection",
+    "build_tool_dispatch_dropped_lifecycle_from_anomaly_flags",
     "failure_evidence_from_lifecycle_receipt",
     "native_tool_call_facts_from_lifecycle_receipt",
     "normalize_native_tool_call_envelope_refs",

@@ -6,19 +6,8 @@ from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.roles.kernel.internal.kernel.task_boundary import append_director_task_boundary_verdict
-from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
-    native_tool_call_count,
-    native_tool_call_envelopes_from_metadata,
-)
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest
 from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
-
-
-def _nonnegative_int(value: Any) -> int:
-    try:
-        return max(0, int(value or 0))
-    except (TypeError, ValueError):
-        return 0
 
 
 def tool_schema_names_for_error_audit(tool_definitions: list[dict[str, Any]]) -> list[str]:
@@ -107,57 +96,17 @@ def append_tool_dispatch_dropped_control_plane_events(
     from polaris.cells.control_plane.run_ledger.public import (
         AppendRunLedgerEventCommandV1,
         append_run_ledger_event,
-        build_tool_call_lifecycle_receipt,
-        normalize_native_tool_call_envelope_refs,
-        normalize_tool_call_lifecycle_receipt,
+        build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
     )
 
-    native_count = 1
-    decoded_count = 0
-    provider_response_hash = ""
-    native_tool_call_envelopes: list[dict[str, Any]] = []
-    dropped_tool_calls: list[dict[str, Any]] = []
-    for flag in error_metadata.get("anomaly_flags", []):
-        if isinstance(flag, dict) and str(flag.get("type") or "") == FailureClassV1.TOOL_DISPATCH_DROPPED.value:
-            lifecycle_raw = flag.get("tool_call_lifecycle_receipt") or flag.get("tool_call_lifecycle")
-            if isinstance(lifecycle_raw, dict):
-                lifecycle_seed = normalize_tool_call_lifecycle_receipt(lifecycle_raw)
-                native_count = 0
-                decoded_count = 0
-                native_tool_call_envelopes = list(
-                    normalize_native_tool_call_envelope_refs(
-                        lifecycle_seed.get("native_tool_call_envelope_refs")
-                    )
-                )
-                dropped_refs = lifecycle_seed.get("dropped_tool_calls")
-                if isinstance(dropped_refs, (list, tuple)):
-                    dropped_tool_calls = [dict(item) for item in dropped_refs if isinstance(item, dict)]
-                provider_response_hash = str(lifecycle_seed.get("provider_response_hash") or "").strip()
-            else:
-                native_tool_call_envelopes = [dict(item) for item in native_tool_call_envelopes_from_metadata(flag)]
-                dropped_refs = flag.get("dropped_tool_calls")
-                if isinstance(dropped_refs, (list, tuple)):
-                    dropped_tool_calls = [dict(item) for item in dropped_refs if isinstance(item, dict)]
-                native_count = native_tool_call_count(flag, ()) or 1
-                decoded_count = _nonnegative_int(flag.get("decoded_tool_calls_count"))
-                provider_response_hash = str(flag.get("provider_response_hash") or "").strip()
-            break
-    lifecycle = build_tool_call_lifecycle_receipt(
+    lifecycle_payload = build_tool_dispatch_dropped_lifecycle_from_anomaly_flags(
+        anomaly_flags=error_metadata.get("anomaly_flags", []),
         run_id=str(request.run_id or turn_id),
         task_id=str(request.task_id or ""),
         turn_id=turn_id,
         role=str(getattr(profile, "role_id", "") or role or ""),
-        provider_response_hash=provider_response_hash,
-        native_tool_calls_count=native_count,
-        decoded_tool_calls_count=decoded_count,
-        receipts=[],
-        dropped_tool_calls=dropped_tool_calls,
-        native_tool_call_envelopes=native_tool_call_envelopes,
-        dispatch_status="dropped",
-        failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
         reason=reason,
     )
-    lifecycle_payload = lifecycle.to_dict()
     append_run_ledger_event(
         AppendRunLedgerEventCommandV1(
             workspace=workspace,
@@ -189,7 +138,7 @@ def append_tool_dispatch_dropped_control_plane_events(
             "status": "dropped",
             "dropped": True,
             "native_tool_calls_count": lifecycle_payload["native_tool_calls_count"],
-            "provider_response_hash": provider_response_hash,
+            "provider_response_hash": lifecycle_payload["provider_response_hash"],
         },
         evidence_refs=[str(error_metadata.get("context_snapshot_ref") or "").strip()],
     )

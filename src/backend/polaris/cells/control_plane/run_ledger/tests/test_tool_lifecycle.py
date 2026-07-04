@@ -4,6 +4,7 @@ from polaris.cells.control_plane.run_ledger.public.failure_evidence import Failu
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_tool_call_lifecycle_receipt,
     build_tool_dispatch_dropped_anomaly_projection,
+    build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
     failure_evidence_from_lifecycle_receipt,
     native_tool_call_facts_from_lifecycle_receipt,
     normalize_native_tool_call_envelope_refs,
@@ -133,6 +134,78 @@ def test_tool_lifecycle_receipt_detects_missing_batch_receipt() -> None:
     assert receipt["ok"] is False
     assert receipt["dispatch_status"] == "blocked"
     assert receipt["failure_class"] == "MISSING_BATCH_RECEIPT"
+
+
+def test_build_dropped_lifecycle_from_anomaly_flags_preserves_legacy_envelopes() -> None:
+    envelopes = [
+        {"envelope_id": "native-read", "tool_name": "read_file"},
+        {"envelope_id": "native-write", "tool_name": "write_file"},
+    ]
+
+    lifecycle = build_tool_dispatch_dropped_lifecycle_from_anomaly_flags(
+        anomaly_flags=[
+            {
+                "type": "TOOL_DISPATCH_DROPPED",
+                "native_tool_calls_count": 99,
+                "native_tool_call_envelopes": envelopes,
+                "provider_response_hash": "hash-1",
+            }
+        ],
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        reason="tool dispatch dropped",
+    )
+
+    assert lifecycle["provider_response_hash"] == "hash-1"
+    assert lifecycle["native_tool_calls_count"] == 2
+    assert lifecycle["decoded_tool_calls_count"] == 2
+    assert lifecycle["native_tool_call_envelope_refs"] == envelopes
+    assert lifecycle["dropped_tool_calls"] == [
+        {"tool_name": "read_file", "envelope_id": "native-read", "reason": "tool_dispatch_dropped"},
+        {"tool_name": "write_file", "envelope_id": "native-write", "reason": "tool_dispatch_dropped"},
+    ]
+
+
+def test_build_dropped_lifecycle_from_anomaly_flags_prefers_lifecycle_receipt() -> None:
+    envelope = {"envelope_id": "native-receipt-write", "tool_name": "write_file"}
+
+    lifecycle = build_tool_dispatch_dropped_lifecycle_from_anomaly_flags(
+        anomaly_flags=[
+            {
+                "type": "TOOL_DISPATCH_DROPPED",
+                "native_tool_calls_count": 99,
+                "provider_response_hash": "legacy-hash",
+                "tool_call_lifecycle_receipt": {
+                    "schema_version": "tool_call_lifecycle_receipt.v1",
+                    "provider_response_hash": "receipt-hash",
+                    "native_tool_calls_count": 1,
+                    "decoded_tool_calls_count": 1,
+                    "dispatched_tool_calls_count": 0,
+                    "native_tool_call_envelope_refs": [envelope, "invalid-ref", dict(envelope)],
+                    "dropped_tool_calls": [
+                        {"tool_name": "write_file", "reason": "tool_dispatch_dropped"}
+                    ],
+                    "dispatch_status": "dropped",
+                    "failure_class": "TOOL_DISPATCH_DROPPED",
+                },
+            }
+        ],
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        reason="tool dispatch dropped",
+    )
+
+    assert lifecycle["provider_response_hash"] == "receipt-hash"
+    assert lifecycle["native_tool_calls_count"] == 1
+    assert lifecycle["decoded_tool_calls_count"] == 1
+    assert lifecycle["native_tool_call_envelope_refs"] == [envelope]
+    assert lifecycle["dropped_tool_calls"] == [
+        {"tool_name": "write_file", "reason": "tool_dispatch_dropped"}
+    ]
 
 
 def test_tool_lifecycle_receipt_preserves_dropped_tool_details() -> None:
