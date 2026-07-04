@@ -5,6 +5,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     FailureEvidenceV1,
     append_failure_evidence_to_metadata,
     is_failure_class,
+    merge_failure_evidence_payload,
     merge_failure_evidence_rows,
     normalize_failure_class,
     summarize_failure_evidence_rows,
@@ -63,6 +64,46 @@ def test_merge_failure_evidence_rows_keeps_structured_rows_and_dedupes() -> None
     rows = merge_failure_evidence_rows([existing, "legacy text"], lifecycle, lifecycle)
 
     assert rows == [existing, lifecycle]
+
+
+def test_merge_failure_evidence_payload_projects_structured_rows() -> None:
+    existing = {
+        "items": [{"failure_class": "TOOL_RESULT_FAILED"}],
+        "failure_classes": ("TOOL_RESULT_FAILED",),
+        "evidence_refs": ("receipt:1",),
+    }
+    raw_evidence = [
+        {
+            "failure_class": "TOOL_DISPATCH_DROPPED",
+            "evidence_refs": ["provider_response:abc", "", "native_tool_call:def"],
+        },
+        "legacy text ignored",
+    ]
+
+    payload = merge_failure_evidence_payload(existing, raw_evidence)
+
+    assert payload["items"] == [
+        {"failure_class": "TOOL_RESULT_FAILED"},
+        {
+            "failure_class": "TOOL_DISPATCH_DROPPED",
+            "evidence_refs": ["provider_response:abc", "", "native_tool_call:def"],
+        },
+    ]
+    assert payload["failure_classes"] == ("TOOL_RESULT_FAILED", "TOOL_DISPATCH_DROPPED")
+    assert payload["evidence_refs"] == ("receipt:1", "provider_response:abc", "native_tool_call:def")
+
+
+def test_merge_failure_evidence_payload_overlays_mapping_projection() -> None:
+    payload = merge_failure_evidence_payload(
+        {"items": [{"failure_class": "TOOL_RESULT_FAILED"}]},
+        {"failure_classes": ["CONTRACT_AMBIGUOUS"], "summary": "from upstream"},
+    )
+
+    assert payload == {
+        "items": [{"failure_class": "TOOL_RESULT_FAILED"}],
+        "failure_classes": ["CONTRACT_AMBIGUOUS"],
+        "summary": "from upstream",
+    }
 
 
 def test_summarize_failure_evidence_rows_uses_structured_rows_only() -> None:

@@ -81,6 +81,71 @@ def merge_failure_evidence_rows(
     return rows
 
 
+def _dedupe_text_tokens(values: Any) -> tuple[str, ...]:
+    tokens: list[str] = []
+    seen: set[str] = set()
+    try:
+        iterator = iter(values)
+    except TypeError:
+        return ()
+    for item in iterator:
+        token = str(item or "").strip()
+        if token and token not in seen:
+            tokens.append(token)
+            seen.add(token)
+    return tuple(tokens)
+
+
+def merge_failure_evidence_payload(
+    existing: Mapping[str, Any] | None,
+    raw_evidence: Any,
+) -> dict[str, Any]:
+    """Merge aggregate/runtime failure-evidence payloads without prose parsing.
+
+    Boundary:
+        Mapping payloads are treated as already-shaped projections and overlay
+        existing keys. List/tuple payloads are treated as structured evidence
+        rows and projected into ``items``, ``failure_classes`` and
+        ``evidence_refs``. Malformed values are ignored.
+
+    Complexity:
+        O(n*m) for row de-duplication plus O(n) for summary token projection.
+    """
+
+    payload = dict(existing) if isinstance(existing, Mapping) else {}
+    if isinstance(raw_evidence, Mapping):
+        payload.update(dict(raw_evidence))
+        return payload
+    if not isinstance(raw_evidence, (list, tuple)):
+        return payload
+
+    rows = [dict(item) for item in raw_evidence if isinstance(item, Mapping)]
+    if not rows:
+        return payload
+    payload["items"] = merge_failure_evidence_rows(payload.get("items"), *rows)
+    payload["failure_classes"] = _dedupe_text_tokens(
+        [
+            *list(payload.get("failure_classes") or ()),
+            *(str(row.get("failure_class") or "") for row in rows),
+        ]
+    )
+    payload["evidence_refs"] = _dedupe_text_tokens(
+        [
+            *list(payload.get("evidence_refs") or ()),
+            *(
+                str(ref or "")
+                for row in rows
+                for ref in (
+                    row.get("evidence_refs")
+                    if isinstance(row.get("evidence_refs"), (list, tuple))
+                    else ()
+                )
+            ),
+        ]
+    )
+    return payload
+
+
 def summarize_failure_evidence_rows(
     rows: Any,
     *,
@@ -156,6 +221,7 @@ __all__ = [
     "FailureEvidenceV1",
     "append_failure_evidence_to_metadata",
     "is_failure_class",
+    "merge_failure_evidence_payload",
     "merge_failure_evidence_rows",
     "normalize_failure_class",
     "summarize_failure_evidence_rows",

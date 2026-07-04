@@ -23,6 +23,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public import merge_failure_evidence_payload
 from polaris.cells.roles.runtime.public.contracts import (
     AggregateChatCompletionsCommandV1,
     AggregateChatMessageV1,
@@ -929,49 +930,12 @@ def _extract_failure_signals(query: BuildAggregateRolePlanQueryV1) -> tuple[str,
     return _dedupe_tokens(_normalize_failure_signal(signal) for signal in signals if str(signal or "").strip())
 
 
-def _merge_failure_evidence(evidence: dict[str, Any], raw_evidence: Any) -> None:
-    if isinstance(raw_evidence, Mapping):
-        evidence.update(dict(raw_evidence))
-        return
-    if not isinstance(raw_evidence, (list, tuple)):
-        return
-    items = [dict(item) for item in raw_evidence if isinstance(item, Mapping)]
-    if not items:
-        return
-    existing_items = evidence.get("items")
-    merged_items = [dict(item) for item in existing_items if isinstance(item, Mapping)] if isinstance(
-        existing_items, (list, tuple)
-    ) else []
-    merged_items.extend(items)
-    evidence["items"] = merged_items
-    evidence["failure_classes"] = _dedupe_tokens(
-        [
-            *list(evidence.get("failure_classes") or ()),
-            *(str(item.get("failure_class") or "") for item in items),
-        ]
-    )
-    evidence["evidence_refs"] = _dedupe_tokens(
-        [
-            *list(evidence.get("evidence_refs") or ()),
-            *(
-                str(ref or "")
-                for item in items
-                for ref in (
-                    item.get("evidence_refs")
-                    if isinstance(item.get("evidence_refs"), (list, tuple))
-                    else ()
-                )
-            ),
-        ]
-    )
-
-
 def _extract_failure_evidence(query: BuildAggregateRolePlanQueryV1) -> dict[str, Any]:
     evidence: dict[str, Any] = {}
     for source in (query.context, query.metadata):
         raw_evidence = source.get("failure_evidence") if isinstance(source, Mapping) else None
-        _merge_failure_evidence(evidence, raw_evidence)
-    evidence.update(dict(query.failure_evidence))
+        evidence = merge_failure_evidence_payload(evidence, raw_evidence)
+    evidence = merge_failure_evidence_payload(evidence, query.failure_evidence)
     return evidence
 
 
