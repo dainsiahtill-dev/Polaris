@@ -179,7 +179,7 @@ class TaskRuntimeService:
         estimated_hours: float = 0.0,
         metadata: dict[str, Any] | None = None,
     ) -> Task:
-        return self._board.create(
+        task = self._board.create(
             subject=subject,
             description=description,
             blocked_by=blocked_by,
@@ -190,6 +190,13 @@ class TaskRuntimeService:
             estimated_hours=estimated_hours,
             metadata=metadata,
         )
+        self._append_execution_event(
+            "created",
+            task_row=self._augment_task_row(task.to_dict()),
+            session=None,
+            details={"source": "runtime.task_runtime.create"},
+        )
+        return task
 
     def ensure_task_row(
         self,

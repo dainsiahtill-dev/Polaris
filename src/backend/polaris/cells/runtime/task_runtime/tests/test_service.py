@@ -920,9 +920,16 @@ def test_task_runtime_service_emits_execution_events_via_fact_stream(tmp_path: P
     assert event_path.is_file()
     content = event_path.read_text(encoding="utf-8")
     assert '"stream":"task_runtime.execution"' in content
+    assert '"event_type":"created"' in content
     assert '"event_type":"completed"' in content
 
     events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    event_types = [str(event.get("event_type") or "") for event in events]
+    assert event_types[:3] == ["created", "claimed", "completed"]
+    created_event = next(event for event in events if event.get("event_type") == "created")
+    assert created_event["payload"]["execution_state"] == "pending"
+    assert created_event["payload"]["details"] == {"source": "runtime.task_runtime.create"}
+
     completed_event = next(event for event in events if event.get("event_type") == "completed")
     payload = completed_event["payload"]
     assert payload["execution_state"] == "completed"
