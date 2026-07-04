@@ -577,6 +577,60 @@ def failure_evidence_from_lifecycle_receipt(value: Any) -> dict[str, Any]:
     ).to_dict()
 
 
+def build_tool_dispatch_dropped_anomaly_projection(
+    *,
+    run_id: str,
+    task_id: str,
+    turn_id: str,
+    role: str,
+    provider_response_hash: str,
+    native_tool_calls_count: int,
+    native_tool_call_envelopes: list[Any] | tuple[Any, ...],
+    streaming: bool = False,
+    reason: str = "provider_emitted_tool_calls_but_no_decoded_tool_batch",
+) -> dict[str, Any]:
+    """Return the canonical dropped-dispatch anomaly projection.
+
+    Boundary:
+        Callers provide already-normalized response facts. This helper owns the
+        lifecycle receipt, dropped-call count projection, and failure-evidence
+        shape so stream and non-stream paths cannot drift.
+
+    Complexity:
+        O(e + d) over envelope and dropped-call receipt refs.
+    """
+
+    lifecycle = build_tool_call_lifecycle_receipt(
+        run_id=run_id,
+        task_id=task_id,
+        turn_id=turn_id,
+        role=role,
+        provider_response_hash=provider_response_hash,
+        native_tool_calls_count=native_tool_calls_count,
+        dispatched_tool_calls_count=0,
+        native_tool_call_envelopes=native_tool_call_envelopes,
+        dispatch_status="dropped",
+        failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        reason=reason,
+    ).to_dict()
+    anomaly = {
+        "type": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        "turn_id": lifecycle["turn_id"],
+        "native_tool_calls_count": lifecycle["native_tool_calls_count"],
+        "native_tool_call_envelopes": lifecycle["native_tool_call_envelope_refs"],
+        "provider_response_hash": lifecycle["provider_response_hash"],
+        "reason": lifecycle["reason"],
+        "dropped_tool_calls": lifecycle["dropped_tool_calls"],
+        "tool_call_lifecycle_receipt": lifecycle,
+    }
+    failure_evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
+    if failure_evidence:
+        anomaly["failure_evidence"] = [failure_evidence]
+    if streaming:
+        anomaly["streaming"] = True
+    return anomaly
+
+
 def project_lifecycle_failure_evidence_to_metadata(
     metadata: dict[str, Any],
     lifecycle: Mapping[str, Any],
@@ -601,6 +655,7 @@ def project_lifecycle_failure_evidence_to_metadata(
 __all__ = [
     "ToolCallLifecycleReceiptV1",
     "build_tool_call_lifecycle_receipt",
+    "build_tool_dispatch_dropped_anomaly_projection",
     "failure_evidence_from_lifecycle_receipt",
     "native_tool_call_facts_from_lifecycle_receipt",
     "normalize_native_tool_call_envelope_refs",

@@ -3,6 +3,7 @@ from __future__ import annotations
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_tool_call_lifecycle_receipt,
+    build_tool_dispatch_dropped_anomaly_projection,
     failure_evidence_from_lifecycle_receipt,
     native_tool_call_facts_from_lifecycle_receipt,
     normalize_native_tool_call_envelope_refs,
@@ -164,6 +165,37 @@ def test_tool_lifecycle_receipt_preserves_dropped_tool_details() -> None:
     assert failure_evidence["metadata"]["source"] == "tool_call_lifecycle_receipt.v1"
     assert failure_evidence["metadata"]["dropped_tool_calls"] == receipt["dropped_tool_calls"]
     assert failure_evidence["evidence_refs"][0].startswith("dropped_tool_call:")
+
+
+def test_tool_dispatch_dropped_anomaly_projection_builds_lifecycle_and_failure_evidence() -> None:
+    anomaly = build_tool_dispatch_dropped_anomaly_projection(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        provider_response_hash="provider-hash",
+        native_tool_calls_count=2,
+        native_tool_call_envelopes=[
+            {"envelope_id": "tool-envelope-1", "tool_name": "write_file"},
+            {"envelope_id": "tool-envelope-2", "tool_name": "execute_command"},
+        ],
+        streaming=True,
+    )
+
+    lifecycle = anomaly["tool_call_lifecycle_receipt"]
+    assert anomaly["type"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert anomaly["streaming"] is True
+    assert anomaly["native_tool_calls_count"] == 2
+    assert anomaly["native_tool_call_envelopes"] == lifecycle["native_tool_call_envelope_refs"]
+    assert anomaly["provider_response_hash"] == "provider-hash"
+    assert lifecycle["dispatch_status"] == "dropped"
+    assert lifecycle["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert lifecycle["decoded_tool_calls_count"] == 2
+    assert lifecycle["dispatched_tool_calls_count"] == 0
+    failure_evidence = anomaly["failure_evidence"][0]
+    assert failure_evidence["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert "provider_response:provider-hash" in failure_evidence["evidence_refs"]
+    assert "native_tool_call:tool-envelope-1" in failure_evidence["evidence_refs"]
 
 
 def test_tool_lifecycle_receipt_derives_dropped_status_from_native_without_dispatch() -> None:

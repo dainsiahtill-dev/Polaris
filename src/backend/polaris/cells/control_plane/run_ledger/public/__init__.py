@@ -44,6 +44,7 @@ from .task_boundary import (
 from .tool_lifecycle import (
     ToolCallLifecycleReceiptV1,
     build_tool_call_lifecycle_receipt,
+    build_tool_dispatch_dropped_anomaly_projection,
     failure_evidence_from_lifecycle_receipt,
     native_tool_call_facts_from_lifecycle_receipt,
     normalize_native_tool_call_envelope_refs,
@@ -76,6 +77,7 @@ __all__ = [
     "build_run_ledger_projection",
     "build_run_provenance_bundle",
     "build_tool_call_lifecycle_receipt",
+    "build_tool_dispatch_dropped_anomaly_projection",
     "evaluate_task_boundary_verdict",
     "failure_evidence_from_lifecycle_receipt",
     "is_failure_class",

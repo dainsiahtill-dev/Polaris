@@ -27,10 +27,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, cast
 
-from polaris.cells.control_plane.run_ledger.public import (
-    build_tool_call_lifecycle_receipt,
-    failure_evidence_from_lifecycle_receipt,
-)
+from polaris.cells.control_plane.run_ledger.public import build_tool_dispatch_dropped_anomaly_projection
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_call_count,
     native_tool_call_envelopes_from_response,
@@ -72,35 +69,17 @@ def build_tool_dispatch_dropped_anomaly(
     native_count = native_tool_call_count(metadata, native_tool_calls_from_response(response))
     response_hash = provider_response_hash(response, metadata)
     native_envelopes = native_tool_call_envelopes_from_response(response, metadata)
-    lifecycle = build_tool_call_lifecycle_receipt(
+    return build_tool_dispatch_dropped_anomaly_projection(
         run_id=str(metadata.get("run_id") or ""),
         task_id=str(metadata.get("task_id") or ""),
         turn_id=turn_id,
         role=str(metadata.get("role") or ""),
         provider_response_hash=response_hash,
         native_tool_calls_count=native_count,
-        dispatched_tool_calls_count=0,
         native_tool_call_envelopes=native_envelopes,
-        dispatch_status="dropped",
-        failure_class="TOOL_DISPATCH_DROPPED",
+        streaming=streaming,
         reason="provider_emitted_tool_calls_but_no_decoded_tool_batch",
-    ).to_dict()
-    anomaly = {
-        "type": "TOOL_DISPATCH_DROPPED",
-        "turn_id": turn_id,
-        "native_tool_calls_count": lifecycle["native_tool_calls_count"],
-        "native_tool_call_envelopes": lifecycle["native_tool_call_envelope_refs"],
-        "provider_response_hash": lifecycle["provider_response_hash"],
-        "reason": lifecycle["reason"],
-        "dropped_tool_calls": lifecycle["dropped_tool_calls"],
-        "tool_call_lifecycle_receipt": lifecycle,
-    }
-    failure_evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
-    if failure_evidence:
-        anomaly["failure_evidence"] = [failure_evidence]
-    if streaming:
-        anomaly["streaming"] = True
-    return anomaly
+    )
 
 
 def _with_decision_metadata(decision: TurnDecision, metadata: dict[str, Any]) -> TurnDecision:
