@@ -7,14 +7,12 @@ into public RoleTurnResult values so result shape drift has one owner.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any, Protocol
 
 from polaris.cells.control_plane.run_ledger.public import (
+    append_failure_evidence_to_metadata,
     failure_evidence_from_lifecycle_receipt,
-    merge_failure_evidence_rows,
     normalize_tool_call_lifecycle_receipt,
-    summarize_failure_evidence_rows,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_call_facts,
@@ -205,14 +203,7 @@ def project_failure_evidence_from_tool_lifecycle(metadata: dict[str, Any]) -> No
     failure_evidence = failure_evidence_from_lifecycle_receipt(raw)
     if not failure_evidence:
         return
-    rows = merge_failure_evidence_rows(metadata.get("failure_evidence"), failure_evidence)
-    metadata["failure_evidence"] = rows
-    metadata["failure_evidence_summary"] = summarize_failure_evidence_rows(
-        rows,
-        existing_summary=metadata.get("failure_evidence_summary")
-        if isinstance(metadata.get("failure_evidence_summary"), Mapping)
-        else None,
-    )
+    append_failure_evidence_to_metadata(metadata, failure_evidence)
 
 
 def role_turn_error_result(

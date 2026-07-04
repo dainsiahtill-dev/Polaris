@@ -3,6 +3,7 @@ from __future__ import annotations
 from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
     FailureEvidenceV1,
+    append_failure_evidence_to_metadata,
     is_failure_class,
     merge_failure_evidence_rows,
     normalize_failure_class,
@@ -85,6 +86,33 @@ def test_summarize_failure_evidence_rows_uses_structured_rows_only() -> None:
     )
 
     assert summary == {
+        "source": "previous_projection",
+        "count": 2,
+        "latest_failure_class": "TOOL_DISPATCH_DROPPED",
+    }
+
+
+def test_append_failure_evidence_to_metadata_refreshes_rows_and_summary() -> None:
+    existing = {
+        "schema_version": "failure_evidence.v1",
+        "failure_class": "TOOL_RESULT_FAILED",
+        "responsible_layer": "tool_executor",
+    }
+    lifecycle = {
+        "schema_version": "failure_evidence.v1",
+        "failure_class": "TOOL_DISPATCH_DROPPED",
+        "responsible_layer": "execution_control_plane",
+    }
+    metadata = {
+        "failure_evidence": [existing, "legacy text"],
+        "failure_evidence_summary": {"source": "previous_projection", "count": 99},
+    }
+
+    rows = append_failure_evidence_to_metadata(metadata, lifecycle, lifecycle)
+
+    assert rows == [existing, lifecycle]
+    assert metadata["failure_evidence"] == [existing, lifecycle]
+    assert metadata["failure_evidence_summary"] == {
         "source": "previous_projection",
         "count": 2,
         "latest_failure_class": "TOOL_DISPATCH_DROPPED",

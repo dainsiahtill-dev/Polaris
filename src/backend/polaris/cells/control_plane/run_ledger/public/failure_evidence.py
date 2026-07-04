@@ -103,6 +103,32 @@ def summarize_failure_evidence_rows(
     return summary
 
 
+def append_failure_evidence_to_metadata(
+    metadata: dict[str, Any],
+    *new_rows: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Append structured failure evidence rows and refresh metadata summary.
+
+    Boundary:
+        This is the single Run Ledger public projection helper for the legacy
+        ``failure_evidence`` / ``failure_evidence_summary`` metadata pair. It
+        does not parse prose diagnostics or infer failure classes.
+
+    Complexity:
+        O(n*m) time for stable row de-duplication, matching
+        :func:`merge_failure_evidence_rows`; O(n) memory for the projected rows.
+    """
+
+    rows = merge_failure_evidence_rows(metadata.get("failure_evidence"), *new_rows)
+    metadata["failure_evidence"] = rows
+    summary = metadata.get("failure_evidence_summary")
+    metadata["failure_evidence_summary"] = summarize_failure_evidence_rows(
+        rows,
+        existing_summary=summary if isinstance(summary, Mapping) else None,
+    )
+    return rows
+
+
 @dataclass(frozen=True)
 class FailureEvidenceV1:
     """Structured failure evidence suitable for Run Ledger and QA projections."""
@@ -128,6 +154,7 @@ class FailureEvidenceV1:
 __all__ = [
     "FailureClassV1",
     "FailureEvidenceV1",
+    "append_failure_evidence_to_metadata",
     "is_failure_class",
     "merge_failure_evidence_rows",
     "normalize_failure_class",

@@ -16,6 +16,7 @@ from .contracts import (
 from .failure_evidence import (
     FailureClassV1,
     FailureEvidenceV1,
+    append_failure_evidence_to_metadata,
     is_failure_class,
     merge_failure_evidence_rows,
     normalize_failure_class,
@@ -66,6 +67,7 @@ __all__ = [
     "TaskBoundaryFailureClassV1",
     "TaskBoundaryVerdictV1",
     "ToolCallLifecycleReceiptV1",
+    "append_failure_evidence_to_metadata",
     "append_run_ledger_event",
     "build_completed_task_boundary_verdict",
     "build_deferred_followup_task_boundary_verdict",

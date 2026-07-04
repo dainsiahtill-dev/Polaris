@@ -13,16 +13,15 @@ from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
+    append_failure_evidence_to_metadata,
     build_tool_call_lifecycle_receipt,
     failure_evidence_from_lifecycle_receipt,
     is_failure_class,
-    merge_failure_evidence_rows,
     native_tool_call_facts_from_lifecycle_receipt,
     normalize_failure_class,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
     project_native_tool_call_facts_to_metadata,
-    summarize_failure_evidence_rows,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
@@ -93,14 +92,7 @@ def _project_lifecycle_failure_evidence(metadata: dict[str, Any], lifecycle: Map
     failure_evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
     if not failure_evidence:
         return
-    rows = merge_failure_evidence_rows(metadata.get("failure_evidence"), failure_evidence)
-    metadata["failure_evidence"] = rows
-    metadata["failure_evidence_summary"] = summarize_failure_evidence_rows(
-        rows,
-        existing_summary=metadata.get("failure_evidence_summary")
-        if isinstance(metadata.get("failure_evidence_summary"), Mapping)
-        else None,
-    )
+    append_failure_evidence_to_metadata(metadata, failure_evidence)
 
 
 def _extract_tool_calls(result: RoleTurnResult) -> tuple[str, ...]:
