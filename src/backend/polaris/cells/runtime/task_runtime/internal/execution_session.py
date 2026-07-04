@@ -117,6 +117,12 @@ def is_terminal_session_status(status: Any) -> bool:
     return bool(terminal_task_status_value_for_session_status(status))
 
 
+def is_terminal_task_row_status(status: Any) -> bool:
+    """Return whether a task-row status is terminal in runtime projections."""
+
+    return str(status or "").strip().lower() in _TERMINAL_TASK_ROW_STATUSES
+
+
 def terminal_session_timestamp(session: TaskExecutionSession) -> float | None:
     """Return the best terminal timestamp carried by a persisted session.
 

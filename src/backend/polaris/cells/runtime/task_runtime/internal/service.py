@@ -24,6 +24,7 @@ from .execution_session import (
     TaskExecutionSession,
     build_task_runtime_metadata,
     is_terminal_session_status,
+    is_terminal_task_row_status,
     normalize_positive_int,
     project_task_row_runtime_state,
     sanitize_summary,
@@ -37,7 +38,6 @@ from .execution_session import (
 logger = logging.getLogger(__name__)
 
 _TASK_ID_PATTERN = re.compile(r"^task-(\d+)(?:-|$)", re.IGNORECASE)
-_TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 
 
 def _terminal_task_status_for_session(status: Any) -> TaskStatus | None:
@@ -372,7 +372,7 @@ class TaskRuntimeService:
         for task in self._board.list_all():
             row = self._augment_task_row(task.to_dict())
             status = str(row.get("status") or "").strip().lower()
-            if (not include_terminal) and status in _TERMINAL_STATUSES:
+            if (not include_terminal) and is_terminal_task_row_status(status):
                 continue
             rows.append(row)
         rows.sort(key=self._row_sort_key)

@@ -7,6 +7,7 @@ from polaris.cells.runtime.task_runtime.internal.execution_session import (
     TaskExecutionSession,
     build_task_runtime_metadata,
     is_terminal_session_status,
+    is_terminal_task_row_status,
     project_task_row_runtime_state,
     task_row_status_counts,
     terminal_session_timestamp,
@@ -88,6 +89,17 @@ def test_terminal_session_status_projects_task_status(session_status: str, task_
 def test_non_terminal_session_status_has_no_task_status_projection(session_status: object) -> None:
     assert terminal_task_status_value_for_session_status(session_status) == ""
     assert is_terminal_session_status(session_status) is False
+
+
+@pytest.mark.parametrize("task_status", ["completed", "failed", "cancelled"])
+def test_terminal_task_row_status_projection(task_status: str) -> None:
+    assert is_terminal_task_row_status(task_status) is True
+    assert is_terminal_task_row_status(task_status.upper()) is True
+
+
+@pytest.mark.parametrize("task_status", ["pending", "in_progress", "blocked", "active", "", None])
+def test_non_terminal_task_row_status_projection(task_status: object) -> None:
+    assert is_terminal_task_row_status(task_status) is False
 
 
 def test_terminal_session_timestamp_uses_terminal_projection_priority() -> None:
