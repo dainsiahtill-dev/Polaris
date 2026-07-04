@@ -877,7 +877,9 @@ def scan_workspace_artifact_quality_evidence(
             errors.extend(file_evidence.errors)
             typed_issues.extend(file_evidence.issues)
         if len(errors) < 50:
-            errors.extend(_scan_typescript_project_typecheck(root_full, scanned_relative_paths))
+            typecheck_evidence = _scan_typescript_project_typecheck_evidence(root_full, scanned_relative_paths)
+            errors.extend(typecheck_evidence.errors)
+            typed_issues.extend(typecheck_evidence.issues)
         if len(errors) < 50:
             cross_artifact_issues = tuple(
                 scan_cross_artifact_consistency(
@@ -1863,17 +1865,47 @@ def _npm_script_entrypoint_after_command(tokens: list[str], command_index: int) 
 
 
 def _scan_typescript_project_typecheck(root_full: Path, relative_paths: list[str]) -> list[str]:
+    """Return legacy TypeScript project typecheck string findings."""
+
+    return list(_scan_typescript_project_typecheck_evidence(root_full, relative_paths).errors)
+
+
+def _typescript_project_typecheck_issue(
+    *,
+    error: str,
+    detail: str,
+    exit_code: int,
+) -> ArtifactQualityIssue:
+    message = str(error or "").strip()
+    if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
+        message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    return ArtifactQualityIssue(
+        code="typescript_project_typecheck_failed",
+        message=message,
+        source="typescript_project_typecheck",
+        metadata={
+            "raw": str(error or "").strip(),
+            "command": "tsc --noEmit --pretty false",
+            "exit_code": exit_code,
+            "detail": detail,
+        },
+    )
+
+
+def _scan_typescript_project_typecheck_evidence(root_full: Path, relative_paths: list[str]) -> _FileArtifactQualityEvidence:
+    """Return TypeScript project typecheck findings as strings and typed issues."""
+
     if os.environ.get(_TSC_PROJECT_CHECK_FLAG, "1").strip().lower() in {"0", "false", "no", "off"}:
-        return []
+        return _FileArtifactQualityEvidence()
     if not (root_full / "tsconfig.json").is_file():
-        return []
+        return _FileArtifactQualityEvidence()
     if not any(
         Path(path).suffix.lower() in {".ts", ".tsx"} or Path(path).name == "tsconfig.json" for path in relative_paths
     ):
-        return []
+        return _FileArtifactQualityEvidence()
     tsc = _typescript_project_typecheck_command(root_full)
     if not tsc:
-        return []
+        return _FileArtifactQualityEvidence()
     try:
         proc = subprocess.run(
             [tsc, "--noEmit", "--pretty", "false"],
@@ -1884,13 +1916,24 @@ def _scan_typescript_project_typecheck(root_full: Path, relative_paths: list[str
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired, ValueError):
-        return []
+        return _FileArtifactQualityEvidence()
     if proc.returncode == 0:
-        return []
+        return _FileArtifactQualityEvidence()
     detail = _first_nonempty_line(f"{proc.stdout}\n{proc.stderr}")
     if not detail:
         detail = f"tsc --noEmit exited with code {proc.returncode}"
-    return [f"Artifact quality scan failed: TypeScript project typecheck failed: {detail[:400]}"]
+    trimmed_detail = detail[:400]
+    error = f"Artifact quality scan failed: TypeScript project typecheck failed: {trimmed_detail}"
+    return _FileArtifactQualityEvidence(
+        errors=(error,),
+        issues=(
+            _typescript_project_typecheck_issue(
+                error=error,
+                detail=trimmed_detail,
+                exit_code=proc.returncode,
+            ),
+        ),
+    )
 
 
 def _typescript_project_typecheck_command(root_full: Path) -> str:

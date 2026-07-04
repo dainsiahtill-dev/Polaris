@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from polaris.kernelone.quality import (
@@ -416,6 +417,42 @@ def test_artifact_quality_evidence_uses_direct_package_module_type_issue(tmp_pat
         "source_path": "src/index.js",
         "declared_type": "module",
         "runtime_syntax": "commonjs",
+    }
+
+
+def test_artifact_quality_evidence_uses_direct_typescript_project_typecheck_issue(tmp_path: Path) -> None:
+    (tmp_path / "tsconfig.json").write_text('{"compilerOptions":{"strict":true}}\n', encoding="utf-8")
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "index.ts").write_text("export const value = 1;\n", encoding="utf-8")
+    bin_dir = tmp_path / "node_modules" / ".bin"
+    bin_dir.mkdir(parents=True)
+    tsc = bin_dir / ("tsc.cmd" if os.name == "nt" else "tsc")
+    if os.name == "nt":
+        tsc.write_text("@echo off\necho src/index.ts(1,7): error TS2322: bad type\nexit /b 2\n", encoding="utf-8")
+    else:
+        tsc.write_text(
+            "#!/usr/bin/env sh\n"
+            "echo 'src/index.ts(1,7): error TS2322: bad type'\n"
+            "exit 2\n",
+            encoding="utf-8",
+        )
+        tsc.chmod(0o755)
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["src/index.ts"])
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/index.ts(1,7): error TS2322: bad type",
+    )
+    assert len(evidence.issues) == 1
+    assert evidence.issues[0].code == "typescript_project_typecheck_failed"
+    assert evidence.issues[0].source == "typescript_project_typecheck"
+    assert evidence.issues[0].metadata == {
+        "raw": evidence.errors[0],
+        "command": "tsc --noEmit --pretty false",
+        "exit_code": 2,
+        "detail": "src/index.ts(1,7): error TS2322: bad type",
     }
 
 

@@ -74,6 +74,10 @@ Typed issues are evidence, not repair authorization. Repair still flows through
   file scanner. Python cross-file symbol drift remains owned by the typed
   `cross_artifact_consistency` scanner and its repair-plan projection, avoiding
   a second Python import fact source for the same unresolved symbol.
+- `_scan_typescript_project_typecheck_evidence()` now owns direct typed issues
+  for `tsc --noEmit --pretty false` failures with
+  `source="typescript_project_typecheck"`, while the legacy
+  `_scan_typescript_project_typecheck()` API remains a string projection.
 
 ## 4. Verification
 
