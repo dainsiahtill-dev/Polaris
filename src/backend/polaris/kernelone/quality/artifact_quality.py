@@ -518,7 +518,9 @@ _ARTIFACT_QUALITY_GO_UNDEFINED_RE = re.compile(
 )
 
 
-def _artifact_quality_issue_code(message: str) -> str:
+def _legacy_artifact_quality_issue_code_from_message(message: str) -> str:
+    """Classify legacy display-string artifact quality diagnostics."""
+
     normalized = message.lower()
     for classifier in _LEGACY_ARTIFACT_QUALITY_ISSUE_CODE_CLASSIFIERS:
         issue_code = classifier(message, normalized)
@@ -932,7 +934,7 @@ def _artifact_quality_issue_from_error(error: str) -> ArtifactQualityIssue:
             line=line,
             column=column,
         )
-    code = _artifact_quality_issue_code(message)
+    code = _legacy_artifact_quality_issue_code_from_message(message)
     path = "package.json" if code == "npm_manifest_invalid" else _artifact_quality_issue_path(message)
     return ArtifactQualityIssue(
         code=code,
@@ -959,7 +961,7 @@ def _artifact_quality_issue_from_mapping(payload: Mapping[str, Any]) -> Artifact
     path_raw = payload.get("path")
     path = str(path_raw).strip().replace("\\", "/") if path_raw is not None else None
     return ArtifactQualityIssue(
-        code=code or _artifact_quality_issue_code(message),
+        code=code or _legacy_artifact_quality_issue_code_from_message(message),
         message=message or code,
         path=path or None,
         severity=str(payload.get("severity") or "error").strip() or "error",
