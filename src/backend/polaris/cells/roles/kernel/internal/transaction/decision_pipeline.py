@@ -173,6 +173,12 @@ def _with_decision_metadata(decision: TurnDecision, metadata: dict[str, Any]) ->
     )
 
 
+def _project_native_tool_call_count(metadata: dict[str, Any], native_tool_call_count: int) -> None:
+    """Project the canonical native tool-call count over legacy top-level aliases."""
+
+    metadata["native_tool_calls_count"] = native_tool_call_count
+
+
 async def run_decision_pipeline(
     *,
     turn_id: str,
@@ -229,7 +235,7 @@ async def run_decision_pipeline(
     decision_metadata = dict(decision.get("metadata") or {})
     native_tool_call_count = _native_tool_call_count(llm_response, decision_metadata)
     decision_metadata.setdefault("provider_response_hash", _provider_response_hash(llm_response, decision_metadata))
-    decision_metadata.setdefault("native_tool_calls_count", native_tool_call_count)
+    _project_native_tool_call_count(decision_metadata, native_tool_call_count)
     decision = _with_decision_metadata(decision, decision_metadata)
     if native_tool_call_count > 0 and tool_definitions and not decision.get("tool_batch"):
         ledger.anomaly_flags.append(

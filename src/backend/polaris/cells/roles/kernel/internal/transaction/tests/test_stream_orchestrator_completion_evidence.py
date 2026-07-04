@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from polaris.cells.roles.kernel.internal.transaction.decision_pipeline import (
+    _project_native_tool_call_count,
+)
 from polaris.cells.roles.kernel.internal.transaction.stream_orchestrator import (
     _project_completion_dispatch_evidence,
 )
@@ -66,3 +69,11 @@ def test_project_completion_dispatch_evidence_derives_refs_from_lifecycle_receip
             "tool_name": "write_file",
         }
     ]
+
+
+def test_project_native_tool_call_count_overwrites_stale_stream_monitoring() -> None:
+    monitoring = {"native_tool_calls_count": 7}
+
+    _project_native_tool_call_count(monitoring, 0)
+
+    assert monitoring["native_tool_calls_count"] == 0

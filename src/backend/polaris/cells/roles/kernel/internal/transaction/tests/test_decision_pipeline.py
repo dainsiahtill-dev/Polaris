@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from polaris.cells.roles.kernel.internal.transaction.decision_pipeline import (
     _native_tool_call_count,
+    _project_native_tool_call_count,
     _provider_response_hash,
     build_tool_dispatch_dropped_anomaly,
 )
@@ -44,6 +45,14 @@ def test_native_tool_call_count_falls_back_to_raw_calls() -> None:
     )
 
     assert _native_tool_call_count(response, {}) == 1
+
+
+def test_project_native_tool_call_count_overwrites_stale_projection() -> None:
+    metadata = {"native_tool_calls_count": 9}
+
+    _project_native_tool_call_count(metadata, 0)
+
+    assert metadata["native_tool_calls_count"] == 0
 
 
 def test_provider_response_hash_includes_metadata_envelopes() -> None:
