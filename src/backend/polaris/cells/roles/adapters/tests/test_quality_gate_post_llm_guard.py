@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import polaris.kernelone.quality.artifact_quality as artifact_quality_module
 from polaris.cells.roles.adapters.internal.director import quality_gate
+from polaris.kernelone.quality import artifact_quality_issues_for_errors
 
 
 class _Adapter:
@@ -30,7 +32,7 @@ def test_artifact_quality_issues_for_errors_preserves_typed_issue_without_fallba
         "metadata": {"raw": diagnostic},
     }
 
-    issues = quality_gate._artifact_quality_issues_for_errors([diagnostic], (typed_issue,))
+    issues = artifact_quality_issues_for_errors([diagnostic], (typed_issue,))
 
     assert issues == (typed_issue,)
 
@@ -60,9 +62,9 @@ def test_artifact_quality_issues_for_errors_only_fallback_parses_residual_errors
         captured_errors.extend(errors)
         return (fallback_issue,)
 
-    monkeypatch.setattr(quality_gate, "artifact_quality_issues_from_errors", _fallback)
+    monkeypatch.setattr(artifact_quality_module, "artifact_quality_issues_from_errors", _fallback)
 
-    issues = quality_gate._artifact_quality_issues_for_errors(
+    issues = artifact_quality_issues_for_errors(
         [typed_diagnostic, residual_diagnostic],
         (typed_issue,),
     )
@@ -88,7 +90,7 @@ def test_artifact_quality_issues_for_errors_dedupes_scanner_issues_by_structured
         "metadata": {"raw": diagnostic},
     }
 
-    issues = quality_gate._artifact_quality_issues_for_errors(
+    issues = artifact_quality_issues_for_errors(
         [diagnostic],
         (first_issue, second_issue),
     )

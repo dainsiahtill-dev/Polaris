@@ -10,6 +10,7 @@ from polaris.kernelone.quality import (
     artifact_quality_issue_key,
     artifact_quality_issue_raw,
     artifact_quality_issue_structural_key,
+    artifact_quality_issues_for_errors,
     artifact_quality_issues_from_errors,
     scan_workspace_artifact_quality,
     scan_workspace_artifact_quality_evidence,
@@ -184,6 +185,35 @@ def test_artifact_quality_issue_projection_preserves_typed_issue_payload() -> No
     issues = artifact_quality_issues_from_errors((issue,))
 
     assert issues == (issue,)
+
+
+def test_artifact_quality_issues_for_errors_matches_typed_and_residual_rows() -> None:
+    typed_raw = "src/main.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'."
+    residual_raw = "src/other.ts(2,3): error TS2304: Cannot find name 'Weather'."
+    stale_raw = "src/stale.ts(3,4): error TS2304: Cannot find name 'Stale'."
+    typed_issue = artifact_quality_issues_from_errors((typed_raw,))[0]
+    stale_issue = artifact_quality_issues_from_errors((stale_raw,))[0]
+
+    issues = artifact_quality_issues_for_errors(
+        [typed_raw, residual_raw],
+        (typed_issue, stale_issue),
+    )
+
+    assert [issue["path"] for issue in issues] == ["src/main.ts", "src/other.ts"]
+    assert [issue["code"] for issue in issues] == ["typescript_ts2322", "typescript_ts2304"]
+    assert all(issue["path"] != "src/stale.ts" for issue in issues)
+
+
+def test_artifact_quality_issues_for_errors_matches_structural_keys_without_raw_equality() -> None:
+    raw_error = "src/main.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'."
+    typed_issue = {
+        **artifact_quality_issues_from_errors((raw_error,))[0],
+        "metadata": {"raw": "compiler output was trimmed but code/path stayed stable"},
+    }
+
+    issues = artifact_quality_issues_for_errors([raw_error], (typed_issue,))
+
+    assert issues == (typed_issue,)
 
 
 def test_artifact_quality_issue_projection_preserves_extra_typed_fields() -> None:

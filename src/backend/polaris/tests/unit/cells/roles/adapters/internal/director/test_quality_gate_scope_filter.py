@@ -3,10 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from polaris.cells.roles.adapters.internal.director.quality_gate import (
-    _artifact_quality_issues_for_errors,
     _filter_missing_workspace_file_errors_to_task_write_scope,
     _task_boundary_scope_filter_evidence,
 )
+from polaris.kernelone.quality import artifact_quality_issues_for_errors
 from polaris.kernelone.quality.file_ownership_ledger import record_file_owners
 
 
@@ -66,7 +66,7 @@ def test_artifact_quality_issue_merge_preserves_structured_issue_when_raw_differ
         "metadata": {"raw": "tsc-json:src/app.ts:7:3:TS2304"},
     }
 
-    issues = _artifact_quality_issues_for_errors([error], (typed_issue,))
+    issues = artifact_quality_issues_for_errors([error], (typed_issue,))
 
     assert issues == (typed_issue,)
 

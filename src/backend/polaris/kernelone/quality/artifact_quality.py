@@ -754,6 +754,74 @@ def artifact_quality_issues_from_errors(errors: Iterable[Any]) -> tuple[dict[str
     return tuple(issue.to_dict() for issue in _artifact_quality_issues_from_errors(errors))
 
 
+def artifact_quality_issues_for_errors(
+    errors: Iterable[Any],
+    issue_payloads: Iterable[Any],
+) -> tuple[dict[str, Any], ...]:
+    """Return issue payloads matching a filtered artifact-quality error list.
+
+    Scanners can emit both display errors and structured issues. Downstream
+    gates often filter the display errors by task scope, then need the matching
+    typed issues without reparsing message prose in the adapter layer. This
+    helper keeps that matching and residual projection inside KernelOne
+    artifact quality.
+
+    Complexity:
+        O(e + i) average time for ``e`` errors and ``i`` issue payloads,
+        excluding the small tuple keys built for each row; O(e + i) memory.
+    """
+
+    error_rows = [str(error or "").strip() for error in errors if str(error or "").strip()]
+    allowed_raw = set(error_rows)
+    allowed_structural_keys = {
+        key
+        for error in error_rows
+        if (key := artifact_quality_issue_structural_key(error))
+    }
+    merged: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, ...]] = set()
+    seen_raw: set[str] = set()
+    seen_structural_keys: set[tuple[str, ...]] = set()
+
+    for payload in issue_payloads:
+        issue = _artifact_quality_issue_from_value(payload)
+        if issue is None:
+            continue
+        issue_payload = dict(payload) if isinstance(payload, Mapping) else issue.to_dict()
+        raw = artifact_quality_issue_raw(issue_payload)
+        key = artifact_quality_issue_key(issue_payload)
+        structural_key = artifact_quality_issue_structural_key(issue_payload)
+        if key in seen_keys:
+            continue
+        if raw not in allowed_raw and (not structural_key or structural_key not in allowed_structural_keys):
+            continue
+        merged.append(issue_payload)
+        seen_keys.add(key)
+        if raw:
+            seen_raw.add(raw)
+        if structural_key:
+            seen_structural_keys.add(structural_key)
+
+    residual_errors: list[str] = []
+    for raw in error_rows:
+        if raw in seen_raw:
+            continue
+        parsed_structural_key = artifact_quality_issue_structural_key(raw)
+        if parsed_structural_key and parsed_structural_key in seen_structural_keys:
+            continue
+        residual_errors.append(raw)
+    for issue in artifact_quality_issues_from_errors(residual_errors):
+        raw = artifact_quality_issue_raw(issue)
+        key = artifact_quality_issue_key(issue)
+        if key in seen_keys or (raw and raw in seen_raw):
+            continue
+        merged.append(dict(issue))
+        seen_keys.add(key)
+        if raw:
+            seen_raw.add(raw)
+    return tuple(merged)
+
+
 def artifact_quality_issue_raw(value: Any) -> str:
     """Return the canonical raw diagnostic text for an artifact-quality issue."""
 
