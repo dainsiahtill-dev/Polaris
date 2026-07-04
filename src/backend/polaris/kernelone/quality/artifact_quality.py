@@ -634,21 +634,12 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
         metadata.update(_legacy_unresolved_import_symbol_metadata(message))
     elif code == "unresolved_relative_import":
         metadata.update(_legacy_unresolved_relative_import_metadata(message))
-    elif code.startswith("typescript_ts"):
-        typescript_match = _ARTIFACT_QUALITY_TYPESCRIPT_ERROR_RE.search(message)
-        if typescript_match:
-            metadata["diagnostic_code"] = str(typescript_match.group("code") or "").strip()
-    elif code.startswith("rust_e"):
-        rust_match = _ARTIFACT_QUALITY_RUST_ERROR_RE.search(message)
-        if rust_match:
-            metadata["diagnostic_code"] = str(rust_match.group("code") or "").strip()
-    elif code in {"go_compile_error", "java_compile_error", "cpp_compile_error"}:
-        metadata["language"] = code.removesuffix("_compile_error")
-        if code == "go_compile_error":
-            go_undefined_match = _ARTIFACT_QUALITY_GO_UNDEFINED_RE.search(message)
-            if go_undefined_match:
-                metadata["identifier"] = str(go_undefined_match.group("identifier") or "").strip()
-                metadata["diagnostic_kind"] = "undefined_identifier"
+    elif code.startswith(("typescript_ts", "rust_e")) or code in {
+        "go_compile_error",
+        "java_compile_error",
+        "cpp_compile_error",
+    }:
+        metadata.update(_legacy_compiler_diagnostic_metadata(message, code))
     return {key: value for key, value in metadata.items() if value}
 
 
@@ -747,6 +738,33 @@ def _legacy_unresolved_relative_import_metadata(message: str) -> dict[str, str]:
         }.items()
         if value
     }
+
+
+def _legacy_compiler_diagnostic_metadata(message: str, code: str) -> dict[str, str]:
+    """Project legacy compiler diagnostic text into metadata.
+
+    Parser-backed scanners should emit these fields directly. This helper keeps
+    compatibility parsing centralized while typed compiler issue rows replace
+    display-string diagnostics one language family at a time.
+    """
+
+    metadata: dict[str, str] = {}
+    if code.startswith("typescript_ts"):
+        typescript_match = _ARTIFACT_QUALITY_TYPESCRIPT_ERROR_RE.search(message)
+        if typescript_match:
+            metadata["diagnostic_code"] = str(typescript_match.group("code") or "").strip()
+    elif code.startswith("rust_e"):
+        rust_match = _ARTIFACT_QUALITY_RUST_ERROR_RE.search(message)
+        if rust_match:
+            metadata["diagnostic_code"] = str(rust_match.group("code") or "").strip()
+    elif code in {"go_compile_error", "java_compile_error", "cpp_compile_error"}:
+        metadata["language"] = code.removesuffix("_compile_error")
+        if code == "go_compile_error":
+            go_undefined_match = _ARTIFACT_QUALITY_GO_UNDEFINED_RE.search(message)
+            if go_undefined_match:
+                metadata["identifier"] = str(go_undefined_match.group("identifier") or "").strip()
+                metadata["diagnostic_kind"] = "undefined_identifier"
+    return {key: value for key, value in metadata.items() if value}
 
 
 def _npm_manifest_script_issue(detail: str) -> str:
