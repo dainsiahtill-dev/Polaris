@@ -1637,11 +1637,17 @@ def _typescript_line_comment_contains_escaped_newline_code(text: str) -> bool:
     return False
 
 
-def _package_manifest_quality_issue(error: str, relative_path: str) -> ArtifactQualityIssue:
+def _package_manifest_quality_issue(
+    error: str,
+    relative_path: str,
+    metadata_override: Mapping[str, Any] | None = None,
+) -> ArtifactQualityIssue:
     message = str(error or "").strip()
     if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
         message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
     metadata = _artifact_quality_issue_metadata(str(error or "").strip(), message, "npm_manifest_invalid")
+    if isinstance(metadata_override, Mapping):
+        metadata.update({str(key): value for key, value in metadata_override.items() if value})
     metadata["manifest_path"] = relative_path
     return ArtifactQualityIssue(
         code="npm_manifest_invalid",
@@ -1657,12 +1663,13 @@ def _append_package_manifest_issue(
     issues: list[ArtifactQualityIssue],
     error: str,
     relative_path: str,
+    metadata: Mapping[str, Any] | None = None,
 ) -> None:
     normalized_error = str(error or "").strip()
     if not normalized_error:
         return
     errors.append(normalized_error)
-    issues.append(_package_manifest_quality_issue(normalized_error, relative_path))
+    issues.append(_package_manifest_quality_issue(normalized_error, relative_path, metadata))
 
 
 def _package_manifest_evidence_from_errors(
@@ -1711,6 +1718,11 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
                 issues,
                 f"Artifact quality scan failed: npm default failing test script in {relative_path}",
                 relative_path,
+                {
+                    "script_name": "test",
+                    "script_issue": "default_failing_test_script",
+                    "script_issue_source": "package_manifest_scanner",
+                },
             )
         if _NPM_PLACEHOLDER_TEST_SCRIPT_RE.search(test_script):
             _append_package_manifest_issue(
@@ -1718,6 +1730,11 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
                 issues,
                 f"Artifact quality scan failed: npm placeholder test script in {relative_path}",
                 relative_path,
+                {
+                    "script_name": "test",
+                    "script_issue": "placeholder_test_script",
+                    "script_issue_source": "package_manifest_scanner",
+                },
             )
         if _NPM_MANIFEST_ONLY_TEST_SCRIPT_RE.search(test_script):
             _append_package_manifest_issue(
@@ -1725,6 +1742,11 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
                 issues,
                 f"Artifact quality scan failed: npm manifest-only test script in {relative_path}",
                 relative_path,
+                {
+                    "script_name": "test",
+                    "script_issue": "manifest_only_test_script",
+                    "script_issue_source": "package_manifest_scanner",
+                },
             )
         if (
             _NPM_TEST_RUNNER_SCRIPT_RE.search(test_script)

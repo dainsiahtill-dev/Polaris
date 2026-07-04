@@ -719,6 +719,11 @@ def test_artifact_quality_evidence_projects_test_script_placeholder_metadata(tmp
     assert all(issue.source == "package_manifest_scanner" for issue in evidence.issues)
     assert all(issue.path == "package.json" for issue in evidence.issues)
     assert all(issue.metadata["script_name"] == "test" for issue in evidence.issues)
+    assert [issue.metadata.get("script_issue_source") for issue in evidence.issues] == [
+        "package_manifest_scanner",
+        "package_manifest_scanner",
+        None,
+    ]
 
 
 def test_artifact_quality_evidence_uses_direct_npm_script_test_directory_issue(tmp_path: Path) -> None:
