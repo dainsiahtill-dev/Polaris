@@ -32,12 +32,12 @@ from polaris.cells.control_plane.run_ledger.public import (
     failure_evidence_from_lifecycle_receipt,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
-    native_tool_call_count as derive_native_tool_call_count,
+    native_tool_call_count,
     native_tool_call_envelopes_from_response,
-    native_tool_call_facts_from_response as derive_native_tool_call_facts_from_response,
+    native_tool_call_facts_from_response,
     native_tool_calls_from_response,
     project_native_tool_call_facts_to_metadata,
-    provider_response_hash as derive_provider_response_hash,
+    provider_response_hash,
 )
 from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
     build_corrective_context,
@@ -60,22 +60,6 @@ from polaris.cells.roles.kernel.public.turn_events import TurnEvent, TurnPhaseEv
 logger = logging.getLogger(__name__)
 
 
-def _native_tool_call_count(response: RawLLMResponse, metadata: Mapping[str, Any] | None = None) -> int:
-    return derive_native_tool_call_count(metadata, _native_tool_calls_from_response(response))
-
-
-def _native_tool_call_facts(response: RawLLMResponse, metadata: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    return derive_native_tool_call_facts_from_response(response, metadata)
-
-
-def _native_tool_calls_from_response(response: Any) -> list[dict[str, Any]]:
-    return native_tool_calls_from_response(response)
-
-
-def _provider_response_hash(response: RawLLMResponse, metadata: Mapping[str, Any] | None = None) -> str:
-    return derive_provider_response_hash(response, metadata)
-
-
 def build_tool_dispatch_dropped_anomaly(
     *,
     response: RawLLMResponse,
@@ -85,15 +69,15 @@ def build_tool_dispatch_dropped_anomaly(
 ) -> dict[str, Any]:
     """Build the canonical anomaly + lifecycle receipt for dropped tool calls."""
 
-    native_count = _native_tool_call_count(response, metadata)
-    provider_response_hash = _provider_response_hash(response, metadata)
+    native_count = native_tool_call_count(metadata, native_tool_calls_from_response(response))
+    response_hash = provider_response_hash(response, metadata)
     native_envelopes = native_tool_call_envelopes_from_response(response, metadata)
     lifecycle = build_tool_call_lifecycle_receipt(
         run_id=str(metadata.get("run_id") or ""),
         task_id=str(metadata.get("task_id") or ""),
         turn_id=turn_id,
         role=str(metadata.get("role") or ""),
-        provider_response_hash=provider_response_hash,
+        provider_response_hash=response_hash,
         native_tool_calls_count=native_count,
         dispatched_tool_calls_count=0,
         native_tool_call_envelopes=native_envelopes,
@@ -141,12 +125,6 @@ def _with_decision_metadata(decision: TurnDecision, metadata: dict[str, Any]) ->
         domain=decision["domain"],
         metadata=metadata,
     )
-
-
-def _project_native_tool_call_facts(metadata: dict[str, Any], facts: Mapping[str, Any]) -> None:
-    """Project canonical native tool-call facts over legacy top-level aliases."""
-
-    project_native_tool_call_facts_to_metadata(metadata, facts)
 
 
 async def run_decision_pipeline(
@@ -203,10 +181,10 @@ async def run_decision_pipeline(
     # === Phase 3: 解码决策 ===
     decision = probe_decision if corrective_ask is None else decoder.decode(llm_response, TurnId(turn_id))
     decision_metadata = dict(decision.get("metadata") or {})
-    native_tool_call_facts = _native_tool_call_facts(llm_response, decision_metadata)
+    native_tool_call_facts = native_tool_call_facts_from_response(llm_response, decision_metadata)
     native_tool_call_count = int(native_tool_call_facts.get("native_tool_calls_count") or 0)
-    decision_metadata.setdefault("provider_response_hash", _provider_response_hash(llm_response, decision_metadata))
-    _project_native_tool_call_facts(decision_metadata, native_tool_call_facts)
+    decision_metadata.setdefault("provider_response_hash", provider_response_hash(llm_response, decision_metadata))
+    project_native_tool_call_facts_to_metadata(decision_metadata, native_tool_call_facts)
     decision = _with_decision_metadata(decision, decision_metadata)
     if native_tool_call_count > 0 and tool_definitions and not decision.get("tool_batch"):
         ledger.anomaly_flags.append(
