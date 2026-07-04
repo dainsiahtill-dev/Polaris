@@ -12,6 +12,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     native_tool_call_facts_from_sources,
     project_native_tool_call_facts_to_metadata,
 )
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_calls_from_response
 
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
@@ -54,7 +55,7 @@ class DecisionCaller:
         )
         if getattr(response, "error", None):
             raise RuntimeError(str(response.error))
-        native_tool_calls = getattr(response, "tool_calls", []) or []
+        native_tool_calls = native_tool_calls_from_response(response)
         metadata = dict(getattr(response, "metadata", {}) or {})
         native_facts = native_tool_call_facts_from_sources(metadata, native_tool_calls)
         project_native_tool_call_facts_to_metadata(

@@ -1315,6 +1315,48 @@ class TestDecisionCaller:
         assert result["usage"]["decision_caller_native_tool_calls_count"] == 2
         assert result["usage"]["native_tool_call_names"] == ["repo_rg", "read_file"]
 
+    async def test_call_preserves_native_tool_calls_alias_without_tool_calls_field(self) -> None:
+        """DecisionCaller should consume the shared response alias normalizer."""
+        invoker = Mock()
+        invoker.call = AsyncMock(
+            return_value=SimpleNamespace(
+                content="decision",
+                native_tool_calls=[
+                    {
+                        "id": "toolu_native",
+                        "type": "tool_use",
+                        "name": "read_file",
+                        "input": {"path": "main.py"},
+                    }
+                ],
+                tool_call_provider="anthropic",
+                metadata={},
+                model="claude",
+            )
+        )
+        caller = DecisionCaller(invoker)
+
+        profile = Mock()
+        profile.role_id = "director"
+        context = Mock()
+        context.message = "read main.py"
+        context.history = ()
+        context.task_id = None
+        context.context_override = None
+
+        result = await caller.call(
+            profile=profile,
+            system_prompt="sys",
+            context=context,
+            tool_definitions=[{"name": "read_file"}],
+        )
+
+        assert result["tool_calls"] == result["native_tool_calls"]
+        assert result["tool_calls"][0]["id"] == "toolu_native"
+        assert result["usage"]["native_tool_calls_count"] == 1
+        assert result["usage"]["decision_caller_native_tool_calls_count"] == 1
+        assert result["usage"]["native_tool_call_names"] == ["read_file"]
+
     async def test_call_raises_on_error(self) -> None:
         """LLM 返回 error 时应抛出 RuntimeError."""
         invoker = Mock()
