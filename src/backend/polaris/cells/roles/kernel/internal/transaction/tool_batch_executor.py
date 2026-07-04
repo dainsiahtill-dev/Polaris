@@ -19,6 +19,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
     append_run_ledger_event,
     build_tool_call_lifecycle_receipt,
+    failure_evidence_from_lifecycle_receipt,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_call_count_from_metadata,
@@ -1867,19 +1868,23 @@ class ToolBatchExecutor:
                 failure_class="TOOL_DISPATCH_DROPPED",
                 reason="decoded_tool_batch_produced_no_authoritative_batch_receipt",
             ).to_dict()
+            failure_evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
+            anomaly = {
+                "type": "TOOL_DISPATCH_DROPPED",
+                "turn_id": turn_id,
+                "native_tool_calls_count": lifecycle["native_tool_calls_count"],
+                "decoded_tool_calls_count": lifecycle["decoded_tool_calls_count"],
+                "dispatched_tool_calls_count": lifecycle["dispatched_tool_calls_count"],
+                "provider_response_hash": lifecycle["provider_response_hash"],
+                "dropped_tool_calls": lifecycle["dropped_tool_calls"],
+                "native_tool_call_envelopes": lifecycle["native_tool_call_envelope_refs"],
+                "reason": lifecycle["reason"],
+                "tool_call_lifecycle_receipt": lifecycle,
+            }
+            if failure_evidence:
+                anomaly["failure_evidence"] = [failure_evidence]
             ledger.anomaly_flags.append(
-                {
-                    "type": "TOOL_DISPATCH_DROPPED",
-                    "turn_id": turn_id,
-                    "native_tool_calls_count": lifecycle["native_tool_calls_count"],
-                    "decoded_tool_calls_count": lifecycle["decoded_tool_calls_count"],
-                    "dispatched_tool_calls_count": lifecycle["dispatched_tool_calls_count"],
-                    "provider_response_hash": lifecycle["provider_response_hash"],
-                    "dropped_tool_calls": lifecycle["dropped_tool_calls"],
-                    "native_tool_call_envelopes": lifecycle["native_tool_call_envelope_refs"],
-                    "reason": lifecycle["reason"],
-                    "tool_call_lifecycle_receipt": lifecycle,
-                }
+                anomaly
             )
             raise RuntimeError("tool_dispatch_dropped: decoded tool batch produced no authoritative batch receipt")
 

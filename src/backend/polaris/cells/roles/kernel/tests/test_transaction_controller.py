@@ -403,6 +403,11 @@ class TestToolBatchExecution:
         assert lifecycle["native_tool_calls_count"] == dropped_flags[0]["native_tool_calls_count"]
         assert lifecycle["decoded_tool_calls_count"] == dropped_flags[0]["decoded_tool_calls_count"]
         assert lifecycle["dropped_tool_calls"] == dropped_flags[0]["dropped_tool_calls"]
+        failure_evidence = dropped_flags[0]["failure_evidence"][0]
+        assert failure_evidence["failure_class"] == "TOOL_DISPATCH_DROPPED"
+        assert failure_evidence["responsible_layer"] == "execution_control_plane"
+        assert failure_evidence["metadata"]["source"] == "tool_call_lifecycle_receipt.v1"
+        assert failure_evidence["metadata"]["decoded_tool_calls_count"] == 2
 
     @pytest.mark.asyncio
     async def test_multiple_readonly_parallel(
