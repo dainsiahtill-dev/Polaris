@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import pytest
-from polaris.cells.runtime.task_runtime.internal.execution_session import TaskExecutionSession
+from polaris.cells.runtime.task_runtime.internal.execution_session import (
+    TaskExecutionSession,
+    is_terminal_session_status,
+    terminal_task_status_value_for_session_status,
+)
 
 
 def _valid_session_payload() -> dict[str, object]:
@@ -59,3 +63,22 @@ def test_from_dict_accepts_known_statuses(status: str) -> None:
     assert session.task_id == 7
     assert session.status == status
     assert session.run_id == ""
+
+
+@pytest.mark.parametrize(
+    ("session_status", "task_status"),
+    [
+        ("completed", "completed"),
+        ("failed", "failed"),
+        ("cancelled", "cancelled"),
+    ],
+)
+def test_terminal_session_status_projects_task_status(session_status: str, task_status: str) -> None:
+    assert terminal_task_status_value_for_session_status(session_status) == task_status
+    assert is_terminal_session_status(session_status) is True
+
+
+@pytest.mark.parametrize("session_status", ["active", "suspended", "", None])
+def test_non_terminal_session_status_has_no_task_status_projection(session_status: object) -> None:
+    assert terminal_task_status_value_for_session_status(session_status) == ""
+    assert is_terminal_session_status(session_status) is False

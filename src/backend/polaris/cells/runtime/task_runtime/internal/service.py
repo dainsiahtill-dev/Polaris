@@ -22,9 +22,11 @@ from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_root
 
 from .execution_session import (
     TaskExecutionSession,
+    is_terminal_session_status,
     normalize_positive_int,
     parse_utc_iso,
     sanitize_summary,
+    terminal_task_status_value_for_session_status,
     utc_now,
     utc_now_iso,
 )
@@ -33,11 +35,19 @@ logger = logging.getLogger(__name__)
 
 _TASK_ID_PATTERN = re.compile(r"^task-(\d+)(?:-|$)", re.IGNORECASE)
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
-_TERMINAL_SESSION_STATUSES_TO_TASK_STATUS = {
-    "completed": TaskStatus.COMPLETED,
-    "failed": TaskStatus.FAILED,
-    "cancelled": TaskStatus.CANCELLED,
-}
+
+
+def _terminal_task_status_for_session(status: Any) -> TaskStatus | None:
+    """Adapt canonical session-terminal projection values to TaskBoard enums."""
+
+    task_status_value = terminal_task_status_value_for_session_status(status)
+    if not task_status_value:
+        return None
+    try:
+        return TaskStatus(task_status_value)
+    except ValueError:
+        logger.warning("Unknown task status projected from session status: %r", task_status_value)
+        return None
 
 
 class TaskRuntimeService:
@@ -529,9 +539,7 @@ class TaskRuntimeService:
         with session_lock:
             existing_session = self._read_session(normalized)
             if existing_session is not None:
-                terminal_session_status = _TERMINAL_SESSION_STATUSES_TO_TASK_STATUS.get(
-                    str(existing_session.status).strip().lower()
-                )
+                terminal_session_status = _terminal_task_status_for_session(existing_session.status)
                 if terminal_session_status is not None:
                     if self._row_authorizes_retry_over_terminal_session(task, existing_session):
                         # Deliberate retry: the row left its terminal state
@@ -1142,7 +1150,7 @@ class TaskRuntimeService:
         *,
         allow_terminal_downgrade: bool = False,
     ) -> bool:
-        if not allow_terminal_downgrade and session.status not in _TERMINAL_SESSION_STATUSES_TO_TASK_STATUS:
+        if not allow_terminal_downgrade and not is_terminal_session_status(session.status):
             terminal_session = self._find_terminal_session_snapshot(session)
             if terminal_session is not None:
                 self._copy_session_state(session, terminal_session)
@@ -1190,7 +1198,7 @@ class TaskRuntimeService:
             return False
         return (
             str(candidate.session_id or "").strip() == str(incoming.session_id or "").strip()
-            and candidate.status in _TERMINAL_SESSION_STATUSES_TO_TASK_STATUS
+            and is_terminal_session_status(candidate.status)
         )
 
     @staticmethod
@@ -1241,7 +1249,7 @@ class TaskRuntimeService:
         recorded, never propagated, so lease/claim paths cannot crash on a
         stale row shape.
         """
-        terminal_status = _TERMINAL_SESSION_STATUSES_TO_TASK_STATUS.get(str(session.status or "").strip().lower())
+        terminal_status = _terminal_task_status_for_session(session.status)
         if terminal_status is None:
             task = self._board.get(task_id)
             return (self._augment_task_row(task.to_dict()) if task is not None else None), ""
@@ -1500,7 +1508,7 @@ class TaskRuntimeService:
             last_claimed_by = str(session.worker_id or "").strip() or last_claimed_by
             session_expired = session.status == "active" and session.is_expired(now=utc_now())
             terminal_session_superseded = (
-                session.status in _TERMINAL_SESSION_STATUSES_TO_TASK_STATUS
+                is_terminal_session_status(session.status)
                 and self._row_authorizes_retry_over_terminal_session(task, session)
             )
             if terminal_session_superseded:

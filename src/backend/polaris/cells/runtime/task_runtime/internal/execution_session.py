@@ -10,6 +10,15 @@ logger = logging.getLogger(__name__)
 
 _MAX_SUMMARY_LENGTH = 400
 _VALID_SESSION_STATUSES = frozenset({"active", "completed", "failed", "suspended"})
+_TERMINAL_SESSION_STATUS_TO_TASK_STATUS = {
+    "completed": "completed",
+    "failed": "failed",
+    # Historical service-level projections recognized cancelled terminal
+    # sessions even though normal persisted sessions are suspended on run
+    # cancellation. Keep the projection fact here so consumers do not rebuild
+    # their own terminal-status tables.
+    "cancelled": "cancelled",
+}
 
 
 def utc_now() -> datetime:
@@ -85,6 +94,18 @@ def normalize_session_status(payload: dict[str, Any]) -> str:
     if status not in _VALID_SESSION_STATUSES:
         raise ValueError(f"TaskExecutionSession field 'status' must be one of: {sorted(_VALID_SESSION_STATUSES)}")
     return status
+
+
+def terminal_task_status_value_for_session_status(status: Any) -> str:
+    """Return the task-row status value implied by a terminal session status."""
+
+    return _TERMINAL_SESSION_STATUS_TO_TASK_STATUS.get(str(status or "").strip().lower(), "")
+
+
+def is_terminal_session_status(status: Any) -> bool:
+    """Return whether a session status carries a terminal task-row verdict."""
+
+    return bool(terminal_task_status_value_for_session_status(status))
 
 
 @dataclass(slots=True)
@@ -255,9 +276,11 @@ class TaskExecutionSession:
 
 __all__ = [
     "TaskExecutionSession",
+    "is_terminal_session_status",
     "normalize_positive_int",
     "parse_utc_iso",
     "sanitize_summary",
+    "terminal_task_status_value_for_session_status",
     "utc_now",
     "utc_now_iso",
 ]
