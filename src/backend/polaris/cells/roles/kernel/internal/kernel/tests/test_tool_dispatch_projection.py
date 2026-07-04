@@ -120,6 +120,10 @@ def test_append_tool_dispatch_dropped_events_preserves_native_envelopes(
         {"tool_name": "write_file", "envelope_id": "native-write", "reason": "tool_dispatch_dropped"},
     ]
     assert captured["task_boundary"]["tool_dispatch"]["native_tool_calls_count"] == 2
+    assert captured["task_boundary"]["tool_dispatch"]["decoded_tool_calls_count"] == 2
+    assert captured["task_boundary"]["tool_dispatch"]["dispatched_tool_calls_count"] == 0
+    assert captured["task_boundary"]["tool_dispatch"]["native_tool_call_names"] == ["read_file", "write_file"]
+    assert captured["task_boundary"]["tool_dispatch"]["provider_response_hash"] == "hash-1"
 
 
 def test_append_tool_dispatch_dropped_events_accepts_lifecycle_envelope_refs(
@@ -173,6 +177,8 @@ def test_append_tool_dispatch_dropped_events_accepts_lifecycle_envelope_refs(
         {"tool_name": "write_file", "envelope_id": "native-ref-write", "reason": "tool_dispatch_dropped"},
     ]
     assert captured["task_boundary"]["tool_dispatch"]["native_tool_calls_count"] == 2
+    assert captured["task_boundary"]["tool_dispatch"]["decoded_tool_calls_count"] == 2
+    assert captured["task_boundary"]["tool_dispatch"]["native_tool_call_names"] == ["read_file", "write_file"]
 
 
 def test_append_tool_dispatch_dropped_events_prefers_lifecycle_receipt_over_legacy_flag_fields(
@@ -241,3 +247,6 @@ def test_append_tool_dispatch_dropped_events_prefers_lifecycle_receipt_over_lega
         {"tool_name": "write_file", "reason": "tool_dispatch_dropped"}
     ]
     assert captured["task_boundary"]["tool_dispatch"]["native_tool_calls_count"] == 1
+    assert captured["task_boundary"]["tool_dispatch"]["decoded_tool_calls_count"] == 1
+    assert captured["task_boundary"]["tool_dispatch"]["native_tool_call_names"] == ["write_file"]
+    assert captured["task_boundary"]["tool_dispatch"]["provider_response_hash"] == "receipt-hash"

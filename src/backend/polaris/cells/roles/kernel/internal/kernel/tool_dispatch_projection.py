@@ -97,6 +97,7 @@ def append_tool_dispatch_dropped_control_plane_events(
         AppendRunLedgerEventCommandV1,
         append_run_ledger_event,
         build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
+        task_boundary_tool_dispatch_from_lifecycle_metadata,
     )
 
     lifecycle_payload = build_tool_dispatch_dropped_lifecycle_from_anomaly_flags(
@@ -134,11 +135,8 @@ def append_tool_dispatch_dropped_control_plane_events(
         run_id=str(request.run_id or turn_id),
         context_override=getattr(request, "context_override", None),
         tool_results=[],
-        tool_dispatch={
-            "status": "dropped",
-            "dropped": True,
-            "native_tool_calls_count": lifecycle_payload["native_tool_calls_count"],
-            "provider_response_hash": lifecycle_payload["provider_response_hash"],
-        },
+        tool_dispatch=task_boundary_tool_dispatch_from_lifecycle_metadata(
+            {"tool_call_lifecycle_receipt": lifecycle_payload}
+        ),
         evidence_refs=[str(error_metadata.get("context_snapshot_ref") or "").strip()],
     )
