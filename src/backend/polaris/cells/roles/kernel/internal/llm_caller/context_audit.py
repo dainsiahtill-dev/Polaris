@@ -269,7 +269,7 @@ def _resident_agi_audit_context(ai_request: Any) -> dict[str, Any]:
     return dict(raw_context) if isinstance(raw_context, dict) else {}
 
 
-def _resident_agi_coverage_flags(_text: str, ai_request: Any | None) -> dict[str, bool]:
+def _resident_agi_coverage_flags(ai_request: Any | None) -> dict[str, bool]:
     audit_context = _resident_agi_audit_context(ai_request) if ai_request is not None else {}
     participation = _mapping(audit_context.get("participation"))
     enabled = _bool_value(audit_context.get("enabled"), default=bool(audit_context))
@@ -297,6 +297,7 @@ def _resident_agi_coverage_flags(_text: str, ai_request: Any | None) -> dict[str
 
 
 def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bool]:
+    del text
     pm_contract = _pm_contract_payload(ai_request) if ai_request is not None else {}
     ce_blueprint = _ce_blueprint_payload(ai_request) if ai_request is not None else {}
     module_interface_contract = _module_interface_contract_payload(ai_request) if ai_request is not None else {}
@@ -317,14 +318,8 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
         "has_failure_feedback": bool(failed_gate_evidence),
         "has_workspace_quality_evidence": bool(workspace_quality_evidence),
     }
-    coverage.update(_resident_agi_coverage_flags(text, ai_request))
+    coverage.update(_resident_agi_coverage_flags(ai_request))
     return coverage
-
-
-def _trusted_coverage_text(text: str) -> str:
-    """Drop explicitly untrusted user-message bodies before scanning evidence terms."""
-
-    return _UNTRUSTED_USER_MESSAGE_RE.sub("", str(text or ""))
 
 
 def _context_quality_findings(
