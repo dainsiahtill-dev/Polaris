@@ -104,6 +104,9 @@ from polaris.cells.roles.kernel.internal.transaction.final_answer_gates import (
 from polaris.cells.roles.kernel.internal.transaction.finalization import FinalizationHandler
 from polaris.cells.roles.kernel.internal.transaction.handoff_handlers import HandoffHandler
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig as _TransactionConfig, TurnLedger
+from polaris.cells.roles.kernel.internal.transaction.llm_response_metadata import (
+    llm_response_metadata_from_usage,
+)
 from polaris.cells.roles.kernel.internal.transaction.modification_contract import ModificationContract
 from polaris.cells.roles.kernel.internal.transaction.mutation_contract_guard import (
     apply_mutation_contract_guard,
@@ -1030,32 +1033,7 @@ class TurnTransactionController:
         response = await self.llm_provider(request_payload)
         response_usage = response.get("usage", {}) if isinstance(response.get("usage", {}), dict) else {}
         response_context_os_audit = response_usage.get("context_os_audit") if isinstance(response_usage, dict) else None
-        response_llm_metadata: dict[str, Any] = {}
-        if isinstance(response_usage, dict):
-            for key in (
-                "context_os_audit",
-                "final_request_context_audit",
-                "context_snapshot_ref",
-                "context_snapshot_degraded",
-                "context_snapshot_degraded_reason",
-                "context_tokens_after",
-                "contextTokens",
-                "usage",
-                "usage_source",
-                "native_tool_calls_count",
-                "decision_caller_native_tool_calls_count",
-                "native_tool_call_names",
-                "tool_call_provider",
-                "decision_caller_tool_call_provider",
-            ):
-                if key in response_usage:
-                    value = response_usage.get(key)
-                    if isinstance(value, dict):
-                        response_llm_metadata[key] = dict(value)
-                    elif isinstance(value, list):
-                        response_llm_metadata[key] = list(value)
-                    else:
-                        response_llm_metadata[key] = value
+        response_llm_metadata = llm_response_metadata_from_usage(response_usage)
 
         # Phase 3.3: Track usage
         raw_provider_usage = response_usage.get("usage")

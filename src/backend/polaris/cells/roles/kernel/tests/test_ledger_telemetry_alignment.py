@@ -103,6 +103,37 @@ class TestLedgerTelemetryAlignment:
         assert result["ledger"].llm_calls[0]["metadata"]["final_request_context_audit"] == final_audit
 
     @pytest.mark.asyncio
+    async def test_execute_result_projects_native_tool_usage_metadata(self) -> None:
+        llm = AsyncMock(
+            return_value={
+                "content": "Final answer.",
+                "model": "test-model",
+                "usage": {
+                    "prompt_tokens": 12,
+                    "completion_tokens": 4,
+                    "native_tool_calls_count": 2,
+                    "decision_caller_native_tool_calls_count": 2,
+                    "native_tool_call_names": ["read_file", "write_file"],
+                    "tool_call_provider": "openai",
+                },
+            }
+        )
+        controller = TurnTransactionController(
+            llm_provider=llm,
+            tool_runtime=AsyncMock(),
+            config=TransactionConfig(domain="code"),
+        )
+
+        result = await controller.execute("turn_native_usage", [{"role": "user", "content": "answer"}], [])
+
+        metadata = result["llm_response_metadata"]
+        assert metadata["native_tool_calls_count"] == 2
+        assert metadata["decision_caller_native_tool_calls_count"] == 2
+        assert metadata["native_tool_call_names"] == ["read_file", "write_file"]
+        assert metadata["tool_call_provider"] == "openai"
+        assert result["ledger"].llm_calls[0]["metadata"]["native_tool_calls_count"] == 2
+
+    @pytest.mark.asyncio
     async def test_execute_stream_carries_provider_context_os_audit_into_completion_monitoring(self) -> None:
         audit = {
             "ok": True,

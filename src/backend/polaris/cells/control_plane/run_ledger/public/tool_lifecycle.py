@@ -884,13 +884,32 @@ def native_tool_call_facts_from_sources(
             }
     raw_facts = native_tool_call_facts_from_raw_calls(native_tool_calls)
     raw_names = raw_facts.get("native_tool_call_names")
-    return {
-        "native_tool_calls_count": _int_value(raw_facts.get("native_tool_calls_count")),
-        "native_tool_call_names": [
+    raw_count = _int_value(raw_facts.get("native_tool_calls_count"))
+    if raw_count > 0 or raw_names:
+        return {
+            "native_tool_calls_count": raw_count,
+            "native_tool_call_names": [
+                name
+                for item in (raw_names if isinstance(raw_names, (list, tuple)) else ())
+                if (name := _clean_string(item))
+            ],
+        }
+    if isinstance(metadata, Mapping):
+        raw_legacy_names = metadata.get("native_tool_call_names")
+        legacy_names = [
             name
-            for item in (raw_names if isinstance(raw_names, (list, tuple)) else ())
+            for item in (raw_legacy_names if isinstance(raw_legacy_names, (list, tuple)) else ())
             if (name := _clean_string(item))
-        ],
+        ]
+        legacy_count = _int_value(metadata.get("native_tool_calls_count"))
+        if legacy_count > 0 or legacy_names:
+            return {
+                "native_tool_calls_count": legacy_count or len(legacy_names),
+                "native_tool_call_names": legacy_names,
+            }
+    return {
+        "native_tool_calls_count": 0,
+        "native_tool_call_names": [],
     }
 
 

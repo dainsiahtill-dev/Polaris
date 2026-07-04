@@ -879,6 +879,21 @@ def test_native_tool_call_facts_from_sources_falls_back_to_raw_calls() -> None:
     }
 
 
+def test_native_tool_call_facts_from_sources_accepts_legacy_numeric_metadata() -> None:
+    facts = native_tool_call_facts_from_sources(
+        {
+            "native_tool_calls_count": 2,
+            "native_tool_call_names": ["read_file", "write_file"],
+        },
+        [],
+    )
+
+    assert facts == {
+        "native_tool_calls_count": 2,
+        "native_tool_call_names": ["read_file", "write_file"],
+    }
+
+
 def test_project_native_tool_call_envelopes_to_metadata_projects_count_and_names() -> None:
     envelope = {
         "schema_version": "native_tool_call_envelope.v1",
