@@ -852,6 +852,48 @@ def native_tool_call_facts_from_raw_calls(native_tool_calls: Sequence[Any]) -> d
     }
 
 
+def native_tool_call_facts_from_sources(
+    metadata: Mapping[str, Any] | None,
+    native_tool_calls: Sequence[Any],
+) -> dict[str, Any]:
+    """Derive canonical native tool-call facts from structured sources.
+
+    Boundary:
+        Run Ledger owns the precedence and projection shape for native
+        tool-call count/name facts. Callers may provide lifecycle-aware
+        metadata and provider-native raw calls, but should not assemble the
+        ``native_tool_calls_count`` / ``native_tool_call_names`` mapping
+        themselves.
+
+    Complexity:
+        O(r + e + n) where ``r`` is lifecycle receipt count, ``e`` is envelope
+        refs, and ``n`` is raw provider call count.
+    """
+
+    if isinstance(metadata, Mapping):
+        facts = native_tool_call_facts_from_metadata(metadata)
+        if facts:
+            raw_names = facts.get("native_tool_call_names")
+            return {
+                "native_tool_calls_count": _int_value(facts.get("native_tool_calls_count")),
+                "native_tool_call_names": [
+                    name
+                    for item in (raw_names if isinstance(raw_names, (list, tuple)) else ())
+                    if (name := _clean_string(item))
+                ],
+            }
+    raw_facts = native_tool_call_facts_from_raw_calls(native_tool_calls)
+    raw_names = raw_facts.get("native_tool_call_names")
+    return {
+        "native_tool_calls_count": _int_value(raw_facts.get("native_tool_calls_count")),
+        "native_tool_call_names": [
+            name
+            for item in (raw_names if isinstance(raw_names, (list, tuple)) else ())
+            if (name := _clean_string(item))
+        ],
+    }
+
+
 def native_tool_call_count_from_metadata(metadata: Mapping[str, Any] | None, *, fallback: int = 0) -> int:
     """Derive native tool-call count from lifecycle-aware metadata.
 

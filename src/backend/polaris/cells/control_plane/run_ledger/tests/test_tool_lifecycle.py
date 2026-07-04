@@ -18,6 +18,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     native_tool_call_facts_from_lifecycle_receipt,
     native_tool_call_facts_from_metadata,
     native_tool_call_facts_from_raw_calls,
+    native_tool_call_facts_from_sources,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
     project_completion_audit_evidence_to_metadata,
@@ -824,6 +825,39 @@ def test_native_tool_call_facts_from_raw_calls_owns_provider_aliases() -> None:
     assert facts == {
         "native_tool_calls_count": 4,
         "native_tool_call_names": ["write_file", "execute_command", "repo_tree"],
+    }
+
+
+def test_native_tool_call_facts_from_sources_prefers_metadata() -> None:
+    facts = native_tool_call_facts_from_sources(
+        {
+            "native_tool_call_envelopes": [
+                {"envelope_id": "native-1", "tool_name": "write_file"},
+                {"envelope_id": "native-2", "tool_name": "execute_command"},
+            ],
+        },
+        [{"function": {"name": "ignored_raw_tool"}}],
+    )
+
+    assert facts == {
+        "native_tool_calls_count": 2,
+        "native_tool_call_names": ["write_file", "execute_command"],
+    }
+
+
+def test_native_tool_call_facts_from_sources_falls_back_to_raw_calls() -> None:
+    facts = native_tool_call_facts_from_sources(
+        {},
+        [
+            {"function": {"name": "write_file"}},
+            {"toolName": "repo_tree"},
+            "not-a-call",
+        ],
+    )
+
+    assert facts == {
+        "native_tool_calls_count": 2,
+        "native_tool_call_names": ["write_file", "repo_tree"],
     }
 
 

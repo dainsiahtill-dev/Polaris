@@ -18,6 +18,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     native_tool_call_envelope_refs_from_metadata,
     native_tool_call_facts_from_metadata,
     native_tool_call_facts_from_raw_calls,
+    native_tool_call_facts_from_sources as run_ledger_native_tool_call_facts_from_sources,
     project_native_tool_call_facts_to_metadata,
 )
 from polaris.kernelone.llm.budget_policy import (
@@ -354,31 +355,7 @@ def native_tool_call_facts(
 ) -> dict[str, Any]:
     """Project canonical native tool-call count/name facts from one evidence path."""
 
-    if isinstance(metadata, Mapping):
-        facts = native_tool_call_facts_from_metadata(metadata)
-        if facts:
-            return {
-                "native_tool_calls_count": _int_from_fact(facts.get("native_tool_calls_count")),
-                "native_tool_call_names": [
-                    name
-                    for item in (
-                        facts.get("native_tool_call_names")
-                        if isinstance(facts.get("native_tool_call_names"), (list, tuple))
-                        else ()
-                    )
-                    if (name := str(item or "").strip())
-                ],
-            }
-    raw_facts = native_tool_call_facts_from_raw_calls(native_tool_calls)
-    raw_names = raw_facts.get("native_tool_call_names")
-    return {
-        "native_tool_calls_count": _int_from_fact(raw_facts.get("native_tool_calls_count")),
-        "native_tool_call_names": [
-            name
-            for item in (raw_names if isinstance(raw_names, (list, tuple)) else ())
-            if (name := str(item or "").strip())
-        ],
-    }
+    return run_ledger_native_tool_call_facts_from_sources(metadata, native_tool_calls)
 
 
 def native_tool_calls_from_response(response: Any) -> list[dict[str, Any]]:
