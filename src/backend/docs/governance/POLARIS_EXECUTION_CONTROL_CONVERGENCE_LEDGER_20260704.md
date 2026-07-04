@@ -66,11 +66,13 @@ Open bucket count: 5.
 
 ## Next Closure Order
 
-1. ECC-WS1: remove remaining pure projection wrappers from transaction tests and
-   make anomaly construction consume shared response facts without duplicating
-   extraction logic.
-2. ECC-WS6: replace local aggregate/runtime failure-evidence merges with Run
-   Ledger public row/summary helpers without losing UI-facing summaries.
+1. ECC-WS1: decide the owner boundary for dropped-dispatch anomaly construction
+   itself. Response facts/envelopes/hashes now come from shared helpers; the
+   remaining question is whether anomaly assembly stays in transaction or moves
+   behind a Run Ledger / lifecycle public helper.
+2. ECC-WS6: continue replacing local runtime/context failure-evidence and
+   coverage projections with Run Ledger public helpers without losing UI-facing
+   summaries.
 3. ECC-WS4: continue moving scanner outputs from string diagnostics to typed
    `QualityIssue` fields, one scanner family at a time.
 4. ECC-WS5: introduce ScopeAuthority read-only classification before changing
