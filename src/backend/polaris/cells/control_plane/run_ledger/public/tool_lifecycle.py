@@ -531,6 +531,65 @@ def task_boundary_tool_dispatch_from_lifecycle_metadata(metadata: Mapping[str, A
     }
 
 
+def project_tool_lifecycle_event(
+    value: Any,
+    *,
+    append_id: Any = "",
+    content_id: Any = "",
+) -> dict[str, Any]:
+    """Project one lifecycle receipt into the canonical Run Ledger read-model row.
+
+    Boundary:
+        The projection is derived only from ``tool_call_lifecycle_receipt.v1``.
+        It centralizes lifecycle counters, dropped/failed flags, receipt refs and
+        lifecycle-derived failure evidence for Run Ledger projections.
+
+    Complexity:
+        O(e + d) time and memory through lifecycle normalization and native-tool
+        fact projection, where ``e`` is envelope refs and ``d`` is dropped-call
+        refs.
+    """
+
+    lifecycle = normalize_tool_call_lifecycle_receipt(value)
+    native_facts = native_tool_call_facts_from_lifecycle_receipt(lifecycle)
+    native_count = _int_value(native_facts.get("native_tool_calls_count"))
+    native_names = list(native_facts.get("native_tool_call_names") or [])
+    decoded_count = _int_value(lifecycle.get("decoded_tool_calls_count"))
+    dispatched_count = _int_value(lifecycle.get("dispatched_tool_calls_count"))
+    result_count = _int_value(lifecycle.get("tool_result_count"))
+    effect_count = _int_value(lifecycle.get("effect_receipt_count"))
+    dispatch_status = _clean_string(lifecycle.get("dispatch_status"))
+    dropped = bool(lifecycle.get("dropped")) or dispatch_status == "dropped"
+    if native_count > 0 and dispatched_count <= 0:
+        dropped = True
+    failed = not bool(lifecycle.get("ok", False))
+    failure_evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
+    row = {
+        "status": dispatch_status or ("dropped" if dropped else "ok"),
+        "failure_class": _clean_string(lifecycle.get("failure_class")),
+        "reason": _clean_string(lifecycle.get("reason")),
+        "ok": not failed,
+        "failed": failed,
+        "native_tool_calls_count": native_count,
+        "native_tool_call_names": native_names,
+        "decoded_tool_calls_count": decoded_count,
+        "dispatched_tool_calls_count": dispatched_count,
+        "tool_result_count": result_count,
+        "effect_receipt_count": effect_count,
+        "dropped": dropped,
+        "provider_response_hash": _clean_string(lifecycle.get("provider_response_hash")),
+        "batch_receipt_hash": _clean_string(lifecycle.get("batch_receipt_hash")),
+        "batch_receipt_refs": _mapping_refs(lifecycle.get("batch_receipt_refs")),
+        "effect_receipt_refs": _mapping_refs(lifecycle.get("effect_receipt_refs")),
+        "receipt": lifecycle,
+        "append_id": _clean_string(append_id),
+        "content_id": _clean_string(content_id),
+    }
+    if failure_evidence:
+        row["failure_evidence"] = failure_evidence
+    return row
+
+
 def project_native_tool_call_facts_to_metadata(
     metadata: dict[str, Any],
     facts: Mapping[str, Any],
@@ -768,4 +827,5 @@ __all__ = [
     "normalize_tool_call_lifecycle_receipt",
     "project_lifecycle_failure_evidence_to_metadata",
     "project_native_tool_call_facts_to_metadata",
+    "project_tool_lifecycle_event",
 ]

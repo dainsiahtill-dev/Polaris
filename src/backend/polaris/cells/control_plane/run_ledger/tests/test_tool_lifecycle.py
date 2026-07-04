@@ -11,6 +11,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     normalize_tool_call_lifecycle_receipt,
     project_lifecycle_failure_evidence_to_metadata,
     project_native_tool_call_facts_to_metadata,
+    project_tool_lifecycle_event,
     task_boundary_tool_dispatch_from_lifecycle_metadata,
 )
 
@@ -288,6 +289,37 @@ def test_tool_lifecycle_receipt_derives_dropped_status_from_native_without_dispa
     assert receipt["ok"] is False
     assert receipt["dispatch_status"] == "dropped"
     assert receipt["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+
+
+def test_project_tool_lifecycle_event_centralizes_projection_shape() -> None:
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        provider_response_hash="provider-hash",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=0,
+        receipts=[],
+        reason="native calls had no dispatch receipt",
+    ).to_dict()
+
+    event = project_tool_lifecycle_event(receipt, append_id="append-1", content_id="event-1")
+
+    assert event["status"] == "dropped"
+    assert event["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert event["failed"] is True
+    assert event["dropped"] is True
+    assert event["native_tool_calls_count"] == 1
+    assert event["decoded_tool_calls_count"] == 1
+    assert event["dispatched_tool_calls_count"] == 0
+    assert event["provider_response_hash"] == "provider-hash"
+    assert event["append_id"] == "append-1"
+    assert event["content_id"] == "event-1"
+    assert event["failure_evidence"]["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert "provider_response:provider-hash" in event["failure_evidence"]["evidence_refs"]
+    assert event["receipt"]["schema_version"] == "tool_call_lifecycle_receipt.v1"
 
 
 def test_tool_lifecycle_receipt_derives_counts_from_dropped_tool_details() -> None:

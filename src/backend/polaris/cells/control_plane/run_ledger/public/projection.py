@@ -12,9 +12,7 @@ from polaris.cells.control_plane.run_ledger.public.task_boundary import (
     normalize_task_boundary_verdict,
 )
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
-    failure_evidence_from_lifecycle_receipt,
-    native_tool_call_facts_from_lifecycle_receipt,
-    normalize_tool_call_lifecycle_receipt,
+    project_tool_lifecycle_event,
 )
 
 
@@ -725,20 +723,19 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         event_type = event.get("event_type")
         if event_type == "tool_call_lifecycle":
             lifecycle_raw = event.get("tool_call_lifecycle_receipt") or event.get("tool_call_lifecycle")
-            lifecycle = normalize_tool_call_lifecycle_receipt(
-                lifecycle_raw if isinstance(lifecycle_raw, dict) else event
+            lifecycle_event = project_tool_lifecycle_event(
+                lifecycle_raw if isinstance(lifecycle_raw, dict) else event,
+                append_id=event.get("append_id"),
+                content_id=event.get("content_id") or event.get("event_id"),
             )
-            native_facts = native_tool_call_facts_from_lifecycle_receipt(lifecycle)
-            native_count = _int_value(native_facts.get("native_tool_calls_count"))
-            native_names = _string_list(native_facts.get("native_tool_call_names"))
-            decoded_count = _int_value(lifecycle.get("decoded_tool_calls_count"))
-            dispatched_count = _int_value(lifecycle.get("dispatched_tool_calls_count"))
-            result_count = _int_value(lifecycle.get("tool_result_count"))
-            effect_count = _int_value(lifecycle.get("effect_receipt_count"))
-            dropped = bool(lifecycle.get("dropped")) or str(lifecycle.get("dispatch_status") or "") == "dropped"
-            if native_count > 0 and dispatched_count <= 0:
-                dropped = True
-            failed = not bool(lifecycle.get("ok", False))
+            native_count = _int_value(lifecycle_event.get("native_tool_calls_count"))
+            native_names = _string_list(lifecycle_event.get("native_tool_call_names"))
+            decoded_count = _int_value(lifecycle_event.get("decoded_tool_calls_count"))
+            dispatched_count = _int_value(lifecycle_event.get("dispatched_tool_calls_count"))
+            result_count = _int_value(lifecycle_event.get("tool_result_count"))
+            effect_count = _int_value(lifecycle_event.get("effect_receipt_count"))
+            dropped = bool(lifecycle_event.get("dropped"))
+            failed = bool(lifecycle_event.get("failed"))
             tool_lifecycle_native_count += native_count
             tool_lifecycle_decoded_count += decoded_count
             tool_lifecycle_dispatched_count += dispatched_count
@@ -749,36 +746,9 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
                 tool_lifecycle_dropped_count += 1
             if failed:
                 tool_lifecycle_failed_count += 1
-            failure_evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
+            failure_evidence = lifecycle_event.get("failure_evidence")
             if failure_evidence:
                 tool_lifecycle_failure_evidence.append(failure_evidence)
-            lifecycle_event = {
-                "status": _clean_string(lifecycle.get("dispatch_status")) or ("dropped" if dropped else "ok"),
-                "failure_class": _clean_string(lifecycle.get("failure_class")),
-                "reason": _clean_string(lifecycle.get("reason")),
-                "ok": not failed,
-                "failed": failed,
-                "native_tool_calls_count": native_count,
-                "native_tool_call_names": native_names,
-                "decoded_tool_calls_count": decoded_count,
-                "dispatched_tool_calls_count": dispatched_count,
-                "tool_result_count": result_count,
-                "effect_receipt_count": effect_count,
-                "dropped": dropped,
-                "provider_response_hash": _clean_string(lifecycle.get("provider_response_hash")),
-                "batch_receipt_hash": _clean_string(lifecycle.get("batch_receipt_hash")),
-                "batch_receipt_refs": lifecycle.get("batch_receipt_refs")
-                if isinstance(lifecycle.get("batch_receipt_refs"), list)
-                else [],
-                "effect_receipt_refs": lifecycle.get("effect_receipt_refs")
-                if isinstance(lifecycle.get("effect_receipt_refs"), list)
-                else [],
-                "receipt": lifecycle,
-                "append_id": _clean_string(event.get("append_id")),
-                "content_id": _clean_string(event.get("content_id") or event.get("event_id")),
-            }
-            if failure_evidence:
-                lifecycle_event["failure_evidence"] = failure_evidence
             tool_lifecycle_events.append(lifecycle_event)
             continue
         task_boundary_raw = event.get("task_boundary_verdict")

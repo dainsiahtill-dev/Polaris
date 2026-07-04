@@ -53,6 +53,7 @@ from .tool_lifecycle import (
     normalize_tool_call_lifecycle_receipt,
     project_lifecycle_failure_evidence_to_metadata,
     project_native_tool_call_facts_to_metadata,
+    project_tool_lifecycle_event,
     task_boundary_tool_dispatch_from_lifecycle_metadata,
 )
 
@@ -94,6 +95,7 @@ __all__ = [
     "normalize_tool_call_lifecycle_receipt",
     "project_lifecycle_failure_evidence_to_metadata",
     "project_native_tool_call_facts_to_metadata",
+    "project_tool_lifecycle_event",
     "read_run_ledger_projection",
     "read_run_ledger_projection_barrier",
     "read_run_provenance_bundle",
