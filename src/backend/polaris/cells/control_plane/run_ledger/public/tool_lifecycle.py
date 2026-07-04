@@ -1182,6 +1182,28 @@ def project_lifecycle_failure_evidence_to_metadata(
         return []
     return append_failure_evidence_to_metadata(metadata, failure_evidence)
 
+
+def project_tool_lifecycle_metadata(metadata: dict[str, Any]) -> None:
+    """Project canonical lifecycle, failure, and native tool facts into metadata.
+
+    Boundary:
+        This is the public projection owner for lifecycle-derived RoleTurnResult
+        and runtime metadata. It canonicalizes existing lifecycle receipt
+        evidence, appends lifecycle failure evidence when present, and derives
+        native tool-call count/name facts from the same metadata. It does not
+        create lifecycle receipts or authorize tool effects.
+
+    Complexity:
+        O(n) time and memory for lifecycle receipt and native envelope rows.
+    """
+
+    receipts = tool_call_lifecycle_receipts_from_metadata(metadata)
+    if receipts:
+        canonical_receipt = dict(receipts[0])
+        metadata["tool_call_lifecycle_receipt"] = canonical_receipt
+        project_lifecycle_failure_evidence_to_metadata(metadata, canonical_receipt)
+    project_native_tool_call_facts_from_evidence_to_metadata(metadata, metadata)
+
 __all__ = [
     "ToolCallLifecycleReceiptV1",
     "build_tool_call_lifecycle_receipt",
@@ -1194,5 +1216,6 @@ __all__ = [
     "project_lifecycle_failure_evidence_to_metadata",
     "project_native_tool_call_facts_to_metadata",
     "project_tool_lifecycle_event",
+    "project_tool_lifecycle_metadata",
     "summarize_tool_lifecycle_events",
 ]

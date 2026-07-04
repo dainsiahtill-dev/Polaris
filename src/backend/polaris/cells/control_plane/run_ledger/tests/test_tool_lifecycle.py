@@ -19,6 +19,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     project_native_tool_call_facts_from_evidence_to_metadata,
     project_native_tool_call_facts_to_metadata,
     project_tool_lifecycle_event,
+    project_tool_lifecycle_metadata,
     summarize_tool_lifecycle_events,
     task_boundary_tool_dispatch_from_lifecycle_metadata,
     tool_call_lifecycle_receipts_from_metadata,
@@ -718,6 +719,33 @@ def test_project_lifecycle_failure_evidence_to_metadata_skips_success_lifecycle(
 
     assert rows == []
     assert metadata == {}
+
+
+def test_project_tool_lifecycle_metadata_projects_canonical_receipt_failure_and_native_facts() -> None:
+    metadata = {
+        "tool_call_lifecycle_receipts": [
+            {
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "native_tool_calls_count": 1,
+                "decoded_tool_calls_count": 1,
+                "dispatched_tool_calls_count": 0,
+                "dispatch_status": "dropped",
+                "failure_class": "TOOL_DISPATCH_DROPPED",
+                "reason": "provider emitted tool calls but none were dispatched",
+                "native_tool_call_envelope_refs": [
+                    {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"}
+                ],
+            }
+        ],
+    }
+
+    project_tool_lifecycle_metadata(metadata)
+
+    assert metadata["tool_call_lifecycle_receipt"]["dispatch_status"] == "dropped"
+    assert metadata["native_tool_calls_count"] == 1
+    assert metadata["native_tool_call_names"] == ["write_file"]
+    assert metadata["failure_evidence"][-1]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert metadata["failure_evidence_summary"]["latest_failure_class"] == "TOOL_DISPATCH_DROPPED"
 
 
 def test_tool_lifecycle_normalizer_canonicalizes_legacy_dropped_tool_names() -> None:
