@@ -41,9 +41,61 @@ _LOCAL_STATIC_IMPORT_RE = re.compile(
 
 
 @dataclass(frozen=True)
+class PackageScriptIssue:
+    """Structured package-script quality finding.
+
+    Human-readable ``detail`` strings remain the compatibility projection.
+    Downstream gates and repair planning should consume this typed evidence so
+    they do not need to re-parse package-script diagnostics from prose.
+    """
+
+    code: str
+    message: str
+    script_name: str = ""
+    script_issue: str = ""
+    command: str = ""
+    entrypoint: str = ""
+    path: str = "package.json"
+    severity: str = "error"
+    source: str = "package_scripts"
+    metadata: Mapping[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return an artifact-quality compatible structured diagnostic."""
+
+        metadata: dict[str, Any] = dict(self.metadata or {})
+        payload: dict[str, Any] = {
+            "code": self.code,
+            "message": self.message,
+            "path": self.path,
+            "severity": self.severity,
+            "source": self.source,
+            "metadata": metadata,
+        }
+        structured_fields = {
+            "script_name": self.script_name,
+            "script_issue": self.script_issue,
+            "command": self.command,
+            "entrypoint": self.entrypoint,
+        }
+        for key, value in structured_fields.items():
+            if not value:
+                continue
+            payload[key] = value
+            metadata.setdefault(key, value)
+        return payload
+
+
+@dataclass(frozen=True)
 class PackageScriptsCheckResult:
     ok: bool
     detail: str
+    issues: tuple[PackageScriptIssue, ...] = ()
+
+    def issue_dicts(self) -> tuple[dict[str, Any], ...]:
+        """Return structured issue payloads for artifact-quality consumers."""
+
+        return tuple(issue.to_dict() for issue in self.issues)
 
 
 def _is_local_script_reference(token: str) -> bool:
@@ -117,24 +169,51 @@ def _local_node_module_references(source: str) -> list[str]:
     return list(dict.fromkeys(refs))
 
 
-def _missing_local_node_module_references(workspace: str, script_name: str, entrypoint_path: str) -> list[str]:
+def _missing_local_node_module_reference_issues(
+    workspace: str,
+    script_name: str,
+    entrypoint_path: str,
+) -> tuple[PackageScriptIssue, ...]:
     try:
         with open(entrypoint_path, encoding="utf-8") as handle:
             source = handle.read()
     except OSError as exc:
         rel_entrypoint = os.path.relpath(entrypoint_path, workspace)
-        return [f"script {script_name!r} local entrypoint {rel_entrypoint!r} is unreadable: {exc}"]
+        return (
+            PackageScriptIssue(
+                code="npm_script_entrypoint_unreadable",
+                message=f"script {script_name!r} local entrypoint {rel_entrypoint!r} is unreadable: {exc}",
+                script_name=script_name,
+                script_issue="entrypoint_unreadable",
+                entrypoint=rel_entrypoint,
+                metadata={"exception": str(exc)},
+            ),
+        )
 
     importer_dir = os.path.dirname(entrypoint_path)
     rel_entrypoint = os.path.relpath(entrypoint_path, workspace)
-    missing: list[str] = []
+    missing: list[PackageScriptIssue] = []
     for module_ref in _local_node_module_references(source):
         if _resolve_node_module_reference(importer_dir, module_ref) is None:
-            missing.append(
+            message = (
                 f"script {script_name!r} local entrypoint {rel_entrypoint!r} "
                 f"requires missing local module: {module_ref}"
             )
-    return missing
+            missing.append(
+                PackageScriptIssue(
+                    code="npm_script_missing_local_module",
+                    message=message,
+                    script_name=script_name,
+                    script_issue="missing_local_module",
+                    entrypoint=rel_entrypoint,
+                    metadata={"module_ref": module_ref},
+                )
+            )
+    return tuple(missing)
+
+
+def _missing_local_node_module_references(workspace: str, script_name: str, entrypoint_path: str) -> list[str]:
+    return [issue.message for issue in _missing_local_node_module_reference_issues(workspace, script_name, entrypoint_path)]
 
 
 def _script_builds_before_interpreter(tokens: list[str], interpreter_index: int) -> bool:
@@ -157,19 +236,28 @@ def _script_lifecycle_can_build_output(scripts: dict[str, Any], script_name: str
     return script_name in {"start", "serve", "preview"} and isinstance(scripts.get("build"), str)
 
 
-def _missing_package_script_entrypoints(
+def _missing_package_script_entrypoint_issues(
     workspace: str,
     script_name: str,
     command: str,
     *,
     scripts: dict[str, Any] | None = None,
-) -> list[str]:
+) -> tuple[PackageScriptIssue, ...]:
     try:
         tokens = shlex.split(command)
     except ValueError as exc:
-        return [f"script {script_name!r} has invalid shell syntax: {exc}"]
+        return (
+            PackageScriptIssue(
+                code="npm_script_invalid_shell_syntax",
+                message=f"script {script_name!r} has invalid shell syntax: {exc}",
+                script_name=script_name,
+                script_issue="invalid_shell_syntax",
+                command=command,
+                metadata={"exception": str(exc)},
+            ),
+        )
     all_scripts = scripts or {}
-    missing: list[str] = []
+    missing: list[PackageScriptIssue] = []
     index = 0
     while index < len(tokens):
         interpreter_index = index
@@ -191,12 +279,20 @@ def _missing_package_script_entrypoints(
                     if _is_local_script_option_reference(option_value):
                         resolved_option = _resolve_script_reference(workspace, option_value)
                         if resolved_option is None:
+                            message = f"script {script_name!r} references missing local entrypoint: {option_value}"
                             missing.append(
-                                f"script {script_name!r} references missing local entrypoint: {option_value}"
+                                PackageScriptIssue(
+                                    code="npm_script_missing_local_entrypoint",
+                                    message=message,
+                                    script_name=script_name,
+                                    script_issue="missing_local_entrypoint",
+                                    command=command,
+                                    entrypoint=option_value,
+                                )
                             )
                         else:
                             missing.extend(
-                                _missing_local_node_module_references(workspace, script_name, resolved_option)
+                                _missing_local_node_module_reference_issues(workspace, script_name, resolved_option)
                             )
                 index += 2
                 continue
@@ -214,34 +310,79 @@ def _missing_package_script_entrypoints(
                         tokens,
                     ):
                         break
-                    missing.append(f"script {script_name!r} references missing local entrypoint: {candidate}")
+                    message = f"script {script_name!r} references missing local entrypoint: {candidate}"
+                    missing.append(
+                        PackageScriptIssue(
+                            code="npm_script_missing_local_entrypoint",
+                            message=message,
+                            script_name=script_name,
+                            script_issue="missing_local_entrypoint",
+                            command=command,
+                            entrypoint=candidate,
+                        )
+                    )
                 elif token == "node":
-                    missing.extend(_missing_local_node_module_references(workspace, script_name, resolved_candidate))
+                    missing.extend(_missing_local_node_module_reference_issues(workspace, script_name, resolved_candidate))
             break
-    return missing
+    return tuple(missing)
 
 
-def _placeholder_package_script_reason(script_name: str, command: str) -> str:
+def _missing_package_script_entrypoints(
+    workspace: str,
+    script_name: str,
+    command: str,
+    *,
+    scripts: dict[str, Any] | None = None,
+) -> list[str]:
+    return [
+        issue.message
+        for issue in _missing_package_script_entrypoint_issues(
+            workspace,
+            script_name,
+            command,
+            scripts=scripts,
+        )
+    ]
+
+
+def _placeholder_package_script_issue(script_name: str, command: str) -> PackageScriptIssue | None:
     try:
         tokens = shlex.split(command)
     except ValueError:
-        return ""
+        return None
     if not tokens:
-        return f"script {script_name!r} is empty"
+        return PackageScriptIssue(
+            code="npm_script_empty",
+            message=f"script {script_name!r} is empty",
+            script_name=script_name,
+            script_issue="empty_command",
+            command=command,
+        )
     first_command = os.path.basename(tokens[0])
     if first_command not in _PLACEHOLDER_SCRIPT_COMMANDS:
-        return ""
+        return None
     for index, token in enumerate(tokens):
         if token not in _SHELL_OPERATORS or index + 1 >= len(tokens):
             continue
         next_command = os.path.basename(tokens[index + 1])
         if next_command not in {*_PLACEHOLDER_SCRIPT_COMMANDS, "exit", "true"}:
-            return ""
-    return f"script {script_name!r} is a placeholder command: {command}"
+            return None
+    return PackageScriptIssue(
+        code="npm_placeholder_script",
+        message=f"script {script_name!r} is a placeholder command: {command}",
+        script_name=script_name,
+        script_issue="placeholder_command",
+        command=command,
+    )
 
 
-def package_script_cycle_reasons(scripts: Mapping[str, Any]) -> list[str]:
-    """Return package script dependency-cycle reasons for npm-compatible scripts."""
+def _placeholder_package_script_reason(script_name: str, command: str) -> str:
+    issue = _placeholder_package_script_issue(script_name, command)
+    return issue.message if issue is not None else ""
+
+
+def package_script_cycle_issues(scripts: Mapping[str, Any]) -> tuple[PackageScriptIssue, ...]:
+    """Return package script dependency-cycle issues for npm-compatible scripts."""
 
     script_commands = {
         str(name): command
@@ -249,12 +390,12 @@ def package_script_cycle_reasons(scripts: Mapping[str, Any]) -> list[str]:
         if isinstance(name, str) and isinstance(command, str) and name.strip()
     }
     if not script_commands:
-        return []
+        return ()
     graph = {
         name: tuple(dep for dep in _npm_script_dependencies(command) if dep in script_commands)
         for name, command in script_commands.items()
     }
-    reasons: list[str] = []
+    issues: list[PackageScriptIssue] = []
     seen_cycles: set[tuple[str, ...]] = set()
     for script_name in sorted(graph):
         cycle = _script_cycle_from(graph, start=script_name, current=script_name, path=(script_name,))
@@ -265,8 +406,23 @@ def package_script_cycle_reasons(scripts: Mapping[str, Any]) -> list[str]:
             continue
         seen_cycles.add(canonical)
         chain = " -> ".join(cycle)
-        reasons.append(f"npm package manifest script {script_name!r} recursively invokes itself via {chain}")
-    return reasons
+        issues.append(
+            PackageScriptIssue(
+                code="npm_script_cycle",
+                message=f"npm package manifest script {script_name!r} recursively invokes itself via {chain}",
+                script_name=script_name,
+                script_issue="recursive_invocation",
+                command=script_commands.get(script_name, ""),
+                metadata={"cycle": list(cycle)},
+            )
+        )
+    return tuple(issues)
+
+
+def package_script_cycle_reasons(scripts: Mapping[str, Any]) -> list[str]:
+    """Return package script dependency-cycle reasons for npm-compatible scripts."""
+
+    return [issue.message for issue in package_script_cycle_issues(scripts)]
 
 
 def _npm_script_dependencies(command: str) -> tuple[str, ...]:
@@ -369,29 +525,69 @@ def check_package_scripts(workspace: str) -> PackageScriptsCheckResult:
 
     package_path = os.path.join(workspace, "package.json")
     if not os.path.exists(package_path):
-        return PackageScriptsCheckResult(False, "package.json not found")
+        issue = PackageScriptIssue(
+            code="npm_manifest_missing",
+            message="package.json not found",
+            script_issue="manifest_missing",
+        )
+        return PackageScriptsCheckResult(False, issue.message, (issue,))
     try:
         with open(package_path, encoding="utf-8") as handle:
             package = json.load(handle)
     except (OSError, json.JSONDecodeError) as exc:
-        return PackageScriptsCheckResult(False, f"package.json unreadable or invalid: {exc}")
+        issue = PackageScriptIssue(
+            code="npm_manifest_invalid",
+            message=f"package.json unreadable or invalid: {exc}",
+            script_issue="manifest_invalid",
+            metadata={"exception": str(exc)},
+        )
+        return PackageScriptsCheckResult(False, issue.message, (issue,))
     scripts = package.get("scripts")
     if not isinstance(scripts, dict) or not scripts:
-        return PackageScriptsCheckResult(False, "package.json has no scripts to validate")
+        issue = PackageScriptIssue(
+            code="npm_scripts_missing",
+            message="package.json has no scripts to validate",
+            script_issue="scripts_missing",
+        )
+        return PackageScriptsCheckResult(False, issue.message, (issue,))
     failures: list[str] = []
-    failures.extend(package_script_cycle_reasons(scripts))
+    issues: list[PackageScriptIssue] = []
+    cycle_issues = package_script_cycle_issues(scripts)
+    issues.extend(cycle_issues)
+    failures.extend(issue.message for issue in cycle_issues)
     for script_name, command in scripts.items():
         if not isinstance(command, str):
-            failures.append(f"script {script_name!r} is not a string")
+            issue = PackageScriptIssue(
+                code="npm_script_not_string",
+                message=f"script {script_name!r} is not a string",
+                script_name=str(script_name),
+                script_issue="not_string",
+            )
+            issues.append(issue)
+            failures.append(issue.message)
             continue
-        placeholder_reason = _placeholder_package_script_reason(str(script_name), command)
-        if placeholder_reason:
-            failures.append(placeholder_reason)
+        placeholder_issue = _placeholder_package_script_issue(str(script_name), command)
+        if placeholder_issue is not None:
+            issues.append(placeholder_issue)
+            failures.append(placeholder_issue.message)
             continue
-        failures.extend(_missing_package_script_entrypoints(workspace, str(script_name), command, scripts=scripts))
+        entrypoint_issues = _missing_package_script_entrypoint_issues(
+            workspace,
+            str(script_name),
+            command,
+            scripts=scripts,
+        )
+        issues.extend(entrypoint_issues)
+        failures.extend(issue.message for issue in entrypoint_issues)
     if failures:
-        return PackageScriptsCheckResult(False, "; ".join(failures[:3]))
+        return PackageScriptsCheckResult(False, "; ".join(failures[:3]), tuple(issues))
     return PackageScriptsCheckResult(True, f"{len(scripts)} package scripts have valid local entrypoint references")
 
 
-__all__ = ["PackageScriptsCheckResult", "check_package_scripts", "package_script_cycle_reasons"]
+__all__ = [
+    "PackageScriptIssue",
+    "PackageScriptsCheckResult",
+    "check_package_scripts",
+    "package_script_cycle_issues",
+    "package_script_cycle_reasons",
+]

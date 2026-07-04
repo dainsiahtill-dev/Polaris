@@ -33,7 +33,12 @@ from polaris.kernelone.quality.file_ownership_ledger import (
     owner_task_identifier_token_aliases,
     task_identifier_token_aliases,
 )
-from polaris.kernelone.quality.package_scripts import PackageScriptsCheckResult, check_package_scripts
+from polaris.kernelone.quality.package_scripts import (
+    PackageScriptIssue,
+    PackageScriptsCheckResult,
+    check_package_scripts,
+    package_script_cycle_issues,
+)
 from polaris.kernelone.quality.role_output_markers import DEBT_MARKERS
 from polaris.kernelone.quality.scope_authority import (
     ScopeAuthorityDecision,
@@ -70,6 +75,7 @@ __all__ = [
     "CrossArtifactRepairPlan",
     "InterfaceImport",
     "InterfaceSymbol",
+    "PackageScriptIssue",
     "PackageScriptsCheckResult",
     "ScopeAuthorityDecision",
     "ScopeAuthorityOwnerHandoffIndex",
@@ -96,6 +102,7 @@ __all__ = [
     "owner_task_identifier_token_aliases",
     "owner_task_retry_handoff_requests_from_scope_payload",
     "ownership_handoff_requests_from_scope_payload",
+    "package_script_cycle_issues",
     "partition_paths_by_declared_scope",
     "path_matches_any_declared_scope_candidate",
     "path_matches_declared_scope_candidate",
