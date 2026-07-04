@@ -505,16 +505,22 @@ class TestHandoffWorkflow:
             content="[handoff_workflow]",
             thinking=None,
             native_tool_calls=[
-                _native_tool("read_file", {"path": "main.py"}),
+                _native_tool("read_file", {"path": "main.py"}, call_id="call_handoff"),
             ],
             model="claude",
-            usage={},
+            usage={"tool_call_provider": "anthropic"},
         )
 
         decision = decoder.decode(response, TurnId("turn_13"))
 
         assert decision["kind"] == TurnDecisionKind.HANDOFF_WORKFLOW
         assert decision["metadata"]["handoff_reason"] == "complex_exploration"
+        envelopes = decision["metadata"]["native_tool_call_envelopes"]
+        assert len(envelopes) == 1
+        assert envelopes[0]["schema_version"] == "native_tool_call_envelope.v1"
+        assert envelopes[0]["provider"] == "anthropic"
+        assert envelopes[0]["tool_name"] == "read_file"
+        assert envelopes[0]["call_id"] == "call_handoff"
 
     def test_async_tools_trigger_handoff(self) -> None:
         decoder = TurnDecisionDecoder(config=DecodeConfig(domain="document"))

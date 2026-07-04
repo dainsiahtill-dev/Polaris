@@ -153,9 +153,21 @@ class TurnDecisionDecoder:
 
             # Step 5: 检查是否需要移交workflow
             if any(t["execution_mode"] == ToolExecutionMode.ASYNC_RECEIPT for t in all_tools):
-                return self._create_handoff_decision(response, all_tools, turn_id, "async_operation")
+                return self._create_handoff_decision(
+                    response,
+                    all_tools,
+                    turn_id,
+                    "async_operation",
+                    native_tool_call_envelopes=native_tool_call_envelopes,
+                )
             if self._should_handoff_to_workflow(all_tools, response):
-                return self._create_handoff_decision(response, all_tools, turn_id, "complex_exploration")
+                return self._create_handoff_decision(
+                    response,
+                    all_tools,
+                    turn_id,
+                    "complex_exploration",
+                    native_tool_call_envelopes=native_tool_call_envelopes,
+                )
 
             batch_metadata: dict[str, Any] = {
                 "tool_count": len(all_tools),
@@ -474,10 +486,23 @@ class TurnDecisionDecoder:
         )
 
     def _create_handoff_decision(
-        self, response: RawLLMResponse, tools: list[ToolInvocation], turn_id: TurnId, reason: str
+        self,
+        response: RawLLMResponse,
+        tools: list[ToolInvocation],
+        turn_id: TurnId,
+        reason: str,
+        *,
+        native_tool_call_envelopes: list[dict[str, Any]] | None = None,
     ) -> TurnDecision:
         """创建移交workflow的决策"""
         tool_batch = self._build_tool_batch(tools, turn_id) if tools else None
+        metadata: dict[str, Any] = {
+            "handoff_reason": reason,
+            "tool_count": len(tools),
+            "initial_tools": [t["tool_name"] for t in tools],
+        }
+        if native_tool_call_envelopes:
+            metadata["native_tool_call_envelopes"] = native_tool_call_envelopes
 
         return TurnDecision(
             turn_id=turn_id,
@@ -487,11 +512,7 @@ class TurnDecisionDecoder:
             tool_batch=tool_batch,
             finalize_mode=FinalizeMode.NONE,
             domain=self.config.domain,
-            metadata={
-                "handoff_reason": reason,
-                "tool_count": len(tools),
-                "initial_tools": [t["tool_name"] for t in tools],
-            },
+            metadata=metadata,
         )
 
     def _is_final_answer(self, response: RawLLMResponse, tools: list[ToolInvocation]) -> bool:
