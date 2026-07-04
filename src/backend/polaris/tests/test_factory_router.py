@@ -7,6 +7,7 @@ import json
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -657,6 +658,87 @@ def test_quality_gate_rework_summary_reads_taskboard_requests(temp_workspace: Pa
     assert summary["ready_count"] == 1
     assert summary["tasks"][0]["external_task_id"] == "TASK-1"
     assert summary["tasks"][0]["reason"] == "qa_score_below_threshold"
+
+
+def test_quality_gate_rework_summary_uses_task_row_projection(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _TaskRowService:
+        def __init__(self, workspace: str) -> None:
+            self.workspace = workspace
+
+        def list_task_rows(self) -> list[dict[str, Any]]:
+            return [
+                {
+                    "id": 7,
+                    "status": "pending",
+                    "metadata": {
+                        "external_task_id": "TASK-7",
+                        "qa_rework_requested": True,
+                        "qa_rework_reason": "qa_score_below_threshold",
+                    },
+                }
+            ]
+
+        def list_all(self) -> list[object]:
+            raise AssertionError("quality-gate rework summary must not read raw TaskBoard entities")
+
+    monkeypatch.setattr(factory_router_module, "TaskRuntimeService", _TaskRowService)
+
+    summary = factory_router_module._read_quality_gate_rework_summary("/tmp/workspace")
+
+    assert summary["requested"] is True
+    assert summary["requested_count"] == 1
+    assert summary["ready_count"] == 1
+    assert summary["tasks"] == [
+        {
+            "task_id": "7",
+            "external_task_id": "TASK-7",
+            "status": "pending",
+            "reason": "qa_score_below_threshold",
+            "retry_count": None,
+            "max_retries": None,
+            "exhausted": False,
+        }
+    ]
+
+
+def test_quality_gate_task_boundary_rework_uses_task_row_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _TaskRowService:
+        def __init__(self, workspace: str) -> None:
+            self.workspace = workspace
+
+        def list_task_rows(self) -> list[dict[str, Any]]:
+            return [
+                {
+                    "id": 8,
+                    "status": "completed",
+                    "metadata": {"external_task_id": "TASK-8"},
+                }
+            ]
+
+        def list_all(self) -> list[object]:
+            raise AssertionError("quality-gate task-boundary rework must not read raw TaskBoard entities")
+
+        def update(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("test fixture should not request update")
+
+        def reopen(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("test fixture should not request reopen")
+
+    monkeypatch.setattr(factory_router_module, "TaskRuntimeService", _TaskRowService)
+    monkeypatch.setattr(
+        factory_router_module,
+        "_read_task_boundary_workspace_validation",
+        lambda _workspace: ({"passed": False, "repair": {}}, "workspace/qa/latest.workspace-validation.json"),
+    )
+
+    summary = factory_router_module._apply_quality_gate_task_boundary_rework_requests("/tmp/workspace")
+
+    assert summary["requested"] is False
+    assert summary["evaluated_count"] == 0
+    assert summary["reopened_count"] == 0
+    assert summary["tasks"] == []
 
 
 def test_quality_gate_rework_summary_keeps_exhausted_requests(temp_workspace: Path) -> None:

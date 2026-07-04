@@ -1064,7 +1064,7 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
 
     try:
         task_board = TaskRuntimeService(str(workspace))
-        entries = task_board.list_all()
+        entries = task_board.list_task_rows()
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         summary["error"] = f"{type(exc).__name__}: {exc}"
         return summary
@@ -1261,7 +1261,7 @@ def _read_quality_gate_rework_summary(workspace: str) -> dict[str, Any]:
     }
     try:
         task_board = TaskRuntimeService(str(workspace))
-        entries = task_board.list_all()
+        entries = task_board.list_task_rows()
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         summary["error"] = f"{type(exc).__name__}: {exc}"
         return summary
