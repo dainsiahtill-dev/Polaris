@@ -5357,7 +5357,7 @@ class TestDirectorFailureClosure:
         tmp_path: Any,
     ) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Create package manifest",
             description="Create a package.json with a runnable local test script.",
             metadata={
@@ -5367,6 +5367,7 @@ class TestDirectorFailureClosure:
                 "acceptance": ["npm test runs a local package manifest check"],
             },
         )
+        task_id = str(task["id"])
         stage_labels: list[str] = []
 
         async def _bad_package_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -5401,8 +5402,8 @@ class TestDirectorFailureClosure:
         adapter._invoke_role_dialogue_with_timeout = _bad_package_dialogue  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-package-deterministic-test-script-repair"},
         )
 
@@ -5418,7 +5419,7 @@ class TestDirectorFailureClosure:
         tmp_path: Any,
     ) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Create package manifest",
             description="Create a package.json with a syntactically valid npm test script.",
             metadata={
@@ -5428,6 +5429,7 @@ class TestDirectorFailureClosure:
                 "acceptance": ["npm test parses and exits 0"],
             },
         )
+        task_id = str(task["id"])
         stage_labels: list[str] = []
 
         async def _bad_package_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -5461,8 +5463,8 @@ class TestDirectorFailureClosure:
         adapter._invoke_role_dialogue_with_timeout = _bad_package_dialogue  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-package-invalid-script-deterministic-repair"},
         )
 
@@ -5480,7 +5482,7 @@ class TestDirectorFailureClosure:
         tmp_path: Any,
     ) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Create task model summary",
             description="Create a task model summary function with valid TypeScript syntax.",
             metadata={
@@ -5490,6 +5492,7 @@ class TestDirectorFailureClosure:
                 "acceptance": ["src/models/task.ts typechecks"],
             },
         )
+        task_id = str(task["id"])
 
         async def _bad_typescript_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -5523,8 +5526,8 @@ export function summary() {
         adapter._invoke_role_dialogue_with_timeout = _bad_typescript_dialogue  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-typescript-return-object-semicolon-repair"},
         )
 
@@ -5555,7 +5558,7 @@ export function summary() {
         )
         _write_substantive_node_test_script(tmp_path)
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Define tenant model",
             description="Create the tenant model with runtime imports declared in package.json.",
             metadata={
@@ -5565,6 +5568,7 @@ export function summary() {
                 "acceptance": ["No undeclared runtime imports remain"],
             },
         )
+        task_id = str(task["id"])
         stage_labels: list[str] = []
 
         async def _repeating_gemma_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -5599,8 +5603,8 @@ export function summary() {
         adapter._invoke_role_dialogue_with_timeout = _repeating_gemma_dialogue  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-undeclared-import-deterministic-repair"},
         )
 
