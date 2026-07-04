@@ -19,7 +19,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     normalize_failure_class,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
-    project_tool_lifecycle_metadata,
+    project_tool_lifecycle_receipt_to_metadata,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
@@ -225,9 +225,7 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
         metadata.setdefault(key, value)
     lifecycle = _lifecycle_receipt_from_metadata(metadata)
     if lifecycle is not None:
-        metadata["tool_call_lifecycle_receipt"] = lifecycle
-        metadata["tool_call_lifecycle"] = lifecycle
-        project_tool_lifecycle_metadata(metadata)
+        project_tool_lifecycle_receipt_to_metadata(metadata, lifecycle)
     dropped_error = _tool_dispatch_dropped_error(result)
     if dropped_error:
         dropped_tool_calls = _extract_tool_calls(result)
@@ -251,9 +249,8 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
             role="",
             reason=dropped_error,
         )
-        metadata.setdefault("tool_call_lifecycle_receipt", dropped_lifecycle)
-        metadata.setdefault("tool_call_lifecycle", metadata["tool_call_lifecycle_receipt"])
-        project_tool_lifecycle_metadata(metadata)
+        if lifecycle is None:
+            project_tool_lifecycle_receipt_to_metadata(metadata, dropped_lifecycle)
     return metadata
 
 

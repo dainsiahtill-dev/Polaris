@@ -10,9 +10,10 @@ re-export-preservation guard for the public surface.
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
 from polaris.cells.roles.profile.public.service import RoleTurnResult
-from polaris.cells.roles.runtime.public import service as runtime_service
+from polaris.cells.roles.runtime.public import result_mapping as runtime_result_mapping, service as runtime_service
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 
 
@@ -234,6 +235,35 @@ def test_contract_result_metadata_appends_lifecycle_failure_evidence() -> None:
     assert meta["failure_evidence"][1]["metadata"]["source"] == "tool_call_lifecycle_receipt.v1"
     assert meta["failure_evidence_summary"]["count"] == 2
     assert meta["failure_evidence_summary"]["latest_failure_class"] == "TOOL_DISPATCH_DROPPED"
+
+
+def test_contract_result_metadata_projects_lifecycle_through_run_ledger_public_helper() -> None:
+    lifecycle = {
+        "schema_version": "tool_call_lifecycle_receipt.v1",
+        "native_tool_calls_count": 1,
+        "dispatched_tool_calls_count": 0,
+        "dispatch_status": "dropped",
+        "failure_class": "tool_dispatch_dropped",
+    }
+    result = RoleTurnResult(content="x", metadata={"tool_call_lifecycle": lifecycle})
+    calls: list[dict[str, Any]] = []
+    original = runtime_result_mapping.project_tool_lifecycle_receipt_to_metadata
+
+    def _record_projection(metadata: dict[str, Any], receipt: dict[str, Any]) -> None:
+        calls.append(dict(receipt))
+        original(metadata, receipt)
+
+    with patch.object(
+        runtime_result_mapping,
+        "project_tool_lifecycle_receipt_to_metadata",
+        side_effect=_record_projection,
+    ):
+        meta = runtime_service._contract_result_metadata(result)
+
+    assert len(calls) == 1
+    assert calls[0]["dispatch_status"] == "dropped"
+    assert meta["tool_call_lifecycle"] == meta["tool_call_lifecycle_receipt"]
+    assert meta["failure_evidence"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
 
 
 def test_with_result_metadata_patch_merges_and_preserves_fields() -> None:
