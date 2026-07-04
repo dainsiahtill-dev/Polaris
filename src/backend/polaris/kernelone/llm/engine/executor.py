@@ -144,8 +144,7 @@ def _structured_coverage_flags(context: Any) -> dict[str, bool]:
     return flags
 
 
-def _coverage_flags(text: str, *, context: Any = None) -> dict[str, bool]:
-    del text
+def _coverage_flags(*, context: Any = None) -> dict[str, bool]:
     structured_flags = _structured_coverage_flags(context)
     return {
         key: bool(structured_flags.get(key))
@@ -1005,12 +1004,11 @@ class AIExecutor:
         )
         window_tokens = int(model_spec.max_context_tokens or 0)
         utilization = (final_request_token_estimate / window_tokens) if window_tokens > 0 else None
-        message_text = "\n".join(message.get("content", "") for message in normalized_messages)
         context_underutilized = bool(
             window_tokens >= _UNDERUTILIZED_WINDOW_THRESHOLD
             and final_request_token_estimate < int(window_tokens * _UNDERUTILIZED_RATIO)
         )
-        coverage = _coverage_flags(message_text, context=getattr(request, "context", None))
+        coverage = _coverage_flags(context=getattr(request, "context", None))
         prompt_profile_fields = build_prompt_profile_observability_fields(getattr(request, "context", None))
 
         return {

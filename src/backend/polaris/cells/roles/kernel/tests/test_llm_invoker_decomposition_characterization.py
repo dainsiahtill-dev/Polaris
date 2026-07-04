@@ -131,7 +131,6 @@ class _ScriptedExecutor:
 
 def test_executor_context_snapshot_coverage_uses_structured_context_before_text_needles() -> None:
     coverage = _coverage_flags(
-        "build",
         context={
             "pm_contract": {
                 "schema_version": "pm.task_contract.v1",
@@ -177,11 +176,16 @@ def test_executor_context_snapshot_coverage_uses_structured_context_before_text_
 
 def test_executor_context_snapshot_coverage_does_not_count_failure_or_quality_prose() -> None:
     coverage = _coverage_flags(
-        (
-            "stderr exit_code failed retry error npm test real_run_gate "
-            "factory_workspace_quality workspace quality"
-        ),
         context={
+            "chat_messages": [
+                {
+                    "role": "assistant",
+                    "content": (
+                        "stderr exit_code failed retry error npm test real_run_gate "
+                        "factory_workspace_quality workspace quality"
+                    ),
+                }
+            ],
             "target_files": ["src/index.ts"],
             "failure_summary": {"message": "failure_class: TOOL_DISPATCH_DROPPED"},
             "quality_summary": {"message": "quality_errors: ['missing README']"},
@@ -195,10 +199,6 @@ def test_executor_context_snapshot_coverage_does_not_count_failure_or_quality_pr
 
 def test_executor_context_snapshot_coverage_does_not_count_contract_or_scope_prose() -> None:
     coverage = _coverage_flags(
-        (
-            "PM task contract acceptance depends_on Chief Engineer blueprint "
-            "target_files src/index.ts scope_paths tests/"
-        ),
         context={
             "chat_messages": [
                 {
@@ -216,7 +216,6 @@ def test_executor_context_snapshot_coverage_does_not_count_contract_or_scope_pro
 
 def test_executor_context_snapshot_coverage_rejects_weak_contract_and_scope_mappings() -> None:
     coverage = _coverage_flags(
-        "build",
         context={
             "pm_contract": {"note": "PM Task Contract"},
             "ce_blueprint": {"note": "Chief Engineer Blueprint"},

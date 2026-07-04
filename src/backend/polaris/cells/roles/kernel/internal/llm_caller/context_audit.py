@@ -301,8 +301,7 @@ def _resident_agi_coverage_flags(ai_request: Any | None) -> dict[str, bool]:
     }
 
 
-def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bool]:
-    del text
+def _coverage_flags(*, ai_request: Any | None = None) -> dict[str, bool]:
     pm_contract = _pm_contract_payload(ai_request) if ai_request is not None else {}
     ce_blueprint = _ce_blueprint_payload(ai_request) if ai_request is not None else {}
     module_interface_contract = _module_interface_contract_payload(ai_request) if ai_request is not None else {}
@@ -2511,13 +2510,11 @@ def build_final_request_context_audit_for_request(
     final_request_token_estimate = message_token_estimate + tool_schema_token_estimate + response_format_token_estimate
     window_tokens = _context_window_tokens(prepared, profile)
     utilization = (final_request_token_estimate / window_tokens) if window_tokens > 0 else None
-    message_text = "\n".join(str(message.get("content") or "") for message in messages)
-
     context_underutilized = bool(
         window_tokens >= _UNDERUTILIZED_WINDOW_THRESHOLD
         and final_request_token_estimate < int(window_tokens * _UNDERUTILIZED_RATIO)
     )
-    coverage = _coverage_flags(message_text, ai_request=ai_request)
+    coverage = _coverage_flags(ai_request=ai_request)
     prompt_profile_selection = _prompt_profile_selection(ai_request)
     sampling = _request_sampling_audit(ai_request, prepared)
     request_metadata_summary = _request_metadata_summary(ai_request, prepared)
