@@ -967,6 +967,8 @@ _INTERFACE_DISCREPANCY_CONTEXT_KEYS = (
 _FAILED_GATE_EVIDENCE_CONTEXT_KEYS = (
     "failed_gate_evidence",
     "failed_gate_or_verification_evidence",
+    "failure_evidence",
+    "failure_evidence_summary",
     "verification_failure_evidence",
     "verification_evidence",
     "failure_feedback",
@@ -1526,11 +1528,21 @@ def _looks_like_failed_gate_evidence(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
     schema_version = str(value.get("schema_version") or "").strip().lower()
-    if "failed_gate" in schema_version or "verification_failure" in schema_version:
+    if (
+        "failed_gate" in schema_version
+        or "verification_failure" in schema_version
+        or "failure_evidence" in schema_version
+    ):
         return True
     return any(
         key in value
         for key in (
+            "failure_class",
+            "responsible_layer",
+            "repairable_by_director",
+            "requires_ce_replan",
+            "requires_pm_revision",
+            "evidence_refs",
             "exit_code",
             "command",
             "stderr",
@@ -1657,6 +1669,12 @@ def _failed_gate_evidence_payload(ai_request: Any | None) -> dict[str, Any]:
                 "schema_version": "polaris.failed_gate_evidence.context_slot.v1",
                 "source_schema_version": str(found.get("schema_version") or ""),
                 "source": str(found.get("source") or found.get("modality") or "failed_gate_evidence"),
+                "failure_class": str(found.get("failure_class") or ""),
+                "responsible_layer": str(found.get("responsible_layer") or ""),
+                "repairable_by_director": _bool_value(found.get("repairable_by_director")),
+                "requires_ce_replan": _bool_value(found.get("requires_ce_replan")),
+                "requires_pm_revision": _bool_value(found.get("requires_pm_revision")),
+                "evidence_refs": _string_list(found.get("evidence_refs")),
                 "command": str(found.get("command") or found.get("verifier_command") or ""),
                 "exit_code": _int_value(found.get("exit_code")),
                 "diagnostic_count": len(found.get("diagnostics") or [])

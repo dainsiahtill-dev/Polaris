@@ -1021,6 +1021,93 @@ def test_final_request_evidence_accepts_context_evidence_slots_without_keywords(
     enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)
 
 
+def test_final_request_evidence_accepts_run_ledger_failure_evidence_without_keywords() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "director_execution_strategy": {
+                "schema_version": "task.execution_strategy.v1",
+                "evidence_requirements": [
+                    "pm_task_contract",
+                    "chief_engineer_blueprint",
+                    "target_files_or_declared_scopes",
+                    "failed_gate_or_verification_evidence",
+                    "execution_envelope",
+                ],
+            },
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+                "pm_contract": {"hash": "pm-hash"},
+                "ce_blueprint": {"hash": "ce-hash"},
+                "authorization": {
+                    "target_files": ["src/models/Fairy.ts"],
+                    "scope_paths": ["src/models/Fairy.ts"],
+                },
+            },
+            "pm_contract": {
+                "schema_version": "pm.task_contract.v1",
+                "task_id": "TASK-1",
+                "target_files": ["src/models/Fairy.ts"],
+            },
+            "ce_blueprint": {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": "ce_TASK-1",
+                "target_files": ["src/models/Fairy.ts"],
+            },
+            "run_ledger_projection": {
+                "schema_version": "polaris.run_ledger_projection.v1",
+                "failure_evidence": [
+                    {
+                        "schema_version": "polaris.failure_evidence.v1",
+                        "source": "tool_lifecycle",
+                        "failure_class": "tool_dispatch_dropped",
+                        "responsible_layer": "platform",
+                        "repairable_by_director": False,
+                        "requires_ce_replan": False,
+                        "requires_pm_revision": False,
+                        "evidence_refs": ["tool_lifecycle:turn-1"],
+                    }
+                ],
+            },
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "system",
+                "content": "Contract TASK-1 covers src/models/Fairy.ts. Blueprint ce_TASK-1 is attached.",
+            }
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    metadata_summary = audit["request_metadata_summary"]
+    assert metadata_summary["has_failed_gate_evidence"] is True
+    assert metadata_summary["failed_gate_evidence_summary"]["failure_class"] == "tool_dispatch_dropped"
+    assert metadata_summary["failed_gate_evidence_summary"]["responsible_layer"] == "platform"
+    assert metadata_summary["failed_gate_evidence_summary"]["evidence_refs"] == ["tool_lifecycle:turn-1"]
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert evidence_coverage["missing_required_refs"] == []
+    assert evidence_coverage["pass"] is True
+    assert evidence_coverage["structured_evidence"]["failed_gate_evidence"] is True
+    enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)
+
+
 def test_final_request_evidence_accepts_structured_architecture_plan_without_keywords() -> None:
     ai_request = AIRequest(
         task_type=TaskType.DIALOGUE,
