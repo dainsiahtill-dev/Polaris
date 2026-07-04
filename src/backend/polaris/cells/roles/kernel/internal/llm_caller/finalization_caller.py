@@ -10,6 +10,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.internal.interaction_contract import TurnIntent, infer_turn_intent
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_calls_from_response
 
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
@@ -80,11 +81,12 @@ class FinalizationCaller:
         )
         if getattr(response, "error", None):
             raise RuntimeError(str(response.error))
-        raw_tool_calls = getattr(response, "tool_calls", []) or []
+        raw_tool_calls = native_tool_calls_from_response(response)
         return {
             "content": response.content,
             "thinking": getattr(response, "thinking", None),
             "tool_calls": raw_tool_calls,
+            "native_tool_calls": raw_tool_calls,
             "model": str(getattr(response, "model", "unknown") or "unknown"),
             "usage": dict(getattr(response, "metadata", {}) or {}),
         }

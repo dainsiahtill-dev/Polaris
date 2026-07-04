@@ -1431,7 +1431,43 @@ class TestFinalizationCaller:
 
         assert result["content"] == "final answer"
         assert result["tool_calls"] == []
+        assert result["native_tool_calls"] == []
         assert result["model"] == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_call_preserves_native_tool_calls_alias_without_tool_calls_field(self) -> None:
+        """FinalizationCaller should use the shared response alias normalizer."""
+        invoker = Mock()
+        invoker.call = AsyncMock(
+            return_value=SimpleNamespace(
+                content="final answer",
+                native_tool_calls=[
+                    {
+                        "id": "toolu_final",
+                        "type": "tool_use",
+                        "name": "write_file",
+                        "input": {"path": "x.py", "content": "1"},
+                    }
+                ],
+                metadata={},
+                model="claude",
+            )
+        )
+        caller = FinalizationCaller(invoker)
+
+        profile = Mock()
+        profile.role_id = "director"
+        context = Mock()
+        context.message = "hello"
+        context.history = ()
+        context.task_id = None
+        context.context_override = None
+
+        result = await caller.call(profile=profile, system_prompt="sys", context=context)
+
+        assert result["tool_calls"] == result["native_tool_calls"]
+        assert result["tool_calls"][0]["id"] == "toolu_final"
+        assert result["tool_calls"][0]["name"] == "write_file"
 
     @pytest.mark.asyncio
     async def test_call_raises_on_error(self) -> None:
