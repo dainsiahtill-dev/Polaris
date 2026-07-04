@@ -32,6 +32,7 @@ from polaris.cells.chief_engineer.blueprint.public import (
 )
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+from polaris.cells.qa.audit_verdict.public import QaFailureClassV1
 from polaris.cells.roles.kernel.public.service import QualityChecker
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleTaskCommandV1
 from polaris.cells.roles.runtime.public.service import RoleRuntimeService
@@ -4336,7 +4337,7 @@ class OrchestrationStageExecutor:
                                     "round": round_index,
                                     "taskboard_before": before_stats,
                                     "taskboard_after": settled_stats,
-                                    "failure_class": "TASKBOARD_DEADLOCK",
+                                    "failure_class": QaFailureClassV1.TASKBOARD_DEADLOCK.value,
                                     "responsible_layer": "execution_control_plane",
                                 }
                             )
@@ -4539,7 +4540,7 @@ class OrchestrationStageExecutor:
                                     "declared_target_count": len(self._collect_declared_delivery_targets(pm_tasks)),
                                     "upstream_status": str(director_result.status or "").strip(),
                                     "round": round_index,
-                                    "failure_class": "INCOMPLETE_MATERIALIZATION",
+                                    "failure_class": QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value,
                                     "responsible_layer": "director_orchestration",
                                     "repairable_by_director": True,
                                     "requires_ce_replan": False,
