@@ -6298,7 +6298,7 @@ export function summary() {
             encoding="utf-8",
         )
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Extend Node.js backend entrypoint",
             description="Implement Node.js backend entrypoint.",
             metadata={
@@ -6309,6 +6309,7 @@ export function summary() {
                 "acceptance": ["npm run build verifies src/server/app.ts"],
             },
         )
+        task_id = str(task["id"])
 
         async def _read_only_contract_violation(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -6329,14 +6330,14 @@ export function summary() {
         adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-existing-scope-after-read-only"},
         )
 
         assert result["success"] is True
         assert result["materialization_mode"] == "verified_existing_workspace_scope"
-        updated = adapter.task_board.get_task(str(task.id))
+        updated = adapter.task_board.get_task(task_id)
         assert updated is not None
         assert str(updated.get("status") or "").lower() == "completed"
         raw_metadata = updated.get("metadata")
@@ -6360,7 +6361,7 @@ export function summary() {
             encoding="utf-8",
         )
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Extend multiplayer session persistence",
             description="Implement multiplayer session persistence.",
             metadata={
@@ -6370,6 +6371,7 @@ export function summary() {
                 "acceptance": ["src/server/session-store.ts exposes persistence methods"],
             },
         )
+        task_id = str(task["id"])
 
         async def _batch_contract_violation(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -6390,8 +6392,8 @@ export function summary() {
         adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-existing-scope-after-batch-violation"},
         )
 
@@ -6405,7 +6407,7 @@ export function summary() {
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("export const serverReady = true;\n", encoding="utf-8")
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Extend Node.js backend entrypoint",
             description="Implement Node.js backend entrypoint.",
             metadata={
@@ -6414,6 +6416,7 @@ export function summary() {
                 "target_files": ["src/server/app.ts"],
             },
         )
+        task_id = str(task["id"])
 
         async def _successful_no_diff_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -6427,8 +6430,8 @@ export function summary() {
         adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-existing-scope-after-successful-no-diff"},
         )
 
