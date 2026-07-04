@@ -148,6 +148,8 @@ def _normalize_structured_error(raw: Mapping[str, Any]) -> RepairDiagnostic | No
         "manifest_path",
         "script_name",
         "script_issue",
+        "actual",
+        "suggestion",
         "language",
         "confidence",
         "archetype",

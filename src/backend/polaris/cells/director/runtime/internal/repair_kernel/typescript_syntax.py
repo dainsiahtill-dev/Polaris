@@ -7843,20 +7843,26 @@ def _parse_string_literal_suggestion_targets(
                 by_path.setdefault(path, set()).add((line, column, actual, suggestion))
         path = _normalize_repair_path(str(diagnostic.path or ""))
         if _is_string_literal_suggestion_diagnostic(diagnostic) and path and diagnostic.line and diagnostic.column:
-            inline_match = re.search(
-                r"Type (?P<actual_quote>['\"])(?P<actual>.*?)(?P=actual_quote) is not assignable to type "
-                r"(?P<target_quote>['\"]).*?(?P=target_quote)\.\s+Did you mean "
-                r"(?P<suggestion_quote>['\"])(?P<suggestion>.*?)(?P=suggestion_quote)\?",
-                text,
-            )
-            actual = (
-                _strip_typescript_literal_type(str(inline_match.group("actual") or "").strip()) if inline_match else ""
-            )
-            suggestion = (
-                _strip_typescript_literal_type(str(inline_match.group("suggestion") or "").strip())
-                if inline_match
-                else ""
-            )
+            metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
+            actual = _strip_typescript_literal_type(str(metadata.get("actual") or "").strip())
+            suggestion = _strip_typescript_literal_type(str(metadata.get("suggestion") or "").strip())
+            if not actual or not suggestion:
+                inline_match = re.search(
+                    r"Type (?P<actual_quote>['\"])(?P<actual>.*?)(?P=actual_quote) is not assignable to type "
+                    r"(?P<target_quote>['\"]).*?(?P=target_quote)\.\s+Did you mean "
+                    r"(?P<suggestion_quote>['\"])(?P<suggestion>.*?)(?P=suggestion_quote)\?",
+                    text,
+                )
+                actual = (
+                    _strip_typescript_literal_type(str(inline_match.group("actual") or "").strip())
+                    if inline_match
+                    else ""
+                )
+                suggestion = (
+                    _strip_typescript_literal_type(str(inline_match.group("suggestion") or "").strip())
+                    if inline_match
+                    else ""
+                )
             line = int(diagnostic.line)
             column = int(diagnostic.column)
             if _valid_string_literal_suggestion_target(path, line, column, actual, suggestion):
@@ -7934,10 +7940,14 @@ def _is_shorthand_property_scope_diagnostic(diagnostic: RepairDiagnostic) -> boo
 
 
 def _is_string_literal_suggestion_diagnostic(diagnostic: RepairDiagnostic) -> bool:
+    if diagnostic.code.lower() != "typescript_ts2820":
+        return False
+    metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
+    if str(metadata.get("actual") or "").strip() and str(metadata.get("suggestion") or "").strip():
+        return True
     message = f"{diagnostic.message}\n{diagnostic.raw}".lower()
     return (
-        diagnostic.code.lower() == "typescript_ts2820"
-        and "not assignable to type" in message
+        "not assignable to type" in message
         and "did you mean" in message
     )
 

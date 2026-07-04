@@ -632,6 +632,31 @@ def test_normalizer_preserves_structured_npm_script_metadata() -> None:
     assert diagnostic.metadata["script_issue"] == "placeholder_command"
 
 
+def test_normalizer_preserves_structured_typescript_suggestion_metadata() -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            {
+                "source": "artifact_quality",
+                "code": "typescript_ts2820",
+                "message": "typed string literal suggestion",
+                "path": "src/models/Market.ts",
+                "line": 3,
+                "column": 5,
+                "actual": '"pre_open"',
+                "suggestion": '"pre-open"',
+                "raw": "typed metadata only",
+            }
+        ]
+    )
+
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    assert diagnostic.code == "typescript_ts2820"
+    assert diagnostic.path == "src/models/Market.ts"
+    assert diagnostic.metadata["actual"] == '"pre_open"'
+    assert diagnostic.metadata["suggestion"] == '"pre-open"'
+
+
 def test_public_normalizer_preserves_structured_diagnostic_payload() -> None:
     diagnostics = normalize_director_repair_diagnostics(
         [
@@ -3507,6 +3532,41 @@ def test_typescript_string_literal_suggestion_rule_covers_ts2820_and_replaces_sa
     assert composition.ok
     assert 'return "pre-open";' in composition.patches[0].content_after
     assert '"pre_open"' not in composition.patches[0].content_after
+
+
+def test_typescript_string_literal_suggestion_uses_typed_metadata_without_raw_message() -> None:
+    content = (
+        'export type MarketPhase = "pre-open" | "open" | "closed";\n'
+        "export function initialPhase(): MarketPhase {\n"
+        '  return "pre_open";\n'
+        "}\n"
+    )
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            {
+                "source": "artifact_quality",
+                "code": "typescript_ts2820",
+                "message": "typed string literal suggestion",
+                "path": "src/models/Market.ts",
+                "line": 3,
+                "column": 5,
+                "actual": '"pre_open"',
+                "suggestion": '"pre-open"',
+                "raw": "typed metadata only",
+            }
+        ]
+    )
+
+    plan = build_typescript_string_literal_suggestion_plan(
+        base_files={"src/models/Market.ts": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert len(plan.operations) == 1
+    assert plan.operations[0].expected == '"pre_open"'
+    assert plan.operations[0].replacement == '"pre-open"'
 
 
 def test_typescript_string_literal_suggestion_runtime_uses_editor_without_write_file(tmp_path: Path) -> None:
