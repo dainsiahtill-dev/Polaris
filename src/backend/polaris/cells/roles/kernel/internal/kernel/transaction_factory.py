@@ -33,6 +33,7 @@ from polaris.cells.roles.kernel.internal.kernel.tool_runtime_executor import (
     reset_cached_tool_gateway_turn_boundary,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.helpers import resolve_context_output_budget_tokens
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_calls_from_response
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
 from polaris.cells.roles.kernel.internal.transaction.recon_policy import resolve_recon_required
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
@@ -344,11 +345,12 @@ def create_transaction_kernel(
                 )
                 if getattr(response, "error", None):
                     raise RuntimeError(str(response.error))
+                native_tool_calls = native_tool_calls_from_response(response)
                 return {
                     "content": response.content,
                     "thinking": getattr(response, "thinking", None),
-                    "tool_calls": getattr(response, "tool_calls", []) or [],
-                    "native_tool_calls": getattr(response, "tool_calls", []) or [],
+                    "tool_calls": native_tool_calls,
+                    "native_tool_calls": native_tool_calls,
                     "model": str(getattr(response, "model", "unknown") or "unknown"),
                     "usage": dict(getattr(response, "metadata", {}) or {}),
                 }
@@ -376,11 +378,12 @@ def create_transaction_kernel(
             )
             if getattr(response, "error", None):
                 raise RuntimeError(str(response.error))
+            native_tool_calls = native_tool_calls_from_response(response)
             return {
                 "content": response.content,
                 "thinking": getattr(response, "thinking", None),
-                "tool_calls": getattr(response, "tool_calls", []) or [],
-                "native_tool_calls": getattr(response, "tool_calls", []) or [],
+                "tool_calls": native_tool_calls,
+                "native_tool_calls": native_tool_calls,
                 "model": str(getattr(response, "model", "unknown") or "unknown"),
                 "usage": dict(getattr(response, "metadata", {}) or {}),
             }

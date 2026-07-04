@@ -693,6 +693,49 @@ class TestTransactionKernelPrebuiltContextPassThrough:
         assert tool_runtime.await_args is not None
         assert tool_runtime.await_args.args[0] == "write_file"
 
+    @pytest.mark.asyncio
+    async def test_provider_fallback_preserves_native_tool_calls_alias(self) -> None:
+        profile = _MockProfile(role_id="director", model="base-model")
+        request = _MockRequest(
+            message="[mode:materialize]\nCreate README.md.",
+            run_id="run_123",
+            context_override={"context_os_snapshot": {}},
+        )
+        native_call = {
+            "id": "call_write_readme",
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "arguments": {"path": "README.md", "content": "done"},
+            },
+        }
+
+        async def _fake_call(**_kwargs: Any) -> Any:
+            return SimpleNamespace(
+                content="",
+                native_tool_calls=[native_call],
+                error=None,
+                metadata={},
+                model="base-model",
+            )
+
+        kernel = RoleExecutionKernel.create_default(workspace=".", llm_invoker=SimpleNamespace(call=_fake_call))
+        tk = create_transaction_kernel(kernel, "director", profile, request)
+
+        response = await tk.llm_provider(
+            {
+                "messages": [
+                    {"role": "system", "content": "sys"},
+                    {"role": "user", "content": request.message},
+                ],
+                "tools": [{"type": "function", "function": {"name": "write_file"}}],
+                "tool_choice": "auto",
+            }
+        )
+
+        assert response["tool_calls"] == [native_call]
+        assert response["native_tool_calls"] == [native_call]
+
 
 class TestExecuteTransactionKernelTurn:
     @pytest.mark.asyncio
