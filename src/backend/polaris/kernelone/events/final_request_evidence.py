@@ -45,6 +45,20 @@ _METADATA_SUMMARY_FLAG_TO_REF: tuple[tuple[str, str], ...] = (
     ("has_failed_gate_evidence", "failed_gate_evidence"),
     ("has_workspace_quality_evidence", "workspace_quality_evidence"),
 )
+_STRUCTURED_EVIDENCE_FLAG_TO_KEY: tuple[tuple[str, str], ...] = (
+    ("has_pm_contract", "pm_contract"),
+    ("has_chief_engineer_blueprint", "ce_blueprint"),
+    ("has_execution_envelope", "execution_envelope"),
+    ("has_module_interface_contract", "module_interface_contract"),
+    ("has_actual_sibling_exports", "actual_sibling_exports"),
+    ("has_interface_discrepancy_context", "interface_discrepancy_context"),
+    ("has_architecture_or_file_plan", "architecture_or_file_plan"),
+    ("has_failed_gate_evidence", "failed_gate_evidence"),
+    ("has_failed_gate_evidence", "failure_evidence"),
+    ("has_workspace_quality_evidence", "workspace_quality_evidence"),
+    ("has_workspace_quality_evidence", "quality_evidence"),
+    ("has_target_scope", "target_files"),
+)
 _EVIDENCE_REQUIREMENT_TO_REF = {
     "pm_task_contract": "pm_contract",
     "pm_contract": "pm_contract",
@@ -154,6 +168,12 @@ def final_request_evidence_refs_for_metadata_summary(summary: Mapping[str, Any])
         if summary.get(flag) and ref not in refs:
             refs.append(ref)
     return refs
+
+
+def final_request_structured_evidence_from_metadata_summary(summary: Mapping[str, Any]) -> dict[str, bool]:
+    """Project request metadata summary flags to structured evidence booleans."""
+
+    return {key: bool(summary.get(flag)) for flag, key in _STRUCTURED_EVIDENCE_FLAG_TO_KEY}
 
 
 def _as_mapping(value: Any) -> Mapping[str, Any]:

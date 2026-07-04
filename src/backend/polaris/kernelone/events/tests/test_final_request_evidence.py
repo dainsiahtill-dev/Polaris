@@ -11,6 +11,7 @@ from polaris.kernelone.events.final_request_evidence import (
     final_request_evidence_ref_for_requirement,
     final_request_evidence_refs_for_coverage_flags,
     final_request_evidence_refs_for_metadata_summary,
+    final_request_structured_evidence_from_metadata_summary,
     looks_like_ce_blueprint_payload,
     looks_like_failed_gate_evidence_context_payload,
     looks_like_pm_contract_payload,
@@ -336,6 +337,25 @@ def test_final_request_evidence_ref_helpers_normalize_requirement_and_coverage_a
         "target_files",
         "workspace_quality_evidence",
     ]
+
+    structured = final_request_structured_evidence_from_metadata_summary(
+        {
+            "has_pm_contract": True,
+            "has_chief_engineer_blueprint": False,
+            "has_execution_envelope": True,
+            "has_failed_gate_evidence": True,
+            "has_workspace_quality_evidence": True,
+            "has_target_scope": False,
+        }
+    )
+    assert structured["pm_contract"] is True
+    assert structured["ce_blueprint"] is False
+    assert structured["execution_envelope"] is True
+    assert structured["failed_gate_evidence"] is True
+    assert structured["failure_evidence"] is True
+    assert structured["workspace_quality_evidence"] is True
+    assert structured["quality_evidence"] is True
+    assert structured["target_files"] is False
 
 
 def test_workspace_quality_context_slot_uses_structured_payload() -> None:
