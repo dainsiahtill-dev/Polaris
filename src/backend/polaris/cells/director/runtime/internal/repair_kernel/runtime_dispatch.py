@@ -1503,6 +1503,23 @@ def _plan_go_error_string_helper(
     return _runtime_planning_from_go(planning)
 
 
+def _plan_go_error_string_helper_typed(
+    base_files: Mapping[str, str],
+    repair_diagnostics: Sequence[RepairDiagnostic],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_go_error_string_helper_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_go(planning)
+
+
 def _plan_rust_dependency(
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
@@ -2858,6 +2875,32 @@ def _run_go_error_string_helper(
     return _runtime_run_from_go(run)
 
 
+def _run_go_error_string_helper_typed(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    repair_diagnostics: Sequence[RepairDiagnostic],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_go_error_string_helper_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_go(run)
+
+
 def _run_rust_dependency(
     workspace: str | Path,
     base_files: Mapping[str, str],
@@ -4156,6 +4199,8 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         rule_id="go.error_string_helper",
         planner=_plan_go_error_string_helper,
         runner=_run_go_error_string_helper,
+        typed_planner=_plan_go_error_string_helper_typed,
+        typed_runner=_run_go_error_string_helper_typed,
     ),
     RUST_DEPENDENCY_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=RUST_DEPENDENCY_SOURCE_TOOL,

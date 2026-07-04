@@ -218,6 +218,7 @@ def plan_go_error_string_helper_repair(
     *,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
 ) -> GoBareImportStringPlanning:
@@ -226,6 +227,7 @@ def plan_go_error_string_helper_repair(
     return _plan_go_repair(
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
         advisor_notes=advisor_notes,
         mode=mode,
         source_tool=GO_ERROR_STRING_HELPER_SOURCE_TOOL,
@@ -479,6 +481,7 @@ def run_go_error_string_helper_repair(
     artifact_quality_errors: Sequence[str],
     writer: WriteFileFn,
     editor: EditFileFn | None = None,
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
     allowed_paths: Sequence[str] | None = None,
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
@@ -489,6 +492,7 @@ def run_go_error_string_helper_repair(
         workspace=workspace,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
         writer=writer,
         editor=editor,
         allowed_paths=allowed_paths,
@@ -504,13 +508,17 @@ def _plan_go_repair(
     *,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
     advisor_notes: Sequence[RepairAdvisorNote] | None,
     mode: str,
     source_tool: str,
     planner: Callable[..., RepairPlan | None],
 ) -> GoBareImportStringPlanning:
     normalized_base = _normalize_base_files(base_files)
-    diagnostics = tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
+    diagnostics = _diagnostics_for_go_repair(
+        artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
+    )
     notes = tuple(advisor_notes or ())
     plan = planner(
         base_files=normalized_base,
@@ -550,14 +558,24 @@ def _run_go_repair(
     planner: Callable[..., GoBareImportStringPlanning],
     missing_plan_message: str,
     missing_composition_message: str,
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
 ) -> GoBareImportStringRun:
     normalized_base = _normalize_base_files(base_files)
-    planning = planner(
-        base_files=normalized_base,
-        artifact_quality_errors=artifact_quality_errors,
-        advisor_notes=advisor_notes,
-        mode=mode,
-    )
+    if repair_diagnostics:
+        planning = planner(
+            base_files=normalized_base,
+            artifact_quality_errors=artifact_quality_errors,
+            repair_diagnostics=repair_diagnostics,
+            advisor_notes=advisor_notes,
+            mode=mode,
+        )
+    else:
+        planning = planner(
+            base_files=normalized_base,
+            artifact_quality_errors=artifact_quality_errors,
+            advisor_notes=advisor_notes,
+            mode=mode,
+        )
     if planning.plan is None:
         return GoBareImportStringRun(
             planning=planning,
@@ -615,6 +633,16 @@ def _normalize_base_files(base_files: Mapping[str, str]) -> dict[str, str]:
         for path, content in dict(base_files or {}).items()
         if _normalize_repair_path(str(path or ""))
     }
+
+
+def _diagnostics_for_go_repair(
+    *,
+    artifact_quality_errors: Sequence[str],
+    repair_diagnostics: Sequence[RepairDiagnostic] | None,
+) -> tuple[RepairDiagnostic, ...]:
+    if repair_diagnostics:
+        return tuple(repair_diagnostics)
+    return tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
 
 
 def _normalize_repair_path(path: str) -> str:

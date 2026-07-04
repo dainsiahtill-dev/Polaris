@@ -39,6 +39,10 @@ _GO_ERROR_RE = re.compile(
     r"(?P<path>[^:\n]+\.go):(?P<line>\d+):(?P<column>\d+):\s*(?P<message>[^\n]+)",
     re.IGNORECASE,
 )
+_GO_UNDEFINED_IDENTIFIER_RE = re.compile(
+    r"\bundefined:\s*(?P<identifier>[A-Za-z_][A-Za-z0-9_]*)\b",
+    re.IGNORECASE,
+)
 _CPP_ERROR_RE = re.compile(
     r"(?P<path>[^:\n]+\.(?:cc|cpp|cxx|hpp|hh|hxx|c|h)):(?P<line>\d+):(?P<column>\d+):\s*"
     r"(?:(?P<severity>fatal error|error|warning):\s*)?(?P<message>[^\n]+)",
@@ -366,14 +370,26 @@ def _normalize_one_error(text: str) -> RepairDiagnostic:
 
     match = _GO_ERROR_RE.search(text)
     if match:
+        message = str(match.group("message") or text).strip()
+        metadata: dict[str, str] = {}
+        undefined_match = _GO_UNDEFINED_IDENTIFIER_RE.search(message)
+        if undefined_match:
+            identifier = str(undefined_match.group("identifier") or "").strip()
+            if identifier:
+                metadata = {
+                    "language": "go",
+                    "diagnostic_kind": "undefined_identifier",
+                    "identifier": identifier,
+                }
         return RepairDiagnostic(
             source="compiler",
             code="go_compile_error",
-            message=str(match.group("message") or text).strip(),
+            message=message,
             path=str(match.group("path") or "").strip(),
             line=_to_int(match.group("line")),
             column=_to_int(match.group("column")),
             raw=text,
+            metadata=metadata,
         )
 
     match = _CPP_ERROR_RE.search(text)

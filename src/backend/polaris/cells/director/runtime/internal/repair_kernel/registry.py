@@ -712,6 +712,7 @@ class RepairRuleDefinition:
     diagnostic_codes: tuple[str, ...] = ()
     message_terms: tuple[str, ...] = ()
     raw_terms: tuple[str, ...] = ()
+    metadata_terms: Mapping[str, str] = field(default_factory=dict)
     excluded_message_terms: tuple[str, ...] = ()
     excluded_raw_terms: tuple[str, ...] = ()
     risk_level: str = "low"
@@ -729,6 +730,15 @@ class RepairRuleDefinition:
         object.__setattr__(self, "diagnostic_codes", tuple(code.lower() for code in _tuple_str(self.diagnostic_codes)))
         object.__setattr__(self, "message_terms", tuple(term.lower() for term in _tuple_str(self.message_terms)))
         object.__setattr__(self, "raw_terms", tuple(term.lower() for term in _tuple_str(self.raw_terms)))
+        object.__setattr__(
+            self,
+            "metadata_terms",
+            {
+                str(key or "").strip(): str(value or "").strip().casefold()
+                for key, value in dict(self.metadata_terms or {}).items()
+                if str(key or "").strip() and str(value or "").strip()
+            },
+        )
         object.__setattr__(
             self,
             "excluded_message_terms",
@@ -763,6 +773,11 @@ class RepairRuleDefinition:
             raw_haystack = (diagnostic.raw or "").lower()
             if not all(term in raw_haystack for term in self.raw_terms):
                 return False
+        if self.metadata_terms:
+            diagnostic_metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
+            for key, expected in self.metadata_terms.items():
+                if str(diagnostic_metadata.get(key) or "").strip().casefold() != expected:
+                    return False
         if self.excluded_message_terms:
             message_haystack = (diagnostic.message or diagnostic.raw).lower()
             if any(term in message_haystack for term in self.excluded_message_terms):
@@ -771,10 +786,10 @@ class RepairRuleDefinition:
             raw_haystack = (diagnostic.raw or "").lower()
             if any(term in raw_haystack for term in self.excluded_raw_terms):
                 return False
-        return bool(self.diagnostic_codes or self.message_terms or self.raw_terms)
+        return bool(self.diagnostic_codes or self.message_terms or self.raw_terms or self.metadata_terms)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "rule_id": self.rule_id,
             "source_tool": self.source_tool,
             "language": self.language,
@@ -792,6 +807,9 @@ class RepairRuleDefinition:
             "runtime_plan_available": self.runtime_plan_available,
             "metadata": dict(self.metadata),
         }
+        if self.metadata_terms:
+            payload["metadata_terms"] = dict(self.metadata_terms)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -1468,7 +1486,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 priority=3,
                 depends_on=("go.unused_import",),
                 diagnostic_codes=("go_compile_error",),
-                message_terms=("undefined:", "errstring"),
+                metadata_terms={"diagnostic_kind": "undefined_identifier", "identifier": "errString"},
                 risk_level="low",
                 description=(
                     "Adds a missing Go error-string helper type only when a compiler undefined "

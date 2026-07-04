@@ -9007,6 +9007,41 @@ def test_go_error_string_helper_rule_uses_typed_identifier_metadata() -> None:
     assert "type errString string" in operation.replacement
 
 
+def test_go_error_string_helper_coverage_uses_typed_identifier_metadata() -> None:
+    relative_path = "models/gallery.go"
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="go_compile_error",
+        message="typed metadata only",
+        path=relative_path,
+        raw="typed metadata only",
+        metadata={
+            "language": "go",
+            "diagnostic_kind": "undefined_identifier",
+            "identifier": "errString",
+        },
+    )
+    coverage = default_repair_rule_registry().coverage((diagnostic,)).to_dict()
+    planning = plan_runtime_repair(
+        source_tool="deterministic_go_error_string_helper_repair",
+        base_files={
+            relative_path: (
+                'package models\n\nvar (\n    ErrDuplicateCapsule = errString("capsule id already exists")\n)\n'
+            )
+        },
+        artifact_quality_errors=(),
+        repair_diagnostics=(diagnostic,),
+        mode="shadow",
+    )
+
+    assert coverage["items"][0]["known_rule_matched"] is True
+    assert coverage["items"][0]["executable_runtime_plan_matched"] is True
+    assert "go.error_string_helper" in coverage["items"][0]["runtime_plan_rule_ids"]
+    assert "deterministic_go_error_string_helper_repair" in coverage["items"][0]["matched_source_tools"]
+    assert planning.plan is not None
+    assert planning.plan.source_tool == "deterministic_go_error_string_helper_repair"
+
+
 def test_go_error_string_helper_coverage_matches_executable_runtime_plan() -> None:
     raw = "models/gallery.go:52:24: undefined: errString"
     diagnostics = normalize_artifact_quality_errors([raw])
