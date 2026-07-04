@@ -12,6 +12,7 @@ from polaris.cells.control_plane.run_ledger.public.task_boundary import (
     normalize_task_boundary_verdict,
 )
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
+    native_tool_call_facts_from_lifecycle_receipt,
     normalize_tool_call_lifecycle_receipt,
 )
 
@@ -715,6 +716,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     tool_lifecycle_effect_count = 0
     tool_lifecycle_dropped_count = 0
     tool_lifecycle_failed_count = 0
+    tool_lifecycle_native_names: list[str] = []
     for event in events:
         if not isinstance(event, dict):
             continue
@@ -724,7 +726,9 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             lifecycle = normalize_tool_call_lifecycle_receipt(
                 lifecycle_raw if isinstance(lifecycle_raw, dict) else event
             )
-            native_count = _int_value(lifecycle.get("native_tool_calls_count"))
+            native_facts = native_tool_call_facts_from_lifecycle_receipt(lifecycle)
+            native_count = _int_value(native_facts.get("native_tool_calls_count"))
+            native_names = _string_list(native_facts.get("native_tool_call_names"))
             decoded_count = _int_value(lifecycle.get("decoded_tool_calls_count"))
             dispatched_count = _int_value(lifecycle.get("dispatched_tool_calls_count"))
             result_count = _int_value(lifecycle.get("tool_result_count"))
@@ -738,6 +742,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             tool_lifecycle_dispatched_count += dispatched_count
             tool_lifecycle_result_count += result_count
             tool_lifecycle_effect_count += effect_count
+            tool_lifecycle_native_names.extend(native_names)
             if dropped:
                 tool_lifecycle_dropped_count += 1
             if failed:
@@ -750,6 +755,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
                     "ok": not failed,
                     "failed": failed,
                     "native_tool_calls_count": native_count,
+                    "native_tool_call_names": native_names,
                     "decoded_tool_calls_count": decoded_count,
                     "dispatched_tool_calls_count": dispatched_count,
                     "tool_result_count": result_count,
@@ -926,6 +932,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             "dispatched_tool_calls_count": tool_lifecycle_dispatched_count,
             "tool_result_count": tool_lifecycle_result_count,
             "effect_receipt_count": tool_lifecycle_effect_count,
+            "native_tool_call_names": list(dict.fromkeys(tool_lifecycle_native_names)),
             "dropped_count": tool_lifecycle_dropped_count,
             "failed_count": tool_lifecycle_failed_count,
             "events": tool_lifecycle_events,
