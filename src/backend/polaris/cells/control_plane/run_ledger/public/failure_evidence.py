@@ -288,6 +288,69 @@ def summarize_failure_evidence_rows(
     return summary
 
 
+_SUSPECTED_FILE_KEYS: tuple[str, ...] = (
+    "changed_files",
+    "target_paths",
+    "candidate_files",
+    "suspected_files",
+)
+
+
+def suspected_files_from_failure_evidence_payload(
+    failure_evidence: Mapping[str, Any] | None,
+    *,
+    limit: int = 20,
+) -> list[str]:
+    """Project suspected file paths from structured failure evidence.
+
+    Boundary:
+        This helper owns the legacy file-list projection used by runtime
+        planning. It reads structured failure-evidence payload fields only; it
+        does not parse compiler prose or diagnostic text.
+
+    Complexity:
+        O(n * k) time and O(n) memory, where ``n`` is the number of structured
+        evidence rows and ``k`` is the fixed suspected-file key count.
+    """
+
+    if not isinstance(failure_evidence, Mapping):
+        return []
+    max_items = max(0, int(limit or 0))
+    if max_items == 0:
+        return []
+    files: list[str] = []
+    seen: set[str] = set()
+
+    def append_values(value: Any) -> None:
+        values: tuple[Any, ...]
+        if isinstance(value, str):
+            values = (value,)
+        elif isinstance(value, (list, tuple)):
+            values = tuple(value)
+        else:
+            values = ()
+        for item in values:
+            path = str(item or "").strip()
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            files.append(path)
+
+    def collect_from_mapping(source: Mapping[str, Any]) -> None:
+        for key in _SUSPECTED_FILE_KEYS:
+            append_values(source.get(key))
+
+    collect_from_mapping(failure_evidence)
+    for nested_key in ("items", "failure_evidence"):
+        nested = failure_evidence.get(nested_key)
+        if not isinstance(nested, (list, tuple)):
+            continue
+        for item in nested:
+            if isinstance(item, Mapping):
+                collect_from_mapping(item)
+    return files[:max_items]
+
+
 def append_failure_evidence_to_metadata(
     metadata: dict[str, Any],
     *new_rows: Mapping[str, Any],
@@ -347,4 +410,5 @@ __all__ = [
     "normalize_failure_class",
     "summarize_failed_gate_evidence_context_slot",
     "summarize_failure_evidence_rows",
+    "suspected_files_from_failure_evidence_payload",
 ]

@@ -11,6 +11,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     normalize_failure_class,
     summarize_failed_gate_evidence_context_slot,
     summarize_failure_evidence_rows,
+    suspected_files_from_failure_evidence_payload,
 )
 
 
@@ -230,6 +231,32 @@ def test_summarize_failure_evidence_rows_uses_structured_rows_only() -> None:
         "count": 2,
         "latest_failure_class": "TOOL_DISPATCH_DROPPED",
     }
+
+
+def test_suspected_files_from_failure_evidence_payload_uses_structured_fields_only() -> None:
+    payload = {
+        "changed_files": ["src/main.py", "", "src/main.py"],
+        "target_paths": "src/engine.py",
+        "items": [
+            {
+                "candidate_files": ["tests/test_product.py"],
+                "message": "do not parse prose mentioning ignored.py",
+            },
+            "legacy prose src/ignored.py",
+        ],
+        "failure_evidence": [
+            {
+                "suspected_files": ["README.md"],
+            }
+        ],
+    }
+
+    assert suspected_files_from_failure_evidence_payload(payload) == [
+        "src/main.py",
+        "src/engine.py",
+        "tests/test_product.py",
+        "README.md",
+    ]
 
 
 def test_append_failure_evidence_to_metadata_refreshes_rows_and_summary() -> None:

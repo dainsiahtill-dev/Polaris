@@ -2697,12 +2697,6 @@
     },
     {
       "type": "function",
-      "name": "_aggregate_suspected_files_from_failure_evidence",
-      "description": "",
-      "defined_in": "polaris/cells/roles/runtime/public/aggregate_chat.py"
-    },
-    {
-      "type": "function",
       "name": "_distill_aggregate_lobe_result",
       "description": "",
       "defined_in": "polaris/cells/roles/runtime/public/aggregate_chat.py"

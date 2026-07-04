@@ -150,7 +150,6 @@ from polaris.cells.roles.runtime.public.aggregate_chat import (
     _aggregate_memory_recall_triggers as _aggregate_memory_recall_triggers,
     _aggregate_objective_from_messages as _aggregate_objective_from_messages,
     _aggregate_phase_for_contextos as _aggregate_phase_for_contextos,
-    _aggregate_suspected_files_from_failure_evidence as _aggregate_suspected_files_from_failure_evidence,
     _attribute_check as _attribute_check,
     _build_aggregate_attention_candidates as _build_aggregate_attention_candidates,
     _build_aggregate_context_governance_pack as _build_aggregate_context_governance_pack,

@@ -24,6 +24,7 @@ from .failure_evidence import (
     normalize_failure_class,
     summarize_failed_gate_evidence_context_slot,
     summarize_failure_evidence_rows,
+    suspected_files_from_failure_evidence_payload,
 )
 from .job_token import JobToken
 from .ledger import RunLedger, stable_hash, stable_json
@@ -123,6 +124,7 @@ __all__ = [
     "summarize_failure_evidence_rows",
     "summarize_run_ledger_projection",
     "summarize_tool_lifecycle_events",
+    "suspected_files_from_failure_evidence_payload",
     "task_boundary_tool_dispatch_from_lifecycle_metadata",
     "tool_call_lifecycle_receipts_from_metadata",
 ]

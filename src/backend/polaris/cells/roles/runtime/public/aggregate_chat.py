@@ -23,7 +23,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from polaris.cells.control_plane.run_ledger.public import merge_failure_evidence_payload
+from polaris.cells.control_plane.run_ledger.public import (
+    merge_failure_evidence_payload,
+    suspected_files_from_failure_evidence_payload,
+)
 from polaris.cells.roles.runtime.public.contracts import (
     AggregateChatCompletionsCommandV1,
     AggregateChatMessageV1,
@@ -1555,17 +1558,6 @@ def _build_aggregate_distilled_knowledge_pack(
         }
 
 
-def _aggregate_suspected_files_from_failure_evidence(failure_evidence: Mapping[str, Any]) -> list[str]:
-    files: list[str] = []
-    for key in ("changed_files", "target_paths", "candidate_files"):
-        value = failure_evidence.get(key)
-        if isinstance(value, str) and value.strip():
-            files.append(value.strip())
-        elif isinstance(value, (list, tuple)):
-            files.extend(str(item).strip() for item in value if str(item or "").strip())
-    return files[:20]
-
-
 def _distill_aggregate_lobe_result(
     *,
     command: AggregateChatCompletionsCommandV1,
@@ -1588,7 +1580,7 @@ def _distill_aggregate_lobe_result(
         "action_taken": selected_lobe.output_contract,
         "verified_results": [result.status] if result.ok else [],
         "patched_files": [],
-        "suspected_files": _aggregate_suspected_files_from_failure_evidence(failure_evidence),
+        "suspected_files": suspected_files_from_failure_evidence_payload(failure_evidence),
         "_findings_trajectory": [
             {
                 "lobe_id": selected_lobe.lobe_id,
