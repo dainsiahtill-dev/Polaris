@@ -631,24 +631,9 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
         metadata["manifest_path"] = "package.json"
         metadata.update(_legacy_npm_manifest_issue_metadata(message))
     elif code == "unresolved_import_symbol":
-        match = _ARTIFACT_QUALITY_UNRESOLVED_IMPORT_SYMBOL_RE.search(message)
-        if match:
-            metadata.update(
-                {
-                    "symbol": str(match.group("symbol") or "").strip(),
-                    "module": str(match.group("module") or "").strip(),
-                    "importer_path": str(match.group("path") or "").strip(),
-                }
-            )
+        metadata.update(_legacy_unresolved_import_symbol_metadata(message))
     elif code == "unresolved_relative_import":
-        match = _ARTIFACT_QUALITY_UNRESOLVED_RELATIVE_IMPORT_RE.search(message)
-        if match:
-            metadata.update(
-                {
-                    "specifier": str(match.group("specifier") or "").strip(),
-                    "importer_path": str(match.group("path") or "").strip(),
-                }
-            )
+        metadata.update(_legacy_unresolved_relative_import_metadata(message))
     elif code.startswith("typescript_ts"):
         typescript_match = _ARTIFACT_QUALITY_TYPESCRIPT_ERROR_RE.search(message)
         if typescript_match:
@@ -724,6 +709,44 @@ def _legacy_npm_manifest_issue_metadata(message: str) -> dict[str, str]:
     if "npm manifest-only test script" in normalized_message:
         return _legacy_npm_script_metadata("test", "manifest_only_test_script")
     return {}
+
+
+def _legacy_unresolved_import_symbol_metadata(message: str) -> dict[str, str]:
+    """Project old unresolved-import-symbol display text into metadata.
+
+    Cross-file interface scanners should prefer typed import/export evidence.
+    This compatibility helper keeps legacy diagnostic parsing in one place until
+    all callers emit structured import issues directly.
+    """
+
+    match = _ARTIFACT_QUALITY_UNRESOLVED_IMPORT_SYMBOL_RE.search(message)
+    if not match:
+        return {}
+    return {
+        key: value
+        for key, value in {
+            "symbol": str(match.group("symbol") or "").strip(),
+            "module": str(match.group("module") or "").strip(),
+            "importer_path": str(match.group("path") or "").strip(),
+        }.items()
+        if value
+    }
+
+
+def _legacy_unresolved_relative_import_metadata(message: str) -> dict[str, str]:
+    """Project old unresolved-relative-import display text into metadata."""
+
+    match = _ARTIFACT_QUALITY_UNRESOLVED_RELATIVE_IMPORT_RE.search(message)
+    if not match:
+        return {}
+    return {
+        key: value
+        for key, value in {
+            "specifier": str(match.group("specifier") or "").strip(),
+            "importer_path": str(match.group("path") or "").strip(),
+        }.items()
+        if value
+    }
 
 
 def _npm_manifest_script_issue(detail: str) -> str:
