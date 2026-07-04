@@ -11,12 +11,10 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
-    native_tool_call_count_from_metadata as run_ledger_native_tool_call_count_from_metadata,
     native_tool_call_envelope_refs_from_metadata,
-    native_tool_call_facts_from_metadata,
     native_tool_call_facts_from_raw_calls,
     project_native_tool_call_facts_to_metadata,
 )
@@ -109,13 +107,6 @@ def _stable_json(value: Any) -> str:
 
 def _stable_hash(value: Any) -> str:
     return hashlib.sha256(_stable_json(value).encode("utf-8")).hexdigest()
-
-
-def _int_from_fact(value: Any) -> int:
-    try:
-        return max(0, int(str(value or "").strip()))
-    except (TypeError, ValueError):
-        return 0
 
 
 @dataclass(frozen=True)
@@ -302,50 +293,6 @@ def native_tool_call_envelopes_from_metadata(metadata: Mapping[str, Any] | None)
     """Return valid native tool-call envelope payloads from response metadata."""
 
     return native_tool_call_envelope_refs_from_metadata(metadata)
-
-
-def native_tool_call_count(
-    metadata: Mapping[str, Any] | None,
-    native_tool_calls: Sequence[Any],
-) -> int:
-    """Derive native tool-call count from envelopes, falling back to raw native calls."""
-
-    if isinstance(metadata, Mapping):
-        facts = native_tool_call_facts_from_metadata(metadata)
-        if facts:
-            return _int_from_fact(facts.get("native_tool_calls_count"))
-    raw_facts = native_tool_call_facts_from_raw_calls(native_tool_calls)
-    return _int_from_fact(raw_facts.get("native_tool_calls_count"))
-
-
-def native_tool_call_count_from_metadata(metadata: Mapping[str, Any] | None, *, fallback: int = 0) -> int:
-    """Compatibility wrapper for the Run Ledger native tool-call count reader."""
-
-    return run_ledger_native_tool_call_count_from_metadata(metadata, fallback=fallback)
-
-
-def native_tool_call_names(
-    metadata: Mapping[str, Any] | None,
-    native_tool_calls: Sequence[Any],
-) -> list[str]:
-    """Derive native tool names from envelopes, falling back to raw native calls."""
-
-    if isinstance(metadata, Mapping):
-        facts = native_tool_call_facts_from_metadata(metadata)
-        if facts:
-            raw_names = facts.get("native_tool_call_names")
-            return [
-                name
-                for item in (raw_names if isinstance(raw_names, (list, tuple)) else ())
-                if (name := str(item or "").strip())
-            ]
-    raw_facts = native_tool_call_facts_from_raw_calls(native_tool_calls)
-    raw_names = raw_facts.get("native_tool_call_names")
-    return [
-        name
-        for item in (raw_names if isinstance(raw_names, (list, tuple)) else ())
-        if (name := str(item or "").strip())
-    ]
 
 
 def native_tool_calls_from_response(response: Any) -> list[dict[str, Any]]:
@@ -1658,12 +1605,9 @@ __all__ = [
     "build_native_tool_call_envelopes",
     "build_native_tool_schemas",
     "extract_native_tool_calls",
-    "native_tool_call_count",
-    "native_tool_call_count_from_metadata",
     "native_tool_call_envelopes_from_metadata",
     "native_tool_call_envelopes_from_response",
     "native_tool_call_name",
-    "native_tool_call_names",
     "native_tool_call_provider_from_metadata",
     "native_tool_calls_from_response",
     "project_native_tool_call_facts_to_metadata",

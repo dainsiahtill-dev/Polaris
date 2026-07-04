@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 import pytest
 from polaris.cells.control_plane.run_ledger.public import (
+    native_tool_call_count_from_metadata,
     native_tool_call_facts_from_sources,
     tool_call_lifecycle_receipts_from_metadata,
 )
@@ -34,8 +35,6 @@ from polaris.cells.roles.kernel.internal.llm_caller.helpers import (
     extract_json_from_text,
     extract_native_tool_calls,
     messages_to_input,
-    native_tool_call_count,
-    native_tool_call_count_from_metadata,
     resolve_max_tokens,
     resolve_platform_retry_max,
     resolve_temperature,
@@ -52,7 +51,6 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     build_native_tool_schemas,
     native_tool_call_envelopes_from_metadata,
     native_tool_call_envelopes_from_response,
-    native_tool_call_names,
     native_tool_call_provider_from_metadata,
     native_tool_calls_from_response,
     provider_response_hash,
@@ -803,8 +801,10 @@ class TestExtractNativeToolCalls:
         }
         raw_calls = [{"function": {"name": "write_file"}}]
 
-        assert native_tool_call_count(metadata, raw_calls) == 2
-        assert native_tool_call_names(metadata, raw_calls) == ["repo_rg", "read_file"]
+        assert native_tool_call_facts_from_sources(metadata, raw_calls) == {
+            "native_tool_calls_count": 2,
+            "native_tool_call_names": ["repo_rg", "read_file"],
+        }
 
     def test_native_tool_call_facts_prefer_envelopes(self) -> None:
         metadata = {
@@ -905,8 +905,10 @@ class TestExtractNativeToolCalls:
         envelopes = native_tool_call_envelopes_from_metadata(metadata)
 
         assert [envelope["tool_name"] for envelope in envelopes] == ["write_file", "execute_command"]
-        assert native_tool_call_count(metadata, raw_calls) == 2
-        assert native_tool_call_names(metadata, raw_calls) == ["write_file", "execute_command"]
+        assert native_tool_call_facts_from_sources(metadata, raw_calls) == {
+            "native_tool_calls_count": 2,
+            "native_tool_call_names": ["write_file", "execute_command"],
+        }
 
     def test_native_tool_call_count_from_metadata_keeps_legacy_numeric_as_fallback(self) -> None:
         metadata = {
@@ -933,7 +935,10 @@ class TestExtractNativeToolCalls:
             }
         }
 
-        assert native_tool_call_count(metadata, ()) == 5
+        assert native_tool_call_facts_from_sources(metadata, ()) == {
+            "native_tool_calls_count": 5,
+            "native_tool_call_names": [],
+        }
         assert native_tool_call_count_from_metadata(metadata, fallback=1) == 5
 
     def test_native_tool_call_count_treats_zero_lifecycle_receipt_as_authoritative(self) -> None:
@@ -950,7 +955,10 @@ class TestExtractNativeToolCalls:
         }
         raw_calls = [{"function": {"name": "write_file"}}]
 
-        assert native_tool_call_count(metadata, raw_calls) == 0
+        assert native_tool_call_facts_from_sources(metadata, raw_calls) == {
+            "native_tool_calls_count": 0,
+            "native_tool_call_names": [],
+        }
         assert native_tool_call_count_from_metadata(metadata, fallback=3) == 0
 
     def test_native_tool_call_names_treat_lifecycle_receipt_without_names_as_authoritative(self) -> None:
@@ -966,7 +974,10 @@ class TestExtractNativeToolCalls:
         }
         raw_calls = [{"function": {"name": "write_file"}}]
 
-        assert native_tool_call_names(metadata, raw_calls) == []
+        assert native_tool_call_facts_from_sources(metadata, raw_calls) == {
+            "native_tool_calls_count": 0,
+            "native_tool_call_names": [],
+        }
 
     def test_native_tool_call_count_accepts_canonical_lifecycle_alias(self) -> None:
         metadata = {
@@ -982,9 +993,11 @@ class TestExtractNativeToolCalls:
             }
         }
 
-        assert native_tool_call_count(metadata, ()) == 2
+        assert native_tool_call_facts_from_sources(metadata, ()) == {
+            "native_tool_calls_count": 2,
+            "native_tool_call_names": ["write_file", "execute_command"],
+        }
         assert native_tool_call_count_from_metadata(metadata, fallback=1) == 2
-        assert native_tool_call_names(metadata, ()) == ["write_file", "execute_command"]
 
     def test_native_tool_call_names_derive_from_lifecycle_dropped_refs(self) -> None:
         metadata = {
@@ -1000,7 +1013,10 @@ class TestExtractNativeToolCalls:
             }
         }
 
-        assert native_tool_call_names(metadata, ()) == ["write_file", "execute_command"]
+        assert native_tool_call_facts_from_sources(metadata, ()) == {
+            "native_tool_calls_count": 2,
+            "native_tool_call_names": ["write_file", "execute_command"],
+        }
 
     def test_native_tool_call_count_and_names_accept_lifecycle_envelope_refs(self) -> None:
         metadata = {
@@ -1011,8 +1027,10 @@ class TestExtractNativeToolCalls:
         }
         raw_calls = [{"function": {"name": "read_file"}}]
 
-        assert native_tool_call_count(metadata, raw_calls) == 2
-        assert native_tool_call_names(metadata, raw_calls) == ["write_file", "execute_command"]
+        assert native_tool_call_facts_from_sources(metadata, raw_calls) == {
+            "native_tool_calls_count": 2,
+            "native_tool_call_names": ["write_file", "execute_command"],
+        }
 
     def test_native_tool_call_envelope_refs_survive_invalid_legacy_alias(self) -> None:
         metadata = {
@@ -1027,8 +1045,10 @@ class TestExtractNativeToolCalls:
 
         assert len(envelopes) == 1
         assert envelopes[0]["tool_name"] == "write_file"
-        assert native_tool_call_count(metadata, raw_calls) == 1
-        assert native_tool_call_names(metadata, raw_calls) == ["write_file"]
+        assert native_tool_call_facts_from_sources(metadata, raw_calls) == {
+            "native_tool_calls_count": 1,
+            "native_tool_call_names": ["write_file"],
+        }
 
     def test_native_tool_call_count_and_names_derive_from_lifecycle_receipt(self) -> None:
         metadata = {
@@ -1045,8 +1065,10 @@ class TestExtractNativeToolCalls:
         envelopes = native_tool_call_envelopes_from_metadata(metadata)
 
         assert len(envelopes) == 2
-        assert native_tool_call_count(metadata, raw_calls) == 2
-        assert native_tool_call_names(metadata, raw_calls) == ["write_file", "execute_command"]
+        assert native_tool_call_facts_from_sources(metadata, raw_calls) == {
+            "native_tool_calls_count": 2,
+            "native_tool_call_names": ["write_file", "execute_command"],
+        }
 
     def test_lifecycle_receipts_deduplicate_canonical_and_legacy_aliases(self) -> None:
         receipt = {
@@ -1085,8 +1107,10 @@ class TestExtractNativeToolCalls:
         envelopes = native_tool_call_envelopes_from_metadata(metadata)
 
         assert [envelope["tool_name"] for envelope in envelopes] == ["write_file", "execute_command"]
-        assert native_tool_call_count(metadata, raw_calls) == 2
-        assert native_tool_call_names(metadata, raw_calls) == ["write_file", "execute_command"]
+        assert native_tool_call_facts_from_sources(metadata, raw_calls) == {
+            "native_tool_calls_count": 2,
+            "native_tool_call_names": ["write_file", "execute_command"],
+        }
 
     def test_native_tool_call_envelopes_deduplicate_lifecycle_receipt_refs(self) -> None:
         metadata = {
@@ -1115,8 +1139,10 @@ class TestExtractNativeToolCalls:
         envelopes = native_tool_call_envelopes_from_metadata(metadata)
 
         assert [envelope["tool_name"] for envelope in envelopes] == ["write_file", "execute_command"]
-        assert native_tool_call_count(metadata, ()) == 2
-        assert native_tool_call_names(metadata, ()) == ["write_file", "execute_command"]
+        assert native_tool_call_facts_from_sources(metadata, ()) == {
+            "native_tool_calls_count": 2,
+            "native_tool_call_names": ["write_file", "execute_command"],
+        }
 
     def test_native_tool_call_envelope_refs_fall_back_to_plural_lifecycle_receipts(self) -> None:
         metadata = {
@@ -1133,7 +1159,10 @@ class TestExtractNativeToolCalls:
         }
         raw_calls = [{"function": {"name": "read_file"}}]
 
-        assert native_tool_call_names(metadata, raw_calls) == ["repo_tree"]
+        assert native_tool_call_facts_from_sources(metadata, raw_calls) == {
+            "native_tool_calls_count": 1,
+            "native_tool_call_names": ["repo_tree"],
+        }
 
     def test_native_tool_call_names_fallback_uses_shared_aliases(self) -> None:
         raw_calls = [
@@ -1141,8 +1170,10 @@ class TestExtractNativeToolCalls:
             {"function_name": "execute_command", "arguments": {"cmd": "pytest"}},
         ]
 
-        assert native_tool_call_count({}, raw_calls) == 2
-        assert native_tool_call_names({}, raw_calls) == ["write_file", "execute_command"]
+        assert native_tool_call_facts_from_sources({}, raw_calls) == {
+            "native_tool_calls_count": 2,
+            "native_tool_call_names": ["write_file", "execute_command"],
+        }
 
     def test_empty_payload_returns_empty(self) -> None:
         calls, provider = extract_native_tool_calls({}, provider_id="openai", model="gpt-4")
