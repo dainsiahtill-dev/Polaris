@@ -285,16 +285,25 @@ def build_task_runtime_execution_event_append_result(
     return result
 
 
+def _with_execution_event_projection(
+    payload: dict[str, Any],
+    execution_event: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Return a copy of ``payload`` with optional execution-event evidence."""
+
+    projected = dict(payload)
+    if execution_event is not None:
+        projected["execution_event"] = dict(execution_event)
+    return projected
+
+
 def project_task_row_execution_event(
     task_row: dict[str, Any],
     execution_event: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Return a task-row projection with optional execution-event evidence."""
 
-    projected = dict(task_row)
-    if execution_event is not None:
-        projected["execution_event"] = dict(execution_event)
-    return projected
+    return _with_execution_event_projection(task_row, execution_event)
 
 
 def _build_task_execution_result(
@@ -304,6 +313,7 @@ def _build_task_execution_result(
     task_row: dict[str, Any] | None = None,
     session: TaskExecutionSession | dict[str, Any] | None = None,
     default_success_reason: str,
+    execution_event: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Project common TaskRuntime execution result fields.
 
@@ -322,7 +332,7 @@ def _build_task_execution_result(
         result["task"] = dict(task_row)
     if session is not None:
         result["session"] = session.to_dict() if isinstance(session, TaskExecutionSession) else dict(session)
-    return result
+    return _with_execution_event_projection(result, execution_event)
 
 
 def build_task_execution_claim_result(
@@ -355,6 +365,7 @@ def build_task_execution_claim_result(
         task_row=task_row,
         session=session,
         default_success_reason="claimed",
+        execution_event=execution_event,
     )
     if resumed is not None:
         result["resumed"] = bool(resumed)
@@ -365,8 +376,6 @@ def build_task_execution_claim_result(
     clean_reconcile_error = str(reconcile_error or "").strip()
     if clean_reconcile_error:
         result["reconcile_error"] = clean_reconcile_error
-    if execution_event is not None:
-        result["execution_event"] = dict(execution_event)
     return result
 
 
@@ -484,9 +493,8 @@ def build_task_execution_transition_result(
         task_row=task_row,
         session=session,
         default_success_reason="transition_applied",
+        execution_event=execution_event,
     )
-    if execution_event is not None:
-        result["execution_event"] = dict(execution_event)
     return result
 
 
