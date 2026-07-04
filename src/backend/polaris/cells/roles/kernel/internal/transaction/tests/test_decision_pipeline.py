@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from polaris.cells.roles.kernel.internal.transaction.decision_pipeline import (
-    _native_tool_call_count,
-    _native_tool_call_facts,
-    _project_native_tool_call_facts,
-    _provider_response_hash,
-    build_tool_dispatch_dropped_anomaly,
+from polaris.cells.control_plane.run_ledger.public import project_native_tool_call_facts_to_metadata
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+    native_tool_call_count,
+    native_tool_call_facts_from_response,
+    native_tool_calls_from_response,
+    provider_response_hash,
 )
+from polaris.cells.roles.kernel.internal.transaction.decision_pipeline import build_tool_dispatch_dropped_anomaly
 
 
 def test_native_tool_call_count_prefers_metadata_envelopes() -> None:
@@ -20,7 +21,7 @@ def test_native_tool_call_count_prefers_metadata_envelopes() -> None:
         ],
     }
 
-    assert _native_tool_call_count(response, metadata) == 2
+    assert native_tool_call_count(metadata, native_tool_calls_from_response(response)) == 2
 
 
 def test_native_tool_call_count_accepts_lifecycle_receipt_envelopes() -> None:
@@ -35,7 +36,7 @@ def test_native_tool_call_count_accepts_lifecycle_receipt_envelopes() -> None:
         }
     }
 
-    assert _native_tool_call_count(response, metadata) == 2
+    assert native_tool_call_count(metadata, native_tool_calls_from_response(response)) == 2
 
 
 def test_native_tool_call_count_falls_back_to_raw_calls() -> None:
@@ -45,7 +46,7 @@ def test_native_tool_call_count_falls_back_to_raw_calls() -> None:
         native_tool_calls=[{"function": {"name": "write_file"}}],
     )
 
-    assert _native_tool_call_count(response, {}) == 1
+    assert native_tool_call_count({}, native_tool_calls_from_response(response)) == 1
 
 
 def test_project_native_tool_call_facts_overwrites_stale_projection() -> None:
@@ -59,7 +60,7 @@ def test_project_native_tool_call_facts_overwrites_stale_projection() -> None:
     )
     metadata = {"native_tool_calls_count": 9, "native_tool_call_names": ["stale_tool"]}
 
-    _project_native_tool_call_facts(metadata, _native_tool_call_facts(response, {}))
+    project_native_tool_call_facts_to_metadata(metadata, native_tool_call_facts_from_response(response, {}))
 
     assert metadata["native_tool_calls_count"] == 2
     assert metadata["native_tool_call_names"] == ["write_file", "execute_command"]
@@ -68,8 +69,8 @@ def test_project_native_tool_call_facts_overwrites_stale_projection() -> None:
 def test_provider_response_hash_includes_metadata_envelopes() -> None:
     response = SimpleNamespace(content="", model="gpt-test", native_tool_calls=[])
 
-    without_envelope = _provider_response_hash(response, {})
-    with_envelope = _provider_response_hash(
+    without_envelope = provider_response_hash(response, {})
+    with_envelope = provider_response_hash(
         response,
         {"native_tool_call_envelopes": [{"envelope_id": "tool-envelope-1"}]},
     )
@@ -80,8 +81,8 @@ def test_provider_response_hash_includes_metadata_envelopes() -> None:
 def test_provider_response_hash_includes_lifecycle_receipt_envelopes() -> None:
     response = SimpleNamespace(content="", model="gpt-test", native_tool_calls=[])
 
-    without_envelope = _provider_response_hash(response, {})
-    with_envelope = _provider_response_hash(
+    without_envelope = provider_response_hash(response, {})
+    with_envelope = provider_response_hash(
         response,
         {
             "tool_call_lifecycle_receipt": {
