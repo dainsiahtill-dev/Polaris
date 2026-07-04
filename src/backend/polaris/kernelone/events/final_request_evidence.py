@@ -124,10 +124,25 @@ def _first_mapping(*values: Any) -> dict[str, Any]:
     return {}
 
 
-def _has_non_empty_text_sequence(value: Any) -> bool:
+def _string_sequence(value: Any) -> list[str]:
     if not isinstance(value, (list, tuple, set)):
-        return False
-    return any(bool(_text(item)) for item in value)
+        return []
+    return [token for item in value if (token := _text(item))]
+
+
+def _has_non_empty_text_sequence(value: Any) -> bool:
+    return bool(_string_sequence(value))
+
+
+def _unique_texts(values: Any) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values if isinstance(values, (list, tuple, set)) else []:
+        token = _text(value)
+        if token and token not in seen:
+            seen.add(token)
+            result.append(token)
+    return result
 
 
 def looks_like_pm_contract_payload(value: Any) -> bool:
@@ -205,15 +220,87 @@ def looks_like_ce_blueprint_payload(value: Any) -> bool:
 def looks_like_target_scope_payload(value: Any) -> bool:
     """Return whether *value* is structured target/scope evidence."""
 
-    if not isinstance(value, Mapping):
-        return False
-    for key in ("target_files", "scope_paths", "allowed_write_paths", "allowed_read_paths"):
-        if _has_non_empty_text_sequence(value.get(key)):
-            return True
-    authorization = value.get("authorization")
+    return bool(target_scope_evidence_entry("", value))
+
+
+def target_scope_evidence_entry(source: str, payload: Any) -> dict[str, Any]:
+    """Return one normalized target-scope evidence source entry."""
+
+    if not isinstance(payload, Mapping):
+        return {}
+    authorization = payload.get("authorization")
     if isinstance(authorization, Mapping):
-        return looks_like_target_scope_payload(authorization)
-    return False
+        authorized = target_scope_evidence_entry(source, authorization)
+        if authorized:
+            return authorized
+    target_files = _string_sequence(payload.get("target_files") or payload.get("targets") or payload.get("target_paths"))
+    scope_paths = _string_sequence(payload.get("scope_paths") or payload.get("declared_scopes") or payload.get("scope"))
+    allowed_write_paths = _string_sequence(
+        payload.get("allowed_write_paths") or payload.get("allowed_paths") or payload.get("write_scope")
+    )
+    allowed_read_paths = _string_sequence(payload.get("allowed_read_paths") or payload.get("read_scope"))
+    if not target_files and not scope_paths and not allowed_write_paths and not allowed_read_paths:
+        return {}
+    return {
+        "source": _text(source),
+        "target_files": target_files,
+        "scope_paths": scope_paths,
+        "allowed_write_paths": allowed_write_paths,
+        "allowed_read_paths": allowed_read_paths,
+    }
+
+
+def summarize_target_scope_evidence_payload(value: Any) -> dict[str, Any]:
+    """Project target-scope evidence into the final-request summary shape."""
+
+    found = _as_mapping(value)
+    if not found:
+        return {}
+    raw_sources = found.get("sources")
+    if isinstance(raw_sources, list):
+        entries = [
+            entry
+            for item in raw_sources
+            if isinstance(item, Mapping)
+            and (entry := target_scope_evidence_entry(_text(item.get("source")), item))
+        ]
+    else:
+        entry = target_scope_evidence_entry(_text(found.get("source") or "target_scope"), found)
+        entries = [entry] if entry else []
+    target_files: list[str] = []
+    scope_paths: list[str] = []
+    allowed_write_paths: list[str] = []
+    allowed_read_paths: list[str] = []
+    source_summaries: list[dict[str, Any]] = []
+    for entry in entries:
+        item_target_files = _string_sequence(entry.get("target_files"))
+        item_scope_paths = _string_sequence(entry.get("scope_paths"))
+        item_allowed_write_paths = _string_sequence(entry.get("allowed_write_paths"))
+        item_allowed_read_paths = _string_sequence(entry.get("allowed_read_paths"))
+        target_files.extend(item_target_files)
+        scope_paths.extend(item_scope_paths)
+        allowed_write_paths.extend(item_allowed_write_paths)
+        allowed_read_paths.extend(item_allowed_read_paths)
+        source_summaries.append(
+            {
+                "source": _text(entry.get("source")),
+                "target_file_count": len(item_target_files),
+                "scope_path_count": len(item_scope_paths),
+                "allowed_write_path_count": len(item_allowed_write_paths),
+                "allowed_read_path_count": len(item_allowed_read_paths),
+            }
+        )
+    return {
+        "schema_version": "polaris.target_scope.evidence.context_slot.v1",
+        "source_schema_version": _text(found.get("schema_version")),
+        "source_count": len(source_summaries),
+        "target_file_count": len(_unique_texts(target_files)),
+        "scope_path_count": len(_unique_texts(scope_paths)),
+        "allowed_write_path_count": len(_unique_texts(allowed_write_paths)),
+        "allowed_read_path_count": len(_unique_texts(allowed_read_paths)),
+        "sources": source_summaries,
+        "payload_hash": _stable_hash(value),
+    }
 
 def normalize_context_snapshot_ref(value: Any) -> str:
     """Return the canonical ContextStore snapshot hash for final-request refs.

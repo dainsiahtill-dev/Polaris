@@ -17,7 +17,9 @@ from polaris.kernelone.events.final_request_evidence import (
     missing_required_refs_from_evidence_coverage,
     missing_required_tools_from_evidence_coverage,
     normalize_context_snapshot_ref,
+    summarize_target_scope_evidence_payload,
     summarize_workspace_quality_evidence_context_slot,
+    target_scope_evidence_entry,
 )
 
 
@@ -359,6 +361,46 @@ def test_contract_and_scope_predicates_require_structured_payloads() -> None:
     assert looks_like_target_scope_payload({"authorization": {"allowed_write_paths": ["src/index.py"]}})
     assert not looks_like_target_scope_payload({"target_files": "src/index.py"})
     assert not looks_like_target_scope_payload({"target_files": []})
+
+    entry = target_scope_evidence_entry(
+        "execution_contract",
+        {
+            "targets": ["src/index.py"],
+            "declared_scopes": ["src"],
+            "allowed_paths": ["src/index.py"],
+            "allowed_read_paths": ["src"],
+        },
+    )
+    assert entry == {
+        "source": "execution_contract",
+        "target_files": ["src/index.py"],
+        "scope_paths": ["src"],
+        "allowed_write_paths": ["src/index.py"],
+        "allowed_read_paths": ["src"],
+    }
+    summary = summarize_target_scope_evidence_payload(
+        {"schema_version": "polaris.target_scope.evidence.v1", "sources": [entry]}
+    )
+    payload_hash = summary.pop("payload_hash")
+    assert len(payload_hash) == 64
+    assert summary == {
+        "schema_version": "polaris.target_scope.evidence.context_slot.v1",
+        "source_schema_version": "polaris.target_scope.evidence.v1",
+        "source_count": 1,
+        "target_file_count": 1,
+        "scope_path_count": 1,
+        "allowed_write_path_count": 1,
+        "allowed_read_path_count": 1,
+        "sources": [
+            {
+                "source": "execution_contract",
+                "target_file_count": 1,
+                "scope_path_count": 1,
+                "allowed_write_path_count": 1,
+                "allowed_read_path_count": 1,
+            }
+        ],
+    }
 
 
 def test_failed_gate_context_payload_uses_structured_payload() -> None:

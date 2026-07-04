@@ -23,7 +23,9 @@ from polaris.kernelone.events.final_request_evidence import (
     looks_like_workspace_quality_evidence_payload,
     missing_required_refs_from_evidence_coverage,
     missing_required_tools_from_evidence_coverage,
+    summarize_target_scope_evidence_payload,
     summarize_workspace_quality_evidence_context_slot,
+    target_scope_evidence_entry,
 )
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
@@ -891,21 +893,6 @@ def _target_scope_payload(ai_request: Any | None) -> dict[str, Any]:
     if ai_request is None:
         return {}
 
-    def scope_entry(source: str, payload: dict[str, Any]) -> dict[str, Any]:
-        target_files = _string_list(payload.get("target_files") or payload.get("targets") or payload.get("target_paths"))
-        scope_paths = _string_list(payload.get("scope_paths") or payload.get("declared_scopes") or payload.get("scope"))
-        allowed_write_paths = _string_list(
-            payload.get("allowed_write_paths") or payload.get("allowed_paths") or payload.get("write_scope")
-        )
-        if not target_files and not scope_paths and not allowed_write_paths:
-            return {}
-        return {
-            "source": source,
-            "target_files": target_files,
-            "scope_paths": scope_paths,
-            "allowed_write_paths": allowed_write_paths,
-        }
-
     context_payload = _request_context(ai_request)
     task_payload = _mapping(context_payload.get("task"))
     task_metadata = _task_metadata(ai_request)
@@ -926,49 +913,13 @@ def _target_scope_payload(ai_request: Any | None) -> dict[str, Any]:
     sources = [
         entry
         for source, payload in candidates
-        if payload and (entry := scope_entry(source, payload))
+        if payload and (entry := target_scope_evidence_entry(source, payload))
     ]
     if not sources:
         return {}
     return {
         "schema_version": "polaris.target_scope.evidence.v1",
         "sources": sources,
-    }
-
-
-def _target_scope_summary(payload: dict[str, Any]) -> dict[str, Any]:
-    if not payload:
-        return {}
-    sources_payload = payload.get("sources")
-    sources = sources_payload if isinstance(sources_payload, list) else []
-    target_files: list[str] = []
-    scope_paths: list[str] = []
-    allowed_write_paths: list[str] = []
-    source_summaries: list[dict[str, Any]] = []
-    for item in sources:
-        source = _mapping(item)
-        item_target_files = _string_list(source.get("target_files"))
-        item_scope_paths = _string_list(source.get("scope_paths"))
-        item_allowed_write_paths = _string_list(source.get("allowed_write_paths"))
-        target_files.extend(item_target_files)
-        scope_paths.extend(item_scope_paths)
-        allowed_write_paths.extend(item_allowed_write_paths)
-        source_summaries.append(
-            {
-                "source": str(source.get("source") or ""),
-                "target_file_count": len(item_target_files),
-                "scope_path_count": len(item_scope_paths),
-                "allowed_write_path_count": len(item_allowed_write_paths),
-            }
-        )
-    return {
-        "schema_version": str(payload.get("schema_version") or ""),
-        "source_count": len(source_summaries),
-        "target_file_count": len(_unique_strings(target_files)),
-        "scope_path_count": len(_unique_strings(scope_paths)),
-        "allowed_write_path_count": len(_unique_strings(allowed_write_paths)),
-        "sources": source_summaries,
-        "payload_hash": _stable_digest(payload),
     }
 
 
@@ -1631,7 +1582,7 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
         "chief_engineer_blueprint_summary": _ce_blueprint_summary(ce_blueprint),
         "chief_engineer_blueprint_hash": _stable_digest(ce_blueprint) if ce_blueprint else "",
         "has_target_scope": bool(target_scope),
-        "target_scope_summary": _target_scope_summary(target_scope),
+        "target_scope_summary": summarize_target_scope_evidence_payload(target_scope),
         "target_scope_hash": _stable_digest(target_scope) if target_scope else "",
         "has_task_metadata": bool(task_metadata),
         "task_metadata_keys": sorted(str(key) for key in task_metadata),
