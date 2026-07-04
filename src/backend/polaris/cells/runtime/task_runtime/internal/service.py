@@ -240,7 +240,11 @@ class TaskRuntimeService:
             estimated_hours=estimated_hours,
             metadata=metadata,
         )
-        return project_task_row_execution_event(row, execution_event)
+        return project_task_row_execution_event(
+            row,
+            execution_event,
+            execution_events=(execution_event,),
+        )
 
     def _create_with_execution_event(
         self,
@@ -301,20 +305,23 @@ class TaskRuntimeService:
         created_metadata.setdefault("materialized_by", "runtime.task_runtime")
         created_metadata.setdefault("materialized_at", utc_now_iso())
 
-        task = self.create(
+        _, row, created_event = self._create_with_execution_event(
             subject=safe_subject,
             description=safe_description,
             priority=priority,
             metadata=created_metadata,
         )
-        row = self._augment_task_row(task.to_dict())
         execution_event = self._append_execution_event(
             "materialized",
             task_row=row,
             session=None,
             details={"external_task_id": external_id},
         )
-        return project_task_row_execution_event(row, execution_event)
+        return project_task_row_execution_event(
+            row,
+            execution_event,
+            execution_events=(created_event, execution_event),
+        )
 
     def get(self, task_id: Any) -> Task | None:
         normalized = self.normalize_task_id(task_id)
@@ -367,7 +374,7 @@ class TaskRuntimeService:
     ) -> dict[str, Any] | None:
         """Update a task and return the runtime row projection with event evidence."""
 
-        _updated, row, execution_event = self._update_with_execution_event(
+        _, row, execution_event = self._update_with_execution_event(
             task_id,
             status=status,
             assignee=assignee,
@@ -377,7 +384,11 @@ class TaskRuntimeService:
         )
         if row is None:
             return None
-        return project_task_row_execution_event(row, execution_event)
+        return project_task_row_execution_event(
+            row,
+            execution_event,
+            execution_events=(execution_event,) if execution_event is not None else (),
+        )
 
     def _update_with_execution_event(
         self,
@@ -463,7 +474,11 @@ class TaskRuntimeService:
         )
         if row is None:
             return None
-        return project_task_row_execution_event(row, execution_event)
+        return project_task_row_execution_event(
+            row,
+            execution_event,
+            execution_events=(execution_event,) if execution_event is not None else (),
+        )
 
     def _reopen_with_execution_event(
         self,

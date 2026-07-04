@@ -300,10 +300,16 @@ def _with_execution_event_projection(
 def project_task_row_execution_event(
     task_row: dict[str, Any],
     execution_event: dict[str, Any] | None,
+    *,
+    execution_events: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
 ) -> dict[str, Any]:
     """Return a task-row projection with optional execution-event evidence."""
 
-    return _with_execution_event_projection(task_row, execution_event)
+    projected = _with_execution_event_projection(task_row, execution_event)
+    event_payload = [dict(item) for item in execution_events]
+    if event_payload:
+        projected["execution_events"] = event_payload
+    return projected
 
 
 def _build_task_execution_result(

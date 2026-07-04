@@ -817,6 +817,10 @@ def test_ensure_task_row_reports_materialized_event_append_failure(
         "published": False,
         "error": "fact stream unavailable",
     }
+    assert len(row["execution_events"]) == 2
+    assert row["execution_events"][0]["ok"] is True
+    assert row["execution_events"][0]["event_type"] == "created"
+    assert row["execution_events"][1] == row["execution_event"]
 
 
 def test_task_runtime_external_task_id_does_not_collide_with_numeric_row(tmp_path: Path) -> None:

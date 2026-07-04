@@ -278,6 +278,10 @@ def test_project_task_row_execution_event_adds_append_evidence_without_mutating_
     result = project_task_row_execution_event(
         row,
         {"ok": False, "event_type": "materialized", "error": "append failed"},
+        execution_events=(
+            {"ok": True, "event_type": "created"},
+            {"ok": False, "event_type": "materialized", "error": "append failed"},
+        ),
     )
 
     assert result == {
@@ -288,8 +292,13 @@ def test_project_task_row_execution_event_adds_append_evidence_without_mutating_
             "event_type": "materialized",
             "error": "append failed",
         },
+        "execution_events": [
+            {"ok": True, "event_type": "created"},
+            {"ok": False, "event_type": "materialized", "error": "append failed"},
+        ],
     }
     assert "execution_event" not in row
+    assert "execution_events" not in row
 
 
 def test_build_task_execution_claim_result_projects_success_shape() -> None:
