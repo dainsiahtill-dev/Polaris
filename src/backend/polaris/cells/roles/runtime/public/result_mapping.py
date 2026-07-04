@@ -13,7 +13,7 @@ from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
-    build_tool_call_lifecycle_receipt,
+    build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
     is_failure_class,
     native_tool_call_facts_from_lifecycle_receipt,
     normalize_failure_class,
@@ -242,22 +242,25 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
     if dropped_error:
         dropped_tool_calls = _extract_tool_calls(result)
         native_envelopes = _native_tool_call_envelopes(result)
-        dropped_tool_call_refs = (
-            []
-            if native_envelopes
-            else [{"tool_name": tool_name, "reason": "tool_dispatch_dropped"} for tool_name in dropped_tool_calls]
-        )
-        dropped_lifecycle = build_tool_call_lifecycle_receipt(
+        dropped_lifecycle = build_tool_dispatch_dropped_lifecycle_from_anomaly_flags(
+            anomaly_flags=[
+                {
+                    "type": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+                    "native_tool_call_envelopes": list(native_envelopes),
+                    "dropped_tool_calls": [
+                        {"tool_name": tool_name, "reason": "tool_dispatch_dropped"}
+                        for tool_name in dropped_tool_calls
+                    ]
+                    if not native_envelopes
+                    else [],
+                }
+            ],
             run_id="",
             task_id="",
             turn_id="",
             role="",
-            dispatched_tool_calls_count=0,
-            dropped_tool_calls=list(dropped_tool_call_refs),
-            native_tool_call_envelopes=list(native_envelopes),
-            dispatch_status="dropped",
-            failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
-        ).to_dict()
+            reason=dropped_error,
+        )
         metadata.setdefault("tool_call_lifecycle_receipt", dropped_lifecycle)
         metadata.setdefault("tool_call_lifecycle", metadata["tool_call_lifecycle_receipt"])
         _project_lifecycle_native_tool_facts(metadata, metadata["tool_call_lifecycle_receipt"])
