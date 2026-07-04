@@ -23,6 +23,7 @@ from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_root
 from .execution_session import (
     TaskExecutionSession,
     build_task_execution_claim_result,
+    build_task_execution_heartbeat_result,
     build_task_runtime_execution_event_payload,
     build_task_runtime_metadata,
     is_terminal_session_status,
@@ -702,17 +703,25 @@ class TaskRuntimeService:
         """Renew an existing task lease."""
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
-            return {"success": False, "reason": "invalid_task_id"}
+            return build_task_execution_heartbeat_result(success=False, reason="invalid_task_id")
 
         session_lock = self._get_session_lock(normalized)
         with session_lock:
             session = self._read_session(normalized)
             if session is None:
-                return {"success": False, "reason": "session_not_found"}
+                return build_task_execution_heartbeat_result(success=False, reason="session_not_found")
             if str(session.session_id) != str(session_id or "").strip():
-                return {"success": False, "reason": "session_mismatch", "session": session.to_dict()}
+                return build_task_execution_heartbeat_result(
+                    success=False,
+                    reason="session_mismatch",
+                    session=session,
+                )
             if session.status != "active":
-                return {"success": False, "reason": "session_not_active", "session": session.to_dict()}
+                return build_task_execution_heartbeat_result(
+                    success=False,
+                    reason="session_not_active",
+                    session=session,
+                )
 
             session.renew(
                 lease_ttl_seconds=lease_ttl_seconds,
@@ -721,12 +730,12 @@ class TaskRuntimeService:
             session_written = self._write_session(session)
             if not session_written:
                 row = self._reconcile_terminal_task_row(normalized, session=session)
-                return {
-                    "success": False,
-                    "reason": "session_terminal_preserved",
-                    "task": row,
-                    "session": session.to_dict(),
-                }
+                return build_task_execution_heartbeat_result(
+                    success=False,
+                    reason="session_terminal_preserved",
+                    task_row=row,
+                    session=session,
+                )
         task = self._board.update(
             normalized,
             metadata=self._build_runtime_metadata(
@@ -736,12 +745,12 @@ class TaskRuntimeService:
             ),
         )
         row = self._augment_task_row(task.to_dict()) if task is not None else self.get_task(normalized)
-        return {
-            "success": True,
-            "reason": "heartbeat_renewed",
-            "task": row,
-            "session": session.to_dict(),
-        }
+        return build_task_execution_heartbeat_result(
+            success=True,
+            reason="heartbeat_renewed",
+            task_row=row,
+            session=session,
+        )
 
     def complete_execution(
         self,

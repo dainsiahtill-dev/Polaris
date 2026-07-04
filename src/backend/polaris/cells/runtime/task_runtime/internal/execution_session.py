@@ -285,6 +285,36 @@ def build_task_execution_claim_result(
     return result
 
 
+def build_task_execution_heartbeat_result(
+    *,
+    success: bool,
+    reason: Any,
+    task_row: dict[str, Any] | None = None,
+    session: TaskExecutionSession | dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Project a heartbeat attempt into the stable TaskRuntime result shape.
+
+    Boundary:
+        Heartbeat execution renews leases and reconciles terminal session
+        conflicts. This helper only owns the public result projection so
+        session mismatch, inactive session, terminal preservation, and renewed
+        lease responses cannot drift into separate ad-hoc dictionaries.
+
+    Complexity:
+        O(t + s) time and memory over task/session payload sizes.
+    """
+
+    result: dict[str, Any] = {
+        "success": bool(success),
+        "reason": str(reason or "").strip() or ("heartbeat_renewed" if success else "unknown"),
+    }
+    if task_row is not None:
+        result["task"] = dict(task_row)
+    if session is not None:
+        result["session"] = session.to_dict() if isinstance(session, TaskExecutionSession) else dict(session)
+    return result
+
+
 def build_task_runtime_metadata(
     *,
     session: TaskExecutionSession,
@@ -598,6 +628,7 @@ class TaskExecutionSession:
 __all__ = [
     "TaskExecutionSession",
     "build_task_execution_claim_result",
+    "build_task_execution_heartbeat_result",
     "build_task_runtime_execution_event_payload",
     "build_task_runtime_metadata",
     "is_terminal_session_status",
