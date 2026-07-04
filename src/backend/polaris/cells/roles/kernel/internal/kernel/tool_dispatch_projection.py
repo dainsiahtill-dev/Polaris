@@ -95,9 +95,6 @@ def append_tool_dispatch_dropped_control_plane_events(
     """Commit dropped native tool-call facts to the control-plane ledger."""
 
     from polaris.cells.control_plane.run_ledger.public import (
-        AppendRunLedgerEventCommandV1,
-        append_run_ledger_event,
-        build_tool_call_lifecycle_run_ledger_event,
         build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
         task_boundary_tool_dispatch_from_lifecycle_receipt,
     )
@@ -112,19 +109,12 @@ def append_tool_dispatch_dropped_control_plane_events(
         role=str(getattr(profile, "role_id", "") or role or ""),
         reason=reason,
     )
-    append_run_ledger_event(
-        AppendRunLedgerEventCommandV1(
-            workspace=workspace,
-            run_id=run_id,
-            event=build_tool_call_lifecycle_run_ledger_event(
-                run_id=run_id,
-                task_id=task_id,
-                turn_id=turn_id,
-                role=str(getattr(profile, "role_id", "") or role or ""),
-                lifecycle_receipt=lifecycle_payload,
-                stage="director_tool_dispatch",
-            ),
-        )
+    append_tool_call_lifecycle_control_plane_event(
+        role=str(getattr(profile, "role_id", "") or role or ""),
+        request=request,
+        workspace=workspace,
+        turn_id=turn_id,
+        lifecycle_receipt=lifecycle_payload,
     )
     append_director_task_boundary_verdict(
         role=role,
