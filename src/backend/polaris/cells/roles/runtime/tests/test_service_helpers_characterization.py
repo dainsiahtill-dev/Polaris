@@ -202,6 +202,40 @@ def test_contract_result_metadata_projects_native_tool_facts_from_lifecycle_rece
     assert meta["native_tool_call_names"] == ["write_file", "execute_command"]
 
 
+def test_contract_result_metadata_appends_lifecycle_failure_evidence() -> None:
+    existing_evidence = {
+        "schema_version": "polaris.failure_evidence.v1",
+        "failure_class": "implementation_defect",
+        "responsible_layer": "director",
+        "metadata": {"source": "existing_gate"},
+    }
+    result = RoleTurnResult(
+        content="x",
+        metadata={
+            "failure_evidence": [existing_evidence],
+            "failure_evidence_summary": {
+                "count": 1,
+                "latest_failure_class": "implementation_defect",
+            },
+            "tool_call_lifecycle_receipt": {
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "native_tool_calls_count": 1,
+                "dispatched_tool_calls_count": 0,
+                "dispatch_status": "dropped",
+                "failure_class": "tool_dispatch_dropped",
+            },
+        },
+    )
+
+    meta = runtime_service._contract_result_metadata(result)
+
+    assert meta["failure_evidence"][0] == existing_evidence
+    assert meta["failure_evidence"][1]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert meta["failure_evidence"][1]["metadata"]["source"] == "tool_call_lifecycle_receipt.v1"
+    assert meta["failure_evidence_summary"]["count"] == 2
+    assert meta["failure_evidence_summary"]["latest_failure_class"] == "TOOL_DISPATCH_DROPPED"
+
+
 def test_with_result_metadata_patch_merges_and_preserves_fields() -> None:
     result = _make_role_execution_result(metadata={"a": 1}, output="hi")
     patched = runtime_service._with_result_metadata_patch(result, {"b": 2})

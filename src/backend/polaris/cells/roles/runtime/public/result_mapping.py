@@ -86,19 +86,27 @@ def _project_lifecycle_native_tool_facts(metadata: dict[str, Any], lifecycle: Ma
 
 
 def _project_lifecycle_failure_evidence(metadata: dict[str, Any], lifecycle: Mapping[str, Any]) -> None:
-    if "failure_evidence" in metadata:
-        return
     failure_evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
     if not failure_evidence:
         return
-    metadata["failure_evidence"] = [failure_evidence]
-    metadata.setdefault(
-        "failure_evidence_summary",
-        {
-            "count": 1,
-            "latest_failure_class": failure_evidence.get("failure_class"),
-        },
-    )
+    rows: list[dict[str, Any]] = []
+    existing = metadata.get("failure_evidence")
+    if isinstance(existing, Mapping):
+        rows.append(dict(existing))
+    elif isinstance(existing, (list, tuple)):
+        rows.extend(dict(item) for item in existing if isinstance(item, Mapping))
+    if failure_evidence not in rows:
+        rows.append(failure_evidence)
+    metadata["failure_evidence"] = rows
+    metadata["failure_evidence_summary"] = {
+        **(
+            metadata.get("failure_evidence_summary")
+            if isinstance(metadata.get("failure_evidence_summary"), Mapping)
+            else {}
+        ),
+        "count": len(rows),
+        "latest_failure_class": rows[-1].get("failure_class") if rows else None,
+    }
 
 
 def _extract_tool_calls(result: RoleTurnResult) -> tuple[str, ...]:
