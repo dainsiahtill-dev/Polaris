@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
-from polaris.kernelone.quality import scan_workspace_artifact_quality, scan_workspace_artifact_quality_evidence
+from polaris.kernelone.quality import (
+    artifact_quality as artifact_quality_module,
+    scan_workspace_artifact_quality,
+    scan_workspace_artifact_quality_evidence,
+)
 
 
 def _write_trivial_test(path: Path, *, count: int = 4) -> None:
@@ -310,6 +315,53 @@ def test_scan_detects_npm_no_test_specified_even_when_exit_code_is_zero(tmp_path
 
     assert errors
     assert "npm default failing test script" in errors[0]
+
+
+def test_package_manifest_scanner_threads_direct_typed_issue_before_projection(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "web-e2e-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "echo \\"Error: no test specified\\" && exit 0"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    captured_issue_raws: list[str] = []
+    original = artifact_quality_module._package_manifest_evidence_from_errors
+
+    def _capture_projection_inputs(
+        errors: list[str],
+        relative_path: str,
+        direct_issues: list[artifact_quality_module.ArtifactQualityIssue] | None = None,
+    ) -> Any:
+        captured_issue_raws.extend(
+            str((issue.metadata or {}).get("raw") or issue.message).strip()
+            for issue in direct_issues or []
+        )
+        return original(errors, relative_path, direct_issues)
+
+    monkeypatch.setattr(
+        artifact_quality_module,
+        "_package_manifest_evidence_from_errors",
+        _capture_projection_inputs,
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["package.json"])
+
+    assert evidence.errors
+    assert "npm default failing test script" in evidence.errors[0]
+    assert captured_issue_raws == list(evidence.errors)
+    assert len(evidence.issues) == len(evidence.errors)
+    assert all(issue.source == "package_manifest_scanner" for issue in evidence.issues)
 
 
 def test_scan_detects_npm_no_tests_specified_plural(tmp_path: Path) -> None:

@@ -1408,6 +1408,19 @@ def _package_manifest_quality_issue(error: str, relative_path: str) -> ArtifactQ
     )
 
 
+def _append_package_manifest_issue(
+    errors: list[str],
+    issues: list[ArtifactQualityIssue],
+    error: str,
+    relative_path: str,
+) -> None:
+    normalized_error = str(error or "").strip()
+    if not normalized_error:
+        return
+    errors.append(normalized_error)
+    issues.append(_package_manifest_quality_issue(normalized_error, relative_path))
+
+
 def _package_manifest_evidence_from_errors(
     errors: list[str],
     relative_path: str,
@@ -1440,59 +1453,99 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
     scripts = payload.get("scripts")
     if isinstance(scripts, dict):
         for reason in package_script_cycle_reasons(scripts):
-            errors.append(f"Artifact quality scan failed: {reason} in {relative_path}")
+            _append_package_manifest_issue(
+                errors,
+                issues,
+                f"Artifact quality scan failed: {reason} in {relative_path}",
+                relative_path,
+            )
         test_script = str(scripts.get("test") or "")
         lowered = test_script.lower()
         if "no test specified" in lowered or "no tests specified" in lowered:
-            errors.append(f"Artifact quality scan failed: npm default failing test script in {relative_path}")
+            _append_package_manifest_issue(
+                errors,
+                issues,
+                f"Artifact quality scan failed: npm default failing test script in {relative_path}",
+                relative_path,
+            )
         if _NPM_PLACEHOLDER_TEST_SCRIPT_RE.search(test_script):
-            errors.append(f"Artifact quality scan failed: npm placeholder test script in {relative_path}")
+            _append_package_manifest_issue(
+                errors,
+                issues,
+                f"Artifact quality scan failed: npm placeholder test script in {relative_path}",
+                relative_path,
+            )
         if _NPM_MANIFEST_ONLY_TEST_SCRIPT_RE.search(test_script):
-            errors.append(f"Artifact quality scan failed: npm manifest-only test script in {relative_path}")
+            _append_package_manifest_issue(
+                errors,
+                issues,
+                f"Artifact quality scan failed: npm manifest-only test script in {relative_path}",
+                relative_path,
+            )
         if (
             _NPM_TEST_RUNNER_SCRIPT_RE.search(test_script)
             and _workspace_has_node_source_files(root_full)
             and not _workspace_has_node_test_files(root_full)
         ):
-            errors.append(
+            _append_package_manifest_issue(
+                errors,
+                issues,
                 "Artifact quality scan failed: npm package manifest has test runner script "
-                f"but no test/spec files exist in {relative_path}"
+                f"but no test/spec files exist in {relative_path}",
+                relative_path,
             )
         for script_name, script_value in scripts.items():
             script_text = str(script_value or "")
             try:
                 tokens = shlex.split(script_text, posix=(os.name != "nt"))
             except ValueError as exc:
-                errors.append(
+                _append_package_manifest_issue(
+                    errors,
+                    issues,
                     "Artifact quality scan failed: npm package manifest script "
-                    f"{str(script_name)!r} has invalid shell syntax in {relative_path}: {exc}"
+                    f"{str(script_name)!r} has invalid shell syntax in {relative_path}: {exc}",
+                    relative_path,
                 )
                 continue
             placeholder_reason = _placeholder_package_script_reason(str(script_name), script_text, tokens)
             if placeholder_reason:
-                errors.append(f"Artifact quality scan failed: {placeholder_reason} in {relative_path}")
+                _append_package_manifest_issue(
+                    errors,
+                    issues,
+                    f"Artifact quality scan failed: {placeholder_reason} in {relative_path}",
+                    relative_path,
+                )
                 continue
             if _NPM_SCRIPT_FAILURE_SWALLOW_RE.search(script_text):
-                errors.append(
+                _append_package_manifest_issue(
+                    errors,
+                    issues,
                     "Artifact quality scan failed: npm package manifest script "
-                    f"{str(script_name)!r} swallows command failures in {relative_path}"
+                    f"{str(script_name)!r} swallows command failures in {relative_path}",
+                    relative_path,
                 )
                 continue
             if _NPM_SCRIPT_SHELL_SUBSTITUTION_RE.search(script_text):
-                errors.append(
+                _append_package_manifest_issue(
+                    errors,
+                    issues,
                     "Artifact quality scan failed: npm package manifest script "
-                    f"{str(script_name)!r} uses shell command substitution in {relative_path}"
+                    f"{str(script_name)!r} uses shell command substitution in {relative_path}",
+                    relative_path,
                 )
                 continue
             if _PYTHON_COMMAND_IN_NPM_SCRIPT_RE.search(script_text):
-                errors.append(
+                _append_package_manifest_issue(
+                    errors,
+                    issues,
                     "Artifact quality scan failed: npm package manifest contains "
-                    f"Python command in script {str(script_name)!r} in {relative_path}"
+                    f"Python command in script {str(script_name)!r} in {relative_path}",
+                    relative_path,
                 )
                 break
             node_eval_error = _scan_npm_script_node_eval_syntax(tokens, str(script_name), relative_path)
             if node_eval_error:
-                errors.append(node_eval_error)
+                _append_package_manifest_issue(errors, issues, node_eval_error, relative_path)
                 continue
             test_directory_evidence = _scan_npm_script_node_test_directory_target_evidence(
                 root_full,
@@ -1521,14 +1574,20 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
         if _package_manifest_requires_typescript(root_full, payload) and not _package_declares_dependency(
             payload, "typescript"
         ):
-            errors.append(
+            _append_package_manifest_issue(
+                errors,
+                issues,
                 "Artifact quality scan failed: TypeScript project requires 'typescript' "
-                f"devDependency in {relative_path}"
+                f"devDependency in {relative_path}",
+                relative_path,
             )
     main_entry = str(payload.get("main") or "").strip().replace("\\", "/").lower()
     if main_entry.endswith(".py"):
-        errors.append(
-            f"Artifact quality scan failed: npm package manifest contains Python runtime entrypoint in {relative_path}"
+        _append_package_manifest_issue(
+            errors,
+            issues,
+            f"Artifact quality scan failed: npm package manifest contains Python runtime entrypoint in {relative_path}",
+            relative_path,
         )
     module_type_evidence = _scan_package_module_type_mismatch_evidence(root_full, payload, relative_path)
     errors.extend(module_type_evidence.errors)
@@ -1540,9 +1599,12 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
         for package_name in section:
             normalized = str(package_name or "").strip().lower()
             if normalized in _PYTHON_PACKAGE_MANIFEST_DEPENDENCIES:
-                errors.append(
+                _append_package_manifest_issue(
+                    errors,
+                    issues,
                     "Artifact quality scan failed: npm package manifest declares "
-                    f"Python package dependency {package_name!r} in {relative_path}"
+                    f"Python package dependency {package_name!r} in {relative_path}",
+                    relative_path,
                 )
                 return _package_manifest_evidence_from_errors(errors, relative_path, issues)
     return _package_manifest_evidence_from_errors(errors, relative_path, issues)
