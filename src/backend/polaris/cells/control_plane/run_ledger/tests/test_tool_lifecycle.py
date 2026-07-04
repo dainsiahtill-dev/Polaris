@@ -15,6 +15,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     normalize_tool_call_lifecycle_receipt,
     project_completion_dispatch_evidence_to_metadata,
     project_lifecycle_failure_evidence_to_metadata,
+    project_native_tool_call_facts_from_evidence_to_metadata,
     project_native_tool_call_facts_to_metadata,
     project_tool_lifecycle_event,
     summarize_tool_lifecycle_events,
@@ -576,6 +577,34 @@ def test_project_native_tool_call_facts_to_metadata_can_preserve_names() -> None
         "native_tool_calls_count": 0,
         "native_tool_call_names": ["stale_tool"],
     }
+
+
+def test_project_native_tool_call_facts_from_evidence_to_metadata_uses_lifecycle_evidence() -> None:
+    metadata = {"native_tool_calls_count": 9, "native_tool_call_names": ["stale_tool"]}
+    evidence = {
+        "tool_call_lifecycle_receipt": {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_call_envelope_refs": [
+                {"schema_version": "native_tool_call_envelope.v1", "tool_name": "read_file"},
+                {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
+            ],
+        }
+    }
+
+    project_native_tool_call_facts_from_evidence_to_metadata(metadata, evidence)
+
+    assert metadata == {
+        "native_tool_calls_count": 2,
+        "native_tool_call_names": ["read_file", "write_file"],
+    }
+
+
+def test_project_native_tool_call_facts_from_evidence_to_metadata_ignores_missing_evidence() -> None:
+    metadata = {"native_tool_calls_count": 9, "native_tool_call_names": ["stale_tool"]}
+
+    project_native_tool_call_facts_from_evidence_to_metadata(metadata, {})
+
+    assert metadata == {"native_tool_calls_count": 9, "native_tool_call_names": ["stale_tool"]}
 
 
 def test_project_completion_dispatch_evidence_keeps_native_envelope_refs() -> None:

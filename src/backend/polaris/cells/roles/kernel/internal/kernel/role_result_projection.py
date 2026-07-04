@@ -11,10 +11,9 @@ from collections.abc import Mapping
 from typing import Any, Protocol
 
 from polaris.cells.control_plane.run_ledger.public import (
-    native_tool_call_facts_from_metadata,
     project_completion_dispatch_evidence_to_metadata,
     project_lifecycle_failure_evidence_to_metadata,
-    project_native_tool_call_facts_to_metadata,
+    project_native_tool_call_facts_from_evidence_to_metadata,
     tool_call_lifecycle_receipts_from_metadata,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnResult
@@ -49,26 +48,6 @@ _ROLE_RESULT_COMPLETION_EVIDENCE_KEYS: tuple[str, ...] = (
     "failure_evidence",
     "failure_evidence_summary",
 )
-
-_NATIVE_TOOL_FACT_KEYS: tuple[str, ...] = (
-    "tool_call_lifecycle",
-    "tool_call_lifecycle_receipt",
-    "tool_call_lifecycle_receipts",
-    "native_tool_call_envelopes",
-    "native_tool_call_envelope_refs",
-    "native_tool_calls_count",
-    "native_tool_call_names",
-)
-
-_NATIVE_TOOL_NAME_FACT_KEYS: tuple[str, ...] = (
-    "tool_call_lifecycle",
-    "tool_call_lifecycle_receipt",
-    "tool_call_lifecycle_receipts",
-    "native_tool_call_envelopes",
-    "native_tool_call_envelope_refs",
-    "native_tool_call_names",
-)
-
 
 class QualityProjection(Protocol):
     """Minimal quality-result fields needed for RoleTurnResult projection."""
@@ -192,21 +171,6 @@ def project_completion_audit_evidence(metadata: dict[str, Any], evidence: Mappin
     project_tool_lifecycle_metadata(metadata)
 
 
-def project_native_tool_call_facts(metadata: dict[str, Any], evidence: dict[str, Any]) -> None:
-    """Project canonical native tool-call facts from structured lifecycle evidence."""
-
-    if not any(key in evidence for key in _NATIVE_TOOL_FACT_KEYS):
-        return
-    facts = native_tool_call_facts_from_metadata(evidence)
-    if not facts:
-        return
-    project_native_tool_call_facts_to_metadata(
-        metadata,
-        facts,
-        project_names=any(key in evidence for key in _NATIVE_TOOL_NAME_FACT_KEYS),
-    )
-
-
 def _project_canonical_tool_lifecycle_receipt(metadata: dict[str, Any]) -> None:
     """Ensure RoleTurnResult metadata exposes the canonical lifecycle receipt key."""
 
@@ -230,7 +194,7 @@ def project_tool_lifecycle_metadata(metadata: dict[str, Any]) -> None:
 
     _project_canonical_tool_lifecycle_receipt(metadata)
     project_failure_evidence_from_tool_lifecycle(metadata)
-    project_native_tool_call_facts(metadata, metadata)
+    project_native_tool_call_facts_from_evidence_to_metadata(metadata, metadata)
 
 
 def project_failure_evidence_from_tool_lifecycle(metadata: dict[str, Any]) -> None:

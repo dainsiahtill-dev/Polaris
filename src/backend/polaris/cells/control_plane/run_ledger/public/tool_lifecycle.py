@@ -610,6 +610,56 @@ def native_tool_call_facts_from_metadata(metadata: Mapping[str, Any] | None) -> 
     }
 
 
+_NATIVE_TOOL_FACT_EVIDENCE_KEYS: tuple[str, ...] = (
+    "tool_call_lifecycle",
+    "tool_call_lifecycle_receipt",
+    "tool_call_lifecycle_receipts",
+    "native_tool_call_envelopes",
+    "native_tool_call_envelope_refs",
+    "native_tool_calls_count",
+    "native_tool_call_names",
+)
+
+_NATIVE_TOOL_NAME_EVIDENCE_KEYS: tuple[str, ...] = (
+    "tool_call_lifecycle",
+    "tool_call_lifecycle_receipt",
+    "tool_call_lifecycle_receipts",
+    "native_tool_call_envelopes",
+    "native_tool_call_envelope_refs",
+    "native_tool_call_names",
+)
+
+
+def project_native_tool_call_facts_from_evidence_to_metadata(
+    metadata: dict[str, Any],
+    evidence: Mapping[str, Any] | None,
+) -> None:
+    """Project lifecycle-derived native tool-call facts from evidence.
+
+    Boundary:
+        Run Ledger owns the evidence keys that are authoritative for native
+        tool-call projections. Role kernels should call this helper instead of
+        maintaining a second trigger-key table.
+
+    Complexity:
+        O(r + e + n) time and memory through
+        :func:`native_tool_call_facts_from_metadata`.
+    """
+
+    if not isinstance(evidence, Mapping):
+        return
+    if not any(key in evidence for key in _NATIVE_TOOL_FACT_EVIDENCE_KEYS):
+        return
+    facts = native_tool_call_facts_from_metadata(evidence)
+    if not facts:
+        return
+    project_native_tool_call_facts_to_metadata(
+        metadata,
+        facts,
+        project_names=any(key in evidence for key in _NATIVE_TOOL_NAME_EVIDENCE_KEYS),
+    )
+
+
 def task_boundary_tool_dispatch_from_lifecycle_metadata(metadata: Mapping[str, Any]) -> dict[str, Any] | None:
     """Project TaskBoundary tool-dispatch evidence from lifecycle metadata.
 
