@@ -924,8 +924,8 @@ def project_native_tool_call_facts_from_evidence_to_metadata(
     )
 
 
-def task_boundary_tool_dispatch_from_lifecycle_metadata(metadata: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Project TaskBoundary tool-dispatch evidence from lifecycle metadata.
+def task_boundary_tool_dispatch_from_lifecycle_receipt(lifecycle_receipt: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Project TaskBoundary tool-dispatch evidence from one lifecycle receipt.
 
     Boundary:
         This is a read-only projection from the public
@@ -938,15 +938,7 @@ def task_boundary_tool_dispatch_from_lifecycle_metadata(metadata: Mapping[str, A
         :func:`native_tool_call_facts_from_lifecycle_receipt`.
     """
 
-    lifecycle: dict[str, Any] = {}
-    for receipt in tool_call_lifecycle_receipts_from_metadata(metadata):
-        dispatch_status = _clean_string(receipt.get("dispatch_status"))
-        failure_class = normalize_failure_class(receipt.get("failure_class"))
-        if dispatch_status == "dropped" or failure_class == FailureClassV1.TOOL_DISPATCH_DROPPED.value:
-            lifecycle = dict(receipt)
-            break
-    if not lifecycle:
-        return None
+    lifecycle = normalize_tool_call_lifecycle_receipt(lifecycle_receipt)
     dispatch_status = _clean_string(lifecycle.get("dispatch_status"))
     failure_class = normalize_failure_class(lifecycle.get("failure_class"))
     if dispatch_status != "dropped" and failure_class != FailureClassV1.TOOL_DISPATCH_DROPPED.value:
@@ -962,6 +954,26 @@ def task_boundary_tool_dispatch_from_lifecycle_metadata(metadata: Mapping[str, A
         "provider_response_hash": _clean_string(lifecycle.get("provider_response_hash")),
         "reason": _clean_string(lifecycle.get("reason")),
     }
+
+
+def task_boundary_tool_dispatch_from_lifecycle_metadata(metadata: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Project TaskBoundary tool-dispatch evidence from lifecycle metadata.
+
+    Boundary:
+        Metadata may contain one or more lifecycle receipt compatibility keys.
+        This helper only selects the dropped receipt; the receipt-to-dispatch
+        projection itself is owned by
+        :func:`task_boundary_tool_dispatch_from_lifecycle_receipt`.
+
+    Complexity:
+        O(n * (e + d)) over lifecycle receipts and native/dropped refs.
+    """
+
+    for receipt in tool_call_lifecycle_receipts_from_metadata(metadata):
+        dispatch = task_boundary_tool_dispatch_from_lifecycle_receipt(receipt)
+        if dispatch:
+            return dispatch
+    return None
 
 
 def project_tool_lifecycle_event(

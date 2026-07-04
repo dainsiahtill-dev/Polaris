@@ -74,6 +74,7 @@ from .tool_lifecycle import (
     project_tool_lifecycle_receipt_to_metadata,
     summarize_tool_lifecycle_events,
     task_boundary_tool_dispatch_from_lifecycle_metadata,
+    task_boundary_tool_dispatch_from_lifecycle_receipt,
     tool_call_lifecycle_receipts_from_metadata,
 )
 
@@ -144,5 +145,6 @@ __all__ = [
     "summarize_tool_lifecycle_events",
     "suspected_files_from_failure_evidence_payload",
     "task_boundary_tool_dispatch_from_lifecycle_metadata",
+    "task_boundary_tool_dispatch_from_lifecycle_receipt",
     "tool_call_lifecycle_receipts_from_metadata",
 ]

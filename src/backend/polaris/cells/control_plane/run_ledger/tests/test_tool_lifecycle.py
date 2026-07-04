@@ -30,6 +30,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     project_tool_lifecycle_receipt_to_metadata,
     summarize_tool_lifecycle_events,
     task_boundary_tool_dispatch_from_lifecycle_metadata,
+    task_boundary_tool_dispatch_from_lifecycle_receipt,
     tool_call_lifecycle_receipts_from_metadata,
 )
 
@@ -1461,6 +1462,32 @@ def test_tool_lifecycle_projects_task_boundary_dispatch_from_metadata() -> None:
     )
 
     assert dispatch == {
+        "status": "dropped",
+        "dropped": True,
+        "native_tool_calls_count": 1,
+        "native_tool_call_names": ["write_file"],
+        "decoded_tool_calls_count": 1,
+        "dispatched_tool_calls_count": 0,
+        "provider_response_hash": "provider/hash",
+        "reason": "native_tool_calls_without_dispatch",
+    }
+
+
+def test_tool_lifecycle_projects_task_boundary_dispatch_from_receipt() -> None:
+    lifecycle = {
+        "schema_version": "tool_call_lifecycle_receipt.v1",
+        "native_tool_call_envelope_refs": [
+            {"envelope_id": "native-1", "tool_name": "write_file"},
+        ],
+        "decoded_tool_calls_count": 1,
+        "dispatched_tool_calls_count": 0,
+        "provider_response_hash": "provider/hash",
+        "dispatch_status": "dropped",
+        "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        "reason": "native_tool_calls_without_dispatch",
+    }
+
+    assert task_boundary_tool_dispatch_from_lifecycle_receipt(lifecycle) == {
         "status": "dropped",
         "dropped": True,
         "native_tool_calls_count": 1,
