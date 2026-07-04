@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal, cast
 
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.roles.kernel.internal.speculation.models import (
     CancelToken,
     check_cancel,
@@ -709,7 +710,7 @@ class ToolBatchRuntime:
             tool_name=result.tool_name,
             status=ToolExecutionStatus.ERROR,
             result={
-                "failure_class": "missing_effect_receipt",
+                "failure_class": FailureClassV1.MISSING_EFFECT_RECEIPT.value,
                 "responsible_layer": "tool_lifecycle",
                 "original_result": result.result,
             },

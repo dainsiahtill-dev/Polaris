@@ -14,6 +14,7 @@ import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import (
     ToolBatchRuntime,
     ToolExecutionContext,
@@ -477,7 +478,7 @@ class TestMixedBatch:
         assert receipts[0]["failure_count"] == 1
         assert receipts[0]["results"][0]["status"] == "error"
         assert receipts[0]["results"][0]["effect_receipt"] is None
-        assert receipts[0]["results"][0]["result"]["failure_class"] == "missing_effect_receipt"
+        assert receipts[0]["results"][0]["result"]["failure_class"] == FailureClassV1.MISSING_EFFECT_RECEIPT.value
         assert receipts[0]["raw_results"][0]["error"] == (
             "Write tool succeeded without effect_receipt; tool lifecycle receipt is incomplete."
         )
