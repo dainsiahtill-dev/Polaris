@@ -25,6 +25,26 @@ _COVERAGE_FLAG_TO_REF = {
     "has_resident_agi_capability_surface": "resident_agi_capability_surface",
     "has_resident_agi_decision_boundary": "resident_agi_decision_boundary",
 }
+_METADATA_SUMMARY_FLAG_TO_REF: tuple[tuple[str, str], ...] = (
+    ("has_execution_profile", "execution_profile"),
+    ("has_execution_strategy", "execution_strategy"),
+    ("has_execution_contract", "execution_contract"),
+    ("has_execution_envelope", "execution_envelope"),
+    ("has_delivery_plan_document", "delivery_plan_document"),
+    ("has_delivery_depth_contract", "delivery_depth_contract"),
+    ("has_pm_contract", "pm_contract"),
+    ("has_chief_engineer_blueprint", "ce_blueprint"),
+    ("has_target_scope", "target_files"),
+    ("has_language_guidance", "language_guidance"),
+    ("has_output_contract", "output_contract"),
+    ("has_task_metadata", "task_metadata"),
+    ("has_module_interface_contract", "module_interface_contract"),
+    ("has_actual_sibling_exports", "actual_sibling_exports"),
+    ("has_interface_discrepancy_context", "interface_discrepancy_context"),
+    ("has_architecture_or_file_plan", "architecture_or_file_plan"),
+    ("has_failed_gate_evidence", "failed_gate_evidence"),
+    ("has_workspace_quality_evidence", "workspace_quality_evidence"),
+)
 _EVIDENCE_REQUIREMENT_TO_REF = {
     "pm_task_contract": "pm_contract",
     "pm_contract": "pm_contract",
@@ -122,6 +142,16 @@ def final_request_evidence_refs_for_coverage_flags(
             continue
         ref = final_request_evidence_ref_for_coverage_flag(normalized_flag)
         if ref and ref not in refs:
+            refs.append(ref)
+    return refs
+
+
+def final_request_evidence_refs_for_metadata_summary(summary: Mapping[str, Any]) -> list[str]:
+    """Project request metadata summary flags to canonical evidence refs."""
+
+    refs: list[str] = []
+    for flag, ref in _METADATA_SUMMARY_FLAG_TO_REF:
+        if summary.get(flag) and ref not in refs:
             refs.append(ref)
     return refs
 

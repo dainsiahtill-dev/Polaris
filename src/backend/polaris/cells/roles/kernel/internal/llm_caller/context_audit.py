@@ -18,6 +18,7 @@ from polaris.kernelone.events.final_request_evidence import (
     build_final_request_tool_slots,
     final_request_evidence_ref_for_requirement,
     final_request_evidence_refs_for_coverage_flags,
+    final_request_evidence_refs_for_metadata_summary,
     looks_like_ce_blueprint_payload,
     looks_like_pm_contract_payload,
     looks_like_workspace_quality_evidence_payload,
@@ -1957,42 +1958,7 @@ def _included_evidence_refs(
             },
         )
     )
-    if request_metadata_summary.get("has_execution_profile"):
-        refs.append("execution_profile")
-    if request_metadata_summary.get("has_execution_strategy"):
-        refs.append("execution_strategy")
-    if request_metadata_summary.get("has_execution_contract"):
-        refs.append("execution_contract")
-    if request_metadata_summary.get("has_execution_envelope"):
-        refs.append("execution_envelope")
-    if request_metadata_summary.get("has_delivery_plan_document"):
-        refs.append("delivery_plan_document")
-    if request_metadata_summary.get("has_delivery_depth_contract"):
-        refs.append("delivery_depth_contract")
-    if request_metadata_summary.get("has_pm_contract"):
-        refs.append("pm_contract")
-    if request_metadata_summary.get("has_chief_engineer_blueprint"):
-        refs.append("ce_blueprint")
-    if request_metadata_summary.get("has_target_scope"):
-        refs.append("target_files")
-    if request_metadata_summary.get("has_language_guidance"):
-        refs.append("language_guidance")
-    if request_metadata_summary.get("has_output_contract"):
-        refs.append("output_contract")
-    if request_metadata_summary.get("has_task_metadata"):
-        refs.append("task_metadata")
-    if request_metadata_summary.get("has_module_interface_contract"):
-        refs.append("module_interface_contract")
-    if request_metadata_summary.get("has_actual_sibling_exports"):
-        refs.append("actual_sibling_exports")
-    if request_metadata_summary.get("has_interface_discrepancy_context"):
-        refs.append("interface_discrepancy_context")
-    if request_metadata_summary.get("has_architecture_or_file_plan"):
-        refs.append("architecture_or_file_plan")
-    if request_metadata_summary.get("has_failed_gate_evidence"):
-        refs.append("failed_gate_evidence")
-    if request_metadata_summary.get("has_workspace_quality_evidence"):
-        refs.append("workspace_quality_evidence")
+    refs.extend(final_request_evidence_refs_for_metadata_summary(request_metadata_summary))
     if receipt_refs:
         refs.append("receipt_store_refs")
     return _unique_strings(refs)
