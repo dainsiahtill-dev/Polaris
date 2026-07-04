@@ -4,6 +4,7 @@ import pytest
 from polaris.cells.runtime.task_runtime.internal.execution_session import (
     TaskExecutionSession,
     is_terminal_session_status,
+    terminal_session_timestamp,
     terminal_task_status_value_for_session_status,
 )
 
@@ -82,3 +83,34 @@ def test_terminal_session_status_projects_task_status(session_status: str, task_
 def test_non_terminal_session_status_has_no_task_status_projection(session_status: object) -> None:
     assert terminal_task_status_value_for_session_status(session_status) == ""
     assert is_terminal_session_status(session_status) is False
+
+
+def test_terminal_session_timestamp_uses_terminal_projection_priority() -> None:
+    payload = _valid_session_payload()
+    payload.update(
+        {
+            "status": "failed",
+            "claimed_at": "2026-01-01T00:00:00+00:00",
+            "last_heartbeat_at": "2026-01-01T00:01:00+00:00",
+            "lease_expires_at": "2026-01-01T00:02:00+00:00",
+            "released_at": "2026-01-01T00:03:00+00:00",
+        }
+    )
+    session = TaskExecutionSession.from_dict(payload)
+
+    assert terminal_session_timestamp(session) == 1767225780.0
+
+
+def test_terminal_session_timestamp_returns_none_without_valid_projection_timestamp() -> None:
+    payload = _valid_session_payload()
+    payload.update(
+        {
+            "claimed_at": "not-a-date",
+            "last_heartbeat_at": "not-a-date",
+            "lease_expires_at": "not-a-date",
+            "released_at": "not-a-date",
+        }
+    )
+    session = TaskExecutionSession.from_dict(payload)
+
+    assert terminal_session_timestamp(session) is None

@@ -108,6 +108,25 @@ def is_terminal_session_status(status: Any) -> bool:
     return bool(terminal_task_status_value_for_session_status(status))
 
 
+def terminal_session_timestamp(session: TaskExecutionSession) -> float | None:
+    """Return the best terminal timestamp carried by a persisted session.
+
+    The timestamp is read-only projection evidence for reconciling task rows
+    against terminal execution sessions. It is not a state transition trigger.
+    """
+
+    for token in (
+        session.released_at,
+        session.lease_expires_at,
+        session.last_heartbeat_at,
+        session.claimed_at,
+    ):
+        parsed = parse_utc_iso(token)
+        if parsed is not None:
+            return parsed.timestamp()
+    return None
+
+
 @dataclass(slots=True)
 class TaskExecutionSession:
     """Persisted execution session for a runtime task."""

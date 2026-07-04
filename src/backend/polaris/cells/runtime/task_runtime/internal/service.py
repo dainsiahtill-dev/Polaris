@@ -24,8 +24,8 @@ from .execution_session import (
     TaskExecutionSession,
     is_terminal_session_status,
     normalize_positive_int,
-    parse_utc_iso,
     sanitize_summary,
+    terminal_session_timestamp,
     terminal_task_status_value_for_session_status,
     utc_now,
     utc_now_iso,
@@ -1325,25 +1325,12 @@ class TaskRuntimeService:
             return False
         if reset_at <= 0.0:
             return False
-        terminal_at = self._session_terminal_timestamp(session)
+        terminal_at = terminal_session_timestamp(session)
         if terminal_at is None:
             # Fail closed: without a trustworthy terminal timestamp the
             # terminal session evidence stays authoritative.
             return False
         return reset_at > terminal_at
-
-    @staticmethod
-    def _session_terminal_timestamp(session: TaskExecutionSession) -> float | None:
-        for token in (
-            session.released_at,
-            session.lease_expires_at,
-            session.last_heartbeat_at,
-            session.claimed_at,
-        ):
-            parsed = parse_utc_iso(token)
-            if parsed is not None:
-                return parsed.timestamp()
-        return None
 
     def _rotate_terminal_session_for_retry(self, session: TaskExecutionSession) -> TaskExecutionSession:
         """Rotate a superseded terminal session via the explicit downgrade path.
