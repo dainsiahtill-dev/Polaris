@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from polaris.cells.control_plane.run_ledger.public.failure_evidence import (
+    FailureClassV1,
+    normalize_failure_class,
+)
 from polaris.cells.roles.runtime.internal.sequential_engine import (
     DEFAULT_BUDGET_CONFIG,
     RESERVED_KEYS,
@@ -43,6 +47,13 @@ class TestEnums:
         assert SequentialFailureClass.VALIDATION_FAIL.value == "validation_fail"
         assert SequentialFailureClass.INTERNAL_BUG.value == "internal_bug"
         assert SequentialFailureClass.UNKNOWN.value == "unknown"
+
+    def test_sequential_failure_classes_do_not_alias_run_ledger_taxonomy(self):
+        run_ledger_values = {item.value for item in FailureClassV1}
+
+        for failure_class in SequentialFailureClass:
+            assert failure_class.value not in run_ledger_values
+            assert normalize_failure_class(failure_class.value) == failure_class.value
 
     def test_retry_hint_values(self):
         assert RetryHint.HANDOFF.value == "handoff"

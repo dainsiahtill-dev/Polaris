@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import pytest
+from polaris.cells.control_plane.run_ledger.public.failure_evidence import (
+    FailureClassV1,
+    normalize_failure_class,
+)
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
     FinalizeMode,
@@ -11,6 +15,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     ToolInvocation,
     TurnDecision,
     TurnDecisionKind,
+    TurnFailureClass,
     TurnId,
     TurnResult,
 )
@@ -86,3 +91,12 @@ class TestTurnResultV2:
         batch = ToolBatch(batch_id=BatchId("batch_1"), readonly_serial=[serial_tool], invocations=[serial_tool])
 
         assert batch["readonly_serial"][0]["execution_mode"] == ToolExecutionMode.READONLY_SERIAL
+
+
+class TestTurnFailureClassBoundary:
+    def test_turn_failure_classes_do_not_alias_run_ledger_taxonomy(self) -> None:
+        run_ledger_values = {item.value for item in FailureClassV1}
+
+        for failure_class in TurnFailureClass:
+            assert failure_class.value not in run_ledger_values
+            assert normalize_failure_class(failure_class.value) == failure_class.value
