@@ -4837,11 +4837,12 @@ class TestDirectorFailureClosure:
     @pytest.mark.asyncio
     async def test_execute_fails_claimed_task_on_unhandled_runtime_error(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="实现核心模块",
             description="创建文件",
             metadata={"scope": "src/core.ts", "steps": ["写入核心文件"]},
         )
+        task_id = str(task["id"])
 
         async def _boom_call(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -4850,21 +4851,21 @@ class TestDirectorFailureClosure:
         adapter._invoke_role_dialogue_with_timeout = _boom_call  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-fail-closed"},
         )
 
         assert result["success"] is False
         assert result["error_code"] == "director.runtime.exception"
-        updated = adapter.task_board.get_task(str(task.id))
+        updated = adapter.task_board.get_task(task_id)
         assert updated is not None
         assert str(updated.get("status") or "").lower() == "failed"
 
     @pytest.mark.asyncio
     async def test_execute_rejects_workspace_diff_without_write_tool_receipt(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Repair failing TypeScript test",
             description="Apply the smallest code change and verify npm test behavior.",
             metadata={
@@ -4873,6 +4874,7 @@ class TestDirectorFailureClosure:
                 "acceptance": ["The TypeScript test failure is repaired"],
             },
         )
+        task_id = str(task["id"])
         captured: dict[str, Any] = {}
 
         async def _mutating_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -4891,8 +4893,8 @@ class TestDirectorFailureClosure:
         adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-diff-evidence"},
         )
 
@@ -4905,7 +4907,7 @@ class TestDirectorFailureClosure:
             for signal in result.get("decision_signals", [])
             if isinstance(signal, dict)
         )
-        updated = adapter.task_board.get_task(str(task.id))
+        updated = adapter.task_board.get_task(task_id)
         assert updated is not None
         assert str(updated.get("status") or "").lower() == "failed"
         raw_metadata = updated.get("metadata")
@@ -4919,7 +4921,7 @@ class TestDirectorFailureClosure:
     @pytest.mark.asyncio
     async def test_execute_rejects_off_target_workspace_diff_as_materialization(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Implement browser networking client",
             description="Update the declared network client target file.",
             metadata={
@@ -4929,6 +4931,7 @@ class TestDirectorFailureClosure:
                 "acceptance": ["src/client/network-client.ts is changed"],
             },
         )
+        task_id = str(task["id"])
 
         async def _off_target_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -4945,15 +4948,15 @@ class TestDirectorFailureClosure:
         adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-off-target-diff"},
         )
 
         assert result["success"] is False
         assert result["error_code"] == "director_materialized_out_of_scope"
         assert result["failure_class"] == QaFailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value
-        updated = adapter.task_board.get_task(str(task.id))
+        updated = adapter.task_board.get_task(task_id)
         assert updated is not None
         raw_metadata = updated.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
@@ -4965,7 +4968,7 @@ class TestDirectorFailureClosure:
     @pytest.mark.asyncio
     async def test_execute_keeps_failed_no_write_separate_from_sibling_diff(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Implement garden simulator module",
             description="Update only the declared garden module.",
             metadata={
@@ -4975,6 +4978,7 @@ class TestDirectorFailureClosure:
                 "acceptance": ["src/garden.ts is changed"],
             },
         )
+        task_id = str(task["id"])
 
         async def _failed_dialogue_with_sibling_diff(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
@@ -4991,15 +4995,15 @@ class TestDirectorFailureClosure:
         adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
-            task_id=str(task.id),
-            input_data={"task_id": str(task.id)},
+            task_id=task_id,
+            input_data={"task_id": task_id},
             context={"run_id": "run-director-sibling-diff"},
         )
 
         assert result["success"] is False
         assert result["error_code"] == "incomplete_materialization"
         assert result["failure_class"] == QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value
-        updated = adapter.task_board.get_task(str(task.id))
+        updated = adapter.task_board.get_task(task_id)
         assert updated is not None
         raw_metadata = updated.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
@@ -5017,11 +5021,12 @@ class TestDirectorFailureClosure:
         )
 
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Bootstrap package manifest",
             description="Create only package.json.",
             metadata={"target_files": ["package.json"], "scope_paths": ["package.json"]},
         )
+        task_id = str(task["id"])
         state = MaterializationState(
             current_files={"tsconfig.json": "sibling-fingerprint"},
             new_files=[],
@@ -5050,7 +5055,7 @@ class TestDirectorFailureClosure:
             primary_llm_summary={"success": True},
             requires_fresh_materialization=True,
             run_id="run-failed-write-sibling-diff",
-            target_task_id=str(task.id),
+            target_task_id=task_id,
             task={"target_files": ["package.json"], "scope_paths": ["package.json"]},
             task_claim_session_id="",
             workspace_name=tmp_path.name,
@@ -5070,11 +5075,12 @@ class TestDirectorFailureClosure:
         )
 
         adapter = _make_adapter(tmp_path)
-        task = adapter.task_board.create(
+        task = adapter.task_board.create_task_row(
             subject="Bootstrap package manifest",
             description="Create only package.json.",
             metadata={"target_files": ["package.json"], "scope_paths": ["package.json"]},
         )
+        task_id = str(task["id"])
         state = MaterializationState(
             current_files={},
             new_files=[],
@@ -5099,7 +5105,7 @@ class TestDirectorFailureClosure:
             },
             requires_fresh_materialization=True,
             run_id="run-tool-dispatch-dropped",
-            target_task_id=str(task.id),
+            target_task_id=task_id,
             task={"target_files": ["package.json"], "scope_paths": ["package.json"]},
             task_claim_session_id="",
             workspace_name=tmp_path.name,
@@ -5131,7 +5137,7 @@ class TestDirectorFailureClosure:
             "root_cause_hint": "required_tool_without_dispatch_receipt",
             "materialization_mode": "tool_dispatch_dropped",
             "run_id": "run-tool-dispatch-dropped",
-            "task_id": str(task.id),
+            "task_id": task_id,
         }
         assert result["failure_evidence_summary"] == {
             "count": 1,
