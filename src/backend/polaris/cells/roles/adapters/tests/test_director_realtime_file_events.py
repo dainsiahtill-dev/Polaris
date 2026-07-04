@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor
 from polaris.cells.roles.adapters.internal.director.execution_tools import DirectorToolExecutor
 from polaris.kernelone.events.message_bus import MessageType
@@ -186,6 +187,7 @@ async def test_markdown_patch_file_is_fail_closed_without_file_event(tmp_path: P
     assert results[0]["tool"] == "patch_apply"
     assert results[0]["success"] is False
     assert results[0]["error"] == "patch_file_protocol_disabled"
+    assert results[0]["failure_class"] == FailureClassV1.PATCH_FILE_PROTOCOL_DISABLED.value
     assert results[0]["writes_allowed"] is False
     assert results[0]["result"]["repair_path"] == "native_tools_or_director_runtime_repair_required"
     assert not (tmp_path / "src" / "patch.ts").exists()
@@ -216,7 +218,7 @@ async def test_write_only_tool_fallback_rejects_read_calls_and_patch_blocks(tmp_
             "success": False,
             "ok": False,
             "error": "text_tool_protocol_disabled",
-            "failure_class": "text_tool_protocol_disabled",
+            "failure_class": FailureClassV1.TEXT_TOOL_PROTOCOL_DISABLED.value,
             "protocol_violation": "text_tool_protocol_disabled",
             "task_id": "task-write-only",
         }
@@ -242,6 +244,7 @@ async def test_write_only_tool_fallback_does_not_apply_markdown_without_write_to
     assert results[0]["tool"] == "patch_apply"
     assert results[0]["success"] is False
     assert results[0]["error"] == "patch_file_protocol_disabled"
+    assert results[0]["failure_class"] == FailureClassV1.PATCH_FILE_PROTOCOL_DISABLED.value
     assert results[0]["allow_patch_fallback_requested"] is False
     assert not (tmp_path / "src" / "ignored.ts").exists()
 
@@ -260,6 +263,7 @@ async def test_markdown_patch_file_returns_disabled_receipt_without_persisting_e
     assert item["status"] == "blocked"
     assert item["success"] is False
     assert item["error"] == "patch_file_protocol_disabled"
+    assert item["failure_class"] == FailureClassV1.PATCH_FILE_PROTOCOL_DISABLED.value
     assert item["result"]["authoritative_receipt"] is False
     assert not (tmp_path / "src" / "patch.ts").exists()
 

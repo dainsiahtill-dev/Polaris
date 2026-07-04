@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.kernelone.events.file_event_broadcaster import (
     broadcast_file_written,
     calculate_patch,
@@ -222,7 +223,7 @@ class DirectorPatchExecutor:
                     "success": False,
                     "ok": False,
                     "error": error_code,
-                    "failure_class": error_code,
+                    "failure_class": FailureClassV1.TEXT_TOOL_PROTOCOL_DISABLED.value,
                     "protocol_violation": error_code,
                     "task_id": task_id,
                 }
@@ -245,7 +246,7 @@ class DirectorPatchExecutor:
             "ok": False,
             "status": "blocked",
             "error": error_code,
-            "failure_class": "patch_file_protocol_disabled",
+            "failure_class": FailureClassV1.PATCH_FILE_PROTOCOL_DISABLED.value,
             "protocol_violation": error_code,
             "task_id": task_id,
             "writes_allowed": False,

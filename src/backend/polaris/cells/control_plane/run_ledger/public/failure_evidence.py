@@ -18,6 +18,8 @@ from typing import Any
 class FailureClassV1(str, Enum):
     """Canonical failure classes carried through run-ledger evidence."""
 
+    PATCH_FILE_PROTOCOL_DISABLED = "PATCH_FILE_PROTOCOL_DISABLED"
+    TEXT_TOOL_PROTOCOL_DISABLED = "TEXT_TOOL_PROTOCOL_DISABLED"
     TOOL_DISPATCH_DROPPED = "TOOL_DISPATCH_DROPPED"
     MISSING_BATCH_RECEIPT = "MISSING_BATCH_RECEIPT"
     MISSING_EFFECT_RECEIPT = "MISSING_EFFECT_RECEIPT"
@@ -204,19 +206,14 @@ def _merge_failure_evidence_rows_into_payload(
             *(str(row.get("failure_class") or "") for row in rows),
         ]
     )
+    evidence_ref_tokens: list[str] = list(_dedupe_text_tokens(payload.get("evidence_refs") or ()))
+    for row in rows:
+        raw_refs = row.get("evidence_refs")
+        if not isinstance(raw_refs, (list, tuple)):
+            continue
+        evidence_ref_tokens.extend(str(ref or "") for ref in raw_refs)
     payload["evidence_refs"] = _dedupe_text_tokens(
-        [
-            *list(payload.get("evidence_refs") or ()),
-            *(
-                str(ref or "")
-                for row in rows
-                for ref in (
-                    row.get("evidence_refs")
-                    if isinstance(row.get("evidence_refs"), (list, tuple))
-                    else ()
-                )
-            ),
-        ]
+        evidence_ref_tokens
     )
     return payload
 
@@ -235,7 +232,12 @@ def summarize_failed_gate_evidence_context_slot(value: Any) -> dict[str, Any]:
     """
 
     found = merge_failure_evidence_payload({}, value)
-    evidence_items = found.get("items") if isinstance(found.get("items"), (list, tuple)) else ()
+    raw_evidence_items = found.get("items")
+    evidence_items = list(raw_evidence_items) if isinstance(raw_evidence_items, (list, tuple)) else []
+    raw_diagnostics = found.get("diagnostics")
+    diagnostics = list(raw_diagnostics) if isinstance(raw_diagnostics, (list, tuple)) else []
+    raw_quality_errors = found.get("quality_errors")
+    quality_errors = list(raw_quality_errors) if isinstance(raw_quality_errors, (list, tuple)) else []
     first_item = next((dict(item) for item in evidence_items if isinstance(item, Mapping)), {})
     return {
         "schema_version": "polaris.failed_gate_evidence.context_slot.v1",
@@ -255,12 +257,8 @@ def summarize_failed_gate_evidence_context_slot(value: Any) -> dict[str, Any]:
         "evidence_refs": list(_dedupe_text_tokens(found.get("evidence_refs") or ())),
         "command": str(found.get("command") or found.get("verifier_command") or ""),
         "exit_code": _int_value(found.get("exit_code")),
-        "diagnostic_count": len(found.get("diagnostics") or [])
-        if isinstance(found.get("diagnostics"), (list, tuple))
-        else 0,
-        "quality_error_count": len(found.get("quality_errors") or [])
-        if isinstance(found.get("quality_errors"), (list, tuple))
-        else 0,
+        "diagnostic_count": len(diagnostics),
+        "quality_error_count": len(quality_errors),
         "failed_required_modalities": list(_dedupe_text_tokens(found.get("failed_required_modalities") or ())),
         "failed_checks": list(_dedupe_text_tokens(found.get("failed_checks") or ())),
     }

@@ -19,6 +19,10 @@ def test_normalize_failure_class_canonicalizes_known_values() -> None:
     assert normalize_failure_class("tool_dispatch_dropped") == FailureClassV1.TOOL_DISPATCH_DROPPED.value
     assert normalize_failure_class(" TOOL-DISPATCH-DROPPED ") == FailureClassV1.TOOL_DISPATCH_DROPPED.value
     assert normalize_failure_class(FailureClassV1.MISSING_EFFECT_RECEIPT) == FailureClassV1.MISSING_EFFECT_RECEIPT.value
+    assert normalize_failure_class("patch_file_protocol_disabled") == (
+        FailureClassV1.PATCH_FILE_PROTOCOL_DISABLED.value
+    )
+    assert normalize_failure_class("text-tool-protocol-disabled") == FailureClassV1.TEXT_TOOL_PROTOCOL_DISABLED.value
 
 
 def test_normalize_failure_class_preserves_unknown_values() -> None:
