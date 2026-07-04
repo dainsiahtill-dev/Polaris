@@ -21,6 +21,7 @@ from .failure_evidence import (
     merge_failure_evidence_payload,
     merge_failure_evidence_rows,
     normalize_failure_class,
+    summarize_failed_gate_evidence_context_slot,
     summarize_failure_evidence_rows,
 )
 from .job_token import JobToken
@@ -98,6 +99,7 @@ __all__ = [
     "read_run_provenance_bundle",
     "stable_hash",
     "stable_json",
+    "summarize_failed_gate_evidence_context_slot",
     "summarize_failure_evidence_rows",
     "summarize_run_ledger_projection",
     "task_boundary_tool_dispatch_from_lifecycle_metadata",

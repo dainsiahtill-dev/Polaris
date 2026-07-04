@@ -7,7 +7,10 @@ import json
 import re
 from typing import Any
 
-from polaris.cells.control_plane.run_ledger.public import merge_failure_evidence_payload
+from polaris.cells.control_plane.run_ledger.public import (
+    merge_failure_evidence_payload,
+    summarize_failed_gate_evidence_context_slot,
+)
 from polaris.kernelone.context.projection_engine import is_empty_run_card_message
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
@@ -1677,37 +1680,7 @@ def _failed_gate_evidence_payload(ai_request: Any | None) -> dict[str, Any]:
             predicate=_looks_like_failed_gate_evidence,
         )
         if found:
-            evidence_items = found.get("items") if isinstance(found.get("items"), (list, tuple)) else ()
-            first_item = next((dict(item) for item in evidence_items if isinstance(item, dict)), {})
-            return {
-                "schema_version": "polaris.failed_gate_evidence.context_slot.v1",
-                "source_schema_version": str(found.get("schema_version") or ""),
-                "source": str(found.get("source") or found.get("modality") or "failed_gate_evidence"),
-                "failure_class": str(found.get("failure_class") or first_item.get("failure_class") or ""),
-                "failure_classes": _string_list(found.get("failure_classes")),
-                "failure_evidence_count": len(evidence_items),
-                "responsible_layer": str(found.get("responsible_layer") or first_item.get("responsible_layer") or ""),
-                "repairable_by_director": _bool_value(
-                    found.get("repairable_by_director", first_item.get("repairable_by_director"))
-                ),
-                "requires_ce_replan": _bool_value(
-                    found.get("requires_ce_replan", first_item.get("requires_ce_replan"))
-                ),
-                "requires_pm_revision": _bool_value(
-                    found.get("requires_pm_revision", first_item.get("requires_pm_revision"))
-                ),
-                "evidence_refs": _string_list(found.get("evidence_refs")),
-                "command": str(found.get("command") or found.get("verifier_command") or ""),
-                "exit_code": _int_value(found.get("exit_code")),
-                "diagnostic_count": len(found.get("diagnostics") or [])
-                if isinstance(found.get("diagnostics"), (list, tuple))
-                else 0,
-                "quality_error_count": len(found.get("quality_errors") or [])
-                if isinstance(found.get("quality_errors"), (list, tuple))
-                else 0,
-                "failed_required_modalities": _string_list(found.get("failed_required_modalities")),
-                "failed_checks": _string_list(found.get("failed_checks")),
-            }
+            return summarize_failed_gate_evidence_context_slot(found)
     return {}
 
 

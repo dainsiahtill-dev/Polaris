@@ -8,6 +8,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     merge_failure_evidence_payload,
     merge_failure_evidence_rows,
     normalize_failure_class,
+    summarize_failed_gate_evidence_context_slot,
     summarize_failure_evidence_rows,
 )
 
@@ -136,6 +137,50 @@ def test_merge_failure_evidence_payload_projects_nested_mapping_rows() -> None:
         }
     ]
     assert payload["summary"] == "from upstream"
+
+
+def test_summarize_failed_gate_evidence_context_slot_projects_structured_payload() -> None:
+    summary = summarize_failed_gate_evidence_context_slot(
+        {
+            "schema_version": "failure_evidence_payload.v1",
+            "source": "qa_verdict",
+            "items": [
+                {
+                    "failure_class": "tool_dispatch_dropped",
+                    "responsible_layer": "execution_control_plane",
+                    "repairable_by_director": "false",
+                    "requires_ce_replan": True,
+                    "evidence_refs": ["provider_response:abc", "native_tool_call:def"],
+                }
+            ],
+            "command": "npm test",
+            "exit_code": "1",
+            "diagnostics": [{"code": "tool_dispatch_dropped"}],
+            "quality_errors": ["tool dispatch dropped"],
+            "failed_required_modalities": ["command"],
+            "failed_checks": ["tool_lifecycle"],
+        }
+    )
+
+    assert summary == {
+        "schema_version": "polaris.failed_gate_evidence.context_slot.v1",
+        "source_schema_version": "failure_evidence_payload.v1",
+        "source": "qa_verdict",
+        "failure_class": "tool_dispatch_dropped",
+        "failure_classes": ["tool_dispatch_dropped"],
+        "failure_evidence_count": 1,
+        "responsible_layer": "execution_control_plane",
+        "repairable_by_director": False,
+        "requires_ce_replan": True,
+        "requires_pm_revision": False,
+        "evidence_refs": ["provider_response:abc", "native_tool_call:def"],
+        "command": "npm test",
+        "exit_code": 1,
+        "diagnostic_count": 1,
+        "quality_error_count": 1,
+        "failed_required_modalities": ["command"],
+        "failed_checks": ["tool_lifecycle"],
+    }
 
 
 def test_summarize_failure_evidence_rows_uses_structured_rows_only() -> None:
