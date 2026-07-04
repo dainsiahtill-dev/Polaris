@@ -17,6 +17,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     native_tool_call_facts_from_raw_calls,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
+    project_completion_audit_evidence_to_metadata,
     project_completion_dispatch_evidence_to_metadata,
     project_lifecycle_failure_evidence_to_metadata,
     project_native_tool_call_facts_from_evidence_to_metadata,
@@ -764,6 +765,60 @@ def test_project_native_tool_call_facts_from_evidence_to_metadata_ignores_missin
     project_native_tool_call_facts_from_evidence_to_metadata(metadata, {})
 
     assert metadata == {"native_tool_calls_count": 9, "native_tool_call_names": ["stale_tool"]}
+
+
+def test_project_completion_audit_evidence_to_metadata_projects_lifecycle_facts() -> None:
+    metadata: dict[str, object] = {}
+    envelope = {
+        "schema_version": "native_tool_call_envelope.v1",
+        "envelope_id": "native-completion-write",
+        "tool_name": "write_file",
+    }
+
+    project_completion_audit_evidence_to_metadata(
+        metadata,
+        {
+            "required_tools": ["write_file"],
+            "native_tool_calls_count": 9,
+            "native_tool_call_names": ["stale_tool"],
+            "tool_call_lifecycle_receipt": {
+                "schema_version": "tool_call_lifecycle_receipt.v1",
+                "native_tool_call_envelope_refs": [envelope],
+            },
+        },
+    )
+
+    assert metadata["required_tools"] == ["write_file"]
+    assert metadata["native_tool_calls_count"] == 1
+    assert metadata["native_tool_call_names"] == ["write_file"]
+    assert metadata["tool_call_lifecycle_receipt"]["native_tool_call_envelope_refs"] == [envelope]
+    assert metadata["failure_evidence"][0]["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+
+
+def test_project_completion_audit_evidence_to_metadata_preserves_direct_failure_evidence() -> None:
+    metadata: dict[str, object] = {}
+    failure_evidence = [
+        {
+            "schema_version": "failure_evidence.v1",
+            "failure_class": "TOOL_RESULT_FAILED",
+            "responsible_layer": "tool_executor",
+        }
+    ]
+
+    project_completion_audit_evidence_to_metadata(
+        metadata,
+        {
+            "native_tool_calls_count": 2,
+            "native_tool_call_names": ["read_file"],
+            "failure_evidence": failure_evidence,
+            "failure_evidence_summary": {"count": 1, "latest_failure_class": "TOOL_RESULT_FAILED"},
+        },
+    )
+
+    assert metadata["native_tool_calls_count"] == 2
+    assert metadata["native_tool_call_names"] == ["read_file"]
+    assert metadata["failure_evidence"] == failure_evidence
+    assert metadata["failure_evidence_summary"] == {"count": 1, "latest_failure_class": "TOOL_RESULT_FAILED"}
 
 
 def test_project_completion_dispatch_evidence_keeps_native_envelope_refs() -> None:

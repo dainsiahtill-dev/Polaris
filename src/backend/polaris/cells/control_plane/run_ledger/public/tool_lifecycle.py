@@ -1136,6 +1136,13 @@ _COMPLETION_DISPATCH_EVIDENCE_KEYS: tuple[str, ...] = (
     "native_tool_call_envelope_refs",
 )
 
+_COMPLETION_AUDIT_EVIDENCE_KEYS: tuple[str, ...] = (
+    "native_tool_calls_count",
+    "native_tool_call_names",
+    "failure_evidence",
+    "failure_evidence_summary",
+)
+
 
 def project_completion_dispatch_evidence_to_metadata(
     metadata: dict[str, Any],
@@ -1169,6 +1176,35 @@ def project_completion_dispatch_evidence_to_metadata(
             "native_tool_call_envelope_refs",
             [dict(item) for item in native_tool_call_envelopes],
         )
+
+
+def project_completion_audit_evidence_to_metadata(
+    metadata: dict[str, Any],
+    *evidence_sources: Mapping[str, Any] | None,
+) -> None:
+    """Project completion audit evidence and lifecycle-derived facts.
+
+    Boundary:
+        Completion audit evidence is produced by stream and non-stream role
+        execution paths, but Run Ledger owns the lifecycle/native/failure fact
+        projection. Callers should pass candidate evidence mappings here rather
+        than copying native-tool or failure-evidence keys locally.
+
+    Complexity:
+        O(s * k + n) time where ``s`` is source count, ``k`` is fixed evidence
+        keys, and ``n`` is lifecycle evidence size; O(n) additional memory.
+    """
+
+    project_completion_dispatch_evidence_to_metadata(metadata, *evidence_sources)
+    for evidence_source in evidence_sources:
+        if not isinstance(evidence_source, Mapping):
+            continue
+        for evidence_key in _COMPLETION_AUDIT_EVIDENCE_KEYS:
+            if evidence_key not in evidence_source or evidence_key in metadata:
+                continue
+            evidence_value = evidence_source[evidence_key]
+            metadata[evidence_key] = dict(evidence_value) if isinstance(evidence_value, Mapping) else evidence_value
+    project_tool_lifecycle_metadata(metadata)
 
 
 def failure_evidence_from_lifecycle_receipt(value: Any) -> dict[str, Any]:
@@ -1398,8 +1434,11 @@ __all__ = [
     "build_tool_dispatch_dropped_lifecycle_from_anomaly_flags",
     "failure_evidence_from_lifecycle_receipt",
     "native_tool_call_facts_from_lifecycle_receipt",
+    "native_tool_call_facts_from_raw_calls",
     "normalize_native_tool_call_envelope_refs",
     "normalize_tool_call_lifecycle_receipt",
+    "project_completion_audit_evidence_to_metadata",
+    "project_completion_dispatch_evidence_to_metadata",
     "project_lifecycle_failure_evidence_to_metadata",
     "project_native_tool_call_facts_to_metadata",
     "project_tool_lifecycle_event",

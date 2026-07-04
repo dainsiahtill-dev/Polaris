@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from typing import Any, Protocol
 
 from polaris.cells.control_plane.run_ledger.public import (
-    project_completion_dispatch_evidence_to_metadata,
+    project_completion_audit_evidence_to_metadata,
     project_tool_lifecycle_metadata,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnResult
@@ -36,13 +36,6 @@ _LLM_RESPONSE_METADATA_KEYS: tuple[str, ...] = (
     "contextTokens",
     "usage",
     "usage_source",
-    "failure_evidence",
-    "failure_evidence_summary",
-)
-
-_ROLE_RESULT_COMPLETION_EVIDENCE_KEYS: tuple[str, ...] = (
-    "native_tool_calls_count",
-    "native_tool_call_names",
     "failure_evidence",
     "failure_evidence_summary",
 )
@@ -161,12 +154,7 @@ def project_completion_audit_evidence(metadata: dict[str, Any], evidence: Mappin
 
     if not isinstance(evidence, Mapping):
         return
-    project_completion_dispatch_evidence_to_metadata(metadata, evidence)
-    for key in _ROLE_RESULT_COMPLETION_EVIDENCE_KEYS:
-        if key in evidence and key not in metadata:
-            value = evidence[key]
-            metadata[key] = dict(value) if isinstance(value, dict) else value
-    project_tool_lifecycle_metadata(metadata)
+    project_completion_audit_evidence_to_metadata(metadata, evidence)
 
 
 def role_turn_error_result(
