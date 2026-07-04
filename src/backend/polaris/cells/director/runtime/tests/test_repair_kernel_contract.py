@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from polaris.cells.control_plane.run_ledger.public import TaskBoundaryFailureClassV1
 from polaris.cells.director.runtime.internal.repair_kernel import (
     PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL,
     PatchComposer,
@@ -4780,6 +4781,9 @@ def test_missing_declared_target_runtime_declines_file_fabrication(tmp_path: Pat
     assert item["coverage_status"] == "metadata_only_not_executable"
     assert item["recommended_route"] == "task_boundary"
     assert item["runtime_blocker_reasons"] == ["task_boundary_required"]
+    assert item["runtime_blockers"][0]["metadata"]["failure_class"] == (
+        TaskBoundaryFailureClassV1.INCOMPLETE_MATERIALIZATION.value
+    )
     assert "deterministic_missing_declared_target_repair" in item["matched_source_tools"]
 
     probe = query_director_repair_plan_probe(

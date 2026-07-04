@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Mapping
 
+from polaris.cells.control_plane.run_ledger.public import TaskBoundaryFailureClassV1
+
 from .contracts import RepairDiagnostic
 from .cpp_syntax import (
     CPP_INCLUDE_PATH_SOURCE_TOOL,
@@ -868,7 +870,7 @@ def _runtime_blockers_for_matched_rules(rules: Sequence[RepairRuleDefinition]) -
                     ),
                     "metadata": {
                         "responsible_layer": "task_boundary",
-                        "failure_class": "incomplete_materialization",
+                        "failure_class": TaskBoundaryFailureClassV1.INCOMPLETE_MATERIALIZATION.value,
                         "runtime_executable": False,
                     },
                 }
