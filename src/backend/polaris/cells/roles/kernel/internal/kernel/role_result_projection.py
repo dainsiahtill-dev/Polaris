@@ -15,7 +15,10 @@ from polaris.cells.control_plane.run_ledger.public import (
     merge_failure_evidence_rows,
     normalize_tool_call_lifecycle_receipt,
 )
-from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_call_facts
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+    native_tool_call_facts,
+    project_native_tool_call_facts_to_metadata,
+)
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
 
@@ -169,9 +172,11 @@ def project_native_tool_call_facts(metadata: dict[str, Any], evidence: dict[str,
     if not any(key in evidence for key in _NATIVE_TOOL_FACT_KEYS):
         return
     facts = native_tool_call_facts(evidence, ())
-    metadata["native_tool_calls_count"] = facts["native_tool_calls_count"]
-    if any(key in evidence for key in _NATIVE_TOOL_NAME_FACT_KEYS):
-        metadata["native_tool_call_names"] = facts["native_tool_call_names"]
+    project_native_tool_call_facts_to_metadata(
+        metadata,
+        facts,
+        project_names=any(key in evidence for key in _NATIVE_TOOL_NAME_FACT_KEYS),
+    )
 
 
 def _project_canonical_tool_lifecycle_receipt(metadata: dict[str, Any]) -> None:

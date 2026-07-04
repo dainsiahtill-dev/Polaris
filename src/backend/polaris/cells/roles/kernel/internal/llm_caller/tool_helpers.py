@@ -310,6 +310,39 @@ def native_tool_call_facts(
     }
 
 
+def project_native_tool_call_facts_to_metadata(
+    metadata: dict[str, Any],
+    facts: Mapping[str, Any],
+    *,
+    project_names: bool = True,
+) -> None:
+    """Write canonical native tool-call facts to a metadata projection.
+
+    Boundary:
+        This helper owns only the legacy metadata projection shape. Callers
+        still own where facts are derived from, and may suppress name projection
+        when their source evidence did not contain names.
+
+    Complexity:
+        O(n) time and memory for normalizing the optional tool-name list.
+    """
+
+    try:
+        metadata["native_tool_calls_count"] = int(
+            str(facts.get("native_tool_calls_count") or "0").strip()
+        )
+    except (TypeError, ValueError):
+        metadata["native_tool_calls_count"] = 0
+    if not project_names:
+        return
+    names = facts.get("native_tool_call_names")
+    metadata["native_tool_call_names"] = [
+        name
+        for item in (names if isinstance(names, (list, tuple)) else [])
+        if (name := str(item or "").strip())
+    ]
+
+
 def _native_tool_call_arguments(call: Mapping[str, Any]) -> Any:
     function = call.get("function")
     if isinstance(function, Mapping) and "arguments" in function:
@@ -1535,5 +1568,6 @@ __all__ = [
     "native_tool_call_facts",
     "native_tool_call_name",
     "native_tool_call_names",
+    "project_native_tool_call_facts_to_metadata",
     "resolve_tool_call_provider",
 ]

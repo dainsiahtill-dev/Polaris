@@ -38,6 +38,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_call_count as derive_native_tool_call_count,
     native_tool_call_envelopes_from_metadata,
     native_tool_call_facts as derive_native_tool_call_facts,
+    project_native_tool_call_facts_to_metadata,
 )
 from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
     build_corrective_context,
@@ -187,14 +188,7 @@ def _with_decision_metadata(decision: TurnDecision, metadata: dict[str, Any]) ->
 def _project_native_tool_call_facts(metadata: dict[str, Any], facts: Mapping[str, Any]) -> None:
     """Project canonical native tool-call facts over legacy top-level aliases."""
 
-    try:
-        metadata["native_tool_calls_count"] = int(str(facts.get("native_tool_calls_count") or "0").strip())
-    except (TypeError, ValueError):
-        metadata["native_tool_calls_count"] = 0
-    names = facts.get("native_tool_call_names")
-    metadata["native_tool_call_names"] = [
-        name for item in (names if isinstance(names, list) else []) if (name := str(item or "").strip())
-    ]
+    project_native_tool_call_facts_to_metadata(metadata, facts)
 
 
 async def run_decision_pipeline(
