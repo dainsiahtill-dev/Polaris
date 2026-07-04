@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 from polaris.cells.runtime.task_runtime.internal.execution_session import (
     TaskExecutionSession,
+    build_task_execution_bulk_suspend_result,
     build_task_execution_claim_result,
     build_task_execution_heartbeat_result,
     build_task_execution_transition_result,
@@ -361,6 +362,38 @@ def test_build_task_execution_transition_result_projects_session_mismatch_shape(
     assert result["session"]["session_id"] == "tx-1"
     assert result["session"]["status"] == "active"
     assert "task" not in result
+
+
+def test_build_task_execution_bulk_suspend_result_projects_invalid_run_shape() -> None:
+    result = build_task_execution_bulk_suspend_result(
+        success=False,
+        reason="invalid_run_id",
+        run_id="",
+    )
+
+    assert result == {
+        "success": False,
+        "reason": "invalid_run_id",
+        "run_id": "",
+        "suspended_count": 0,
+        "task_ids": [],
+        "failed": [],
+    }
+
+
+def test_build_task_execution_bulk_suspend_result_projects_aggregate_shape() -> None:
+    result = build_task_execution_bulk_suspend_result(
+        run_id="run-1",
+        suspended_rows=({"id": 7, "status": "blocked"}, {"id": "task-8", "status": "blocked"}),
+        failed=({"task_id": 9, "reason": "task_update_failed"},),
+    )
+
+    assert result["success"] is False
+    assert result["reason"] == "suspended"
+    assert result["run_id"] == "run-1"
+    assert result["suspended_count"] == 2
+    assert result["task_ids"] == ["7", "task-8"]
+    assert result["failed"] == [{"task_id": 9, "reason": "task_update_failed"}]
 
 
 def test_project_task_row_runtime_state_uses_active_session_projection() -> None:

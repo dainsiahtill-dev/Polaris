@@ -22,6 +22,7 @@ from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_root
 
 from .execution_session import (
     TaskExecutionSession,
+    build_task_execution_bulk_suspend_result,
     build_task_execution_claim_result,
     build_task_execution_heartbeat_result,
     build_task_execution_transition_result,
@@ -938,7 +939,11 @@ class TaskRuntimeService:
 
         normalized_run_id = str(run_id or "").strip()
         if not normalized_run_id:
-            return {"success": False, "reason": "invalid_run_id", "suspended_count": 0, "task_ids": []}
+            return build_task_execution_bulk_suspend_result(
+                success=False,
+                reason="invalid_run_id",
+                run_id=normalized_run_id,
+            )
 
         suspended_rows: list[dict[str, Any]] = []
         failed: list[dict[str, Any]] = []
@@ -996,14 +1001,11 @@ class TaskRuntimeService:
                 },
             )
 
-        return {
-            "success": not failed,
-            "reason": "suspended" if suspended_rows else "no_active_sessions_for_run",
-            "run_id": normalized_run_id,
-            "suspended_count": len(suspended_rows),
-            "task_ids": [str(row.get("id") or "") for row in suspended_rows],
-            "failed": failed,
-        }
+        return build_task_execution_bulk_suspend_result(
+            run_id=normalized_run_id,
+            suspended_rows=suspended_rows,
+            failed=failed,
+        )
 
     def list_ready(self) -> list[Task]:
         self.refresh_dependency_unblocks()

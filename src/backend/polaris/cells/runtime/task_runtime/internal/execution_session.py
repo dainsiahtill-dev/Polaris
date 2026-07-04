@@ -368,6 +368,42 @@ def build_task_execution_transition_result(
     )
 
 
+def build_task_execution_bulk_suspend_result(
+    *,
+    run_id: Any,
+    suspended_rows: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    failed: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    reason: Any = "",
+    success: bool | None = None,
+) -> dict[str, Any]:
+    """Project run-scoped bulk suspension into its stable result shape.
+
+    Boundary:
+        Bulk suspension owns orchestration-run cancellation results. It reports
+        aggregate row ids and per-task failures, while individual task/session
+        state transitions remain owned by the service method and ledger events.
+
+    Complexity:
+        O(s + f) time and memory for suspended rows and failed task records.
+    """
+
+    normalized_run_id = str(run_id or "").strip()
+    suspended_payload = [dict(row) for row in suspended_rows]
+    failed_payload = [dict(item) for item in failed]
+    resolved_success = not failed_payload if success is None else bool(success)
+    resolved_reason = str(reason or "").strip()
+    if not resolved_reason:
+        resolved_reason = "suspended" if suspended_payload else "no_active_sessions_for_run"
+    return {
+        "success": resolved_success,
+        "reason": resolved_reason,
+        "run_id": normalized_run_id,
+        "suspended_count": len(suspended_payload),
+        "task_ids": [str(row.get("id") or "") for row in suspended_payload],
+        "failed": failed_payload,
+    }
+
+
 def build_task_runtime_metadata(
     *,
     session: TaskExecutionSession,
@@ -680,6 +716,7 @@ class TaskExecutionSession:
 
 __all__ = [
     "TaskExecutionSession",
+    "build_task_execution_bulk_suspend_result",
     "build_task_execution_claim_result",
     "build_task_execution_heartbeat_result",
     "build_task_execution_transition_result",
