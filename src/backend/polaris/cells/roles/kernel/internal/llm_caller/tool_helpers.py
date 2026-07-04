@@ -299,6 +299,18 @@ def native_tool_call_names(
     ]
 
 
+def native_tool_call_facts(
+    metadata: Mapping[str, Any] | None,
+    native_tool_calls: Sequence[Any],
+) -> dict[str, Any]:
+    """Project canonical native tool-call count/name facts from one evidence path."""
+
+    return {
+        "native_tool_calls_count": native_tool_call_count(metadata, native_tool_calls),
+        "native_tool_call_names": native_tool_call_names(metadata, native_tool_calls),
+    }
+
+
 def _native_tool_call_arguments(call: Mapping[str, Any]) -> Any:
     function = call.get("function")
     if isinstance(function, Mapping) and "arguments" in function:
@@ -1521,6 +1533,7 @@ __all__ = [
     "native_tool_call_count",
     "native_tool_call_count_from_metadata",
     "native_tool_call_envelopes_from_metadata",
+    "native_tool_call_facts",
     "native_tool_call_name",
     "native_tool_call_names",
     "resolve_tool_call_provider",

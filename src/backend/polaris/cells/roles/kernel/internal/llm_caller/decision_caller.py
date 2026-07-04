@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .tool_helpers import native_tool_call_count, native_tool_call_names
+from .tool_helpers import native_tool_call_facts
 
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
@@ -53,11 +53,10 @@ class DecisionCaller:
             raise RuntimeError(str(response.error))
         native_tool_calls = getattr(response, "tool_calls", []) or []
         metadata = dict(getattr(response, "metadata", {}) or {})
-        native_count = native_tool_call_count(metadata, native_tool_calls)
-        tool_names = native_tool_call_names(metadata, native_tool_calls)
+        native_facts = native_tool_call_facts(metadata, native_tool_calls)
+        native_count = int(native_facts["native_tool_calls_count"])
         metadata["decision_caller_native_tool_calls_count"] = native_count
-        metadata["native_tool_calls_count"] = native_count
-        metadata["native_tool_call_names"] = tool_names
+        metadata.update(native_facts)
         metadata["decision_caller_tool_call_provider"] = str(
             getattr(response, "tool_call_provider", "") or metadata.get("tool_call_provider") or "auto"
         )

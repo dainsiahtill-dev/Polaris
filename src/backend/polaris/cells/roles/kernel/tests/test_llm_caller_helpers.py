@@ -47,6 +47,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     _tool_call_lifecycle_receipts_from_metadata,
     build_native_tool_schemas,
     native_tool_call_envelopes_from_metadata,
+    native_tool_call_facts,
     native_tool_call_names,
 )
 from polaris.cells.roles.profile.public.service import load_core_roles
@@ -726,6 +727,22 @@ class TestExtractNativeToolCalls:
 
         assert native_tool_call_count(metadata, raw_calls) == 2
         assert native_tool_call_names(metadata, raw_calls) == ["repo_rg", "read_file"]
+
+    def test_native_tool_call_facts_prefer_envelopes(self) -> None:
+        metadata = {
+            "native_tool_call_envelopes": [
+                {"schema_version": "native_tool_call_envelope.v1", "tool_name": "repo_rg"},
+                {"schema_version": "native_tool_call_envelope.v1", "tool_name": "read_file"},
+            ],
+            "native_tool_calls_count": 9,
+            "native_tool_call_names": ["stale_tool"],
+        }
+        raw_calls = [{"function": {"name": "write_file"}}]
+
+        assert native_tool_call_facts(metadata, raw_calls) == {
+            "native_tool_calls_count": 2,
+            "native_tool_call_names": ["repo_rg", "read_file"],
+        }
 
     def test_native_tool_call_envelopes_deduplicate_by_envelope_identity(self) -> None:
         metadata = {
