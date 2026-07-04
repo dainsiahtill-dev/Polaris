@@ -549,6 +549,38 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
     )
     assert missing_effect_receipt.metadata["tool_call_lifecycle_receipt"]["failure_class"] == "MISSING_EFFECT_RECEIPT"
 
+    blocked_without_failure_class = runtime_service._to_contract_result(
+        role="director",
+        workspace=".",
+        task_id="t",
+        session_id="se",
+        run_id="ru",
+        result=RoleTurnResult(
+            content="write state unclear",
+            metadata={
+                "tool_call_lifecycle_receipt": {
+                    "schema_version": "tool_call_lifecycle_receipt.v1",
+                    "dispatch_status": "blocked",
+                    "native_tool_calls_count": 1,
+                    "decoded_tool_calls_count": 1,
+                    "dispatched_tool_calls_count": 1,
+                    "tool_result_count": 1,
+                    "effect_receipt_count": 0,
+                }
+            },
+        ),
+    )
+    assert blocked_without_failure_class.ok is False
+    assert blocked_without_failure_class.status == "failed"
+    assert blocked_without_failure_class.error_code == "tool_lifecycle_unknown"
+    assert blocked_without_failure_class.error_message == (
+        "tool_lifecycle_unknown: tool lifecycle reported TOOL_LIFECYCLE_UNKNOWN"
+    )
+    assert blocked_without_failure_class.metadata["failure_evidence"][0]["failure_class"] == "TOOL_LIFECYCLE_UNKNOWN"
+    assert blocked_without_failure_class.metadata["failure_evidence"][0]["metadata"]["source"] == (
+        "tool_call_lifecycle_receipt.v1"
+    )
+
     failed = runtime_service._to_contract_result(
         role="pm",
         workspace=".",

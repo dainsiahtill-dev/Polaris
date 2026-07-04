@@ -14,6 +14,7 @@ from typing import Any
 from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
     build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
+    failure_evidence_from_lifecycle_receipt,
     is_failure_class,
     native_tool_call_facts_from_lifecycle_receipt,
     normalize_failure_class,
@@ -78,6 +79,14 @@ def _lifecycle_receipt_from_metadata(metadata: Mapping[str, Any]) -> dict[str, A
     return None
 
 
+def _lifecycle_failure_evidence_from_metadata(metadata: Mapping[str, Any]) -> dict[str, Any] | None:
+    lifecycle = _lifecycle_receipt_from_metadata(metadata)
+    if lifecycle is None:
+        return None
+    evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
+    return dict(evidence) if isinstance(evidence, Mapping) and evidence.get("failure_class") else None
+
+
 def _project_lifecycle_native_tool_facts(metadata: dict[str, Any], lifecycle: Mapping[str, Any]) -> None:
     facts = native_tool_call_facts_from_lifecycle_receipt(lifecycle)
     project_native_tool_call_facts_to_metadata(
@@ -123,15 +132,12 @@ def _has_tool_dispatch_evidence(result: RoleTurnResult) -> bool:
 
 def _tool_dispatch_dropped_error(result: RoleTurnResult) -> str:
     metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
-    lifecycle = _lifecycle_receipt_from_metadata(metadata)
-    if lifecycle is not None:
-        dispatch_status = str(lifecycle.get("dispatch_status") or "").strip().lower()
-        failure_class = str(lifecycle.get("failure_class") or "").strip()
-        if dispatch_status == "dropped" or is_failure_class(
-            failure_class,
-            FailureClassV1.TOOL_DISPATCH_DROPPED,
-        ):
-            return "tool_dispatch_dropped: required or native tool calls had no dispatch/effect receipt"
+    lifecycle_failure = _lifecycle_failure_evidence_from_metadata(metadata)
+    if lifecycle_failure is not None and is_failure_class(
+        lifecycle_failure.get("failure_class"),
+        FailureClassV1.TOOL_DISPATCH_DROPPED,
+    ):
+        return "tool_dispatch_dropped: required or native tool calls had no dispatch/effect receipt"
     tool_calls = _extract_tool_calls(result)
     native_envelopes = _native_tool_call_envelopes(result)
     if (not tool_calls and not native_envelopes) or _has_tool_dispatch_evidence(result):
@@ -141,10 +147,10 @@ def _tool_dispatch_dropped_error(result: RoleTurnResult) -> str:
 
 def _tool_lifecycle_failure_error(result: RoleTurnResult) -> tuple[str, str]:
     metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
-    lifecycle = _lifecycle_receipt_from_metadata(metadata)
-    if lifecycle is None:
+    lifecycle_failure = _lifecycle_failure_evidence_from_metadata(metadata)
+    if lifecycle_failure is None:
         return "", ""
-    failure_class = normalize_failure_class(lifecycle.get("failure_class"))
+    failure_class = normalize_failure_class(lifecycle_failure.get("failure_class"))
     if not failure_class or is_failure_class(failure_class, FailureClassV1.TOOL_DISPATCH_DROPPED):
         return "", ""
     error_code = str(failure_class).strip().lower()
