@@ -52,6 +52,7 @@ from .tool_lifecycle import (
     normalize_tool_call_lifecycle_receipt,
     project_lifecycle_failure_evidence_to_metadata,
     project_native_tool_call_facts_to_metadata,
+    task_boundary_tool_dispatch_from_lifecycle_metadata,
 )
 
 __all__ = [
@@ -99,4 +100,5 @@ __all__ = [
     "stable_json",
     "summarize_failure_evidence_rows",
     "summarize_run_ledger_projection",
+    "task_boundary_tool_dispatch_from_lifecycle_metadata",
 ]

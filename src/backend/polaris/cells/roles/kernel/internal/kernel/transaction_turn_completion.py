@@ -15,9 +15,7 @@ from typing import TYPE_CHECKING, Any
 from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
     build_tool_call_lifecycle_receipt,
-    is_failure_class,
-    native_tool_call_facts_from_lifecycle_receipt,
-    normalize_tool_call_lifecycle_receipt,
+    task_boundary_tool_dispatch_from_lifecycle_metadata,
 )
 from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
     _build_turn_history_and_events,
@@ -233,15 +231,6 @@ def _build_completion_metadata(
         metadata["handoff_pack"] = handoff_pack.to_dict()
         metadata["transaction_kind"] = "handoff_workflow"
     return metadata
-
-
-def _safe_int(value: Any) -> int:
-    if isinstance(value, bool) or value is None:
-        return 0
-    try:
-        return max(0, int(value))
-    except (TypeError, ValueError):
-        return 0
 
 
 def _copy_string_list(value: Any) -> list[str]:
@@ -502,7 +491,7 @@ def _append_task_boundary_verdict(
             run_id=str(request.run_id or turn_id),
             context_override=getattr(request, "context_override", None),
             tool_results=tool_results,
-            tool_dispatch=_tool_dispatch_from_lifecycle(metadata),
+            tool_dispatch=task_boundary_tool_dispatch_from_lifecycle_metadata(metadata),
             needs_followup_workflow=bool(metadata.get("needs_followup_workflow")),
             workflow_reason=str(metadata.get("workflow_reason") or ""),
             error_message=error_msg,
@@ -511,28 +500,6 @@ def _append_task_boundary_verdict(
     except (OSError, RuntimeError, TypeError, ValueError):
         logger.debug("failed to append role-turn task boundary verdict", exc_info=True)
         return None
-
-
-def _tool_dispatch_from_lifecycle(metadata: Mapping[str, Any]) -> dict[str, Any] | None:
-    lifecycle = metadata.get("tool_call_lifecycle_receipt") or metadata.get("tool_call_lifecycle")
-    if not isinstance(lifecycle, Mapping):
-        return None
-    lifecycle = normalize_tool_call_lifecycle_receipt(lifecycle)
-    dispatch_status = str(lifecycle.get("dispatch_status") or "").strip()
-    failure_class = str(lifecycle.get("failure_class") or "").strip()
-    if dispatch_status != "dropped" and not is_failure_class(failure_class, FailureClassV1.TOOL_DISPATCH_DROPPED):
-        return None
-    native_facts = native_tool_call_facts_from_lifecycle_receipt(lifecycle)
-    return {
-        "status": "dropped",
-        "dropped": True,
-        "native_tool_calls_count": _safe_int(native_facts.get("native_tool_calls_count")),
-        "native_tool_call_names": list(native_facts.get("native_tool_call_names") or []),
-        "decoded_tool_calls_count": _safe_int(lifecycle.get("decoded_tool_calls_count")),
-        "dispatched_tool_calls_count": _safe_int(lifecycle.get("dispatched_tool_calls_count")),
-        "provider_response_hash": str(lifecycle.get("provider_response_hash") or "").strip(),
-        "reason": str(lifecycle.get("reason") or "").strip(),
-    }
 
 
 def _apply_task_boundary_completion_gate(

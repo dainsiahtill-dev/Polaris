@@ -14,6 +14,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public import task_boundary_tool_dispatch_from_lifecycle_metadata
 from polaris.cells.roles.kernel.internal.kernel.commit_protocol import _build_turn_history_and_events
 from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     project_completion_audit_evidence,
@@ -25,7 +26,6 @@ from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
 from polaris.cells.roles.kernel.internal.kernel.task_boundary import append_role_turn_task_boundary_verdict
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_completion import (
     MISSING_DISPATCH_COMPLETION_ERROR,
-    _tool_dispatch_from_lifecycle,
     record_missing_dispatch_lifecycle_receipt,
 )
 from polaris.cells.roles.kernel.public.turn_events import (
@@ -212,7 +212,7 @@ class StreamEventProjector:
             event.turn_id,
             tool_results,
             metadata,
-            tool_dispatch=_tool_dispatch_from_lifecycle(metadata),
+            tool_dispatch=task_boundary_tool_dispatch_from_lifecycle_metadata(metadata),
         )
         task_boundary_error = _task_boundary_error_message(task_boundary_verdict, metadata)
         if lifecycle_receipt is not None:

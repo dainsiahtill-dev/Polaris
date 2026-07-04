@@ -10,6 +10,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
     ReadRunLedgerProjectionQueryV1,
     read_run_ledger_projection,
+    task_boundary_tool_dispatch_from_lifecycle_metadata,
 )
 from polaris.cells.roles.kernel.internal.kernel import transaction_turn_completion as completion
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
@@ -277,7 +278,7 @@ def test_task_boundary_tool_dispatch_accepts_canonical_lifecycle_receipt() -> No
         "dropped_tool_calls": [{"tool_name": "write_file", "reason": "tool_dispatch_dropped"}],
     }
 
-    dispatch = completion._tool_dispatch_from_lifecycle({"tool_call_lifecycle_receipt": lifecycle})
+    dispatch = task_boundary_tool_dispatch_from_lifecycle_metadata({"tool_call_lifecycle_receipt": lifecycle})
 
     assert dispatch == {
         "status": "dropped",

@@ -496,6 +496,41 @@ def native_tool_call_facts_from_lifecycle_receipt(value: Any) -> dict[str, Any]:
     }
 
 
+def task_boundary_tool_dispatch_from_lifecycle_metadata(metadata: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Project TaskBoundary tool-dispatch evidence from lifecycle metadata.
+
+    Boundary:
+        This is a read-only projection from the public
+        ``tool_call_lifecycle_receipt.v1`` evidence shape. Role kernels should
+        use this helper instead of locally reinterpreting lifecycle count,
+        status, and native-tool fields before calling the TaskBoundary gate.
+
+    Complexity:
+        O(e + d) time and memory through
+        :func:`native_tool_call_facts_from_lifecycle_receipt`.
+    """
+
+    lifecycle = metadata.get("tool_call_lifecycle_receipt") or metadata.get("tool_call_lifecycle")
+    if not isinstance(lifecycle, Mapping):
+        return None
+    lifecycle = normalize_tool_call_lifecycle_receipt(lifecycle)
+    dispatch_status = _clean_string(lifecycle.get("dispatch_status"))
+    failure_class = normalize_failure_class(lifecycle.get("failure_class"))
+    if dispatch_status != "dropped" and failure_class != FailureClassV1.TOOL_DISPATCH_DROPPED.value:
+        return None
+    native_facts = native_tool_call_facts_from_lifecycle_receipt(lifecycle)
+    return {
+        "status": "dropped",
+        "dropped": True,
+        "native_tool_calls_count": _int_value(native_facts.get("native_tool_calls_count")),
+        "native_tool_call_names": list(native_facts.get("native_tool_call_names") or []),
+        "decoded_tool_calls_count": _int_value(lifecycle.get("decoded_tool_calls_count")),
+        "dispatched_tool_calls_count": _int_value(lifecycle.get("dispatched_tool_calls_count")),
+        "provider_response_hash": _clean_string(lifecycle.get("provider_response_hash")),
+        "reason": _clean_string(lifecycle.get("reason")),
+    }
+
+
 def project_native_tool_call_facts_to_metadata(
     metadata: dict[str, Any],
     facts: Mapping[str, Any],
