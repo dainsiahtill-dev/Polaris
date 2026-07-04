@@ -607,6 +607,31 @@ def test_normalizer_preserves_structured_artifact_quality_issue() -> None:
     assert diagnostic.metadata["diagnostic_archetype"] == "object_literal_syntax"
 
 
+def test_normalizer_preserves_structured_npm_script_metadata() -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            {
+                "source": "artifact_quality",
+                "code": "npm_manifest_invalid",
+                "message": "npm manifest script contract violation",
+                "path": "package.json",
+                "manifest_path": "package.json",
+                "script_name": "lint",
+                "script_issue": "placeholder_command",
+                "raw": "typed script issue",
+            }
+        ]
+    )
+
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    assert diagnostic.code == "npm_manifest_invalid"
+    assert diagnostic.path == "package.json"
+    assert diagnostic.metadata["manifest_path"] == "package.json"
+    assert diagnostic.metadata["script_name"] == "lint"
+    assert diagnostic.metadata["script_issue"] == "placeholder_command"
+
+
 def test_public_normalizer_preserves_structured_diagnostic_payload() -> None:
     diagnostics = normalize_director_repair_diagnostics(
         [

@@ -799,6 +799,46 @@ def test_npm_script_contract_uses_typed_placeholder_script_metadata() -> None:
     assert plan.operations[0].value == "node --check src/index.js"
 
 
+def test_npm_script_contract_uses_structured_top_level_script_metadata() -> None:
+    package_text = json.dumps(
+        {
+            "name": "sample",
+            "version": "1.0.0",
+            "type": "module",
+            "scripts": {
+                "start": "node src/index.js",
+                "lint": 'echo "lint placeholder - wire eslint later" && exit 0',
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            {
+                "source": "artifact_quality",
+                "code": "npm_manifest_invalid",
+                "message": "typed npm script issue",
+                "path": "package.json",
+                "manifest_path": "package.json",
+                "script_name": "lint",
+                "script_issue": "placeholder_command",
+                "raw": "typed metadata only",
+            }
+        ]
+    )
+
+    plan = build_npm_script_contract_plan(
+        base_files={"package.json": package_text, "src/index.js": "export const ok = true;\n"},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.operations[0].json_path == ("scripts", "lint")
+    assert plan.operations[0].value == "node --check src/index.js"
+
+
 def test_npm_script_contract_repairs_python_commands_with_structured_json() -> None:
     package_text = json.dumps(
         {
