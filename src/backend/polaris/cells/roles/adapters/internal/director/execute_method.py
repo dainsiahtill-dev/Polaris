@@ -24,7 +24,6 @@ from polaris.cells.director.runtime.public.service import (
     AttachDirectorRepairRevalidationEvidenceV1,
     project_director_repair_revalidation_evidence,
 )
-from polaris.cells.roles.adapters.public.contracts import RunDirectorMaterializationQualityRepairScheduleCommandV1
 from polaris.kernelone.fs.materialization import materialized_file_paths
 
 # ``scan_workspace_artifact_quality`` MUST stay a name on THIS module: the test
@@ -33,7 +32,6 @@ from polaris.kernelone.fs.materialization import materialized_file_paths
 # at call time, so the patch still takes effect. ``DirectorToolExecutor`` is kept
 # for the original public surface.
 from polaris.kernelone.quality import (
-    artifact_quality_issues_from_errors,
     scan_workspace_artifact_quality as scan_workspace_artifact_quality,
     scan_workspace_artifact_quality_evidence as scan_workspace_artifact_quality_evidence,
 )
@@ -49,6 +47,7 @@ from .helpers import (
     has_successful_write_tool,
     taskboard_snapshot_brief,
 )
+from .materialization_quality_boundary import run_materialization_quality_public_boundary
 from .post_execution_repair_bridge import run_post_execution_language_repairs
 from .repair_convergence_verifier import (
     build_artifact_quality_convergence_verifier,
@@ -70,22 +69,14 @@ def _run_materialization_quality_public_boundary(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Execute materialization-quality repair via the typed roles public boundary."""
 
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule_result,
+    return run_materialization_quality_public_boundary(
+        adapter,
+        task=task,
+        task_id=task_id,
+        artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=artifact_quality_issues,
+        convergence_verifier=convergence_verifier,
     )
-
-    result = run_director_materialization_quality_repair_schedule_result(
-        RunDirectorMaterializationQualityRepairScheduleCommandV1(
-            adapter_port=adapter,
-            task=task,
-            task_id=task_id,
-            artifact_quality_errors=tuple(artifact_quality_errors),
-            artifact_quality_issues=artifact_quality_issues
-            or artifact_quality_issues_from_errors(artifact_quality_errors),
-            convergence_verifier=convergence_verifier,
-        )
-    )
-    return [dict(item) for item in result.tool_results], dict(result.summary)
 
 
 _TRANSIENT_LLM_PROVIDER_ERROR_MARKERS = (

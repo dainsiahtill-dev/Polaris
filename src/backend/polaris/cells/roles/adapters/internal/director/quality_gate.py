@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
-from polaris.cells.roles.adapters.public.contracts import RunDirectorMaterializationQualityRepairScheduleCommandV1
 from polaris.kernelone.quality import artifact_quality_issues_from_errors, build_scope_authority_decision
 
 from . import execute_method as _em
@@ -41,6 +40,7 @@ from .artifact_quality_diagnostics import (
 from .contract_verify import resolve_contract_step_verify_command
 from .execution_tools import DirectorToolExecutor
 from .helpers import has_successful_write_tool
+from .materialization_quality_boundary import run_materialization_quality_public_boundary
 from .materialization_quality_runtime_ports import has_materialization_quality_runtime_repair_coverage
 from .repair_profile_projection import project_repair_kernel_summary
 from .task_scope_paths import (
@@ -68,22 +68,14 @@ def _run_materialization_quality_public_boundary(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Execute materialization-quality repair via the typed roles public boundary."""
 
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule_result,
+    return run_materialization_quality_public_boundary(
+        adapter,
+        task=task,
+        task_id=task_id,
+        artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=artifact_quality_issues,
+        convergence_verifier=convergence_verifier,
     )
-
-    result = run_director_materialization_quality_repair_schedule_result(
-        RunDirectorMaterializationQualityRepairScheduleCommandV1(
-            adapter_port=adapter,
-            task=task,
-            task_id=task_id,
-            artifact_quality_errors=tuple(artifact_quality_errors),
-            artifact_quality_issues=artifact_quality_issues
-            or artifact_quality_issues_from_errors(artifact_quality_errors),
-            convergence_verifier=convergence_verifier,
-        )
-    )
-    return [dict(item) for item in result.tool_results], dict(result.summary)
 
 
 def _summarize_llm_stage_result(result: dict[str, Any], *, stage: str) -> dict[str, Any]:

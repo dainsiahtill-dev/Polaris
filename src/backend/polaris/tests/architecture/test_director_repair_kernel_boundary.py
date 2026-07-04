@@ -51,6 +51,7 @@ POST_EXECUTION_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "post_execution_repair_bridge
 MATERIALIZATION_QUALITY_CALLBACK_PORTS_PATH = ROLES_DIRECTOR_ROOT / "materialization_quality_callback_ports.py"
 MATERIALIZATION_QUALITY_EVIDENCE_PORTS_PATH = ROLES_DIRECTOR_ROOT / "materialization_quality_evidence_ports.py"
 MATERIALIZATION_QUALITY_RUNTIME_PORTS_PATH = ROLES_DIRECTOR_ROOT / "materialization_quality_runtime_ports.py"
+MATERIALIZATION_QUALITY_BOUNDARY_PATH = ROLES_DIRECTOR_ROOT / "materialization_quality_boundary.py"
 DETERMINISTIC_REPAIRS_INIT_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "__init__.py"
 DETERMINISTIC_REPAIRS_ROOT = ROLES_DIRECTOR_ROOT / "deterministic_repairs"
 GENERIC_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "generic_repairs.py"
@@ -1100,13 +1101,12 @@ def test_roles_adapter_public_boundary_blocks_internal_kernel_and_direct_legacy_
     )
     execute_direct_helper_calls = sorted(_called_deterministic_repair_names(EXECUTE_METHOD_PATH))
     execute_calls = _called_function_names(EXECUTE_METHOD_PATH)
-    execute_source = _read_text(EXECUTE_METHOD_PATH)
 
     assert internal_kernel_imports == []
     assert execute_imports == []
     assert execute_direct_helper_calls == []
     assert "run_post_execution_language_repairs" in execute_calls
-    assert "run_director_materialization_quality_repair_schedule" in execute_source
+    assert "run_materialization_quality_public_boundary" in execute_calls
 
 
 def test_execute_method_projects_revalidation_evidence_through_runtime_public_contract() -> None:
@@ -1461,16 +1461,19 @@ def test_go_bare_import_string_repair_runs_through_director_runtime_kernel() -> 
 def test_materialization_quality_repairs_stay_behind_public_boundary() -> None:
     execute_calls = _called_function_names(EXECUTE_METHOD_PATH)
     quality_calls = _called_function_names(QUALITY_GATE_PATH)
+    boundary_calls = _called_function_names(MATERIALIZATION_QUALITY_BOUNDARY_PATH)
     factory_calls = _called_function_names(FACTORY_STAGE_EXECUTOR_PATH)
     execute_source = _read_text(EXECUTE_METHOD_PATH)
     quality_source = _read_text(QUALITY_GATE_PATH)
+    boundary_source = _read_text(MATERIALIZATION_QUALITY_BOUNDARY_PATH)
     factory_source = _read_text(FACTORY_STAGE_EXECUTOR_PATH)
 
     assert "_apply_deterministic_materialization_quality_repairs" not in execute_calls
     assert "run_materialization_quality_repairs" not in execute_calls
     assert "run_materialization_quality_repairs" not in quality_calls
-    assert "run_director_materialization_quality_repair_schedule_result" in execute_calls
-    assert "run_director_materialization_quality_repair_schedule_result" in quality_calls
+    assert "run_materialization_quality_public_boundary" in execute_calls
+    assert "run_materialization_quality_public_boundary" in quality_calls
+    assert "run_director_materialization_quality_repair_schedule_result" in boundary_calls
     assert "_apply_deterministic_materialization_quality_repairs" not in execute_source
     assert (
         "from .materialization_quality_runtime_ports import run_materialization_quality_repairs" not in execute_source
@@ -1478,6 +1481,7 @@ def test_materialization_quality_repairs_stay_behind_public_boundary() -> None:
     assert (
         "from .materialization_quality_runtime_ports import run_materialization_quality_repairs" not in quality_source
     )
+    assert "deterministic_repairs" not in boundary_source
     assert "_apply_deterministic_materialization_quality_repairs" not in factory_calls
     assert "_apply_deterministic_materialization_quality_repairs" not in factory_source
     for shim_name in PUBLIC_MIGRATION_ONLY_REPAIR_SHIMS:
