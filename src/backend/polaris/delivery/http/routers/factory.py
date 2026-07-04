@@ -68,8 +68,6 @@ from polaris.kernelone.llm.budget_policy import resolve_director_dispatch_timeou
 from polaris.kernelone.quality import (
     ScopeAuthorityOwnerHandoffIndex,
     build_owner_handoff_index,
-    matching_owner_handoff_request as kernelone_matching_owner_handoff_request,
-    owner_handoff_identifier_tokens as kernelone_owner_handoff_identifier_tokens,
     ownership_handoff_requests_from_scope_payload,
     task_identifier_token_aliases,
     task_record_identifier_tokens,
@@ -1009,17 +1007,6 @@ def _task_record_external_tokens(record: dict[str, Any]) -> set[str]:
 
 def _task_identifier_token_aliases(value: Any) -> set[str]:
     return set(task_identifier_token_aliases(value))
-
-
-def _matching_owner_handoff_request(
-    record: dict[str, Any],
-    handoff_requests: list[dict[str, Any]],
-) -> dict[str, Any]:
-    return kernelone_matching_owner_handoff_request(record, handoff_requests)
-
-
-def _owner_handoff_identifier_tokens(request: dict[str, Any]) -> set[str]:
-    return set(kernelone_owner_handoff_identifier_tokens(request))
 
 
 def _task_record_rework_key(record: dict[str, Any]) -> str:

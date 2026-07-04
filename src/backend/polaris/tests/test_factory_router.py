@@ -22,6 +22,10 @@ from polaris.cells.factory.pipeline.public.types import FactoryStartRequest
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.delivery.http.app_factory import create_app
 from polaris.delivery.http.routers import factory as factory_router_module
+from polaris.kernelone.quality import (
+    matching_owner_handoff_request,
+    owner_handoff_identifier_tokens,
+)
 from polaris.kernelone.storage import resolve_logical_path
 
 
@@ -890,8 +894,8 @@ def test_owner_handoff_matching_prefers_projected_identifier_tokens() -> None:
         "recommended_route": "owner_task_retry",
     }
 
-    assert factory_router_module._matching_owner_handoff_request(owner_row, [request]) == request
-    assert factory_router_module._owner_handoff_identifier_tokens(request) == {"4", "TASK-04", "TASK-4"}
+    assert matching_owner_handoff_request(owner_row, [request]) == request
+    assert set(owner_handoff_identifier_tokens(request)) == {"4", "TASK-04", "TASK-4"}
 
 
 def test_quality_gate_task_boundary_validation_reports_unmatched_owner_handoff(temp_workspace: Path) -> None:
@@ -982,7 +986,7 @@ def test_matching_owner_handoff_accepts_task_prefix_numeric_alias() -> None:
         "owner_step_id": "TASK-12",
     }
 
-    matched = factory_router_module._matching_owner_handoff_request(
+    matched = matching_owner_handoff_request(
         {"id": 12, "metadata": {}},
         [request],
     )
@@ -998,7 +1002,7 @@ def test_matching_owner_handoff_aliases_request_owner_tokens() -> None:
         "owner_step_id": "TASK-012",
     }
 
-    matched = factory_router_module._matching_owner_handoff_request(
+    matched = matching_owner_handoff_request(
         {"id": 12, "metadata": {}},
         [request],
     )
