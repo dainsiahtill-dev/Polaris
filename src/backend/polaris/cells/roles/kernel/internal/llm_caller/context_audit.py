@@ -33,7 +33,6 @@ from .response_types import PreparedLLMRequest
 
 _UNDERUTILIZED_WINDOW_THRESHOLD = 8192
 _UNDERUTILIZED_RATIO = 0.15
-_RECEIPT_REF_RE = re.compile(r"receipt://([A-Za-z0-9_.:/-]+)")
 _UNTRUSTED_USER_MESSAGE_RE = re.compile(r"\[UNTRUSTED_USER_MESSAGE\].*", re.IGNORECASE | re.DOTALL)
 _REF_BASED_SUPERSEDED_FINDING_CODES = frozenset(
     {
@@ -229,13 +228,19 @@ def _unique_strings(values: Any) -> list[str]:
 
 
 def _receipt_refs_from_payload(value: Any, *, depth: int = 0) -> list[str]:
+    """Return structured receipt refs from final-request message metadata.
+
+    Boundary:
+        Receipt references are evidence links, so they must come from explicit
+        ``receipt_refs`` fields. Message prose may mention ``receipt://...`` for
+        display, but content text is not authoritative evidence.
+    """
+
     if depth > 4:
         return []
-    if isinstance(value, str):
-        return [match.group(1).strip() for match in _RECEIPT_REF_RE.finditer(value) if match.group(1).strip()]
     if isinstance(value, dict):
         mapping_refs = _string_list(value.get("receipt_refs"))
-        for key in ("content", "text", "message", "messages", "parts"):
+        for key in ("messages", "parts", "items"):
             mapping_refs.extend(_receipt_refs_from_payload(value.get(key), depth=depth + 1))
         return mapping_refs
     if isinstance(value, (list, tuple, set)):

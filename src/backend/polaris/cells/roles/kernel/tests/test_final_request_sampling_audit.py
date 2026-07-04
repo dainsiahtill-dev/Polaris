@@ -1532,6 +1532,50 @@ def test_final_request_context_audit_tracks_receipt_store_refs() -> None:
     assert "receipt_store_refs" in evidence_coverage["included_refs"]
 
 
+def test_final_request_context_audit_ignores_receipt_refs_in_message_text() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 48000},
+        context={
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {
+                    "role": "system",
+                    "name": "chief_engineer_blueprint",
+                    "content": "[chief_engineer_blueprint stored - receipt://chief_engineer_blueprint]",
+                },
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {
+                "role": "system",
+                "name": "chief_engineer_blueprint",
+                "content": "[chief_engineer_blueprint stored - receipt://chief_engineer_blueprint]",
+            },
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert evidence_coverage["ledger_evidence"]["receipt_refs"] == []
+    assert "receipt_store_refs" not in evidence_coverage["included_refs"]
+
+
 def test_final_request_context_audit_reads_nested_run_ledger_evidence_policy() -> None:
     ai_request = AIRequest(
         task_type=TaskType.DIALOGUE,
