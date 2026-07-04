@@ -54,6 +54,26 @@ def test_scope_filter_evidence_includes_file_ownership_handoff_requests(tmp_path
     assert scope_authority["recommended_routes"] == ["owner_task_retry", "scope_authority_resolution"]
 
 
+def test_scope_filter_evidence_normalizes_workspace_prefixed_targets(tmp_path: Path) -> None:
+    workspace = tmp_path / "L2-08"
+    workspace.mkdir()
+
+    evidence = _task_boundary_scope_filter_evidence(
+        {
+            "task_id": "TASK-2",
+            "target_files": ["L2-08/tests/behavior.test.js"],
+        },
+        target_files=["L2-08/src/index.js"],
+        reason="quality_repair_targets_outside_current_task_target_files",
+        workspace=str(workspace),
+        cache_root=str(workspace),
+    )
+
+    scope_authority = evidence["scope_authority"]
+    assert scope_authority["task_declared_write_targets"] == ["tests/behavior.test.js"]
+    assert scope_authority["out_of_scope_repair_target_files"] == ["src/index.js"]
+
+
 def test_artifact_quality_issue_merge_preserves_structured_issue_when_raw_differs() -> None:
     error = "Artifact quality scan failed: src/app.ts(7,3): error TS2304: Cannot find name 'Widget'."
     typed_issue = {

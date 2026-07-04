@@ -1553,11 +1553,28 @@ def _task_boundary_scope_filter_evidence(
     workspace: str = "",
     cache_root: str = "",
 ) -> dict[str, Any]:
+    workspace_token = str(workspace or "").strip()
+    workspace_name = Path(workspace_token).name if workspace_token else ""
+    normalized_target_files = _dedupe_preserve_order(
+        [
+            normalized
+            for target in target_files
+            if (
+                normalized := _normalize_declared_task_path(
+                    str(target or ""),
+                    workspace_name=workspace_name,
+                )
+            )
+        ]
+    )
     decision = build_scope_authority_decision(
-        workspace=str(workspace or "").strip(),
+        workspace=workspace_token,
         cache_root=str(cache_root or "").strip(),
-        task_declared_write_targets=_task_write_scope_candidates(task),
-        out_of_scope_repair_target_files=target_files,
+        task_declared_write_targets=_task_write_scope_candidates(
+            task,
+            workspace_name=workspace_name,
+        ),
+        out_of_scope_repair_target_files=normalized_target_files,
         requesting_task_id=_task_boundary_requesting_task_id(task),
         reason=reason,
     )
