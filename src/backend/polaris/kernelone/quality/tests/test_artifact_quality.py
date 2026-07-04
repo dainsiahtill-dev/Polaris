@@ -489,6 +489,75 @@ def test_artifact_quality_evidence_uses_direct_npm_script_missing_config_issue(t
     }
 
 
+def test_artifact_quality_evidence_uses_direct_npm_script_missing_entrypoint_issue(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        """
+{
+  "name": "missing-entrypoint-project",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node src/index.js"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["package.json"])
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: npm package manifest script "
+        "'start' references missing local entrypoint 'src/index.js' in package.json",
+    )
+    assert len(evidence.issues) == 1
+    assert evidence.issues[0].code == "npm_script_missing_local_entrypoint"
+    assert evidence.issues[0].source == "npm_script_entrypoint_scanner"
+    assert evidence.issues[0].path == "package.json"
+    assert evidence.issues[0].metadata == {
+        "raw": evidence.errors[0],
+        "manifest_path": "package.json",
+        "script_name": "start",
+        "entrypoint": "src/index.js",
+    }
+
+
+def test_artifact_quality_evidence_uses_direct_npm_script_test_directory_issue(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        """
+{
+  "name": "test-directory-project",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node --test tests"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "product.test.js").write_text("import test from 'node:test';\n", encoding="utf-8")
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["package.json"])
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: npm package manifest script "
+        "'test' references test directory 'tests' instead of concrete test files in package.json",
+    )
+    assert len(evidence.issues) == 1
+    assert evidence.issues[0].code == "npm_script_node_test_directory_target"
+    assert evidence.issues[0].source == "npm_script_test_target_scanner"
+    assert evidence.issues[0].path == "package.json"
+    assert evidence.issues[0].metadata == {
+        "raw": evidence.errors[0],
+        "manifest_path": "package.json",
+        "script_name": "test",
+        "target_directory": "tests",
+    }
+
+
 def test_typescript_import_scanner_ignores_fixture_string_imports(tmp_path: Path) -> None:
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir(parents=True)

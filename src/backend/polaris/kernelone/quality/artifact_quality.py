@@ -1519,12 +1519,22 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
             if node_eval_error:
                 errors.append(node_eval_error)
                 continue
-            errors.extend(
-                _scan_npm_script_node_test_directory_targets(root_full, tokens, str(script_name), relative_path)
+            test_directory_evidence = _scan_npm_script_node_test_directory_target_evidence(
+                root_full,
+                tokens,
+                str(script_name),
+                relative_path,
             )
-            errors.extend(
-                _scan_npm_script_missing_local_entrypoints(root_full, script_text, str(script_name), relative_path)
+            errors.extend(test_directory_evidence.errors)
+            issues.extend(test_directory_evidence.issues)
+            entrypoint_evidence = _scan_npm_script_missing_local_entrypoint_evidence(
+                root_full,
+                script_text,
+                str(script_name),
+                relative_path,
             )
+            errors.extend(entrypoint_evidence.errors)
+            issues.extend(entrypoint_evidence.issues)
             config_evidence = _scan_npm_script_missing_local_config_evidence(
                 root_full,
                 tokens,
@@ -1683,13 +1693,53 @@ def _is_concrete_npm_script_entrypoint_path(value: str) -> bool:
 def _scan_npm_script_missing_local_entrypoints(
     root_full: Path, script_text: str, script_name: str, relative_path: str
 ) -> list[str]:
+    """Return legacy npm script missing-entrypoint string findings."""
+
+    return list(
+        _scan_npm_script_missing_local_entrypoint_evidence(root_full, script_text, script_name, relative_path).errors
+    )
+
+
+def _npm_script_missing_local_entrypoint_issue(
+    error: str,
+    relative_path: str,
+    *,
+    script_name: str,
+    entrypoint: str,
+) -> ArtifactQualityIssue:
+    message = str(error or "").strip()
+    if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
+        message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    return ArtifactQualityIssue(
+        code="npm_script_missing_local_entrypoint",
+        message=message,
+        path=relative_path,
+        source="npm_script_entrypoint_scanner",
+        metadata={
+            "raw": str(error or "").strip(),
+            "manifest_path": relative_path,
+            "script_name": script_name,
+            "entrypoint": entrypoint,
+        },
+    )
+
+
+def _scan_npm_script_missing_local_entrypoint_evidence(
+    root_full: Path,
+    script_text: str,
+    script_name: str,
+    relative_path: str,
+) -> _FileArtifactQualityEvidence:
+    """Return npm script missing-entrypoint findings as strings and typed issues."""
+
     if _NPM_SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE.search(script_text):
-        return []
+        return _FileArtifactQualityEvidence()
     try:
         tokens = shlex.split(script_text, posix=(os.name != "nt"))
     except ValueError:
-        return []
+        return _FileArtifactQualityEvidence()
     errors: list[str] = []
+    issues: list[ArtifactQualityIssue] = []
     for index, token in enumerate(tokens[:-1]):
         command = token.strip().lower()
         if command not in _NPM_SCRIPT_ENTRYPOINT_COMMANDS:
@@ -1705,11 +1755,20 @@ def _scan_npm_script_missing_local_entrypoints(
         if Path(normalized).suffix.lower() not in {".js", ".mjs", ".cjs", ".ts", ".tsx"}:
             continue
         if not (root_full / normalized).is_file():
-            errors.append(
+            error = (
                 "Artifact quality scan failed: npm package manifest script "
                 f"{script_name!r} references missing local entrypoint {normalized!r} in {relative_path}"
             )
-    return errors
+            errors.append(error)
+            issues.append(
+                _npm_script_missing_local_entrypoint_issue(
+                    error,
+                    relative_path,
+                    script_name=script_name,
+                    entrypoint=normalized,
+                )
+            )
+    return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
 
 
 def _scan_npm_script_node_test_directory_targets(
@@ -1718,9 +1777,49 @@ def _scan_npm_script_node_test_directory_targets(
     script_name: str,
     relative_path: str,
 ) -> list[str]:
+    """Return legacy npm script node-test directory target string findings."""
+
+    return list(
+        _scan_npm_script_node_test_directory_target_evidence(root_full, tokens, script_name, relative_path).errors
+    )
+
+
+def _npm_script_node_test_directory_target_issue(
+    error: str,
+    relative_path: str,
+    *,
+    script_name: str,
+    target_directory: str,
+) -> ArtifactQualityIssue:
+    message = str(error or "").strip()
+    if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
+        message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    return ArtifactQualityIssue(
+        code="npm_script_node_test_directory_target",
+        message=message,
+        path=relative_path,
+        source="npm_script_test_target_scanner",
+        metadata={
+            "raw": str(error or "").strip(),
+            "manifest_path": relative_path,
+            "script_name": script_name,
+            "target_directory": target_directory,
+        },
+    )
+
+
+def _scan_npm_script_node_test_directory_target_evidence(
+    root_full: Path,
+    tokens: list[str],
+    script_name: str,
+    relative_path: str,
+) -> _FileArtifactQualityEvidence:
+    """Return npm script node-test directory target findings as strings and typed issues."""
+
     if str(script_name or "").strip().lower() != "test":
-        return []
+        return _FileArtifactQualityEvidence()
     errors: list[str] = []
+    issues: list[ArtifactQualityIssue] = []
     for index, token in enumerate(tokens[:-1]):
         command = os.path.basename(str(token or "").strip().lower())
         if command not in {"node", "node.exe"}:
@@ -1738,12 +1837,21 @@ def _scan_npm_script_node_test_directory_targets(
             continue
         if not _directory_has_node_test_files(target_dir):
             continue
-        errors.append(
+        error = (
             "Artifact quality scan failed: npm package manifest script "
             f"{script_name!r} references test directory {normalized!r} instead of concrete test files in "
             f"{relative_path}"
         )
-    return errors
+        errors.append(error)
+        issues.append(
+            _npm_script_node_test_directory_target_issue(
+                error,
+                relative_path,
+                script_name=script_name,
+                target_directory=normalized,
+            )
+        )
+    return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
 
 
 def _node_token_enables_test_runner(token: str) -> bool:

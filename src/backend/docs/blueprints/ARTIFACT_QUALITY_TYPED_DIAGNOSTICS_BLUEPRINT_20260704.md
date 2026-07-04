@@ -82,6 +82,16 @@ Typed issues are evidence, not repair authorization. Repair still flows through
   issues for npm scripts that reference missing local config files with
   `source="npm_script_config_scanner"`, while the legacy
   `_scan_npm_script_missing_local_configs()` API remains a string projection.
+- `_scan_npm_script_missing_local_entrypoint_evidence()` now owns direct typed
+  issues for npm scripts that reference missing local entrypoints with
+  `source="npm_script_entrypoint_scanner"`, while the legacy
+  `_scan_npm_script_missing_local_entrypoints()` API remains a string
+  projection.
+- `_scan_npm_script_node_test_directory_target_evidence()` now owns direct typed
+  issues for `node --test` scripts that target a directory instead of concrete
+  test files with `source="npm_script_test_target_scanner"`, while the legacy
+  `_scan_npm_script_node_test_directory_targets()` API remains a string
+  projection.
 
 ## 4. Verification
 
