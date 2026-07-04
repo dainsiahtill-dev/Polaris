@@ -2313,23 +2313,23 @@ def _add_evidence_coverage_findings(quality: dict[str, Any], evidence_coverage: 
             for item in findings
             if not (isinstance(item, dict) and item.get("code") in _REF_BASED_SUPERSEDED_FINDING_CODES)
         ]
-    missing_refs = evidence_coverage.get("missing_required_refs")
-    if isinstance(missing_refs, list) and missing_refs:
+    missing_refs = missing_required_refs_from_evidence_coverage(evidence_coverage)
+    if missing_refs:
         findings.append(
             {
                 "code": "missing_required_final_request_evidence",
                 "severity": "warning",
-                "missing_required_refs": [str(item) for item in missing_refs],
+                "missing_required_refs": list(missing_refs),
                 "request_hash": evidence_coverage.get("request_hash", ""),
             }
         )
-    missing_tools = evidence_coverage.get("missing_required_tools")
-    if isinstance(missing_tools, list) and missing_tools:
+    missing_tools = missing_required_tools_from_evidence_coverage(evidence_coverage)
+    if missing_tools:
         findings.append(
             {
                 "code": "missing_required_final_request_tools",
                 "severity": "error",
-                "missing_required_tools": [str(item) for item in missing_tools],
+                "missing_required_tools": list(missing_tools),
                 "request_hash": evidence_coverage.get("request_hash", ""),
             }
         )
@@ -2349,8 +2349,8 @@ def _add_evidence_coverage_findings(quality: dict[str, Any], evidence_coverage: 
         "context_needs_review": bool(findings),
         "findings": findings,
         "final_request_evidence_coverage_pass": evidence_pass,
-        "missing_required_refs": list(evidence_coverage.get("missing_required_refs") or []),
-        "missing_required_tools": list(evidence_coverage.get("missing_required_tools") or []),
+        "missing_required_refs": list(missing_refs),
+        "missing_required_tools": list(missing_tools),
     }
 
 
