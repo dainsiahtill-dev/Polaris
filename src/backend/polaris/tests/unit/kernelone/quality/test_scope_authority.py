@@ -14,6 +14,7 @@ from polaris.kernelone.quality.scope_authority import (
     ownership_handoff_requests_from_scope_payload,
     partition_paths_by_declared_scope,
     path_matches_any_declared_scope_candidate,
+    scope_authority_decision_summary,
     task_record_identifier_tokens,
     unresolved_owner_handoff_requests_from_scope_payload,
 )
@@ -67,6 +68,59 @@ def test_scope_authority_without_workspace_still_records_defer_decision() -> Non
     assert decision["recommended_routes"] == []
     assert decision["owner_task_retry_handoff_requests"] == []
     assert decision["unresolved_owner_handoff_requests"] == []
+
+
+def test_scope_authority_summary_projects_bounded_decision_fields(tmp_path: Path) -> None:
+    workspace = str(tmp_path)
+    record_file_owners(
+        workspace,
+        workspace,
+        [{"step_id": "S1", "target_file": f"src/file_{index}.py"} for index in range(4)],
+        "TASK-1",
+    )
+
+    decision = build_scope_authority_decision(
+        workspace=workspace,
+        cache_root=workspace,
+        task_declared_write_targets=[f"tests/test_{index}.py" for index in range(4)],
+        out_of_scope_repair_target_files=[f"src/file_{index}.py" for index in range(4)],
+        requesting_task_id="TASK-2",
+        reason="scope_filter",
+    )
+
+    summary = scope_authority_decision_summary(decision, limit=2)
+
+    assert summary["task_declared_write_targets"] == ["tests/test_0.py", "tests/test_1.py"]
+    assert summary["out_of_scope_repair_target_files"] == ["src/file_0.py", "src/file_1.py"]
+    assert len(summary["ownership_handoff_requests"]) == 2
+    assert len(summary["owner_task_retry_handoff_requests"]) == 2
+    assert summary["unresolved_owner_handoff_requests"] == []
+
+
+def test_scope_authority_summary_accepts_nested_scope_authority_payload() -> None:
+    request = {
+        "target_file": "src/index.js",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+    }
+    payload = {
+        "scope_authority": {
+            "task_declared_write_targets": ["tests/behavior.test.js"],
+            "out_of_scope_repair_target_files": ["src/index.js"],
+            "ownership_handoff_requests": [request],
+            "owner_task_retry_handoff_requests": [request],
+            "unresolved_owner_handoff_requests": [],
+        }
+    }
+
+    summary = scope_authority_decision_summary(payload, limit=12)
+
+    assert summary["task_declared_write_targets"] == ["tests/behavior.test.js"]
+    assert summary["out_of_scope_repair_target_files"] == ["src/index.js"]
+    assert summary["ownership_handoff_requests"] == [request]
+    assert summary["ownership_handoff_requests"][0] is not request
+    assert summary["owner_task_retry_handoff_requests"] == [request]
+    assert summary["unresolved_owner_handoff_requests"] == []
 
 
 def test_scope_authority_path_matching_is_case_insensitive_and_workspace_relative() -> None:

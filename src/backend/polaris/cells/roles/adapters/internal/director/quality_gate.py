@@ -33,6 +33,7 @@ from polaris.kernelone.quality import (
     artifact_quality_issues_from_errors,
     build_scope_authority_decision,
     partition_paths_by_declared_scope,
+    scope_authority_decision_summary,
 )
 
 from . import execute_method as _em
@@ -1563,14 +1564,11 @@ def _task_boundary_scope_filter_evidence(
         reason=reason,
     )
     scope_authority = decision.to_dict()
+    summary = scope_authority_decision_summary(scope_authority, limit=12)
     return {
         "schema_version": "director.task_boundary.repair_scope_filter.v1",
         "reason": reason,
-        "task_declared_write_targets": scope_authority["task_declared_write_targets"][:12],
-        "out_of_scope_repair_target_files": scope_authority["out_of_scope_repair_target_files"][:12],
-        "ownership_handoff_requests": scope_authority["ownership_handoff_requests"][:12],
-        "owner_task_retry_handoff_requests": scope_authority["owner_task_retry_handoff_requests"][:12],
-        "unresolved_owner_handoff_requests": scope_authority["unresolved_owner_handoff_requests"][:12],
+        **summary,
         "scope_authority": scope_authority,
         "deferred": True,
     }

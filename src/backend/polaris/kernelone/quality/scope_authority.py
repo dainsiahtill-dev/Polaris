@@ -188,6 +188,66 @@ class ScopeAuthorityDecision:
         }
 
 
+def _bounded_projection_list(payload: Mapping[str, Any], key: str, *, limit: int) -> list[Any]:
+    raw_values = payload.get(key)
+    if not isinstance(raw_values, Sequence) or isinstance(raw_values, (str, bytes, bytearray)):
+        return []
+    output: list[Any] = []
+    for item in raw_values[:limit]:
+        if isinstance(item, Mapping):
+            output.append(dict(item))
+        else:
+            output.append(item)
+    return output
+
+
+def scope_authority_decision_summary(
+    decision: ScopeAuthorityDecision | Mapping[str, Any],
+    *,
+    limit: int = 12,
+) -> dict[str, Any]:
+    """Return a bounded display/audit projection for a scope decision.
+
+    ScopeAuthority remains the full read-only authority object. This helper is
+    only a compact projection for receipts, UI, or task-boundary evidence; it
+    does not grant writes or change the underlying owner-routing decision.
+
+    Complexity:
+        O(k) time and memory where ``k`` is the bounded number of projected
+        values across the known summary fields.
+    """
+
+    if isinstance(decision, ScopeAuthorityDecision):
+        payload: Mapping[str, Any] = decision.to_dict()
+    elif isinstance(decision, Mapping):
+        nested = decision.get("scope_authority")
+        payload = (
+            nested
+            if isinstance(nested, Mapping) and "task_declared_write_targets" not in decision
+            else decision
+        )
+    else:
+        payload = {}
+    bounded_limit = max(0, int(limit))
+    return {
+        "task_declared_write_targets": _bounded_projection_list(
+            payload, "task_declared_write_targets", limit=bounded_limit
+        ),
+        "out_of_scope_repair_target_files": _bounded_projection_list(
+            payload, "out_of_scope_repair_target_files", limit=bounded_limit
+        ),
+        "ownership_handoff_requests": _bounded_projection_list(
+            payload, "ownership_handoff_requests", limit=bounded_limit
+        ),
+        "owner_task_retry_handoff_requests": _bounded_projection_list(
+            payload, "owner_task_retry_handoff_requests", limit=bounded_limit
+        ),
+        "unresolved_owner_handoff_requests": _bounded_projection_list(
+            payload, "unresolved_owner_handoff_requests", limit=bounded_limit
+        ),
+    }
+
+
 def ownership_handoff_requests_from_scope_payload(payload: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
     """Extract ownership handoff requests from scope-authority projections.
 
@@ -375,6 +435,7 @@ __all__ = [
     "partition_paths_by_declared_scope",
     "path_matches_any_declared_scope_candidate",
     "path_matches_declared_scope_candidate",
+    "scope_authority_decision_summary",
     "task_record_identifier_tokens",
     "unresolved_owner_handoff_requests_from_scope_payload",
 ]

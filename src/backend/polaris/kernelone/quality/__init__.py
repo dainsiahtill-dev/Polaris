@@ -45,6 +45,7 @@ from polaris.kernelone.quality.scope_authority import (
     partition_paths_by_declared_scope,
     path_matches_any_declared_scope_candidate,
     path_matches_declared_scope_candidate,
+    scope_authority_decision_summary,
     task_record_identifier_tokens,
     unresolved_owner_handoff_requests_from_scope_payload,
 )
@@ -94,6 +95,7 @@ __all__ = [
     "scan_cross_artifact_consistency_errors",
     "scan_workspace_artifact_quality",
     "scan_workspace_artifact_quality_evidence",
+    "scope_authority_decision_summary",
     "task_identifier_token_aliases",
     "task_record_identifier_tokens",
     "unresolved_owner_handoff_requests_from_scope_payload",
