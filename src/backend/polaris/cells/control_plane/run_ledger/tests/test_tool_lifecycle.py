@@ -6,6 +6,7 @@ from polaris.cells.control_plane.run_ledger.public.failure_evidence import Failu
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_missing_dispatch_lifecycle_receipt,
     build_tool_batch_lifecycle_receipt,
+    build_tool_batch_lifecycle_receipt_from_sources,
     build_tool_call_lifecycle_receipt,
     build_tool_call_lifecycle_run_ledger_event,
     build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt,
@@ -205,6 +206,37 @@ def test_tool_batch_lifecycle_receipt_classifies_decoded_batch_without_receipt()
         }
     ]
     assert receipt["reason"] == "decoded_tool_batch_produced_no_authoritative_batch_receipt"
+
+
+def test_tool_batch_lifecycle_receipt_from_sources_owns_native_fact_projection() -> None:
+    receipt = build_tool_batch_lifecycle_receipt_from_sources(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        provider_response_hash="provider-response-hash",
+        metadata={
+            "native_tool_call_envelopes": [
+                {"envelope_id": "tool-envelope-1", "tool_name": "write_file"},
+                {"envelope_id": "tool-envelope-2", "tool_name": "execute_command"},
+            ],
+        },
+        native_tool_calls=[
+            {"function": {"name": "write_file"}},
+            {"function": {"name": "execute_command"}},
+        ],
+        decoded_tool_calls_count=2,
+        receipts=[],
+    ).to_dict()
+
+    assert receipt["ok"] is False
+    assert receipt["dispatch_status"] == "dropped"
+    assert receipt["native_tool_calls_count"] == 2
+    assert receipt["decoded_tool_calls_count"] == 2
+    assert receipt["native_tool_call_envelope_refs"] == [
+        {"envelope_id": "tool-envelope-1", "tool_name": "write_file"},
+        {"envelope_id": "tool-envelope-2", "tool_name": "execute_command"},
+    ]
 
 
 def test_tool_batch_lifecycle_receipt_keeps_authoritative_receipt_dispatched() -> None:

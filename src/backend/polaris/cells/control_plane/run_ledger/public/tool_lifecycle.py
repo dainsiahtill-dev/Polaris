@@ -452,6 +452,47 @@ def build_tool_batch_lifecycle_receipt(
     )
 
 
+def build_tool_batch_lifecycle_receipt_from_sources(
+    *,
+    run_id: str,
+    task_id: str,
+    turn_id: str,
+    role: str,
+    provider_response_hash: str = "",
+    metadata: Mapping[str, Any] | None = None,
+    native_tool_calls: Sequence[Any] = (),
+    decoded_tool_calls_count: int = 0,
+    receipts: list[dict[str, Any]] | None = None,
+    dropped_tool_calls: list[Any] | tuple[Any, ...] | None = None,
+    missing_receipt_reason: str = "decoded_tool_batch_produced_no_authoritative_batch_receipt",
+) -> ToolCallLifecycleReceiptV1:
+    """Build a tool-batch lifecycle receipt from canonical native sources.
+
+    Boundary:
+        Run Ledger owns native tool-call count and envelope precedence for tool
+        batch receipts. Transaction callers supply source metadata/raw calls and
+        do not interpret native lifecycle aliases locally.
+
+    Complexity:
+        O(r + e + n) over lifecycle receipts, native envelopes, and raw calls.
+    """
+
+    native_facts = native_tool_call_facts_from_sources(metadata, native_tool_calls)
+    return build_tool_batch_lifecycle_receipt(
+        run_id=run_id,
+        task_id=task_id,
+        turn_id=turn_id,
+        role=role,
+        provider_response_hash=provider_response_hash,
+        native_tool_calls_count=native_tool_call_count_from_facts(native_facts),
+        decoded_tool_calls_count=decoded_tool_calls_count,
+        receipts=receipts,
+        dropped_tool_calls=dropped_tool_calls,
+        native_tool_call_envelopes=native_tool_call_envelope_refs_from_metadata(metadata),
+        missing_receipt_reason=missing_receipt_reason,
+    )
+
+
 def _batch_has_dispatch_evidence(batch_receipt: Any) -> bool:
     if not isinstance(batch_receipt, Mapping):
         return False

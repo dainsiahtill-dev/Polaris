@@ -18,11 +18,9 @@ from typing import Any, NoReturn, cast
 from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
     append_run_ledger_event,
-    build_tool_batch_lifecycle_receipt,
+    build_tool_batch_lifecycle_receipt_from_sources,
     build_tool_call_lifecycle_run_ledger_event,
     build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt,
-    native_tool_call_count_from_metadata,
-    native_tool_call_envelope_refs_from_metadata,
 )
 from polaris.cells.roles.kernel.internal.speculation.models import CancelToken
 from polaris.cells.roles.kernel.internal.speculation.write_phases import WriteToolPhases
@@ -796,8 +794,7 @@ def _append_tool_batch_receipts_to_run_ledger(
     capability_token: dict[str, Any] | None = None,
     execution_envelope_hash: str = "",
     provider_response_hash: str = "",
-    native_tool_calls_count: int = 0,
-    native_tool_call_envelopes: list[Any] | tuple[Any, ...] | None = None,
+    metadata: Mapping[str, Any] | None = None,
 ) -> None:
     decoded_count = len(invocations or [])
     merged_receipt = _merge_batch_receipts(receipts)
@@ -816,17 +813,16 @@ def _append_tool_batch_receipts_to_run_ledger(
     if envelope_hash and token and not token.get("execution_envelope_hash"):
         token["execution_envelope_hash"] = envelope_hash
     stage = str(token.get("stage") or "tool_batch").strip() or "tool_batch"
-    lifecycle = build_tool_batch_lifecycle_receipt(
+    lifecycle = build_tool_batch_lifecycle_receipt_from_sources(
         run_id=str(run_id or turn_id or ""),
         task_id=task_id,
         turn_id=turn_id,
         role=role_id,
         provider_response_hash=provider_response_hash,
-        native_tool_calls_count=native_tool_calls_count,
+        metadata=metadata,
         decoded_tool_calls_count=decoded_count,
         receipts=receipts,
         missing_receipt_reason="decoded_tool_batch_produced_no_authoritative_batch_receipt",
-        native_tool_call_envelopes=native_tool_call_envelopes,
     )
     resolved_lifecycle_run_id = str(run_id or lifecycle.run_id or turn_id or "").strip()
     if resolved_lifecycle_run_id:
@@ -1844,16 +1840,15 @@ class ToolBatchExecutor:
                 }
                 for invocation in invocations
             ]
-            native_tool_call_envelopes = native_tool_call_envelope_refs_from_metadata(metadata)
-            lifecycle = build_tool_batch_lifecycle_receipt(
+            lifecycle = build_tool_batch_lifecycle_receipt_from_sources(
                 run_id=str(metadata.get("run_id") or ""),
                 task_id=str(metadata.get("task_id") or ""),
                 turn_id=turn_id,
                 role=str(getattr(self.config, "role_id", "") or ""),
                 provider_response_hash=str(metadata.get("provider_response_hash") or ""),
+                metadata=metadata,
                 decoded_tool_calls_count=len(invocations),
                 dropped_tool_calls=decoded_tool_calls,
-                native_tool_call_envelopes=native_tool_call_envelopes,
                 missing_receipt_reason="decoded_tool_batch_produced_no_authoritative_batch_receipt",
             ).to_dict()
             ledger.anomaly_flags.append(build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt(lifecycle))
@@ -1889,8 +1884,7 @@ class ToolBatchExecutor:
             capability_token=_capability_token_from_metadata(metadata),
             execution_envelope_hash=_execution_envelope_hash_from_metadata(metadata),
             provider_response_hash=str(metadata.get("provider_response_hash") or ""),
-            native_tool_calls_count=native_tool_call_count_from_metadata(metadata),
-            native_tool_call_envelopes=native_tool_call_envelope_refs_from_metadata(metadata),
+            metadata=metadata,
         )
 
         # 本 turn 的工具批裁决已完成（adopt/join/replay 全部计入 metrics）；在此
