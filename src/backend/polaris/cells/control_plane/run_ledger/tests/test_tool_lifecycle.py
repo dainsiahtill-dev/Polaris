@@ -20,6 +20,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     project_completion_audit_evidence_to_metadata,
     project_completion_dispatch_evidence_to_metadata,
     project_lifecycle_failure_evidence_to_metadata,
+    project_native_tool_call_envelopes_to_metadata,
     project_native_tool_call_facts_from_evidence_to_metadata,
     project_native_tool_call_facts_to_metadata,
     project_tool_lifecycle_event,
@@ -704,6 +705,31 @@ def test_native_tool_call_facts_from_raw_calls_owns_provider_aliases() -> None:
     assert facts == {
         "native_tool_calls_count": 4,
         "native_tool_call_names": ["write_file", "execute_command", "repo_tree"],
+    }
+
+
+def test_project_native_tool_call_envelopes_to_metadata_projects_count_and_names() -> None:
+    envelope = {
+        "schema_version": "native_tool_call_envelope.v1",
+        "envelope_id": "native-write",
+        "tool_name": "write_file",
+    }
+    command_envelope = {
+        "schema_version": "native_tool_call_envelope.v1",
+        "envelope_id": "native-run",
+        "tool_name": "execute_command",
+    }
+    metadata: dict[str, object] = {"native_tool_calls_count": 99, "native_tool_call_names": ["stale"]}
+
+    project_native_tool_call_envelopes_to_metadata(
+        metadata,
+        [envelope, dict(envelope), command_envelope, "not-an-envelope"],
+    )
+
+    assert metadata == {
+        "native_tool_call_envelopes": [envelope, command_envelope],
+        "native_tool_calls_count": 2,
+        "native_tool_call_names": ["write_file", "execute_command"],
     }
 
 

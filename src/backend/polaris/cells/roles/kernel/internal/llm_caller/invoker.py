@@ -24,6 +24,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.control_plane.run_ledger.public import project_native_tool_call_envelopes_to_metadata
 from polaris.kernelone.llm.engine import AIExecutor
 from polaris.kernelone.llm.engine._executor_base import coerce_required_flag
 from polaris.kernelone.llm.runtime_config import (
@@ -922,7 +923,9 @@ class LLMInvoker:
             native_tool_calls,
             provider=native_tool_provider,
         )
-        native_tool_call_count = len(native_tool_call_envelopes)
+        native_tool_metadata: dict[str, Any] = {}
+        project_native_tool_call_envelopes_to_metadata(native_tool_metadata, native_tool_call_envelopes)
+        native_tool_call_count = int(native_tool_metadata.get("native_tool_calls_count") or 0)
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         provider_usage = _normalize_provider_usage(getattr(response, "usage", None)) or _normalize_provider_usage(
@@ -963,7 +966,7 @@ class LLMInvoker:
             "compression_applied": prepared.context_result.compression_applied if prepared.context_result else False,
             "turn_round": turn_round,
             "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
-            "native_tool_call_envelopes": native_tool_call_envelopes,
+            **native_tool_metadata,
         }
         event_metadata = _with_context_snapshot_diagnostics(event_metadata, active_request)
         if provider_usage is not None:
@@ -1001,8 +1004,7 @@ class LLMInvoker:
         response_metadata: dict[str, Any] = {
             "model": response_model_name,
             "provider": response_provider,
-            "native_tool_calls_count": native_tool_call_count,
-            "native_tool_call_envelopes": native_tool_call_envelopes,
+            **native_tool_metadata,
             "elapsed_ms": round(elapsed_ms, 2),
             "run_id": run_id,
             "workspace": self.workspace,

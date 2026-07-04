@@ -1126,6 +1126,36 @@ def project_native_tool_call_facts_to_metadata(
     ]
 
 
+def project_native_tool_call_envelopes_to_metadata(
+    metadata: dict[str, Any],
+    envelopes: Sequence[Any],
+) -> None:
+    """Project native tool-call envelope evidence and derived facts.
+
+    Boundary:
+        Run Ledger owns the metadata projection for native tool-call envelopes,
+        their count, and their names. Provider adapters may still construct raw
+        envelope rows, but should not maintain a second count/name projection.
+
+    Complexity:
+        O(e) time and memory where ``e`` is envelope count.
+    """
+
+    valid_envelopes = normalize_native_tool_call_envelope_refs(envelopes)
+    metadata["native_tool_call_envelopes"] = [dict(item) for item in valid_envelopes]
+    project_native_tool_call_facts_to_metadata(
+        metadata,
+        {
+            "native_tool_calls_count": len(valid_envelopes),
+            "native_tool_call_names": [
+                name
+                for envelope in valid_envelopes
+                if (name := _clean_string(envelope.get("tool_name")))
+            ],
+        },
+    )
+
+
 _COMPLETION_DISPATCH_EVIDENCE_KEYS: tuple[str, ...] = (
     "final_request_context_audit",
     "required_tools",
@@ -1440,6 +1470,7 @@ __all__ = [
     "project_completion_audit_evidence_to_metadata",
     "project_completion_dispatch_evidence_to_metadata",
     "project_lifecycle_failure_evidence_to_metadata",
+    "project_native_tool_call_envelopes_to_metadata",
     "project_native_tool_call_facts_to_metadata",
     "project_tool_lifecycle_event",
     "project_tool_lifecycle_metadata",
