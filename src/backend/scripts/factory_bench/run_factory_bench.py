@@ -42,8 +42,8 @@ sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
 from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
     append_run_ledger_event,
-    build_tool_call_lifecycle_receipt,
     build_tool_call_lifecycle_run_ledger_event,
+    build_tool_dispatch_dropped_lifecycle_from_observed_calls,
     evaluate_task_boundary_verdict,
 )
 from polaris.cells.factory.pipeline.internal.bench_gates import (
@@ -2469,18 +2469,11 @@ def _append_tool_dispatch_failure_to_run_ledger(
 ) -> None:
     """Append project-level lifecycle evidence for an already observed chain failure."""
 
-    receipt = build_tool_call_lifecycle_receipt(
+    lifecycle_receipt = build_tool_dispatch_dropped_lifecycle_from_observed_calls(
         run_id=run_id,
         task_id=task_id,
         turn_id=str(tool_dispatch.get("turn_id") or ""),
         role=str(tool_dispatch.get("role") or "director"),
-        provider_response_hash=str(tool_dispatch.get("provider_response_hash") or ""),
-        native_tool_calls_count=0,
-        decoded_tool_calls_count=0,
-        dispatched_tool_calls_count=0,
-        receipts=[],
-        dispatch_status="dropped",
-        failure_class="TOOL_DISPATCH_DROPPED",
         reason=str(tool_dispatch.get("reason") or "tool_dispatch_dropped").strip(),
     )
     try:
@@ -2493,7 +2486,7 @@ def _append_tool_dispatch_failure_to_run_ledger(
                     task_id=task_id,
                     turn_id=str(tool_dispatch.get("turn_id") or ""),
                     role=str(tool_dispatch.get("role") or "director"),
-                    lifecycle_receipt=receipt.to_dict(),
+                    lifecycle_receipt=lifecycle_receipt,
                     stage="director_tool_dispatch",
                     project_id=project_id,
                     job_token={
