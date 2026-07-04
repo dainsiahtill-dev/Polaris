@@ -13,15 +13,15 @@ import pytest
 project_root = str(Path(__file__).parent.parent.parent.parent)
 sys.path.insert(0, project_root)
 
-from polaris.cells.runtime.task_runtime.public.task_board_contract import TaskBoard, TaskStatus
-from polaris.kernelone.context import (
+from polaris.cells.runtime.task_runtime.internal.task_board import TaskBoard, TaskStatus  # noqa: E402
+from polaris.kernelone.context import (  # noqa: E402
     RoleContextCompressor as ContextCompressor,
     RoleContextIdentity as IdentityAnchor,
 )
-from polaris.kernelone.process.background_manager import (
+from polaris.kernelone.process.background_manager import (  # noqa: E402
     BackgroundManagerV2,
 )
-from polaris.kernelone.single_agent.skill_system import SkillLoader, install_default_skills
+from polaris.kernelone.single_agent.skill_system import SkillLoader, install_default_skills  # noqa: E402
 
 
 class TestPhase2BackgroundManagerV2:

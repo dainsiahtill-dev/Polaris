@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from polaris.cells.policy.protocol import PolicyContractError, PolicyRuntime
-from polaris.cells.runtime.task_runtime.public.task_board_contract import TaskBoard
+from polaris.cells.runtime.task_runtime.internal.task_board import TaskBoard
 from polaris.kernelone.events.file_event_broadcaster import (
     broadcast_file_written,
     replace_in_file_with_broadcast,

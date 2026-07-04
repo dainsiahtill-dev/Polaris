@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from polaris.cells.runtime.task_runtime.internal import task_board as task_board_module
-from polaris.cells.runtime.task_runtime.public.task_board_contract import (
+from polaris.cells.runtime.task_runtime.internal.task_board import (
     InvalidTaskStateTransitionError,
     TaskBoard,
     TaskStatus,

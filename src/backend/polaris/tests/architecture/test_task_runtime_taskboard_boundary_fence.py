@@ -274,3 +274,21 @@ def test_task_runtime_raw_tool_factory_surface_is_removed() -> None:
         "TaskBoard LLM tool/factory compatibility surface is retired; "
         "use TaskRuntimeService row/session APIs instead:\n" + "\n".join(offenders)
     )
+
+
+def test_public_task_board_contract_does_not_export_raw_taskboard_types() -> None:
+    source = TASK_RUNTIME_PUBLIC_BOARD_CONTRACT.read_text(encoding="utf-8")
+    blocked_tokens = (
+        "from polaris.cells.runtime.task_runtime.internal.task_board import",
+        '"TaskBoard"',
+        '"Task"',
+        '"TaskStatus"',
+        '"TaskPriority"',
+        '"InvalidTaskStateTransitionError"',
+    )
+    offenders = [token for token in blocked_tokens if token in source]
+
+    assert not offenders, (
+        "public.task_board_contract is retired as a raw TaskBoard facade; "
+        "public consumers must use TaskRuntimeService:\n" + "\n".join(offenders)
+    )

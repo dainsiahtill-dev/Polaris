@@ -25,7 +25,7 @@ from polaris.cells.orchestration.workflow_runtime.internal.models import TaskFai
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.runtime.embedded.store_sqlite import (
     SqliteRuntimeStore,
 )
-from polaris.cells.runtime.task_runtime.public.task_board_contract import TaskBoard
+from polaris.cells.runtime.task_runtime.internal.task_board import TaskBoard
 from polaris.kernelone.errors import ErrorCategory
 
 

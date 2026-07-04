@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
-from polaris.cells.runtime.task_runtime.public.task_board_contract import TaskBoard, TaskStatus
+from polaris.cells.runtime.task_runtime.internal.task_board import TaskBoard, TaskStatus
 from polaris.kernelone.audit.invariant_sentinel import run_invariant_sentinel
 from polaris.kernelone.llm.providers import (
     BaseProvider,

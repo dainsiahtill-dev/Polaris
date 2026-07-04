@@ -182,7 +182,7 @@ def mock_settings():
 @pytest.fixture
 def mock_task_board(mock_workspace):
     """Create a mock TaskBoard for testing."""
-    from polaris.cells.runtime.task_runtime.public.task_board_contract import TaskBoard
+    from polaris.cells.runtime.task_runtime.internal.task_board import TaskBoard
 
     return TaskBoard(workspace=mock_workspace)
 
