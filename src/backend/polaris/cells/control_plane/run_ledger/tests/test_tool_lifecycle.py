@@ -25,6 +25,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     native_tool_call_names_from_facts,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
+    observed_tool_call_names_from_sources,
     project_completion_audit_evidence_to_metadata,
     project_completion_dispatch_evidence_to_metadata,
     project_lifecycle_failure_evidence_to_metadata,
@@ -336,6 +337,37 @@ def test_build_dropped_lifecycle_from_observed_calls_prefers_native_envelopes() 
     assert lifecycle["dropped_tool_calls"] == [
         {"tool_name": "write_file", "envelope_id": "native-1", "reason": "tool_dispatch_dropped"}
     ]
+
+
+def test_observed_tool_call_names_from_sources_owns_runtime_aliases() -> None:
+    tool_calls = [
+        {"name": "write_file"},
+        {"tool": "read_file"},
+        {"function": {"name": "execute_command"}},
+        {"functionName": "repo_tree"},
+        {"other": "ignored"},
+        "not-a-mapping",
+    ]
+
+    assert observed_tool_call_names_from_sources(tool_calls) == (
+        "write_file",
+        "read_file",
+        "execute_command",
+        "repo_tree",
+    )
+
+
+def test_observed_tool_call_names_from_sources_falls_back_to_lifecycle_metadata() -> None:
+    metadata = {
+        "tool_call_lifecycle_receipt": {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "native_tool_call_envelope_refs": [
+                {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
+            ],
+        }
+    }
+
+    assert observed_tool_call_names_from_sources([], metadata) == ("write_file",)
 
 
 def test_tool_lifecycle_receipt_preserves_dropped_tool_details() -> None:

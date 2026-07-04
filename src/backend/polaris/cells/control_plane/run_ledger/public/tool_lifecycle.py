@@ -824,6 +824,19 @@ def _raw_native_tool_call_name(call: Mapping[str, Any]) -> str:
     return ""
 
 
+def _observed_tool_call_name(call: Mapping[str, Any]) -> str:
+    function = call.get("function")
+    if isinstance(function, Mapping):
+        name = _clean_string(function.get("name"))
+        if name:
+            return name
+    for key in ("name", "tool", "tool_name", "toolName", "function_name", "functionName"):
+        name = _clean_string(call.get(key))
+        if name:
+            return name
+    return ""
+
+
 def native_tool_call_facts_from_raw_calls(native_tool_calls: Sequence[Any]) -> dict[str, Any]:
     """Derive native tool-call facts from provider-native raw call payloads.
 
@@ -979,6 +992,36 @@ def native_tool_call_names_from_facts(
         if raw_names:
             return [name for item in raw_names if (name := _clean_string(item))]
     return [name for item in fallback if (name := _clean_string(item))]
+
+
+def observed_tool_call_names_from_sources(
+    tool_calls: Sequence[Any],
+    metadata: Mapping[str, Any] | None = None,
+) -> tuple[str, ...]:
+    """Derive observed tool-call names from runtime calls and lifecycle metadata.
+
+    Boundary:
+        Runtime cells may pass their raw observed ``tool_calls`` rows and
+        lifecycle-aware metadata here. Run Ledger owns the alias order and the
+        envelope fallback, so role/runtime projections do not maintain another
+        tool-name extraction table.
+
+    Complexity:
+        O(c + r + e) time and memory where ``c`` is observed call count, ``r``
+        is lifecycle receipt count, and ``e`` is envelope ref count.
+    """
+
+    names: list[str] = []
+    for item in tool_calls or ():
+        if not isinstance(item, Mapping):
+            continue
+        name = _observed_tool_call_name(item)
+        if name:
+            names.append(name)
+    if names:
+        return tuple(names)
+    facts = native_tool_call_facts_from_metadata(metadata)
+    return tuple(native_tool_call_names_from_facts(facts))
 
 
 _NATIVE_TOOL_FACT_EVIDENCE_KEYS: tuple[str, ...] = (

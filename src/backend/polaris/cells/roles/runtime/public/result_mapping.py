@@ -18,24 +18,12 @@ from polaris.cells.control_plane.run_ledger.public import (
     is_failure_class,
     native_tool_call_envelope_refs_from_metadata,
     normalize_failure_class,
+    observed_tool_call_names_from_sources,
     project_tool_lifecycle_receipt_to_metadata,
     tool_call_lifecycle_receipts_from_metadata,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
-
-
-def _tool_name_from_call(item: Mapping[str, Any]) -> str:
-    function = item.get("function")
-    if isinstance(function, Mapping):
-        name = str(function.get("name") or "").strip()
-        if name:
-            return name
-    for key in ("name", "tool", "tool_name", "toolName", "function_name", "functionName"):
-        name = str(item.get(key) or "").strip()
-        if name:
-            return name
-    return ""
 
 
 def _native_tool_call_envelopes(result: RoleTurnResult) -> tuple[Mapping[str, Any], ...]:
@@ -59,20 +47,8 @@ def _lifecycle_failure_evidence_from_metadata(metadata: Mapping[str, Any]) -> di
 
 
 def _extract_tool_calls(result: RoleTurnResult) -> tuple[str, ...]:
-    names: list[str] = []
-    for item in list(result.tool_calls or []):
-        if not isinstance(item, Mapping):
-            continue
-        token = _tool_name_from_call(item)
-        if token:
-            names.append(token)
-    if names:
-        return tuple(names)
-    for envelope in _native_tool_call_envelopes(result):
-        token = str(envelope.get("tool_name") or "").strip()
-        if token:
-            names.append(token)
-    return tuple(names)
+    metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
+    return observed_tool_call_names_from_sources(result.tool_calls or (), metadata)
 
 
 def _has_tool_dispatch_evidence(result: RoleTurnResult) -> bool:
