@@ -533,6 +533,8 @@ def _artifact_quality_issue_code(message: str) -> str:
         return "typescript_project_typecheck_failed"
     if "syntax error" in normalized or "invalid json" in normalized:
         return "syntax_error"
+    if "test script must use node --test" in normalized:
+        return "npm_manifest_invalid"
     if "npm package manifest" in normalized:
         return "npm_manifest_invalid"
     if "patch residue" in normalized:
@@ -614,6 +616,9 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
             if python_command_match:
                 metadata["script_name"] = str(python_command_match.group("script") or "").strip()
                 metadata["script_issue"] = "python_command"
+            elif "test script must use node --test" in message.lower():
+                metadata["script_name"] = "test"
+                metadata["script_issue"] = "node_test_runner_contract"
     elif code == "unresolved_import_symbol":
         match = _ARTIFACT_QUALITY_UNRESOLVED_IMPORT_SYMBOL_RE.search(message)
         if match:

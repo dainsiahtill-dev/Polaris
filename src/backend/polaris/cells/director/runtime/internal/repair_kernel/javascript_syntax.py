@@ -196,7 +196,9 @@ def build_npm_script_contract_plan(
     missing_entrypoints = _missing_entrypoints(raw_errors)
     missing_entrypoints.update(_missing_entrypoints_from_diagnostics(matched_diagnostics))
     has_typescript_context = _has_typescript_context(normalized_base, package_payload)
-    has_node_test_runner_contract = _has_node_test_runner_contract_error(raw_errors)
+    has_node_test_runner_contract = _has_node_test_runner_contract_error(
+        raw_errors
+    ) or _has_node_test_runner_contract_diagnostic(matched_diagnostics)
 
     for script_name in _script_names_for_manifest_issue(
         matched_diagnostics,
@@ -1204,6 +1206,16 @@ def _has_typescript_context(base_files: Mapping[str, str], package_payload: Mapp
 def _has_node_test_runner_contract_error(errors: Sequence[str]) -> bool:
     joined = "\n".join(str(error or "") for error in errors).lower()
     return "test script must use node --test" in joined
+
+
+def _has_node_test_runner_contract_diagnostic(diagnostics: Sequence[RepairDiagnostic]) -> bool:
+    for diagnostic in diagnostics:
+        metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
+        script_name = str(metadata.get("script_name") or "").strip()
+        script_issue = str(metadata.get("script_issue") or "").strip()
+        if script_name == "test" and script_issue == "node_test_runner_contract":
+            return True
+    return False
 
 
 def _has_fixed_port_start_script_error(errors: Sequence[str]) -> bool:

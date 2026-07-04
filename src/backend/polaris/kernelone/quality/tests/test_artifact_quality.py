@@ -363,6 +363,21 @@ def test_artifact_quality_issue_projection_extracts_npm_missing_entrypoint_metad
     }
 
 
+def test_artifact_quality_issue_projection_extracts_node_test_runner_contract_metadata() -> None:
+    error = "Artifact quality scan failed: test script must use node --test"
+
+    issues = artifact_quality_issues_from_errors((error,))
+
+    assert issues[0]["code"] == "npm_manifest_invalid"
+    assert issues[0]["path"] == "package.json"
+    assert issues[0]["metadata"] == {
+        "raw": error,
+        "manifest_path": "package.json",
+        "script_name": "test",
+        "script_issue": "node_test_runner_contract",
+    }
+
+
 def test_artifact_quality_issue_projection_extracts_typescript_start_loader_metadata() -> None:
     error = (
         "Artifact quality scan failed: npm start :: node --loader ts-node/esm src/index.ts\n"
