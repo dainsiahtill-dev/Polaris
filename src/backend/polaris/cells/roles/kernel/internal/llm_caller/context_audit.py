@@ -14,6 +14,7 @@ from polaris.cells.control_plane.run_ledger.public import (
 )
 from polaris.kernelone.context.projection_engine import is_empty_run_card_message
 from polaris.kernelone.events.final_request_evidence import (
+    build_final_request_coverage_sources,
     build_final_request_evidence_slots,
     build_final_request_tool_slots,
     final_request_evidence_ref_for_requirement,
@@ -2040,85 +2041,6 @@ def enforce_final_request_evidence_coverage(
         raise FinalRequestEvidenceCoverageError(violation)
 
 
-def _coverage_source(
-    *,
-    ref_type: str,
-    present: bool,
-    workflow_chain: dict[str, str],
-    request_metadata_summary: dict[str, Any],
-) -> dict[str, Any]:
-    hash_by_ref = {
-        "pm_contract": str(
-            request_metadata_summary.get("pm_contract_hash") or workflow_chain.get("pm_contract_hash", "")
-        ),
-        "ce_blueprint": str(
-            request_metadata_summary.get("chief_engineer_blueprint_hash") or workflow_chain.get("ce_blueprint_hash", "")
-        ),
-        "handoff_decision": workflow_chain.get("handoff_decision_hash", ""),
-        "module_interface_contract": str(request_metadata_summary.get("module_interface_contract_hash") or ""),
-        "actual_sibling_exports": str(request_metadata_summary.get("actual_sibling_exports_hash") or ""),
-        "interface_discrepancy_context": str(request_metadata_summary.get("interface_discrepancy_context_hash") or ""),
-        "architecture_or_file_plan": str(request_metadata_summary.get("architecture_or_file_plan_hash") or ""),
-        "failed_gate_evidence": str(request_metadata_summary.get("failed_gate_evidence_hash") or ""),
-        "workspace_quality_evidence": str(request_metadata_summary.get("workspace_quality_evidence_hash") or ""),
-        "target_files": str(request_metadata_summary.get("target_scope_hash") or ""),
-        "execution_profile": workflow_chain.get("execution_profile_hash", ""),
-        "execution_envelope": workflow_chain.get("execution_envelope_hash", ""),
-        "execution_contract": str(request_metadata_summary.get("execution_contract_hash") or ""),
-        "task_metadata": str(request_metadata_summary.get("task_metadata_hash") or ""),
-    }
-    structured_refs = {
-        "execution_profile",
-        "execution_strategy",
-        "execution_contract",
-        "execution_envelope",
-        "task_metadata",
-        "language_guidance",
-        "output_contract",
-    }
-    source = "final_provider_request"
-    confidence = "absent"
-    structured_metadata_flags = {
-        "pm_contract": "has_pm_contract",
-        "ce_blueprint": "has_chief_engineer_blueprint",
-        "module_interface_contract": "has_module_interface_contract",
-        "actual_sibling_exports": "has_actual_sibling_exports",
-        "interface_discrepancy_context": "has_interface_discrepancy_context",
-        "architecture_or_file_plan": "has_architecture_or_file_plan",
-        "failed_gate_evidence": "has_failed_gate_evidence",
-        "workspace_quality_evidence": "has_workspace_quality_evidence",
-        "target_files": "has_target_scope",
-    }
-    structured_flag = structured_metadata_flags.get(ref_type)
-    if (structured_flag and request_metadata_summary.get(structured_flag)) or (present and ref_type in structured_refs):
-        confidence = "structured_metadata"
-    elif present:
-        confidence = "text_heuristic"
-    result = {
-        "ref_type": ref_type,
-        "present": present,
-        "source": source,
-        "confidence": confidence,
-        "freshness": "current_turn" if present else "unknown",
-    }
-    hash_value = hash_by_ref.get(ref_type, "")
-    if hash_value:
-        result["hash"] = hash_value
-    detail_by_ref = {
-        "module_interface_contract": request_metadata_summary.get("module_interface_contract_summary"),
-        "actual_sibling_exports": request_metadata_summary.get("actual_sibling_exports_summary"),
-        "interface_discrepancy_context": request_metadata_summary.get("interface_discrepancy_context_summary"),
-        "architecture_or_file_plan": request_metadata_summary.get("architecture_or_file_plan_summary"),
-        "failed_gate_evidence": request_metadata_summary.get("failed_gate_evidence_summary"),
-        "workspace_quality_evidence": request_metadata_summary.get("workspace_quality_evidence_summary"),
-        "target_files": request_metadata_summary.get("target_scope_summary"),
-    }
-    detail_payload = detail_by_ref.get(ref_type)
-    if isinstance(detail_payload, dict) and detail_payload:
-        result["details"] = dict(detail_payload)
-    return result
-
-
 def _ledger_evidence(ai_request: Any, *, receipt_refs: list[str] | None = None) -> dict[str, Any]:
     context_payload = _request_context(ai_request)
     ledger = _mapping(context_payload.get("run_ledger")) or _mapping(context_payload.get("run_ledger_projection"))
@@ -2223,15 +2145,12 @@ def _final_request_evidence_coverage(
         envelope=envelope,
     )
     coverage_source_refs = _unique_strings([*required_refs, *included_refs])
-    coverage_sources = [
-        _coverage_source(
-            ref_type=ref,
-            present=ref in included_refs,
-            workflow_chain=workflow_chain,
-            request_metadata_summary=request_metadata_summary,
-        )
-        for ref in coverage_source_refs
-    ]
+    coverage_sources = build_final_request_coverage_sources(
+        refs=coverage_source_refs,
+        included_refs=included_refs,
+        workflow_chain=workflow_chain,
+        request_metadata_summary=request_metadata_summary,
+    )
     total_required = len(required_refs) + len(required_tools)
     total_missing = len(missing_required_refs) + len(missing_required_tools)
     coverage_ratio = 1.0 if total_required == 0 else max(0.0, (total_required - total_missing) / total_required)

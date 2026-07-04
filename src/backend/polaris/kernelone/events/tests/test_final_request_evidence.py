@@ -4,6 +4,7 @@ from polaris.kernelone.events.final_request_evidence import (
     FINAL_REQUEST_EVIDENCE_AUTHORITY_SCHEMA,
     FINAL_REQUEST_EVIDENCE_SCHEMA,
     attach_final_request_evidence,
+    build_final_request_coverage_sources,
     build_final_request_evidence,
     build_final_request_evidence_slots,
     build_final_request_tool_slots,
@@ -240,6 +241,79 @@ def test_final_request_slot_builders_project_structured_coverage() -> None:
             "source": "final_provider_request.tools",
             "confidence": "tool_schema",
             "freshness": "current_turn",
+        },
+    ]
+
+
+def test_build_final_request_coverage_sources_owns_provenance_projection() -> None:
+    coverage_sources = build_final_request_coverage_sources(
+        refs=[
+            "pm_contract",
+            "execution_profile",
+            "failed_gate_evidence",
+            "custom_context",
+            "ce_blueprint",
+        ],
+        included_refs=[
+            "pm_contract",
+            "execution_profile",
+            "failed_gate_evidence",
+            "custom_context",
+        ],
+        workflow_chain={
+            "pm_contract_hash": "pm-workflow",
+            "ce_blueprint_hash": "ce-workflow",
+            "execution_profile_hash": "profile-workflow",
+        },
+        request_metadata_summary={
+            "pm_contract_hash": "pm-summary",
+            "has_pm_contract": True,
+            "failed_gate_evidence_hash": "gate-summary",
+            "failed_gate_evidence_summary": {"exit_code": 1},
+            "has_failed_gate_evidence": True,
+        },
+    )
+
+    assert coverage_sources == [
+        {
+            "ref_type": "pm_contract",
+            "present": True,
+            "source": "final_provider_request",
+            "confidence": "structured_metadata",
+            "freshness": "current_turn",
+            "hash": "pm-summary",
+        },
+        {
+            "ref_type": "execution_profile",
+            "present": True,
+            "source": "final_provider_request",
+            "confidence": "structured_metadata",
+            "freshness": "current_turn",
+            "hash": "profile-workflow",
+        },
+        {
+            "ref_type": "failed_gate_evidence",
+            "present": True,
+            "source": "final_provider_request",
+            "confidence": "structured_metadata",
+            "freshness": "current_turn",
+            "hash": "gate-summary",
+            "details": {"exit_code": 1},
+        },
+        {
+            "ref_type": "custom_context",
+            "present": True,
+            "source": "final_provider_request",
+            "confidence": "text_heuristic",
+            "freshness": "current_turn",
+        },
+        {
+            "ref_type": "ce_blueprint",
+            "present": False,
+            "source": "final_provider_request",
+            "confidence": "absent",
+            "freshness": "unknown",
+            "hash": "ce-workflow",
         },
     ]
 
