@@ -6,6 +6,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_tool_batch_lifecycle_receipt,
     build_tool_call_lifecycle_receipt,
     build_tool_call_lifecycle_run_ledger_event,
+    build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt,
     build_tool_dispatch_dropped_anomaly_projection,
     build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
     empty_tool_lifecycle_summary,
@@ -341,6 +342,34 @@ def test_tool_dispatch_dropped_anomaly_projection_builds_lifecycle_and_failure_e
     assert failure_evidence["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
     assert "provider_response:provider-hash" in failure_evidence["evidence_refs"]
     assert "native_tool_call:tool-envelope-1" in failure_evidence["evidence_refs"]
+
+
+def test_tool_dispatch_dropped_anomaly_from_lifecycle_receipt_projects_counts() -> None:
+    lifecycle = build_tool_batch_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        provider_response_hash="provider-response-hash",
+        decoded_tool_calls_count=2,
+        receipts=[],
+        dropped_tool_calls=[
+            {"tool_name": "write_file", "call_id": "call-1"},
+            {"tool_name": "execute_command", "call_id": "call-2"},
+        ],
+        missing_receipt_reason="decoded_tool_batch_produced_no_authoritative_batch_receipt",
+    ).to_dict()
+
+    anomaly = build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt(lifecycle)
+
+    assert anomaly["type"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert anomaly["turn_id"] == "turn-1"
+    assert anomaly["native_tool_calls_count"] == 2
+    assert anomaly["decoded_tool_calls_count"] == 2
+    assert anomaly["dispatched_tool_calls_count"] == 0
+    assert anomaly["provider_response_hash"] == "provider-response-hash"
+    assert anomaly["tool_call_lifecycle_receipt"] == lifecycle
+    assert anomaly["failure_evidence"][0]["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
 
 
 def test_tool_lifecycle_receipt_derives_dropped_status_from_native_without_dispatch() -> None:

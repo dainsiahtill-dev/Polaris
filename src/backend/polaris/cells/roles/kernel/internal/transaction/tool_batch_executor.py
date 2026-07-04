@@ -17,11 +17,10 @@ from typing import Any, NoReturn, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
-    FailureClassV1,
     append_run_ledger_event,
     build_tool_batch_lifecycle_receipt,
     build_tool_call_lifecycle_run_ledger_event,
-    failure_evidence_from_lifecycle_receipt,
+    build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt,
     native_tool_call_count_from_metadata,
     native_tool_call_envelope_refs_from_metadata,
 )
@@ -1857,24 +1856,7 @@ class ToolBatchExecutor:
                 native_tool_call_envelopes=native_tool_call_envelopes,
                 missing_receipt_reason="decoded_tool_batch_produced_no_authoritative_batch_receipt",
             ).to_dict()
-            failure_evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
-            anomaly = {
-                "type": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
-                "turn_id": turn_id,
-                "native_tool_calls_count": lifecycle["native_tool_calls_count"],
-                "decoded_tool_calls_count": lifecycle["decoded_tool_calls_count"],
-                "dispatched_tool_calls_count": lifecycle["dispatched_tool_calls_count"],
-                "provider_response_hash": lifecycle["provider_response_hash"],
-                "dropped_tool_calls": lifecycle["dropped_tool_calls"],
-                "native_tool_call_envelopes": lifecycle["native_tool_call_envelope_refs"],
-                "reason": lifecycle["reason"],
-                "tool_call_lifecycle_receipt": lifecycle,
-            }
-            if failure_evidence:
-                anomaly["failure_evidence"] = [failure_evidence]
-            ledger.anomaly_flags.append(
-                anomaly
-            )
+            ledger.anomaly_flags.append(build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt(lifecycle))
             raise RuntimeError("tool_dispatch_dropped: decoded tool batch produced no authoritative batch receipt")
 
         if write_file_autofill_evidence:

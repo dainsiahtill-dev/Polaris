@@ -1381,10 +1381,37 @@ def build_tool_dispatch_dropped_anomaly_projection(
         failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
         reason=reason,
     ).to_dict()
+    return build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt(
+        lifecycle,
+        streaming=streaming,
+    )
+
+
+def build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt(
+    lifecycle_receipt: Mapping[str, Any],
+    *,
+    streaming: bool = False,
+) -> dict[str, Any]:
+    """Return the canonical anomaly flag for a dropped-dispatch lifecycle.
+
+    Boundary:
+        Lifecycle receipt construction and normalization remain in Run Ledger.
+        Callers append the returned anomaly only; they do not copy lifecycle
+        counters, dropped calls, envelopes, or failure evidence into ad-hoc
+        dictionaries.
+
+    Complexity:
+        O(b + d + e) through lifecycle normalization and failure evidence
+        projection.
+    """
+
+    lifecycle = normalize_tool_call_lifecycle_receipt(lifecycle_receipt)
     anomaly = {
         "type": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
         "turn_id": lifecycle["turn_id"],
         "native_tool_calls_count": lifecycle["native_tool_calls_count"],
+        "decoded_tool_calls_count": lifecycle["decoded_tool_calls_count"],
+        "dispatched_tool_calls_count": lifecycle["dispatched_tool_calls_count"],
         "native_tool_call_envelopes": lifecycle["native_tool_call_envelope_refs"],
         "provider_response_hash": lifecycle["provider_response_hash"],
         "reason": lifecycle["reason"],
