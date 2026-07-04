@@ -90,12 +90,13 @@ Open bucket count: 5.
 | ECC-WS1-16 | `057089ff` | ECC-WS1 / ECC-WS6 | Role execution result mapping now derives lifecycle failure classification from Run Ledger `failure_evidence_from_lifecycle_receipt` instead of locally reinterpreting `dispatch_status` / `failure_class`, and blocked lifecycle receipts without a failure class now fail as `TOOL_LIFECYCLE_UNKNOWN` rather than projecting as success. | `rtk pytest src/backend/polaris/cells/roles/runtime/tests/test_service_helpers_characterization.py -q`; targeted ruff passed. |
 | ECC-WS1-17 | `54a9ff95` | ECC-WS1 | Run Ledger lifecycle aggregate totals now live in `summarize_tool_lifecycle_events`; `projection.py` consumes the public summary instead of locally maintaining native/decoded/dispatched/result/effect/drop/failure counters and failure-evidence lists. | `rtk pytest src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py -q`; `rtk pytest src/backend/polaris/cells/control_plane/run_ledger/tests/test_public_service.py -q`; targeted ruff passed. |
 | ECC-WS1-18 | `2c768f22` | ECC-WS1 | Dropped-dispatch error projection now passes TaskBoundary tool-dispatch evidence through Run Ledger `task_boundary_tool_dispatch_from_lifecycle_metadata` instead of hand-writing a reduced dict, preserving decoded count, native tool names, provider response hash, and dropped status from the lifecycle receipt. | `rtk pytest src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_tool_dispatch_projection.py -q`; `rtk pytest src/backend/polaris/cells/control_plane/run_ledger/tests/test_task_boundary.py -q`; targeted ruff passed. |
+| ECC-WS1-19 | `eb2bff73` | ECC-WS1 | Stream completion dropped-dispatch behavior is now locked by an end-to-end projector regression: required write tools with zero dispatch/effect evidence return `tool_dispatch_dropped`, and TaskBoundary receives only the Run Ledger lifecycle-derived dispatch projection instead of a local stream summary. | `rtk pytest src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_stream_event_projection.py -q`; `rtk pytest src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_transaction_turn_completion.py -q`; `rtk pytest src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_tool_dispatch_projection.py -q`; `rtk pytest src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py -q`; targeted ruff passed. |
 
 ## Next Closure Order
 
-1. ECC-WS1: audit stream completion/monitoring projection for any remaining
-   hand-written lifecycle receipt or dispatch-count summaries now that response
-   facts and dropped-dispatch anomaly projection are shared.
+1. ECC-WS1: continue auditing stream/non-stream monitoring surfaces for
+   remaining hand-written lifecycle receipt, native-tool, or dispatch-count
+   summaries that should be pure Run Ledger public projections.
 2. ECC-WS6: continue replacing local runtime/context failure-evidence and
    coverage projections with Run Ledger public helpers without losing UI-facing
    summaries.
