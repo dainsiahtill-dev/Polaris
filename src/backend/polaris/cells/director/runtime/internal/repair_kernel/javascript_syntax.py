@@ -1093,7 +1093,7 @@ def _is_npm_script_contract_diagnostic(diagnostic: RepairDiagnostic) -> bool:
     metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
     if str(diagnostic.code or "").strip() == "npm_manifest_invalid":
         return True
-    if str(metadata.get("script_name") or "").strip() or str(metadata.get("script_issue") or "").strip():
+    if _diagnostic_script_name(diagnostic) or str(metadata.get("script_issue") or "").strip():
         return True
     return (
         "npm default failing test script" in raw
@@ -1123,10 +1123,15 @@ def _script_names_for_manifest_issue(
     for diagnostic in diagnostics:
         metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
         script_issue = str(metadata.get("script_issue") or "").strip()
-        script_name = str(metadata.get("script_name") or "").strip()
+        script_name = _diagnostic_script_name(diagnostic)
         if script_issue == issue and script_name:
             script_names.append(script_name)
     return tuple(dict.fromkeys(script_names))
+
+
+def _diagnostic_script_name(diagnostic: RepairDiagnostic) -> str:
+    metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
+    return str(metadata.get("script_name") or metadata.get("script") or "").strip()
 
 
 def _missing_entrypoints_from_diagnostics(diagnostics: Sequence[RepairDiagnostic]) -> dict[str, str]:
@@ -1134,7 +1139,7 @@ def _missing_entrypoints_from_diagnostics(diagnostics: Sequence[RepairDiagnostic
     for diagnostic in diagnostics:
         metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
         script_issue = str(metadata.get("script_issue") or "").strip()
-        script_name = str(metadata.get("script_name") or "").strip()
+        script_name = _diagnostic_script_name(diagnostic)
         entrypoint = str(metadata.get("entrypoint") or "").strip().replace("\\", "/")
         if script_issue == "missing_local_entrypoint" and script_name and entrypoint:
             entrypoints[script_name] = entrypoint
@@ -1224,7 +1229,7 @@ def _has_node_test_runner_contract_error(errors: Sequence[str]) -> bool:
 def _has_node_test_runner_contract_diagnostic(diagnostics: Sequence[RepairDiagnostic]) -> bool:
     for diagnostic in diagnostics:
         metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
-        script_name = str(metadata.get("script_name") or "").strip()
+        script_name = _diagnostic_script_name(diagnostic)
         script_issue = str(metadata.get("script_issue") or "").strip()
         if script_name == "test" and script_issue == "node_test_runner_contract":
             return True
@@ -1241,7 +1246,7 @@ def _has_fixed_port_start_script_error(errors: Sequence[str]) -> bool:
 def _has_fixed_port_start_script_diagnostic(diagnostics: Sequence[RepairDiagnostic]) -> bool:
     for diagnostic in diagnostics:
         metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
-        script_name = str(metadata.get("script_name") or "").strip()
+        script_name = _diagnostic_script_name(diagnostic)
         script_issue = str(metadata.get("script_issue") or "").strip()
         if script_name in {"start", "serve", "dev", "preview"} and script_issue == "fixed_port_conflict":
             return True
@@ -1259,7 +1264,7 @@ def _has_typescript_source_loader_start_error(errors: Sequence[str]) -> bool:
 def _has_typescript_source_loader_start_diagnostic(diagnostics: Sequence[RepairDiagnostic]) -> bool:
     for diagnostic in diagnostics:
         metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
-        script_name = str(metadata.get("script_name") or "").strip()
+        script_name = _diagnostic_script_name(diagnostic)
         script_issue = str(metadata.get("script_issue") or "").strip()
         if script_name == "start" and script_issue == "typescript_source_loader_require_cycle":
             return True
@@ -1296,7 +1301,7 @@ def _has_repairable_test_script_error(errors: Sequence[str]) -> bool:
 def _has_repairable_test_script_diagnostic(diagnostics: Sequence[RepairDiagnostic]) -> bool:
     for diagnostic in diagnostics:
         metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
-        script_name = str(metadata.get("script_name") or "").strip()
+        script_name = _diagnostic_script_name(diagnostic)
         script_issue = str(metadata.get("script_issue") or "").strip()
         if script_name == "test" and script_issue in _REPAIRABLE_TEST_SCRIPT_ISSUES:
             return True
