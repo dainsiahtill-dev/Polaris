@@ -46,6 +46,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     task_boundary_tool_dispatch_from_lifecycle_metadata,
     task_boundary_tool_dispatch_from_lifecycle_receipt,
     tool_call_lifecycle_receipts_from_metadata,
+    tool_dispatch_dropped_error_message,
 )
 
 
@@ -60,6 +61,7 @@ def test_tool_lifecycle_all_exports_source_projection_helpers() -> None:
         "project_tool_lifecycle_failure_status",
         "project_tool_lifecycle_summary",
         "task_boundary_tool_dispatch_from_lifecycle_receipt",
+        "tool_dispatch_dropped_error_message",
     }
 
     assert required_exports <= set(tool_lifecycle.__all__)
@@ -587,6 +589,10 @@ def test_tool_dispatch_dropped_anomaly_from_sources_owns_native_fact_projection(
     assert lifecycle["native_tool_calls_count"] == 2
     assert lifecycle["decoded_tool_calls_count"] == 2
     assert lifecycle["dispatched_tool_calls_count"] == 0
+    assert (
+        tool_dispatch_dropped_error_message(anomaly)
+        == "tool_dispatch_dropped: provider emitted 2 tool call(s), but no executable tool batch was decoded"
+    )
 
 
 def test_tool_dispatch_dropped_anomaly_from_lifecycle_receipt_projects_counts() -> None:

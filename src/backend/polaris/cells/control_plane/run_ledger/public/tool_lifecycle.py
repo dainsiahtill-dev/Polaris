@@ -1890,6 +1890,30 @@ def build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt(
     return anomaly
 
 
+def tool_dispatch_dropped_error_message(anomaly: Mapping[str, Any] | None) -> str:
+    """Return the canonical runtime error text for dropped tool dispatch.
+
+    Boundary:
+        Run Ledger owns the dropped-dispatch lifecycle counters and their
+        human-readable runtime projection. Role runtimes may raise the returned
+        message, but must not restate native-call counts with local f-strings.
+
+    Complexity:
+        O(1); only top-level anomaly and nested lifecycle counters are read.
+    """
+
+    count = 0
+    if isinstance(anomaly, Mapping):
+        count = _int_value(anomaly.get("native_tool_calls_count"))
+        lifecycle = anomaly.get("tool_call_lifecycle_receipt")
+        if count <= 0 and isinstance(lifecycle, Mapping):
+            count = _int_value(lifecycle.get("native_tool_calls_count"))
+    return (
+        "tool_dispatch_dropped: provider emitted "
+        f"{count} tool call(s), but no executable tool batch was decoded"
+    )
+
+
 def build_tool_dispatch_dropped_lifecycle_from_anomaly_flags(
     *,
     anomaly_flags: Any,
@@ -2119,4 +2143,5 @@ __all__ = [
     "task_boundary_tool_dispatch_from_lifecycle_metadata",
     "task_boundary_tool_dispatch_from_lifecycle_receipt",
     "tool_call_lifecycle_receipts_from_metadata",
+    "tool_dispatch_dropped_error_message",
 ]

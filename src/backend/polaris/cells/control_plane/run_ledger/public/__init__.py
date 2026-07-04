@@ -90,6 +90,7 @@ from .tool_lifecycle import (
     task_boundary_tool_dispatch_from_lifecycle_metadata,
     task_boundary_tool_dispatch_from_lifecycle_receipt,
     tool_call_lifecycle_receipts_from_metadata,
+    tool_dispatch_dropped_error_message,
 )
 
 __all__ = [
@@ -173,4 +174,5 @@ __all__ = [
     "task_boundary_tool_dispatch_from_lifecycle_metadata",
     "task_boundary_tool_dispatch_from_lifecycle_receipt",
     "tool_call_lifecycle_receipts_from_metadata",
+    "tool_dispatch_dropped_error_message",
 ]

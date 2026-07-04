@@ -26,6 +26,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     native_tool_call_facts_from_sources,
     project_completion_audit_evidence_to_metadata,
     project_native_tool_call_facts_to_metadata,
+    tool_dispatch_dropped_error_message,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_calls_from_response,
@@ -1193,18 +1194,14 @@ class StreamOrchestrator:
         decision = dict(decision)
         decision["metadata"] = decision_metadata
         if native_tool_call_count > 0 and tool_definitions and not decision.get("tool_batch"):
-            ledger.anomaly_flags.append(
-                build_tool_dispatch_dropped_anomaly(
-                    response=llm_response,
-                    metadata=decision_metadata,
-                    turn_id=turn_id,
-                    streaming=True,
-                )
+            anomaly = build_tool_dispatch_dropped_anomaly(
+                response=llm_response,
+                metadata=decision_metadata,
+                turn_id=turn_id,
+                streaming=True,
             )
-            raise RuntimeError(
-                "tool_dispatch_dropped: provider emitted "
-                f"{native_tool_call_count} tool call(s), but no executable tool batch was decoded"
-            )
+            ledger.anomaly_flags.append(anomaly)
+            raise RuntimeError(tool_dispatch_dropped_error_message(anomaly))
 
         # PROPOSE_PATCH / ANALYZE_ONLY 边界保护：过滤 write tools（与 run 模式一致）。
         # 必须在 record_decision / TOOL_BATCH 执行之前应用，否则只读/提案契约下
