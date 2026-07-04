@@ -163,6 +163,12 @@ def test_final_request_context_audit_counts_tools_and_coverage() -> None:
             "target_files": ["src/index.ts"],
             "acceptance": ["npm test"],
         },
+        "chief_engineer_blueprint": {
+            "schema_version": "chief_engineer.blueprint.v1",
+            "blueprint_id": "ce_TASK-1",
+            "target_files": ["src/index.ts"],
+            "construction_plan": {"phase": "implement"},
+        },
         "target_files": ["src/index.ts"],
         "scope_paths": ["src/index.ts"],
         "failed_gate_evidence": {
@@ -846,6 +852,12 @@ def test_final_request_context_audit_skips_resident_agi_coverage_when_disabled()
             "target_files": ["src/engine/SimulationEngine.ts"],
             "acceptance": ["npm run build"],
         },
+        "chief_engineer_blueprint": {
+            "schema_version": "chief_engineer.blueprint.v1",
+            "blueprint_id": "bp-L1-01-4",
+            "target_files": ["src/engine/SimulationEngine.ts"],
+            "construction_plan": {"phase": "implement"},
+        },
         "target_files": ["src/engine/SimulationEngine.ts"],
         "scope_paths": ["src/engine/SimulationEngine.ts"],
         "workspace_quality_evidence": {
@@ -1021,6 +1033,12 @@ def test_final_request_context_audit_recognizes_director_contract_and_blueprint_
             "task_id": "TASK-1",
             "target_files": ["src/engine/SimulationEngine.ts"],
             "acceptance": ["npm run build"],
+        },
+        "chief_engineer_blueprint": {
+            "schema_version": "chief_engineer.blueprint.v1",
+            "blueprint_id": "bp-L1-01-4",
+            "target_files": ["src/engine/SimulationEngine.ts"],
+            "construction_plan": {"phase": "implement"},
         },
         "target_files": ["src/engine/SimulationEngine.ts"],
         "scope_paths": ["src/engine/SimulationEngine.ts"],

@@ -333,7 +333,6 @@ def _resident_agi_coverage_flags(text: str, ai_request: Any | None) -> dict[str,
 
 
 def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bool]:
-    lowered = _trusted_coverage_text(text).lower()
     pm_contract = _pm_contract_payload(ai_request) if ai_request is not None else {}
     ce_blueprint = _ce_blueprint_payload(ai_request) if ai_request is not None else {}
     module_interface_contract = _module_interface_contract_payload(ai_request) if ai_request is not None else {}
@@ -344,35 +343,9 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
     architecture_or_file_plan = _architecture_or_file_plan_payload(ai_request) if ai_request is not None else {}
     failed_gate_evidence = _failed_gate_evidence_payload(ai_request) if ai_request is not None else {}
     workspace_quality_evidence = _workspace_quality_evidence_payload(ai_request) if ai_request is not None else {}
-    blueprint_absent = any(
-        marker in lowered
-        for marker in (
-            "无 ce 蓝图可用",
-            "无 chief engineer 蓝图可用",
-            "no ce blueprint available",
-            "no chief engineer blueprint available",
-            "chief engineer blueprint evidence: unavailable",
-            "蓝图/技术架构（降级）",
-            "非 ce 权威蓝图",
-        )
-    )
-    strong_blueprint_evidence = any(
-        needle in lowered
-        for needle in (
-            "blueprint_id",
-            "ce_blueprint",
-            "chief_engineer_blueprint",
-            "chief engineer blueprint",
-            "handoff_ready",
-            "generated_blueprints",
-            'blueprints":',
-            "蓝图交接",
-        )
-    )
-    has_chief_engineer_blueprint = bool(ce_blueprint or (strong_blueprint_evidence and not blueprint_absent))
     coverage = {
         "has_pm_contract": bool(pm_contract),
-        "has_chief_engineer_blueprint": has_chief_engineer_blueprint,
+        "has_chief_engineer_blueprint": bool(ce_blueprint),
         "has_module_interface_contract": bool(module_interface_contract),
         "has_actual_sibling_exports": bool(actual_sibling_exports),
         "has_architecture_or_file_plan": bool(architecture_or_file_plan),
