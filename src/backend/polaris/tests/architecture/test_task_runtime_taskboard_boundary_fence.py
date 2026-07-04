@@ -95,6 +95,19 @@ def _legacy_task_runtime_method_calls(path: Path) -> list[str]:
     return offenders
 
 
+def _legacy_task_board_alias_references(path: Path) -> list[str]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute):
+            continue
+        if node.attr != "task_board":
+            continue
+        offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} references legacy task_board alias")
+    return offenders
+
+
 def test_raw_taskboard_is_private_to_task_runtime_cell() -> None:
     offenders: list[str] = []
     this_file = Path(__file__).resolve()
@@ -129,4 +142,22 @@ def test_production_code_uses_task_runtime_row_apis() -> None:
         "Production task-runtime consumers must use row APIs such as "
         "create_task_row(), update_task_row(), get_task(), list_task_rows(), "
         "list_ready_task_rows(), or get_task_row_stats():\n" + "\n".join(offenders)
+    )
+
+
+def test_production_code_uses_task_runtime_alias() -> None:
+    offenders: list[str] = []
+    this_file = Path(__file__).resolve()
+    for path in POLARIS_ROOT.rglob("*.py"):
+        if path.resolve() == this_file or "__pycache__" in path.parts:
+            continue
+        if "tests" in path.parts:
+            continue
+        if _is_allowed_owner_path(path):
+            continue
+        offenders.extend(_legacy_task_board_alias_references(path))
+
+    assert not offenders, (
+        "Production code must access TaskRuntimeService through task_runtime, "
+        "not the legacy task_board alias:\n" + "\n".join(offenders)
     )

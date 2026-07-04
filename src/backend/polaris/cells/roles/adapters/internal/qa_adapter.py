@@ -520,21 +520,21 @@ class QAAdapter(BaseRoleAdapter):
 
             try:
                 if passed:
-                    self.task_board.update_task_row(task_id, metadata=metadata_update)
+                    self.task_runtime.update_task_row(task_id, metadata=metadata_update)
                     summary["passed_marked"] += 1
                     continue
 
                 if exhausted:
                     # completed -> failed is not a standard transition; reopen first
-                    self.task_board.reopen_task_row(
+                    self.task_runtime.reopen_task_row(
                         task_id,
                         reason="qa_rework_retry_exhausted",
                         metadata=metadata_update,
                     )
-                    self.task_board.update_task_row(task_id, status="failed", metadata=metadata_update)
+                    self.task_runtime.update_task_row(task_id, status="failed", metadata=metadata_update)
                     summary["failed"] += 1
                 else:
-                    self.task_board.reopen_task_row(
+                    self.task_runtime.reopen_task_row(
                         task_id,
                         reason=last_reason,
                         metadata=metadata_update,
@@ -548,7 +548,7 @@ class QAAdapter(BaseRoleAdapter):
     def _list_taskboard_rows(self) -> list[dict[str, Any]]:
         """Return QA task-board rows through the runtime read model when available."""
 
-        list_task_rows = getattr(self.task_board, "list_task_rows", None)
+        list_task_rows = getattr(self.task_runtime, "list_task_rows", None)
         if not callable(list_task_rows):
             return []
         try:

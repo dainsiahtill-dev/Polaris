@@ -65,7 +65,7 @@ class BaseRoleAdapter(RoleOrchestrationAdapter):
 
     @property
     def task_board(self) -> TaskRuntimeService:
-        """兼容属性：历史调用点继续使用 ``self.task_board``。"""
+        """Compatibility alias retained while tests migrate to ``task_runtime``."""
         return self.task_runtime
 
     def _build_env(self, overrides: dict[str, str] | None = None) -> dict[str, str]:

@@ -2,7 +2,7 @@
 
 ``PMAdapter`` 由多个职责 mixin 组合而成；这些 mixin 之间会互相调用对方
 定义的方法（例如 parsing 调用 normalization 的 ``_normalize_task_contract``），
-并访问 ``BaseRoleAdapter`` 提供的实例成员（如 ``workspace`` / ``task_board``）。
+并访问 ``BaseRoleAdapter`` 提供的实例成员（如 ``workspace`` / ``task_runtime``）。
 
 为了在 ``mypy --strict`` 下让每个 mixin 都能静态看到这些兄弟方法与基类成员，
 同时保持运行时真实的 ``BaseRoleAdapter`` MRO，本模块提供:
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
         def role_id(self) -> str: ...
 
         @property
-        def task_board(self) -> Any: ...
+        def task_runtime(self) -> Any: ...
 
         def _board_task_exists(self, task_id: Any) -> bool: ...
 

@@ -1006,12 +1006,10 @@ class DirectorAdapter(BaseRoleAdapter):
     """
 
     def __init__(self, workspace: str, task_board: Any = None, task_runtime: Any = None) -> None:
-        if task_board is None and task_runtime is None:
-            super().__init__(workspace)
-        else:
-            self.workspace = workspace
-            self._task_runtime = task_runtime
-            self._task_board = task_board if task_board else task_runtime
+        super().__init__(workspace)
+        runtime_override = task_runtime if task_runtime is not None else task_board
+        if runtime_override is not None:
+            self._task_runtime = runtime_override
         self._state_tracker = DirectorStateTracker(workspace)
         self._execution = DirectorPatchExecutor(workspace)
 
@@ -1699,7 +1697,7 @@ class DirectorAdapter(BaseRoleAdapter):
 
     def _get_task(self, task_id: str) -> dict | None:
         """获取任务信息"""
-        return self.task_board.get_task(task_id)
+        return self.task_runtime.get_task(task_id)
 
     def _select_pending_board_task(self) -> dict[str, Any] | None:
         """当编排任务没有 TaskBoard 映射时，回退到可执行的真实待办任务。"""
@@ -2161,7 +2159,7 @@ class DirectorAdapter(BaseRoleAdapter):
         """更新 TaskBoard 任务"""
         if not metadata and not status:
             return False
-        updated = self.task_board.update_task_row(
+        updated = self.task_runtime.update_task_row(
             task_id,
             status=status,
             metadata=metadata or {},

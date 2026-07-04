@@ -17,7 +17,7 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
     def _list_board_task_rows(self) -> list[dict[str, Any]]:
         """Return PM task-board rows through the runtime read model when available."""
 
-        list_task_rows = getattr(self.task_board, "list_task_rows", None)
+        list_task_rows = getattr(self.task_runtime, "list_task_rows", None)
         if not callable(list_task_rows):
             return []
         rows = list_task_rows()
@@ -104,17 +104,17 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
                 merged_metadata = dict(metadata)
                 merged_metadata["pm_deduplicated"] = True
                 merged_metadata["pm_last_contract_subject"] = subject
-                task_row = self.task_board.update_task_row(matched_id, metadata=merged_metadata)
+                task_row = self.task_runtime.update_task_row(matched_id, metadata=merged_metadata)
                 if task_row is None:
-                    task_row = self.task_board.get_task(matched_id)
+                    task_row = self.task_runtime.get_task(matched_id)
                 if task_row is None:
-                    task_row = self.task_board.create_task_row(
+                    task_row = self.task_runtime.create_task_row(
                         subject=subject,
                         description=description,
                         metadata=metadata,
                     )
             else:
-                task_row = self.task_board.create_task_row(
+                task_row = self.task_runtime.create_task_row(
                     subject=subject,
                     description=description,
                     metadata=metadata,
@@ -142,13 +142,13 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
                 if mapped is not None and mapped != board_task_id:
                     blocked_by.append(mapped)
             if blocked_by and self._board_task_exists(board_task_id):
-                refreshed_row = self.task_board.update_task_row(
+                refreshed_row = self.task_runtime.update_task_row(
                     board_task_id,
                     blocked_by=blocked_by,
                     metadata={"resolved_depends_on_task_ids": blocked_by},
                 )
                 if refreshed_row is None:
-                    refreshed_row = self.task_board.get_task(board_task_id)
+                    refreshed_row = self.task_runtime.get_task(board_task_id)
                 if refreshed_row is not None:
                     for position, row in enumerate(created):
                         if int(row.get("id") or 0) == board_task_id:
@@ -179,7 +179,7 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
                 status = str(row.get("status") or "").strip().lower()
                 if status not in {"pending", "blocked", "in_progress", "failed"}:
                     continue
-                self.task_board.update_task_row(
+                self.task_runtime.update_task_row(
                     task_id,
                     status="cancelled",
                     metadata={
