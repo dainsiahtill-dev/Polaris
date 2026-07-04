@@ -21,6 +21,7 @@ from polaris.cells.director.execution.public import (
     ExecuteDirectorTaskCommandV1,
     execute_director_task,
 )
+from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.cells.runtime.task_runtime.public.task_board_contract import TaskBoard
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 
@@ -55,11 +56,17 @@ class DirectorService:
         self.max_workers = max_workers
         self.execution_mode = execution_mode
         self._task_board: TaskBoard | None = None
+        self._task_runtime: TaskRuntimeService | None = None
 
     def _get_task_board(self) -> TaskBoard:
         if self._task_board is None:
             self._task_board = TaskBoard(workspace=str(self.workspace))
         return self._task_board
+
+    def _get_task_runtime(self) -> TaskRuntimeService:
+        if self._task_runtime is None:
+            self._task_runtime = TaskRuntimeService(workspace=str(self.workspace))
+        return self._task_runtime
 
     async def run_iteration(self, iteration: int = 1) -> dict[str, Any]:
         """运行 Director 迭代。
@@ -192,7 +199,7 @@ class DirectorService:
     def _update_task_board(self, task_id: str, result: dict[str, Any]) -> None:
         status = "completed" if bool(result.get("success")) else "failed"
         try:
-            self._get_task_board().update(
+            self._get_task_runtime().update(
                 self._normalize_task_id(task_id),
                 status=status,
                 metadata=dict(result.get("metadata") or {}),
