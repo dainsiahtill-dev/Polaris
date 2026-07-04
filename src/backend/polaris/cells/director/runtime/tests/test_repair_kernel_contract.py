@@ -657,6 +657,29 @@ def test_normalizer_preserves_structured_typescript_suggestion_metadata() -> Non
     assert diagnostic.metadata["suggestion"] == '"pre-open"'
 
 
+def test_normalizer_preserves_structured_typescript_issue_kind_metadata() -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            {
+                "source": "artifact_quality",
+                "code": "typescript_syntax_red_flag",
+                "message": "typed syntax red flag",
+                "path": "src/middleware/auth.ts",
+                "issue_kind": "escaped_newline",
+                "raw_path": "/tmp/factory-bench/src/middleware/auth.ts",
+                "raw": "typed issue metadata only",
+            }
+        ]
+    )
+
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    assert diagnostic.code == "typescript_syntax_red_flag"
+    assert diagnostic.path == "src/middleware/auth.ts"
+    assert diagnostic.metadata["issue_kind"] == "escaped_newline"
+    assert diagnostic.metadata["raw_path"] == "/tmp/factory-bench/src/middleware/auth.ts"
+
+
 def test_public_normalizer_preserves_structured_diagnostic_payload() -> None:
     diagnostics = normalize_director_repair_diagnostics(
         [
@@ -3325,6 +3348,41 @@ def test_runtime_dispatcher_typescript_escaped_newline_uses_typed_diagnostic_pat
     assert planning.plan is not None
     assert planning.composition is not None
     assert planning.plan.diagnostics[0].metadata["stable_issue_id"] == "typed-typescript-escaped-newline"
+    assert "lifecycle\\nexport const tenantContext" not in planning.composition.patches[0].content_after
+    assert "\nexport const tenantContext" in planning.composition.patches[0].content_after
+
+
+def test_typescript_escaped_newline_rule_uses_structured_issue_kind_metadata() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL
+    content = (
+        "import { AsyncLocalStorage } from 'async_hooks';\n\n"
+        "// Context for tenant lifecycle\\n"
+        "export const tenantContext = new AsyncLocalStorage<{ tenantId: string }>();\n"
+    )
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            {
+                "source": "artifact_quality",
+                "code": "typescript_syntax_red_flag",
+                "message": "typed syntax red flag",
+                "path": "src/middleware/auth.ts",
+                "issue_kind": "escaped_newline",
+                "raw": "typed issue metadata only",
+            }
+        ]
+    )
+
+    planning = plan_runtime_repair(
+        source_tool=source_tool,
+        base_files={"src/middleware/auth.ts": content},
+        artifact_quality_errors=(),
+        repair_diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert planning.plan is not None
+    assert planning.composition is not None
+    assert planning.plan.diagnostics[0].metadata["issue_kind"] == "escaped_newline"
     assert "lifecycle\\nexport const tenantContext" not in planning.composition.patches[0].content_after
     assert "\nexport const tenantContext" in planning.composition.patches[0].content_after
 
