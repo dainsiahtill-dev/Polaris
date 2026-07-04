@@ -39,6 +39,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     project_tool_lifecycle_failure_status,
     project_tool_lifecycle_metadata,
     project_tool_lifecycle_receipt_to_metadata,
+    project_tool_lifecycle_summary,
     summarize_tool_lifecycle_events,
     task_boundary_tool_dispatch_from_lifecycle_metadata,
     task_boundary_tool_dispatch_from_lifecycle_receipt,
@@ -53,6 +54,7 @@ def test_tool_lifecycle_all_exports_source_projection_helpers() -> None:
         "native_tool_call_names_from_facts",
         "observed_tool_call_names_from_sources",
         "project_tool_lifecycle_failure_status",
+        "project_tool_lifecycle_summary",
         "task_boundary_tool_dispatch_from_lifecycle_receipt",
     }
 
@@ -119,6 +121,40 @@ def test_project_native_tool_call_facts_to_metadata_can_emit_decision_caller_com
     assert metadata["native_tool_calls_count"] == 2
     assert metadata["decision_caller_native_tool_calls_count"] == 2
     assert metadata["native_tool_call_names"] == ["read_file", "write_file"]
+
+
+def test_project_tool_lifecycle_summary_owns_read_model_shape() -> None:
+    summary = {
+        "ok": False,
+        "event_count": "2",
+        "native_tool_calls_count": "3",
+        "decoded_tool_calls_count": "2",
+        "dispatched_tool_calls_count": "1",
+        "tool_result_count": "1",
+        "effect_receipt_count": "1",
+        "native_tool_call_names": ["write_file", "write_file", "execute_command"],
+        "dropped_count": "1",
+        "failed_count": "0",
+        "failure_evidence": [{"failure_class": "TOOL_DISPATCH_DROPPED"}],
+        "events": [{"status": "dropped"}],
+    }
+
+    projection = project_tool_lifecycle_summary(summary)
+
+    assert projection == {
+        "ok": False,
+        "event_count": 2,
+        "native_tool_calls_count": 3,
+        "decoded_tool_calls_count": 2,
+        "dispatched_tool_calls_count": 1,
+        "tool_result_count": 1,
+        "effect_receipt_count": 1,
+        "native_tool_call_names": ["write_file", "execute_command"],
+        "dropped_count": 1,
+        "failed_count": 0,
+        "failure_evidence": [{"failure_class": "TOOL_DISPATCH_DROPPED"}],
+        "events": [{"status": "dropped"}],
+    }
 
 
 def test_normalize_native_tool_call_envelope_refs_filters_and_deduplicates() -> None:

@@ -62,6 +62,19 @@ def _int_value(value: Any) -> int:
         return 0
 
 
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    output: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = _clean_string(item)
+        if text and text not in seen:
+            output.append(text)
+            seen.add(text)
+    return output
+
+
 def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
@@ -1287,6 +1300,47 @@ def summarize_tool_lifecycle_events(events: Sequence[Mapping[str, Any]]) -> dict
     }
 
 
+def project_tool_lifecycle_summary(summary: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Project the canonical lifecycle summary into Run Ledger read-model shape.
+
+    Boundary:
+        ``summarize_tool_lifecycle_events`` owns lifecycle aggregation and this
+        helper owns the read-model field projection for that aggregate. Generic
+        Run Ledger projections should not hand-copy lifecycle count/name/event
+        fields because that recreates a second summary contract.
+
+    Complexity:
+        O(n + m) over native tool names, failure evidence rows, and events; O(n)
+        memory for the copied projection lists.
+    """
+
+    lifecycle = summary if isinstance(summary, Mapping) else {}
+    if not lifecycle:
+        lifecycle = empty_tool_lifecycle_summary()
+    failure_evidence_raw = lifecycle.get("failure_evidence")
+    events_raw = lifecycle.get("events")
+    failure_evidence = (
+        [dict(item) for item in failure_evidence_raw if isinstance(item, Mapping)]
+        if isinstance(failure_evidence_raw, list)
+        else []
+    )
+    events = [dict(item) for item in events_raw if isinstance(item, Mapping)] if isinstance(events_raw, list) else []
+    return {
+        "ok": bool(lifecycle.get("ok", True)),
+        "event_count": _int_value(lifecycle.get("event_count")),
+        "native_tool_calls_count": _int_value(lifecycle.get("native_tool_calls_count")),
+        "decoded_tool_calls_count": _int_value(lifecycle.get("decoded_tool_calls_count")),
+        "dispatched_tool_calls_count": _int_value(lifecycle.get("dispatched_tool_calls_count")),
+        "tool_result_count": _int_value(lifecycle.get("tool_result_count")),
+        "effect_receipt_count": _int_value(lifecycle.get("effect_receipt_count")),
+        "native_tool_call_names": _string_list(lifecycle.get("native_tool_call_names")),
+        "dropped_count": _int_value(lifecycle.get("dropped_count")),
+        "failed_count": _int_value(lifecycle.get("failed_count")),
+        "failure_evidence": failure_evidence,
+        "events": events,
+    }
+
+
 def project_tool_lifecycle_failure_status(summary: Mapping[str, Any] | None) -> dict[str, Any]:
     """Project aggregate lifecycle failure status from a canonical summary.
 
@@ -1949,6 +2003,7 @@ __all__ = [
     "project_tool_lifecycle_failure_status",
     "project_tool_lifecycle_metadata",
     "project_tool_lifecycle_receipt_to_metadata",
+    "project_tool_lifecycle_summary",
     "summarize_tool_lifecycle_events",
     "task_boundary_tool_dispatch_from_lifecycle_metadata",
     "task_boundary_tool_dispatch_from_lifecycle_receipt",
