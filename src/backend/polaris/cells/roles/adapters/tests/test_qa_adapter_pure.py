@@ -44,13 +44,13 @@ class _QaRowProjectionOnlyTaskBoard:
     def list_all(self) -> list[Any]:
         raise AssertionError("QA read-model consumers must use list_task_rows()")
 
-    def reopen(
+    def reopen_task_row(
         self,
         task_id: Any,
         *,
         reason: str = "",
         metadata: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> dict[str, Any] | None:
         self.reopened.append(
             {
                 "task_id": task_id,
@@ -58,14 +58,15 @@ class _QaRowProjectionOnlyTaskBoard:
                 "metadata": dict(metadata or {}),
             }
         )
+        return self._update_row(task_id, status="pending", metadata=metadata)
 
-    def update(
+    def update_task_row(
         self,
         task_id: Any,
         *,
         status: str | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> dict[str, Any] | None:
         self.updated.append(
             {
                 "task_id": task_id,
@@ -73,6 +74,33 @@ class _QaRowProjectionOnlyTaskBoard:
                 "metadata": dict(metadata or {}),
             }
         )
+        return self._update_row(task_id, status=status, metadata=metadata)
+
+    def _update_row(
+        self,
+        task_id: Any,
+        *,
+        status: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        for row in self.rows:
+            if str(row.get("id") or "") != str(task_id or ""):
+                continue
+            if status is not None:
+                row["status"] = status
+            if metadata is not None:
+                current_metadata = row.get("metadata")
+                merged_metadata = dict(current_metadata) if isinstance(current_metadata, dict) else {}
+                merged_metadata.update(metadata)
+                row["metadata"] = merged_metadata
+            return dict(row)
+        return None
+
+    def reopen(self, *_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("QA verdict routing must use reopen_task_row()")
+
+    def update(self, *_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("QA verdict routing must use update_task_row()")
 
 
 # ---------------------------------------------------------------------------
