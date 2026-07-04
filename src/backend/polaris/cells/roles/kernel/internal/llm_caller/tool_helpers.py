@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
+    native_tool_call_facts_from_lifecycle_receipt,
     normalize_native_tool_call_envelope_refs,
     normalize_tool_call_lifecycle_receipt,
 )
@@ -190,9 +191,9 @@ def _native_tool_call_count_from_lifecycle_receipts(metadata: Mapping[str, Any])
     if not receipts:
         return None
     for receipt in receipts:
-        normalized = normalize_tool_call_lifecycle_receipt(receipt)
+        facts = native_tool_call_facts_from_lifecycle_receipt(receipt)
         try:
-            count = int(str(normalized.get("native_tool_calls_count") or "").strip())
+            count = int(str(facts.get("native_tool_calls_count") or "").strip())
         except (TypeError, ValueError):
             count = 0
         if count > 0:
@@ -205,14 +206,12 @@ def _native_tool_call_names_from_lifecycle_receipts(metadata: Mapping[str, Any])
     if not receipts:
         return None
     for receipt in receipts:
-        normalized = normalize_tool_call_lifecycle_receipt(receipt)
-        dropped_refs = normalized.get("dropped_tool_calls")
-        if not isinstance(dropped_refs, (list, tuple)):
+        facts = native_tool_call_facts_from_lifecycle_receipt(receipt)
+        raw_names = facts.get("native_tool_call_names")
+        if not isinstance(raw_names, (list, tuple)):
             continue
         names = [
-            name
-            for item in dropped_refs
-            if isinstance(item, Mapping) and (name := str(item.get("tool_name") or "").strip())
+            name for item in raw_names if (name := str(item or "").strip())
         ]
         if names:
             return names
