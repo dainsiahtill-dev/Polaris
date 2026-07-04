@@ -14,6 +14,8 @@ from pathlib import Path
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 POLARIS_ROOT = BACKEND_ROOT / "polaris"
 TASK_RUNTIME_OWNER = POLARIS_ROOT / "cells" / "runtime" / "task_runtime"
+TASK_RUNTIME_INTERNAL_BOARD = TASK_RUNTIME_OWNER / "internal" / "task_board.py"
+TASK_RUNTIME_PUBLIC_BOARD_CONTRACT = TASK_RUNTIME_OWNER / "public" / "task_board_contract.py"
 ROLE_WORKER_POOL = POLARIS_ROOT / "cells" / "roles" / "runtime" / "internal" / "worker_pool.py"
 DELIVERY_PM_TASKBOARD = POLARIS_ROOT / "delivery" / "cli" / "pm" / "engine" / "taskboard.py"
 RAW_TASKBOARD_MODULES = {
@@ -247,4 +249,28 @@ def test_delivery_pm_taskboard_mainline_uses_task_runtime_service() -> None:
     assert not offenders, (
         "delivery PM taskboard mainline must use TaskRuntimeService row/session APIs, "
         "not the retired role taskboard loader or raw TaskBoard calls: " + ", ".join(offenders)
+    )
+
+
+def test_task_runtime_raw_tool_factory_surface_is_removed() -> None:
+    sources = {
+        "internal": TASK_RUNTIME_INTERNAL_BOARD.read_text(encoding="utf-8"),
+        "public": TASK_RUNTIME_PUBLIC_BOARD_CONTRACT.read_text(encoding="utf-8"),
+    }
+    blocked_tokens = (
+        "class TaskBoardToolInterface",
+        "def create_taskboard",
+        '"TaskBoardToolInterface"',
+        '"create_taskboard"',
+    )
+    offenders = [
+        f"{source_name}:{token}"
+        for source_name, source in sources.items()
+        for token in blocked_tokens
+        if token in source
+    ]
+
+    assert not offenders, (
+        "TaskBoard LLM tool/factory compatibility surface is retired; "
+        "use TaskRuntimeService row/session APIs instead:\n" + "\n".join(offenders)
     )

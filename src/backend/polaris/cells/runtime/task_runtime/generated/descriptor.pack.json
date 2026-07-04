@@ -519,42 +519,6 @@
       ]
     },
     {
-      "type": "class",
-      "name": "TaskBoardToolInterface",
-      "description": "Tool interface for task board operations (LLM tool calling).",
-      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "task_create",
-          "doc": "Tool: Create a new task."
-        },
-        {
-          "name": "task_update",
-          "doc": "Tool: Update task status."
-        },
-        {
-          "name": "task_list",
-          "doc": "Tool: List tasks."
-        },
-        {
-          "name": "task_dependencies",
-          "doc": "Tool: Get dependency graph for a task."
-        },
-        {
-          "name": "task_ready",
-          "doc": "Tool: Get all ready-to-work tasks."
-        },
-        {
-          "name": "task_assign",
-          "doc": "Tool: Assign task to owner."
-        }
-      ]
-    },
-    {
       "type": "function",
       "name": "_normalize_priority",
       "description": "",
@@ -576,12 +540,6 @@
       "type": "function",
       "name": "_normalize_task_id_list",
       "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py"
-    },
-    {
-      "type": "function",
-      "name": "create_taskboard",
-      "description": "Compatibility factory used by role-agent subsystem.",
       "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py"
     },
     {
