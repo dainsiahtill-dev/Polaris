@@ -60,6 +60,28 @@ def _string_list(value: Any) -> list[str]:
     return [token for item in value if (token := _text(item))]
 
 
+def _string_tokens(value: Any) -> list[str]:
+    if isinstance(value, str):
+        raw_items = value.replace(";", ",").split(",")
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        return []
+    return [token for item in raw_items if (token := _text(item))]
+
+
+def _bool_value(value: Any, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        if normalized in {"0", "false", "no", "off", "disabled"}:
+            return False
+    return default
+
+
 def _list_value(value: Any) -> list[Any]:
     return list(value) if isinstance(value, list) else []
 
@@ -110,6 +132,66 @@ def missing_required_tools_from_tool_slots(evidence_coverage: Mapping[str, Any])
             seen.add(tool_name)
             missing_tools.append(tool_name)
     return missing_tools
+
+
+def looks_like_workspace_quality_evidence_payload(value: Any) -> bool:
+    """Return whether *value* is structured workspace-quality evidence.
+
+    Boundary:
+        This predicate recognizes already-shaped workspace/artifact quality
+        evidence for final-request context-slot discovery. It checks schema and
+        structural keys only; it does not parse diagnostic prose.
+
+    Complexity:
+        O(k) time over a fixed key set; O(1) memory.
+    """
+
+    if not isinstance(value, Mapping):
+        return False
+    schema_version = _text(value.get("schema_version")).lower()
+    if "workspace_quality" in schema_version or "artifact_quality" in schema_version:
+        return True
+    return any(
+        key in value
+        for key in (
+            "all_checks_passed",
+            "quality_errors",
+            "deterministic_checks",
+            "real_run_gate",
+            "verifier_results",
+            "failed_required_modalities",
+            "missing_required_modalities",
+        )
+    )
+
+
+def summarize_workspace_quality_evidence_context_slot(value: Any) -> dict[str, Any]:
+    """Project workspace-quality context evidence into the final-request slot shape.
+
+    Boundary:
+        This helper owns the UI-facing summary shape for workspace/artifact
+        quality evidence in final-request audit coverage. It consumes
+        already-structured payloads and does not inspect raw diagnostic prose.
+
+    Complexity:
+        O(n) over small modality/check lists; O(n) memory for normalized tokens.
+    """
+
+    found = _as_mapping(value)
+    if not found:
+        return {}
+    return {
+        "schema_version": "polaris.workspace_quality_evidence.context_slot.v1",
+        "source_schema_version": _text(found.get("schema_version")),
+        "source": _text(found.get("source") or found.get("modality") or "workspace_quality_evidence"),
+        "all_checks_passed": _bool_value(found.get("all_checks_passed")),
+        "quality_error_count": len(found.get("quality_errors") or [])
+        if isinstance(found.get("quality_errors"), (list, tuple))
+        else 0,
+        "deterministic_check_count": len(_string_tokens(found.get("deterministic_checks"))),
+        "failed_required_modalities": _string_tokens(found.get("failed_required_modalities")),
+        "missing_required_modalities": _string_tokens(found.get("missing_required_modalities")),
+    }
 
 
 def _stable_hash(value: Any) -> str:

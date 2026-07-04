@@ -5,7 +5,9 @@ from polaris.kernelone.events.final_request_evidence import (
     FINAL_REQUEST_EVIDENCE_SCHEMA,
     attach_final_request_evidence,
     build_final_request_evidence,
+    looks_like_workspace_quality_evidence_payload,
     normalize_context_snapshot_ref,
+    summarize_workspace_quality_evidence_context_slot,
 )
 
 
@@ -153,6 +155,33 @@ def test_build_final_request_evidence_derives_missing_refs_from_structured_slots
     assert evidence["missing_required_tools"] == ["write_file"]
     assert evidence["final_request_evidence_authority"]["missing_required_refs"] == ["ce_blueprint"]
     assert evidence["final_request_evidence_authority"]["missing_required_tools"] == ["write_file"]
+
+
+def test_workspace_quality_context_slot_uses_structured_payload() -> None:
+    payload = {
+        "schema_version": "polaris.workspace_quality_evidence.v1",
+        "source": "artifact_quality_evidence",
+        "all_checks_passed": "false",
+        "quality_errors": ["missing README", "test failed"],
+        "deterministic_checks": "py_compile, min_files:3",
+        "failed_required_modalities": ["command"],
+        "missing_required_modalities": "browser; screenshot",
+    }
+
+    assert looks_like_workspace_quality_evidence_payload(payload)
+    assert not looks_like_workspace_quality_evidence_payload(
+        {"message": "quality_errors: ['missing README']"}
+    )
+    assert summarize_workspace_quality_evidence_context_slot(payload) == {
+        "schema_version": "polaris.workspace_quality_evidence.context_slot.v1",
+        "source_schema_version": "polaris.workspace_quality_evidence.v1",
+        "source": "artifact_quality_evidence",
+        "all_checks_passed": False,
+        "quality_error_count": 2,
+        "deterministic_check_count": 2,
+        "failed_required_modalities": ["command"],
+        "missing_required_modalities": ["browser", "screenshot"],
+    }
 
 
 def test_build_final_request_evidence_preserves_existing_lightweight_projection() -> None:

@@ -14,8 +14,10 @@ from polaris.cells.control_plane.run_ledger.public import (
 )
 from polaris.kernelone.context.projection_engine import is_empty_run_card_message
 from polaris.kernelone.events.final_request_evidence import (
+    looks_like_workspace_quality_evidence_payload,
     missing_required_refs_from_evidence_slots,
     missing_required_tools_from_tool_slots,
+    summarize_workspace_quality_evidence_context_slot,
 )
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
@@ -1542,26 +1544,6 @@ def _context_slot_payload(value: Any, *, keys: tuple[str, ...]) -> dict[str, Any
     return dict(value)
 
 
-def _looks_like_workspace_quality_evidence(value: Any) -> bool:
-    if not isinstance(value, dict):
-        return False
-    schema_version = str(value.get("schema_version") or "").strip().lower()
-    if "workspace_quality" in schema_version or "artifact_quality" in schema_version:
-        return True
-    return any(
-        key in value
-        for key in (
-            "all_checks_passed",
-            "quality_errors",
-            "deterministic_checks",
-            "real_run_gate",
-            "verifier_results",
-            "failed_required_modalities",
-            "missing_required_modalities",
-        )
-    )
-
-
 def _find_structured_evidence_context(
     value: Any,
     *,
@@ -1667,21 +1649,10 @@ def _workspace_quality_evidence_payload(ai_request: Any | None) -> dict[str, Any
         found = _find_structured_evidence_context(
             payload,
             keys=_WORKSPACE_QUALITY_EVIDENCE_CONTEXT_KEYS,
-            predicate=_looks_like_workspace_quality_evidence,
+            predicate=looks_like_workspace_quality_evidence_payload,
         )
         if found:
-            return {
-                "schema_version": "polaris.workspace_quality_evidence.context_slot.v1",
-                "source_schema_version": str(found.get("schema_version") or ""),
-                "source": str(found.get("source") or found.get("modality") or "workspace_quality_evidence"),
-                "all_checks_passed": _bool_value(found.get("all_checks_passed")),
-                "quality_error_count": len(found.get("quality_errors") or [])
-                if isinstance(found.get("quality_errors"), (list, tuple))
-                else 0,
-                "deterministic_check_count": len(_string_list(found.get("deterministic_checks"))),
-                "failed_required_modalities": _string_list(found.get("failed_required_modalities")),
-                "missing_required_modalities": _string_list(found.get("missing_required_modalities")),
-            }
+            return summarize_workspace_quality_evidence_context_slot(found)
     return {}
 
 
