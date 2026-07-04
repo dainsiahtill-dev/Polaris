@@ -1038,11 +1038,11 @@ def test_quality_gate_owner_handoff_index_centralizes_matching() -> None:
         [{"id": 12, "metadata": {}}],
     )
 
-    assert index.all_handoff_requests == [matched_request, unmatched_request, unknown_request]
-    assert index.owner_handoff_requests == [matched_request, unmatched_request]
-    assert index.unknown_owner_handoff_requests == [unknown_request]
+    assert index.all_handoff_requests == (matched_request, unmatched_request, unknown_request)
+    assert index.owner_handoff_requests == (matched_request, unmatched_request)
+    assert index.unknown_owner_handoff_requests == (unknown_request,)
     assert index.matched_owner_handoff_by_task_key["12"] == matched_request
-    assert index.unmatched_owner_handoff_requests == [unmatched_request]
+    assert index.unmatched_owner_handoff_requests == (unmatched_request,)
 
 
 def test_quality_gate_task_boundary_validation_reports_unknown_owner_handoff(temp_workspace: Path) -> None:

@@ -13,7 +13,6 @@ import os
 import re
 import shutil
 import traceback
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -67,13 +66,13 @@ from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.llm.budget_policy import resolve_director_dispatch_timeout_seconds
 from polaris.kernelone.quality import (
+    ScopeAuthorityOwnerHandoffIndex,
+    build_owner_handoff_index,
     matching_owner_handoff_request as kernelone_matching_owner_handoff_request,
     owner_handoff_identifier_tokens as kernelone_owner_handoff_identifier_tokens,
-    owner_task_retry_handoff_requests_from_scope_payload,
     ownership_handoff_requests_from_scope_payload,
     task_identifier_token_aliases,
     task_record_identifier_tokens,
-    unresolved_owner_handoff_requests_from_scope_payload,
 )
 from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path, resolve_storage_roots
 from polaris.kernelone.trace import create_task_with_context
@@ -1003,10 +1002,6 @@ def _ownership_handoff_requests_from_repair_payload(repair: dict[str, Any]) -> l
     return list(ownership_handoff_requests_from_scope_payload(repair))
 
 
-def _owned_handoff_requests_from_repair_payload(repair: dict[str, Any]) -> list[dict[str, Any]]:
-    return list(owner_task_retry_handoff_requests_from_scope_payload(repair))
-
-
 def _task_record_external_tokens(record: dict[str, Any]) -> set[str]:
     return set(task_record_identifier_tokens(record))
 
@@ -1026,66 +1021,20 @@ def _owner_handoff_identifier_tokens(request: dict[str, Any]) -> set[str]:
     return set(kernelone_owner_handoff_identifier_tokens(request))
 
 
-def _owner_handoff_match_key(request: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
-    """Return a stable key for one owner handoff request.
-
-    ``matching_owner_handoff_request`` intentionally returns a JSON-safe copy of
-    the matching request. Object identity therefore cannot prove that a request
-    was consumed; the stable routing identifiers are the target file and owner
-    task aliases.
-    """
-
-    target_file = str(request.get("target_file") or "").strip().replace("\\", "/")
-    return target_file, tuple(sorted(_owner_handoff_identifier_tokens(request)))
-
-
 def _task_record_rework_key(record: dict[str, Any]) -> str:
     return str(record.get("id") or record.get("task_id") or "").strip()
-
-
-@dataclass(frozen=True, slots=True)
-class _QualityGateOwnerHandoffIndex:
-    all_handoff_requests: list[dict[str, Any]]
-    owner_handoff_requests: list[dict[str, Any]]
-    unknown_owner_handoff_requests: list[dict[str, Any]]
-    matched_owner_handoff_by_task_key: dict[str, dict[str, Any]]
-    unmatched_owner_handoff_requests: list[dict[str, Any]]
 
 
 def _quality_gate_owner_handoff_index(
     repair: dict[str, Any],
     entries: list[Any],
-) -> _QualityGateOwnerHandoffIndex:
-    all_handoff_requests = _ownership_handoff_requests_from_repair_payload(repair)
-    owner_handoff_requests = _owned_handoff_requests_from_repair_payload(repair)
-    unknown_owner_handoff_requests = list(unresolved_owner_handoff_requests_from_scope_payload(repair))
-
-    matched_owner_handoff_keys: set[tuple[str, tuple[str, ...]]] = set()
-    matched_owner_handoff_by_task_key: dict[str, dict[str, Any]] = {}
+) -> ScopeAuthorityOwnerHandoffIndex:
+    records: list[dict[str, Any]] = []
     for entry in entries:
         record = entry.to_dict() if hasattr(entry, "to_dict") else entry
-        if not isinstance(record, dict):
-            continue
-        owner_handoff_request = _matching_owner_handoff_request(record, owner_handoff_requests)
-        if not owner_handoff_request:
-            continue
-        task_key = _task_record_rework_key(record)
-        if task_key:
-            matched_owner_handoff_by_task_key[task_key] = owner_handoff_request
-        matched_owner_handoff_keys.add(_owner_handoff_match_key(owner_handoff_request))
-
-    unmatched_owner_handoff_requests = [
-        dict(request)
-        for request in owner_handoff_requests
-        if _owner_handoff_match_key(request) not in matched_owner_handoff_keys
-    ]
-    return _QualityGateOwnerHandoffIndex(
-        all_handoff_requests=all_handoff_requests,
-        owner_handoff_requests=owner_handoff_requests,
-        unknown_owner_handoff_requests=unknown_owner_handoff_requests,
-        matched_owner_handoff_by_task_key=matched_owner_handoff_by_task_key,
-        unmatched_owner_handoff_requests=unmatched_owner_handoff_requests,
-    )
+        if isinstance(record, dict):
+            records.append(record)
+    return build_owner_handoff_index(repair, records)
 
 
 def _safe_rework_int(value: Any, *, default: int = 0) -> int:
@@ -1250,12 +1199,12 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
     if owner_handoff_index.unmatched_owner_handoff_requests:
         summary["skipped_count"] += len(owner_handoff_index.unmatched_owner_handoff_requests)
         summary["unmatched_owner_handoff_count"] = len(owner_handoff_index.unmatched_owner_handoff_requests)
-        summary["unmatched_owner_handoff_requests"] = owner_handoff_index.unmatched_owner_handoff_requests
+        summary["unmatched_owner_handoff_requests"] = list(owner_handoff_index.unmatched_owner_handoff_requests)
 
     if owner_handoff_index.unknown_owner_handoff_requests:
         summary["skipped_count"] += len(owner_handoff_index.unknown_owner_handoff_requests)
         summary["unknown_owner_handoff_count"] = len(owner_handoff_index.unknown_owner_handoff_requests)
-        summary["unknown_owner_handoff_requests"] = owner_handoff_index.unknown_owner_handoff_requests
+        summary["unknown_owner_handoff_requests"] = list(owner_handoff_index.unknown_owner_handoff_requests)
 
     return summary
 
@@ -1332,9 +1281,9 @@ def _quality_gate_handoff_summary_from_payload(
     return {
         "ownership_handoff_count": len(owner_handoff_index.all_handoff_requests),
         "unmatched_owner_handoff_count": len(owner_handoff_index.unmatched_owner_handoff_requests),
-        "unmatched_owner_handoff_requests": owner_handoff_index.unmatched_owner_handoff_requests,
+        "unmatched_owner_handoff_requests": list(owner_handoff_index.unmatched_owner_handoff_requests),
         "unknown_owner_handoff_count": len(owner_handoff_index.unknown_owner_handoff_requests),
-        "unknown_owner_handoff_requests": owner_handoff_index.unknown_owner_handoff_requests,
+        "unknown_owner_handoff_requests": list(owner_handoff_index.unknown_owner_handoff_requests),
     }
 
 

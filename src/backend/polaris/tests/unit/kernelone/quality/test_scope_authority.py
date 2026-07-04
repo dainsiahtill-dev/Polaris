@@ -6,6 +6,7 @@ from pathlib import Path
 
 from polaris.kernelone.quality.file_ownership_ledger import record_file_owners
 from polaris.kernelone.quality.scope_authority import (
+    build_owner_handoff_index,
     build_scope_authority_decision,
     matching_owner_handoff_request,
     normalize_declared_scope_path,
@@ -255,3 +256,42 @@ def test_scope_authority_matches_owner_handoff_using_legacy_owner_fields() -> No
     }
 
     assert matching_owner_handoff_request(owner_row, [request]) == request
+
+
+def test_scope_authority_builds_owner_handoff_index() -> None:
+    matched_request = {
+        "target_file": "src/index.js",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+        "owner_step_id": "TASK-12",
+    }
+    unmatched_request = {
+        "target_file": "src/missing.js",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+        "owner_step_id": "TASK-99",
+    }
+    unknown_request = {
+        "target_file": "src/unknown.js",
+        "owner_found": False,
+        "recommended_route": "scope_authority_resolution",
+    }
+
+    index = build_owner_handoff_index(
+        {
+            "task_boundary_scope_filter": {
+                "ownership_handoff_requests": [
+                    matched_request,
+                    unmatched_request,
+                    unknown_request,
+                ]
+            }
+        },
+        [{"id": 12, "metadata": {}}],
+    )
+
+    assert index.all_handoff_requests == (matched_request, unmatched_request, unknown_request)
+    assert index.owner_handoff_requests == (matched_request, unmatched_request)
+    assert index.unknown_owner_handoff_requests == (unknown_request,)
+    assert index.matched_owner_handoff_by_task_key["12"] == matched_request
+    assert index.unmatched_owner_handoff_requests == (unmatched_request,)

@@ -16,6 +16,23 @@ from polaris.kernelone.quality.file_ownership_ledger import (
 _SCHEMA_VERSION = "scope-authority-decision/1"
 
 
+@dataclass(frozen=True, slots=True)
+class ScopeAuthorityOwnerHandoffIndex:
+    """Read-only owner-routing projection for scope-authority handoffs.
+
+    This object is a projection, not an authorization source. It keeps
+    downstream orchestration layers from rebuilding owner matching with local
+    string heuristics while preserving the file ownership ledger as the source
+    of truth.
+    """
+
+    all_handoff_requests: tuple[dict[str, Any], ...]
+    owner_handoff_requests: tuple[dict[str, Any], ...]
+    unknown_owner_handoff_requests: tuple[dict[str, Any], ...]
+    matched_owner_handoff_by_task_key: dict[str, dict[str, Any]]
+    unmatched_owner_handoff_requests: tuple[dict[str, Any], ...]
+
+
 def _clean_token(value: Any) -> str:
     return str(value or "").strip()
 
@@ -351,6 +368,58 @@ def matching_owner_handoff_request(
     return {}
 
 
+def build_owner_handoff_index(
+    payload: Mapping[str, Any],
+    task_records: Sequence[Mapping[str, Any]],
+) -> ScopeAuthorityOwnerHandoffIndex:
+    """Build a task-record index for owner handoff routing evidence.
+
+    ``payload`` may be a full repair payload, a task-boundary scope-filter
+    payload, or a nested scope-authority projection. ``task_records`` are
+    read-only task-board rows. The returned index never mutates task state and
+    never expands write scope; callers decide how to route matched requests.
+    """
+
+    all_handoff_requests = ownership_handoff_requests_from_scope_payload(payload)
+    owner_handoff_requests = owner_task_retry_handoff_requests_from_scope_payload(payload)
+    unknown_owner_handoff_requests = unresolved_owner_handoff_requests_from_scope_payload(payload)
+
+    matched_owner_handoff_keys: set[tuple[str, tuple[str, ...]]] = set()
+    matched_owner_handoff_by_task_key: dict[str, dict[str, Any]] = {}
+    for record in task_records:
+        if not isinstance(record, Mapping):
+            continue
+        owner_handoff_request = matching_owner_handoff_request(record, owner_handoff_requests)
+        if not owner_handoff_request:
+            continue
+        task_key = _task_record_key(record)
+        if task_key:
+            matched_owner_handoff_by_task_key[task_key] = owner_handoff_request
+        matched_owner_handoff_keys.add(_owner_handoff_match_key(owner_handoff_request))
+
+    unmatched_owner_handoff_requests = tuple(
+        dict(request)
+        for request in owner_handoff_requests
+        if _owner_handoff_match_key(request) not in matched_owner_handoff_keys
+    )
+    return ScopeAuthorityOwnerHandoffIndex(
+        all_handoff_requests=tuple(dict(request) for request in all_handoff_requests),
+        owner_handoff_requests=tuple(dict(request) for request in owner_handoff_requests),
+        unknown_owner_handoff_requests=tuple(dict(request) for request in unknown_owner_handoff_requests),
+        matched_owner_handoff_by_task_key=matched_owner_handoff_by_task_key,
+        unmatched_owner_handoff_requests=unmatched_owner_handoff_requests,
+    )
+
+
+def _task_record_key(record: Mapping[str, Any]) -> str:
+    return _clean_token(record.get("id") or record.get("task_id"))
+
+
+def _owner_handoff_match_key(request: Mapping[str, Any]) -> tuple[str, tuple[str, ...]]:
+    target_file = _normalize_target(request.get("target_file"))
+    return target_file, tuple(sorted(owner_handoff_identifier_tokens(request)))
+
+
 def _ownership_handoff_candidate_values(payload: Mapping[str, Any]) -> tuple[Any, ...]:
     return _handoff_candidate_values(payload, "ownership_handoff_requests")
 
@@ -425,6 +494,8 @@ def build_scope_authority_decision(
 
 __all__ = [
     "ScopeAuthorityDecision",
+    "ScopeAuthorityOwnerHandoffIndex",
+    "build_owner_handoff_index",
     "build_scope_authority_decision",
     "glob_declared_scope_path_matches",
     "matching_owner_handoff_request",
