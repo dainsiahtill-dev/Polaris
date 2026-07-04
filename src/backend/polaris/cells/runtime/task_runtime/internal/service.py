@@ -1160,8 +1160,7 @@ class TaskRuntimeService:
         )
 
     def list_ready(self) -> list[Task]:
-        self.refresh_dependency_unblocks()
-        return self._board.list_ready()
+        raise RuntimeError("TaskRuntimeService.list_ready is retired; use list_ready_task_rows()")
 
     def wait_ready(self, timeout: float | None = None) -> bool:
         self.refresh_dependency_unblocks()
@@ -1170,12 +1169,23 @@ class TaskRuntimeService:
     def add_ready_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
         return self._board.add_ready_listener(listener)
 
+    def list_ready_task_rows(self) -> list[dict[str, Any]]:
+        rows = self.list_task_rows(include_terminal=False)
+        ready_rows: list[dict[str, Any]] = []
+        for row in rows:
+            status = str(row.get("status") or "").strip().lower()
+            if status in {"pending", "ready"} and not row.get("blocked_by"):
+                ready_rows.append(row)
+        return ready_rows
+
     def get_ready_tasks(self) -> list[Task]:
-        self.refresh_dependency_unblocks()
-        return self._board.get_ready_tasks()
+        raise RuntimeError("TaskRuntimeService.get_ready_tasks is retired; use list_ready_task_rows()")
+
+    def get_task_row_stats(self) -> dict[str, Any]:
+        return task_row_status_counts(self.list_task_rows())
 
     def get_stats(self) -> dict[str, Any]:
-        return task_row_status_counts(self.list_task_rows())
+        raise RuntimeError("TaskRuntimeService.get_stats is retired; use get_task_row_stats()")
 
     def refresh_dependency_unblocks(self) -> dict[str, Any]:
         """Normalize stale BLOCKED rows whose dependencies are now complete."""

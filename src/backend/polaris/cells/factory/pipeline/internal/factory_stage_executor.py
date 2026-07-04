@@ -1841,7 +1841,7 @@ class OrchestrationStageExecutor:
             "blocked": 0,
         }
         try:
-            payload = TaskRuntimeService(str(self.workspace)).get_stats()
+            payload = TaskRuntimeService(str(self.workspace)).get_task_row_stats()
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
             return baseline
         if not isinstance(payload, dict):

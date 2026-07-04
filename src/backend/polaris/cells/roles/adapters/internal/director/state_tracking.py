@@ -247,7 +247,8 @@ class DirectorStateTracker:
             "blocked": [],
         }
         task_rows = task_runtime.list_task_rows()
-        stats = task_runtime.get_stats()
+        get_task_row_stats = getattr(task_runtime, "get_task_row_stats", None)
+        stats = get_task_row_stats() if callable(get_task_row_stats) else {}
         if isinstance(stats, dict):
             for key in counts:
                 raw = stats.get(key)
@@ -256,7 +257,8 @@ class DirectorStateTracker:
                 except (TypeError, ValueError):
                     continue
         self._collect_taskboard_samples(task_runtime, task_rows, counts, samples, sample_limit)
-        ready_entries = task_runtime.get_ready_tasks()
+        list_ready_task_rows = getattr(task_runtime, "list_ready_task_rows", None)
+        ready_entries = list_ready_task_rows() if callable(list_ready_task_rows) else []
         self._add_ready_samples(ready_entries, samples, sample_limit)
         if counts["total"] <= 0 and task_rows:
             counts["total"] = len(task_rows)

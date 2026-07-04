@@ -68,6 +68,27 @@ def test_task_runtime_service_raw_list_all_is_retired(tmp_path: Path) -> None:
         service.list_all()
 
 
+def test_task_runtime_service_ready_and_stats_entity_apis_are_retired(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="ready row projection")
+
+    ready_rows = service.list_ready_task_rows()
+    stats = service.get_task_row_stats()
+
+    assert [row["id"] for row in ready_rows] == [created["id"]]
+    assert stats["total"] == 1
+    assert stats["pending"] == 1
+    assert stats["ready"] == 1
+    with pytest.raises(RuntimeError, match="use list_ready_task_rows"):
+        service.list_ready()
+    with pytest.raises(RuntimeError, match="use list_ready_task_rows"):
+        service.get_ready_tasks()
+    with pytest.raises(RuntimeError, match="use get_task_row_stats"):
+        service.get_stats()
+
+
 def test_task_runtime_service_does_not_proxy_legacy_board_methods(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
