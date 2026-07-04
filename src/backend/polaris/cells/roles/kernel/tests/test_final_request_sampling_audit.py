@@ -1072,7 +1072,17 @@ def test_final_request_evidence_accepts_run_ledger_failure_evidence_without_keyw
                         "requires_ce_replan": False,
                         "requires_pm_revision": False,
                         "evidence_refs": ["tool_lifecycle:turn-1"],
-                    }
+                    },
+                    {
+                        "schema_version": "polaris.failure_evidence.v1",
+                        "source": "tool_lifecycle",
+                        "failure_class": "missing_effect_receipt",
+                        "responsible_layer": "tool_executor",
+                        "repairable_by_director": True,
+                        "requires_ce_replan": False,
+                        "requires_pm_revision": False,
+                        "evidence_refs": ["effect_receipt:missing-1"],
+                    },
                 ],
             },
         },
@@ -1100,8 +1110,16 @@ def test_final_request_evidence_accepts_run_ledger_failure_evidence_without_keyw
     metadata_summary = audit["request_metadata_summary"]
     assert metadata_summary["has_failed_gate_evidence"] is True
     assert metadata_summary["failed_gate_evidence_summary"]["failure_class"] == "tool_dispatch_dropped"
+    assert metadata_summary["failed_gate_evidence_summary"]["failure_classes"] == [
+        "tool_dispatch_dropped",
+        "missing_effect_receipt",
+    ]
+    assert metadata_summary["failed_gate_evidence_summary"]["failure_evidence_count"] == 2
     assert metadata_summary["failed_gate_evidence_summary"]["responsible_layer"] == "platform"
-    assert metadata_summary["failed_gate_evidence_summary"]["evidence_refs"] == ["tool_lifecycle:turn-1"]
+    assert metadata_summary["failed_gate_evidence_summary"]["evidence_refs"] == [
+        "tool_lifecycle:turn-1",
+        "effect_receipt:missing-1",
+    ]
 
     evidence_coverage = audit["final_request_evidence_coverage"]
     assert evidence_coverage["missing_required_refs"] == []
