@@ -8,6 +8,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     empty_tool_lifecycle_summary,
     failure_evidence_from_lifecycle_receipt,
     merge_tool_lifecycle_summaries,
+    native_tool_call_count_from_metadata,
     native_tool_call_envelope_refs_from_metadata,
     native_tool_call_facts_from_lifecycle_receipt,
     native_tool_call_facts_from_metadata,
@@ -1199,6 +1200,20 @@ def test_native_tool_call_facts_from_metadata_treats_lifecycle_zero_as_authorita
         "native_tool_calls_count": 0,
         "native_tool_call_names": [],
     }
+
+
+def test_native_tool_call_count_from_metadata_uses_envelopes_before_numeric_fallback() -> None:
+    metadata = {
+        "native_tool_call_envelope_refs": [
+            {"schema_version": "native_tool_call_envelope.v1", "tool_name": "read_file"},
+            {"schema_version": "native_tool_call_envelope.v1", "tool_name": "write_file"},
+        ],
+        "native_tool_calls_count": 99,
+    }
+
+    assert native_tool_call_count_from_metadata(metadata, fallback=1) == 2
+    assert native_tool_call_count_from_metadata({"native_tool_calls_count": 3}, fallback=1) == 3
+    assert native_tool_call_count_from_metadata({}, fallback=2) == 2
 
 
 def test_tool_lifecycle_receipt_deduplicates_native_envelopes_by_envelope_id() -> None:

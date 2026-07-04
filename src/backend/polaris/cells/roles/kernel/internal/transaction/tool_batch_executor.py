@@ -20,11 +20,9 @@ from polaris.cells.control_plane.run_ledger.public import (
     append_run_ledger_event,
     build_tool_call_lifecycle_receipt,
     failure_evidence_from_lifecycle_receipt,
-)
-from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_call_count_from_metadata,
-    native_tool_call_envelopes_from_metadata,
 )
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_call_envelopes_from_metadata
 from polaris.cells.roles.kernel.internal.speculation.models import CancelToken
 from polaris.cells.roles.kernel.internal.speculation.write_phases import WriteToolPhases
 from polaris.cells.roles.kernel.internal.speculative_flags import is_adoption_audit_enabled
@@ -734,10 +732,6 @@ def _mapping_value(value: Any) -> dict[str, Any]:
             return {}
         return dict(payload) if isinstance(payload, dict) else {}
     return {}
-
-
-def _metadata_native_tool_call_count(metadata: Mapping[str, Any], fallback: int = 0) -> int:
-    return native_tool_call_count_from_metadata(metadata, fallback=fallback)
 
 
 def _metadata_native_tool_call_envelopes(metadata: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
@@ -1918,7 +1912,7 @@ class ToolBatchExecutor:
             capability_token=_capability_token_from_metadata(metadata),
             execution_envelope_hash=_execution_envelope_hash_from_metadata(metadata),
             provider_response_hash=str(metadata.get("provider_response_hash") or ""),
-            native_tool_calls_count=_metadata_native_tool_call_count(metadata),
+            native_tool_calls_count=native_tool_call_count_from_metadata(metadata),
             native_tool_call_envelopes=_metadata_native_tool_call_envelopes(metadata),
         )
 

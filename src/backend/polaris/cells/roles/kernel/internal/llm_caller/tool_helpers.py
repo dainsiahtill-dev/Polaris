@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
+    native_tool_call_count_from_metadata as run_ledger_native_tool_call_count_from_metadata,
     native_tool_call_envelope_refs_from_metadata,
     native_tool_call_facts_from_metadata,
     project_native_tool_call_facts_to_metadata,
@@ -187,23 +188,9 @@ def native_tool_call_count(
 
 
 def native_tool_call_count_from_metadata(metadata: Mapping[str, Any] | None, *, fallback: int = 0) -> int:
-    """Derive native tool-call count from metadata envelope facts.
+    """Compatibility wrapper for the Run Ledger native tool-call count reader."""
 
-    Numeric ``native_tool_calls_count`` remains a compatibility fallback, but
-    all envelope-derived metadata paths are resolved before consulting it.
-    """
-
-    if isinstance(metadata, Mapping):
-        facts = native_tool_call_facts_from_metadata(metadata)
-        if facts:
-            return _int_from_fact(facts.get("native_tool_calls_count"))
-        try:
-            metadata_count = int(str(metadata.get("native_tool_calls_count") or "").strip())
-        except (TypeError, ValueError):
-            metadata_count = 0
-        if metadata_count > 0:
-            return metadata_count
-    return max(0, int(fallback or 0))
+    return run_ledger_native_tool_call_count_from_metadata(metadata, fallback=fallback)
 
 
 def native_tool_call_names(

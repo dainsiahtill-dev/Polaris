@@ -610,6 +610,28 @@ def native_tool_call_facts_from_metadata(metadata: Mapping[str, Any] | None) -> 
     }
 
 
+def native_tool_call_count_from_metadata(metadata: Mapping[str, Any] | None, *, fallback: int = 0) -> int:
+    """Derive native tool-call count from lifecycle-aware metadata.
+
+    Boundary:
+        Run Ledger owns the precedence between envelope-derived facts,
+        lifecycle receipt facts, legacy numeric metadata, and caller fallback.
+
+    Complexity:
+        O(r + e + n) time and memory through
+        :func:`native_tool_call_facts_from_metadata`.
+    """
+
+    if isinstance(metadata, Mapping):
+        facts = native_tool_call_facts_from_metadata(metadata)
+        if facts:
+            return _int_value(facts.get("native_tool_calls_count"))
+        metadata_count = _int_value(metadata.get("native_tool_calls_count"))
+        if metadata_count > 0:
+            return metadata_count
+    return _int_value(fallback)
+
+
 _NATIVE_TOOL_FACT_EVIDENCE_KEYS: tuple[str, ...] = (
     "tool_call_lifecycle",
     "tool_call_lifecycle_receipt",
