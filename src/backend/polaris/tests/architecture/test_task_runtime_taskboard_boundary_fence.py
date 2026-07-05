@@ -172,6 +172,10 @@ TASK_RUNTIME_SERVICE_NON_AGENT_DESCRIPTOR_METHODS = {
     "board",
     "wait_ready",
 }
+TASK_RUNTIME_SERVICE_UTILITY_DESCRIPTOR_METHODS = {
+    "normalize_task_id",
+    "task_exists",
+}
 TASK_RUNTIME_SERVICE_DESTRUCTIVE_DESCRIPTOR_METHODS = {
     "reset_records",
 }
@@ -1633,6 +1637,38 @@ def test_task_runtime_descriptor_does_not_advertise_destructive_service_methods(
         "task_runtime descriptor must not advertise destructive TaskRuntimeService "
         "methods. Reset orchestration should use the explicit owner-level "
         "reset_runtime_task_records capability instead:\n" + "\n".join(sorted(offenders))
+    )
+
+
+def test_task_runtime_descriptor_does_not_advertise_utility_service_methods() -> None:
+    descriptor = json.loads(TASK_RUNTIME_DESCRIPTOR.read_text(encoding="utf-8"))
+    capabilities = descriptor.get("capabilities")
+    assert isinstance(capabilities, list), "task_runtime descriptor must expose a capabilities list"
+
+    offenders: list[str] = []
+    advertised: set[str] = set()
+    for item in capabilities:
+        if not isinstance(item, dict):
+            continue
+        if item.get("name") != "TaskRuntimeService":
+            continue
+        for method in item.get("methods", []):
+            if not isinstance(method, dict):
+                continue
+            method_name = str(method.get("name") or "")
+            advertised.add(method_name)
+            if method_name in TASK_RUNTIME_SERVICE_UTILITY_DESCRIPTOR_METHODS:
+                offenders.append(method_name)
+
+    assert "get_task" in advertised, (
+        "task_runtime descriptor must keep get_task() as the observable task "
+        "lookup API when utility helpers are hidden."
+    )
+    assert not offenders, (
+        "task_runtime descriptor must not advertise helper-style utility "
+        "methods. Agent-facing context should use get_task() and row/read-model "
+        "APIs instead of task id normalization or raw existence checks:\n"
+        + "\n".join(sorted(offenders))
     )
 
 

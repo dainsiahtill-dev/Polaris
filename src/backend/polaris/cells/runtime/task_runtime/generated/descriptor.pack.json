@@ -20,14 +20,6 @@
           "doc": ""
         },
         {
-          "name": "normalize_task_id",
-          "doc": ""
-        },
-        {
-          "name": "task_exists",
-          "doc": ""
-        },
-        {
           "name": "create_task_row",
           "doc": "Create a task and return the runtime row projection with event evidence."
         },
