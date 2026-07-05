@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.delivery.cli.pm.engine.taskboard import (
     _build_taskboard_runtime,
     _finalize_taskboard_runtime_entry,
     _select_taskboard_ready_batch,
+    _taskboard_runtime_claim_failures,
     _taskboard_runtime_transition_failures,
 )
 
@@ -92,6 +94,45 @@ def test_pm_taskboard_mainline_suspends_needs_continue(tmp_path: Path) -> None:
     metadata = row.get("metadata")
     assert isinstance(metadata, dict)
     assert metadata["last_pm_status"] == "needs_continue"
+
+
+def test_pm_taskboard_mainline_records_claim_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runtime = _build_taskboard_runtime(
+        workspace_full=str(tmp_path),
+        run_id="run-claim-failure",
+        director_tasks=[_task("TASK-1")],
+        max_workers=1,
+    )
+
+    def fake_claim_execution(self, task_id, **kwargs):
+        del self, kwargs
+        return {
+            "success": False,
+            "reason": "lease_conflict",
+            "task": {"id": task_id},
+        }
+
+    monkeypatch.setattr(TaskRuntimeService, "claim_execution", fake_claim_execution)
+
+    batch = _select_taskboard_ready_batch(runtime, max_workers=1)
+
+    assert batch == []
+    assert _taskboard_runtime_claim_failures(runtime) == [
+        {
+            "success": False,
+            "board_id": 1,
+            "worker_id": "director-worker-1",
+            "reason": "lease_conflict",
+            "claim_result": {
+                "success": False,
+                "reason": "lease_conflict",
+                "task": {"id": 1},
+            },
+        }
+    ]
 
 
 def test_pm_taskboard_mainline_records_transition_failure(tmp_path: Path) -> None:

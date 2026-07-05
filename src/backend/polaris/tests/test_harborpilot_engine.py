@@ -233,6 +233,115 @@ def test_engine_dispatch_marks_task_runtime_transition_failure(
     assert status_payload["error"] == "TASK_RUNTIME_TRANSITION_FAILURE"
 
 
+def test_engine_dispatch_marks_task_runtime_claim_failure(
+    tmp_path,
+    monkeypatch,
+):
+    loop_pm = _load_loop_pm()
+    dispatch_module = importlib.import_module("polaris.delivery.cli.pm.engine._dispatch")
+
+    def _fake_runner(args, workspace_full, iteration, **kwargs):
+        del args, workspace_full, iteration, kwargs
+        raise AssertionError("Director runner must not execute when TaskRuntime claim fails")
+
+    def _fake_select_ready_batch(runtime, max_workers, dispatched_board_ids=None):
+        del max_workers, dispatched_board_ids
+        failure = {
+            "success": False,
+            "board_id": 1,
+            "worker_id": "director-worker-1",
+            "reason": "lease_conflict",
+            "claim_result": {
+                "success": False,
+                "reason": "lease_conflict",
+            },
+        }
+        runtime.setdefault("task_runtime_claim_failures", []).append(failure)
+        return []
+
+    monkeypatch.setattr(dispatch_module, "_select_taskboard_ready_batch", _fake_select_ready_batch)
+
+    config = loop_pm.EngineRuntimeConfig(
+        director_execution_mode="multi",
+        max_directors=1,
+        scheduling_policy="dag",
+    )
+    engine = loop_pm.PolarisEngine(config, director_runner=_fake_runner)
+
+    runtime_dir = tmp_path / ".polaris" / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    plan_path = runtime_dir / "contracts" / "plan.md"
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text("# Test Plan\n", encoding="utf-8")
+    pm_tasks_path = runtime_dir / "contracts" / "pm_tasks.contract.json"
+    pm_tasks_path.parent.mkdir(parents=True, exist_ok=True)
+    pm_tasks_path.write_text(json.dumps({"tasks": []}), encoding="utf-8")
+    runtime_engine_status = runtime_dir / "status" / "engine.status.json"
+    runtime_engine_status.parent.mkdir(parents=True, exist_ok=True)
+
+    args = SimpleNamespace(
+        run_director=True,
+        director_result_path=str(tmp_path / "unused_result.json"),
+        director_events_path=str(runtime_dir / "events" / "runtime.events.jsonl"),
+        pm_task_path=str(pm_tasks_path),
+        plan_path=str(plan_path),
+        planner_response_path="",
+        ollama_response_path="",
+        qa_response_path="",
+        reviewer_response_path="",
+        director_timeout=0,
+        director_show_output=False,
+        director_model="",
+        director_path="src/backend/scripts/loop-director.py",
+        director_type="v1",
+        prompt_profile="generic",
+    )
+    payload = {
+        "run_id": "pm-claim-failure",
+        "pm_iteration": 1,
+        "tasks": [
+            {
+                "id": "TASK-A",
+                "title": "Task A",
+                "goal": "Do A",
+                "status": "todo",
+                "priority": 1,
+                "assigned_to": "Director",
+                "dependencies": [],
+            }
+        ],
+    }
+
+    result = engine.dispatch_director_tasks(
+        args=args,
+        workspace_full=str(tmp_path),
+        run_dir=str(tmp_path / "run"),
+        pm_payload=payload,
+        events_path="",
+        plan_path=str(plan_path),
+        pm_tasks_paths=[str(pm_tasks_path)],
+        runtime_status_path=str(runtime_engine_status),
+    )
+
+    assert result["hard_failure"] is True
+    assert result["records"] == []
+    assert result["summary"]["taskboard_claim_failures"] == [
+        {
+            "success": False,
+            "board_id": 1,
+            "worker_id": "director-worker-1",
+            "reason": "lease_conflict",
+            "claim_result": {
+                "success": False,
+                "reason": "lease_conflict",
+            },
+        }
+    ]
+    status_payload = json.loads(runtime_engine_status.read_text(encoding="utf-8"))
+    assert status_payload["phase"] == "failed"
+    assert status_payload["error"] == "TASK_RUNTIME_CLAIM_FAILURE"
+
+
 def test_engine_preflight_missing_plan_fails_closed(tmp_path):
     loop_pm = _load_loop_pm()
 

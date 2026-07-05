@@ -110,6 +110,42 @@ def _taskboard_runtime_transition_failures(runtime: dict[str, Any]) -> list[dict
     return [dict(item) for item in failures if isinstance(item, dict)]
 
 
+def _record_task_runtime_claim_failure(
+    runtime: dict[str, Any],
+    *,
+    board_id: int,
+    worker_id: str,
+    claim_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Append a failed TaskRuntime claim to the PM runtime projection."""
+
+    result = dict(claim_result or {})
+    reason = str(result.get("reason") or "task_runtime_claim_failed").strip()
+    if not reason:
+        reason = "task_runtime_claim_failed"
+    failure = {
+        "success": False,
+        "board_id": int(board_id or 0),
+        "worker_id": str(worker_id or "").strip(),
+        "reason": reason,
+        "claim_result": result,
+    }
+    existing = runtime.get("task_runtime_claim_failures")
+    failures = existing if isinstance(existing, list) else []
+    failures.append(failure)
+    runtime["task_runtime_claim_failures"] = failures
+    return failure
+
+
+def _taskboard_runtime_claim_failures(runtime: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return recorded TaskRuntime claim failures from the PM runtime projection."""
+
+    failures = runtime.get("task_runtime_claim_failures")
+    if not isinstance(failures, list):
+        return []
+    return [dict(item) for item in failures if isinstance(item, dict)]
+
+
 def _source_task_by_pm_id(director_tasks: Sequence[dict[str, Any]], pm_task_id: str) -> dict[str, Any] | None:
     """Find the original Director task payload for one PM task id."""
     for item in director_tasks:
@@ -245,6 +281,12 @@ def _select_taskboard_ready_batch(
             metadata={"pm_dispatch_worker_id": worker_id},
         )
         if not bool(isinstance(claim_result, dict) and claim_result.get("success") is True):
+            _record_task_runtime_claim_failure(
+                runtime,
+                board_id=board_id,
+                worker_id=worker_id,
+                claim_result=claim_result if isinstance(claim_result, dict) else {},
+            )
             continue
         selected.append(
             {
@@ -326,5 +368,6 @@ __all__ = [
     "_finalize_taskboard_runtime_entry",
     "_select_taskboard_ready_batch",
     "_taskboard_mainline_enabled",
+    "_taskboard_runtime_claim_failures",
     "_taskboard_runtime_transition_failures",
 ]
