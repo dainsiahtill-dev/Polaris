@@ -49,6 +49,32 @@ def _executor(workspace: Path) -> OrchestrationStageExecutor:
     return OrchestrationStageExecutor(workspace)
 
 
+def test_read_claimable_director_task_ids_uses_observable_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _ProjectionOnlyTaskRuntime:
+        def __init__(self, workspace: str) -> None:
+            assert workspace == str(tmp_path)
+
+        def list_observable_task_rows(self) -> list[dict[str, Any]]:
+            return [
+                {"id": 1, "status": "pending", "metadata": {"pm_task_id": "TASK-1"}},
+                {"id": 2, "status": "ready", "metadata": {"external_task_id": "TASK-2"}},
+                {"id": 3, "status": "pending", "blocked_by": [1]},
+                {"id": 4, "status": "completed", "metadata": {"pm_task_id": "TASK-4"}},
+            ]
+
+        def list_task_rows(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+            raise AssertionError("Factory stage executor must read observable task rows")
+
+    monkeypatch.setattr(stage_executor_module, "TaskRuntimeService", _ProjectionOnlyTaskRuntime)
+
+    claimable = _executor(tmp_path)._read_claimable_director_task_ids(limit=10)
+
+    assert claimable == ["TASK-1", "TASK-2"]
+
+
 def test_materialization_quality_target_filter_prefers_ts_source_over_compiled_outputs(tmp_path: Path) -> None:
     (tmp_path / "tests").mkdir(parents=True)
     (tmp_path / "dist").mkdir(parents=True)

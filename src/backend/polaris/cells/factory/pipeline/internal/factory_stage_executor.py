@@ -1858,7 +1858,7 @@ class OrchestrationStageExecutor:
         if limit <= 0:
             return []
         try:
-            rows = TaskRuntimeService(str(self.workspace)).list_task_rows(include_terminal=False)
+            rows = TaskRuntimeService(str(self.workspace)).list_observable_task_rows()
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
             return []
 
