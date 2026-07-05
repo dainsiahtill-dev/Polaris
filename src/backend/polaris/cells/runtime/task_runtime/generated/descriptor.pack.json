@@ -7,94 +7,6 @@
   "capabilities": [
     {
       "type": "class",
-      "name": "TaskExecutionSession",
-      "description": "Persisted execution session for a runtime task.",
-      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Create a fresh active session."
-        },
-        {
-          "name": "from_dict",
-          "doc": "Hydrate a session from storage."
-        },
-        {
-          "name": "to_dict",
-          "doc": "Serialize the session."
-        },
-        {
-          "name": "is_expired",
-          "doc": "Return whether the lease has expired."
-        },
-        {
-          "name": "renew",
-          "doc": "Renew the active lease."
-        },
-        {
-          "name": "mark_completed",
-          "doc": "Mark the session as completed."
-        },
-        {
-          "name": "mark_failed",
-          "doc": "Mark the session as failed."
-        },
-        {
-          "name": "mark_suspended",
-          "doc": "Mark the session as suspended and optionally resumable."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "utc_now",
-      "description": "Return the current UTC timestamp.",
-      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
-    },
-    {
-      "type": "function",
-      "name": "utc_now_iso",
-      "description": "Return the current UTC timestamp in ISO-8601 format.",
-      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
-    },
-    {
-      "type": "function",
-      "name": "parse_utc_iso",
-      "description": "Parse an ISO-8601 UTC timestamp.",
-      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
-    },
-    {
-      "type": "function",
-      "name": "sanitize_summary",
-      "description": "Normalize short human-readable summary text.",
-      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
-    },
-    {
-      "type": "function",
-      "name": "normalize_positive_int",
-      "description": "Convert arbitrary input into a bounded positive integer.",
-      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
-    },
-    {
-      "type": "function",
-      "name": "require_non_empty_field",
-      "description": "Return a required non-empty persisted session field.",
-      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
-    },
-    {
-      "type": "function",
-      "name": "require_positive_int_field",
-      "description": "Return a required positive integer persisted session field.",
-      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
-    },
-    {
-      "type": "function",
-      "name": "normalize_session_status",
-      "description": "Return a required persisted session status.",
-      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
-    },
-    {
-      "type": "class",
       "name": "TaskRuntimeService",
       "description": "Runtime task lifecycle service for the ``runtime.task_runtime`` cell.",
       "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py",
@@ -247,18 +159,6 @@
           "doc": ""
         }
       ]
-    },
-    {
-      "type": "function",
-      "name": "_require_non_empty",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
-    },
-    {
-      "type": "function",
-      "name": "_to_dict_copy",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

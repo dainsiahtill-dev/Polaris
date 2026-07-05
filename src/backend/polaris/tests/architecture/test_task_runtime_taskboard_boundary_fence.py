@@ -20,6 +20,9 @@ TASK_RUNTIME_INTERNAL_BOARD = TASK_RUNTIME_OWNER / "internal" / "task_board.py"
 TASK_RUNTIME_INTERNAL_SERVICE = TASK_RUNTIME_OWNER / "internal" / "service.py"
 TASK_RUNTIME_PUBLIC_BOARD_CONTRACT = TASK_RUNTIME_OWNER / "public" / "task_board_contract.py"
 TASK_RUNTIME_DESCRIPTOR = TASK_RUNTIME_OWNER / "generated" / "descriptor.pack.json"
+TASK_RUNTIME_INTERNAL_EXECUTION_SESSION_DESCRIPTOR_FILE = (
+    "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+)
 ROLE_WORKER_POOL = POLARIS_ROOT / "cells" / "roles" / "runtime" / "internal" / "worker_pool.py"
 DELIVERY_PM_TASKBOARD = POLARIS_ROOT / "delivery" / "cli" / "pm" / "engine" / "taskboard.py"
 DELIVERY_CLI_DIRECTOR_SERVICE = POLARIS_ROOT / "delivery" / "cli" / "director" / "director_service.py"
@@ -1404,6 +1407,44 @@ def test_task_runtime_descriptor_does_not_advertise_raw_taskboard_surface() -> N
     assert not offenders, (
         "task_runtime descriptor must not advertise raw internal TaskBoard symbols; "
         "public consumers must use TaskRuntimeService row/session APIs:\n" + "\n".join(offenders)
+    )
+
+
+def test_task_runtime_descriptor_does_not_advertise_internal_execution_session_symbols() -> None:
+    descriptor = json.loads(TASK_RUNTIME_DESCRIPTOR.read_text(encoding="utf-8"))
+    capabilities = descriptor.get("capabilities")
+    assert isinstance(capabilities, list), "task_runtime descriptor must expose a capabilities list"
+
+    offenders = [
+        str(item.get("name") or "")
+        for item in capabilities
+        if isinstance(item, dict)
+        and item.get("defined_in") == TASK_RUNTIME_INTERNAL_EXECUTION_SESSION_DESCRIPTOR_FILE
+    ]
+
+    assert not offenders, (
+        "task_runtime descriptor must not advertise internal execution-session "
+        "implementation symbols. Agent-facing context should use "
+        "TaskRuntimeService row/session APIs instead of constructing, parsing, "
+        "or mutating session implementation objects directly:\n" + "\n".join(sorted(offenders))
+    )
+
+
+def test_task_runtime_descriptor_does_not_advertise_private_top_level_helpers() -> None:
+    descriptor = json.loads(TASK_RUNTIME_DESCRIPTOR.read_text(encoding="utf-8"))
+    capabilities = descriptor.get("capabilities")
+    assert isinstance(capabilities, list), "task_runtime descriptor must expose a capabilities list"
+
+    offenders = [
+        str(item.get("name") or "")
+        for item in capabilities
+        if isinstance(item, dict) and str(item.get("name") or "").startswith("_")
+    ]
+
+    assert not offenders, (
+        "task_runtime descriptor must not advertise private top-level helper "
+        "functions from implementation or contract modules. Generated context "
+        "should expose public contracts and service APIs only:\n" + "\n".join(sorted(offenders))
     )
 
 
