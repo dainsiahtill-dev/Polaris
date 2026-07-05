@@ -50,8 +50,6 @@ if TYPE_CHECKING:
         load_runtime_task_rows,
         merge_director_status,
         resolve_workspace_runtime_context,
-        select_task_rows,
-        select_task_rows_from_projection,
     )
 
 __all__ = [
@@ -99,8 +97,6 @@ __all__ = [
     "load_runtime_task_rows",
     "merge_director_status",
     "resolve_workspace_runtime_context",
-    "select_task_rows",
-    "select_task_rows_from_projection",
 ]
 
 

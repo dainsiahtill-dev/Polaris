@@ -705,12 +705,6 @@
     },
     {
       "type": "function",
-      "name": "select_task_rows",
-      "description": "Select task rows following \"二选一，不做跨源混拼\" rule.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
       "name": "build_engine_status",
       "description": "Build engine status from engine.status.json (fallback only).",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
@@ -791,12 +785,6 @@
       "type": "function",
       "name": "_completed_task_count",
       "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "select_task_rows_from_projection",
-      "description": "Select task rows using priority rules:",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
     },
     {

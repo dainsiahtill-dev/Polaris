@@ -52,8 +52,6 @@ from polaris.cells.runtime.projection.internal.runtime_projection_service import
     invalidate_projection_cache,
     load_runtime_task_rows,
     merge_director_status,
-    select_task_rows,
-    select_task_rows_from_projection,
 )
 from polaris.cells.runtime.projection.internal.runtime_v2 import (
     CodeChangeState,
@@ -177,8 +175,6 @@ __all__ = [
     "resolve_artifact_path",
     "resolve_workspace_runtime_context",
     "select_latest_artifact",
-    "select_task_rows",
-    "select_task_rows_from_projection",
     "summarize_workflow_tasks",
     "write_text_atomic",
     "write_workflow_state",
