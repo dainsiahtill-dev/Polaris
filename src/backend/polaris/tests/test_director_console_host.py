@@ -234,6 +234,7 @@ class _FakeTask:
     description: str
     metadata: dict[str, Any]
     priority: int | str = 1
+    status: str = "pending"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -242,7 +243,7 @@ class _FakeTask:
             "description": self.description,
             "metadata": dict(self.metadata),
             "priority": self.priority,
-            "status": "pending",
+            "status": self.status,
         }
 
 
@@ -277,9 +278,12 @@ class _FakeTaskService:
         self.tasks.append(task)
         return task.to_dict()
 
+    def list_observable_task_rows(self) -> list[dict[str, Any]]:
+        return [task.to_dict() for task in self.tasks]
+
     def list_task_rows(self, *, include_terminal: bool = True) -> list[dict[str, Any]]:
         del include_terminal
-        return [task.to_dict() for task in self.tasks]
+        raise AssertionError("Director console task reads must use observable task rows")
 
     def select_next_task(
         self, *, requested_task_id: Any = None, prefer_resumable: bool = True
@@ -458,6 +462,26 @@ def test_director_console_host_task_row_apis_use_task_runtime_service() -> None:
     assert listed[0]["metadata"]["role"] == "director"
     assert selected is not None
     assert selected["subject"] == "wire the CLI"
+
+
+def test_director_console_host_list_tasks_filters_terminal_observable_rows() -> None:
+    task_service = _FakeTaskService("workspace")
+    task_service.tasks.append(
+        _FakeTask(task_id=1, subject="done", description="", metadata={}, status="completed"),
+    )
+    task_service.tasks.append(
+        _FakeTask(task_id=2, subject="open", description="", metadata={}, status="pending"),
+    )
+    host = DirectorConsoleHost(
+        "workspace",
+        session_service_factory=lambda: _FakeRoleSessionService(),
+        task_service_factory=lambda workspace: task_service,
+        runtime_service_factory=lambda: _FakeRoleRuntime(),
+    )
+
+    listed = host.list_tasks(include_terminal=False)
+
+    assert [item["subject"] for item in listed] == ["open"]
 
 
 @pytest.mark.asyncio

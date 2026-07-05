@@ -33,6 +33,20 @@ from polaris.kernelone.telemetry.debug_stream import (
 
 logger = logging.getLogger(__name__)
 
+_CONSOLE_TERMINAL_TASK_STATUSES = {
+    "cancelled",
+    "canceled",
+    "completed",
+    "done",
+    "failed",
+    "failure",
+    "passed",
+    "success",
+    "succeeded",
+    "timeout",
+    "timed_out",
+}
+
 
 class RoleConsoleHostError(RuntimeError):
     """Structured error for the role console host layer."""
@@ -987,7 +1001,17 @@ class RoleConsoleHost:
         service = self._get_task_service(required=False)
         if service is None:
             return []
-        return [dict(row) for row in service.list_task_rows(include_terminal=include_terminal)]
+        list_observable_task_rows = getattr(service, "list_observable_task_rows", None)
+        if not callable(list_observable_task_rows):
+            return []
+        rows = [dict(row) for row in list_observable_task_rows() if isinstance(row, dict)]
+        if include_terminal:
+            return rows
+        return [
+            row
+            for row in rows
+            if str(row.get("status") or "").strip().lower() not in _CONSOLE_TERMINAL_TASK_STATUSES
+        ]
 
     def create_task(
         self,
