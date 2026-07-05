@@ -1219,7 +1219,7 @@ def test_heartbeat_execution_fails_closed_on_event_append_failure(
     }
 
 
-def test_suspend_active_executions_for_run_reports_event_append_failure(
+def test_suspend_active_executions_for_run_fails_closed_on_event_append_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1247,8 +1247,18 @@ def test_suspend_active_executions_for_run_reports_event_append_failure(
         reason="factory_stage_timeout",
     )
 
-    assert suspended["success"] is True
+    assert suspended["success"] is False
+    assert suspended["reason"] == "execution_event_append_failed"
+    assert suspended["failure_class"] == "ledger_append_failed"
     assert suspended["suspended_count"] == 1
+    assert suspended["failed"] == [
+        {
+            "reason": "execution_event_append_failed",
+            "failure_class": "ledger_append_failed",
+            "event_type": "suspended",
+            "error": "fact stream unavailable",
+        }
+    ]
     assert suspended["execution_events"] == [
         {
             "ok": False,

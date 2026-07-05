@@ -655,11 +655,26 @@ def build_task_execution_bulk_suspend_result(
     suspended_payload = [dict(row) for row in suspended_rows]
     failed_payload = [dict(item) for item in failed]
     event_payload = [dict(item) for item in execution_events]
+    event_append_failures = [
+        {
+            "reason": "execution_event_append_failed",
+            "failure_class": "ledger_append_failed",
+            "event_type": str(item.get("event_type") or "unknown"),
+            "error": sanitize_summary(item.get("error") or item.get("publish_error") or "", max_chars=300),
+        }
+        for item in event_payload
+        if _execution_event_append_failed(item)
+    ]
+    failed_payload.extend(event_append_failures)
     resolved_success = not failed_payload if success is None else bool(success)
+    if event_append_failures:
+        resolved_success = False
     resolved_reason = str(reason or "").strip()
+    if event_append_failures and not resolved_reason:
+        resolved_reason = "execution_event_append_failed"
     if not resolved_reason:
         resolved_reason = "suspended" if suspended_payload else "no_active_sessions_for_run"
-    return {
+    result: dict[str, Any] = {
         "success": resolved_success,
         "reason": resolved_reason,
         "run_id": normalized_run_id,
@@ -668,6 +683,9 @@ def build_task_execution_bulk_suspend_result(
         "failed": failed_payload,
         "execution_events": event_payload,
     }
+    if event_append_failures:
+        result["failure_class"] = "ledger_append_failed"
+    return result
 
 
 def build_task_runtime_metadata(
