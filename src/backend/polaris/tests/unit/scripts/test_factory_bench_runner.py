@@ -1382,20 +1382,17 @@ def test_director_resume_rehydrates_taskboard_from_legacy_runtime(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
+    from polaris.cells.events.fact_stream.public.contracts import QueryFactEventsV1
+    from polaris.cells.events.fact_stream.public.service import query_fact_events
+    from polaris.kernelone.storage import resolve_runtime_path
+
     workspace = tmp_path / "factory-bench" / "L1-01"
     workspace.mkdir(parents=True)
     (workspace / "requirements.md").write_text("bench input requirements", encoding="utf-8")
     current_runtime_projects = tmp_path / "kernelone-projects"
     legacy_runtime_projects = tmp_path / "polaris-projects"
-    current_runtime = current_runtime_projects / "l1-01-111111111111" / "runtime"
     legacy_runtime = legacy_runtime_projects / "l1-01-222222222222" / "runtime"
     stale_runtime = legacy_runtime_projects / "l1-01-333333333333" / "runtime"
-
-    def _fake_resolve_runtime_path(_workspace: str, rel_path: str) -> str:
-        assert rel_path.startswith("runtime/")
-        return str(current_runtime / rel_path.removeprefix("runtime/"))
-
-    monkeypatch.setattr(bench, "resolve_runtime_path", _fake_resolve_runtime_path)
     monkeypatch.setattr(
         bench,
         "resolve_storage_roots",
@@ -1458,13 +1455,16 @@ def test_director_resume_rehydrates_taskboard_from_legacy_runtime(
 
     bench._prepare_director_resume_workspace(workspace)
 
-    rehydration_path = current_runtime / "tasks" / "director_resume_rehydration.json"
+    target_task_dir = Path(resolve_runtime_path(str(workspace), "runtime/tasks"))
+    rehydration_path = target_task_dir / "director_resume_rehydration.json"
     rehydration = json.loads(rehydration_path.read_text(encoding="utf-8"))
     assert rehydration["source_task_dir"] == str(legacy_runtime / "tasks")
-    assert not (current_runtime / "tasks" / "task_1.session.json").exists()
-    task_1 = json.loads((current_runtime / "tasks" / "task_1.json").read_text(encoding="utf-8"))
+    assert not (target_task_dir / "task_1.session.json").exists()
+    task_1 = json.loads((target_task_dir / "task_1.json").read_text(encoding="utf-8"))
     assert task_1["status"] == "pending"
     assert "runtime_execution" not in task_1["metadata"]
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    assert any(event.get("event_type") == "reexecution_imported" for event in events)
     snapshot_manifest = workspace / ".polaris" / "factory_snapshots" / "pre_director" / "manifest.json"
     assert json.loads(snapshot_manifest.read_text(encoding="utf-8"))["snapshot_kind"] == "pre_director_workspace"
 
@@ -2362,6 +2362,8 @@ def test_factory_chain_catalog_contract_writes_metadata(tmp_path: Path) -> None:
     workspace.mkdir(parents=True, exist_ok=True)
 
     feature_keywords = _extract_feature_keywords(project)
+    raw_level = project.get("level")
+    level = raw_level if isinstance(raw_level, int) else int(str(raw_level or 0))
     catalog_contract = {
         "project_id": str(project.get("id") or "").strip(),
         "domain": str(project.get("domain") or "").strip(),
@@ -2371,8 +2373,8 @@ def test_factory_chain_catalog_contract_writes_metadata(tmp_path: Path) -> None:
         "feature_keywords": feature_keywords,
         "checks": list(project.get("checks") or []),  # type: ignore[call-overload]
         "test_focus": str(project.get("test_focus") or "").strip(),
-        "level": int(project.get("level") or 0),
-        "level_contract": bench.build_factory_bench_level_contract(project.get("level"), project=project),
+        "level": level,
+        "level_contract": bench.build_factory_bench_level_contract(level, project=project),
         "source_tree_mandate": "PM/CE/Director must create src/ with core source files, not just scaffolding",
     }
     catalog_path = workspace / ".polaris" / "catalog_contract.json"

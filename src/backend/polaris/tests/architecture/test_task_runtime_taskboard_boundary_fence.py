@@ -23,6 +23,8 @@ ROLE_WORKER_POOL = POLARIS_ROOT / "cells" / "roles" / "runtime" / "internal" / "
 DELIVERY_PM_TASKBOARD = POLARIS_ROOT / "delivery" / "cli" / "pm" / "engine" / "taskboard.py"
 DIRECTOR_EXECUTION_SERVICE = POLARIS_ROOT / "cells" / "director" / "execution" / "service.py"
 RUNTIME_PROJECTION_SERVICE = POLARIS_ROOT / "cells" / "runtime" / "projection" / "internal" / "runtime_projection_service.py"
+FACTORY_HTTP_ROUTER = POLARIS_ROOT / "delivery" / "http" / "routers" / "factory.py"
+FACTORY_BENCH_RUNNER = BACKEND_ROOT / "scripts" / "factory_bench" / "run_factory_bench.py"
 RAW_TASKBOARD_MODULES = {
     "polaris.cells.runtime.task_runtime.internal.task_board",
     "polaris.cells.runtime.task_runtime.public.task_board_contract",
@@ -382,6 +384,47 @@ def test_taskboard_terminal_event_stream_is_owner_only_compatibility_projection(
         "projection, not an execution-control fact source. Production code "
         "outside task_runtime must consume TaskRuntimeService / execution "
         "ledger projections instead:\n" + "\n".join(offenders)
+    )
+
+
+def test_director_resume_preparation_uses_task_runtime_owner() -> None:
+    sources = {
+        "factory_http_router": FACTORY_HTTP_ROUTER.read_text(encoding="utf-8"),
+        "factory_bench_runner": FACTORY_BENCH_RUNNER.read_text(encoding="utf-8"),
+    }
+    blocked_tokens = (
+        "_director_resume_reset_task_payload",
+        "target_dir / task_file.name",
+        "task_file.write_text(",
+        "session_file.unlink(",
+        "shutil.copy2(max_id",
+    )
+    offenders = [
+        f"{source_name}:{token}"
+        for source_name, source in sources.items()
+        for token in blocked_tokens
+        if token in source
+    ]
+
+    missing_owner_calls = [
+        f"{source_name}:import_task_rows_for_reexecution"
+        for source_name, source in sources.items()
+        if "import_task_rows_for_reexecution" not in source
+    ]
+    missing_owner_calls.extend(
+        f"{source_name}:reset_task_rows_for_reexecution"
+        for source_name, source in sources.items()
+        if "reset_task_rows_for_reexecution" not in source
+    )
+
+    assert not offenders, (
+        "Director-resume preparation must not rewrite runtime/tasks rows or "
+        "sessions directly. Use TaskRuntimeService owner APIs so every row "
+        "mutation has task_runtime.execution evidence:\n" + "\n".join(offenders)
+    )
+    assert not missing_owner_calls, (
+        "Director-resume preparation must route import/reset through "
+        "TaskRuntimeService owner APIs:\n" + "\n".join(missing_owner_calls)
     )
 
 

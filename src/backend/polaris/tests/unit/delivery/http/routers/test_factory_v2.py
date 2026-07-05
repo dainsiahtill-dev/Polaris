@@ -175,19 +175,14 @@ def test_director_resume_evidence_rehydrates_source_taskboard(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    from polaris.cells.events.fact_stream.public.contracts import QueryFactEventsV1
+    from polaris.cells.events.fact_stream.public.service import query_fact_events
     from polaris.delivery.http.routers import factory
 
     workspace = tmp_path / "resume-unit"
     workspace.mkdir()
     runtime_projects = tmp_path / "runtime-projects"
-    current_runtime = runtime_projects / "resume-unit-111111111111" / "runtime"
     legacy_runtime = runtime_projects / "resume-unit-222222222222" / "runtime"
-
-    def _fake_resolve_runtime_path(_workspace: str, rel_path: str) -> str:
-        assert rel_path.startswith("runtime/")
-        return str(current_runtime / rel_path.removeprefix("runtime/"))
-
-    monkeypatch.setattr(factory, "resolve_runtime_path", _fake_resolve_runtime_path)
     monkeypatch.setattr(
         factory,
         "resolve_storage_roots",
@@ -239,29 +234,27 @@ def test_director_resume_evidence_rehydrates_source_taskboard(
 
     factory._ensure_director_resume_evidence_ready(str(workspace))
 
+    target_dir = Path(factory.resolve_runtime_path(str(workspace), "runtime/tasks"))
     assert factory._taskboard_record_count(str(workspace)) == 1
-    assert not (current_runtime / "tasks" / "task_1.session.json").exists()
-    task_1 = json.loads((current_runtime / "tasks" / "task_1.json").read_text(encoding="utf-8"))
+    assert not (target_dir / "task_1.session.json").exists()
+    task_1 = json.loads((target_dir / "task_1.json").read_text(encoding="utf-8"))
     assert task_1["status"] == "pending"
     assert "runtime_execution" not in task_1["metadata"]
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    assert any(event.get("event_type") == "reexecution_imported" for event in events)
 
 
 def test_director_resume_evidence_resets_current_dirty_taskboard(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    from polaris.cells.events.fact_stream.public.contracts import QueryFactEventsV1
+    from polaris.cells.events.fact_stream.public.service import query_fact_events
     from polaris.delivery.http.routers import factory
 
     workspace = tmp_path / "resume-current-unit"
     workspace.mkdir()
     runtime_projects = tmp_path / "runtime-projects"
-    current_runtime = runtime_projects / "resume-current-unit-111111111111" / "runtime"
-
-    def _fake_resolve_runtime_path(_workspace: str, rel_path: str) -> str:
-        assert rel_path.startswith("runtime/")
-        return str(current_runtime / rel_path.removeprefix("runtime/"))
-
-    monkeypatch.setattr(factory, "resolve_runtime_path", _fake_resolve_runtime_path)
     monkeypatch.setattr(
         factory,
         "resolve_storage_roots",
@@ -271,7 +264,7 @@ def test_director_resume_evidence_resets_current_dirty_taskboard(
         ),
     )
 
-    task_dir = current_runtime / "tasks"
+    task_dir = Path(factory.resolve_runtime_path(str(workspace), "runtime/tasks"))
     task_dir.mkdir(parents=True)
     (task_dir / "plan.json").write_text(
         json.dumps({"tasks": [{"id": "TASK-1", "target_files": ["src/index.ts"]}]}, ensure_ascii=False),
@@ -317,6 +310,8 @@ def test_director_resume_evidence_resets_current_dirty_taskboard(
     assert "runtime_execution" not in task_1["metadata"]
     evidence = json.loads((task_dir / "director_resume_reset.json").read_text(encoding="utf-8"))
     assert evidence["reset_statuses"] == "all_task_records"
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    assert any(event.get("event_type") == "reexecution_reset" for event in events)
 
 
 def test_build_gates_uses_recorded_quality_gate_score() -> None:

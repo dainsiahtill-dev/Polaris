@@ -6,7 +6,7 @@ import shutil
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, Callable, NoReturn
+from typing import Any, Callable, Mapping, NoReturn, Sequence
 
 from polaris.cells.events.fact_stream.public.contracts import (
     AppendFactEventCommandV1,
@@ -52,6 +52,25 @@ from .execution_session import (
 logger = logging.getLogger(__name__)
 
 _TASK_ID_PATTERN = re.compile(r"^task-(\d+)(?:-|$)", re.IGNORECASE)
+_REEXECUTION_METADATA_DROP_KEYS = frozenset(
+    {
+        "adapter_phase",
+        "claim_attempt",
+        "claimed_at",
+        "claimed_by",
+        "director_claimable_task_ids",
+        "factory_stage",
+        "last_claimed_by",
+        "last_context_summary",
+        "last_execution_error",
+        "last_execution_summary",
+        "resume_available",
+        "resume_count",
+        "resume_state",
+        "runtime_execution",
+        "workflow_run_id",
+    }
+)
 
 
 def _raise_retired_entity_api(method: str, replacement: str) -> NoReturn:
@@ -151,6 +170,107 @@ class TaskRuntimeService:
             "failed_count": len(unique_failed),
         }
 
+    def reset_task_rows_for_reexecution(self, *, source: str = "") -> dict[str, Any]:
+        """Reset current task rows to a clean pre-execution state.
+
+        This is the owner-cell API for retry/resume preparation.  It preserves
+        task ids and dependency fields, removes stale execution/session state,
+        and emits one ``task_runtime.execution`` fact per row mutation.
+        """
+
+        reset_files: list[str] = []
+        skipped_files: list[str] = []
+        deleted_session_files: list[str] = []
+        execution_events: list[dict[str, Any]] = []
+        for task in self._board.list_all():
+            task_id = int(task.id)
+            task_file_name = f"task_{task_id}.json"
+            try:
+                previous_status = str(task.status.value if isinstance(task.status, TaskStatus) else task.status)
+                replaced = self._replace_task_row_for_reexecution(task.to_dict())
+            except (KeyError, RuntimeError, TypeError, ValueError) as exc:
+                logger.warning("Failed to reset task row %s for reexecution: %s", task_id, exc)
+                skipped_files.append(task_file_name)
+                continue
+            deleted_session = self._delete_session_file(task_id)
+            if deleted_session:
+                deleted_session_files.append(Path(deleted_session).name)
+            row = self._augment_task_row(replaced.to_dict())
+            execution_events.append(
+                self._append_execution_event(
+                    "reexecution_reset",
+                    task_row=row,
+                    session=None,
+                    details={
+                        "source": str(source or "runtime.task_runtime.reexecution_reset"),
+                        "previous_status": previous_status,
+                    },
+                )
+            )
+            reset_files.append(task_file_name)
+        return self._project_reexecution_prepare_result(
+            operation="reset",
+            changed_files=reset_files,
+            skipped_files=skipped_files,
+            deleted_session_files=deleted_session_files,
+            execution_events=execution_events,
+        )
+
+    def import_task_rows_for_reexecution(
+        self,
+        task_rows: Sequence[Mapping[str, Any]],
+        *,
+        source: str = "",
+        source_task_dir: str = "",
+    ) -> dict[str, Any]:
+        """Import existing task rows for retry/resume preparation.
+
+        The source rows may come from a trusted runtime snapshot.  The task
+        runtime cell still owns persistence: rows are normalized for
+        reexecution, numeric task ids are preserved, stale sessions are removed,
+        max-id bookkeeping is updated, and every imported row receives
+        ``task_runtime.execution`` evidence.
+        """
+
+        imported_files: list[str] = []
+        skipped_files: list[str] = []
+        deleted_session_files: list[str] = []
+        execution_events: list[dict[str, Any]] = []
+        for payload in task_rows:
+            try:
+                task_id = self.normalize_task_id(payload.get("id"))
+                if task_id is None:
+                    raise ValueError("task row id is required")
+                task_file_name = f"task_{task_id}.json"
+                replaced = self._replace_task_row_for_reexecution(dict(payload))
+            except (KeyError, RuntimeError, TypeError, ValueError) as exc:
+                logger.warning("Failed to import task row for reexecution: %s", exc)
+                skipped_files.append(str(payload.get("id") or "unknown"))
+                continue
+            deleted_session = self._delete_session_file(task_id)
+            if deleted_session:
+                deleted_session_files.append(Path(deleted_session).name)
+            row = self._augment_task_row(replaced.to_dict())
+            execution_events.append(
+                self._append_execution_event(
+                    "reexecution_imported",
+                    task_row=row,
+                    session=None,
+                    details={
+                        "source": str(source or "runtime.task_runtime.reexecution_import"),
+                        "source_task_dir": str(source_task_dir or ""),
+                    },
+                )
+            )
+            imported_files.append(task_file_name)
+        return self._project_reexecution_prepare_result(
+            operation="import",
+            changed_files=imported_files,
+            skipped_files=skipped_files,
+            deleted_session_files=deleted_session_files,
+            execution_events=execution_events,
+        )
+
     @staticmethod
     def normalize_task_id(task_id: Any) -> int | None:
         token = str(task_id or "").strip()
@@ -162,6 +282,75 @@ class TaskRuntimeService:
         if match:
             return int(match.group(1))
         return None
+
+    @staticmethod
+    def _task_row_payload_for_reexecution(payload: Mapping[str, Any]) -> dict[str, Any]:
+        reset = dict(payload)
+        blocked_by_raw = reset.get("blocked_by")
+        if not isinstance(blocked_by_raw, list):
+            blocked_by_raw = reset.get("blockedBy") if isinstance(reset.get("blockedBy"), list) else []
+        blocked_by_source: list[Any] = blocked_by_raw if isinstance(blocked_by_raw, list) else []
+        blocked_by = list(blocked_by_source)
+        reset["blocked_by"] = blocked_by
+        reset["blockedBy"] = list(blocked_by)
+        reset["status"] = "blocked" if blocked_by else "pending"
+        reset["claimed_by"] = None
+        reset["assignee"] = ""
+        reset["started_at"] = None
+        reset["completed_at"] = None
+        reset["claimed_at"] = None
+        reset["result_summary"] = ""
+        reset["error_message"] = None
+        metadata_raw = reset.get("metadata")
+        metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+        for key in _REEXECUTION_METADATA_DROP_KEYS:
+            metadata.pop(key, None)
+        reset["metadata"] = metadata
+        return reset
+
+    def _replace_task_row_for_reexecution(self, payload: Mapping[str, Any]) -> Task:
+        task = Task.from_dict(self._task_row_payload_for_reexecution(payload))
+        with self._board.transaction():
+            self._board._cache[int(task.id)] = task
+            self._board._save_task(task)
+            if int(task.id) > self._board._load_max_id():
+                self._board._save_max_id(int(task.id))
+        return task
+
+    def _delete_session_file(self, task_id: int) -> str:
+        session_path = Path(resolve_runtime_path(self._workspace, self._session_logical_path(task_id)))
+        with self._get_session_lock(task_id):
+            if not session_path.is_file():
+                return ""
+            session_path.unlink()
+        with self._session_locks_meta:
+            self._session_locks.pop(task_id, None)
+        return str(session_path)
+
+    @staticmethod
+    def _project_reexecution_prepare_result(
+        *,
+        operation: str,
+        changed_files: list[str],
+        skipped_files: list[str],
+        deleted_session_files: list[str],
+        execution_events: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        failed_events = [dict(event) for event in execution_events if not bool(event.get("ok"))]
+        return {
+            "success": not skipped_files and not failed_events,
+            "operation": operation,
+            "changed_files": list(changed_files),
+            "reset_files": list(changed_files) if operation == "reset" else [],
+            "imported_files": list(changed_files) if operation == "import" else [],
+            "skipped_files": list(skipped_files),
+            "deleted_session_files": list(deleted_session_files),
+            "execution_events": [dict(event) for event in execution_events],
+            "failed_execution_events": failed_events,
+            "changed_count": len(changed_files),
+            "skipped_count": len(skipped_files),
+            "deleted_session_count": len(deleted_session_files),
+        }
 
     def task_exists(self, task_id: Any) -> bool:
         normalized = self.normalize_task_id(task_id)

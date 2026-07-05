@@ -1063,6 +1063,84 @@ def test_task_runtime_reset_records_clears_rows_sessions_and_events(tmp_path: Pa
     assert not taskboard_event_path.exists()
 
 
+def test_task_runtime_reset_rows_for_reexecution_emits_execution_facts(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(subject="dirty task", metadata={"scope": "src/App.tsx"})
+    created_id = created["id"]
+    claimed = service.claim_execution(
+        created_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-reset-row",
+        selection_source="unit",
+    )
+    assert claimed["success"] is True
+    assert _session_file_path(workspace, created_id).is_file()
+
+    result = service.reset_task_rows_for_reexecution(source="unit.reset")
+
+    assert result["success"] is True
+    assert result["reset_files"] == [f"task_{created_id}.json"]
+    assert result["deleted_session_files"] == [f"task_{created_id}.session.json"]
+    assert not _session_file_path(workspace, created_id).exists()
+    task_payload = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
+    assert task_payload["status"] == "pending"
+    assert task_payload["assignee"] == ""
+    assert "runtime_execution" not in task_payload["metadata"]
+
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    reset_event = next(event for event in events if event.get("event_type") == "reexecution_reset")
+    assert reset_event["payload"]["task_id"] == str(created_id)
+    assert reset_event["payload"]["details"]["source"] == "unit.reset"
+
+
+def test_task_runtime_import_rows_for_reexecution_preserves_ids_and_events(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    _session_file_path(workspace, 7).write_text('{"status":"active"}', encoding="utf-8")
+
+    result = service.import_task_rows_for_reexecution(
+        [
+            {
+                "id": 7,
+                "subject": "legacy director task",
+                "description": "resume existing PM/CE task",
+                "status": "in_progress",
+                "blocked_by": [],
+                "metadata": {
+                    "runtime_execution": {"status": "active"},
+                    "workflow_run_id": "old-run",
+                    "pm_task_id": "TASK-7",
+                },
+            }
+        ],
+        source="unit.import",
+        source_task_dir="/tmp/source/runtime/tasks",
+    )
+
+    assert result["success"] is True
+    assert result["imported_files"] == ["task_7.json"]
+    assert result["deleted_session_files"] == ["task_7.session.json"]
+    assert not _session_file_path(workspace, 7).exists()
+    task_payload = json.loads(_task_file_path(workspace, 7).read_text(encoding="utf-8"))
+    assert task_payload["id"] == 7
+    assert task_payload["status"] == "pending"
+    assert task_payload["metadata"] == {"pm_task_id": "TASK-7"}
+
+    next_row = service.create_task_row(subject="next task")
+    assert next_row["id"] == 8
+
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    imported_event = next(event for event in events if event.get("event_type") == "reexecution_imported")
+    assert imported_event["payload"]["task_id"] == "7"
+    assert imported_event["payload"]["details"]["source"] == "unit.import"
+    assert imported_event["payload"]["details"]["source_task_dir"] == "/tmp/source/runtime/tasks"
+
+
 def test_task_runtime_service_materializes_legacy_task_and_claims_it(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

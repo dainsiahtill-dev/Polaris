@@ -578,42 +578,13 @@ def _director_resume_taskboard_score(task_dir: Path) -> tuple[int, int, float]:
     return (blueprint_count, min(planned_count, len(task_files)), mtime)
 
 
-def _director_resume_reset_task_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    reset = dict(payload)
-    blocked_by = reset.get("blocked_by")
-    if not isinstance(blocked_by, list):
-        blocked_by = reset.get("blockedBy") if isinstance(reset.get("blockedBy"), list) else []
-    reset["status"] = "blocked" if blocked_by else "pending"
-    reset["claimed_by"] = None
-    reset["assignee"] = ""
-    reset["started_at"] = None
-    reset["completed_at"] = None
-    reset["claimed_at"] = None
-    reset["result_summary"] = ""
-    reset["error_message"] = None
-    metadata = reset.get("metadata")
-    if isinstance(metadata, dict):
-        cleaned_metadata = dict(metadata)
-        for key in (
-            "adapter_phase",
-            "claim_attempt",
-            "claimed_at",
-            "claimed_by",
-            "director_claimable_task_ids",
-            "factory_stage",
-            "last_claimed_by",
-            "last_context_summary",
-            "last_execution_error",
-            "last_execution_summary",
-            "resume_available",
-            "resume_count",
-            "resume_state",
-            "runtime_execution",
-            "workflow_run_id",
-        ):
-            cleaned_metadata.pop(key, None)
-        reset["metadata"] = cleaned_metadata
-    return reset
+def _raise_director_resume_task_runtime_failure(result: dict[str, Any]) -> None:
+    raise StructuredHTTPException(
+        status_code=500,
+        code="DIRECTOR_RESUME_TASK_RUNTIME_WRITE_FAILED",
+        message="Director resume task rows must be prepared through task_runtime execution evidence",
+        details={"task_runtime_result": result},
+    )
 
 
 def _rehydrate_director_resume_taskboard(workspace: str) -> str:
@@ -632,24 +603,27 @@ def _rehydrate_director_resume_taskboard(workspace: str) -> str:
             continue
         target_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_dir / "plan.json", target_dir / "plan.json")
-        copied: list[str] = ["plan.json"]
+        task_payloads: list[dict[str, Any]] = []
         for task_file in _director_resume_task_files(source_dir):
             payload = _load_json_object(task_file)
             if not payload:
                 continue
-            normalized_payload = _director_resume_reset_task_payload(payload)
-            _write_json_text_atomic(target_dir / task_file.name, normalized_payload, trailing_newline=False)
-            copied.append(task_file.name)
-        max_id = source_dir / ".max_id"
-        if max_id.is_file():
-            shutil.copy2(max_id, target_dir / ".max_id")
-            copied.append(".max_id")
+            task_payloads.append(payload)
+        prepare_result = TaskRuntimeService(workspace).import_task_rows_for_reexecution(
+            task_payloads,
+            source="factory.director_resume.rehydration",
+            source_task_dir=str(source_dir),
+        )
+        if not bool(prepare_result.get("success")):
+            _raise_director_resume_task_runtime_failure(prepare_result)
+        copied: list[str] = ["plan.json", *[str(path) for path in prepare_result.get("imported_files", [])]]
         evidence = {
             "schema_version": "factory.director_resume_taskboard_rehydration.v1",
             "source": "factory_http",
             "source_task_dir": str(source_dir),
             "target_task_dir": str(target_dir),
             "copied_files": copied,
+            "task_runtime_prepare_result": prepare_result,
             "reset_statuses": "all_task_records",
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -665,37 +639,24 @@ def _reset_current_director_resume_taskboard(
 ) -> dict[str, Any]:
     """Reset existing Director task rows to a clean pre-Director claimable state."""
     task_dir = target_dir or Path(resolve_runtime_path(workspace, "runtime/tasks"))
-    task_files = _director_resume_task_files(task_dir)
-    if not task_files:
+    if not _director_resume_task_files(task_dir):
         return {}
 
-    reset_files: list[str] = []
-    skipped_files: list[str] = []
-    deleted_session_files: list[str] = []
-    for task_file in task_files:
-        payload = _load_json_object(task_file)
-        if not payload:
-            skipped_files.append(task_file.name)
-            continue
-        normalized_payload = _director_resume_reset_task_payload(payload)
-        _write_json_text_atomic(task_file, normalized_payload)
-        reset_files.append(task_file.name)
-
-    with contextlib.suppress(OSError):
-        for session_file in sorted(task_dir.glob("task_*.session.json")):
-            if not session_file.is_file():
-                continue
-            session_file.unlink()
-            deleted_session_files.append(session_file.name)
+    prepare_result = TaskRuntimeService(workspace).reset_task_rows_for_reexecution(
+        source="factory.director_resume.reset"
+    )
+    if not bool(prepare_result.get("success")):
+        _raise_director_resume_task_runtime_failure(prepare_result)
 
     evidence = {
         "schema_version": "factory.director_resume_taskboard_reset.v1",
         "source": "factory_http",
         "workspace": workspace,
         "target_task_dir": str(task_dir),
-        "reset_files": reset_files,
-        "skipped_files": skipped_files,
-        "deleted_session_files": deleted_session_files,
+        "reset_files": prepare_result.get("reset_files", []),
+        "skipped_files": prepare_result.get("skipped_files", []),
+        "deleted_session_files": prepare_result.get("deleted_session_files", []),
+        "task_runtime_prepare_result": prepare_result,
         "reset_statuses": "all_task_records",
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
