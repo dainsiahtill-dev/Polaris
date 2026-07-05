@@ -56,6 +56,12 @@ LEGACY_TASK_RUNTIME_METHODS = {
 RAW_TASK_ROW_READ_METHODS = {"list_task_rows"}
 TASK_RUNTIME_RECEIVER_NAMES = {"task_runtime", "task_board"}
 RUNTIME_EXECUTION_MUTATING_METHODS = {"pop", "setdefault", "update"}
+TASK_RUNTIME_UPDATE_ROW_METADATA_ONLY_ALLOWLIST = {
+    "polaris/cells/roles/adapters/internal/pm/board_tasks.py",
+    "polaris/cells/roles/adapters/internal/qa_adapter.py",
+    "polaris/delivery/cli/pm/engine/taskboard.py",
+    "polaris/delivery/http/routers/factory.py",
+}
 
 
 def _is_allowed_owner_path(path: Path) -> bool:
@@ -358,6 +364,34 @@ def _literal_status_method_calls(path: Path, method_name: str, statuses: set[str
     return offenders
 
 
+def _update_task_row_boundary_violations(path: Path) -> list[str]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    rel = path.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr != "update_task_row":
+            continue
+        status_keyword = next((keyword for keyword in node.keywords if keyword.arg == "status"), None)
+        if rel == "polaris/cells/roles/adapters/internal/base.py":
+            if status_keyword is None:
+                offenders.append(f"{rel}:{node.lineno} calls update_task_row() without the shared status guard")
+            continue
+        if status_keyword is not None:
+            offenders.append(
+                f"{rel}:{node.lineno} passes status= to update_task_row(); use a TaskRuntimeService owner transition"
+            )
+            continue
+        if rel not in TASK_RUNTIME_UPDATE_ROW_METADATA_ONLY_ALLOWLIST:
+            offenders.append(
+                f"{rel}:{node.lineno} is not an approved metadata-only update_task_row() projection writer"
+            )
+    return offenders
+
+
 def test_raw_taskboard_is_private_to_task_runtime_cell() -> None:
     offenders: list[str] = []
     this_file = Path(__file__).resolve()
@@ -392,6 +426,28 @@ def test_production_code_uses_task_runtime_row_apis() -> None:
         "Production task-runtime consumers must use row APIs such as "
         "create_task_row(), update_task_row(), get_task(), list_observable_task_rows(), "
         "list_ready_task_rows(), or get_task_row_stats():\n" + "\n".join(offenders)
+    )
+
+
+def test_update_task_row_writers_are_metadata_only_or_owner_guarded() -> None:
+    offenders: list[str] = []
+    this_file = Path(__file__).resolve()
+    for path in POLARIS_ROOT.rglob("*.py"):
+        if path.resolve() == this_file or "__pycache__" in path.parts:
+            continue
+        if "tests" in path.parts:
+            continue
+        if _is_allowed_owner_path(path):
+            continue
+        offenders.extend(_update_task_row_boundary_violations(path))
+
+    assert not offenders, (
+        "TaskRuntimeService.update_task_row() is a row projection helper, not a "
+        "distributed task-state owner. Production callers outside "
+        "runtime.task_runtime may only perform reviewed metadata-only updates; "
+        "status changes must use owner transitions such as claim/complete/fail, "
+        "dedup cancellation, QA rework failure, or role-adapter failure helpers:\n"
+        + "\n".join(offenders)
     )
 
 
