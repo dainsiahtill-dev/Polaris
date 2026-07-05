@@ -787,7 +787,7 @@ class TaskRuntimeService:
                         # Reconcile the row to the terminal verdict and reject
                         # the claim; reconcile failures become structured
                         # rejection evidence, never an exception.
-                        row, reconcile_error = self._apply_terminal_session_reconcile(
+                        row, reconcile_error, execution_event = self._apply_terminal_session_reconcile(
                             normalized,
                             session=existing_session,
                             extra_metadata=metadata,
@@ -801,6 +801,7 @@ class TaskRuntimeService:
                             session=existing_session,
                             reconciled_from_terminal_session=not reconcile_error,
                             reconcile_error=reconcile_error,
+                            execution_event=execution_event,
                         )
 
             if task.is_terminal:
@@ -1560,7 +1561,7 @@ class TaskRuntimeService:
         session: TaskExecutionSession,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        row, _reconcile_error = self._apply_terminal_session_reconcile(
+        row, _reconcile_error, _execution_event = self._apply_terminal_session_reconcile(
             task_id,
             session=session,
             extra_metadata=metadata,
@@ -1573,7 +1574,7 @@ class TaskRuntimeService:
         *,
         session: TaskExecutionSession,
         extra_metadata: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, Any] | None, str]:
+    ) -> tuple[dict[str, Any] | None, str, dict[str, Any] | None]:
         """Project a terminal session onto its task row without ever raising.
 
         Returns ``(row, error_code)``. ``error_code`` is empty when the row now
@@ -1586,7 +1587,7 @@ class TaskRuntimeService:
         terminal_status = _terminal_task_status_for_session(session.status)
         if terminal_status is None:
             task = self._board.get(task_id)
-            return (self._augment_task_row(task.to_dict()) if task is not None else None), ""
+            return (self._augment_task_row(task.to_dict()) if task is not None else None), "", None
         runtime_metadata = self._build_runtime_metadata(
             session=session,
             effective_status=terminal_status.value,
@@ -1598,7 +1599,7 @@ class TaskRuntimeService:
         except InvalidTaskStateTransitionError:
             task = self._board.get(task_id)
             if task is None:
-                return None, "task_not_found"
+                return None, "task_not_found", None
             if task.is_terminal:
                 # Never rewrite one terminal verdict with another here:
                 # reopen is the only sanctioned terminal-downgrade path.
@@ -1609,7 +1610,7 @@ class TaskRuntimeService:
                     session.session_id,
                     terminal_status.value,
                 )
-                return self._augment_task_row(task.to_dict()), "terminal_row_conflict"
+                return self._augment_task_row(task.to_dict()), "terminal_row_conflict", None
             try:
                 forced = self._board.reconcile_terminal_status(
                     task_id,
@@ -1623,14 +1624,24 @@ class TaskRuntimeService:
                     terminal_status.value,
                     exc,
                 )
-                return self._augment_task_row(task.to_dict()), "terminal_reconcile_rejected"
+                return self._augment_task_row(task.to_dict()), "terminal_reconcile_rejected", None
             if forced is None:
-                return None, "task_not_found"
+                return None, "task_not_found", None
             updated = self._board.update(task_id, metadata=runtime_metadata) or forced
         if updated is None:
             task = self._board.get(task_id)
-            return (self._augment_task_row(task.to_dict()) if task is not None else None), ""
-        return self._augment_task_row(updated.to_dict()), ""
+            return (self._augment_task_row(task.to_dict()) if task is not None else None), "", None
+        row = self._augment_task_row(updated.to_dict())
+        execution_event = self._append_execution_event(
+            "terminal_session_reconciled",
+            task_row=row,
+            session=session,
+            details={
+                "terminal_status": terminal_status.value,
+                "source": "runtime.task_runtime.terminal_session_reconcile",
+            },
+        )
+        return row, "", execution_event
 
     def _row_authorizes_retry_over_terminal_session(
         self,

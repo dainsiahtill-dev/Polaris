@@ -520,6 +520,8 @@ def test_task_runtime_service_reconciles_terminal_session_before_reclaim(tmp_pat
     assert reclaimed["success"] is False
     assert reclaimed["reason"] == "task_terminal"
     assert reclaimed["reconciled_from_terminal_session"] is True
+    assert reclaimed["execution_event"]["ok"] is True
+    assert reclaimed["execution_event"]["event_type"] == "terminal_session_reconciled"
     assert reclaimed["task"]["status"] == "completed"
     persisted = json.loads(task_path.read_text(encoding="utf-8"))
     assert persisted["status"] == "completed"
@@ -731,6 +733,8 @@ def test_task_runtime_stale_pending_row_with_newer_terminal_session_still_reject
     assert reclaimed["success"] is False
     assert reclaimed["reason"] == "task_terminal"
     assert reclaimed["reconciled_from_terminal_session"] is True
+    assert reclaimed["execution_event"]["ok"] is True
+    assert reclaimed["execution_event"]["event_type"] == "terminal_session_reconciled"
     persisted = json.loads(task_path.read_text(encoding="utf-8"))
     assert persisted["status"] == "failed"
 
@@ -783,6 +787,8 @@ def test_task_runtime_stale_ready_row_reconcile_does_not_crash_claim(tmp_path: P
     assert reclaimed["reason"] == "task_terminal"
     assert reclaimed["reconciled_from_terminal_session"] is True
     assert "reconcile_error" not in reclaimed
+    assert reclaimed["execution_event"]["ok"] is True
+    assert reclaimed["execution_event"]["event_type"] == "terminal_session_reconciled"
     persisted = json.loads(task_path.read_text(encoding="utf-8"))
     assert persisted["status"] == "failed"
 
