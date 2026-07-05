@@ -20,6 +20,8 @@ import pytest
 from polaris.cells.roles.runtime.internal.worker_pool import (
     AsyncWorker,
     AsyncWorkerConfig,
+    Worker,
+    WorkerConfig,
     WorkerResult,
     WorkerTask,
     create_async_worker_pool,
@@ -136,6 +138,65 @@ async def test_async_worker_consumes_task_runtime_rows(work_dir: Path) -> None:
     assert runtime.completed[0]["task_id"] == 7
     assert runtime.completed[0]["session_id"] == "session-7"
     assert runtime.failed == []
+
+
+@pytest.mark.asyncio
+async def test_async_worker_failure_uses_task_runtime_fail_execution(work_dir: Path) -> None:
+    runtime = _FakeTaskRuntime()
+    config = AsyncWorkerConfig(
+        worker_id="test-worker-runtime",
+        work_dir=work_dir,
+        max_idle_time=10,
+        poll_interval=1.0,
+    )
+    worker = AsyncWorker(config, task_runtime=runtime)
+    task = WorkerTask(
+        task_id=7,
+        command=f"{sys.executable} -c \"import sys; sys.exit(7)\"",
+        work_dir=work_dir,
+        env={},
+        timeout=30,
+        metadata={"test": "runtime_failure"},
+        session_id="session-7",
+    )
+
+    await worker._execute_worker_task(task)
+
+    assert runtime.completed == []
+    assert len(runtime.failed) == 1
+    assert runtime.failed[0]["task_id"] == 7
+    assert runtime.failed[0]["session_id"] == "session-7"
+    assert runtime.failed[0]["error"]
+    assert runtime.failed[0]["metadata"] == {"worker_id": "test-worker-runtime"}
+
+
+def test_sync_worker_failure_uses_task_runtime_fail_execution(work_dir: Path) -> None:
+    runtime = _FakeTaskRuntime()
+    config = WorkerConfig(
+        worker_id="test-sync-worker-runtime",
+        work_dir=work_dir,
+        max_idle_time=10,
+        poll_interval=1.0,
+    )
+    worker = Worker(config, task_runtime=runtime)
+    task = WorkerTask(
+        task_id=7,
+        command=f"{sys.executable} -c \"import sys; sys.exit(7)\"",
+        work_dir=work_dir,
+        env={},
+        timeout=30,
+        metadata={"test": "runtime_failure"},
+        session_id="session-7",
+    )
+
+    worker._execute_worker_task(task)
+
+    assert runtime.completed == []
+    assert len(runtime.failed) == 1
+    assert runtime.failed[0]["task_id"] == 7
+    assert runtime.failed[0]["session_id"] == "session-7"
+    assert runtime.failed[0]["error"]
+    assert runtime.failed[0]["metadata"] == {"worker_id": "test-sync-worker-runtime"}
 
 
 @pytest.mark.asyncio
