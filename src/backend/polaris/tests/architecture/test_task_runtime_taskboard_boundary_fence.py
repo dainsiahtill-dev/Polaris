@@ -18,6 +18,7 @@ TASK_RUNTIME_INTERNAL_BOARD = TASK_RUNTIME_OWNER / "internal" / "task_board.py"
 TASK_RUNTIME_PUBLIC_BOARD_CONTRACT = TASK_RUNTIME_OWNER / "public" / "task_board_contract.py"
 ROLE_WORKER_POOL = POLARIS_ROOT / "cells" / "roles" / "runtime" / "internal" / "worker_pool.py"
 DELIVERY_PM_TASKBOARD = POLARIS_ROOT / "delivery" / "cli" / "pm" / "engine" / "taskboard.py"
+DIRECTOR_EXECUTION_SERVICE = POLARIS_ROOT / "cells" / "director" / "execution" / "service.py"
 RAW_TASKBOARD_MODULES = {
     "polaris.cells.runtime.task_runtime.internal.task_board",
     "polaris.cells.runtime.task_runtime.public.task_board_contract",
@@ -308,4 +309,31 @@ def test_public_task_board_contract_does_not_export_raw_taskboard_types() -> Non
     assert not offenders, (
         "public.task_board_contract is retired as a raw TaskBoard facade; "
         "public consumers must use TaskRuntimeService:\n" + "\n".join(offenders)
+    )
+
+
+def test_director_status_uses_task_runtime_projection() -> None:
+    source = DIRECTOR_EXECUTION_SERVICE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    get_status: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef) or node.name != "DirectorService":
+            continue
+        for item in node.body:
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == "get_status":
+                get_status = item
+                break
+    assert get_status is not None, "DirectorService.get_status() not found"
+
+    offenders: list[str] = []
+    for node in ast.walk(get_status):
+        if not isinstance(node, ast.Attribute) or node.attr not in {"get_tasks", "get_ready_task_count"}:
+            continue
+        receiver = node.value
+        if isinstance(receiver, ast.Attribute) and receiver.attr == "_task_service":
+            offenders.append(f"line {node.lineno}: self._task_service.{node.attr}()")
+
+    assert not offenders, (
+        "DirectorService.get_status() must project tasks from TaskRuntimeService "
+        "rows, not Director's internal TaskService snapshot:\n" + "\n".join(offenders)
     )

@@ -16,6 +16,7 @@ from enum import Enum, auto
 from typing import Any
 
 from polaris.cells.director.tasking.public import TaskQueueConfig, TaskService, WorkerPoolConfig, WorkerService
+from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.domain.entities import Task, TaskPriority, TaskResult, TaskStatus, Worker, WorkerStatus
 from polaris.domain.entities.capability import Role, RoleConfig, get_role_config
 from polaris.domain.entities.policy import Policy
@@ -81,6 +82,19 @@ AUTO_IDLE_GRACE_SECONDS = 1.5
 PENDING_STALL_TIMEOUT_SECONDS = 120.0
 EMPTY_QUEUE_STALL_TIMEOUT_SECONDS = 45.0
 
+_TASK_ROW_STATUS_TO_DIRECTOR_STATUS = {
+    "queued": "QUEUED",
+    "pending": "PENDING",
+    "blocked": "BLOCKED",
+    "ready": "READY",
+    "claimed": "CLAIMED",
+    "in_progress": "IN_PROGRESS",
+    "completed": "COMPLETED",
+    "failed": "FAILED",
+    "cancelled": "CANCELLED",
+    "timeout": "TIMEOUT",
+}
+
 @dataclass
 class DirectorConfig:
     """Director configuration."""
@@ -111,6 +125,7 @@ class DirectorService(DirectorCodeIntelMixin):
         transcript: TranscriptService | None = None,
         message_bus: MessageBus | None = None,
         task_service: TaskService | None = None,
+        task_runtime: TaskRuntimeService | None = None,
         worker_service: WorkerService | None = None,
     ) -> None:
         DirectorCodeIntelMixin.__init__(self, config.workspace)
@@ -124,6 +139,7 @@ class DirectorService(DirectorCodeIntelMixin):
         self.transcript = transcript or get_transcript_service()
 
         self._bus = message_bus or MessageBus()
+        self._task_runtime = task_runtime
 
         provided_task_service = task_service is not None
         self._task_service = task_service or TaskService(
@@ -440,8 +456,11 @@ class DirectorService(DirectorCodeIntelMixin):
                     logger.debug("Director transitioned RUNNING -> IDLE (main loop exited, no workers)")
 
     async def get_status(self) -> dict[str, Any]:
-        """Return a pure snapshot of Director state.  Does not modify any state (CQS)."""
-        tasks = await self._task_service.get_tasks()
+        """Return a status snapshot projected from execution-control rows."""
+
+        task_runtime = self._get_task_runtime()
+        task_rows = task_runtime.list_task_rows()
+        task_stats = task_runtime.get_task_row_stats()
         workers = await self._worker_service.get_workers()
         async with self._state_lock:
             state_name = self.state.name
@@ -453,10 +472,11 @@ class DirectorService(DirectorCodeIntelMixin):
             "workspace": self.config.workspace,
             "metrics": self._metrics.copy(),
             "tasks": {
-                "total": len(tasks),
-                "by_status": {status.name: len([t for t in tasks if t.status == status]) for status in TaskStatus},
-                "ready_queue_size": await self._task_service.get_ready_task_count(),
-                "task_rows": [task.to_dict() for task in tasks],
+                "total": int(task_stats.get("total") or len(task_rows)),
+                "by_status": self._director_task_status_counts(task_stats),
+                "ready_queue_size": int(task_stats.get("ready") or 0),
+                "task_rows": task_rows,
+                "projection_source": "runtime.task_runtime",
             },
             "workers": {
                 "total": len(workers),
@@ -466,6 +486,25 @@ class DirectorService(DirectorCodeIntelMixin):
             },
             "token_budget": self.token.get_budget_status().to_dict(),
         }
+
+    def _get_task_runtime(self) -> TaskRuntimeService:
+        if self._task_runtime is None:
+            self._task_runtime = TaskRuntimeService(self.config.workspace)
+        return self._task_runtime
+
+    @staticmethod
+    def _director_task_status_counts(task_stats: dict[str, Any]) -> dict[str, int]:
+        """Project task-runtime status counters onto the legacy Director wire keys."""
+
+        counts = {status.name: 0 for status in TaskStatus}
+        for runtime_status, director_status in _TASK_ROW_STATUS_TO_DIRECTOR_STATUS.items():
+            if director_status not in counts:
+                continue
+            try:
+                counts[director_status] = int(task_stats.get(runtime_status) or 0)
+            except (TypeError, ValueError):
+                counts[director_status] = 0
+        return counts
 
     async def _main_loop(self) -> None:
         while not self._stop_event.is_set():

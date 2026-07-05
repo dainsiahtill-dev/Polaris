@@ -13,6 +13,7 @@ from polaris.cells.director.execution.service import (
     DirectorService,
     DirectorState,
 )
+from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.domain.entities import Task, TaskPriority
 from polaris.kernelone.constants import DEFAULT_MAX_WORKERS
 
@@ -30,6 +31,28 @@ class TestDirectorService:
         mock_security = Mock()
         service = DirectorService(config=config, security=mock_security)
         assert service.security is mock_security
+
+    @pytest.mark.asyncio
+    async def test_get_status_projects_task_runtime_rows(self, tmp_path: Path) -> None:
+        task_runtime = TaskRuntimeService(str(tmp_path))
+        task_runtime.create_task_row(subject="Ready row")
+
+        config = DirectorConfig(workspace=str(tmp_path))
+        service = DirectorService(config=config, task_runtime=task_runtime)
+        service._task_service = Mock(
+            get_tasks=AsyncMock(side_effect=AssertionError("must not read Director TaskService")),
+            get_ready_task_count=AsyncMock(side_effect=AssertionError("must not read Director TaskService")),
+        )
+        service._worker_service = Mock(get_workers=AsyncMock(return_value=[]))
+        service.token = Mock(get_budget_status=Mock(to_dict=Mock(return_value={})))
+
+        status = await service.get_status()
+
+        assert status["tasks"]["projection_source"] == "runtime.task_runtime"
+        assert status["tasks"]["total"] == 1
+        assert status["tasks"]["ready_queue_size"] == 1
+        assert status["tasks"]["by_status"]["PENDING"] == 1
+        assert status["tasks"]["task_rows"][0]["subject"] == "Ready row"
 
     @pytest.mark.asyncio
     async def test_execute_task_work_without_command_uses_worker_executor(
@@ -151,7 +174,7 @@ class TestDirectorStateConcurrencyRegression:
         )
 
     @pytest.mark.asyncio
-    async def test_get_status_does_not_race_with_state_transition(self) -> None:
+    async def test_get_status_does_not_race_with_state_transition(self, tmp_path: Path) -> None:
         """Verify get_status() can be called concurrently with start()/stop() safely.
 
         Bug (M5): get_status() reads self.state at line 428 without the lock.
@@ -162,8 +185,9 @@ class TestDirectorStateConcurrencyRegression:
         After fix: get_status() either acquires the lock or state reads are
         otherwise protected so the returned dict is consistent.
         """
-        config = DirectorConfig(workspace="/workspace")
-        service = DirectorService(config=config)
+        task_runtime = TaskRuntimeService(str(tmp_path))
+        config = DirectorConfig(workspace=str(tmp_path))
+        service = DirectorService(config=config, task_runtime=task_runtime)
 
         service._task_service = Mock(get_tasks=AsyncMock(return_value=[]))
         service._worker_service = Mock(
