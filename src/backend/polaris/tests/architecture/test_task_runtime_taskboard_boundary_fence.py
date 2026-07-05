@@ -277,6 +277,52 @@ def _call_name(node: ast.AST) -> str:
     return ""
 
 
+def _is_raw_taskboard_factory_call(node: ast.AST) -> bool:
+    return isinstance(node, ast.Call) and _call_name(node.func) in {"TaskBoard", "create_taskboard"}
+
+
+def _taskboard_receiver_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return _call_name(node)
+    return ""
+
+
+def _raw_taskboard_create_calls(path: Path) -> list[str]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    taskboard_receivers: set[str] = set()
+
+    for node in ast.walk(tree):
+        targets: list[ast.AST] = []
+        value: ast.AST | None = None
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+            value = node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+            value = node.value
+        if value is None or not _is_raw_taskboard_factory_call(value):
+            continue
+        for target in targets:
+            receiver = _taskboard_receiver_name(target)
+            if receiver:
+                taskboard_receivers.add(receiver)
+
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr != "create":
+            continue
+        receiver = _taskboard_receiver_name(func.value)
+        if receiver in taskboard_receivers or _is_raw_taskboard_factory_call(func.value):
+            offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} calls raw TaskBoard.create()")
+    return offenders
+
+
 def _function_def(path: Path, name: str) -> ast.FunctionDef:
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -469,6 +515,27 @@ def test_production_code_uses_task_runtime_row_apis() -> None:
         "Production task-runtime consumers must use row APIs such as "
         "create_task_row(), update_task_row(), get_task(), list_observable_task_rows(), "
         "list_ready_task_rows(), or get_task_row_stats():\n" + "\n".join(offenders)
+    )
+
+
+def test_taskboard_row_creation_stays_in_task_runtime_service() -> None:
+    offenders: list[str] = []
+    for path in TASK_RUNTIME_OWNER.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        if "tests" in path.parts:
+            continue
+        if path.resolve() in {
+            TASK_RUNTIME_INTERNAL_BOARD.resolve(),
+            TASK_RUNTIME_INTERNAL_SERVICE.resolve(),
+        }:
+            continue
+        offenders.extend(_raw_taskboard_create_calls(path))
+
+    assert not offenders, (
+        "Raw TaskBoard.create() must stay behind TaskRuntimeService.create_task_row() "
+        "so task creation always emits execution ledger facts and reverse dependency "
+        "links from the same owner path:\n" + "\n".join(offenders)
     )
 
 
