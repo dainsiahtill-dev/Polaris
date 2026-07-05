@@ -441,6 +441,16 @@ class TaskBoard:
             except RuntimeError as exc:
                 logger.debug("TaskBoard ready listener failed: %s", exc)
 
+    def notify_ready_tasks(self) -> None:
+        """Notify waiters/listeners when at least one row is ready.
+
+        Cross-row orchestration belongs to ``TaskRuntimeService``, but the
+        board still owns the condition variable and listener registry used by
+        ready-task waiters.
+        """
+
+        self._notify_ready_tasks()
+
     def wait_ready(self, timeout: float | None = None) -> bool:
         """Block until at least one task is ready, without interval polling."""
 
@@ -758,14 +768,6 @@ class TaskBoard:
                 if evidence_refs:
                     task.evidence_refs.extend(evidence_refs)
 
-                # Dependency unblocking: only a SUCCESSFUL completion may unblock
-                # downstream dependents. A FAILED/CANCELLED/TIMEOUT prerequisite
-                # must leave its dependents BLOCKED to preserve the DAG guarantee
-                # (otherwise workers would pick up tasks whose deps never produced
-                # the artifacts they require).
-                if next_status == TaskStatus.COMPLETED:
-                    should_notify_ready = self._unblock_dependent_tasks(task_id)
-
             self._save_task(task)
             should_notify_ready = should_notify_ready or self._is_ready_task(task)
 
@@ -778,18 +780,6 @@ class TaskBoard:
             self._notify_ready_tasks()
 
         return result_task
-
-    def _unblock_dependent_tasks(self, completed_task_id: int) -> bool:
-        """Remove completed task from blocked_by lists of dependent tasks."""
-        ready_unblocked = False
-        for task in self._cache.values():
-            if completed_task_id in task.blocked_by:
-                task.blocked_by.remove(completed_task_id)
-                if task.status == TaskStatus.BLOCKED and not task.blocked_by:
-                    task.status = TaskStatus.PENDING
-                    ready_unblocked = True
-                self._save_task(task)
-        return ready_unblocked
 
     def _write_terminal_event(self, event_data: dict[str, Any]) -> None:
         """Write terminal event to JSONL outside the board transaction lock."""

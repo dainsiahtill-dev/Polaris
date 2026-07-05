@@ -150,10 +150,10 @@ def test_task_board_reopen_demotes_completed_task_back_to_pending(tmp_path) -> N
     child = board.create(subject="child-task", blocked_by=[parent.id])
 
     board.update_status(parent.id, TaskStatus.COMPLETED)
-    child_after_unblock = board.get(child.id)
-    assert child_after_unblock is not None
-    assert parent.id not in child_after_unblock.blocked_by
-    assert child_after_unblock.status == TaskStatus.PENDING
+    child_after_parent_completion = board.get(child.id)
+    assert child_after_parent_completion is not None
+    assert parent.id in child_after_parent_completion.blocked_by
+    assert child_after_parent_completion.status == TaskStatus.BLOCKED
 
     reopened = board.reopen(parent.id, reason="qa_rework")
     assert reopened is not None
@@ -201,8 +201,8 @@ def test_task_board_cancelled_prerequisite_keeps_dependents_blocked(tmp_path) ->
     assert upstream.id in downstream_after.blocked_by
 
 
-def test_task_board_completed_prerequisite_unblocks_dependents(tmp_path) -> None:
-    """A SUCCESSFUL completion DOES unblock its downstream dependents."""
+def test_task_board_completed_prerequisite_keeps_dependent_rows_local(tmp_path) -> None:
+    """Raw TaskBoard completion is row-local; TaskRuntimeService unblocks deps."""
     board = TaskBoard(str(tmp_path))
     upstream = board.create(subject="successful-prerequisite")
     downstream = board.create(subject="dependent-task", blocked_by=[upstream.id])
@@ -211,17 +211,16 @@ def test_task_board_completed_prerequisite_unblocks_dependents(tmp_path) -> None
 
     downstream_after = board.get(downstream.id)
     assert downstream_after is not None
-    assert downstream_after.status == TaskStatus.PENDING
-    assert upstream.id not in downstream_after.blocked_by
-    assert any(t.id == downstream.id for t in board.list_ready())
+    assert downstream_after.status == TaskStatus.BLOCKED
+    assert upstream.id in downstream_after.blocked_by
+    assert all(t.id != downstream.id for t in board.list_ready())
 
 
 def test_task_board_repeated_complete_is_idempotent_no_op(tmp_path) -> None:
     """Re-applying the same terminal status must be a no-op.
 
-    Guards against clobbering the original completed_at, re-running dependency
-    unblocking, and appending a duplicate terminal event (e.g. an LLM tool
-    retry calling complete() twice).
+    Guards against clobbering the original completed_at and appending a
+    duplicate terminal event (e.g. an LLM tool retry calling complete() twice).
     """
     board = TaskBoard(str(tmp_path))
     task = board.create(subject="idempotent-complete")

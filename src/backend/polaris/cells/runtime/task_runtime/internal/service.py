@@ -1035,7 +1035,7 @@ class TaskRuntimeService:
             ),
         )
         row = self._augment_task_row(updated.to_dict() if updated is not None else task.to_dict())
-        dependency_events = self._append_dependency_transition_events(
+        dependency_events = self._apply_dependency_completion_side_effects(
             completed_task_id=normalized,
             dependent_rows_before=dependent_rows_before,
         )
@@ -1696,9 +1696,10 @@ class TaskRuntimeService:
         """Return task-row snapshots that currently depend on ``task_id``.
 
         Boundary:
-            This is pre-mutation evidence for dependency side effects triggered
-            by ``TaskBoard.update_status(COMPLETED)``. The snapshots are used
-            only to emit execution facts for rows the board changes implicitly.
+            This is pre-mutation evidence for dependency side effects owned by
+            ``TaskRuntimeService.complete_execution()``. Raw ``TaskBoard``
+            updates are row-local; dependency fan-out must stay in this service
+            so every cross-row mutation can emit execution facts.
 
         Complexity:
             O(t) time and memory over task rows in the current workspace.
@@ -1729,33 +1730,55 @@ class TaskRuntimeService:
                 blocker_ids.append(blocker_id)
         return blocker_ids
 
-    def _append_dependency_transition_events(
+    def _apply_dependency_completion_side_effects(
         self,
         *,
         completed_task_id: int,
         dependent_rows_before: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """Append execution facts for dependency rows changed by a completion."""
+        """Apply and record dependent-row changes caused by a completed task.
+
+        The operation is O(d) over rows that explicitly blocked on the
+        completed task, where d is the number of direct dependents captured
+        before the parent transition. Each changed dependent row produces an
+        execution event so Run Ledger projections can explain the unblock
+        without re-reading raw task files.
+        """
 
         events: list[dict[str, Any]] = []
+        should_notify_ready = False
         for before_row in dependent_rows_before:
             dependent_id = self.normalize_task_id(before_row.get("id"))
             if dependent_id is None:
                 continue
-            task = self._board.get(dependent_id)
-            if task is None:
-                continue
-            after_row = self._augment_task_row(task.to_dict())
             previous_blockers = self._row_blocker_ids(before_row)
-            active_blockers = self._row_blocker_ids(after_row)
+            active_blockers = [blocker_id for blocker_id in previous_blockers if blocker_id != completed_task_id]
             if previous_blockers == active_blockers:
                 continue
+
+            updated = self._board.update(dependent_id, blocked_by=active_blockers)
+            if updated is None:
+                events.append(
+                    {
+                        "ok": False,
+                        "event_type": "dependency_row_update_failed",
+                        "task_id": dependent_id,
+                        "reason": "task_update_failed",
+                        "failure_class": "task_state_write_failed",
+                    }
+                )
+                continue
+
+            after_row = self._augment_task_row(updated.to_dict())
+            active_blockers = self._row_blocker_ids(after_row)
             status = str(after_row.get("status") or "").strip().lower()
             event_type = (
                 "dependencies_unblocked"
                 if not active_blockers and status in {"pending", "ready"}
                 else "dependency_blockers_refreshed"
             )
+            if event_type == "dependencies_unblocked":
+                should_notify_ready = True
             events.append(
                 self._append_execution_event(
                     event_type,
@@ -1768,6 +1791,8 @@ class TaskRuntimeService:
                     },
                 )
             )
+        if should_notify_ready:
+            self._board.notify_ready_tasks()
         return events
 
     @staticmethod
@@ -1782,9 +1807,9 @@ class TaskRuntimeService:
         failed_events = [event for event in dependency_events if not bool(event.get("ok"))]
         if failed_events and bool(projected.get("success")):
             projected["requested_reason"] = str(projected.get("reason") or "")
-            projected["reason"] = "execution_event_append_failed"
+            projected["reason"] = str(failed_events[0].get("reason") or "dependency_transition_failed")
             projected["success"] = False
-            projected["failure_class"] = "ledger_append_failed"
+            projected["failure_class"] = str(failed_events[0].get("failure_class") or "ledger_append_failed")
             projected["state_mutation_applied"] = True
         return projected
 
