@@ -8,6 +8,7 @@ from polaris.delivery.cli.pm.engine.taskboard import (
     _build_taskboard_runtime,
     _finalize_taskboard_runtime_entry,
     _select_taskboard_ready_batch,
+    _taskboard_runtime_transition_failures,
 )
 
 
@@ -91,3 +92,36 @@ def test_pm_taskboard_mainline_suspends_needs_continue(tmp_path: Path) -> None:
     metadata = row.get("metadata")
     assert isinstance(metadata, dict)
     assert metadata["last_pm_status"] == "needs_continue"
+
+
+def test_pm_taskboard_mainline_records_transition_failure(tmp_path: Path) -> None:
+    runtime = _build_taskboard_runtime(
+        workspace_full=str(tmp_path),
+        run_id="run-transition-failure",
+        director_tasks=[_task("TASK-1")],
+        max_workers=1,
+    )
+    batch = _select_taskboard_ready_batch(runtime, max_workers=1)
+    row_id = int(batch[0]["board_id"])
+
+    transition = _finalize_taskboard_runtime_entry(
+        runtime,
+        board_id=row_id,
+        session_id="wrong-session",
+        pm_status="done",
+        metadata={"last_pm_status": "done"},
+        result_summary="completed by stale worker",
+    )
+
+    assert transition["success"] is False
+    failures = _taskboard_runtime_transition_failures(runtime)
+    assert failures == [
+        {
+            "success": False,
+            "board_id": row_id,
+            "pm_status": "done",
+            "reason": transition["reason"],
+            "transition_result": transition["transition_result"],
+        }
+    ]
+    assert failures[0]["transition_result"]["success"] is False

@@ -74,6 +74,42 @@ def _task_runtime_session_id(result: dict[str, Any] | None) -> str:
     return str(getattr(session, "session_id", "") or "").strip()
 
 
+def _record_task_runtime_transition_failure(
+    runtime: dict[str, Any],
+    *,
+    board_id: int,
+    pm_status: str,
+    reason: str,
+    transition_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Append a failed TaskRuntime transition to the PM runtime projection."""
+
+    normalized_reason = str(reason or "task_runtime_transition_failed").strip()
+    if not normalized_reason:
+        normalized_reason = "task_runtime_transition_failed"
+    failure = {
+        "success": False,
+        "board_id": int(board_id or 0),
+        "pm_status": str(pm_status or "").strip(),
+        "reason": normalized_reason,
+        "transition_result": dict(transition_result or {}),
+    }
+    existing = runtime.get("task_runtime_transition_failures")
+    failures = existing if isinstance(existing, list) else []
+    failures.append(failure)
+    runtime["task_runtime_transition_failures"] = failures
+    return failure
+
+
+def _taskboard_runtime_transition_failures(runtime: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return recorded TaskRuntime transition failures from the PM runtime projection."""
+
+    failures = runtime.get("task_runtime_transition_failures")
+    if not isinstance(failures, list):
+        return []
+    return [dict(item) for item in failures if isinstance(item, dict)]
+
+
 def _source_task_by_pm_id(director_tasks: Sequence[dict[str, Any]], pm_task_id: str) -> dict[str, Any] | None:
     """Find the original Director task payload for one PM task id."""
     for item in director_tasks:
@@ -238,32 +274,50 @@ def _finalize_taskboard_runtime_entry(
         return {"success": False, "reason": "task_runtime_unavailable"}
     normalized_session_id = str(session_id or "").strip()
     if not normalized_session_id:
-        return task_runtime.update_task_row(
+        update_result = task_runtime.update_task_row(
             board_id,
             metadata=dict(metadata or {}),
-        ) or {"success": False, "reason": "session_missing"}
+        )
+        return _record_task_runtime_transition_failure(
+            runtime,
+            board_id=board_id,
+            pm_status=pm_status,
+            reason="session_missing",
+            transition_result=update_result if isinstance(update_result, dict) else {},
+        )
 
     status_token = str(pm_status or "").strip().lower()
     transition_metadata = dict(metadata or {})
     if status_token == "done":
-        return task_runtime.complete_execution(
+        result = task_runtime.complete_execution(
             board_id,
             session_id=normalized_session_id,
             result_summary=result_summary,
             metadata=transition_metadata,
         )
-    if status_token == "needs_continue":
-        return task_runtime.suspend_execution(
+    elif status_token == "needs_continue":
+        result = task_runtime.suspend_execution(
             board_id,
             session_id=normalized_session_id,
             reason=result_summary or "Director requested follow-up work",
             metadata=transition_metadata,
         )
-    return task_runtime.fail_execution(
-        board_id,
-        session_id=normalized_session_id,
-        error=failure_detail or result_summary or f"Director task ended with PM status {status_token or 'unknown'}",
-        metadata=transition_metadata,
+    else:
+        result = task_runtime.fail_execution(
+            board_id,
+            session_id=normalized_session_id,
+            error=failure_detail or result_summary or f"Director task ended with PM status {status_token or 'unknown'}",
+            metadata=transition_metadata,
+        )
+    if isinstance(result, dict) and result.get("success") is True:
+        return result
+    transition_result = result if isinstance(result, dict) else {}
+    return _record_task_runtime_transition_failure(
+        runtime,
+        board_id=board_id,
+        pm_status=pm_status,
+        reason=str(transition_result.get("reason") or "task_runtime_transition_failed"),
+        transition_result=transition_result,
     )
 
 
@@ -272,4 +326,5 @@ __all__ = [
     "_finalize_taskboard_runtime_entry",
     "_select_taskboard_ready_batch",
     "_taskboard_mainline_enabled",
+    "_taskboard_runtime_transition_failures",
 ]

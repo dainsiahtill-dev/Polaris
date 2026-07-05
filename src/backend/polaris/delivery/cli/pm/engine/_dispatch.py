@@ -38,6 +38,7 @@ from polaris.delivery.cli.pm.engine.taskboard import (
     _build_taskboard_runtime,
     _finalize_taskboard_runtime_entry,
     _select_taskboard_ready_batch,
+    _taskboard_runtime_transition_failures,
 )
 from polaris.delivery.cli.pm.engine.tri_council import (
     _DEFAULT_MAX_DIRECTOR_RETRIES,
@@ -500,12 +501,15 @@ def _dispatch_director_tasks_impl(
     failed_count = sum(1 for item in records if item.get("pm_status") == "failed")
     blocked_count = sum(1 for item in records if item.get("pm_status") == "blocked")
     needs_continue_count = sum(1 for item in records if item.get("pm_status") == "needs_continue")
+    taskboard_transition_failures = (
+        _taskboard_runtime_transition_failures(taskboard_runtime) if taskboard_enabled else []
+    )
     terminal_count = success_count + failed_count + blocked_count
     target_failure_rate = _env_float("KERNELONE_TARGET_FAILURE_RATE", 0.05)
     if target_failure_rate < 0:
         target_failure_rate = 0.05
     failure_rate = float(failed_count + blocked_count) / float(terminal_count) if terminal_count > 0 else 0.0
-    hard_failure = failed_count > 0 or blocked_count > 0
+    hard_failure = failed_count > 0 or blocked_count > 0 or bool(taskboard_transition_failures)
     delivery_floor = _evaluate_delivery_floor(records, workspace_full=workspace_full)
     if (
         not hard_failure
@@ -519,6 +523,8 @@ def _dispatch_director_tasks_impl(
         dispatch_error = "DIRECTOR_DISPATCH_FAILURE"
     elif blocked_count > 0:
         dispatch_error = "DIRECTOR_DISPATCH_BLOCKED"
+    elif taskboard_transition_failures:
+        dispatch_error = "TASK_RUNTIME_TRANSITION_FAILURE"
     elif (
         needs_continue_count == 0 and delivery_floor.get("enabled") is True and delivery_floor.get("passed") is not True
     ):
@@ -552,6 +558,7 @@ def _dispatch_director_tasks_impl(
         "batches": dispatch_batches,
         "taskboard_mainline": taskboard_enabled,
         "taskboard_stats": taskboard_stats,
+        "taskboard_transition_failures": taskboard_transition_failures,
         "taskboard_root": str(taskboard_runtime.get("taskboard_root") or "") if taskboard_enabled else "",
         "preflight": preflight,
         "stability_filters": filter_meta,

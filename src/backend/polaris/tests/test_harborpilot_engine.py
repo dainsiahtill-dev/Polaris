@@ -113,6 +113,126 @@ def test_engine_dispatch_director_tasks_with_multi_config(tmp_path):
     assert status_payload["roles"]["QA"]["status"] == "completed"
 
 
+def test_engine_dispatch_marks_task_runtime_transition_failure(
+    tmp_path,
+    monkeypatch,
+):
+    loop_pm = _load_loop_pm()
+    dispatch_module = importlib.import_module("polaris.delivery.cli.pm.engine._dispatch")
+
+    def _fake_runner(args, workspace_full, iteration, **kwargs):
+        task = kwargs.get("task") if isinstance(kwargs.get("task"), dict) else {}
+        task_id = str(task.get("id") or "").strip() or "UNKNOWN"
+        payload = {
+            "schema_version": 1,
+            "status": "success",
+            "task_id": task_id,
+            "run_id": "pm-transition-failure",
+            "changed_files": [],
+        }
+        path = Path(args.director_result_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        return 0
+
+    def _fake_finalize(runtime, *, board_id, session_id, pm_status, metadata=None, result_summary="", failure_detail=""):
+        del session_id, metadata, result_summary, failure_detail
+        failure = {
+            "success": False,
+            "board_id": int(board_id),
+            "pm_status": str(pm_status),
+            "reason": "execution_event_append_failed",
+            "transition_result": {
+                "success": False,
+                "reason": "execution_event_append_failed",
+            },
+        }
+        runtime.setdefault("task_runtime_transition_failures", []).append(failure)
+        return failure
+
+    monkeypatch.setattr(dispatch_module, "_finalize_taskboard_runtime_entry", _fake_finalize)
+
+    config = loop_pm.EngineRuntimeConfig(
+        director_execution_mode="multi",
+        max_directors=1,
+        scheduling_policy="dag",
+    )
+    engine = loop_pm.PolarisEngine(config, director_runner=_fake_runner)
+
+    runtime_dir = tmp_path / ".polaris" / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    plan_path = runtime_dir / "contracts" / "plan.md"
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text("# Test Plan\n", encoding="utf-8")
+    pm_tasks_path = runtime_dir / "contracts" / "pm_tasks.contract.json"
+    pm_tasks_path.parent.mkdir(parents=True, exist_ok=True)
+    pm_tasks_path.write_text(json.dumps({"tasks": []}), encoding="utf-8")
+    runtime_engine_status = runtime_dir / "status" / "engine.status.json"
+    runtime_engine_status.parent.mkdir(parents=True, exist_ok=True)
+
+    args = SimpleNamespace(
+        run_director=True,
+        director_result_path=str(tmp_path / "unused_result.json"),
+        director_events_path=str(runtime_dir / "events" / "runtime.events.jsonl"),
+        pm_task_path=str(pm_tasks_path),
+        plan_path=str(plan_path),
+        planner_response_path="",
+        ollama_response_path="",
+        qa_response_path="",
+        reviewer_response_path="",
+        director_timeout=0,
+        director_show_output=False,
+        director_model="",
+        director_path="src/backend/scripts/loop-director.py",
+        director_type="v1",
+        prompt_profile="generic",
+    )
+    payload = {
+        "run_id": "pm-transition-failure",
+        "pm_iteration": 1,
+        "tasks": [
+            {
+                "id": "TASK-A",
+                "title": "Task A",
+                "goal": "Do A",
+                "status": "todo",
+                "priority": 1,
+                "assigned_to": "Director",
+                "dependencies": [],
+            }
+        ],
+    }
+
+    result = engine.dispatch_director_tasks(
+        args=args,
+        workspace_full=str(tmp_path),
+        run_dir=str(tmp_path / "run"),
+        pm_payload=payload,
+        events_path="",
+        plan_path=str(plan_path),
+        pm_tasks_paths=[str(pm_tasks_path)],
+        runtime_status_path=str(runtime_engine_status),
+    )
+
+    assert result["hard_failure"] is True
+    assert result["summary"]["successes"] == 1
+    assert result["summary"]["taskboard_transition_failures"] == [
+        {
+            "success": False,
+            "board_id": 1,
+            "pm_status": "done",
+            "reason": "execution_event_append_failed",
+            "transition_result": {
+                "success": False,
+                "reason": "execution_event_append_failed",
+            },
+        }
+    ]
+    status_payload = json.loads(runtime_engine_status.read_text(encoding="utf-8"))
+    assert status_payload["phase"] == "failed"
+    assert status_payload["error"] == "TASK_RUNTIME_TRANSITION_FAILURE"
+
+
 def test_engine_preflight_missing_plan_fails_closed(tmp_path):
     loop_pm = _load_loop_pm()
 
