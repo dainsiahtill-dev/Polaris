@@ -974,6 +974,40 @@ def _task_runtime_finalization_failed_result(
     return result
 
 
+def _task_runtime_heartbeat_failed_signal(heartbeat_result: dict[str, Any]) -> dict[str, Any]:
+    """Project a TaskRuntime heartbeat rejection into execution evidence."""
+
+    reason = str(heartbeat_result.get("reason") or "task_runtime_heartbeat_failed").strip()
+    if not reason:
+        reason = "task_runtime_heartbeat_failed"
+    detail = str(heartbeat_result.get("error") or heartbeat_result.get("detail") or reason).strip()
+    signal: dict[str, Any] = {
+        "code": "director_task_runtime_heartbeat_failed",
+        "severity": "error",
+        "detail": detail,
+        "reason": reason,
+        "heartbeat_result": dict(heartbeat_result),
+    }
+    failure_class = str(heartbeat_result.get("failure_class") or "").strip()
+    if failure_class:
+        signal["failure_class"] = failure_class
+    return signal
+
+
+def _with_decision_signals(
+    result: dict[str, Any],
+    decision_signals: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Return ``result`` with appended decision signals without aliasing lists."""
+
+    if not decision_signals:
+        return result
+    existing = result.get("decision_signals")
+    merged = [item for item in existing if isinstance(item, dict)] if isinstance(existing, list) else []
+    merged.extend(dict(item) for item in decision_signals)
+    return {**result, "decision_signals": merged}
+
+
 def _emit_director_adapter_cognitive_receipt(
     adapter: Any,
     *,
@@ -1232,6 +1266,7 @@ async def execute_director_task(
         adapter._update_task_progress(target_task_id, "executing")
 
     # 心跳任务
+    decision_signals: list[dict[str, Any]] = []
     heartbeat_stop = asyncio.Event()
     heartbeat_task: asyncio.Task[Any] | None = None
 
@@ -1245,12 +1280,18 @@ async def execute_director_task(
                 return
             except asyncio.TimeoutError:
                 try:
-                    adapter.task_runtime.heartbeat_execution(
+                    heartbeat_result = adapter.task_runtime.heartbeat_execution(
                         target_task_id,
                         session_id=task_claim_session_id,
                         lease_ttl_seconds=_DEFAULT_TASK_LEASE_TTL_SECONDS,
                         context_summary=selected_subject,
                     )
+                    if (
+                        isinstance(heartbeat_result, dict)
+                        and heartbeat_result.get("success") is not True
+                    ):
+                        decision_signals.append(_task_runtime_heartbeat_failed_signal(heartbeat_result))
+                        return
                 except (OSError, RuntimeError, TypeError, ValueError):
                     return
 
@@ -1331,6 +1372,7 @@ async def execute_director_task(
                                 target_task_id=target_task_id,
                                 requested_outcome="completed",
                                 finalize_result=finalize_result,
+                                decision_signals=decision_signals,
                             )
                     else:
                         _finalize_claimed_execution(
@@ -1341,7 +1383,7 @@ async def execute_director_task(
                             error=str(result.get("error") or "director_sequential_execution_failed"),
                             metadata={"adapter_phase": "failed"},
                         )
-                return result
+                return _with_decision_signals(result, decision_signals) if isinstance(result, dict) else result
             except asyncio.CancelledError:
                 if board_claim_applied and task_claim_session_id:
                     adapter.task_runtime.suspend_execution(
@@ -1354,7 +1396,6 @@ async def execute_director_task(
 
         # 标准 LLM 执行路径
         llm_call_timeout = adapter._execution.resolve_llm_call_timeout_seconds(context)
-        decision_signals: list[dict[str, Any]] = []
 
         # 执行流程...
         try:

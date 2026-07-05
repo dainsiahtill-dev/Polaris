@@ -61,6 +61,8 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _run_empty_write_content_materialization_retry,
     _task_requires_fresh_materialization,
     _task_runtime_finalization_failed_result,
+    _task_runtime_heartbeat_failed_signal,
+    _with_decision_signals,
     execute_director_task,
 )
 from polaris.cells.roles.adapters.internal.director.execute_method_repair_bridge import (
@@ -4696,6 +4698,35 @@ class TestDeterministicRepairEvidence:
 
 class TestDirectorFailureClosure:
     """Runtime failures must fail the claimed task instead of leaving it running."""
+
+    def test_task_runtime_heartbeat_failure_projects_decision_signal(self) -> None:
+        heartbeat_result = {
+            "success": False,
+            "reason": "execution_event_append_failed",
+            "failure_class": "ledger_append_failed",
+            "execution_event": {
+                "ok": False,
+                "event_type": "heartbeat_renewed",
+                "error": "fact stream unavailable",
+            },
+        }
+
+        signal = _task_runtime_heartbeat_failed_signal(heartbeat_result)
+
+        assert signal["code"] == "director_task_runtime_heartbeat_failed"
+        assert signal["severity"] == "error"
+        assert signal["reason"] == "execution_event_append_failed"
+        assert signal["failure_class"] == "ledger_append_failed"
+        assert signal["heartbeat_result"] == heartbeat_result
+
+    def test_with_decision_signals_appends_without_overwriting_existing_signals(self) -> None:
+        result = {"success": True, "decision_signals": [{"code": "existing"}]}
+        merged = _with_decision_signals(result, [{"code": "heartbeat"}])
+
+        assert merged is not result
+        assert merged["success"] is True
+        assert merged["decision_signals"] == [{"code": "existing"}, {"code": "heartbeat"}]
+        assert result["decision_signals"] == [{"code": "existing"}]
 
     def test_finalize_claimed_execution_reports_terminal_transition_failure(self) -> None:
         class _Runtime:
