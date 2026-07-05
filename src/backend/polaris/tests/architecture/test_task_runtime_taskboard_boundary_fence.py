@@ -62,6 +62,31 @@ TASK_RUNTIME_UPDATE_ROW_METADATA_ONLY_ALLOWLIST = {
     "polaris/delivery/cli/pm/engine/taskboard.py",
     "polaris/delivery/http/routers/factory.py",
 }
+TASK_RUNTIME_OWNER_TRANSITION_CALL_ALLOWLIST = {
+    "cancel_task_row_for_deduplication": {
+        "polaris/cells/roles/adapters/internal/pm/board_tasks.py",
+    },
+    "complete_execution": {
+        "polaris/cells/roles/adapters/internal/director/execute_method.py",
+        "polaris/cells/roles/runtime/internal/worker_pool.py",
+        "polaris/delivery/cli/pm/engine/taskboard.py",
+    },
+    "fail_execution": {
+        "polaris/cells/roles/adapters/internal/director/execute_method.py",
+        "polaris/cells/roles/runtime/internal/worker_pool.py",
+        "polaris/delivery/cli/pm/engine/taskboard.py",
+    },
+    "fail_task_row_after_rework_exhausted": {
+        "polaris/cells/roles/adapters/internal/qa_adapter.py",
+    },
+    "fail_task_row_from_role_adapter": {
+        "polaris/cells/roles/adapters/internal/pm_adapter.py",
+    },
+    "reopen_task_row": {
+        "polaris/cells/roles/adapters/internal/qa_adapter.py",
+        "polaris/delivery/http/routers/factory.py",
+    },
+}
 
 
 def _is_allowed_owner_path(path: Path) -> bool:
@@ -392,6 +417,24 @@ def _update_task_row_boundary_violations(path: Path) -> list[str]:
     return offenders
 
 
+def _owner_transition_call_boundary_violations(path: Path) -> list[str]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    rel = path.relative_to(BACKEND_ROOT).as_posix()
+    owner_methods = set(TASK_RUNTIME_OWNER_TRANSITION_CALL_ALLOWLIST)
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr not in owner_methods:
+            continue
+        allowed_paths = TASK_RUNTIME_OWNER_TRANSITION_CALL_ALLOWLIST[func.attr]
+        if rel not in allowed_paths:
+            offenders.append(f"{rel}:{node.lineno} calls {func.attr}() outside the reviewed WS2 allowlist")
+    return offenders
+
+
 def test_raw_taskboard_is_private_to_task_runtime_cell() -> None:
     offenders: list[str] = []
     this_file = Path(__file__).resolve()
@@ -448,6 +491,26 @@ def test_update_task_row_writers_are_metadata_only_or_owner_guarded() -> None:
         "status changes must use owner transitions such as claim/complete/fail, "
         "dedup cancellation, QA rework failure, or role-adapter failure helpers:\n"
         + "\n".join(offenders)
+    )
+
+
+def test_task_runtime_owner_transition_callers_are_reviewed() -> None:
+    offenders: list[str] = []
+    this_file = Path(__file__).resolve()
+    for path in POLARIS_ROOT.rglob("*.py"):
+        if path.resolve() == this_file or "__pycache__" in path.parts:
+            continue
+        if "tests" in path.parts:
+            continue
+        if _is_allowed_owner_path(path):
+            continue
+        offenders.extend(_owner_transition_call_boundary_violations(path))
+
+    assert not offenders, (
+        "TaskRuntimeService owner transitions are the only reviewed terminal "
+        "TaskRow state writers. New production callers must be audited and "
+        "added to the WS2 allowlist with coverage, otherwise TaskRuntime stops "
+        "being the execution-state SSoT:\n" + "\n".join(offenders)
     )
 
 
