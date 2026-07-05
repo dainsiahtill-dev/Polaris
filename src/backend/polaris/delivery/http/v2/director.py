@@ -47,10 +47,10 @@ from polaris.cells.runtime.projection.public.service import (
     build_cache_root,
     build_llm_status,  # patched/dereferenced via director.<name>
     build_workflow_status_payload,  # dereferenced via director.<name> from support
-    build_workflow_task_rows,  # patched/dereferenced via director.<name>
+    canonicalize_workflow_task_state,  # dereferenced via director.<name> from task rows
     get_workflow_runtime_status,  # dereferenced via director.<name> from support
     merge_director_status,
-    select_task_rows_from_projection,  # patched/dereferenced via director.<name>
+    summarize_workflow_tasks,  # dereferenced via director.<name> from task rows
 )
 from polaris.cells.runtime.task_market.public.contracts import (
     QueryTaskMarketStatusV1,  # referenced via director.<name>
@@ -188,8 +188,10 @@ from polaris.delivery.http.v2.director_task_rows import (
     _projection_task_rows,
     _runtime_backed_task_rows,
     _runtime_task_rows_for_workspace,
+    _select_projection_task_rows_for_director,
     _task_market_execution_rows_for_workspace,
     _task_market_row_to_director_task_row,
+    _workflow_summary_task_rows,
 )
 from polaris.delivery.http.v2.llm_event_filters import filter_llm_events_by_workspace
 from polaris.delivery.http.workspace import (
@@ -211,6 +213,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def select_task_rows_from_projection(projection: Any) -> list[dict[str, Any]]:
+    """HTTP-local Director task-row selector for route diagnostics.
+
+    The runtime.projection public selector was retired with WS2; this local
+    patch surface remains for route tests/helpers and only reads fields already
+    present on the projection payload.
+    """
+
+    return _select_projection_task_rows_for_director(projection)
+
 # Explicit re-export surface. The lossless module split moved ~90 helpers into
 # sibling modules (``director_diagnostics``, ``director_support``,
 # ``director_task_rows``, ``director_helpers``). Those siblings dereference their
@@ -219,7 +232,7 @@ logger = logging.getLogger(__name__)
 # contract is honored — tests patch ``polaris.delivery.http.v2.director.<name>``
 # (e.g. ``BlueprintPersistence``, ``RuntimeProjectionService``,
 # ``ensure_required_roles_ready``, ``select_task_rows_from_projection``,
-# ``build_workflow_task_rows``, ``resolve_artifact_path``, ``get_task_market_service``,
+# ``summarize_workflow_tasks``, ``resolve_artifact_path``, ``get_task_market_service``,
 # ``_contract_backed_task_rows`` ...) and drive full routes. Because those names
 # are imported (not defined) here, ``mypy --strict --no-implicit-reexport`` would
 # otherwise flag every ``_d.<name>`` access with ``[attr-defined]``. Declaring the
@@ -319,13 +332,14 @@ __all__ = [
     "_worker_row_matches_id",
     "_worker_rows_from_payload",
     "_worker_rows_from_projection",
+    "_workflow_summary_task_rows",
     "_workspace_from_request",
     "active_workspace_value",
     "build_cache_root",
     "build_llm_status",
     "build_workflow_status_payload",
-    "build_workflow_task_rows",
     "cancel_task",
+    "canonicalize_workflow_task_state",
     "clear_cache",
     "create_task",
     "director_cancel_orchestration",
@@ -361,6 +375,7 @@ __all__ = [
     "settings_with_workspace_override",
     "start_director",
     "stop_director",
+    "summarize_workflow_tasks",
     "workspace_values_match",
 ]
 

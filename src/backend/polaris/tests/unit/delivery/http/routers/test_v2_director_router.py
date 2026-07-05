@@ -18,6 +18,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 from polaris.bootstrap.config import Settings
+from polaris.cells.events.fact_stream.public.contracts import AppendFactEventCommandV1
+from polaris.cells.events.fact_stream.public.service import append_fact_event
 from polaris.cells.runtime.state_owner.public.service import AppState
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_runtime_path
@@ -892,7 +894,7 @@ async def test_director_diagnostics_does_not_count_expired_runtime_session_as_ru
                 }
             ],
         ),
-        patch("polaris.delivery.http.v2.director.build_workflow_task_rows", return_value=[]),
+        patch("polaris.delivery.http.v2.director.summarize_workflow_tasks", return_value={"tasks": []}),
         patch(
             "polaris.delivery.http.dependencies.get_container",
             new_callable=AsyncMock,
@@ -1239,22 +1241,24 @@ async def test_director_diagnostics_includes_unmaterialized_pm_contract_dependen
             ],
         ),
         patch(
-            "polaris.delivery.http.v2.director.build_workflow_task_rows",
-            return_value=[
-                {
-                    "id": "PM-base",
-                    "subject": "Base task",
-                    "status": "COMPLETED",
-                    "metadata": {"pm_task_id": "PM-base"},
-                },
-                {
-                    "id": "PM-dependent",
-                    "subject": "Dependent task",
-                    "status": "PENDING",
-                    "dependencies": ["PM-base"],
-                    "metadata": {"pm_task_id": "PM-dependent"},
-                },
-            ],
+            "polaris.delivery.http.v2.director.summarize_workflow_tasks",
+            return_value={
+                "tasks": [
+                    {
+                        "id": "PM-base",
+                        "subject": "Base task",
+                        "status": "COMPLETED",
+                        "metadata": {"pm_task_id": "PM-base"},
+                    },
+                    {
+                        "id": "PM-dependent",
+                        "subject": "Dependent task",
+                        "status": "PENDING",
+                        "dependencies": ["PM-base"],
+                        "metadata": {"pm_task_id": "PM-dependent"},
+                    },
+                ],
+            },
         ),
         patch(
             "polaris.delivery.http.dependencies.get_container",
@@ -1350,31 +1354,33 @@ async def test_director_diagnostics_runtime_overlay_filters_workflow_shell(
             ],
         ),
         patch(
-            "polaris.delivery.http.v2.director.build_workflow_task_rows",
-            return_value=[
-                {
-                    "id": "T01",
-                    "subject": "Contract task 1",
-                    "status": "PENDING",
-                    "metadata": {"pm_task_id": "T01"},
-                },
-                {
-                    "id": "T02",
-                    "subject": "Contract task 2",
-                    "status": "PENDING",
-                    "metadata": {"pm_task_id": "T02"},
-                },
-                {
-                    "id": "T03",
-                    "subject": "Remaining contract task",
-                    "status": "PENDING",
-                    "dependencies": ["T02"],
-                    "metadata": {
-                        "pm_task_id": "T03",
-                        "blueprint_id": "bp-T03",
+            "polaris.delivery.http.v2.director.summarize_workflow_tasks",
+            return_value={
+                "tasks": [
+                    {
+                        "id": "T01",
+                        "subject": "Contract task 1",
+                        "status": "PENDING",
+                        "metadata": {"pm_task_id": "T01"},
                     },
-                },
-            ],
+                    {
+                        "id": "T02",
+                        "subject": "Contract task 2",
+                        "status": "PENDING",
+                        "metadata": {"pm_task_id": "T02"},
+                    },
+                    {
+                        "id": "T03",
+                        "subject": "Remaining contract task",
+                        "status": "PENDING",
+                        "dependencies": ["T02"],
+                        "metadata": {
+                            "pm_task_id": "T03",
+                            "blueprint_id": "bp-T03",
+                        },
+                    },
+                ],
+            },
         ),
         patch(
             "polaris.delivery.http.dependencies.get_container",
@@ -1411,6 +1417,41 @@ async def test_director_diagnostics_runtime_overlay_filters_workflow_shell(
     assert data["execution_blockers"] == []
     assert data["issues"] == []
     mock_director.list_tasks.assert_not_awaited()
+
+
+def test_runtime_task_rows_for_workspace_uses_observable_task_rows(tmp_path: Path) -> None:
+    from polaris.delivery.http.v2 import director
+
+    task_runtime = TaskRuntimeService(str(tmp_path))
+    created = task_runtime.create_task_row(subject="Observable diagnostics row")
+    task_id = str(created["id"])
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(tmp_path),
+            stream="task_runtime.execution",
+            event_type="failed",
+            source="runtime.task_runtime",
+            task_id=task_id,
+            run_id="run-diagnostics",
+            payload={
+                "task_id": task_id,
+                "run_id": "run-diagnostics",
+                "event_type": "failed",
+                "status": "failed",
+                "execution_state": "failed",
+                "last_error": "diagnostics failure",
+                "task_row_snapshot": created,
+            },
+        )
+    )
+
+    rows = director._runtime_task_rows_for_workspace(str(tmp_path))
+
+    assert len(rows) == 1
+    assert rows[0]["subject"] == "Observable diagnostics row"
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["last_error"] == "diagnostics failure"
+    assert rows[0]["metadata"]["status_source"] == "task_runtime.execution_fact"
 
 
 @pytest.mark.asyncio

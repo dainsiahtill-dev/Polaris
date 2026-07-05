@@ -138,7 +138,7 @@ def _get_workflow_snapshot_sync(
     )
     if not isinstance(status_payload, dict):
         return None, []
-    task_rows = _d.build_workflow_task_rows(
+    task_rows = _d._workflow_summary_task_rows(
         workflow_status,
         workspace=workspace_value,
         cache_root=cache_root,

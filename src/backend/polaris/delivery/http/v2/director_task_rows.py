@@ -6,7 +6,7 @@ PM workflow contract, the task market and the canonical task runtime.
 
 Monkeypatch contract (CRITICAL): tests patch collaborators on the ``director``
 module namespace (``director.select_task_rows_from_projection``,
-``director.get_task_market_service``, ``director.build_workflow_task_rows``,
+``director.get_task_market_service``, ``director.summarize_workflow_tasks``,
 ``director._runtime_task_rows_for_workspace``, ``director.logger`` ...) and then
 drive full routes. Any such collaborator referenced from a helper that lives
 here MUST be dereferenced through the ``director`` module object at call time
@@ -28,6 +28,30 @@ from polaris.delivery.http.v2.director_helpers import (
     _task_identity_tokens,
     _with_task_projection_source,
 )
+
+
+def _select_projection_task_rows_for_director(projection: Any) -> list[dict[str, Any]]:
+    """Return task rows already present on a runtime projection object."""
+
+    rows = getattr(projection, "task_rows", None)
+    if isinstance(rows, list) and rows:
+        return [dict(item) for item in rows if isinstance(item, dict)]
+
+    local_payload = getattr(projection, "director_local", None)
+    if isinstance(local_payload, dict):
+        local_task_rows = local_payload.get("task_rows")
+        if not isinstance(local_task_rows, list):
+            status_payload = local_payload.get("status")
+            tasks_payload = status_payload.get("tasks") if isinstance(status_payload, dict) else None
+            local_task_rows = tasks_payload.get("task_rows") if isinstance(tasks_payload, dict) else None
+        if isinstance(local_task_rows, list) and local_task_rows:
+            return [dict(item) for item in local_task_rows if isinstance(item, dict)]
+
+    snapshot = getattr(projection, "snapshot", None)
+    snapshot_tasks = snapshot.get("tasks") if isinstance(snapshot, dict) else None
+    if isinstance(snapshot_tasks, list):
+        return [dict(item) for item in snapshot_tasks if isinstance(item, dict)]
+    return []
 
 
 def _projection_task_rows(projection: Any) -> list[dict[str, Any]]:
@@ -165,6 +189,115 @@ def _task_market_execution_rows_for_workspace(workspace: str) -> list[dict[str, 
     return rows
 
 
+def _workflow_state_to_director_status(value: Any) -> str:
+    from polaris.delivery.http.v2 import director as _d
+
+    state = _d.canonicalize_workflow_task_state(value)
+    if state == "completed":
+        return "COMPLETED"
+    if state == "failed":
+        return "FAILED"
+    if state == "blocked":
+        return "BLOCKED"
+    if state == "cancelled":
+        return "CANCELLED"
+    if state in {"in_progress", "claimed"}:
+        return "RUNNING"
+    if state == "ready":
+        return "READY"
+    return "PENDING"
+
+
+def _summary_task_to_contract_row(item: dict[str, Any]) -> dict[str, Any] | None:
+    task_id = str(item.get("id") or item.get("task_id") or "").strip()
+    if not task_id:
+        return None
+    metadata_raw = item.get("metadata")
+    metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+    metadata.setdefault("pm_task_id", task_id)
+    metadata.setdefault("source_task_id", task_id)
+    title = str(item.get("title") or item.get("subject") or item.get("summary") or task_id).strip()
+    description = str(item.get("goal") or item.get("description") or item.get("summary") or "").strip()
+    target_files = _first_string_list(item.get("target_files"), metadata.get("target_files"))
+    scope_paths = _first_string_list(item.get("scope_paths"), metadata.get("scope_paths"))
+    acceptance_criteria = _first_string_list(
+        item.get("acceptance_criteria"),
+        item.get("acceptance"),
+        metadata.get("acceptance_criteria"),
+        metadata.get("acceptance"),
+    )
+    dependencies = _first_string_list(
+        item.get("dependencies"),
+        item.get("depends_on"),
+        item.get("blocked_by"),
+        item.get("blockedBy"),
+        metadata.get("dependencies"),
+        metadata.get("depends_on"),
+        metadata.get("blocked_by"),
+    )
+    return {
+        "id": task_id,
+        "task_id": task_id,
+        "subject": title,
+        "title": title,
+        "description": description,
+        "goal": str(item.get("goal") or "").strip(),
+        "status": _workflow_state_to_director_status(item.get("status") or item.get("state")),
+        "priority": str(item.get("priority") or "MEDIUM").strip() or "MEDIUM",
+        "claimed_by": item.get("claimed_by"),
+        "result": item.get("result") if isinstance(item.get("result"), dict) else None,
+        "metadata": metadata,
+        "target_files": target_files,
+        "scope_paths": scope_paths,
+        "acceptance_criteria": acceptance_criteria,
+        "dependencies": dependencies,
+        "depends_on": dependencies,
+        "blueprint_id": item.get("blueprint_id") or metadata.get("blueprint_id"),
+        "blueprint_path": item.get("blueprint_path") or metadata.get("blueprint_path"),
+        "runtime_blueprint_path": item.get("runtime_blueprint_path") or metadata.get("runtime_blueprint_path"),
+    }
+
+
+def _first_string_list(*values: Any) -> list[str]:
+    for value in values:
+        if not isinstance(value, list):
+            continue
+        result = [str(item or "").strip() for item in value if str(item or "").strip()]
+        if result:
+            return result
+    return []
+
+
+def _workflow_summary_task_rows(
+    workflow_status: dict[str, Any] | None,
+    *,
+    workspace: str,
+    cache_root: str,
+) -> list[dict[str, Any]]:
+    from polaris.delivery.http.v2 import director as _d
+
+    try:
+        summary = _d.summarize_workflow_tasks(workflow_status, workspace=workspace, cache_root=cache_root)
+    except (RuntimeError, OSError, TypeError, ValueError):
+        _d.logger.debug("Director workflow summary task rows unavailable for workspace=%s", workspace, exc_info=True)
+        return []
+    raw_tasks = summary.get("tasks") if isinstance(summary, dict) else None
+    if not isinstance(raw_tasks, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in raw_tasks:
+        if not isinstance(item, dict):
+            continue
+        row = _summary_task_to_contract_row(item)
+        if row is not None:
+            rows.append(row)
+    return rows
+
+
+def _contract_rows_for_workspace(workspace: str, cache_root: str) -> list[dict[str, Any]]:
+    return _workflow_summary_task_rows({}, workspace=workspace, cache_root=cache_root)
+
+
 def _contract_backed_task_rows(
     task_rows: list[dict[str, Any]],
     *,
@@ -173,9 +306,7 @@ def _contract_backed_task_rows(
 ) -> list[dict[str, Any]]:
     """Show PM contract rows as waiting for Chief Engineer handoff."""
 
-    from polaris.delivery.http.v2 import director as _d
-
-    contract_rows = _d.build_workflow_task_rows({}, workspace=workspace, cache_root=cache_root)
+    contract_rows = _contract_rows_for_workspace(workspace, cache_root)
     contract_rows = [dict(row) for row in contract_rows if isinstance(row, dict)]
     if not contract_rows:
         return task_rows
@@ -251,7 +382,7 @@ def _runtime_task_rows_for_workspace(workspace: str) -> list[dict[str, Any]]:
     if not workspace_token:
         return []
     try:
-        runtime_rows = _d.TaskRuntimeService(workspace_token).list_task_rows()
+        runtime_rows = _d.TaskRuntimeService(workspace_token).list_observable_task_rows()
     except (RuntimeError, ValueError, OSError):
         _d.logger.debug("Director diagnostics runtime task overlay failed for workspace=%s", workspace, exc_info=True)
         return []
