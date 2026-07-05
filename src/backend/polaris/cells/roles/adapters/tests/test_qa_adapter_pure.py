@@ -38,11 +38,14 @@ class _QaRowProjectionOnlyTaskBoard:
         self.reopened: list[dict[str, Any]] = []
         self.updated: list[dict[str, Any]] = []
 
-    def list_task_rows(self) -> list[dict[str, Any]]:
+    def list_observable_task_rows(self) -> list[dict[str, Any]]:
         return [dict(row) for row in self.rows]
 
+    def list_task_rows(self) -> list[dict[str, Any]]:
+        raise AssertionError("QA read-model consumers must use list_observable_task_rows()")
+
     def list_all(self) -> list[Any]:
-        raise AssertionError("QA read-model consumers must use list_task_rows()")
+        raise AssertionError("QA read-model consumers must use list_observable_task_rows()")
 
     def reopen_task_row(
         self,
