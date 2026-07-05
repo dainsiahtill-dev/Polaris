@@ -258,7 +258,13 @@ class TaskBoardStateBridge:
 
 
 class StateConsistencyChecker:
-    """Checks consistency between TaskBoard and workflow runtime task states."""
+    """Checks task-runtime row projection consistency with workflow task states.
+
+    The checker intentionally consumes ``list_task_rows()`` instead of raw
+    TaskBoard entities.  Raw board state is an implementation detail of
+    ``runtime.task_runtime``; orchestration consistency checks must compare
+    stable projections so status semantics do not drift between state stores.
+    """
 
     def __init__(self, task_board: Any, workflow_store: Any) -> None:
         self._task_board = task_board

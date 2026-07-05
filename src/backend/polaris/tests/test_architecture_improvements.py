@@ -26,6 +26,7 @@ from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.runtim
     SqliteRuntimeStore,
 )
 from polaris.cells.runtime.task_runtime.internal.task_board import TaskBoard
+from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.errors import ErrorCategory
 
 
@@ -246,13 +247,13 @@ class TestStateConsistencyChecker:
 
     @pytest.mark.asyncio
     async def test_empty_check_passes(self, temp_workspace: str, tmp_path: Path) -> None:
-        """Empty task board should be consistent."""
-        task_board = TaskBoard(temp_workspace)
+        """Empty task-row projection should be consistent."""
+        task_runtime = TaskRuntimeService(temp_workspace)
         db_path = str(tmp_path / "test.db")
         store = SqliteRuntimeStore(db_path)
         # Initialize the workflow execution table by creating an execution
         await store.create_execution("test-workflow", "test", {})
-        checker = StateConsistencyChecker(task_board, workflow_store=store)
+        checker = StateConsistencyChecker(task_runtime, workflow_store=store)
 
         report = await checker.check_consistency("test-workflow")
 
@@ -262,16 +263,16 @@ class TestStateConsistencyChecker:
 
     @pytest.mark.asyncio
     async def test_detects_missing_in_workflow(self, temp_workspace: str, tmp_path: Path) -> None:
-        """Should detect task in TaskBoard but not in workflow."""
-        task_board = TaskBoard(temp_workspace)
+        """Should detect task-row projection entries missing from workflow."""
+        task_runtime = TaskRuntimeService(temp_workspace)
         db_path = str(tmp_path / "test.db")
         store = SqliteRuntimeStore(db_path)
         # Initialize the workflow execution table
         await store.create_execution("test-workflow", "test", {})
-        checker = StateConsistencyChecker(task_board, workflow_store=store)
+        checker = StateConsistencyChecker(task_runtime, workflow_store=store)
 
-        # Create task only in TaskBoard
-        task_board.create("Test task")
+        # Create task only in the task-runtime projection.
+        task_runtime.create_task_row(subject="Test task")
 
         report = await checker.check_consistency("test-workflow")
 
