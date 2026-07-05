@@ -616,6 +616,33 @@ def _active_orchestration_state(status_token: str) -> tuple[str, bool]:
     return token.upper() if token else "IDLE", False
 
 
+def _director_status_for_runtime_task_row(row: dict[str, Any]) -> str:
+    status_token = str(row.get("status") or "").strip().lower()
+    if status_token == "in_progress":
+        return "IN_PROGRESS"
+    if status_token:
+        return status_token.upper()
+    return "PENDING"
+
+
+def _runtime_task_rows_payload(workspace: str) -> dict[str, Any]:
+    rows = load_runtime_task_rows(workspace)
+    by_status: dict[str, int] = {}
+    ready_queue_size = 0
+    for row in rows:
+        status_token = _director_status_for_runtime_task_row(row)
+        by_status[status_token] = by_status.get(status_token, 0) + 1
+        if str(row.get("status") or "").strip().lower() in {"pending", "ready"} and not row.get("blocked_by"):
+            ready_queue_size += 1
+    return {
+        "total": len(rows),
+        "by_status": by_status,
+        "ready_queue_size": ready_queue_size,
+        "task_rows": rows,
+        "projection_source": "runtime.task_runtime",
+    }
+
+
 def _orchestration_task_rows(snapshot: Any) -> tuple[list[dict[str, Any]], dict[str, int]]:
     rows: list[dict[str, Any]] = []
     by_status: dict[str, int] = {}
@@ -709,12 +736,15 @@ async def get_active_director_orchestration_status(workspace: str) -> dict[str, 
     snapshot = candidates[0]
     status_token = _enum_value(getattr(snapshot, "status", ""))
     state, running = _active_orchestration_state(status_token)
-    task_rows, by_status = _orchestration_task_rows(snapshot)
+    workflow_task_rows, workflow_by_status = _orchestration_task_rows(snapshot)
     run_id = str(getattr(snapshot, "run_id", "") or "").strip()
-    tasks_payload = {
-        "total": len(task_rows),
-        "by_status": by_status,
-        "task_rows": task_rows,
+    workspace_token = str(getattr(snapshot, "workspace", "") or workspace or "").strip()
+    tasks_payload = _runtime_task_rows_payload(workspace_token)
+    workflow_tasks_payload = {
+        "total": len(workflow_task_rows),
+        "by_status": workflow_by_status,
+        "task_rows": workflow_task_rows,
+        "projection_source": "orchestration.workflow_runtime",
     }
     return {
         "running": running,
@@ -727,7 +757,7 @@ async def get_active_director_orchestration_status(workspace: str) -> dict[str, 
         "workflow_id": run_id,
         "run_id": run_id,
         "state": state,
-        "workspace": str(getattr(snapshot, "workspace", "") or "").strip(),
+        "workspace": workspace_token,
         "status": {
             "state": state,
             "run_status": status_token.lower(),
@@ -743,7 +773,7 @@ async def get_active_director_orchestration_status(workspace: str) -> dict[str, 
             "running": running,
             "workflow_id": run_id,
             "workflow_status": status_token.lower(),
-            "tasks": tasks_payload,
+            "workflow_tasks": workflow_tasks_payload,
         },
     }
 

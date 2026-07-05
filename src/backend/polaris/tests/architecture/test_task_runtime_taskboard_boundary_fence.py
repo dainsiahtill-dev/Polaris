@@ -19,6 +19,7 @@ TASK_RUNTIME_PUBLIC_BOARD_CONTRACT = TASK_RUNTIME_OWNER / "public" / "task_board
 ROLE_WORKER_POOL = POLARIS_ROOT / "cells" / "roles" / "runtime" / "internal" / "worker_pool.py"
 DELIVERY_PM_TASKBOARD = POLARIS_ROOT / "delivery" / "cli" / "pm" / "engine" / "taskboard.py"
 DIRECTOR_EXECUTION_SERVICE = POLARIS_ROOT / "cells" / "director" / "execution" / "service.py"
+RUNTIME_PROJECTION_SERVICE = POLARIS_ROOT / "cells" / "runtime" / "projection" / "internal" / "runtime_projection_service.py"
 RAW_TASKBOARD_MODULES = {
     "polaris.cells.runtime.task_runtime.internal.task_board",
     "polaris.cells.runtime.task_runtime.public.task_board_contract",
@@ -336,4 +337,31 @@ def test_director_status_uses_task_runtime_projection() -> None:
     assert not offenders, (
         "DirectorService.get_status() must project tasks from TaskRuntimeService "
         "rows, not Director's internal TaskService snapshot:\n" + "\n".join(offenders)
+    )
+
+
+def test_active_orchestration_status_uses_runtime_task_rows() -> None:
+    source = RUNTIME_PROJECTION_SERVICE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    target: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == (
+            "get_active_director_orchestration_status"
+        ):
+            target = node
+            break
+    assert target is not None, "get_active_director_orchestration_status() not found"
+
+    task_payload_assignments: list[str] = []
+    for node in ast.walk(target):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(item, ast.Name) and item.id == "tasks_payload" for item in node.targets):
+            continue
+        if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
+            task_payload_assignments.append(node.value.func.id)
+
+    assert task_payload_assignments == ["_runtime_task_rows_payload"], (
+        "Active Director orchestration status must expose task-runtime rows as "
+        f"the top-level tasks payload, got {task_payload_assignments!r}"
     )

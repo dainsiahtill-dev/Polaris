@@ -43,6 +43,7 @@ from polaris.cells.runtime.projection.internal.runtime_projection_service import
 from polaris.cells.runtime.projection.internal.status_snapshot_builder import (
     _parse_engine_updated_at as _parse_status_snapshot_updated_at,
 )
+from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.cells.workspace.integrity.public.service import write_workspace_status
 
 if TYPE_CHECKING:
@@ -997,6 +998,8 @@ class TestRuntimeProjectionServiceBuildAsync:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
+        task_runtime = TaskRuntimeService(str(tmp_path))
+        task_runtime.create_task_row(subject="Runtime row")
         snapshot = OrchestrationSnapshot(
             run_id="director-active123",
             workspace=str(tmp_path),
@@ -1040,7 +1043,15 @@ class TestRuntimeProjectionServiceBuildAsync:
         assert proj.director_merged["running"] is True
         assert proj.director_merged["source"] == "workflow"
         assert proj.task_source == TaskSource.WORKFLOW
-        assert proj.task_rows[0]["id"] == "task-0-director"
+        assert proj.workflow_archive is not None
+        assert proj.workflow_archive["tasks"]["projection_source"] == "runtime.task_runtime"
+        assert proj.workflow_archive["raw_workflow_status"]["workflow_tasks"]["projection_source"] == (
+            "orchestration.workflow_runtime"
+        )
+        assert proj.workflow_archive["raw_workflow_status"]["workflow_tasks"]["task_rows"][0]["id"] == (
+            "task-0-director"
+        )
+        assert proj.task_rows[0]["subject"] == "Runtime row"
 
     async def test_active_director_status_ignores_other_workspaces(
         self,
