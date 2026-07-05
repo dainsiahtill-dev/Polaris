@@ -63,6 +63,7 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _task_runtime_finalization_failed_result,
     _task_runtime_heartbeat_failed_signal,
     _with_decision_signals,
+    _with_task_runtime_finalize_evidence,
     execute_director_task,
 )
 from polaris.cells.roles.adapters.internal.director.execute_method_repair_bridge import (
@@ -4727,6 +4728,49 @@ class TestDirectorFailureClosure:
         assert merged["success"] is True
         assert merged["decision_signals"] == [{"code": "existing"}, {"code": "heartbeat"}]
         assert result["decision_signals"] == [{"code": "existing"}]
+
+    def test_with_task_runtime_finalize_evidence_preserves_original_failure(self) -> None:
+        result = {
+            "success": False,
+            "error_code": "director.materialization.no_physical_files",
+            "failure_stage": "director_materialization",
+            "decision_signals": [{"code": "original_failure"}],
+        }
+        finalize_result = {
+            "success": False,
+            "reason": "execution_event_append_failed",
+            "failure_class": "ledger_append_failed",
+            "execution_event": {
+                "ok": False,
+                "event_type": "failed",
+                "error": "fact stream unavailable",
+            },
+        }
+
+        merged = _with_task_runtime_finalize_evidence(
+            result,
+            requested_outcome="failed",
+            finalize_result=finalize_result,
+        )
+
+        assert merged["success"] is False
+        assert merged["error_code"] == "director.materialization.no_physical_files"
+        assert merged["failure_stage"] == "director_materialization"
+        assert merged["control_plane_failure_code"] == "director_task_runtime_finalization_failed"
+        assert merged["control_plane_failure_stage"] == "director_task_runtime_finalization"
+        assert merged["task_runtime_finalization_failed"] is True
+        assert merged["task_runtime_finalize_result"] == finalize_result
+        assert merged["decision_signals"] == [
+            {"code": "original_failure"},
+            {
+                "code": "director_task_runtime_finalization_failed",
+                "severity": "error",
+                "detail": "execution_event_append_failed",
+                "requested_outcome": "failed",
+                "reason": "execution_event_append_failed",
+                "failure_class": "ledger_append_failed",
+            },
+        ]
 
     def test_finalize_claimed_execution_reports_terminal_transition_failure(self) -> None:
         class _Runtime:

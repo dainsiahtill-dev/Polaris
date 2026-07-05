@@ -1008,6 +1008,55 @@ def _with_decision_signals(
     return {**result, "decision_signals": merged}
 
 
+def _task_runtime_finalize_failed_signal(
+    *,
+    requested_outcome: str,
+    finalize_result: dict[str, Any],
+) -> dict[str, Any]:
+    """Project failed TaskRuntime finalization as control-plane evidence."""
+
+    reason = str(finalize_result.get("reason") or "task_runtime_finalize_rejected").strip()
+    if not reason:
+        reason = "task_runtime_finalize_rejected"
+    detail = str(finalize_result.get("error") or finalize_result.get("detail") or reason).strip()
+    signal: dict[str, Any] = {
+        "code": "director_task_runtime_finalization_failed",
+        "severity": "error",
+        "detail": detail,
+        "requested_outcome": requested_outcome,
+        "reason": reason,
+    }
+    failure_class = str(finalize_result.get("failure_class") or "").strip()
+    if failure_class:
+        signal["failure_class"] = failure_class
+    return signal
+
+
+def _with_task_runtime_finalize_evidence(
+    result: dict[str, Any],
+    *,
+    requested_outcome: str,
+    finalize_result: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Return ``result`` with TaskRuntime finalization failure evidence attached."""
+
+    if not isinstance(finalize_result, dict) or finalize_result.get("success") is True:
+        return result
+    signal = _task_runtime_finalize_failed_signal(
+        requested_outcome=requested_outcome,
+        finalize_result=finalize_result,
+    )
+    projected = _with_decision_signals(result, [signal])
+    return {
+        **projected,
+        "control_plane_failure_code": "director_task_runtime_finalization_failed",
+        "control_plane_failure_stage": "director_task_runtime_finalization",
+        "task_runtime_finalization_failed": True,
+        "task_runtime_finalize_result": dict(finalize_result),
+        "qa_required_for_final_verdict": True,
+    }
+
+
 def _emit_director_adapter_cognitive_receipt(
     adapter: Any,
     *,
@@ -1375,7 +1424,7 @@ async def execute_director_task(
                                 decision_signals=decision_signals,
                             )
                     else:
-                        _finalize_claimed_execution(
+                        finalize_result = _finalize_claimed_execution(
                             adapter,
                             target_task_id=target_task_id,
                             outcome="failed",
@@ -1383,6 +1432,12 @@ async def execute_director_task(
                             error=str(result.get("error") or "director_sequential_execution_failed"),
                             metadata={"adapter_phase": "failed"},
                         )
+                        if isinstance(result, dict):
+                            result = _with_task_runtime_finalize_evidence(
+                                result,
+                                requested_outcome="failed",
+                                finalize_result=finalize_result,
+                            )
                 return _with_decision_signals(result, decision_signals) if isinstance(result, dict) else result
             except asyncio.CancelledError:
                 if board_claim_applied and task_claim_session_id:
@@ -1415,8 +1470,9 @@ async def execute_director_task(
             )
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             error = f"director_runtime_exception:{exc}"
+            runtime_exception_finalize_result: dict[str, Any] | None = None
             if board_claim_applied and task_claim_session_id:
-                _finalize_claimed_execution(
+                runtime_exception_finalize_result = _finalize_claimed_execution(
                     adapter,
                     target_task_id=target_task_id,
                     outcome="failed",
@@ -1425,7 +1481,7 @@ async def execute_director_task(
                     metadata={"adapter_phase": "failed", "exception_type": type(exc).__name__},
                 )
             adapter._update_task_progress(target_task_id, "failed")
-            return {
+            result = {
                 "success": False,
                 "task_id": target_task_id,
                 "error": error,
@@ -1442,6 +1498,11 @@ async def execute_director_task(
                 "qa_required_for_final_verdict": True,
                 "artifacts": [],
             }
+            return _with_task_runtime_finalize_evidence(
+                result,
+                requested_outcome="failed",
+                finalize_result=runtime_exception_finalize_result,
+            )
 
     except asyncio.CancelledError:
         if board_claim_applied and task_claim_session_id:
@@ -2259,8 +2320,9 @@ def _phase_finalize_materialization(
             failure_metadata["adapter_result"]["no_write_materialization_retry"] = (
                 no_write_materialization_retry_summary
             )
+        finalize_result: dict[str, Any] | None = None
         if board_claim_applied and task_claim_session_id:
-            _finalize_claimed_execution(
+            finalize_result = _finalize_claimed_execution(
                 adapter,
                 target_task_id=target_task_id,
                 outcome="failed",
@@ -2269,7 +2331,7 @@ def _phase_finalize_materialization(
                 metadata=failure_metadata,
             )
         adapter._update_task_progress(target_task_id, "failed")
-        return {
+        result = {
             "success": False,
             "task_id": target_task_id,
             "error": error,
@@ -2289,6 +2351,11 @@ def _phase_finalize_materialization(
             "artifacts": [],
             "materialization_mode": materialization_mode,
         }
+        return _with_task_runtime_finalize_evidence(
+            result,
+            requested_outcome="failed",
+            finalize_result=finalize_result,
+        )
 
     # 返回结果
     completion_metadata: dict[str, Any] = {
@@ -3861,8 +3928,9 @@ def _phase_no_materialized_changes(
             {},
         )
         completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
+        finalize_result: dict[str, Any] | None = None
         if board_claim_applied and task_claim_session_id:
-            _finalize_claimed_execution(
+            finalize_result = _finalize_claimed_execution(
                 adapter,
                 target_task_id=target_task_id,
                 outcome="failed",
@@ -3871,7 +3939,7 @@ def _phase_no_materialized_changes(
                 metadata=completion_metadata,
             )
         adapter._update_task_progress(target_task_id, "failed")
-        return {
+        result = {
             "success": False,
             "task_id": target_task_id,
             "tools_executed": len(tool_results),
@@ -3897,6 +3965,11 @@ def _phase_no_materialized_changes(
             "qa_required_for_final_verdict": True,
             "artifacts": [],
         }
+        return _with_task_runtime_finalize_evidence(
+            result,
+            requested_outcome="failed",
+            finalize_result=finalize_result,
+        )
     return None
 
 
@@ -4079,8 +4152,9 @@ def _phase_missing_write_receipt(
             },
         )
         completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
+        finalize_result: dict[str, Any] | None = None
         if board_claim_applied and task_claim_session_id:
-            _finalize_claimed_execution(
+            finalize_result = _finalize_claimed_execution(
                 adapter,
                 target_task_id=target_task_id,
                 outcome="failed",
@@ -4099,7 +4173,7 @@ def _phase_missing_write_receipt(
             "new_file_count": len(new_files),
             "modified_file_count": len(modified_files),
         }
-        return {
+        result = {
             "success": False,
             "task_id": target_task_id,
             "tools_executed": len(tool_results),
@@ -4114,6 +4188,11 @@ def _phase_missing_write_receipt(
             "artifacts": [],
             "materialization_mode": materialization_mode,
         }
+        return _with_task_runtime_finalize_evidence(
+            result,
+            requested_outcome="failed",
+            finalize_result=finalize_result,
+        )
     return None
 
 
@@ -4290,8 +4369,9 @@ def _phase_quality_failed(
             },
         )
         completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
+        finalize_result: dict[str, Any] | None = None
         if board_claim_applied and task_claim_session_id:
-            _finalize_claimed_execution(
+            finalize_result = _finalize_claimed_execution(
                 adapter,
                 target_task_id=target_task_id,
                 outcome="failed",
@@ -4309,7 +4389,7 @@ def _phase_quality_failed(
             ),
             "artifact_quality_errors": artifact_quality_errors[:20],
         }
-        return {
+        result = {
             "success": False,
             "task_id": target_task_id,
             "tools_executed": len(tool_results),
@@ -4328,6 +4408,11 @@ def _phase_quality_failed(
             # its LLM call is indistinguishable from one that never ran.
             "quality_repair_attempts": quality_repair_attempts,
         }
+        return _with_task_runtime_finalize_evidence(
+            result,
+            requested_outcome="failed",
+            finalize_result=finalize_result,
+        )
     return None
 
 
@@ -4411,8 +4496,9 @@ def _phase_semantic_quality_failed(
             },
         )
         completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
+        finalize_result: dict[str, Any] | None = None
         if board_claim_applied and task_claim_session_id:
-            _finalize_claimed_execution(
+            finalize_result = _finalize_claimed_execution(
                 adapter,
                 target_task_id=target_task_id,
                 outcome="failed",
@@ -4426,7 +4512,7 @@ def _phase_semantic_quality_failed(
             "severity": "error",
             "detail": semantic_quality_error,
         }
-        return {
+        result = {
             "success": False,
             "task_id": target_task_id,
             "tools_executed": len(tool_results),
@@ -4443,6 +4529,11 @@ def _phase_semantic_quality_failed(
             "semantic_quality_error": semantic_quality_error,
             "semantic_quality_repair_attempts": semantic_quality_repair_attempts,
         }
+        return _with_task_runtime_finalize_evidence(
+            result,
+            requested_outcome="failed",
+            finalize_result=finalize_result,
+        )
     return None
 
 
