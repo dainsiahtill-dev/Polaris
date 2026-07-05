@@ -52,10 +52,6 @@
           "doc": "Return task rows for read-only runtime projections."
         },
         {
-          "name": "select_next_task",
-          "doc": "Return the next claimable task row, preferring resumable work."
-        },
-        {
           "name": "claim_next_execution",
           "doc": "Atomically select and claim the next executable task."
         },

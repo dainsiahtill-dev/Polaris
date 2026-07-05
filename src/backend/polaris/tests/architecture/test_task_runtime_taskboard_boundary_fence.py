@@ -181,6 +181,9 @@ TASK_RUNTIME_SERVICE_OWNER_READ_DESCRIPTOR_METHODS = {
 TASK_RUNTIME_SERVICE_OWNER_MAINTENANCE_DESCRIPTOR_METHODS = {
     "refresh_dependency_unblocks",
 }
+TASK_RUNTIME_SERVICE_PREVIEW_SELECTION_DESCRIPTOR_METHODS = {
+    "select_next_task",
+}
 TASK_RUNTIME_SERVICE_REQUIRED_ROW_MUTATION_METHODS = {
     "create_task_row",
     "reopen_task_row",
@@ -1683,6 +1686,37 @@ def test_task_runtime_descriptor_does_not_advertise_owner_maintenance_methods() 
         "selection/read-model paths; Agent-facing context should use explicit "
         "read-model, select, claim, or terminal transition APIs instead:\n"
         + "\n".join(sorted(offenders))
+    )
+
+
+def test_task_runtime_descriptor_does_not_advertise_preview_selection_methods() -> None:
+    descriptor = json.loads(TASK_RUNTIME_DESCRIPTOR.read_text(encoding="utf-8"))
+    capabilities = descriptor.get("capabilities")
+    assert isinstance(capabilities, list), "task_runtime descriptor must expose a capabilities list"
+
+    offenders: list[str] = []
+    advertised: set[str] = set()
+    for item in capabilities:
+        if not isinstance(item, dict):
+            continue
+        if item.get("name") != "TaskRuntimeService":
+            continue
+        for method in item.get("methods", []):
+            if not isinstance(method, dict):
+                continue
+            method_name = str(method.get("name") or "")
+            advertised.add(method_name)
+            if method_name in TASK_RUNTIME_SERVICE_PREVIEW_SELECTION_DESCRIPTOR_METHODS:
+                offenders.append(method_name)
+
+    assert "claim_next_execution" in advertised, (
+        "task_runtime descriptor must keep the atomic select-and-claim API for "
+        "execution consumers."
+    )
+    assert not offenders, (
+        "task_runtime descriptor must not advertise preview-only selection "
+        "methods. Concurrent execution consumers should use claim_next_execution() "
+        "so selection and claim stay in one owner operation:\n" + "\n".join(sorted(offenders))
     )
 
 
