@@ -34,11 +34,14 @@ class _RowProjectionOnlyTaskBoard:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self._rows = [dict(row) for row in rows]
 
-    def list_task_rows(self) -> list[dict[str, Any]]:
+    def list_observable_task_rows(self) -> list[dict[str, Any]]:
         return [dict(row) for row in self._rows]
 
+    def list_task_rows(self) -> list[dict[str, Any]]:
+        raise AssertionError("PM read-model consumers must use list_observable_task_rows()")
+
     def list_all(self) -> list[Any]:
-        raise AssertionError("PM read-model consumers must use list_task_rows()")
+        raise AssertionError("PM read-model consumers must use list_observable_task_rows()")
 
     def task_exists(self, task_id: Any) -> bool:
         return any(str(row.get("id") or "") == str(task_id or "") for row in self._rows)
@@ -67,8 +70,11 @@ class _RowWriteOnlyTaskRuntime:
         self._next_id = 1
         self._rows: list[dict[str, Any]] = []
 
-    def list_task_rows(self) -> list[dict[str, Any]]:
+    def list_observable_task_rows(self) -> list[dict[str, Any]]:
         return [dict(row) for row in self._rows]
+
+    def list_task_rows(self) -> list[dict[str, Any]]:
+        raise AssertionError("PM read-model consumers must use list_observable_task_rows()")
 
     def create_task_row(
         self,
@@ -134,7 +140,7 @@ class _RowWriteOnlyTaskRuntime:
         raise AssertionError("PM task reads must use get_task()")
 
     def list_all(self) -> list[Any]:
-        raise AssertionError("PM read-model consumers must use list_task_rows()")
+        raise AssertionError("PM read-model consumers must use list_observable_task_rows()")
 
 
 # ---------------------------------------------------------------------------

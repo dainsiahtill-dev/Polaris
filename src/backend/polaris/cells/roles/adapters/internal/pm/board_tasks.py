@@ -17,10 +17,10 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
     def _list_board_task_rows(self) -> list[dict[str, Any]]:
         """Return PM task-board rows through the runtime read model when available."""
 
-        list_task_rows = getattr(self.task_runtime, "list_task_rows", None)
-        if not callable(list_task_rows):
+        list_observable_task_rows = getattr(self.task_runtime, "list_observable_task_rows", None)
+        if not callable(list_observable_task_rows):
             return []
-        rows = list_task_rows()
+        rows = list_observable_task_rows()
         return [dict(row) for row in rows if isinstance(row, dict)]
 
     def _create_board_tasks(self, task_contracts: list[dict[str, Any]]) -> list[dict[str, Any]]:
