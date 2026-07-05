@@ -363,6 +363,28 @@ def test_raw_taskboard_has_no_workflow_state_bridge_hook() -> None:
     )
 
 
+def test_taskboard_terminal_event_stream_is_owner_only_compatibility_projection() -> None:
+    offenders: list[str] = []
+    this_file = Path(__file__).resolve()
+    terminal_stream = "taskboard.terminal.events"
+    for path in POLARIS_ROOT.rglob("*.py"):
+        if path.resolve() == this_file or "__pycache__" in path.parts:
+            continue
+        if "tests" in path.parts:
+            continue
+        if _is_allowed_owner_path(path):
+            continue
+        if terminal_stream in path.read_text(encoding="utf-8"):
+            offenders.append(str(path.relative_to(BACKEND_ROOT)))
+
+    assert not offenders, (
+        "`taskboard.terminal.events` is a task_runtime-owned compatibility "
+        "projection, not an execution-control fact source. Production code "
+        "outside task_runtime must consume TaskRuntimeService / execution "
+        "ledger projections instead:\n" + "\n".join(offenders)
+    )
+
+
 def test_raw_taskboard_dependency_state_changes_are_row_local() -> None:
     """Guard the WS2 invariant that TaskBoard does not mutate dependency peers."""
 

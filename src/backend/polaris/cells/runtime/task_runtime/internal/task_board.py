@@ -6,28 +6,19 @@ to resolve the architectural violation of embedding business logic in KernelOne.
 
 Responsibilities:
 - File-backed JSON persistence (atomic writes, survives context compaction)
-- DAG dependency management (blocked_by, blocks)
+- Row-local DAG fields (blocked_by, blocks)
 - State machine with validated transitions
-- Priority-based task ordering
-- Terminal event emission for async consumers (TaskHistoryArchiver)
-- State bridge notifications for workflow runtime sync
+- Priority-based row ordering
+- Compatibility terminal-event projection for legacy observers
 
-This module intentionally mirrors the API of the former kernelone task_board
-so that all callers (roles adapters, factory_run_service, CLI entrypoints,
-director/pm_service) can migrate over time without immediate import changes.
-
-Consumers of this module:
-  - polaris/cells/roles/adapters/internal/{director,pm,qa}_adapter.py
-  - polaris/cells/factory/pipeline/internal/factory_run_service.py
-  - polaris/cells/orchestration/pm_planning/internal/pm_agent.py
-  - polaris/delivery/cli/director/director_service.py
-  - polaris/delivery/cli/pm/pm_service.py
-  - polaris/cells/runtime/task_runtime/internal/service.py
-  - polaris/cells/runtime/task_runtime/internal/worker_pool.py
+This module intentionally remains private to ``runtime.task_runtime``.  Public
+callers must use ``TaskRuntimeService`` row/session APIs so execution-control
+state changes can be accompanied by ``task_runtime.execution`` evidence.
 
 Architecture note: This module is state-owned by the ``runtime.task_runtime`` cell.
-Its state paths are ``runtime/tasks/*`` and ``runtime/events/taskboard.terminal.events.jsonl``.
-No other cell should write to these paths.
+Its row path is ``runtime/tasks/*``. ``taskboard.terminal.events`` is a
+compatibility projection, not the authoritative task-state source. No other
+cell should read or write either path directly.
 """
 
 from __future__ import annotations
@@ -701,9 +692,10 @@ class TaskBoard:
     ) -> Task | None:
         """Update task status with state machine validation.
 
-        When entering a terminal state, appends a lightweight event to
-        ``runtime/events/taskboard.terminal.events.jsonl`` for async consumption
-        by the TaskHistoryArchiver.
+        When entering a terminal state, appends a lightweight compatibility
+        event to ``taskboard.terminal.events``. Execution-control consumers must
+        use ``TaskRuntimeService`` / ``task_runtime.execution`` projections as
+        the authoritative state source.
         """
         import copy
 
@@ -775,7 +767,7 @@ class TaskBoard:
         return result_task
 
     def _write_terminal_event(self, event_data: dict[str, Any]) -> None:
-        """Write terminal event to JSONL outside the board transaction lock."""
+        """Write a compatibility terminal event outside the board transaction."""
         try:
             append_fact_event(
                 AppendFactEventCommandV1(
