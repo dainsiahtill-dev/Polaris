@@ -218,6 +218,57 @@ def _direct_task_row_file_globs(path: Path) -> list[str]:
     return offenders
 
 
+TASK_ROW_FILE_ACCESS_METHODS = {
+    "glob",
+    "open",
+    "read_bytes",
+    "read_text",
+    "rename",
+    "unlink",
+    "write_bytes",
+    "write_text",
+}
+
+
+def _looks_like_task_row_file_literal(value: str) -> bool:
+    return value == "task_*.json" or ("task_" in value and value.endswith(".json"))
+
+
+def _contains_task_row_file_literal(node: ast.AST) -> bool:
+    for child in ast.walk(node):
+        if (
+            isinstance(child, ast.Constant)
+            and isinstance(child.value, str)
+            and _looks_like_task_row_file_literal(child.value)
+        ):
+            return True
+        if isinstance(child, ast.JoinedStr):
+            literal_text = "".join(
+                part.value for part in child.values if isinstance(part, ast.Constant) and isinstance(part.value, str)
+            )
+            if "task_" in literal_text and ".json" in literal_text:
+                return True
+    return False
+
+
+def _direct_task_row_file_accesses(path: Path) -> list[str]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        method = func.attr if isinstance(func, ast.Attribute) else (func.id if isinstance(func, ast.Name) else "")
+        if method not in TASK_ROW_FILE_ACCESS_METHODS:
+            continue
+        if _contains_task_row_file_literal(node):
+            offenders.append(
+                f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} directly accesses runtime task-row files"
+            )
+    return offenders
+
+
 def _legacy_task_board_alias_references(path: Path) -> list[str]:
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -668,7 +719,7 @@ def test_production_read_side_uses_observable_task_rows() -> None:
     )
 
 
-def test_runtime_task_row_file_globs_stay_in_task_runtime_owner() -> None:
+def test_runtime_task_row_file_access_stays_in_task_runtime_owner() -> None:
     offenders: list[str] = []
     this_file = Path(__file__).resolve()
     for root in (POLARIS_ROOT, BACKEND_ROOT / "scripts"):
@@ -679,13 +730,13 @@ def test_runtime_task_row_file_globs_stay_in_task_runtime_owner() -> None:
                 continue
             if _is_allowed_owner_path(path):
                 continue
-            offenders.extend(_direct_task_row_file_globs(path))
+            offenders.extend(_direct_task_row_file_accesses(path))
 
     assert not offenders, (
-        "runtime/tasks/task_*.json is a task-runtime storage detail. "
+        "runtime/tasks/task_*.json files are a task-runtime storage detail. "
         "Production code outside runtime.task_runtime must use task-runtime "
         "public projections such as list_observable_task_rows() instead of "
-        "direct task-row file globs:\n" + "\n".join(offenders)
+        "direct task-row file access:\n" + "\n".join(offenders)
     )
 
 
