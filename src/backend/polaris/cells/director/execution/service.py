@@ -459,8 +459,8 @@ class DirectorService(DirectorCodeIntelMixin):
         """Return a status snapshot projected from execution-control rows."""
 
         task_runtime = self._get_task_runtime()
-        task_rows = task_runtime.list_task_rows()
-        task_stats = task_runtime.get_task_row_stats()
+        task_rows = task_runtime.list_observable_task_rows()
+        task_stats = self._task_stats_from_rows(task_rows)
         workers = await self._worker_service.get_workers()
         async with self._state_lock:
             state_name = self.state.name
@@ -491,6 +491,21 @@ class DirectorService(DirectorCodeIntelMixin):
         if self._task_runtime is None:
             self._task_runtime = TaskRuntimeService(self.config.workspace)
         return self._task_runtime
+
+    @staticmethod
+    def _task_stats_from_rows(task_rows: list[dict[str, Any]]) -> dict[str, int]:
+        """Return Director status counters from observable task rows."""
+
+        stats: dict[str, int] = {"total": len(task_rows), "ready": 0}
+        for row in task_rows:
+            status = str(row.get("status") or row.get("state") or "").strip().lower()
+            if not status:
+                status = "unknown"
+            stats[status] = stats.get(status, 0) + 1
+            blocked_by = row.get("blocked_by") if isinstance(row.get("blocked_by"), list) else row.get("blockedBy")
+            if status in {"pending", "ready", "queued"} and not blocked_by:
+                stats["ready"] += 1
+        return stats
 
     @staticmethod
     def _director_task_status_counts(task_stats: dict[str, Any]) -> dict[str, int]:

@@ -13,6 +13,8 @@ from polaris.cells.director.execution.service import (
     DirectorService,
     DirectorState,
 )
+from polaris.cells.events.fact_stream.public.contracts import AppendFactEventCommandV1
+from polaris.cells.events.fact_stream.public.service import append_fact_event
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.domain.entities import Task, TaskPriority
 from polaris.kernelone.constants import DEFAULT_MAX_WORKERS
@@ -53,6 +55,45 @@ class TestDirectorService:
         assert status["tasks"]["ready_queue_size"] == 1
         assert status["tasks"]["by_status"]["PENDING"] == 1
         assert status["tasks"]["task_rows"][0]["subject"] == "Ready row"
+
+    @pytest.mark.asyncio
+    async def test_get_status_counts_observable_task_runtime_rows(self, tmp_path: Path) -> None:
+        task_runtime = TaskRuntimeService(str(tmp_path))
+        created = task_runtime.create_task_row(subject="Observable row")
+        task_id = str(created["id"])
+        append_fact_event(
+            AppendFactEventCommandV1(
+                workspace=str(tmp_path),
+                stream="task_runtime.execution",
+                event_type="failed",
+                source="runtime.task_runtime",
+                task_id=task_id,
+                run_id="run-status",
+                payload={
+                    "task_id": task_id,
+                    "run_id": "run-status",
+                    "event_type": "failed",
+                    "status": "failed",
+                    "execution_state": "failed",
+                    "last_error": "observable failure",
+                    "task_row_snapshot": created,
+                },
+            )
+        )
+
+        config = DirectorConfig(workspace=str(tmp_path))
+        service = DirectorService(config=config, task_runtime=task_runtime)
+        service._worker_service = Mock(get_workers=AsyncMock(return_value=[]))
+        service.token = Mock(get_budget_status=Mock(to_dict=Mock(return_value={})))
+
+        status = await service.get_status()
+
+        assert status["tasks"]["total"] == 1
+        assert status["tasks"]["ready_queue_size"] == 0
+        assert status["tasks"]["by_status"]["PENDING"] == 0
+        assert status["tasks"]["by_status"]["FAILED"] == 1
+        assert status["tasks"]["task_rows"][0]["status"] == "failed"
+        assert status["tasks"]["task_rows"][0]["last_error"] == "observable failure"
 
     @pytest.mark.asyncio
     async def test_execute_task_work_without_command_uses_worker_executor(
