@@ -730,8 +730,8 @@ class TaskBoard:
 
             # Idempotency guard: re-applying the same terminal status is a no-op.
             # Without this, a second complete()/fail() call would clobber the
-            # original completed_at, re-run dependency unblocking, and append a
-            # duplicate terminal event. Return the existing task untouched.
+            # original completed_at and append a duplicate terminal event.
+            # Return the existing task untouched.
             if old_status == next_status and old_status.is_terminal:
                 return copy.deepcopy(task)
 
@@ -991,8 +991,8 @@ class TaskBoard:
                 # non-terminal projection and the terminal execution session
                 # is authoritative. Route through IN_PROGRESS (which has valid
                 # transitions to every terminal state) so update_status()
-                # applies the full terminal bookkeeping (terminal event,
-                # dependency unblocking, state-bridge notification).
+                # applies the full row-local terminal bookkeeping: terminal
+                # event, timestamps, and state-bridge notification.
                 task.status = TaskStatus.IN_PROGRESS
                 self._cache[task_id] = task
                 self._save_task(task)
