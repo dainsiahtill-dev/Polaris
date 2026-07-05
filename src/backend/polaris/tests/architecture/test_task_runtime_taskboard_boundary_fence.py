@@ -49,6 +49,7 @@ LEGACY_TASK_RUNTIME_METHODS = {
 }
 RAW_TASK_ROW_READ_METHODS = {"list_task_rows"}
 TASK_RUNTIME_RECEIVER_NAMES = {"task_runtime", "task_board"}
+RUNTIME_EXECUTION_MUTATING_METHODS = {"pop", "setdefault", "update"}
 
 
 def _is_allowed_owner_path(path: Path) -> bool:
@@ -267,6 +268,48 @@ def _assigned_constant_tuple(path: Path, name: str) -> tuple[str, ...]:
     raise AssertionError(f"{path.relative_to(BACKEND_ROOT)}:{name} assignment not found")
 
 
+def _string_literal(node: ast.AST | None) -> str:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return ""
+
+
+def _subscript_key(node: ast.AST) -> str:
+    if not isinstance(node, ast.Subscript):
+        return ""
+    return _string_literal(node.slice)
+
+
+def _contains_runtime_execution_subscript(node: ast.AST) -> bool:
+    if isinstance(node, ast.Subscript) and _subscript_key(node) == "runtime_execution":
+        return True
+    return any(_contains_runtime_execution_subscript(child) for child in ast.iter_child_nodes(node))
+
+
+def _runtime_execution_metadata_writes(path: Path) -> list[str]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if _contains_runtime_execution_subscript(target):
+                    offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} assigns runtime_execution")
+        elif isinstance(node, ast.AnnAssign) and _contains_runtime_execution_subscript(node.target):
+            offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} assigns runtime_execution")
+        elif isinstance(node, ast.AugAssign) and _contains_runtime_execution_subscript(node.target):
+            offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} mutates runtime_execution")
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr not in RUNTIME_EXECUTION_MUTATING_METHODS:
+                continue
+            first_arg = node.args[0] if node.args else None
+            if _string_literal(first_arg) == "runtime_execution":
+                offenders.append(
+                    f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} calls {node.func.attr}('runtime_execution')"
+                )
+    return offenders
+
+
 def test_raw_taskboard_is_private_to_task_runtime_cell() -> None:
     offenders: list[str] = []
     this_file = Path(__file__).resolve()
@@ -321,6 +364,27 @@ def test_production_read_side_uses_observable_task_rows() -> None:
         "list_observable_task_rows() so execution facts remain the status "
         "projection SSoT. Claim/write paths should use explicit ready/session "
         "APIs instead:\n" + "\n".join(offenders)
+    )
+
+
+def test_runtime_execution_metadata_writes_stay_in_task_runtime_owner() -> None:
+    offenders: list[str] = []
+    this_file = Path(__file__).resolve()
+    for root in (POLARIS_ROOT, BACKEND_ROOT / "scripts"):
+        for path in root.rglob("*.py"):
+            if path.resolve() == this_file or "__pycache__" in path.parts:
+                continue
+            if "tests" in path.parts:
+                continue
+            if _is_allowed_owner_path(path):
+                continue
+            offenders.extend(_runtime_execution_metadata_writes(path))
+
+    assert not offenders, (
+        "metadata['runtime_execution'] is a task-runtime-owned execution-state "
+        "projection. Production code outside runtime.task_runtime may read it "
+        "as a projection, but must not write, pop, setdefault, or update it:\n"
+        + "\n".join(offenders)
     )
 
 
