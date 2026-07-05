@@ -34,6 +34,7 @@ depends_on:
 - control_plane.run_ledger
 - director.execution
 - docs.court_workflow
+- events.fact_stream
 - llm.evaluation
 - llm.provider_runtime
 - orchestration.pm_planning
