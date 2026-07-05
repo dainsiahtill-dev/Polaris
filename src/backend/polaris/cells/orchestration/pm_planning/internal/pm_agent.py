@@ -793,7 +793,12 @@ class PMAgent(RoleAgent):
 
     def _tool_taskboard_list_ready(self) -> dict[str, Any]:
         """List tasks ready for execution."""
-        ready = self.task_runtime.list_ready_task_rows()
+        ready: list[dict[str, Any]] = []
+        for row in self.task_runtime.list_observable_task_rows():
+            status = str(row.get("status") or "").strip().lower()
+            blocked_by = row.get("blocked_by") or row.get("blockedBy") or []
+            if status in {"pending", "ready"} and not blocked_by:
+                ready.append(row)
         return {
             "ok": True,
             "tasks": [

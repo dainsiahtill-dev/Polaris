@@ -324,6 +324,28 @@ class TestPMAgentGovernanceTools:
         assert stats["stats"]["ready"] == 1
         assert stats["stats"]["pending"] == 1
 
+    def test_taskboard_list_ready_uses_observable_rows(self, tmp_path) -> None:
+        class _ProjectionOnlyTaskRuntime:
+            def list_observable_task_rows(self) -> list[dict[str, object]]:
+                return [
+                    {"id": 1, "status": "pending", "subject": "pending", "blocked_by": []},
+                    {"id": 2, "status": "ready", "subject": "ready", "blockedBy": []},
+                    {"id": 3, "status": "pending", "subject": "blocked", "blocked_by": [1]},
+                    {"id": 4, "status": "completed", "subject": "done", "blocked_by": []},
+                ]
+
+            def list_ready_task_rows(self) -> list[dict[str, object]]:
+                raise AssertionError("PM taskboard list-ready tool must read observable rows")
+
+        agent = PMAgent(str(tmp_path))
+        agent._task_runtime = _ProjectionOnlyTaskRuntime()  # type: ignore[assignment]
+
+        ready = agent._tool_taskboard_list_ready()
+
+        assert ready["ok"] is True
+        assert ready["count"] == 2
+        assert [task["id"] for task in ready["tasks"]] == [1, 2]
+
     def test_project_status_report_empty_workspace(self, tmp_path) -> None:
         agent = PMAgent(str(tmp_path))
         result = agent._tool_project_status_report(current_iteration=0)
