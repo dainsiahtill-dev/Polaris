@@ -189,9 +189,9 @@ class TestSummarizeToolResults:
 
 
 class TestCollectPendingTaskContext:
-    def test_uses_task_row_projection_before_raw_entities(self) -> None:
+    def test_uses_observable_task_row_projection_before_raw_entities(self) -> None:
         class _TaskRows:
-            def list_task_rows(self) -> list[dict[str, Any]]:
+            def list_observable_task_rows(self) -> list[dict[str, Any]]:
                 return [
                     {
                         "id": 2,
@@ -203,6 +203,9 @@ class TestCollectPendingTaskContext:
                         },
                     }
                 ]
+
+            def list_task_rows(self) -> list[dict[str, Any]]:
+                raise AssertionError("pending task context must use observable task rows")
 
             def list_all(self) -> list[object]:
                 raise AssertionError("pending task context must prefer task-row projection")

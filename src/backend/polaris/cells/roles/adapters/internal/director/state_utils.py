@@ -225,10 +225,10 @@ def collect_pending_task_context(
     """收集待办任务上下文"""
 
     lines: list[str] = []
-    list_task_rows = getattr(task_runtime, "list_task_rows", None)
-    if not callable(list_task_rows):
+    list_observable_task_rows = getattr(task_runtime, "list_observable_task_rows", None)
+    if not callable(list_observable_task_rows):
         return lines
-    entries = list_task_rows()
+    entries = list_observable_task_rows()
 
     for entry in entries:
         record: dict[str, Any]
