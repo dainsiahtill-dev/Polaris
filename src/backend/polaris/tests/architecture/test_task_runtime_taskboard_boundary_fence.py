@@ -16,6 +16,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[3]
 POLARIS_ROOT = BACKEND_ROOT / "polaris"
 TASK_RUNTIME_OWNER = POLARIS_ROOT / "cells" / "runtime" / "task_runtime"
 TASK_RUNTIME_INTERNAL_BOARD = TASK_RUNTIME_OWNER / "internal" / "task_board.py"
+TASK_RUNTIME_INTERNAL_SERVICE = TASK_RUNTIME_OWNER / "internal" / "service.py"
 TASK_RUNTIME_PUBLIC_BOARD_CONTRACT = TASK_RUNTIME_OWNER / "public" / "task_board_contract.py"
 TASK_RUNTIME_DESCRIPTOR = TASK_RUNTIME_OWNER / "generated" / "descriptor.pack.json"
 ROLE_WORKER_POOL = POLARIS_ROOT / "cells" / "roles" / "runtime" / "internal" / "worker_pool.py"
@@ -401,6 +402,23 @@ def test_raw_taskboard_dependency_state_changes_are_row_local() -> None:
         "Cross-row dependency link/unblock/reblock mutations belong in "
         "TaskRuntimeService so every side effect has task_runtime.execution "
         "facts:\n" + "\n".join(offenders)
+    )
+
+
+def test_task_runtime_service_avoids_raw_taskboard_convenience_writes() -> None:
+    source = TASK_RUNTIME_INTERNAL_SERVICE.read_text(encoding="utf-8")
+    blocked_tokens = (
+        "self._board.claim(",
+        "self._board.complete(",
+        "self._board.fail(",
+        "self._board.assign(",
+    )
+    offenders = [token for token in blocked_tokens if token in source]
+
+    assert not offenders, (
+        "TaskRuntimeService must own execution facts around task-state writes. "
+        "Do not call raw TaskBoard convenience write methods that mutate rows "
+        "without task_runtime.execution evidence:\n" + "\n".join(offenders)
     )
 
 
