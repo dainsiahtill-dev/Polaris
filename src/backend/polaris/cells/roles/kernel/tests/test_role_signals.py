@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 
 class TestBlueprintStepsSignal:
@@ -228,6 +229,56 @@ class TestResidentAgiCapabilitySurfaceSignal:
         assert "platform_hard_rule" in rendered
         assert "agi_decision_scope" in rendered
         assert "contextos.final_request_audit.read" in rendered
+
+    def test_signal_source_provider_uses_observable_task_rows_for_dependency_graph(
+        self,
+        tmp_path: Path,
+        monkeypatch: Any,
+    ) -> None:
+        from polaris.cells.roles.kernel.internal.context_gateway.gateway import (
+            ContextGatewayConfig,
+        )
+        from polaris.cells.roles.kernel.internal.context_gateway.signal_sources import (
+            SignalSourceProvider,
+        )
+        from polaris.cells.roles.kernel.internal.context_gateway.token_estimator import (
+            TokenEstimator,
+        )
+        from polaris.cells.runtime.task_runtime.public import service as task_runtime_service
+
+        class Policy:
+            max_context_tokens = 8192
+
+        class FakeTaskRuntimeService:
+            def __init__(self, workspace: str) -> None:
+                self.workspace = workspace
+
+            def get_task(self, task_id: str | int) -> dict[str, object] | None:
+                if str(task_id) == "1":
+                    return {"id": 1, "status": "failed", "subject": "first"}
+                return None
+
+            def list_observable_task_rows(self) -> list[dict[str, object]]:
+                return [{"id": 2, "status": "blocked", "subject": "second", "blocked_by": [1]}]
+
+            def list_task_rows(self) -> list[dict[str, object]]:
+                raise AssertionError("task history dependency graph must use observable task rows")
+
+        monkeypatch.setattr(task_runtime_service, "TaskRuntimeService", FakeTaskRuntimeService)
+        source = SignalSourceProvider(
+            workspace=tmp_path,
+            config=ContextGatewayConfig(),
+            policy=Policy(),
+            token_estimator=TokenEstimator(),
+            trigger_pct_resolver=lambda _override: 0.8,
+        )
+
+        rendered = source.get_task_history("1")
+
+        assert rendered is not None
+        assert "任务ID: 1" in rendered
+        assert "下游（被本任务阻塞）:" in rendered
+        assert "2: blocked - second" in rendered
 
 
 class TestResidentAgiDecisionTraceSignal:
