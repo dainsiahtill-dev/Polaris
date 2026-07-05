@@ -1080,32 +1080,46 @@ def _row_from_task_runtime_execution_fact(fact: dict[str, Any]) -> dict[str, Any
         return {}
     execution_state = str(fact.get("execution_state") or fact.get("status") or "").strip()
     status = execution_state or str(fact.get("event_type") or "unknown").strip()
-    metadata = {
-        "source": "task_runtime.execution_fact",
-        "status_source": "task_runtime.execution_fact",
-        "task_runtime_execution_fact": fact,
-    }
-    return {
-        "id": task_id,
-        "task_id": task_id,
-        "status": status,
-        "state": status,
-        "execution_state": status,
-        "running": _task_running_from_status(status),
-        "session_id": str(fact.get("session_id") or ""),
-        "workflow_run_id": str(fact.get("run_id") or ""),
-        "claimed_by": str(fact.get("claimed_by") or ""),
-        "last_claimed_by": str(fact.get("last_claimed_by") or ""),
-        "resume_state": str(fact.get("resume_state") or ""),
-        "resume_available": bool(fact.get("resume_available")),
-        "claim_attempt": _safe_int(fact.get("attempt")),
-        "resume_count": _safe_int(fact.get("resume_count")),
-        "lease_expires_at": str(fact.get("lease_expires_at") or ""),
-        "last_heartbeat_at": str(fact.get("last_heartbeat_at") or ""),
-        "last_error": str(fact.get("last_error") or ""),
-        "last_result_summary": str(fact.get("last_result_summary") or ""),
-        "metadata": metadata,
-    }
+    snapshot = fact.get("task_row_snapshot")
+    if isinstance(snapshot, dict):
+        row = dict(snapshot)
+        row.setdefault("id", task_id)
+        row.setdefault("task_id", task_id)
+    else:
+        row = {
+            "id": task_id,
+            "task_id": task_id,
+        }
+    metadata = dict(row.get("metadata") or {})
+    metadata.update(
+        {
+            "source": "task_runtime.execution_fact",
+            "status_source": "task_runtime.execution_fact",
+            "task_runtime_execution_fact": fact,
+        }
+    )
+    row.update(
+        {
+            "status": status,
+            "state": status,
+            "execution_state": status,
+            "running": _task_running_from_status(status),
+            "session_id": str(fact.get("session_id") or ""),
+            "workflow_run_id": str(fact.get("run_id") or ""),
+            "claimed_by": str(fact.get("claimed_by") or ""),
+            "last_claimed_by": str(fact.get("last_claimed_by") or ""),
+            "resume_state": str(fact.get("resume_state") or ""),
+            "resume_available": bool(fact.get("resume_available")),
+            "claim_attempt": _safe_int(fact.get("attempt")),
+            "resume_count": _safe_int(fact.get("resume_count")),
+            "lease_expires_at": str(fact.get("lease_expires_at") or ""),
+            "last_heartbeat_at": str(fact.get("last_heartbeat_at") or ""),
+            "last_error": str(fact.get("last_error") or ""),
+            "last_result_summary": str(fact.get("last_result_summary") or ""),
+            "metadata": metadata,
+        }
+    )
+    return row
 
 
 def _apply_task_runtime_execution_fact_overlay(rows: list[dict[str, Any]], workspace: str) -> list[dict[str, Any]]:

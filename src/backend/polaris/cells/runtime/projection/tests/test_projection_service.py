@@ -460,6 +460,18 @@ def test_snapshot_task_rows_project_task_runtime_execution_facts_when_rows_are_m
                 "resume_available": False,
                 "lease_expires_at": "2026-07-04T00:00:00+00:00",
                 "last_heartbeat_at": "2026-07-03T23:59:00+00:00",
+                "task_row_snapshot": {
+                    "id": "TASK-3",
+                    "task_id": "TASK-3",
+                    "status": "in_progress",
+                    "subject": "Snapshot task subject",
+                    "description": "Preserved from execution event row snapshot",
+                    "priority": "HIGH",
+                    "metadata": {
+                        "source": "task_runtime.row_snapshot",
+                        "target_files": ["src/main.py"],
+                    },
+                },
             },
         )
     )
@@ -473,6 +485,10 @@ def test_snapshot_task_rows_project_task_runtime_execution_facts_when_rows_are_m
     assert snapshot["tasks"][0]["session_id"] == "session-3"
     assert snapshot["tasks"][0]["claim_attempt"] == 2
     assert snapshot["tasks"][0]["resume_count"] == 1
+    assert snapshot["tasks"][0]["subject"] == "Snapshot task subject"
+    assert snapshot["tasks"][0]["description"] == "Preserved from execution event row snapshot"
+    assert snapshot["tasks"][0]["priority"] == "HIGH"
+    assert snapshot["tasks"][0]["metadata"]["target_files"] == ["src/main.py"]
     assert snapshot["tasks"][0]["metadata"]["source"] == "task_runtime.execution_fact"
 
 
