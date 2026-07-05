@@ -524,12 +524,25 @@ def _pm_plan_task_count(workspace: str) -> int:
 
 
 def _director_resume_task_files(task_dir: Path) -> list[Path]:
-    try:
-        return sorted(
-            path for path in task_dir.glob("task_*.json") if path.is_file() and not path.name.endswith(".session.json")
-        )
-    except OSError:
+    inspection = TaskRuntimeService.inspect_reexecution_source_task_rows(task_dir)
+    task_files = inspection.get("task_files")
+    if not isinstance(task_files, list):
         return []
+    return [task_dir / str(name) for name in task_files if str(name or "").strip()]
+
+
+def _director_resume_task_payloads(task_dir: Path) -> list[dict[str, Any]]:
+    inspection = TaskRuntimeService.inspect_reexecution_source_task_rows(task_dir)
+    task_rows = inspection.get("task_rows")
+    return [dict(row) for row in task_rows if isinstance(row, dict)] if isinstance(task_rows, list) else []
+
+
+def _director_resume_task_rows_mtime(task_dir: Path) -> float:
+    inspection = TaskRuntimeService.inspect_reexecution_source_task_rows(task_dir)
+    try:
+        return float(inspection.get("latest_mtime") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _taskboard_record_count(workspace: str) -> int:
@@ -566,7 +579,7 @@ def _director_resume_source_task_dirs(workspace: str) -> list[Path]:
 
 
 def _director_resume_taskboard_score(task_dir: Path) -> tuple[int, int, float]:
-    task_files = _director_resume_task_files(task_dir)
+    task_payloads = _director_resume_task_payloads(task_dir)
     plan = _load_json_object(task_dir / "plan.json")
     tasks = plan.get("tasks")
     planned_count = len(tasks) if isinstance(tasks, list) else 0
@@ -574,8 +587,12 @@ def _director_resume_taskboard_score(task_dir: Path) -> tuple[int, int, float]:
     blueprint_count = 0
     with contextlib.suppress(OSError):
         blueprint_count = len([path for path in blueprint_dir.glob("ce_*.json") if path.is_file()])
-    mtime = max((path.stat().st_mtime for path in [task_dir / "plan.json", *task_files] if path.exists()), default=0.0)
-    return (blueprint_count, min(planned_count, len(task_files)), mtime)
+    mtime = max(
+        (path.stat().st_mtime for path in [task_dir / "plan.json"] if path.exists()),
+        default=0.0,
+    )
+    mtime = max(mtime, _director_resume_task_rows_mtime(task_dir))
+    return (blueprint_count, min(planned_count, len(task_payloads)), mtime)
 
 
 def _raise_director_resume_task_runtime_failure(result: dict[str, Any]) -> None:
@@ -599,16 +616,11 @@ def _rehydrate_director_resume_taskboard(workspace: str) -> str:
     )
     for source_dir in candidates:
         plan_payload = _load_json_object(source_dir / "plan.json")
-        if not isinstance(plan_payload.get("tasks"), list) or not _director_resume_task_files(source_dir):
+        task_payloads = _director_resume_task_payloads(source_dir)
+        if not isinstance(plan_payload.get("tasks"), list) or not task_payloads:
             continue
         target_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_dir / "plan.json", target_dir / "plan.json")
-        task_payloads: list[dict[str, Any]] = []
-        for task_file in _director_resume_task_files(source_dir):
-            payload = _load_json_object(task_file)
-            if not payload:
-                continue
-            task_payloads.append(payload)
         prepare_result = TaskRuntimeService(workspace).import_task_rows_for_reexecution(
             task_payloads,
             source="factory.director_resume.rehydration",

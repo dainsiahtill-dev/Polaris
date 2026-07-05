@@ -1141,6 +1141,42 @@ def test_task_runtime_import_rows_for_reexecution_preserves_ids_and_events(tmp_p
     assert imported_event["payload"]["details"]["source_task_dir"] == "/tmp/source/runtime/tasks"
 
 
+def test_task_runtime_inspects_reexecution_source_task_rows(tmp_path: Path) -> None:
+    task_dir = tmp_path / "runtime" / "tasks"
+    task_dir.mkdir(parents=True)
+    (task_dir / "task_2.json").write_text(
+        json.dumps({"id": 2, "status": "failed", "metadata": {"pm_task_id": "TASK-2"}}),
+        encoding="utf-8",
+    )
+    (task_dir / "task_2.session.json").write_text('{"status":"active"}', encoding="utf-8")
+    (task_dir / "task_bad.json").write_text("{not-json", encoding="utf-8")
+    (task_dir / "notes.json").write_text("{}", encoding="utf-8")
+
+    inspection = TaskRuntimeService.inspect_reexecution_source_task_rows(task_dir)
+
+    assert inspection["task_rows"] == [
+        {"id": 2, "status": "failed", "metadata": {"pm_task_id": "TASK-2"}}
+    ]
+    assert inspection["task_files"] == ["task_2.json"]
+    assert inspection["task_count"] == 1
+    assert isinstance(inspection["latest_mtime"], float)
+
+
+def test_task_runtime_reexecution_source_reader_rejects_non_task_dir(tmp_path: Path) -> None:
+    non_task_dir = tmp_path / "runtime" / "not_tasks"
+    non_task_dir.mkdir(parents=True)
+    (non_task_dir / "task_1.json").write_text('{"id":1}', encoding="utf-8")
+
+    inspection = TaskRuntimeService.inspect_reexecution_source_task_rows(non_task_dir)
+
+    assert inspection == {
+        "task_rows": [],
+        "task_files": [],
+        "task_count": 0,
+        "latest_mtime": 0.0,
+    }
+
+
 def test_task_runtime_service_materializes_legacy_task_and_claims_it(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

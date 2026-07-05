@@ -418,6 +418,8 @@ def test_director_resume_preparation_uses_task_runtime_owner() -> None:
     }
     blocked_tokens = (
         "_director_resume_reset_task_payload",
+        'glob("task_*.json")',
+        "glob('task_*.json')",
         "target_dir / task_file.name",
         "task_file.write_text(",
         "session_file.unlink(",
@@ -439,6 +441,11 @@ def test_director_resume_preparation_uses_task_runtime_owner() -> None:
         f"{source_name}:reset_task_rows_for_reexecution"
         for source_name, source in sources.items()
         if "reset_task_rows_for_reexecution" not in source
+    )
+    missing_owner_calls.extend(
+        f"{source_name}:inspect_reexecution_source_task_rows"
+        for source_name, source in sources.items()
+        if "inspect_reexecution_source_task_rows" not in source
     )
 
     assert not offenders, (

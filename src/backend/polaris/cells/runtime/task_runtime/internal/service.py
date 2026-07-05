@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import shutil
@@ -270,6 +271,60 @@ class TaskRuntimeService:
             deleted_session_files=deleted_session_files,
             execution_events=execution_events,
         )
+
+    @staticmethod
+    def inspect_reexecution_source_task_rows(task_dir: str | Path) -> dict[str, Any]:
+        """Read source task-row payloads for controlled reexecution import.
+
+        This is a task-runtime-owned read helper for Director resume.  Factory
+        and bench entrypoints may discover candidate ``runtime/tasks``
+        directories, but the task row JSON loading itself remains in the owner
+        cell so raw ``task_*.json`` file layout knowledge does not leak into
+        orchestration code.
+
+        The helper is intentionally read-only and does not validate authority to
+        import the rows.  Mutation remains in ``import_task_rows_for_reexecution``.
+
+        Complexity:
+            O(f + b) time over task row files and their JSON bodies, O(r) memory
+            for accepted row payloads.
+        """
+
+        source_dir = Path(task_dir)
+        if source_dir.name != "tasks" or not source_dir.is_dir():
+            return {
+                "task_rows": [],
+                "task_files": [],
+                "task_count": 0,
+                "latest_mtime": 0.0,
+            }
+        try:
+            task_files = sorted(
+                path
+                for path in source_dir.glob("task_*.json")
+                if path.is_file() and not path.name.endswith(".session.json")
+            )
+        except OSError:
+            task_files = []
+
+        rows: list[dict[str, Any]] = []
+        accepted_files: list[str] = []
+        latest_mtime = 0.0
+        for task_file in task_files:
+            try:
+                latest_mtime = max(latest_mtime, float(task_file.stat().st_mtime))
+                payload = json.loads(task_file.read_text(encoding="utf-8"))
+            except (OSError, TypeError, ValueError):
+                continue
+            if isinstance(payload, dict):
+                rows.append(dict(payload))
+                accepted_files.append(task_file.name)
+        return {
+            "task_rows": rows,
+            "task_files": accepted_files,
+            "task_count": len(rows),
+            "latest_mtime": latest_mtime,
+        }
 
     @staticmethod
     def normalize_task_id(task_id: Any) -> int | None:
