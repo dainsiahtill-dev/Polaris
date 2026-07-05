@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import json
+from collections import Counter
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
@@ -86,6 +87,36 @@ TASK_RUNTIME_OWNER_TRANSITION_CALL_ALLOWLIST = {
         "polaris/cells/roles/adapters/internal/qa_adapter.py",
         "polaris/delivery/http/routers/factory.py",
     },
+}
+REVIEWED_TASK_RUNTIME_SERVICE_BOARD_WRITES = {
+    ("_apply_dependency_completion_side_effects", "notify_ready_tasks"): 1,
+    ("_apply_dependency_completion_side_effects", "update"): 1,
+    ("_apply_reopen_downstream_reblocks", "update"): 1,
+    ("_apply_reverse_dependency_links", "update_blocks"): 1,
+    ("_apply_terminal_session_reconcile", "reconcile_terminal_status"): 1,
+    ("_apply_terminal_session_reconcile", "update"): 2,
+    ("_create_with_execution_event", "create"): 1,
+    ("_reopen_with_execution_event", "reopen"): 1,
+    ("_update_with_execution_event", "update"): 1,
+    ("cancel_task_row_for_deduplication", "update"): 1,
+    ("claim_execution", "update"): 2,
+    ("complete_execution", "update"): 1,
+    ("fail_execution", "update"): 1,
+    ("fail_task_row_after_rework_exhausted", "update"): 1,
+    ("fail_task_row_from_role_adapter", "update"): 1,
+    ("heartbeat_execution", "update"): 1,
+    ("refresh_dependency_unblocks", "update"): 2,
+    ("suspend_active_executions_for_run", "update"): 1,
+    ("suspend_execution", "update"): 1,
+}
+TASK_RUNTIME_SERVICE_RAW_BOARD_WRITE_METHODS = {
+    "create",
+    "notify_ready_tasks",
+    "reconcile_terminal_status",
+    "reopen",
+    "update",
+    "update_blocks",
+    "update_status",
 }
 
 
@@ -277,6 +308,23 @@ def _call_name(node: ast.AST) -> str:
     return ""
 
 
+def _parent_lookup(tree: ast.AST) -> dict[ast.AST, ast.AST]:
+    parents: dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+    return parents
+
+
+def _enclosing_function_name(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> str:
+    current = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return current.name
+    return "<module>"
+
+
 def _is_raw_taskboard_factory_call(node: ast.AST) -> bool:
     return isinstance(node, ast.Call) and _call_name(node.func) in {"TaskBoard", "create_taskboard"}
 
@@ -321,6 +369,25 @@ def _raw_taskboard_create_calls(path: Path) -> list[str]:
         if receiver in taskboard_receivers or _is_raw_taskboard_factory_call(func.value):
             offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} calls raw TaskBoard.create()")
     return offenders
+
+
+def _task_runtime_service_raw_board_write_calls() -> Counter[tuple[str, str]]:
+    source = TASK_RUNTIME_INTERNAL_SERVICE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    parents = _parent_lookup(tree)
+    calls: Counter[tuple[str, str]] = Counter()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute):
+            continue
+        if _call_name(func.value) != "self._board":
+            continue
+        if func.attr not in TASK_RUNTIME_SERVICE_RAW_BOARD_WRITE_METHODS:
+            continue
+        calls[(_enclosing_function_name(node, parents), func.attr)] += 1
+    return calls
 
 
 def _function_def(path: Path, name: str) -> ast.FunctionDef:
@@ -995,6 +1062,28 @@ def test_task_runtime_service_avoids_raw_taskboard_convenience_writes() -> None:
         "TaskRuntimeService must own execution facts around task-state writes. "
         "Do not call raw TaskBoard convenience write methods that mutate rows "
         "without task_runtime.execution evidence:\n" + "\n".join(offenders)
+    )
+
+
+def test_task_runtime_service_raw_board_writes_are_reviewed() -> None:
+    actual = _task_runtime_service_raw_board_write_calls()
+    expected = Counter(REVIEWED_TASK_RUNTIME_SERVICE_BOARD_WRITES)
+    offenders: list[str] = []
+    for key in sorted(set(actual) | set(expected)):
+        actual_count = actual.get(key, 0)
+        expected_count = expected.get(key, 0)
+        if actual_count != expected_count:
+            method_name, board_method = key
+            offenders.append(
+                f"{method_name} -> self._board.{board_method}: "
+                f"expected {expected_count}, found {actual_count}"
+            )
+
+    assert not offenders, (
+        "TaskRuntimeService is the only reviewed owner for raw TaskBoard writes. "
+        "New raw Board write calls must be audited for execution-ledger evidence "
+        "and recorded in REVIEWED_TASK_RUNTIME_SERVICE_BOARD_WRITES:\n"
+        + "\n".join(offenders)
     )
 
 
