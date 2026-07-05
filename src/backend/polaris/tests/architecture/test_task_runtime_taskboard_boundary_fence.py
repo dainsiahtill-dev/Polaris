@@ -109,6 +109,28 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_WRITES = {
     ("suspend_active_executions_for_run", "update"): 1,
     ("suspend_execution", "update"): 1,
 }
+REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
+    ("_apply_reopen_downstream_reblocks", "get"): 1,
+    ("_apply_reverse_dependency_links", "get"): 1,
+    ("_apply_terminal_session_reconcile", "get"): 3,
+    ("_augment_task_row", "get"): 1,
+    ("_dependent_rows_blocked_by", "list_all"): 1,
+    ("_find_terminal_session_snapshot", "get"): 1,
+    ("_get_task_by_external_task_id", "list_all"): 1,
+    ("_task_has_unresolved_dependencies", "get"): 1,
+    ("cancel_task_row_for_deduplication", "get"): 1,
+    ("claim_execution", "get"): 1,
+    ("complete_execution", "get"): 1,
+    ("fail_execution", "get"): 1,
+    ("fail_task_row_from_role_adapter", "get"): 1,
+    ("get_task", "get"): 1,
+    ("list_task_rows", "list_all"): 1,
+    ("refresh_dependency_unblocks", "list_all"): 1,
+    ("reset_task_rows_for_reexecution", "list_all"): 1,
+    ("suspend_active_executions_for_run", "list_all"): 1,
+    ("suspend_execution", "get"): 1,
+    ("task_exists", "get"): 1,
+}
 TASK_RUNTIME_SERVICE_RAW_BOARD_WRITE_METHODS = {
     "create",
     "notify_ready_tasks",
@@ -117,6 +139,17 @@ TASK_RUNTIME_SERVICE_RAW_BOARD_WRITE_METHODS = {
     "update",
     "update_blocks",
     "update_status",
+}
+TASK_RUNTIME_SERVICE_RAW_BOARD_READ_METHODS = {
+    "get",
+    "get_blocked_tasks",
+    "get_dependency_graph",
+    "get_ready_tasks",
+    "get_stats",
+    "get_task",
+    "list_all",
+    "list_my_tasks",
+    "list_ready",
 }
 
 
@@ -423,6 +456,14 @@ def _raw_taskboard_create_calls(path: Path) -> list[str]:
 
 
 def _task_runtime_service_raw_board_write_calls() -> Counter[tuple[str, str]]:
+    return _task_runtime_service_raw_board_calls(TASK_RUNTIME_SERVICE_RAW_BOARD_WRITE_METHODS)
+
+
+def _task_runtime_service_raw_board_read_calls() -> Counter[tuple[str, str]]:
+    return _task_runtime_service_raw_board_calls(TASK_RUNTIME_SERVICE_RAW_BOARD_READ_METHODS)
+
+
+def _task_runtime_service_raw_board_calls(methods: set[str]) -> Counter[tuple[str, str]]:
     source = TASK_RUNTIME_INTERNAL_SERVICE.read_text(encoding="utf-8")
     tree = ast.parse(source)
     parents = _parent_lookup(tree)
@@ -435,7 +476,7 @@ def _task_runtime_service_raw_board_write_calls() -> Counter[tuple[str, str]]:
             continue
         if _call_name(func.value) != "self._board":
             continue
-        if func.attr not in TASK_RUNTIME_SERVICE_RAW_BOARD_WRITE_METHODS:
+        if func.attr not in methods:
             continue
         calls[(_enclosing_function_name(node, parents), func.attr)] += 1
     return calls
@@ -1155,6 +1196,28 @@ def test_task_runtime_service_raw_board_writes_are_reviewed() -> None:
         "TaskRuntimeService is the only reviewed owner for raw TaskBoard writes. "
         "New raw Board write calls must be audited for execution-ledger evidence "
         "and recorded in REVIEWED_TASK_RUNTIME_SERVICE_BOARD_WRITES:\n"
+        + "\n".join(offenders)
+    )
+
+
+def test_task_runtime_service_raw_board_reads_are_reviewed() -> None:
+    actual = _task_runtime_service_raw_board_read_calls()
+    expected = Counter(REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS)
+    offenders: list[str] = []
+    for key in sorted(set(actual) | set(expected)):
+        actual_count = actual.get(key, 0)
+        expected_count = expected.get(key, 0)
+        if actual_count != expected_count:
+            method_name, board_method = key
+            offenders.append(
+                f"{method_name} -> self._board.{board_method}: "
+                f"expected {expected_count}, found {actual_count}"
+            )
+
+    assert not offenders, (
+        "TaskRuntimeService is the reviewed owner for raw TaskBoard reads. "
+        "New raw Board read calls must be audited against the observable "
+        "read-model boundary and recorded in REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS:\n"
         + "\n".join(offenders)
     )
 
