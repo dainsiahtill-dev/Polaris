@@ -124,32 +124,24 @@
           "doc": ""
         },
         {
-          "name": "create",
-          "doc": ""
+          "name": "create_task_row",
+          "doc": "Create a task and return the runtime row projection with event evidence."
         },
         {
           "name": "ensure_task_row",
           "doc": "Materialize a legacy/orchestration task into the canonical taskboard."
         },
         {
-          "name": "get",
-          "doc": ""
+          "name": "update_task_row",
+          "doc": "Update a task and return the runtime row projection with event evidence."
         },
         {
           "name": "get_task",
           "doc": ""
         },
         {
-          "name": "update",
-          "doc": ""
-        },
-        {
-          "name": "update_task",
-          "doc": ""
-        },
-        {
-          "name": "reopen",
-          "doc": ""
+          "name": "reopen_task_row",
+          "doc": "Reopen a task and return the runtime row projection with event evidence."
         },
         {
           "name": "list_task_rows",

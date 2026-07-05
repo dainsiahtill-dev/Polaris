@@ -157,6 +157,18 @@ TASK_RUNTIME_SERVICE_RETIRED_PUBLIC_METHODS = {
     "list_all",
     "list_ready",
 }
+TASK_RUNTIME_SERVICE_RETIRED_ENTITY_METHODS = {
+    "create",
+    "get",
+    "reopen",
+    "update",
+    "update_task",
+}
+TASK_RUNTIME_SERVICE_REQUIRED_ROW_MUTATION_METHODS = {
+    "create_task_row",
+    "reopen_task_row",
+    "update_task_row",
+}
 TASK_RUNTIME_SERVICE_REQUIRED_READ_MODEL_METHODS = {
     "get_task_row_stats",
     "list_observable_task_rows",
@@ -1404,6 +1416,55 @@ def test_task_runtime_descriptor_does_not_advertise_retired_service_methods() ->
         "compatibility methods. Public consumers should use row/session APIs "
         "such as list_task_rows(), list_ready_task_rows(), get_task_row_stats(), "
         "and list_observable_task_rows():\n" + "\n".join(sorted(offenders))
+    )
+
+
+def test_task_runtime_descriptor_does_not_advertise_retired_entity_methods() -> None:
+    descriptor = json.loads(TASK_RUNTIME_DESCRIPTOR.read_text(encoding="utf-8"))
+    capabilities = descriptor.get("capabilities")
+    assert isinstance(capabilities, list), "task_runtime descriptor must expose a capabilities list"
+
+    offenders: list[str] = []
+    for item in capabilities:
+        if not isinstance(item, dict):
+            continue
+        if item.get("name") != "TaskRuntimeService":
+            continue
+        for method in item.get("methods", []):
+            if not isinstance(method, dict):
+                continue
+            method_name = str(method.get("name") or "")
+            if method_name in TASK_RUNTIME_SERVICE_RETIRED_ENTITY_METHODS:
+                offenders.append(method_name)
+
+    assert not offenders, (
+        "task_runtime descriptor must not advertise retired entity-returning "
+        "TaskRuntimeService compatibility methods. Public consumers should use "
+        "row/session APIs such as create_task_row(), update_task_row(), "
+        "reopen_task_row(), and get_task():\n" + "\n".join(sorted(offenders))
+    )
+
+
+def test_task_runtime_descriptor_advertises_current_row_mutation_methods() -> None:
+    descriptor = json.loads(TASK_RUNTIME_DESCRIPTOR.read_text(encoding="utf-8"))
+    capabilities = descriptor.get("capabilities")
+    assert isinstance(capabilities, list), "task_runtime descriptor must expose a capabilities list"
+
+    advertised: set[str] = set()
+    for item in capabilities:
+        if not isinstance(item, dict):
+            continue
+        if item.get("name") != "TaskRuntimeService":
+            continue
+        for method in item.get("methods", []):
+            if isinstance(method, dict):
+                advertised.add(str(method.get("name") or ""))
+
+    missing = sorted(TASK_RUNTIME_SERVICE_REQUIRED_ROW_MUTATION_METHODS - advertised)
+    assert not missing, (
+        "task_runtime descriptor must advertise current row mutation methods so "
+        "agents use APIs that return projection and execution-event evidence:\n"
+        + "\n".join(missing)
     )
 
 
