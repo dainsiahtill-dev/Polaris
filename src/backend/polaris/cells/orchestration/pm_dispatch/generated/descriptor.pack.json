@@ -1109,69 +1109,6 @@
     },
     {
       "type": "class",
-      "name": "StateSyncEvent",
-      "description": "Internal event used by TaskBoardStateBridge.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/state_bridge.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TaskBoardStateBridge",
-      "description": "Async bridge that syncs TaskBoard events into workflow runtime state.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/state_bridge.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "notify_task_created",
-          "doc": ""
-        },
-        {
-          "name": "notify_task_updated",
-          "doc": ""
-        },
-        {
-          "name": "notify_task_completed",
-          "doc": ""
-        },
-        {
-          "name": "_workflow_id_or_default",
-          "doc": ""
-        },
-        {
-          "name": "_enqueue",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "StateConsistencyChecker",
-      "description": "Checks consistency between TaskBoard and workflow runtime task states.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/state_bridge.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_now_iso",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/state_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_status",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/state_bridge.py"
-    },
-    {
-      "type": "class",
       "name": "RoleEntrySpecRequest",
       "description": "角色条目请求",
       "defined_in": "polaris/delivery/http/v2/orchestration.py",

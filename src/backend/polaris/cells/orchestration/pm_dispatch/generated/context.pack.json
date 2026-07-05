@@ -9,7 +9,6 @@
     "polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py",
     "polaris/cells/orchestration/pm_dispatch/internal/error_classifier.py",
     "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py",
-    "polaris/cells/orchestration/pm_dispatch/internal/state_bridge.py",
     "polaris/cells/orchestration/pm_dispatch/public/contracts.py",
     "polaris/cells/orchestration/pm_dispatch/public/service.py"
   ],

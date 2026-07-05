@@ -1,32 +1,18 @@
 """Tests for architecture improvements: state bridge and error classifier.
 
 This module tests the P0 improvements:
-1. State bridge between TaskBoard and Workflow Runtime
-2. Error classification and recovery strategies
-3. Circuit breaker pattern
+1. Error classification and recovery strategies
+2. Circuit breaker pattern
 """
 
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
-
-import pytest
 from polaris.cells.orchestration.pm_dispatch.internal.error_classifier import (
     CircuitBreaker,
     ExponentialBackoff,
 )
-from polaris.cells.orchestration.pm_dispatch.internal.state_bridge import (
-    StateConsistencyChecker,
-    TaskBoardStateBridge,
-)
 from polaris.cells.orchestration.shared_types import ErrorClassifier
 from polaris.cells.orchestration.workflow_runtime.internal.models import TaskFailureRecord
-from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.runtime.embedded.store_sqlite import (
-    SqliteRuntimeStore,
-)
-from polaris.cells.runtime.task_runtime.internal.task_board import TaskBoard
-from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.errors import ErrorCategory
 
 
@@ -171,114 +157,6 @@ class TestCircuitBreaker:
         cb.record_success()
 
         assert cb.state == CircuitBreaker.State.CLOSED
-
-
-class TestTaskBoardStateBridge:
-    """Test TaskBoard state bridge."""
-
-    @pytest.fixture
-    def temp_workspace(self, tmp_path: Path) -> str:
-        """Create a temporary workspace."""
-        return str(tmp_path / "workspace")
-
-    @pytest.mark.asyncio
-    async def test_bridge_initialization_without_store(self, temp_workspace: str) -> None:
-        """Bridge should work without workflow store."""
-        task_board = TaskBoard(temp_workspace)
-        bridge = TaskBoardStateBridge(task_board, workflow_store=None)
-
-        # Should not raise
-        await bridge.start()
-        await bridge.stop()
-
-    @pytest.mark.asyncio
-    async def test_bridge_with_workflow_store(self, temp_workspace: str) -> None:
-        """Bridge should sync to workflow store."""
-        task_board = TaskBoard(temp_workspace)
-        store = SqliteRuntimeStore(":memory:")
-        bridge = TaskBoardStateBridge(task_board, workflow_store=store)
-
-        await bridge.start()
-
-        # Create a task in TaskBoard
-        task = task_board.create("Test task")
-
-        # Notify bridge
-        bridge.notify_task_created(task.id, subject="Test task")
-
-        # Give time for async processing
-        await asyncio.sleep(0.1)
-
-        await bridge.stop()
-
-    @pytest.mark.asyncio
-    async def test_unified_task_status(self, temp_workspace: str) -> None:
-        """Should provide unified task status from both sources."""
-        task_board = TaskBoard(temp_workspace)
-        store = SqliteRuntimeStore(":memory:")
-        bridge = TaskBoardStateBridge(task_board, workflow_store=store)
-
-        # Create a task
-        task = task_board.create("Test task")
-
-        # Get unified status
-        status = await bridge.get_unified_task_status(str(task.id))
-
-        assert status is not None
-        assert status["task_id"] == str(task.id)
-        assert "sources" in status
-        assert "task_board" in status["sources"]
-
-
-class TestStateConsistencyChecker:
-    """Test state consistency checker."""
-
-    @pytest.fixture
-    def temp_workspace(self, tmp_path: Path) -> str:
-        """Create a temporary workspace."""
-        return str(tmp_path / "workspace")
-
-    @pytest.fixture
-    async def temp_store(self, tmp_path: Path):
-        """Create a temporary SQLite store."""
-        db_path = str(tmp_path / "test.db")
-        store = SqliteRuntimeStore(db_path)
-        yield store
-
-    @pytest.mark.asyncio
-    async def test_empty_check_passes(self, temp_workspace: str, tmp_path: Path) -> None:
-        """Empty task-row projection should be consistent."""
-        task_runtime = TaskRuntimeService(temp_workspace)
-        db_path = str(tmp_path / "test.db")
-        store = SqliteRuntimeStore(db_path)
-        # Initialize the workflow execution table by creating an execution
-        await store.create_execution("test-workflow", "test", {})
-        checker = StateConsistencyChecker(task_runtime, workflow_store=store)
-
-        report = await checker.check_consistency("test-workflow")
-
-        assert report["consistent"] is True
-        assert report["summary"]["checked"] == 0
-        assert len(report["inconsistencies"]) == 0
-
-    @pytest.mark.asyncio
-    async def test_detects_missing_in_workflow(self, temp_workspace: str, tmp_path: Path) -> None:
-        """Should detect task-row projection entries missing from workflow."""
-        task_runtime = TaskRuntimeService(temp_workspace)
-        db_path = str(tmp_path / "test.db")
-        store = SqliteRuntimeStore(db_path)
-        # Initialize the workflow execution table
-        await store.create_execution("test-workflow", "test", {})
-        checker = StateConsistencyChecker(task_runtime, workflow_store=store)
-
-        # Create task only in the task-runtime projection.
-        task_runtime.create_task_row(subject="Test task")
-
-        report = await checker.check_consistency("test-workflow")
-
-        assert report["summary"]["missing_in_workflow"] == 1
-        assert len(report["inconsistencies"]) == 1
-        assert report["inconsistencies"][0]["type"] == "missing_in_workflow"
 
 
 class TestTaskFailureRecord:
