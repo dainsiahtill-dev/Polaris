@@ -176,6 +176,13 @@ _VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     },
 }
 
+_EXECUTION_OWNER_STATUSES: frozenset[TaskStatus] = frozenset(
+    {
+        TaskStatus.CLAIMED,
+        TaskStatus.IN_PROGRESS,
+    }
+)
+
 _PRIORITY_LABEL_TO_VALUE: dict[str, int] = {
     TaskPriority.LOW.value: 0,
     TaskPriority.MEDIUM.value: 1,
@@ -691,6 +698,7 @@ class TaskBoard:
         workflow_id: str = "",
         *,
         allow_terminal_status: bool = False,
+        allow_execution_status: bool = False,
     ) -> Task | None:
         """Update task status with state machine validation.
 
@@ -706,6 +714,11 @@ class TaskBoard:
         if is_terminal and not allow_terminal_status:
             raise RuntimeError(
                 "terminal_taskboard_status_requires_task_runtime_owner_transition:"
+                f"{next_status.value}"
+            )
+        if next_status in _EXECUTION_OWNER_STATUSES and not allow_execution_status:
+            raise RuntimeError(
+                "taskboard_execution_status_requires_task_runtime_owner_transition:"
                 f"{next_status.value}"
             )
 
@@ -803,6 +816,7 @@ class TaskBoard:
         metadata: dict[str, Any] | None = None,
         *,
         allow_terminal_status: bool = False,
+        allow_execution_status: bool = False,
     ) -> Task | None:
         """Compatibility update API (delegates to update_status)."""
         import copy
@@ -816,6 +830,7 @@ class TaskBoard:
                     task_id,
                     status,
                     allow_terminal_status=allow_terminal_status,
+                    allow_execution_status=allow_execution_status,
                 )
                 if task is None:
                     return None
@@ -884,20 +899,7 @@ class TaskBoard:
             return copy.deepcopy(task) if task else None
 
     def claim(self, task_id: int, worker_id: str) -> bool:
-        """Claim a task for a worker (READY -> CLAIMED)."""
-        with self.transaction():
-            task = self._cache.get(task_id)
-            if not task:
-                return False
-            # Check dependencies are satisfied
-            blocked = any(
-                self._cache.get(dep_id) is None or self._cache[dep_id].status != TaskStatus.COMPLETED
-                for dep_id in task.blocked_by
-            )
-            if blocked:
-                return False
-            updated = self.update(task_id, status=TaskStatus.IN_PROGRESS, assignee=worker_id)
-            return updated is not None
+        raise RuntimeError("TaskBoard.claim is retired; use TaskRuntimeService.claim_execution()")
 
     def complete(self, task_id: int) -> bool:
         raise RuntimeError("TaskBoard.complete is retired; use TaskRuntimeService.complete_execution()")

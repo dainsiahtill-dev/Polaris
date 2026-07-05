@@ -109,6 +109,22 @@ def _is_terminal_task_row_update_status(status: TaskStatus | str | None) -> bool
         return False
 
 
+def _is_execution_task_row_update_status(status: TaskStatus | str | None) -> bool:
+    """Return whether a public row update is attempting to write execution state."""
+
+    if status is None:
+        return False
+    if isinstance(status, TaskStatus):
+        return status in {TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS}
+    token = str(status or "").strip()
+    if not token:
+        return False
+    try:
+        return TaskStatus(token) in {TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS}
+    except ValueError:
+        return False
+
+
 class TaskRuntimeService:
     """Runtime task lifecycle service for the ``runtime.task_runtime`` cell.
 
@@ -651,6 +667,11 @@ class TaskRuntimeService:
         if _is_terminal_task_row_update_status(status):
             raise RuntimeError(
                 "terminal_task_status_requires_task_runtime_owner_transition:"
+                f"{str(status.value if isinstance(status, TaskStatus) else status).strip().lower()}"
+            )
+        if _is_execution_task_row_update_status(status):
+            raise RuntimeError(
+                "execution_task_status_requires_task_runtime_owner_transition:"
                 f"{str(status.value if isinstance(status, TaskStatus) else status).strip().lower()}"
             )
         updated = self._board.update(
@@ -1345,6 +1366,7 @@ class TaskRuntimeService:
                         resume_state="resumed" if existing_session.resume_count > 0 else "",
                         extra_metadata=metadata,
                     ),
+                    allow_execution_status=True,
                 )
                 row = self._augment_task_row(updated.to_dict() if updated is not None else task.to_dict())
                 execution_event = self._append_execution_event(
@@ -1402,6 +1424,7 @@ class TaskRuntimeService:
                 resume_state="resumed" if resume_from_previous else "",
                 extra_metadata=metadata,
             ),
+            allow_execution_status=True,
         )
         row = self._augment_task_row(updated_task.to_dict() if updated_task is not None else task.to_dict())
         execution_event = self._append_execution_event(

@@ -46,16 +46,16 @@ def test_task_runtime_service_manages_task_rows(tmp_path: Path) -> None:
 
     updated = service.update_task_row(
         f"task-{created['id']}",
-        status="in_progress",
+        status="ready",
         metadata={"owner_role": "director"},
     )
     assert updated is not None
-    assert str(updated["status"]) == "in_progress"
+    assert str(updated["status"]) == "ready"
 
     row = service.get_task(f"task-{created['id']}")
     assert isinstance(row, dict)
     assert row["subject"] == "wire runtime.v2 taskboard"
-    assert row["status"] == "in_progress"
+    assert row["status"] == "ready"
     assert row["metadata"]["owner_role"] == "director"
 
     rows = service.list_task_rows()
@@ -327,12 +327,12 @@ def test_update_task_row_reports_event_append_failure_without_persisting_evidenc
 
     row = service.update_task_row(
         created["id"],
-        status="in_progress",
+        status="ready",
         metadata={"owner_role": "director"},
     )
 
     assert row is not None
-    assert row["status"] == "in_progress"
+    assert row["status"] == "ready"
     assert row["execution_event"] == {
         "ok": False,
         "event_type": "updated",
@@ -353,6 +353,10 @@ def test_update_task_row_rejects_terminal_status_owner_bypass(tmp_path: Path) ->
 
     with pytest.raises(RuntimeError, match="terminal_task_status_requires_task_runtime_owner_transition:completed"):
         service.update_task_row(created["id"], status="completed")
+    with pytest.raises(RuntimeError, match="execution_task_status_requires_task_runtime_owner_transition:in_progress"):
+        service.update_task_row(created["id"], status="in_progress")
+    with pytest.raises(RuntimeError, match="execution_task_status_requires_task_runtime_owner_transition:claimed"):
+        service.update_task_row(created["id"], status="claimed")
 
     row = service.get_task(created["id"])
     assert row is not None

@@ -42,7 +42,11 @@ def test_task_board_save_retries_windows_permission_error_and_cleans_temp(tmp_pa
 
     monkeypatch.setattr(task_board_module.os, "replace", flaky_replace)
 
-    updated = board.update_status(task.id, TaskStatus.IN_PROGRESS)
+    updated = board.update_status(
+        task.id,
+        TaskStatus.IN_PROGRESS,
+        allow_execution_status=True,
+    )
 
     assert updated is not None
     assert updated.status == TaskStatus.IN_PROGRESS
@@ -69,7 +73,7 @@ def test_task_board_load_all_ignores_execution_session_files(tmp_path) -> None:
     assert len(reloaded.list_all()) == 1
 
 
-def test_task_board_load_all_normalizes_external_task_ids_for_claim(tmp_path) -> None:
+def test_task_board_load_all_normalizes_external_task_ids_without_claim_api(tmp_path) -> None:
     TaskBoard(str(tmp_path))
     tasks_dir = Path(resolve_runtime_path(str(tmp_path), "runtime/tasks"))
     (tasks_dir / "task_1.json").write_text(
@@ -98,7 +102,8 @@ def test_task_board_load_all_normalizes_external_task_ids_for_claim(tmp_path) ->
     assert task.blocks == [3]
     assert task.metadata["pm_task_id"] == "TASK-1"
     assert task.metadata["external_task_id"] == "TASK-1"
-    assert reloaded.claim(1, "director") is True
+    with pytest.raises(RuntimeError, match=r"TaskBoard\.claim is retired"):
+        reloaded.claim(1, "director")
 
 
 def test_task_board_load_all_preserves_legacy_partial_rows(tmp_path) -> None:
@@ -147,6 +152,15 @@ def test_task_board_rejects_invalid_transition(tmp_path) -> None:
 def test_task_board_rejects_terminal_status_without_owner_authorization(tmp_path) -> None:
     board = TaskBoard(str(tmp_path))
     task = board.create(subject="terminal-owner-guard")
+
+    with pytest.raises(RuntimeError, match="taskboard_execution_status_requires_task_runtime_owner_transition"):
+        board.update_status(task.id, TaskStatus.IN_PROGRESS)
+
+    with pytest.raises(RuntimeError, match="taskboard_execution_status_requires_task_runtime_owner_transition"):
+        board.update(task.id, status=TaskStatus.CLAIMED)
+
+    with pytest.raises(RuntimeError, match=r"TaskBoard\.claim is retired"):
+        board.claim(task.id, "director")
 
     with pytest.raises(RuntimeError, match="terminal_taskboard_status_requires_task_runtime_owner_transition"):
         board.update_status(task.id, TaskStatus.COMPLETED)
