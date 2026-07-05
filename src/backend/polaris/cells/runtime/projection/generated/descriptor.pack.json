@@ -1302,12 +1302,6 @@
     },
     {
       "type": "function",
-      "name": "build_workflow_task_rows",
-      "description": "Project merged workflow task state into the Director API/WebSocket task schema.",
-      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
-    },
-    {
-      "type": "function",
       "name": "build_workflow_status_payload",
       "description": "Project merged workflow task state into the Director status schema.",
       "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"

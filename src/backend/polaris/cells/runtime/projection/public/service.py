@@ -89,7 +89,6 @@ from polaris.cells.runtime.projection.internal.status_snapshot_builder import (
 from polaris.cells.runtime.projection.internal.workflow_status import (
     WORKFLOW_PM_TASKS_FILE,
     build_workflow_status_payload,
-    build_workflow_task_rows,
     canonicalize_workflow_task_state,
     get_workflow_runtime_status,
     get_workflow_stage,
@@ -158,7 +157,6 @@ __all__ = [
     "build_snapshot_payload_from_projection",
     "build_status_payload_sync",
     "build_workflow_status_payload",
-    "build_workflow_task_rows",
     "canonicalize_workflow_task_state",
     "decode_bytes",
     "format_mtime",
