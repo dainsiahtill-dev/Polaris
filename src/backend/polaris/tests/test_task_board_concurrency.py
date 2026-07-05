@@ -229,6 +229,26 @@ def test_task_board_create_keeps_reverse_dependencies_row_local(tmp_path) -> Non
     assert upstream_after.blocks == []
 
 
+def test_task_board_reopen_keeps_downstream_rows_local(tmp_path) -> None:
+    """Raw TaskBoard reopen must not re-block downstream rows behind the ledger."""
+    board = TaskBoard(str(tmp_path))
+    parent = board.create(subject="parent")
+    child = board.create(subject="child")
+    linked = board.update_blocks(parent.id, [child.id])
+    assert linked is not None
+    completed = board.update_status(parent.id, TaskStatus.COMPLETED)
+    assert completed is not None
+
+    reopened = board.reopen(parent.id, reason="qa_rework")
+    child_after = board.get(child.id)
+
+    assert reopened is not None
+    assert reopened.status == TaskStatus.PENDING
+    assert child_after is not None
+    assert child_after.status == TaskStatus.PENDING
+    assert child_after.blocked_by == []
+
+
 def test_task_board_repeated_complete_is_idempotent_no_op(tmp_path) -> None:
     """Re-applying the same terminal status must be a no-op.
 

@@ -441,17 +441,20 @@ class TaskRuntimeService:
     ) -> dict[str, Any] | None:
         """Reopen a task and return the runtime row projection with event evidence."""
 
-        _task, row, execution_event = self._reopen_with_execution_event(
+        _task, row, execution_event, downstream_events = self._reopen_with_execution_event(
             task_id,
             reason=reason,
             metadata=metadata,
         )
         if row is None:
             return None
+        execution_events = (
+            (execution_event,) if execution_event is not None else ()
+        ) + tuple(downstream_events)
         return project_task_row_execution_event(
             row,
             execution_event,
-            execution_events=(execution_event,) if execution_event is not None else (),
+            execution_events=execution_events,
         )
 
     def _reopen_with_execution_event(
@@ -460,17 +463,17 @@ class TaskRuntimeService:
         *,
         reason: str = "",
         metadata: dict[str, Any] | None = None,
-    ) -> tuple[Task | None, dict[str, Any] | None, dict[str, Any] | None]:
+    ) -> tuple[Task | None, dict[str, Any] | None, dict[str, Any] | None, list[dict[str, Any]]]:
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
-            return None, None, None
+            return None, None, None, []
         task = self._board.reopen(
             normalized,
             reason=reason,
             metadata=metadata,
         )
         if task is None:
-            return None, None, None
+            return None, None, None, []
         session = self._read_session(normalized)
         if session is not None:
             session.mark_suspended(reason=reason or "task_reopened", resumable=True)
@@ -482,7 +485,11 @@ class TaskRuntimeService:
             session=session,
             details={"reason": sanitize_summary(reason or "task_reopened")},
         )
-        return task, row, execution_event
+        downstream_events = self._apply_reopen_downstream_reblocks(
+            reopened_task_id=normalized,
+            dependent_ids=self._row_blocks_ids(row),
+        )
+        return task, row, execution_event, downstream_events
 
     def list_all(
         self,
@@ -1794,6 +1801,63 @@ class TaskRuntimeService:
                         "dependent_task_id": created_task_id,
                         "previous_blocks": previous_blocks,
                         "blocks": self._row_blocks_ids(after_row),
+                    },
+                )
+            )
+        return events
+
+    def _apply_reopen_downstream_reblocks(
+        self,
+        *,
+        reopened_task_id: int,
+        dependent_ids: list[int],
+    ) -> list[dict[str, Any]]:
+        """Re-block direct dependents after a prerequisite task is reopened.
+
+        The operation is O(d) over direct dependents from the reopened task row.
+        Each dependent row mutation is followed by a task-runtime execution fact
+        so QA rework cannot silently rewrite downstream scheduling state.
+        """
+
+        events: list[dict[str, Any]] = []
+        for dependent_id in dependent_ids:
+            dependent = self._board.get(dependent_id)
+            if dependent is None:
+                continue
+            before_row = self._augment_task_row(dependent.to_dict())
+            previous_blockers = self._row_blocker_ids(before_row)
+            next_blockers = list(previous_blockers)
+            if reopened_task_id not in next_blockers:
+                next_blockers.append(reopened_task_id)
+            previous_status = str(before_row.get("status") or "").strip().lower()
+            next_status: TaskStatus | None = (
+                TaskStatus.BLOCKED if previous_status in {"pending", "ready"} else None
+            )
+            if next_blockers == previous_blockers and next_status is None:
+                continue
+            updated = self._board.update(dependent_id, status=next_status, blocked_by=next_blockers)
+            if updated is None:
+                events.append(
+                    {
+                        "ok": False,
+                        "event_type": "downstream_dependency_reblock_failed",
+                        "task_id": dependent_id,
+                        "reason": "task_update_failed",
+                        "failure_class": "task_state_write_failed",
+                    }
+                )
+                continue
+            after_row = self._augment_task_row(updated.to_dict())
+            events.append(
+                self._append_execution_event(
+                    "downstream_dependency_reblocked",
+                    task_row=after_row,
+                    session=None,
+                    details={
+                        "reopened_task_id": reopened_task_id,
+                        "previous_status": previous_status,
+                        "previous_blockers": previous_blockers,
+                        "active_blockers": self._row_blocker_ids(after_row),
                     },
                 )
             )

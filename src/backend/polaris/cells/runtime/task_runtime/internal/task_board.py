@@ -943,17 +943,6 @@ class TaskBoard:
             if isinstance(metadata, dict) and metadata:
                 task.metadata.update(metadata)
 
-            # Re-block downstream tasks that were waiting on this one
-            for dependent_id in task.blocks:
-                dependent = self._cache.get(dependent_id)
-                if not dependent:
-                    continue
-                if task_id not in dependent.blocked_by:
-                    dependent.blocked_by.append(task_id)
-                if dependent.status == TaskStatus.PENDING:
-                    dependent.status = TaskStatus.BLOCKED
-                self._save_task(dependent)
-
             self._save_task(task)
 
             should_notify_ready = self._is_ready_task(task)

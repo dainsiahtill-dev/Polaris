@@ -1544,8 +1544,14 @@ def test_task_runtime_update_and_reopen_emit_execution_events(tmp_path: Path) ->
 
     created = service.create_task_row(subject="emit row update events")
     created_id = created["id"]
+    child = service.create_task_row(subject="dependent row", blocked_by=[int(created_id)])
+    child_id = int(child["id"])
     updated = service.update_task_row(created_id, status="completed", metadata={"qa": "failed"})
     assert updated is not None
+    unblocked_child = service.update_task_row(child_id, status="pending", blocked_by=[])
+    assert unblocked_child is not None
+    assert unblocked_child["status"] == "pending"
+    assert unblocked_child["blocked_by"] == []
     reopened = service.reopen_task_row(created_id, reason="qa_rework")
     assert reopened is not None
 
@@ -1553,6 +1559,7 @@ def test_task_runtime_update_and_reopen_emit_execution_events(tmp_path: Path) ->
     event_types = [str(event.get("event_type") or "") for event in events]
     assert "updated" in event_types
     assert "reopened" in event_types
+    assert "downstream_dependency_reblocked" in event_types
 
     updated_event = next(event for event in events if event.get("event_type") == "updated")
     assert updated_event["payload"]["status"] == "completed"
@@ -1561,6 +1568,15 @@ def test_task_runtime_update_and_reopen_emit_execution_events(tmp_path: Path) ->
     reopened_event = next(event for event in events if event.get("event_type") == "reopened")
     assert reopened_event["payload"]["details"]["reason"] == "qa_rework"
     assert reopened_event["payload"]["execution_state"] == "pending"
+
+    reblocked_event = next(event for event in events if event.get("event_type") == "downstream_dependency_reblocked")
+    assert reblocked_event["payload"]["task_row_snapshot"]["id"] == child_id
+    assert reblocked_event["payload"]["details"]["reopened_task_id"] == int(created_id)
+    assert reblocked_event["payload"]["details"]["active_blockers"] == [int(created_id)]
+    child_after = service.get_task(child_id)
+    assert child_after is not None
+    assert child_after["status"] == "blocked"
+    assert child_after["blocked_by"] == [int(created_id)]
 
 
 def test_reopen_task_row_reports_event_append_failure_without_persisting_evidence(
