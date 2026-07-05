@@ -140,10 +140,6 @@
           "doc": "Reopen a task and return the runtime row projection with event evidence."
         },
         {
-          "name": "list_task_rows",
-          "doc": ""
-        },
-        {
           "name": "list_observable_task_rows",
           "doc": "Return task rows for read-only runtime projections."
         },

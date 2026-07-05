@@ -169,6 +169,9 @@ TASK_RUNTIME_SERVICE_NON_AGENT_DESCRIPTOR_METHODS = {
     "board",
     "wait_ready",
 }
+TASK_RUNTIME_SERVICE_OWNER_READ_DESCRIPTOR_METHODS = {
+    "list_task_rows",
+}
 TASK_RUNTIME_SERVICE_REQUIRED_ROW_MUTATION_METHODS = {
     "create_task_row",
     "reopen_task_row",
@@ -1544,6 +1547,32 @@ def test_task_runtime_descriptor_does_not_advertise_live_listener_or_raw_board_m
         "task_runtime descriptor must not advertise raw-board access or live "
         "condition/listener utilities. Agent-facing context should use stable "
         "row/session/read-model methods instead:\n" + "\n".join(sorted(offenders))
+    )
+
+
+def test_task_runtime_descriptor_does_not_advertise_owner_read_primitives() -> None:
+    descriptor = json.loads(TASK_RUNTIME_DESCRIPTOR.read_text(encoding="utf-8"))
+    capabilities = descriptor.get("capabilities")
+    assert isinstance(capabilities, list), "task_runtime descriptor must expose a capabilities list"
+
+    offenders: list[str] = []
+    for item in capabilities:
+        if not isinstance(item, dict):
+            continue
+        if item.get("name") != "TaskRuntimeService":
+            continue
+        for method in item.get("methods", []):
+            if not isinstance(method, dict):
+                continue
+            method_name = str(method.get("name") or "")
+            if method_name in TASK_RUNTIME_SERVICE_OWNER_READ_DESCRIPTOR_METHODS:
+                offenders.append(method_name)
+
+    assert not offenders, (
+        "task_runtime descriptor must not advertise owner read primitives. "
+        "Agent-facing status, UI, and observer context should use "
+        "list_observable_task_rows() so execution facts remain part of the "
+        "read-model projection:\n" + "\n".join(sorted(offenders))
     )
 
 
