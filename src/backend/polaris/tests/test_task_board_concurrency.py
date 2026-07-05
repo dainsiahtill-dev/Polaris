@@ -136,7 +136,7 @@ def test_task_board_rejects_invalid_transition(tmp_path) -> None:
     board = TaskBoard(str(tmp_path))
     task = board.create(subject="transition-check")
 
-    updated = board.update_status(task.id, TaskStatus.COMPLETED)
+    updated = board.update_status(task.id, TaskStatus.COMPLETED, allow_terminal_status=True)
     assert updated is not None
     assert updated.status == TaskStatus.COMPLETED
 
@@ -144,12 +144,33 @@ def test_task_board_rejects_invalid_transition(tmp_path) -> None:
         board.update_status(task.id, TaskStatus.PENDING)
 
 
+def test_task_board_rejects_terminal_status_without_owner_authorization(tmp_path) -> None:
+    board = TaskBoard(str(tmp_path))
+    task = board.create(subject="terminal-owner-guard")
+
+    with pytest.raises(RuntimeError, match="terminal_taskboard_status_requires_task_runtime_owner_transition"):
+        board.update_status(task.id, TaskStatus.COMPLETED)
+
+    with pytest.raises(RuntimeError, match="terminal_taskboard_status_requires_task_runtime_owner_transition"):
+        board.update(task.id, status=TaskStatus.FAILED)
+
+    with pytest.raises(RuntimeError, match=r"TaskBoard\.complete is retired"):
+        board.complete(task.id)
+
+    with pytest.raises(RuntimeError, match=r"TaskBoard\.fail is retired"):
+        board.fail(task.id, reason="boom")
+
+    current = board.get(task.id)
+    assert current is not None
+    assert current.status == TaskStatus.PENDING
+
+
 def test_task_board_reopen_demotes_completed_task_back_to_pending(tmp_path) -> None:
     board = TaskBoard(str(tmp_path))
     parent = board.create(subject="parent-task")
     child = board.create(subject="child-task", blocked_by=[parent.id])
 
-    board.update_status(parent.id, TaskStatus.COMPLETED)
+    board.update_status(parent.id, TaskStatus.COMPLETED, allow_terminal_status=True)
     child_after_parent_completion = board.get(child.id)
     assert child_after_parent_completion is not None
     assert parent.id in child_after_parent_completion.blocked_by
@@ -178,7 +199,7 @@ def test_task_board_failed_prerequisite_keeps_dependents_blocked(tmp_path) -> No
     upstream = board.create(subject="failing-prerequisite")
     downstream = board.create(subject="dependent-task", blocked_by=[upstream.id])
 
-    board.update_status(upstream.id, TaskStatus.FAILED)
+    board.update_status(upstream.id, TaskStatus.FAILED, allow_terminal_status=True)
 
     downstream_after = board.get(downstream.id)
     assert downstream_after is not None
@@ -193,7 +214,7 @@ def test_task_board_cancelled_prerequisite_keeps_dependents_blocked(tmp_path) ->
     upstream = board.create(subject="cancelled-prerequisite")
     downstream = board.create(subject="dependent-task", blocked_by=[upstream.id])
 
-    board.update_status(upstream.id, TaskStatus.CANCELLED)
+    board.update_status(upstream.id, TaskStatus.CANCELLED, allow_terminal_status=True)
 
     downstream_after = board.get(downstream.id)
     assert downstream_after is not None
@@ -207,7 +228,7 @@ def test_task_board_completed_prerequisite_keeps_dependent_rows_local(tmp_path) 
     upstream = board.create(subject="successful-prerequisite")
     downstream = board.create(subject="dependent-task", blocked_by=[upstream.id])
 
-    board.update_status(upstream.id, TaskStatus.COMPLETED)
+    board.update_status(upstream.id, TaskStatus.COMPLETED, allow_terminal_status=True)
 
     downstream_after = board.get(downstream.id)
     assert downstream_after is not None
@@ -236,7 +257,7 @@ def test_task_board_reopen_keeps_downstream_rows_local(tmp_path) -> None:
     child = board.create(subject="child")
     linked = board.update_blocks(parent.id, [child.id])
     assert linked is not None
-    completed = board.update_status(parent.id, TaskStatus.COMPLETED)
+    completed = board.update_status(parent.id, TaskStatus.COMPLETED, allow_terminal_status=True)
     assert completed is not None
 
     reopened = board.reopen(parent.id, reason="qa_rework")
@@ -258,7 +279,12 @@ def test_task_board_repeated_complete_is_idempotent_no_op(tmp_path) -> None:
     board = TaskBoard(str(tmp_path))
     task = board.create(subject="idempotent-complete")
 
-    first = board.update_status(task.id, TaskStatus.COMPLETED, result_summary="done")
+    first = board.update_status(
+        task.id,
+        TaskStatus.COMPLETED,
+        result_summary="done",
+        allow_terminal_status=True,
+    )
     assert first is not None
     assert first.status == TaskStatus.COMPLETED
     first_completed_at = first.completed_at
@@ -269,7 +295,12 @@ def test_task_board_repeated_complete_is_idempotent_no_op(tmp_path) -> None:
     events_after_first = [line for line in event_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(events_after_first) == 1
 
-    second = board.update_status(task.id, TaskStatus.COMPLETED, result_summary="retry")
+    second = board.update_status(
+        task.id,
+        TaskStatus.COMPLETED,
+        result_summary="retry",
+        allow_terminal_status=True,
+    )
     assert second is not None
     assert second.status == TaskStatus.COMPLETED
     # completed_at must be unchanged on the no-op re-entry.

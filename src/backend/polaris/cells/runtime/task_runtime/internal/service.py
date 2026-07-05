@@ -765,6 +765,7 @@ class TaskRuntimeService:
             normalized,
             status=TaskStatus.FAILED,
             metadata=metadata,
+            allow_terminal_status=True,
         )
         if updated is None:
             return None
@@ -843,6 +844,7 @@ class TaskRuntimeService:
             normalized,
             status=TaskStatus.CANCELLED,
             metadata=merged_metadata,
+            allow_terminal_status=True,
         )
         if updated is None:
             return None
@@ -917,6 +919,7 @@ class TaskRuntimeService:
             normalized,
             status=TaskStatus.FAILED,
             metadata=merged_metadata,
+            allow_terminal_status=True,
         )
         if updated is None:
             return None
@@ -1526,6 +1529,7 @@ class TaskRuntimeService:
                 resume_state="",
                 extra_metadata=metadata,
             ),
+            allow_terminal_status=True,
         )
         row = self._augment_task_row(updated.to_dict() if updated is not None else task.to_dict())
         dependency_events = self._apply_dependency_completion_side_effects(
@@ -1585,6 +1589,7 @@ class TaskRuntimeService:
                 resume_state="",
                 extra_metadata=metadata,
             ),
+            allow_terminal_status=True,
         )
         row = self._augment_task_row(updated.to_dict() if updated is not None else task.to_dict())
         execution_event = self._append_execution_event(
@@ -2088,7 +2093,12 @@ class TaskRuntimeService:
             extra_metadata=extra_metadata,
         )
         try:
-            updated = self._board.update(task_id, status=terminal_status, metadata=runtime_metadata)
+            updated = self._board.update(
+                task_id,
+                status=terminal_status,
+                metadata=runtime_metadata,
+                allow_terminal_status=True,
+            )
         except InvalidTaskStateTransitionError:
             task = self._board.get(task_id)
             if task is None:

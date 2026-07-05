@@ -291,7 +291,12 @@ def test_task_board_terminal_event_write_does_not_spawn_thread(monkeypatch, tmp_
 
     board = TaskBoard(str(tmp_path))
     task = board.create(subject="t1")
-    updated = board.update_status(task.id, TaskStatus.COMPLETED, result_summary="done")
+    updated = board.update_status(
+        task.id,
+        TaskStatus.COMPLETED,
+        result_summary="done",
+        allow_terminal_status=True,
+    )
 
     assert updated is not None
     events_path = Path(resolve_runtime_path(str(tmp_path), "runtime/events/taskboard.terminal.events.jsonl"))

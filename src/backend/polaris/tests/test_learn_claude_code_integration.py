@@ -263,7 +263,7 @@ class TestPhase6TaskBoard:
         task2 = board.create(subject="Second", blocked_by=[task1.id])
 
         # Complete task1
-        board.update_status(task1.id, TaskStatus.COMPLETED)
+        board.update_status(task1.id, TaskStatus.COMPLETED, allow_terminal_status=True)
 
         # task2 remains blocked when using raw TaskBoard directly.
         updated_task2 = board.get(task2.id)

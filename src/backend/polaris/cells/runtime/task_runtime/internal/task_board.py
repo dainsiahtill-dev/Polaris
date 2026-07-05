@@ -689,6 +689,8 @@ class TaskBoard:
         result_summary: str = "",
         evidence_refs: list[str] | None = None,
         workflow_id: str = "",
+        *,
+        allow_terminal_status: bool = False,
     ) -> Task | None:
         """Update task status with state machine validation.
 
@@ -701,6 +703,11 @@ class TaskBoard:
 
         next_status = _normalize_status(status)
         is_terminal = next_status.is_terminal
+        if is_terminal and not allow_terminal_status:
+            raise RuntimeError(
+                "terminal_taskboard_status_requires_task_runtime_owner_transition:"
+                f"{next_status.value}"
+            )
 
         terminal_event_data: dict[str, Any] | None = None
         if is_terminal:
@@ -794,6 +801,8 @@ class TaskBoard:
         owner: str | None = None,
         blocked_by: list[int] | None = None,
         metadata: dict[str, Any] | None = None,
+        *,
+        allow_terminal_status: bool = False,
     ) -> Task | None:
         """Compatibility update API (delegates to update_status)."""
         import copy
@@ -803,7 +812,11 @@ class TaskBoard:
             if not task:
                 return None
             if status is not None:
-                task = self.update_status(task_id, status)
+                task = self.update_status(
+                    task_id,
+                    status,
+                    allow_terminal_status=allow_terminal_status,
+                )
                 if task is None:
                     return None
             if assignee is not None:
@@ -887,16 +900,10 @@ class TaskBoard:
             return updated is not None
 
     def complete(self, task_id: int) -> bool:
-        updated = self.update_status(task_id, TaskStatus.COMPLETED)
-        return updated is not None
+        raise RuntimeError("TaskBoard.complete is retired; use TaskRuntimeService.complete_execution()")
 
     def fail(self, task_id: int, reason: str = "") -> bool:
-        updated = self.update(
-            task_id,
-            status=TaskStatus.FAILED,
-            metadata={"failure_reason": reason},
-        )
-        return updated is not None
+        raise RuntimeError("TaskBoard.fail is retired; use TaskRuntimeService.fail_execution()")
 
     def reopen(
         self,
@@ -993,6 +1000,7 @@ class TaskBoard:
                 next_status,
                 result_summary=result_summary,
                 evidence_refs=evidence_refs,
+                allow_terminal_status=True,
             )
 
     def get_ready_tasks(self) -> list[Task]:
