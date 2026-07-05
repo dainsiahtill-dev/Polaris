@@ -27,6 +27,29 @@ from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path, resolve_storage_roots
 
 
+def _complete_task_row(
+    task_runtime: TaskRuntimeService,
+    task_id: Any,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    claimed = task_runtime.claim_execution(
+        task_id,
+        worker_id="test",
+        role_id="director",
+        selection_source="factory_run_service_test",
+    )
+    assert claimed["success"] is True
+    completed = task_runtime.complete_execution(
+        task_id,
+        session_id=str(claimed["session"]["session_id"]),
+        result_summary="test completed",
+        metadata=metadata,
+    )
+    assert completed["success"] is True
+    return completed
+
+
 class FakeStageExecutor:
     """Deterministic stage executor for FactoryRunService tests."""
 
@@ -1310,7 +1333,7 @@ class TestOrchestrationStageExecutor:
         plan_path.parent.mkdir(parents=True, exist_ok=True)
         runtime = TaskRuntimeService(str(temp_workspace))
         stale = runtime.create_task_row(subject="Stale task", description="completed in a previous run")
-        runtime.update_task_row(stale["id"], status="completed", metadata={"previous_run": "old"})
+        _complete_task_row(runtime, stale["id"], metadata={"previous_run": "old"})
         plan_path.write_text(
             """{
   "tasks": [

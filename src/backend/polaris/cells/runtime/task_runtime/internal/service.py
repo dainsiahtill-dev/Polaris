@@ -93,6 +93,22 @@ def _terminal_task_status_for_session(status: Any) -> TaskStatus | None:
         return None
 
 
+def _is_terminal_task_row_update_status(status: TaskStatus | str | None) -> bool:
+    """Return whether a public row update is attempting to write a terminal state."""
+
+    if status is None:
+        return False
+    if isinstance(status, TaskStatus):
+        return status.is_terminal
+    token = str(status or "").strip()
+    if not token:
+        return False
+    try:
+        return TaskStatus(token).is_terminal
+    except ValueError:
+        return False
+
+
 class TaskRuntimeService:
     """Runtime task lifecycle service for the ``runtime.task_runtime`` cell.
 
@@ -632,6 +648,11 @@ class TaskRuntimeService:
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
             return None, None, None
+        if _is_terminal_task_row_update_status(status):
+            raise RuntimeError(
+                "terminal_task_status_requires_task_runtime_owner_transition:"
+                f"{str(status.value if isinstance(status, TaskStatus) else status).strip().lower()}"
+            )
         updated = self._board.update(
             normalized,
             status=status,

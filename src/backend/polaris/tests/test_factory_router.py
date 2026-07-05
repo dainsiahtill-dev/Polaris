@@ -31,6 +31,57 @@ from polaris.kernelone.quality import (
 from polaris.kernelone.storage import resolve_logical_path
 
 
+def _complete_task_row(
+    task_runtime: TaskRuntimeService,
+    task_id: Any,
+    *,
+    worker_id: str = "test",
+    role_id: str = "director",
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    claimed = task_runtime.claim_execution(
+        task_id,
+        worker_id=worker_id,
+        role_id=role_id,
+        selection_source="factory_router_test",
+    )
+    assert claimed["success"] is True
+    completed = task_runtime.complete_execution(
+        task_id,
+        session_id=str(claimed["session"]["session_id"]),
+        result_summary="test completed",
+        metadata=metadata,
+    )
+    assert completed["success"] is True
+    return completed
+
+
+def _fail_task_row(
+    task_runtime: TaskRuntimeService,
+    task_id: Any,
+    *,
+    worker_id: str = "test",
+    role_id: str = "director",
+    error: str = "test failed",
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    claimed = task_runtime.claim_execution(
+        task_id,
+        worker_id=worker_id,
+        role_id=role_id,
+        selection_source="factory_router_test",
+    )
+    assert claimed["success"] is True
+    failed = task_runtime.fail_execution(
+        task_id,
+        session_id=str(claimed["session"]["session_id"]),
+        error=error,
+        metadata=metadata,
+    )
+    assert failed["success"] is True
+    return failed
+
+
 class FakeStageExecutor:
     """Fast deterministic executor for router tests."""
 
@@ -185,10 +236,10 @@ class TaskBoundaryQualityReworkStageExecutor(FakeStageExecutor):
             },
             priority=1,
         )
-        task_board.update_task_row(
+        _fail_task_row(
+            task_board,
             row["id"],
-            status="failed",
-            assignee="director",
+            worker_id="director",
             metadata={"last_execution_error": "director_materialization_quality_failed"},
         )
 
@@ -755,9 +806,9 @@ def test_quality_gate_rework_summary_keeps_exhausted_requests(temp_workspace: Pa
         metadata={"external_task_id": "TASK-1"},
         priority=1,
     )
-    task_board.update_task_row(
+    _fail_task_row(
+        task_board,
         row["id"],
-        status="failed",
         metadata={
             "qa_rework_requested": False,
             "qa_rework_exhausted": True,
@@ -824,8 +875,8 @@ def test_quality_gate_task_boundary_validation_routes_owner_handoff_to_owner_tas
         },
         priority=2,
     )
-    task_board.update_task_row(owner_row["id"], status="completed", assignee="director")
-    task_board.update_task_row(current_row["id"], status="failed", assignee="director")
+    _complete_task_row(task_board, owner_row["id"], worker_id="director")
+    _fail_task_row(task_board, current_row["id"], worker_id="director")
 
     target = Path(resolve_logical_path(str(temp_workspace), "workspace/qa/latest.workspace-validation.json"))
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -897,7 +948,7 @@ def test_quality_gate_task_boundary_validation_routes_scope_authority_nested_han
         metadata={"external_task_id": "PM-0001-1-S4"},
         priority=1,
     )
-    task_board.update_task_row(owner_row["id"], status="completed", assignee="director")
+    _complete_task_row(task_board, owner_row["id"], worker_id="director")
 
     handoff_request = {
         "schema_version": "file-ownership-handoff-request/1",
@@ -998,7 +1049,7 @@ def test_quality_gate_task_boundary_validation_reports_unmatched_owner_handoff(t
         },
         priority=2,
     )
-    task_board.update_task_row(current_row["id"], status="failed", assignee="director")
+    _fail_task_row(task_board, current_row["id"], worker_id="director")
 
     target = Path(resolve_logical_path(str(temp_workspace), "workspace/qa/latest.workspace-validation.json"))
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -1157,7 +1208,7 @@ def test_quality_gate_task_boundary_validation_reports_unknown_owner_handoff(tem
         },
         priority=2,
     )
-    task_board.update_task_row(current_row["id"], status="failed", assignee="director")
+    _fail_task_row(task_board, current_row["id"], worker_id="director")
 
     target = Path(resolve_logical_path(str(temp_workspace), "workspace/qa/latest.workspace-validation.json"))
     target.parent.mkdir(parents=True, exist_ok=True)

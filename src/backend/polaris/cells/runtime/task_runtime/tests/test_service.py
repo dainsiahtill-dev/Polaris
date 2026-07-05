@@ -345,6 +345,20 @@ def test_update_task_row_reports_event_append_failure_without_persisting_evidenc
     assert "execution_event" not in persisted["metadata"]
 
 
+def test_update_task_row_rejects_terminal_status_owner_bypass(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="terminal bypass guard")
+
+    with pytest.raises(RuntimeError, match="terminal_task_status_requires_task_runtime_owner_transition:completed"):
+        service.update_task_row(created["id"], status="completed")
+
+    row = service.get_task(created["id"])
+    assert row is not None
+    assert row["status"] == "pending"
+
+
 def test_claim_execution_fails_closed_on_execution_event_append_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1257,7 +1271,19 @@ def test_task_runtime_external_task_id_does_not_collide_with_numeric_row(tmp_pat
 
     stale = service.create_task_row(subject="stale", description="old row")
     stale_id = stale["id"]
-    service.update_task_row(stale_id, status="completed", metadata={"previous_run": "old"})
+    claimed_stale = service.claim_execution(
+        stale_id,
+        worker_id="test",
+        role_id="director",
+        selection_source="unit",
+    )
+    assert claimed_stale["success"] is True
+    service.complete_execution(
+        stale_id,
+        session_id=str(claimed_stale["session"]["session_id"]),
+        result_summary="old row",
+        metadata={"previous_run": "old"},
+    )
 
     row = service.ensure_task_row(
         external_task_id="TASK-1",
@@ -1660,9 +1686,22 @@ def test_task_runtime_update_and_reopen_emit_execution_events(tmp_path: Path) ->
     created_id = created["id"]
     child = service.create_task_row(subject="dependent row", blocked_by=[int(created_id)])
     child_id = int(child["id"])
-    updated = service.update_task_row(created_id, status="completed", metadata={"qa": "failed"})
+    updated = service.update_task_row(created_id, metadata={"qa": "failed"})
     assert updated is not None
-    unblocked_child = service.update_task_row(child_id, status="pending", blocked_by=[])
+    claimed = service.claim_execution(
+        created_id,
+        worker_id="test",
+        role_id="director",
+        selection_source="unit",
+    )
+    assert claimed["success"] is True
+    completed = service.complete_execution(
+        created_id,
+        session_id=str(claimed["session"]["session_id"]),
+        result_summary="done",
+    )
+    assert completed["success"] is True
+    unblocked_child = service.get_task(child_id)
     assert unblocked_child is not None
     assert unblocked_child["status"] == "pending"
     assert unblocked_child["blocked_by"] == []
@@ -1676,7 +1715,7 @@ def test_task_runtime_update_and_reopen_emit_execution_events(tmp_path: Path) ->
     assert "downstream_dependency_reblocked" in event_types
 
     updated_event = next(event for event in events if event.get("event_type") == "updated")
-    assert updated_event["payload"]["status"] == "completed"
+    assert updated_event["payload"]["status"] == "pending"
     assert updated_event["payload"]["details"]["metadata_updated"] is True
 
     reopened_event = next(event for event in events if event.get("event_type") == "reopened")
@@ -1831,8 +1870,21 @@ def test_reopen_task_row_reports_event_append_failure_without_persisting_evidenc
     service = TaskRuntimeService(str(workspace))
     created = service.create_task_row(subject="reopen with append evidence")
     created_id = created["id"]
-    updated = service.update_task_row(created_id, status="completed", metadata={"qa": "failed"})
+    updated = service.update_task_row(created_id, metadata={"qa": "failed"})
     assert updated is not None
+    claimed = service.claim_execution(
+        created_id,
+        worker_id="test",
+        role_id="director",
+        selection_source="unit",
+    )
+    assert claimed["success"] is True
+    completed = service.complete_execution(
+        created_id,
+        session_id=str(claimed["session"]["session_id"]),
+        result_summary="done",
+    )
+    assert completed["success"] is True
     original_append_event = service_module.append_fact_event
 
     def fail_reopened_append(command: object) -> object:
