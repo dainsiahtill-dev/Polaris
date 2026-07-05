@@ -1057,6 +1057,67 @@ def _with_task_runtime_finalize_evidence(
     }
 
 
+async def _suspend_claimed_execution_for_cancellation(
+    adapter: Any,
+    *,
+    target_task_id: str,
+    run_id: str,
+    session_id: str,
+) -> dict[str, Any]:
+    """Suspend a claimed Director task during cancellation and emit failure evidence."""
+
+    try:
+        suspend_result = adapter.task_runtime.suspend_execution(
+            target_task_id,
+            session_id=session_id,
+            reason="director_execution_cancelled",
+            metadata={"adapter_phase": "pending"},
+        )
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        suspend_result = {
+            "success": False,
+            "reason": "task_runtime_suspend_exception",
+            "error": str(exc),
+            "exception_type": type(exc).__name__,
+        }
+    if isinstance(suspend_result, dict) and suspend_result.get("success") is True:
+        return suspend_result
+
+    result = suspend_result if isinstance(suspend_result, dict) else {}
+    reason = str(result.get("reason") or "task_runtime_suspend_failed").strip()
+    if not reason:
+        reason = "task_runtime_suspend_failed"
+    detail = str(result.get("error") or result.get("detail") or reason).strip()
+    try:
+        await adapter._emit_task_trace_event(
+            task_id=target_task_id,
+            phase="executing",
+            step_kind="task_runtime",
+            step_title="Director cancellation suspend failed",
+            step_detail=detail,
+            status="failed",
+            run_id=run_id,
+            code="director_task_runtime_suspend_failed",
+            reason=reason,
+            refs={
+                "task_runtime_suspend_result": dict(result),
+                "task_runtime_session_id": session_id,
+            },
+        )
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug(
+            "Failed to emit Director cancellation suspend evidence for task %s: %s",
+            target_task_id,
+            exc,
+        )
+    return {
+        **result,
+        "success": False,
+        "reason": reason,
+        "task_runtime_suspend_failed": True,
+    }
+
+
 def _emit_director_adapter_cognitive_receipt(
     adapter: Any,
     *,
@@ -1441,11 +1502,11 @@ async def execute_director_task(
                 return _with_decision_signals(result, decision_signals) if isinstance(result, dict) else result
             except asyncio.CancelledError:
                 if board_claim_applied and task_claim_session_id:
-                    adapter.task_runtime.suspend_execution(
-                        target_task_id,
+                    await _suspend_claimed_execution_for_cancellation(
+                        adapter,
+                        target_task_id=target_task_id,
+                        run_id=run_id,
                         session_id=task_claim_session_id,
-                        reason="director_execution_cancelled",
-                        metadata={"adapter_phase": "pending"},
                     )
                 raise
 
@@ -1506,11 +1567,11 @@ async def execute_director_task(
 
     except asyncio.CancelledError:
         if board_claim_applied and task_claim_session_id:
-            adapter.task_runtime.suspend_execution(
-                target_task_id,
+            await _suspend_claimed_execution_for_cancellation(
+                adapter,
+                target_task_id=target_task_id,
+                run_id=run_id,
                 session_id=task_claim_session_id,
-                reason="director_execution_cancelled",
-                metadata={"adapter_phase": "pending"},
             )
         raise
     finally:

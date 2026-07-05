@@ -60,6 +60,7 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _pin_file_schema_to_declared_targets,
     _resolve_claim_external_task_id,
     _run_empty_write_content_materialization_retry,
+    _suspend_claimed_execution_for_cancellation,
     _task_requires_fresh_materialization,
     _task_runtime_finalization_failed_result,
     _task_runtime_heartbeat_failed_signal,
@@ -4700,6 +4701,60 @@ class TestDeterministicRepairEvidence:
 
 class TestDirectorFailureClosure:
     """Runtime failures must fail the claimed task instead of leaving it running."""
+
+    @pytest.mark.asyncio
+    async def test_suspend_claimed_execution_for_cancellation_emits_failure_evidence(self) -> None:
+        captured_event: dict[str, Any] = {}
+        suspend_result = {
+            "success": False,
+            "reason": "execution_event_append_failed",
+            "failure_class": "ledger_append_failed",
+            "execution_event": {
+                "ok": False,
+                "event_type": "suspended",
+                "error": "fact stream unavailable",
+            },
+        }
+
+        class FakeTaskRuntime:
+            def suspend_execution(self, task_id: str, *, session_id: str, reason: str, metadata: dict[str, Any]):
+                assert task_id == "TASK-1"
+                assert session_id == "session-1"
+                assert reason == "director_execution_cancelled"
+                assert metadata == {"adapter_phase": "pending"}
+                return suspend_result
+
+        class FakeAdapter:
+            task_runtime = FakeTaskRuntime()
+
+            async def _emit_task_trace_event(self, **kwargs: Any) -> None:
+                captured_event.update(kwargs)
+
+        result = await _suspend_claimed_execution_for_cancellation(
+            FakeAdapter(),
+            target_task_id="TASK-1",
+            run_id="run-1",
+            session_id="session-1",
+        )
+
+        assert result["success"] is False
+        assert result["reason"] == "execution_event_append_failed"
+        assert result["task_runtime_suspend_failed"] is True
+        assert captured_event == {
+            "task_id": "TASK-1",
+            "phase": "executing",
+            "step_kind": "task_runtime",
+            "step_title": "Director cancellation suspend failed",
+            "step_detail": "execution_event_append_failed",
+            "status": "failed",
+            "run_id": "run-1",
+            "code": "director_task_runtime_suspend_failed",
+            "reason": "execution_event_append_failed",
+            "refs": {
+                "task_runtime_suspend_result": suspend_result,
+                "task_runtime_session_id": "session-1",
+            },
+        }
 
     @pytest.mark.asyncio
     async def test_handle_claim_required_projects_claim_attempt_evidence(self) -> None:
