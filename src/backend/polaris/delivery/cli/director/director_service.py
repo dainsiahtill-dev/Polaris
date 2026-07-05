@@ -26,6 +26,8 @@ from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 
 logger = logging.getLogger(__name__)
 
+_READY_TASK_STATUSES = frozenset({"pending", "ready"})
+
 
 def _bootstrap_backend_import_path() -> None:
     """Ensure backend package path when running file directly."""
@@ -114,14 +116,18 @@ class DirectorService:
         }
 
     def _get_ready_tasks(self) -> list[dict[str, Any]]:
-        """Return ready task rows through the runtime task-row projection."""
-        rows = self._get_task_runtime().list_task_rows(include_terminal=False)
+        """Return runnable rows through the runtime observable projection.
+
+        The delivery CLI is a read-side consumer. It must not bypass the
+        execution-fact overlay by reading raw task rows directly.
+        """
+        rows = self._get_task_runtime().list_observable_task_rows()
         ready_rows: list[dict[str, Any]] = []
         for row in rows:
             status = str(row.get("status") or "").strip().lower()
             blocked_by = row.get("blocked_by") or row.get("blockedBy") or []
             claimed_by = str(row.get("claimed_by") or "").strip()
-            if status in {"pending", "ready"} and not blocked_by and not claimed_by:
+            if status in _READY_TASK_STATUSES and not blocked_by and not claimed_by:
                 ready_rows.append(row)
         return ready_rows
 
