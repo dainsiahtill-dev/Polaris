@@ -182,10 +182,6 @@
         {
           "name": "get_task_row_stats",
           "doc": ""
-        },
-        {
-          "name": "refresh_dependency_unblocks",
-          "doc": "Normalize stale BLOCKED rows whose dependencies are now complete."
         }
       ]
     },

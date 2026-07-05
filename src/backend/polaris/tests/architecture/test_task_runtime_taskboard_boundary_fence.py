@@ -172,6 +172,9 @@ TASK_RUNTIME_SERVICE_NON_AGENT_DESCRIPTOR_METHODS = {
 TASK_RUNTIME_SERVICE_OWNER_READ_DESCRIPTOR_METHODS = {
     "list_task_rows",
 }
+TASK_RUNTIME_SERVICE_OWNER_MAINTENANCE_DESCRIPTOR_METHODS = {
+    "refresh_dependency_unblocks",
+}
 TASK_RUNTIME_SERVICE_REQUIRED_ROW_MUTATION_METHODS = {
     "create_task_row",
     "reopen_task_row",
@@ -1573,6 +1576,33 @@ def test_task_runtime_descriptor_does_not_advertise_owner_read_primitives() -> N
         "Agent-facing status, UI, and observer context should use "
         "list_observable_task_rows() so execution facts remain part of the "
         "read-model projection:\n" + "\n".join(sorted(offenders))
+    )
+
+
+def test_task_runtime_descriptor_does_not_advertise_owner_maintenance_methods() -> None:
+    descriptor = json.loads(TASK_RUNTIME_DESCRIPTOR.read_text(encoding="utf-8"))
+    capabilities = descriptor.get("capabilities")
+    assert isinstance(capabilities, list), "task_runtime descriptor must expose a capabilities list"
+
+    offenders: list[str] = []
+    for item in capabilities:
+        if not isinstance(item, dict):
+            continue
+        if item.get("name") != "TaskRuntimeService":
+            continue
+        for method in item.get("methods", []):
+            if not isinstance(method, dict):
+                continue
+            method_name = str(method.get("name") or "")
+            if method_name in TASK_RUNTIME_SERVICE_OWNER_MAINTENANCE_DESCRIPTOR_METHODS:
+                offenders.append(method_name)
+
+    assert not offenders, (
+        "task_runtime descriptor must not advertise owner maintenance methods. "
+        "Dependency unblock refresh is a side effect owned by TaskRuntimeService "
+        "selection/read-model paths; Agent-facing context should use explicit "
+        "read-model, select, claim, or terminal transition APIs instead:\n"
+        + "\n".join(sorted(offenders))
     )
 
 
