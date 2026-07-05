@@ -239,6 +239,34 @@ def _call_name(node: ast.AST) -> str:
     return ""
 
 
+def _function_def(path: Path, name: str) -> ast.FunctionDef:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    raise AssertionError(f"{path.relative_to(BACKEND_ROOT)}:{name}() not found")
+
+
+def _assigned_constant_tuple(path: Path, name: str) -> tuple[str, ...]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+            continue
+        if not isinstance(node.value, ast.Tuple):
+            raise AssertionError(f"{name} must remain a literal tuple")
+        values: list[str] = []
+        for item in node.value.elts:
+            if not isinstance(item, ast.Constant) or not isinstance(item.value, str):
+                raise AssertionError(f"{name} entries must remain literal strings")
+            values.append(item.value)
+        return tuple(values)
+    raise AssertionError(f"{path.relative_to(BACKEND_ROOT)}:{name} assignment not found")
+
+
 def test_raw_taskboard_is_private_to_task_runtime_cell() -> None:
     offenders: list[str] = []
     this_file = Path(__file__).resolve()
@@ -495,6 +523,39 @@ def test_runtime_artifact_store_reads_task_rows_through_task_runtime_projection(
     assert "list_observable_task_rows" in source, (
         "runtime.artifact_store workflow status must consume "
         "TaskRuntimeService.list_observable_task_rows()."
+    )
+
+
+def test_factory_bench_task_runtime_event_file_is_workspace_evidence_only() -> None:
+    evidence_paths = _assigned_constant_tuple(FACTORY_BENCH_RUNNER, "_RUNTIME_WORKSPACE_EVIDENCE_RELATIVE_PATHS")
+    source = FACTORY_BENCH_RUNNER.read_text(encoding="utf-8")
+    workspace_matcher = _function_def(FACTORY_BENCH_RUNNER, "_file_mentions_workspace")
+    runtime_matcher = _function_def(FACTORY_BENCH_RUNNER, "_runtime_dir_matches_workspace")
+    matcher_calls = {_call_name(node.func) for node in ast.walk(workspace_matcher) if isinstance(node, ast.Call)}
+    runtime_matcher_calls = {_call_name(node.func) for node in ast.walk(runtime_matcher) if isinstance(node, ast.Call)}
+
+    assert "events/task_runtime.execution.jsonl" in evidence_paths
+    assert source.count('"events/task_runtime.execution.jsonl"') == 1, (
+        "factory_bench may list task_runtime.execution.jsonl only as runtime-dir "
+        "workspace evidence. Execution status projections must use task-runtime "
+        "owner/read-model APIs, not direct event-file parsing."
+    )
+    assert not ({"json.loads", "json.load"} & matcher_calls), (
+        "_file_mentions_workspace must remain a bounded text evidence check, not "
+        "a task_runtime.execution status reader."
+    )
+    assert "_file_mentions_workspace" in runtime_matcher_calls, (
+        "_runtime_dir_matches_workspace should consume task-runtime events only "
+        "through workspace evidence matching."
+    )
+    assert not any(
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value in {"status", "execution_state", "resume_state", "task_row_snapshot"}
+        for node in ast.walk(workspace_matcher)
+    ), (
+        "Workspace evidence matching must not inspect task execution fields from "
+        "task_runtime.execution events."
     )
 
 
