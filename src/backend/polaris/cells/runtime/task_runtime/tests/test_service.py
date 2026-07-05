@@ -310,7 +310,7 @@ def test_update_task_row_reports_event_append_failure_without_persisting_evidenc
     assert "execution_event" not in persisted["metadata"]
 
 
-def test_claim_execution_reports_execution_event_append_failure(
+def test_claim_execution_fails_closed_on_execution_event_append_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -332,8 +332,11 @@ def test_claim_execution_reports_execution_event_append_failure(
         selection_source="unit",
     )
 
-    assert claimed["success"] is True
-    assert claimed["reason"] == "claimed"
+    assert claimed["success"] is False
+    assert claimed["reason"] == "execution_event_append_failed"
+    assert claimed["requested_reason"] == "claimed"
+    assert claimed["failure_class"] == "ledger_append_failed"
+    assert claimed["state_mutation_applied"] is True
     assert claimed["execution_event"] == {
         "ok": False,
         "event_type": "claimed",
@@ -343,7 +346,7 @@ def test_claim_execution_reports_execution_event_append_failure(
     assert claimed["task"]["status"] == "in_progress"
 
 
-def test_complete_execution_reports_execution_event_append_failure(
+def test_complete_execution_fails_closed_on_execution_event_append_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -371,8 +374,11 @@ def test_complete_execution_reports_execution_event_append_failure(
         result_summary="done",
     )
 
-    assert completed["success"] is True
-    assert completed["reason"] == "completed"
+    assert completed["success"] is False
+    assert completed["reason"] == "execution_event_append_failed"
+    assert completed["requested_reason"] == "completed"
+    assert completed["failure_class"] == "ledger_append_failed"
+    assert completed["state_mutation_applied"] is True
     assert completed["execution_event"] == {
         "ok": False,
         "event_type": "completed",
@@ -1171,7 +1177,7 @@ def test_task_runtime_service_suspends_active_sessions_for_cancelled_run(tmp_pat
     assert other_heartbeat["execution_event"]["event_type"] == "heartbeat_renewed"
 
 
-def test_heartbeat_execution_reports_event_append_failure(
+def test_heartbeat_execution_fails_closed_on_event_append_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1200,8 +1206,11 @@ def test_heartbeat_execution_reports_event_append_failure(
         context_summary="renew lease after tool dispatch",
     )
 
-    assert heartbeat["success"] is True
-    assert heartbeat["reason"] == "heartbeat_renewed"
+    assert heartbeat["success"] is False
+    assert heartbeat["reason"] == "execution_event_append_failed"
+    assert heartbeat["requested_reason"] == "heartbeat_renewed"
+    assert heartbeat["failure_class"] == "ledger_append_failed"
+    assert heartbeat["state_mutation_applied"] is True
     assert heartbeat["execution_event"] == {
         "ok": False,
         "event_type": "heartbeat_renewed",

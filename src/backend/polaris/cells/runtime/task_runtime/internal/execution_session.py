@@ -401,6 +401,14 @@ def _with_execution_event_projection(
     return projected
 
 
+def _execution_event_append_failed(execution_event: dict[str, Any] | None) -> bool:
+    """Return True when a state-transition event failed to reach the fact stream."""
+
+    if not isinstance(execution_event, dict):
+        return False
+    return not bool(execution_event.get("ok"))
+
+
 def project_task_row_execution_event(
     task_row: dict[str, Any],
     execution_event: dict[str, Any] | None,
@@ -434,10 +442,21 @@ def _build_task_execution_result(
         an untyped generic call.
     """
 
+    requested_reason = str(reason or "").strip() or (default_success_reason if success else "unknown")
+    result_success = bool(success)
+    result_reason = requested_reason
+    if result_success and _execution_event_append_failed(execution_event):
+        result_success = False
+        result_reason = "execution_event_append_failed"
+
     result: dict[str, Any] = {
-        "success": bool(success),
-        "reason": str(reason or "").strip() or (default_success_reason if success else "unknown"),
+        "success": result_success,
+        "reason": result_reason,
     }
+    if result_reason != requested_reason:
+        result["requested_reason"] = requested_reason
+        result["state_mutation_applied"] = True
+        result["failure_class"] = "ledger_append_failed"
     if task_row is not None:
         result["task"] = dict(task_row)
     if session is not None:
