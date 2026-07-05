@@ -1258,18 +1258,31 @@ def select_task_rows(
     """Select task rows following "二选一，不做跨源混拼" rule.
 
     Selection Rules:
-    1. If workflow rows exist and are valid (non-empty), use workflow tasks
-    2. Else if local Director is running and has local task_rows, use local live tasks
-    3. Otherwise return empty list
+    1. If local Director exposes runtime.task_runtime rows, use them.
+    2. Else if workflow rows exist and are valid (non-empty), use workflow tasks.
+    3. Else if local Director is running and has local task_rows, use local live tasks.
+    4. Otherwise return empty list
 
     Returns:
         Tuple of (selected task rows, source indicator)
     """
-    # Rule 1: If workflow rows exist and have content, use them
+    if local_status and isinstance(local_status, dict):
+        status = local_status.get("status")
+        tasks = status.get("tasks") if isinstance(status, dict) else None
+        if isinstance(tasks, dict):
+            local_task_rows = tasks.get("task_rows")
+            if (
+                tasks.get("projection_source") == "runtime.task_runtime"
+                and isinstance(local_task_rows, list)
+                and len(local_task_rows) > 0
+            ):
+                return local_task_rows, TaskSource.LOCAL_LIVE
+
+    # Rule 2: If workflow rows exist and have content, use them
     if workflow_tasks and len(workflow_tasks) > 0:
         return workflow_tasks, TaskSource.WORKFLOW
 
-    # Rule 2: Check local live tasks when workflow unavailable
+    # Rule 3: Check legacy local live tasks when workflow unavailable
     if local_status and isinstance(local_status, dict):
         local_running = bool(local_status.get("running"))
         local_state = _state_token(local_status)

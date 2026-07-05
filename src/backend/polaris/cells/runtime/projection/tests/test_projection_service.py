@@ -587,12 +587,31 @@ def test_task_boundary_execution_state_uses_shared_qa_failure_taxonomy() -> None
 
 
 class TestSelectTaskRows:
-    def test_workflow_rows_preferred(self) -> None:
+    def test_workflow_rows_used_when_no_runtime_projection(self) -> None:
         workflow_rows = [{"id": "task-1", "status": "RUNNING"}]
         local = {"running": True}
         rows, source = select_task_rows(workflow_rows, local)
         assert rows == workflow_rows
         assert source == TaskSource.WORKFLOW
+
+    def test_runtime_task_rows_preferred_over_workflow_rows(self) -> None:
+        workflow_rows = [{"id": "workflow-1", "status": "RUNNING"}]
+        runtime_rows = [{"id": "runtime-1", "status": "pending"}]
+        local = {
+            "running": False,
+            "state": "IDLE",
+            "status": {
+                "tasks": {
+                    "projection_source": "runtime.task_runtime",
+                    "task_rows": runtime_rows,
+                }
+            },
+        }
+
+        rows, source = select_task_rows(workflow_rows, local)
+
+        assert rows == runtime_rows
+        assert source == TaskSource.LOCAL_LIVE
 
     def test_local_live_when_workflow_empty(self) -> None:
         local = {
