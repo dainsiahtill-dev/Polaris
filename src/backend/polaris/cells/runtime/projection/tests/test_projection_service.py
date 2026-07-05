@@ -587,12 +587,12 @@ def test_task_boundary_execution_state_uses_shared_qa_failure_taxonomy() -> None
 
 
 class TestSelectTaskRows:
-    def test_workflow_rows_used_when_no_runtime_projection(self) -> None:
-        workflow_rows = [{"id": "task-1", "status": "RUNNING"}]
+    def test_runtime_projection_rows_used_when_local_projection_missing(self) -> None:
+        runtime_rows = [{"id": "task-1", "status": "RUNNING"}]
         local = {"running": True}
-        rows, source = select_task_rows(workflow_rows, local)
-        assert rows == workflow_rows
-        assert source == TaskSource.WORKFLOW
+        rows, source = select_task_rows(runtime_rows, local)
+        assert rows == runtime_rows
+        assert source == TaskSource.TASK_RUNTIME
 
     def test_runtime_task_rows_preferred_over_workflow_rows(self) -> None:
         workflow_rows = [{"id": "workflow-1", "status": "RUNNING"}]
@@ -611,7 +611,7 @@ class TestSelectTaskRows:
         rows, source = select_task_rows(workflow_rows, local)
 
         assert rows == runtime_rows
-        assert source == TaskSource.LOCAL_LIVE
+        assert source == TaskSource.TASK_RUNTIME
 
     def test_local_live_when_workflow_empty(self) -> None:
         local = {
@@ -687,13 +687,22 @@ class TestProjectionCache:
 
 
 class TestSelectTaskRowsFromProjection:
-    def test_workflow_tasks_returned_when_available(self) -> None:
+    def test_projection_task_rows_returned_when_available(self) -> None:
         proj = RuntimeProjection(
             workflow_archive={"tasks": [{"id": "wf-task-1"}]},
-            director_local={"running": True},
+            director_local={"running": False},
+            task_rows=[{"id": "runtime-task-1"}],
         )
         rows = select_task_rows_from_projection(proj)
-        assert rows == [{"id": "wf-task-1"}]
+        assert rows == [{"id": "runtime-task-1"}]
+
+    def test_workflow_archive_rows_not_returned_as_live_tasks(self) -> None:
+        proj = RuntimeProjection(
+            workflow_archive={"tasks": [{"id": "wf-task-1"}]},
+            director_local={"running": False},
+        )
+        rows = select_task_rows_from_projection(proj)
+        assert rows == []
 
     def test_local_rows_when_workflow_empty(self) -> None:
         proj = RuntimeProjection(
@@ -790,11 +799,11 @@ class TestRuntimeProjectionDataclass:
         custom = {"running": True, "pid": 12345}
         proj = RuntimeProjection(
             pm_local=custom,
-            task_source=TaskSource.WORKFLOW,
+            task_source=TaskSource.TASK_RUNTIME,
             task_rows=[{"id": "task-1"}],
         )
         assert proj.pm_local == custom
-        assert proj.task_source == TaskSource.WORKFLOW
+        assert proj.task_source == TaskSource.TASK_RUNTIME
         assert proj.task_rows == [{"id": "task-1"}]
 
 
@@ -1061,7 +1070,7 @@ class TestRuntimeProjectionServiceBuildAsync:
         assert proj.director_merged["state"] == "RUNNING"
         assert proj.director_merged["running"] is True
         assert proj.director_merged["source"] == "workflow"
-        assert proj.task_source == TaskSource.WORKFLOW
+        assert proj.task_source == TaskSource.TASK_RUNTIME
         assert proj.workflow_archive is not None
         assert proj.workflow_archive["tasks"]["projection_source"] == "runtime.task_runtime"
         assert proj.workflow_archive["raw_workflow_status"]["workflow_tasks"]["projection_source"] == (

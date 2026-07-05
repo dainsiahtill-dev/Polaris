@@ -365,3 +365,18 @@ def test_active_orchestration_status_uses_runtime_task_rows() -> None:
         "Active Director orchestration status must expose task-runtime rows as "
         f"the top-level tasks payload, got {task_payload_assignments!r}"
     )
+
+
+def test_runtime_projection_never_selects_workflow_archive_tasks_as_live_rows() -> None:
+    source = RUNTIME_PROJECTION_SERVICE.read_text(encoding="utf-8")
+    blocked_tokens = (
+        "TaskSource.WORKFLOW",
+        "build_workflow_task_rows(",
+    )
+    offenders = [token for token in blocked_tokens if token in source]
+
+    assert not offenders, (
+        "RuntimeProjection.task_rows must come from runtime.task_runtime rows, "
+        "not workflow archive task rows. Archive tasks may remain under "
+        "workflow_archive/raw_workflow_status as read-only evidence:\n" + "\n".join(offenders)
+    )

@@ -58,7 +58,6 @@ from polaris.cells.runtime.projection.internal.io_helpers import (
 from polaris.cells.runtime.projection.internal.workflow_status import (
     WORKFLOW_PM_TASKS_FILE,
     build_workflow_status_payload,
-    build_workflow_task_rows,
     get_workflow_runtime_status,
 )
 from polaris.cells.runtime.state_owner.public.service import AppState
@@ -76,8 +75,8 @@ logger = logging.getLogger(__name__)
 class TaskSource(Enum):
     """Task list source selection."""
 
-    WORKFLOW = "workflow"  # Prefer workflow tasks when available
-    LOCAL_LIVE = "local_live"  # Local live tasks when workflow unavailable
+    TASK_RUNTIME = "runtime.task_runtime"  # TaskRuntimeService row projection
+    LOCAL_LIVE = "local_live"  # Legacy local live rows when task-runtime projection is unavailable
     NONE = "none"  # No tasks available
 
 
@@ -1252,16 +1251,21 @@ def _apply_run_ledger_task_rows_overlay(
 
 
 def select_task_rows(
-    workflow_tasks: list[dict[str, Any]] | None,
+    runtime_projection_rows: list[dict[str, Any]] | None,
     local_status: dict[str, Any] | None,
 ) -> tuple[list[dict[str, Any]], TaskSource]:
-    """Select task rows following "二选一，不做跨源混拼" rule.
+    """Select live task rows from execution-control projections.
 
     Selection Rules:
     1. If local Director exposes runtime.task_runtime rows, use them.
-    2. Else if workflow rows exist and are valid (non-empty), use workflow tasks.
+    2. Else if the active orchestration projection exposes runtime.task_runtime
+       rows, use them.
     3. Else if local Director is running and has local task_rows, use local live tasks.
-    4. Otherwise return empty list
+    4. Otherwise return empty list.
+
+    Workflow archive rows are historical evidence.  They must remain available
+    under workflow_archive/raw_workflow_status, but they are not live execution
+    task facts and must not populate RuntimeProjection.task_rows.
 
     Returns:
         Tuple of (selected task rows, source indicator)
@@ -1276,13 +1280,12 @@ def select_task_rows(
                 and isinstance(local_task_rows, list)
                 and len(local_task_rows) > 0
             ):
-                return local_task_rows, TaskSource.LOCAL_LIVE
+                return local_task_rows, TaskSource.TASK_RUNTIME
 
-    # Rule 2: If workflow rows exist and have content, use them
-    if workflow_tasks and len(workflow_tasks) > 0:
-        return workflow_tasks, TaskSource.WORKFLOW
+    if runtime_projection_rows and len(runtime_projection_rows) > 0:
+        return runtime_projection_rows, TaskSource.TASK_RUNTIME
 
-    # Rule 3: Check legacy local live tasks when workflow unavailable
+    # Rule 3: Check legacy local live tasks when task-runtime projection is unavailable.
     if local_status and isinstance(local_status, dict):
         local_running = bool(local_status.get("running"))
         local_state = _state_token(local_status)
@@ -1297,7 +1300,7 @@ def select_task_rows(
                     if isinstance(local_task_rows, list) and len(local_task_rows) > 0:
                         return local_task_rows, TaskSource.LOCAL_LIVE
 
-    # Rule 3: No tasks available
+    # Rule 4: No live execution-control tasks available.
     return [], TaskSource.NONE
 
 
@@ -1592,46 +1595,17 @@ async def build_runtime_projection(
             active_director_status["archive_status"] = workflow_director_status
         workflow_director_status = active_director_status
 
-    # Step 4: Get workflow tasks for task selection
-    workflow_tasks: list[dict[str, Any]] = []
-    if workflow_director_status:
-        if str(workflow_director_status.get("source") or "").strip() == "orchestration_run":
-            tasks_payload = workflow_director_status.get("tasks")
-            active_rows = tasks_payload.get("task_rows") if isinstance(tasks_payload, dict) else None
-            workflow_tasks = (
+    # Step 4: Get active task-runtime rows for task selection.
+    # Workflow archive rows stay under workflow_archive/raw_workflow_status as
+    # historical evidence; they are not live task facts.
+    runtime_projection_rows: list[dict[str, Any]] = []
+    if workflow_director_status and str(workflow_director_status.get("source") or "").strip() == "orchestration_run":
+        tasks_payload = workflow_director_status.get("tasks")
+        if isinstance(tasks_payload, dict) and tasks_payload.get("projection_source") == "runtime.task_runtime":
+            active_rows = tasks_payload.get("task_rows")
+            runtime_projection_rows = (
                 [dict(item) for item in active_rows if isinstance(item, dict)] if isinstance(active_rows, list) else []
             )
-        else:
-            try:
-                raw_workflow_status = (
-                    workflow_director_status.get("raw_workflow_status")
-                    if isinstance(workflow_director_status.get("raw_workflow_status"), dict)
-                    else workflow_director_status
-                )
-                workflow_tasks = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        lambda: build_workflow_task_rows(
-                            raw_workflow_status,
-                            workspace=workspace,
-                            cache_root=cache_root,
-                        )
-                    ),
-                    timeout=5.0,  # 5 second timeout for task rows
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "build_runtime_projection: build_workflow_task_rows timed out (workspace=%r)",
-                    workspace,
-                )
-                workflow_tasks = []
-            except (RuntimeError, ValueError) as exc:
-                logger.warning(
-                    "build_runtime_projection: build_workflow_task_rows failed (workspace=%r): %s",
-                    workspace,
-                    exc,
-                    exc_info=True,
-                )
-                workflow_tasks = []
 
     # Step 5: Merge Director status using single implementation.
     # Run Ledger terminal overlays are run-scoped. Without an explicit run id,
@@ -1642,13 +1616,13 @@ async def build_runtime_projection(
     merged_director_status = merge_director_status(
         director_local_status,
         workflow_director_status,
-        workflow_tasks,
+        runtime_projection_rows,
         run_ledger_projection,
     )
 
     # Step 6: Select task rows (二选一规则)
     task_rows, task_source = select_task_rows(
-        workflow_tasks if isinstance(workflow_tasks, list) else None,
+        runtime_projection_rows if isinstance(runtime_projection_rows, list) else None,
         director_local_status,
     )
     task_rows = _apply_run_ledger_task_rows_overlay(task_rows, run_ledger_projection)
@@ -2115,18 +2089,13 @@ def _derive_projection_fields(projection: RuntimeProjection) -> dict[str, Any]:
 
 
 def select_task_rows_from_projection(projection: RuntimeProjection) -> list[dict[str, Any]]:
-    """Select task rows using priority rules:
+    """Select live task rows using projection priority rules.
 
-    1. If workflow archive has tasks: use workflow rows
-    2. If workflow missing + local running: use local live rows
-    3. If workflow stale + local terminal snapshot has tasks: keep local rows
-    4. All unavailable: fallback to empty
+    Workflow archive rows are historical evidence and must not become live
+    runtime tasks.  The caller may still expose archive payloads separately.
     """
-    workflow_tasks: list[dict[str, Any]] = []
-    if projection.workflow_archive and isinstance(projection.workflow_archive.get("tasks"), list):
-        workflow_tasks = projection.workflow_archive["tasks"]
-    if workflow_tasks:
-        return workflow_tasks
+    if projection.task_rows:
+        return [row for row in projection.task_rows if isinstance(row, dict)]
 
     local_payload = projection.director_local if isinstance(projection.director_local, dict) else {}
     local_task_rows = local_payload.get("task_rows")
@@ -2164,7 +2133,7 @@ def select_task_rows_from_projection(projection: RuntimeProjection) -> list[dict
         # Director 已结束时仍需保留本地任务快照，避免任务证据在终态被清空。
         return filtered_local_rows
 
-    selected, _ = select_task_rows(workflow_tasks, local_payload)
+    selected, _ = select_task_rows(None, local_payload)
     return selected
 
 
