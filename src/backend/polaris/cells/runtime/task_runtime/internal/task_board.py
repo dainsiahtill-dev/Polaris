@@ -911,6 +911,7 @@ class TaskBoard:
         *,
         reason: str = "",
         metadata: dict[str, Any] | None = None,
+        allow_terminal_reopen: bool = False,
     ) -> Task | None:
         """Reopen a terminal task for another implementation round."""
         import copy
@@ -924,6 +925,8 @@ class TaskBoard:
 
             if not task.status.is_terminal:
                 return copy.deepcopy(task)
+            if not allow_terminal_reopen:
+                raise RuntimeError("taskboard_reopen_requires_task_runtime_owner_transition")
 
             # Reopen is the sanctioned terminal-downgrade path; stamp the
             # reset marker so runtime claim reconciliation treats the reopened

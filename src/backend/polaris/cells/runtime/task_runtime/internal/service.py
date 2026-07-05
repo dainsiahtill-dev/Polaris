@@ -956,6 +956,7 @@ class TaskRuntimeService:
             normalized,
             reason=reason,
             metadata=metadata,
+            allow_terminal_reopen=True,
         )
         if task is None:
             return None, None, None, []

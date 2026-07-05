@@ -160,6 +160,16 @@ def test_task_board_rejects_terminal_status_without_owner_authorization(tmp_path
     with pytest.raises(RuntimeError, match=r"TaskBoard\.fail is retired"):
         board.fail(task.id, reason="boom")
 
+    reopen_target = board.create(subject="terminal-reopen-guard")
+    completed = board.update_status(
+        reopen_target.id,
+        TaskStatus.COMPLETED,
+        allow_terminal_status=True,
+    )
+    assert completed is not None
+    with pytest.raises(RuntimeError, match="taskboard_reopen_requires_task_runtime_owner_transition"):
+        board.reopen(reopen_target.id, reason="qa_rework")
+
     current = board.get(task.id)
     assert current is not None
     assert current.status == TaskStatus.PENDING
@@ -176,7 +186,7 @@ def test_task_board_reopen_demotes_completed_task_back_to_pending(tmp_path) -> N
     assert parent.id in child_after_parent_completion.blocked_by
     assert child_after_parent_completion.status == TaskStatus.BLOCKED
 
-    reopened = board.reopen(parent.id, reason="qa_rework")
+    reopened = board.reopen(parent.id, reason="qa_rework", allow_terminal_reopen=True)
     assert reopened is not None
     assert reopened.status == TaskStatus.PENDING
     assert reopened.completed_at is None
@@ -260,7 +270,7 @@ def test_task_board_reopen_keeps_downstream_rows_local(tmp_path) -> None:
     completed = board.update_status(parent.id, TaskStatus.COMPLETED, allow_terminal_status=True)
     assert completed is not None
 
-    reopened = board.reopen(parent.id, reason="qa_rework")
+    reopened = board.reopen(parent.id, reason="qa_rework", allow_terminal_reopen=True)
     child_after = board.get(child.id)
 
     assert reopened is not None
