@@ -15,8 +15,11 @@ class _FakeTaskRuntimeService:
     def __init__(self, workspace: str) -> None:
         self.workspace = workspace
 
-    def list_task_rows(self) -> list[dict[str, Any]]:
+    def list_observable_task_rows(self) -> list[dict[str, Any]]:
         return list(self.rows)
+
+    def list_task_rows(self) -> list[dict[str, Any]]:
+        raise AssertionError("Director result artifacts must consume observable task rows")
 
 
 def test_build_director_result_waits_until_all_contract_tasks_terminal(monkeypatch) -> None:

@@ -296,7 +296,7 @@ def build_director_result_from_runtime(
     if not workspace_token:
         return None, False
 
-    runtime_rows = TaskRuntimeService(workspace_token).list_task_rows()
+    runtime_rows = TaskRuntimeService(workspace_token).list_observable_task_rows()
     runtime_rows = [dict(row) for row in runtime_rows if isinstance(row, dict)]
     contract_rows = _read_pm_contract_rows(workspace_token)
     rows_by_token = _index_runtime_rows(runtime_rows, run_id=run_id)
