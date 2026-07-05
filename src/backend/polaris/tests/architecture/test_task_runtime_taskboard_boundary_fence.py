@@ -668,6 +668,27 @@ def test_production_read_side_uses_observable_task_rows() -> None:
     )
 
 
+def test_runtime_task_row_file_globs_stay_in_task_runtime_owner() -> None:
+    offenders: list[str] = []
+    this_file = Path(__file__).resolve()
+    for root in (POLARIS_ROOT, BACKEND_ROOT / "scripts"):
+        for path in root.rglob("*.py"):
+            if path.resolve() == this_file or "__pycache__" in path.parts:
+                continue
+            if "tests" in path.parts:
+                continue
+            if _is_allowed_owner_path(path):
+                continue
+            offenders.extend(_direct_task_row_file_globs(path))
+
+    assert not offenders, (
+        "runtime/tasks/task_*.json is a task-runtime storage detail. "
+        "Production code outside runtime.task_runtime must use task-runtime "
+        "public projections such as list_observable_task_rows() instead of "
+        "direct task-row file globs:\n" + "\n".join(offenders)
+    )
+
+
 def test_runtime_execution_metadata_writes_stay_in_task_runtime_owner() -> None:
     offenders: list[str] = []
     this_file = Path(__file__).resolve()
