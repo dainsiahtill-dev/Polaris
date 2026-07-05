@@ -63,6 +63,7 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _suspend_claimed_execution_for_cancellation,
     _task_requires_fresh_materialization,
     _task_runtime_finalization_failed_result,
+    _task_runtime_heartbeat_exception_signal,
     _task_runtime_heartbeat_failed_signal,
     _with_decision_signals,
     _with_task_runtime_finalize_evidence,
@@ -4837,6 +4838,24 @@ class TestDirectorFailureClosure:
         assert signal["reason"] == "execution_event_append_failed"
         assert signal["failure_class"] == "ledger_append_failed"
         assert signal["heartbeat_result"] == heartbeat_result
+
+    def test_task_runtime_heartbeat_exception_projects_decision_signal(self) -> None:
+        exc = RuntimeError("heartbeat ledger unavailable")
+
+        signal = _task_runtime_heartbeat_exception_signal(exc)
+
+        assert signal == {
+            "code": "director_task_runtime_heartbeat_failed",
+            "severity": "error",
+            "detail": "heartbeat ledger unavailable",
+            "reason": "task_runtime_heartbeat_exception",
+            "heartbeat_result": {
+                "success": False,
+                "reason": "task_runtime_heartbeat_exception",
+                "error": "heartbeat ledger unavailable",
+                "exception_type": "RuntimeError",
+            },
+        }
 
     def test_with_decision_signals_appends_without_overwriting_existing_signals(self) -> None:
         result = {"success": True, "decision_signals": [{"code": "existing"}]}

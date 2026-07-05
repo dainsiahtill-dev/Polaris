@@ -994,6 +994,19 @@ def _task_runtime_heartbeat_failed_signal(heartbeat_result: dict[str, Any]) -> d
     return signal
 
 
+def _task_runtime_heartbeat_exception_signal(exc: BaseException) -> dict[str, Any]:
+    """Project a TaskRuntime heartbeat exception into execution evidence."""
+
+    return _task_runtime_heartbeat_failed_signal(
+        {
+            "success": False,
+            "reason": "task_runtime_heartbeat_exception",
+            "error": str(exc),
+            "exception_type": type(exc).__name__,
+        }
+    )
+
+
 def _with_decision_signals(
     result: dict[str, Any],
     decision_signals: list[dict[str, Any]],
@@ -1402,7 +1415,8 @@ async def execute_director_task(
                     ):
                         decision_signals.append(_task_runtime_heartbeat_failed_signal(heartbeat_result))
                         return
-                except (OSError, RuntimeError, TypeError, ValueError):
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    decision_signals.append(_task_runtime_heartbeat_exception_signal(exc))
                     return
 
     async def _stop_task_claim_heartbeat() -> None:
