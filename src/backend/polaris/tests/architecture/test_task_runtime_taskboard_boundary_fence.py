@@ -151,6 +151,13 @@ TASK_RUNTIME_SERVICE_RAW_BOARD_READ_METHODS = {
     "list_my_tasks",
     "list_ready",
 }
+TASK_RUNTIME_EXECUTION_STREAM = "task_runtime.execution"
+TASK_RUNTIME_EXECUTION_EVENT_FILE = "task_runtime.execution.jsonl"
+TASK_RUNTIME_EXECUTION_DIRECT_WRITE_METHODS = {
+    "open",
+    "write_bytes",
+    "write_text",
+}
 
 
 def _is_allowed_owner_path(path: Path) -> bool:
@@ -298,6 +305,37 @@ def _direct_task_row_file_accesses(path: Path) -> list[str]:
         if _contains_task_row_file_literal(node):
             offenders.append(
                 f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} directly accesses runtime task-row files"
+            )
+    return offenders
+
+
+def _contains_string_literal(node: ast.AST, value: str) -> bool:
+    return any(
+        isinstance(child, ast.Constant) and isinstance(child.value, str) and child.value == value
+        for child in ast.walk(node)
+    )
+
+
+def _task_runtime_execution_writer_violations(path: Path) -> list[str]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        call = _call_name(node.func)
+        if call == "AppendFactEventCommandV1" and _contains_string_literal(node, TASK_RUNTIME_EXECUTION_STREAM):
+            offenders.append(
+                f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} appends task_runtime.execution facts"
+            )
+            continue
+        method = call.rsplit(".", maxsplit=1)[-1]
+        if method in TASK_RUNTIME_EXECUTION_DIRECT_WRITE_METHODS and _contains_string_literal(
+            node,
+            TASK_RUNTIME_EXECUTION_EVENT_FILE,
+        ):
+            offenders.append(
+                f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} writes task_runtime.execution.jsonl directly"
             )
     return offenders
 
@@ -778,6 +816,27 @@ def test_runtime_task_row_file_access_stays_in_task_runtime_owner() -> None:
         "Production code outside runtime.task_runtime must use task-runtime "
         "public projections such as list_observable_task_rows() instead of "
         "direct task-row file access:\n" + "\n".join(offenders)
+    )
+
+
+def test_task_runtime_execution_fact_writer_stays_in_task_runtime_service() -> None:
+    offenders: list[str] = []
+    this_file = Path(__file__).resolve()
+    for root in (POLARIS_ROOT, BACKEND_ROOT / "scripts"):
+        for path in root.rglob("*.py"):
+            if path.resolve() == this_file or "__pycache__" in path.parts:
+                continue
+            if "tests" in path.parts:
+                continue
+            if path.resolve() == TASK_RUNTIME_INTERNAL_SERVICE.resolve():
+                continue
+            offenders.extend(_task_runtime_execution_writer_violations(path))
+
+    assert not offenders, (
+        "task_runtime.execution is the execution-state fact stream. "
+        "Only TaskRuntimeService may append to it; other production code must "
+        "use task-runtime owner APIs and projections instead of creating fact "
+        "events or writing the event file directly:\n" + "\n".join(offenders)
     )
 
 
