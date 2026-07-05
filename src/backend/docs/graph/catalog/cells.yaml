@@ -2119,6 +2119,7 @@ cells:
       - policy.workspace_guard
       - orchestration.pm_planning
       - runtime.projection
+      - runtime.task_runtime
     subgraphs:
       - storage_archive_pipeline
     state_owners:

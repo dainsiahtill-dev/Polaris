@@ -35,7 +35,10 @@ depends_on:
 - policy.workspace_guard
 - storage.layout
 - audit.evidence
+- orchestration.pm_planning
 - runtime.state_owner
+- runtime.projection
+- runtime.task_runtime
 subgraphs:
 - storage_archive_pipeline
 state_owners:

@@ -11,6 +11,7 @@ from polaris.cells.runtime.artifact_store.internal.artifact_paths import (
     select_latest_artifact,
 )
 from polaris.cells.runtime.state_owner.public import AppState
+from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.domain.director.constants import (
     AGENTS_DRAFT_REL,
     AGENTS_FEEDBACK_REL,
@@ -158,17 +159,23 @@ def _recover_orphaned_engine_state(
 
 
 def _load_runtime_task_rows(workspace: str, cache_root: str) -> list[dict[str, Any]]:
-    tasks_dir = resolve_artifact_path(workspace, cache_root, "runtime/tasks")
-    if not tasks_dir or not os.path.isdir(tasks_dir):
+    """Return task rows through the task-runtime owner projection.
+
+    ``runtime.artifact_store`` may include task rows in its historical workflow
+    status payload, but it does not own ``runtime/tasks/*``.  The read model
+    therefore comes from ``TaskRuntimeService.list_observable_task_rows()``,
+    which overlays transitional row files with ``task_runtime.execution`` facts.
+
+    Complexity:
+        O(t) time and memory over task-runtime observable rows.
+    """
+
+    del cache_root
+    try:
+        rows = TaskRuntimeService(str(workspace)).list_observable_task_rows()
+    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
         return []
-    rows: list[dict[str, Any]] = []
-    for task_file in sorted(Path(tasks_dir).glob("task_*.json")):
-        if str(task_file).endswith(".session.json"):
-            continue
-        payload = _read_json_dict(str(task_file))
-        if payload:
-            rows.append(payload)
-    return rows
+    return [dict(row) for row in rows if isinstance(row, dict)]
 
 
 def get_workflow_runtime_status(workspace: str, cache_root: str) -> dict[str, Any]:

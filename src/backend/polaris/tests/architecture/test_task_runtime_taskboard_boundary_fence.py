@@ -28,6 +28,9 @@ FACTORY_BENCH_RUNNER = BACKEND_ROOT / "scripts" / "factory_bench" / "run_factory
 FACTORY_STAGE_EXECUTOR = (
     POLARIS_ROOT / "cells" / "factory" / "pipeline" / "internal" / "factory_stage_executor.py"
 )
+RUNTIME_ARTIFACT_STORE_ARTIFACTS = (
+    POLARIS_ROOT / "cells" / "runtime" / "artifact_store" / "internal" / "artifacts.py"
+)
 RAW_TASKBOARD_MODULES = {
     "polaris.cells.runtime.task_runtime.internal.task_board",
     "polaris.cells.runtime.task_runtime.public.task_board_contract",
@@ -462,6 +465,22 @@ def test_factory_stage_executor_reads_task_rows_through_task_runtime_projection(
     assert "list_observable_task_rows" in source, (
         "Factory stage executor must consume TaskRuntimeService.list_observable_task_rows() "
         "for read-only task status projections."
+    )
+
+
+def test_runtime_artifact_store_reads_task_rows_through_task_runtime_projection() -> None:
+    offenders = _direct_task_row_file_globs(RUNTIME_ARTIFACT_STORE_ARTIFACTS)
+    source = RUNTIME_ARTIFACT_STORE_ARTIFACTS.read_text(encoding="utf-8")
+
+    assert not offenders, (
+        "runtime.artifact_store must not scan runtime/tasks/task_*.json as an "
+        "execution fact source. Task rows are owned by runtime.task_runtime; "
+        "artifact-backed workflow status must use TaskRuntimeService observable rows:\n"
+        + "\n".join(offenders)
+    )
+    assert "list_observable_task_rows" in source, (
+        "runtime.artifact_store workflow status must consume "
+        "TaskRuntimeService.list_observable_task_rows()."
     )
 
 
