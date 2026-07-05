@@ -76,6 +76,42 @@ def normalize_positive_int(value: Any, *, default: int, minimum: int = 1) -> int
     return max(minimum, int(default))
 
 
+def _json_compatible_copy(value: Any) -> Any:
+    """Return a JSON-compatible recursive copy for event payload snapshots.
+
+    The task-runtime event stream must be able to reconstruct task rows without
+    keeping references to mutable TaskBoard dictionaries.  This helper preserves
+    scalar JSON values, recursively copies mappings/sequences, and stringifies
+    uncommon objects so fact-stream serialization remains deterministic.
+
+    Complexity:
+        O(n) time and memory over the number of values in ``value``.
+    """
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_compatible_copy(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_compatible_copy(item) for item in value]
+    return str(value)
+
+
+def build_task_row_snapshot(task_row: dict[str, Any]) -> dict[str, Any]:
+    """Return the complete task-row snapshot stored in execution events.
+
+    Boundary:
+        This snapshot is evidence, not a write authority.  It exists so future
+        event-sourced task projections can rebuild row state from the
+        task-runtime fact stream instead of rereading the file-backed TaskBoard.
+
+    Complexity:
+        O(n) time and memory over the task-row payload size.
+    """
+
+    return _json_compatible_copy(task_row)
+
+
 def require_non_empty_field(payload: dict[str, Any], field_name: str) -> str:
     """Return a required non-empty persisted session field."""
     token = str(payload.get(field_name) or "").strip()
@@ -228,6 +264,7 @@ def build_task_runtime_execution_event_payload(
             session.last_result_summary if session is not None else task_row.get("last_result_summary")
         ),
         "details": dict(details or {}),
+        "task_row_snapshot": build_task_row_snapshot(task_row),
         "timestamp": str(timestamp or "").strip() or utc_now_iso(),
     }
     factory_run_id = str(task_metadata.get("factory_run_id") or "").strip()

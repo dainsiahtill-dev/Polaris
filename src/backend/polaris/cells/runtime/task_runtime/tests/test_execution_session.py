@@ -11,6 +11,7 @@ from polaris.cells.runtime.task_runtime.internal.execution_session import (
     build_task_execution_claim_result,
     build_task_execution_heartbeat_result,
     build_task_execution_transition_result,
+    build_task_row_snapshot,
     build_task_runtime_execution_event_append_result,
     build_task_runtime_execution_event_payload,
     build_task_runtime_metadata,
@@ -206,6 +207,26 @@ def test_build_task_runtime_metadata_projects_session_state() -> None:
 
 
 def test_build_task_runtime_execution_event_payload_projects_runtime_state() -> None:
+    task_row = {
+        "id": 7,
+        "status": "in_progress",
+        "subject": "task subject",
+        "description": "task description",
+        "priority": "HIGH",
+        "blocked_by": [1, 2],
+        "claimed_by": "worker-1",
+        "last_claimed_by": "worker-1",
+        "metadata": {
+            "runtime_execution": {
+                "effective_status": "in_progress",
+                "resume_state": "resumed",
+                "resume_available": False,
+            },
+            "factory_run_id": "factory-1",
+            "factory_bench_session_id": "bench-1",
+            "factory_bench_project_id": "L1-01",
+        },
+    }
     payload = _valid_session_payload()
     payload.update(
         {
@@ -220,23 +241,7 @@ def test_build_task_runtime_execution_event_payload_projects_runtime_state() -> 
     event_payload = build_task_runtime_execution_event_payload(
         event_type="CLAIMED",
         workspace="/tmp/workspace",
-        task_row={
-            "id": 7,
-            "status": "in_progress",
-            "subject": "task subject",
-            "claimed_by": "worker-1",
-            "last_claimed_by": "worker-1",
-            "metadata": {
-                "runtime_execution": {
-                    "effective_status": "in_progress",
-                    "resume_state": "resumed",
-                    "resume_available": False,
-                },
-                "factory_run_id": "factory-1",
-                "factory_bench_session_id": "bench-1",
-                "factory_bench_project_id": "L1-01",
-            },
-        },
+        task_row=task_row,
         session=session,
         details={"source": "unit"},
         timestamp="2026-01-01T00:00:00+00:00",
@@ -257,6 +262,30 @@ def test_build_task_runtime_execution_event_payload_projects_runtime_state() -> 
     assert event_payload["factory_run_id"] == "factory-1"
     assert event_payload["factory_bench_session_id"] == "bench-1"
     assert event_payload["factory_bench_project_id"] == "L1-01"
+    assert event_payload["task_row_snapshot"] == task_row
+    assert event_payload["task_row_snapshot"] is not task_row
+    assert event_payload["task_row_snapshot"]["metadata"] is not task_row["metadata"]
+
+
+def test_build_task_row_snapshot_returns_json_compatible_deep_copy() -> None:
+    marker = object()
+    source = {
+        "id": 7,
+        "metadata": {
+            "nested": [{"value": marker}],
+        },
+    }
+
+    snapshot = build_task_row_snapshot(source)
+
+    assert snapshot == {
+        "id": 7,
+        "metadata": {
+            "nested": [{"value": str(marker)}],
+        },
+    }
+    assert snapshot is not source
+    assert snapshot["metadata"] is not source["metadata"]
 
 
 def test_build_task_runtime_execution_event_append_result_projects_failure_evidence() -> None:
