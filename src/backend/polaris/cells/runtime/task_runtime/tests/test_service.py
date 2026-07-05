@@ -893,6 +893,8 @@ def test_task_runtime_service_refreshes_stale_blocked_row_with_completed_depende
         result_summary="parent done",
     )
     assert completed["success"] is True
+    assert completed["dependency_execution_events"][0]["ok"] is True
+    assert completed["dependency_execution_events"][0]["event_type"] == "dependencies_unblocked"
 
     stale = service.update_task_row(child_id, status="blocked")
     assert stale is not None
@@ -901,6 +903,11 @@ def test_task_runtime_service_refreshes_stale_blocked_row_with_completed_depende
 
     refresh = service.refresh_dependency_unblocks()
     assert refresh["unblocked_task_ids"] == [child_id]
+    assert refresh["execution_events"][0]["ok"] is True
+    assert refresh["execution_events"][0]["event_type"] == "dependencies_unblocked"
+    fact_rows = service.list_task_rows_from_execution_facts()
+    fact_child = next(row for row in fact_rows if row["id"] == child_id)
+    assert fact_child["status"] == "pending"
     claim_child = service.claim_next_execution(
         worker_id="director",
         role_id="director",
@@ -910,6 +917,58 @@ def test_task_runtime_service_refreshes_stale_blocked_row_with_completed_depende
 
     assert claim_child["success"] is True
     assert claim_child["task"]["id"] == child_id
+
+
+def test_task_runtime_service_records_dependency_blocker_refresh_events(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    completed_parent = service.create_task_row(subject="completed dependency")
+    active_parent = service.create_task_row(subject="still active dependency")
+    completed_parent_id = int(completed_parent["id"])
+    active_parent_id = int(active_parent["id"])
+    child = service.create_task_row(
+        subject="partially blocked child",
+        blocked_by=[completed_parent_id, active_parent_id],
+    )
+    child_id = int(child["id"])
+    stale_child = service.update_task_row(child_id, status="blocked")
+    assert stale_child is not None
+
+    claimed = service.claim_execution(
+        completed_parent_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-partial-unblock",
+        selection_source="unit",
+    )
+    assert claimed["success"] is True
+    completed = service.complete_execution(
+        completed_parent_id,
+        session_id=str(claimed["session"]["session_id"]),
+        result_summary="dependency done",
+    )
+    assert completed["success"] is True
+    assert completed["dependency_execution_events"][0]["ok"] is True
+    assert completed["dependency_execution_events"][0]["event_type"] == "dependency_blockers_refreshed"
+
+    stale_child = service.update_task_row(
+        child_id,
+        status="blocked",
+        blocked_by=[completed_parent_id, active_parent_id],
+    )
+    assert stale_child is not None
+    refresh = service.refresh_dependency_unblocks()
+
+    assert refresh["unblocked_task_ids"] == []
+    assert refresh["refreshed_task_ids"] == [child_id]
+    assert refresh["execution_events"][0]["ok"] is True
+    assert refresh["execution_events"][0]["event_type"] == "dependency_blockers_refreshed"
+    child_row = service.get_task(child_id)
+    assert child_row is not None
+    assert child_row["status"] == "blocked"
+    assert child_row["blocked_by"] == [active_parent_id]
 
 
 def test_task_runtime_service_blocks_missing_dependency_fail_closed(tmp_path: Path) -> None:

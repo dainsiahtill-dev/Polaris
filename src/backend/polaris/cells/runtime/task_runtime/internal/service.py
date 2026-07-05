@@ -1022,6 +1022,7 @@ class TaskRuntimeService:
 
             session.mark_completed(result_summary=result_summary)
             self._write_session(session)
+        dependent_rows_before = self._dependent_rows_blocked_by(normalized)
         updated = self._board.update(
             normalized,
             status=TaskStatus.COMPLETED,
@@ -1033,19 +1034,24 @@ class TaskRuntimeService:
             ),
         )
         row = self._augment_task_row(updated.to_dict() if updated is not None else task.to_dict())
+        dependency_events = self._append_dependency_transition_events(
+            completed_task_id=normalized,
+            dependent_rows_before=dependent_rows_before,
+        )
         execution_event = self._append_execution_event(
             "completed",
             task_row=row,
             session=session,
             details={"result_summary": sanitize_summary(result_summary)},
         )
-        return build_task_execution_transition_result(
+        result = build_task_execution_transition_result(
             success=True,
             reason="completed",
             task_row=row,
             session=session,
             execution_event=execution_event,
         )
+        return self._with_dependency_execution_events(result, dependency_events)
 
     def fail_execution(
         self,
@@ -1285,6 +1291,9 @@ class TaskRuntimeService:
         """Normalize stale BLOCKED rows whose dependencies are now complete."""
 
         changed: list[int] = []
+        refreshed: list[int] = []
+        failed: list[dict[str, Any]] = []
+        execution_events: list[dict[str, Any]] = []
         inspected = 0
         tasks = self._board.list_all()
         status_by_id = {int(task.id): task.status for task in tasks}
@@ -1296,7 +1305,37 @@ class TaskRuntimeService:
             explicit_blockers = self._active_dependency_ids(task.blocked_by, status_by_id)
             if explicit_blockers:
                 if explicit_blockers != list(task.blocked_by or []):
-                    self._board.update(int(task.id), blocked_by=explicit_blockers)
+                    previous_blockers = [int(blocker) for blocker in task.blocked_by or []]
+                    updated = self._board.update(int(task.id), blocked_by=explicit_blockers)
+                    if updated is None:
+                        failed.append({"task_id": int(task.id), "reason": "task_update_failed"})
+                    else:
+                        row = self._augment_task_row(updated.to_dict())
+                        refreshed.append(int(task.id))
+                        execution_event = self._append_execution_event(
+                            "dependency_blockers_refreshed",
+                            task_row=row,
+                            session=None,
+                            details={
+                                "previous_blockers": previous_blockers,
+                                "active_blockers": [int(blocker) for blocker in explicit_blockers],
+                            },
+                        )
+                        execution_events.append(execution_event)
+                        if not bool(execution_event.get("ok")):
+                            failed.append(
+                                {
+                                    "task_id": int(task.id),
+                                    "reason": "execution_event_append_failed",
+                                    "failure_class": "ledger_append_failed",
+                                    "event_type": "dependency_blockers_refreshed",
+                                    "error": str(
+                                        execution_event.get("error")
+                                        or execution_event.get("publish_error")
+                                        or ""
+                                    ),
+                                }
+                            )
                 continue
 
             metadata = task.metadata if isinstance(task.metadata, dict) else {}
@@ -1304,15 +1343,46 @@ class TaskRuntimeService:
             if resolved_dependencies and self._active_dependency_ids(resolved_dependencies, status_by_id):
                 continue
 
+            previous_blockers = [int(blocker) for blocker in task.blocked_by or []]
             updated = self._board.update(int(task.id), status=TaskStatus.PENDING, blocked_by=[])
             if updated is not None:
+                row = self._augment_task_row(updated.to_dict())
                 changed.append(int(task.id))
+                execution_event = self._append_execution_event(
+                    "dependencies_unblocked",
+                    task_row=row,
+                    session=None,
+                    details={
+                        "previous_blockers": previous_blockers,
+                        "resolved_dependencies": [int(dep_id) for dep_id in resolved_dependencies],
+                    },
+                )
+                execution_events.append(execution_event)
+                if not bool(execution_event.get("ok")):
+                    failed.append(
+                        {
+                            "task_id": int(task.id),
+                            "reason": "execution_event_append_failed",
+                            "failure_class": "ledger_append_failed",
+                            "event_type": "dependencies_unblocked",
+                            "error": str(execution_event.get("error") or execution_event.get("publish_error") or ""),
+                        }
+                    )
+            else:
+                failed.append({"task_id": int(task.id), "reason": "task_update_failed"})
 
-        return {
+        result: dict[str, Any] = {
             "inspected_count": inspected,
             "unblocked_count": len(changed),
             "unblocked_task_ids": changed,
+            "refreshed_count": len(refreshed),
+            "refreshed_task_ids": refreshed,
+            "failed": failed,
+            "execution_events": execution_events,
         }
+        if any(str(item.get("failure_class") or "") == "ledger_append_failed" for item in failed):
+            result["failure_class"] = "ledger_append_failed"
+        return result
 
     @staticmethod
     def _active_dependency_ids(dependency_ids: list[int], status_by_id: dict[int, TaskStatus]) -> list[int]:
@@ -1610,6 +1680,102 @@ class TaskRuntimeService:
         session.mark_suspended(reason="terminal_session_rotated_for_deliberate_retry", resumable=False)
         self._write_session(session, allow_terminal_downgrade=True)
         return session
+
+    def _dependent_rows_blocked_by(self, task_id: int) -> list[dict[str, Any]]:
+        """Return task-row snapshots that currently depend on ``task_id``.
+
+        Boundary:
+            This is pre-mutation evidence for dependency side effects triggered
+            by ``TaskBoard.update_status(COMPLETED)``. The snapshots are used
+            only to emit execution facts for rows the board changes implicitly.
+
+        Complexity:
+            O(t) time and memory over task rows in the current workspace.
+        """
+
+        rows: list[dict[str, Any]] = []
+        for task in self._board.list_all():
+            try:
+                blockers = [int(blocker) for blocker in task.blocked_by or []]
+            except (TypeError, ValueError):
+                blockers = []
+            if task_id in blockers:
+                rows.append(self._augment_task_row(task.to_dict()))
+        return rows
+
+    @staticmethod
+    def _row_blocker_ids(row: dict[str, Any]) -> list[int]:
+        blockers_raw = row.get("blocked_by") or row.get("blockedBy") or []
+        blocker_ids: list[int] = []
+        if not isinstance(blockers_raw, list):
+            return blocker_ids
+        for blocker in blockers_raw:
+            try:
+                blocker_id = int(blocker)
+            except (TypeError, ValueError):
+                continue
+            if blocker_id not in blocker_ids:
+                blocker_ids.append(blocker_id)
+        return blocker_ids
+
+    def _append_dependency_transition_events(
+        self,
+        *,
+        completed_task_id: int,
+        dependent_rows_before: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Append execution facts for dependency rows changed by a completion."""
+
+        events: list[dict[str, Any]] = []
+        for before_row in dependent_rows_before:
+            dependent_id = self.normalize_task_id(before_row.get("id"))
+            if dependent_id is None:
+                continue
+            task = self._board.get(dependent_id)
+            if task is None:
+                continue
+            after_row = self._augment_task_row(task.to_dict())
+            previous_blockers = self._row_blocker_ids(before_row)
+            active_blockers = self._row_blocker_ids(after_row)
+            if previous_blockers == active_blockers:
+                continue
+            status = str(after_row.get("status") or "").strip().lower()
+            event_type = (
+                "dependencies_unblocked"
+                if not active_blockers and status in {"pending", "ready"}
+                else "dependency_blockers_refreshed"
+            )
+            events.append(
+                self._append_execution_event(
+                    event_type,
+                    task_row=after_row,
+                    session=None,
+                    details={
+                        "completed_task_id": completed_task_id,
+                        "previous_blockers": previous_blockers,
+                        "active_blockers": active_blockers,
+                    },
+                )
+            )
+        return events
+
+    @staticmethod
+    def _with_dependency_execution_events(
+        result: dict[str, Any],
+        dependency_events: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        if not dependency_events:
+            return result
+        projected = dict(result)
+        projected["dependency_execution_events"] = [dict(event) for event in dependency_events]
+        failed_events = [event for event in dependency_events if not bool(event.get("ok"))]
+        if failed_events and bool(projected.get("success")):
+            projected["requested_reason"] = str(projected.get("reason") or "")
+            projected["reason"] = "execution_event_append_failed"
+            projected["success"] = False
+            projected["failure_class"] = "ledger_append_failed"
+            projected["state_mutation_applied"] = True
+        return projected
 
     def _append_execution_event(
         self,
