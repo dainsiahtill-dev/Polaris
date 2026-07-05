@@ -1003,6 +1003,31 @@ def test_role_worker_pool_uses_task_runtime_port_not_raw_taskboard() -> None:
     )
 
 
+def test_role_worker_pool_task_runtime_port_does_not_require_live_listener() -> None:
+    source = ROLE_WORKER_POOL.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    port_class: ast.ClassDef | None = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "TaskRuntimePort":
+            port_class = node
+            break
+
+    assert port_class is not None, "TaskRuntimePort protocol not found"
+    port_methods = {
+        item.name
+        for item in port_class.body
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    assert "add_ready_listener" not in port_methods, (
+        "TaskRuntimePort must not require live listener utilities. Worker wakeup "
+        "may use an optional duck-typed add_ready_listener() optimization, but "
+        "the required port contract should stay on ready-row reads and atomic "
+        "claim/complete/fail execution transitions."
+    )
+    assert {"list_ready_task_rows", "claim_execution", "complete_execution", "fail_execution"} <= port_methods
+
+
 def test_delivery_pm_taskboard_mainline_uses_task_runtime_service() -> None:
     source = DELIVERY_PM_TASKBOARD.read_text(encoding="utf-8")
     blocked_tokens = (

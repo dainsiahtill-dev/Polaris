@@ -100,7 +100,6 @@ class TaskRuntimePort(Protocol):
         error: str,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
-    def add_ready_listener(self, listener: Callable[[], None]) -> Callable[[], None]: ...
 
 
 class WorkerState(str, Enum):
