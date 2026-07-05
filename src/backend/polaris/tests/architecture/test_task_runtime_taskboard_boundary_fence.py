@@ -158,6 +158,11 @@ TASK_RUNTIME_EXECUTION_DIRECT_WRITE_METHODS = {
     "write_bytes",
     "write_text",
 }
+TASK_RUNTIME_EXECUTION_DIRECT_READ_METHODS = {
+    "open",
+    "read_bytes",
+    "read_text",
+}
 
 
 def _is_allowed_owner_path(path: Path) -> bool:
@@ -336,6 +341,33 @@ def _task_runtime_execution_writer_violations(path: Path) -> list[str]:
         ):
             offenders.append(
                 f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} writes task_runtime.execution.jsonl directly"
+            )
+    return offenders
+
+
+def _task_runtime_execution_reader_violations(path: Path) -> list[str]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        call = _call_name(node.func)
+        if call in {"QueryFactEventsV1", "query_fact_events"} and _contains_string_literal(
+            node,
+            TASK_RUNTIME_EXECUTION_STREAM,
+        ):
+            offenders.append(
+                f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} reads task_runtime.execution facts"
+            )
+            continue
+        method = call.rsplit(".", maxsplit=1)[-1]
+        if method in TASK_RUNTIME_EXECUTION_DIRECT_READ_METHODS and _contains_string_literal(
+            node,
+            TASK_RUNTIME_EXECUTION_EVENT_FILE,
+        ):
+            offenders.append(
+                f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} reads task_runtime.execution.jsonl directly"
             )
     return offenders
 
@@ -837,6 +869,27 @@ def test_task_runtime_execution_fact_writer_stays_in_task_runtime_service() -> N
         "Only TaskRuntimeService may append to it; other production code must "
         "use task-runtime owner APIs and projections instead of creating fact "
         "events or writing the event file directly:\n" + "\n".join(offenders)
+    )
+
+
+def test_task_runtime_execution_fact_reader_stays_in_task_runtime_service() -> None:
+    offenders: list[str] = []
+    this_file = Path(__file__).resolve()
+    for root in (POLARIS_ROOT, BACKEND_ROOT / "scripts"):
+        for path in root.rglob("*.py"):
+            if path.resolve() == this_file or "__pycache__" in path.parts:
+                continue
+            if "tests" in path.parts:
+                continue
+            if path.resolve() == TASK_RUNTIME_INTERNAL_SERVICE.resolve():
+                continue
+            offenders.extend(_task_runtime_execution_reader_violations(path))
+
+    assert not offenders, (
+        "task_runtime.execution read projections are owned by TaskRuntimeService. "
+        "Production code outside runtime.task_runtime must use task-runtime "
+        "read-model APIs such as list_observable_task_rows(), not direct fact "
+        "stream queries or event-file reads:\n" + "\n".join(offenders)
     )
 
 
