@@ -11,6 +11,37 @@ from typing import Any
 from ._protocol import _PMAdapterMixinBase
 
 
+def _with_task_runtime_transition_failure(
+    row: dict[str, Any],
+    *,
+    task_id: int,
+    action: str,
+    reason: str,
+    blocked_by: list[int] | None = None,
+    transition_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return a row projection annotated with a failed TaskRuntime transition."""
+
+    projected = dict(row)
+    normalized_reason = str(reason or "task_runtime_transition_failed").strip()
+    if not normalized_reason:
+        normalized_reason = "task_runtime_transition_failed"
+    raw_failures = projected.get("task_runtime_transition_failures")
+    failures = [dict(item) for item in raw_failures if isinstance(item, dict)] if isinstance(raw_failures, list) else []
+    failures.append(
+        {
+            "success": False,
+            "task_id": int(task_id or 0),
+            "action": str(action or "").strip(),
+            "reason": normalized_reason,
+            "blocked_by": list(blocked_by or []),
+            "transition_result": dict(transition_result or {}),
+        }
+    )
+    projected["task_runtime_transition_failures"] = failures
+    return projected
+
+
 class PMBoardTaskMixin(_PMAdapterMixinBase):
     """PM 任务板 mixin：在 TaskBoard 上创建/去重/匹配任务，并回填依赖关系。"""
 
@@ -149,6 +180,14 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
                 )
                 if refreshed_row is None:
                     refreshed_row = self.task_runtime.get_task(board_task_id)
+                    if refreshed_row is not None:
+                        refreshed_row = _with_task_runtime_transition_failure(
+                            refreshed_row,
+                            task_id=board_task_id,
+                            action="resolve_dependencies",
+                            reason="task_runtime_dependency_update_missing_row",
+                            blocked_by=blocked_by,
+                        )
                 if refreshed_row is not None:
                     for position, row in enumerate(created):
                         if int(row.get("id") or 0) == board_task_id:

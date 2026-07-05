@@ -64,6 +64,27 @@ class _RowProjectionOnlyTaskBoard:
                 merged_metadata.update(metadata)
                 row["metadata"] = merged_metadata
 
+    def fail_task_row_from_role_adapter(
+        self,
+        task_id: Any,
+        *,
+        reason: str,
+        metadata: dict[str, Any] | None = None,
+        **_kwargs: Any,
+    ) -> dict[str, Any] | None:
+        for row in self._rows:
+            if str(row.get("id") or "") != str(task_id or ""):
+                continue
+            row["status"] = "failed"
+            current_metadata = row.get("metadata")
+            merged_metadata = dict(current_metadata) if isinstance(current_metadata, dict) else {}
+            merged_metadata["failure_reason"] = str(reason or "").strip()
+            if metadata is not None:
+                merged_metadata.update(metadata)
+            row["metadata"] = merged_metadata
+            return dict(row)
+        return None
+
 
 class _RowWriteOnlyTaskRuntime:
     def __init__(self) -> None:
@@ -141,6 +162,21 @@ class _RowWriteOnlyTaskRuntime:
 
     def list_all(self) -> list[Any]:
         raise AssertionError("PM read-model consumers must use list_observable_task_rows()")
+
+
+class _DependencyUpdateMissingTaskRuntime(_RowWriteOnlyTaskRuntime):
+    def update_task_row(
+        self,
+        task_id: Any,
+        *,
+        status: str | None = None,
+        blocked_by: list[int] | None = None,
+        metadata: dict[str, Any] | None = None,
+        **_kwargs: Any,
+    ) -> dict[str, Any] | None:
+        if blocked_by is not None:
+            return None
+        return super().update_task_row(task_id, status=status, blocked_by=blocked_by, metadata=metadata, **_kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -2194,6 +2230,53 @@ class TestCreateBoardTasksRows:
         assert [row["id"] for row in created] == [1, 2]
         assert created[1]["blocked_by"] == [1]
         assert created[1]["metadata"]["resolved_depends_on_task_ids"] == [1]
+
+    def test_dependency_update_failure_is_returned_as_transition_evidence(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        runtime = _DependencyUpdateMissingTaskRuntime()
+        adapter._task_runtime = cast(Any, runtime)
+
+        created = adapter._create_board_tasks(
+            [
+                {
+                    "id": "TASK-1",
+                    "title": "Create model",
+                    "description": "Create the domain model",
+                    "goal": "model",
+                    "scope": "src/model.py",
+                    "scope_paths": ["src/model.py"],
+                    "target_files": ["src/model.py"],
+                    "steps": ["write model"],
+                    "acceptance": ["model exists"],
+                    "depends_on": [],
+                },
+                {
+                    "id": "TASK-2",
+                    "title": "Create engine",
+                    "description": "Create the engine",
+                    "goal": "engine",
+                    "scope": "src/engine.py",
+                    "scope_paths": ["src/engine.py"],
+                    "target_files": ["src/engine.py"],
+                    "steps": ["write engine"],
+                    "acceptance": ["engine exists"],
+                    "depends_on": ["TASK-1"],
+                },
+            ]
+        )
+
+        assert created[1]["blocked_by"] == []
+        assert "resolved_depends_on_task_ids" not in created[1]["metadata"]
+        assert created[1]["task_runtime_transition_failures"] == [
+            {
+                "success": False,
+                "task_id": 2,
+                "action": "resolve_dependencies",
+                "reason": "task_runtime_dependency_update_missing_row",
+                "blocked_by": [1],
+                "transition_result": {},
+            }
+        ]
 
 
 class TestCanonicalText:
