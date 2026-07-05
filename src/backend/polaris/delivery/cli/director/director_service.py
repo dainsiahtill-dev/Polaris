@@ -197,15 +197,24 @@ class DirectorService:
         }
 
     def _update_task_board(self, task_id: str, result: dict[str, Any]) -> None:
-        status = "completed" if bool(result.get("success")) else "failed"
+        expected_status = "completed" if bool(result.get("success")) else "failed"
         try:
-            self._get_task_runtime().update_task_row(
-                self._normalize_task_id(task_id),
-                status=status,
-                metadata=dict(result.get("metadata") or {}),
-            )
+            normalized_task_id = self._normalize_task_id(task_id)
+            row = self._get_task_runtime().get_task(normalized_task_id)
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-            logger.warning("Failed to update Director task %s after public execution: %s", task_id, exc)
+            logger.warning("Failed to inspect Director task %s after public execution: %s", task_id, exc)
+            return
+        if not isinstance(row, dict):
+            logger.warning("Director task %s disappeared after public execution", task_id)
+            return
+        actual_status = str(row.get("status") or "").strip().lower()
+        if actual_status != expected_status:
+            logger.warning(
+                "Director public execution for task %s returned success=%s but task-runtime projection is %s",
+                task_id,
+                bool(result.get("success")),
+                actual_status or "missing",
+            )
 
     @staticmethod
     def _exception_result(task: dict[str, Any], exc: BaseException) -> dict[str, Any]:

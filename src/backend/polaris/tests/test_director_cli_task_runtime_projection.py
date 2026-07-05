@@ -8,11 +8,30 @@ from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.delivery.cli.director.director_service import DirectorService
 
 
-def test_director_cli_status_update_writes_task_runtime_execution_fact(tmp_path: Path) -> None:
+def test_director_cli_status_check_does_not_write_sessionless_terminal_event(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     task_runtime = TaskRuntimeService(str(workspace))
     task = task_runtime.create_task_row(subject="Director CLI execution projection")
+    claim = task_runtime.claim_execution(
+        task["id"],
+        worker_id="director",
+        role_id="director",
+        run_id="run-director-cli-status-check",
+        selection_source="test",
+    )
+    assert claim["success"] is True
+    session = claim["session"]
+    completed = task_runtime.complete_execution(
+        task["id"],
+        session_id=session["session_id"],
+        result_summary="director public execution completed",
+        metadata={
+            "adapter": "director.execution.public",
+            "changed_files": ["src/main.py"],
+        },
+    )
+    assert completed["success"] is True
     service = DirectorService(workspace=workspace)
 
     service._update_task_board(
@@ -27,11 +46,15 @@ def test_director_cli_status_update_writes_task_runtime_execution_fact(tmp_path:
     )
 
     events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
-    updated_event = next(event for event in events if event.get("event_type") == "updated")
+    terminal_events = [event for event in events if event.get("event_type") == "completed"]
+    sessionless_updated_events = [
+        event
+        for event in events
+        if event.get("event_type") == "updated" and not str(event.get("payload", {}).get("session_id") or "").strip()
+    ]
 
-    assert updated_event["payload"]["status"] == "completed"
-    assert updated_event["payload"]["execution_state"] == "completed"
-    assert updated_event["payload"]["details"]["metadata_updated"] is True
+    assert len(terminal_events) == 1
+    assert not sessionless_updated_events
 
     updated_row = TaskRuntimeService(str(workspace)).get_task(task["id"])
     assert updated_row is not None

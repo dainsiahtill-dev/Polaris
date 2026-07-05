@@ -21,6 +21,7 @@ TASK_RUNTIME_PUBLIC_BOARD_CONTRACT = TASK_RUNTIME_OWNER / "public" / "task_board
 TASK_RUNTIME_DESCRIPTOR = TASK_RUNTIME_OWNER / "generated" / "descriptor.pack.json"
 ROLE_WORKER_POOL = POLARIS_ROOT / "cells" / "roles" / "runtime" / "internal" / "worker_pool.py"
 DELIVERY_PM_TASKBOARD = POLARIS_ROOT / "delivery" / "cli" / "pm" / "engine" / "taskboard.py"
+DELIVERY_CLI_DIRECTOR_SERVICE = POLARIS_ROOT / "delivery" / "cli" / "director" / "director_service.py"
 DIRECTOR_EXECUTION_SERVICE = POLARIS_ROOT / "cells" / "director" / "execution" / "service.py"
 RUNTIME_PROJECTION_SERVICE = POLARIS_ROOT / "cells" / "runtime" / "projection" / "internal" / "runtime_projection_service.py"
 FACTORY_HTTP_ROUTER = POLARIS_ROOT / "delivery" / "http" / "routers" / "factory.py"
@@ -444,6 +445,23 @@ def test_delivery_pm_taskboard_mainline_uses_task_runtime_service() -> None:
     assert not offenders, (
         "delivery PM taskboard mainline must use TaskRuntimeService row/session APIs, "
         "not the retired role taskboard loader or raw TaskBoard calls: " + ", ".join(offenders)
+    )
+
+
+def test_delivery_cli_director_does_not_finalize_with_row_updates() -> None:
+    source = DELIVERY_CLI_DIRECTOR_SERVICE.read_text(encoding="utf-8")
+    blocked_tokens = (
+        "update_task_row(",
+        'event_type") == "updated"',
+        "event_type') == 'updated'",
+    )
+    offenders = [token for token in blocked_tokens if token in source]
+
+    assert not offenders, (
+        "delivery CLI Director must not finalize execution with sessionless "
+        "row updates. It should consume director.execution / TaskRuntimeService "
+        "execution transitions and only inspect the resulting projection: "
+        + ", ".join(offenders)
     )
 
 
