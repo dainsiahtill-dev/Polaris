@@ -1753,6 +1753,40 @@ def test_task_runtime_rework_exhaustion_failure_is_owner_transition(tmp_path: Pa
     }
 
 
+def test_task_runtime_dedup_cancel_is_owner_transition(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    primary = service.create_task_row(subject="primary task")
+    duplicate = service.create_task_row(subject="duplicate task")
+
+    cancelled = service.cancel_task_row_for_deduplication(
+        duplicate["id"],
+        primary_task_id=primary["id"],
+        reason="pm_duplicate_subject",
+        metadata={"dedup_source": "pm_adapter"},
+        source="pm_adapter",
+    )
+
+    assert cancelled is not None
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["metadata"]["dedup_merged_into"] == primary["id"]
+    assert cancelled["metadata"]["dedup_reason"] == "pm_duplicate_subject"
+    assert cancelled["metadata"]["dedup_source"] == "pm_adapter"
+    assert cancelled["execution_event"]["event_type"] == "cancelled"
+
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    cancelled_event = events[-1]
+    assert cancelled_event["event_type"] == "cancelled"
+    assert cancelled_event["payload"]["execution_state"] == "cancelled"
+    assert cancelled_event["payload"]["details"] == {
+        "reason": "pm_duplicate_subject",
+        "source": "pm_adapter",
+        "dedup_merged_into": str(primary["id"]),
+    }
+
+
 def test_reopen_task_row_reports_event_append_failure_without_persisting_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

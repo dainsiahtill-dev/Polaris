@@ -179,14 +179,14 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
                 status = str(row.get("status") or "").strip().lower()
                 if status not in {"pending", "blocked", "in_progress", "failed"}:
                     continue
-                self.task_runtime.update_task_row(
+                self.task_runtime.cancel_task_row_for_deduplication(
                     task_id,
-                    status="cancelled",
+                    primary_task_id=primary_id,
+                    reason="pm_duplicate_subject",
                     metadata={
-                        "dedup_merged_into": primary_id,
-                        "dedup_reason": "pm_duplicate_subject",
                         "dedup_source": "pm_adapter",
                     },
+                    source="pm_adapter",
                 )
 
     @staticmethod

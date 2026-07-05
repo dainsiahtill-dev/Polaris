@@ -11,6 +11,8 @@ from typing import Any, cast
 
 import pytest
 from polaris.bootstrap import config as bootstrap_config_module
+from polaris.cells.events.fact_stream.public.contracts import QueryFactEventsV1
+from polaris.cells.events.fact_stream.public.service import query_fact_events
 from polaris.cells.roles.adapters.internal import director_execution_backend as director_execution_backend_module
 from polaris.cells.roles.adapters.internal.director.state_tracking import DirectorStateTracker
 from polaris.cells.roles.adapters.internal.director_adapter import DirectorAdapter
@@ -833,6 +835,19 @@ def test_pm_adapter_cleans_existing_duplicate_tasks_before_new_plan(tmp_path: Pa
     duplicate_after = _get_task_row(adapter, duplicate["id"])
     assert duplicate_after.get("status") == "cancelled"
     assert int(_row_metadata(duplicate_after).get("dedup_merged_into") or 0) == _row_id(keep)
+    events = query_fact_events(QueryFactEventsV1(workspace=str(tmp_path), stream="task_runtime.execution")).events
+    cancelled_events = [
+        event
+        for event in events
+        if event.get("event_type") == "cancelled"
+        and event.get("payload", {}).get("task_id") == str(_row_id(duplicate))
+    ]
+    assert len(cancelled_events) == 1
+    assert cancelled_events[0]["payload"]["details"] == {
+        "reason": "pm_duplicate_subject",
+        "source": "pm_adapter",
+        "dedup_merged_into": str(_row_id(keep)),
+    }
 
 
 @pytest.mark.asyncio

@@ -770,6 +770,79 @@ class TaskRuntimeService:
             execution_events=execution_events,
         )
 
+    def cancel_task_row_for_deduplication(
+        self,
+        task_id: Any,
+        *,
+        primary_task_id: Any,
+        reason: str = "duplicate_task",
+        metadata: dict[str, Any] | None = None,
+        source: str = "task_deduplication",
+    ) -> dict[str, Any] | None:
+        """Cancel a duplicate task row through the task-runtime owner.
+
+        PM planning can discover duplicate pending task contracts after rows
+        already exist.  The dedupe decision is row lifecycle metadata, not an
+        execution result, but entering a terminal row state must still be owned
+        by ``TaskRuntimeService`` so observers receive a first-class
+        ``cancelled`` execution fact rather than a generic ``updated`` event.
+
+        Complexity:
+            O(1) task-row/session work for the target duplicate row.
+        """
+
+        normalized = self.normalize_task_id(task_id)
+        if normalized is None:
+            return None
+        task = self._board.get(normalized)
+        if task is None:
+            return None
+
+        session = self._read_session(normalized)
+        cancel_reason = sanitize_summary(reason or "duplicate_task")
+        if session is not None and not is_terminal_session_status(session.status):
+            session.mark_suspended(reason=cancel_reason, resumable=False)
+            self._write_session(session, allow_terminal_downgrade=True)
+
+        merged_metadata = {
+            "dedup_merged_into": primary_task_id,
+            "dedup_reason": cancel_reason,
+            "dedup_source": sanitize_summary(source or "task_deduplication"),
+        }
+        merged_metadata.update(dict(metadata or {}))
+        if session is not None:
+            merged_metadata = self._build_runtime_metadata(
+                session=session,
+                effective_status="cancelled",
+                resume_state="",
+                extra_metadata=merged_metadata,
+            )
+
+        updated = self._board.update(
+            normalized,
+            status=TaskStatus.CANCELLED,
+            metadata=merged_metadata,
+        )
+        if updated is None:
+            return None
+
+        row = self._augment_task_row(updated.to_dict())
+        cancelled_event = self._append_execution_event(
+            "cancelled",
+            task_row=row,
+            session=session,
+            details={
+                "reason": cancel_reason,
+                "source": sanitize_summary(source or "task_deduplication"),
+                "dedup_merged_into": str(primary_task_id or "").strip(),
+            },
+        )
+        return project_task_row_execution_event(
+            row,
+            cancelled_event,
+            execution_events=(cancelled_event,) if cancelled_event is not None else (),
+        )
+
     def _reopen_with_execution_event(
         self,
         task_id: Any,

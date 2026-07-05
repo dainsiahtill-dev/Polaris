@@ -22,6 +22,7 @@ TASK_RUNTIME_DESCRIPTOR = TASK_RUNTIME_OWNER / "generated" / "descriptor.pack.js
 ROLE_WORKER_POOL = POLARIS_ROOT / "cells" / "roles" / "runtime" / "internal" / "worker_pool.py"
 DELIVERY_PM_TASKBOARD = POLARIS_ROOT / "delivery" / "cli" / "pm" / "engine" / "taskboard.py"
 DELIVERY_CLI_DIRECTOR_SERVICE = POLARIS_ROOT / "delivery" / "cli" / "director" / "director_service.py"
+PM_BOARD_TASKS = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "pm" / "board_tasks.py"
 QA_ADAPTER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "qa_adapter.py"
 DIRECTOR_EXECUTION_SERVICE = POLARIS_ROOT / "cells" / "director" / "execution" / "service.py"
 RUNTIME_PROJECTION_SERVICE = POLARIS_ROOT / "cells" / "runtime" / "projection" / "internal" / "runtime_projection_service.py"
@@ -500,6 +501,21 @@ def test_qa_rework_exhaustion_uses_task_runtime_owner_failure_transition() -> No
         "QA adapter must not finalize Director task rows with sessionless "
         "update_task_row(status='failed'). Use "
         "fail_task_row_after_rework_exhausted() instead:\n" + "\n".join(offenders)
+    )
+
+
+def test_pm_dedup_cancel_uses_task_runtime_owner_transition() -> None:
+    source = PM_BOARD_TASKS.read_text(encoding="utf-8")
+    offenders = _literal_status_update_task_row_calls(PM_BOARD_TASKS, {"cancelled"})
+
+    assert "cancel_task_row_for_deduplication" in source, (
+        "PM duplicate-task cleanup must use TaskRuntimeService's owner "
+        "transition so cancelled rows emit task_runtime.execution facts."
+    )
+    assert not offenders, (
+        "PM board task deduplication must not finalize duplicate task rows "
+        "with sessionless update_task_row(status='cancelled'). Use "
+        "cancel_task_row_for_deduplication() instead:\n" + "\n".join(offenders)
     )
 
 
