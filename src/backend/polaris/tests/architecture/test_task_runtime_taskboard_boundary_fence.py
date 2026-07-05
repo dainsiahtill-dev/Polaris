@@ -172,6 +172,10 @@ TASK_RUNTIME_SERVICE_NON_AGENT_DESCRIPTOR_METHODS = {
     "board",
     "wait_ready",
 }
+TASK_RUNTIME_SERVICE_NON_OPERATION_DESCRIPTOR_METHODS = {
+    "__init__",
+    "workspace",
+}
 TASK_RUNTIME_SERVICE_UTILITY_DESCRIPTOR_METHODS = {
     "normalize_task_id",
     "task_exists",
@@ -1576,6 +1580,40 @@ def test_task_runtime_descriptor_does_not_advertise_private_service_methods() ->
         "owner implementation methods. Descriptor context should expose stable "
         "row/session/read-model APIs, not storage, session, selection, or event "
         "internals:\n" + "\n".join(sorted(offenders))
+    )
+
+
+def test_task_runtime_descriptor_does_not_advertise_non_operation_service_methods() -> None:
+    descriptor = json.loads(TASK_RUNTIME_DESCRIPTOR.read_text(encoding="utf-8"))
+    capabilities = descriptor.get("capabilities")
+    assert isinstance(capabilities, list), "task_runtime descriptor must expose a capabilities list"
+
+    offenders: list[str] = []
+    advertised: set[str] = set()
+    for item in capabilities:
+        if not isinstance(item, dict):
+            continue
+        if item.get("name") != "TaskRuntimeService":
+            continue
+        for method in item.get("methods", []):
+            if not isinstance(method, dict):
+                continue
+            method_name = str(method.get("name") or "")
+            advertised.add(method_name)
+            if method_name in TASK_RUNTIME_SERVICE_NON_OPERATION_DESCRIPTOR_METHODS:
+                offenders.append(method_name)
+
+    required_operations = TASK_RUNTIME_SERVICE_REQUIRED_ROW_MUTATION_METHODS | TASK_RUNTIME_SERVICE_REQUIRED_READ_MODEL_METHODS
+    missing_operations = sorted(required_operations - advertised)
+
+    assert not missing_operations, (
+        "task_runtime descriptor must keep stable operation APIs while hiding "
+        "construction and metadata methods:\n" + "\n".join(missing_operations)
+    )
+    assert not offenders, (
+        "task_runtime descriptor must not advertise construction or metadata "
+        "methods on TaskRuntimeService. Agent-facing context should expose only "
+        "task execution, row mutation, and read-model operations:\n" + "\n".join(sorted(offenders))
     )
 
 

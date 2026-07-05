@@ -12,14 +12,6 @@
       "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py",
       "methods": [
         {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "workspace",
-          "doc": ""
-        },
-        {
           "name": "create_task_row",
           "doc": "Create a task and return the runtime row projection with event evidence."
         },
