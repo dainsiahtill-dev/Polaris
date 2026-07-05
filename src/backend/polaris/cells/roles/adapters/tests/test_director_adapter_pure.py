@@ -53,6 +53,7 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _empty_write_content_retry_needed,
     _extract_task_target_path_candidates,
     _finalize_claimed_execution,
+    _handle_claim_required,
     _materialization_task_boundary_triage_summary,
     _no_write_materialization_retry_needed,
     _no_write_materialization_retry_tool_definitions,
@@ -4699,6 +4700,68 @@ class TestDeterministicRepairEvidence:
 
 class TestDirectorFailureClosure:
     """Runtime failures must fail the claimed task instead of leaving it running."""
+
+    @pytest.mark.asyncio
+    async def test_handle_claim_required_projects_claim_attempt_evidence(self) -> None:
+        captured_event: dict[str, Any] = {}
+
+        class FakeAdapter:
+            async def _emit_task_trace_event(self, **kwargs: Any) -> None:
+                captured_event.update(kwargs)
+
+        claim_attempts = [
+            {
+                "attempt": 1,
+                "task_id": "TASK-1",
+                "selection_source": "task_id_lookup",
+                "claimed": False,
+                "reason": "lease_conflict",
+                "session_id": "",
+            }
+        ]
+
+        result = await _handle_claim_required(
+            FakeAdapter(),
+            "TASK-1",
+            "run-1",
+            "TASK-1",
+            "task_id_lookup",
+            True,
+            "Demo task",
+            {"ready": 1},
+            {"ready": 1, "running": 1},
+            claim_attempts,
+        )
+
+        expected_evidence = {
+            "requested_task_id": "TASK-1",
+            "selected_task_id": "TASK-1",
+            "selection_source": "task_id_lookup",
+            "selected_from_board": True,
+            "selected_subject": "Demo task",
+            "taskboard_before": {"ready": 1},
+            "taskboard_after_claim": {"ready": 1, "running": 1},
+            "board_claim_applied": False,
+            "claim_attempts": claim_attempts,
+            "claim_failure_reason": "lease_conflict",
+        }
+
+        assert result["success"] is False
+        assert result["error_code"] == "director.task_claim_required"
+        assert result["task_runtime_claim_required"] is True
+        assert result["task_runtime_claim_evidence"] == expected_evidence
+        assert result["task_runtime_claim_attempts"] == claim_attempts
+        assert result["task_runtime_claim_failure_reason"] == "lease_conflict"
+        assert result["decision_signals"] == [
+            {
+                "code": "director.taskboard.claim_required",
+                "severity": "error",
+                "detail": "taskboard_claim_required_before_execution_with_retries_exhausted",
+                "claim_failure_reason": "lease_conflict",
+                "claim_attempt_count": 1,
+            }
+        ]
+        assert captured_event["refs"] == expected_evidence
 
     def test_task_runtime_heartbeat_failure_projects_decision_signal(self) -> None:
         heartbeat_result = {

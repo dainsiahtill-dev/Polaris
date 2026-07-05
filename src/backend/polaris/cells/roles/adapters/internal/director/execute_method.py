@@ -1713,6 +1713,25 @@ async def _handle_claim_required(
     claim_attempts: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """处理声明失败情况"""
+    claim_attempt_evidence = [dict(item) for item in claim_attempts if isinstance(item, dict)]
+    claim_failure_reason = "claim_required"
+    for attempt in reversed(claim_attempt_evidence):
+        reason = str(attempt.get("reason") or "").strip()
+        if reason:
+            claim_failure_reason = reason
+            break
+    claim_evidence: dict[str, Any] = {
+        "requested_task_id": requested_task_id,
+        "selected_task_id": target_task_id,
+        "selection_source": selection_source,
+        "selected_from_board": selected_from_board,
+        "selected_subject": selected_subject,
+        "taskboard_before": board_snapshot_before,
+        "taskboard_after_claim": board_snapshot_after_claim,
+        "board_claim_applied": False,
+        "claim_attempts": claim_attempt_evidence,
+        "claim_failure_reason": claim_failure_reason,
+    }
     await adapter._emit_task_trace_event(
         task_id=target_task_id,
         phase="executing",
@@ -1726,17 +1745,7 @@ async def _handle_claim_required(
         run_id=run_id,
         code="director.taskboard.claim_required",
         reason="claim_required",
-        refs={
-            "requested_task_id": requested_task_id,
-            "selected_task_id": target_task_id,
-            "selection_source": selection_source,
-            "selected_from_board": selected_from_board,
-            "selected_subject": selected_subject,
-            "taskboard_before": board_snapshot_before,
-            "taskboard_after_claim": board_snapshot_after_claim,
-            "board_claim_applied": False,
-            "claim_attempts": claim_attempts,
-        },
+        refs=claim_evidence,
     )
     return {
         "success": False,
@@ -1750,8 +1759,14 @@ async def _handle_claim_required(
                 "code": "director.taskboard.claim_required",
                 "severity": "error",
                 "detail": "taskboard_claim_required_before_execution_with_retries_exhausted",
+                "claim_failure_reason": claim_failure_reason,
+                "claim_attempt_count": len(claim_attempt_evidence),
             }
         ],
+        "task_runtime_claim_required": True,
+        "task_runtime_claim_evidence": claim_evidence,
+        "task_runtime_claim_attempts": claim_attempt_evidence,
+        "task_runtime_claim_failure_reason": claim_failure_reason,
         "qa_required_for_final_verdict": True,
         "artifacts": [],
     }
