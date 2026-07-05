@@ -38,6 +38,7 @@ LEGACY_TASK_RUNTIME_METHODS = {
     "get_ready_tasks",
     "get_stats",
 }
+RAW_TASK_ROW_READ_METHODS = {"list_task_rows"}
 TASK_RUNTIME_RECEIVER_NAMES = {"task_runtime", "task_board"}
 
 
@@ -100,6 +101,24 @@ def _legacy_task_runtime_method_calls(path: Path) -> list[str]:
         offenders.append(
             f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} calls legacy task-runtime method {func.attr}()"
         )
+    return offenders
+
+
+def _raw_task_row_read_calls(path: Path) -> list[str]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute):
+            continue
+        if func.attr not in RAW_TASK_ROW_READ_METHODS:
+            continue
+        if not _is_legacy_task_runtime_receiver(func.value):
+            continue
+        offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} calls raw {func.attr}()")
     return offenders
 
 
@@ -192,8 +211,28 @@ def test_production_code_uses_task_runtime_row_apis() -> None:
 
     assert not offenders, (
         "Production task-runtime consumers must use row APIs such as "
-        "create_task_row(), update_task_row(), get_task(), list_task_rows(), "
+        "create_task_row(), update_task_row(), get_task(), list_observable_task_rows(), "
         "list_ready_task_rows(), or get_task_row_stats():\n" + "\n".join(offenders)
+    )
+
+
+def test_production_read_side_uses_observable_task_rows() -> None:
+    offenders: list[str] = []
+    this_file = Path(__file__).resolve()
+    for path in POLARIS_ROOT.rglob("*.py"):
+        if path.resolve() == this_file or "__pycache__" in path.parts:
+            continue
+        if "tests" in path.parts:
+            continue
+        if _is_allowed_owner_path(path):
+            continue
+        offenders.extend(_raw_task_row_read_calls(path))
+
+    assert not offenders, (
+        "Production read-side task-runtime consumers must use "
+        "list_observable_task_rows() so execution facts remain the status "
+        "projection SSoT. Claim/write paths should use explicit ready/session "
+        "APIs instead:\n" + "\n".join(offenders)
     )
 
 
