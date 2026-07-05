@@ -445,13 +445,14 @@ class QAAdapter(BaseRoleAdapter):
         )
         rework_evidence = _extract_qa_rework_evidence(review_result)
 
-        summary = {
+        summary: dict[str, Any] = {
             "evaluated": 0,
             "passed_marked": 0,
             "reopened": 0,
             "failed": 0,
             "skipped": 0,
             "max_retries_default": default_max_retries,
+            "task_runtime_transition_failures": [],
         }
 
         for record in self._list_taskboard_rows():
@@ -520,26 +521,63 @@ class QAAdapter(BaseRoleAdapter):
 
             try:
                 if passed:
-                    self.task_runtime.update_task_row(task_id, metadata=metadata_update)
+                    transition_result = self.task_runtime.update_task_row(task_id, metadata=metadata_update)
+                    if not isinstance(transition_result, dict):
+                        _record_qa_task_runtime_transition_failure(
+                            summary,
+                            task_id=task_id,
+                            action="mark_passed",
+                            reason="task_runtime_update_missing_row",
+                            transition_result={},
+                        )
+                        summary["skipped"] += 1
+                        continue
                     summary["passed_marked"] += 1
                     continue
 
                 if exhausted:
-                    self.task_runtime.fail_task_row_after_rework_exhausted(
+                    transition_result = self.task_runtime.fail_task_row_after_rework_exhausted(
                         task_id,
                         reason="qa_rework_retry_exhausted",
                         metadata=metadata_update,
                         source="qa_verdict",
                     )
+                    if not isinstance(transition_result, dict):
+                        _record_qa_task_runtime_transition_failure(
+                            summary,
+                            task_id=task_id,
+                            action="fail_after_rework_exhausted",
+                            reason="task_runtime_fail_missing_row",
+                            transition_result={},
+                        )
+                        summary["skipped"] += 1
+                        continue
                     summary["failed"] += 1
                 else:
-                    self.task_runtime.reopen_task_row(
+                    transition_result = self.task_runtime.reopen_task_row(
                         task_id,
                         reason=last_reason,
                         metadata=metadata_update,
                     )
+                    if not isinstance(transition_result, dict):
+                        _record_qa_task_runtime_transition_failure(
+                            summary,
+                            task_id=task_id,
+                            action="reopen_for_rework",
+                            reason="task_runtime_reopen_missing_row",
+                            transition_result={},
+                        )
+                        summary["skipped"] += 1
+                        continue
                     summary["reopened"] += 1
-            except (RuntimeError, ValueError):
+            except (RuntimeError, ValueError) as exc:
+                _record_qa_task_runtime_transition_failure(
+                    summary,
+                    task_id=task_id,
+                    action="apply_qa_verdict",
+                    reason=f"{type(exc).__name__}: {exc}",
+                    transition_result={},
+                )
                 summary["skipped"] += 1
 
         return summary
@@ -1688,3 +1726,31 @@ def _extract_qa_rework_evidence(review_result: dict[str, Any]) -> list[str]:
         if len(results) >= 12:
             break
     return results
+
+
+def _record_qa_task_runtime_transition_failure(
+    summary: dict[str, Any],
+    *,
+    task_id: int,
+    action: str,
+    reason: str,
+    transition_result: dict[str, Any] | None = None,
+) -> None:
+    """Record a failed QA TaskRuntime transition in the verdict summary."""
+
+    normalized_reason = str(reason or "task_runtime_transition_failed").strip()
+    if not normalized_reason:
+        normalized_reason = "task_runtime_transition_failed"
+    failures = summary.get("task_runtime_transition_failures")
+    if not isinstance(failures, list):
+        failures = []
+        summary["task_runtime_transition_failures"] = failures
+    failures.append(
+        {
+            "success": False,
+            "task_id": int(task_id or 0),
+            "action": str(action or "").strip(),
+            "reason": normalized_reason,
+            "transition_result": dict(transition_result or {}),
+        }
+    )

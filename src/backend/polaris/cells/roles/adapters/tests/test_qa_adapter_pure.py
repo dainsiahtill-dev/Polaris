@@ -261,6 +261,64 @@ class TestTaskboardQaVerdict:
         ]
         assert not any(item["status"] == "failed" for item in task_runtime.updated)
 
+    def test_failed_task_runtime_transition_is_not_counted_as_qa_success(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+
+        class MissingRowTransitionBoard(_QaRowProjectionOnlyTaskBoard):
+            def update_task_row(
+                self,
+                task_id: Any,
+                *,
+                status: str | None = None,
+                metadata: dict[str, Any] | None = None,
+            ) -> dict[str, Any] | None:
+                self.updated.append(
+                    {
+                        "task_id": task_id,
+                        "status": status,
+                        "metadata": dict(metadata or {}),
+                    }
+                )
+                return None
+
+        task_runtime = MissingRowTransitionBoard(
+            [
+                {
+                    "id": 9,
+                    "status": "completed",
+                    "metadata": {
+                        "adapter_result": {
+                            "qa_required_for_final_verdict": True,
+                            "qa_passed": None,
+                        }
+                    },
+                }
+            ]
+        )
+        adapter._task_runtime = cast(Any, task_runtime)
+
+        summary = adapter._apply_taskboard_qa_verdict(
+            review_result={
+                "passed": True,
+                "score": 95,
+                "critical_issues": [],
+            },
+            context={"run_id": "qa-run"},
+        )
+
+        assert summary["evaluated"] == 1
+        assert summary["passed_marked"] == 0
+        assert summary["skipped"] == 1
+        assert summary["task_runtime_transition_failures"] == [
+            {
+                "success": False,
+                "task_id": 9,
+                "action": "mark_passed",
+                "reason": "task_runtime_update_missing_row",
+                "transition_result": {},
+            }
+        ]
+
 
 class TestSafeInt:
     def test_numeric(self, tmp_path: Any) -> None:
