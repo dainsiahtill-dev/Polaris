@@ -665,7 +665,7 @@ def test_quality_gate_rework_summary_uses_task_row_projection(monkeypatch: pytes
         def __init__(self, workspace: str) -> None:
             self.workspace = workspace
 
-        def list_task_rows(self) -> list[dict[str, Any]]:
+        def list_observable_task_rows(self) -> list[dict[str, Any]]:
             return [
                 {
                     "id": 7,
@@ -677,6 +677,9 @@ def test_quality_gate_rework_summary_uses_task_row_projection(monkeypatch: pytes
                     },
                 }
             ]
+
+        def list_task_rows(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+            raise AssertionError("quality-gate rework summary must read observable task rows")
 
         def list_all(self) -> list[object]:
             raise AssertionError("quality-gate rework summary must not read raw TaskBoard entities")
@@ -708,7 +711,7 @@ def test_quality_gate_task_boundary_rework_uses_task_row_projection(
         def __init__(self, workspace: str) -> None:
             self.workspace = workspace
 
-        def list_task_rows(self) -> list[dict[str, Any]]:
+        def list_observable_task_rows(self) -> list[dict[str, Any]]:
             return [
                 {
                     "id": 8,
@@ -716,6 +719,9 @@ def test_quality_gate_task_boundary_rework_uses_task_row_projection(
                     "metadata": {"external_task_id": "TASK-8"},
                 }
             ]
+
+        def list_task_rows(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+            raise AssertionError("quality-gate task-boundary rework must read observable task rows")
 
         def list_all(self) -> list[object]:
             raise AssertionError("quality-gate task-boundary rework must not read raw TaskBoard entities")
