@@ -1036,8 +1036,8 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
         return summary
 
     try:
-        task_board = TaskRuntimeService(str(workspace))
-        entries = task_board.list_observable_task_rows()
+        task_runtime = TaskRuntimeService(str(workspace))
+        entries = task_runtime.list_observable_task_rows()
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         summary["error"] = f"{type(exc).__name__}: {exc}"
         return summary
@@ -1127,10 +1127,10 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
             ).strip()
         try:
             if exhausted:
-                task_board.update_task_row(task_id, metadata=metadata_update)
+                task_runtime.update_task_row(task_id, metadata=metadata_update)
                 summary["exhausted_count"] += 1
             else:
-                task_board.reopen_task_row(
+                task_runtime.reopen_task_row(
                     task_id,
                     reason=rework_reason,
                     metadata=metadata_update,
@@ -1233,8 +1233,8 @@ def _read_quality_gate_rework_summary(workspace: str) -> dict[str, Any]:
         "tasks": [],
     }
     try:
-        task_board = TaskRuntimeService(str(workspace))
-        entries = task_board.list_observable_task_rows()
+        task_runtime = TaskRuntimeService(str(workspace))
+        entries = task_runtime.list_observable_task_rows()
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         summary["error"] = f"{type(exc).__name__}: {exc}"
         return summary

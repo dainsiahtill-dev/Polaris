@@ -190,6 +190,13 @@ def _legacy_task_runtime_symbol_aliases(path: Path) -> list[str]:
     tree = ast.parse(source)
     offenders: list[str] = []
     for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and _is_task_runtime_constructor_call(node.value):
+            for target_node in node.targets:
+                target = _target_name(target_node)
+                if target in {"taskboard", "_taskboard", "task_board"}:
+                    offenders.append(
+                        f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} names TaskRuntimeService as {target}"
+                    )
         if isinstance(node, ast.AnnAssign):
             annotation = _annotation_name(node.annotation)
             target = _target_name(node.target)
