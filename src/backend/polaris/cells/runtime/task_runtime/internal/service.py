@@ -1276,7 +1276,7 @@ class TaskRuntimeService:
         raise RuntimeError("TaskRuntimeService.get_ready_tasks is retired; use list_ready_task_rows()")
 
     def get_task_row_stats(self) -> dict[str, Any]:
-        return task_row_status_counts(self.list_task_rows())
+        return task_row_status_counts(self.list_observable_task_rows())
 
     def get_stats(self) -> dict[str, Any]:
         raise RuntimeError("TaskRuntimeService.get_stats is retired; use get_task_row_stats()")
