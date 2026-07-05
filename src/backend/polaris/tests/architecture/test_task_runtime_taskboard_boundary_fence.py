@@ -1674,12 +1674,11 @@ def test_task_runtime_descriptor_does_not_advertise_destructive_service_methods(
 
     offenders: list[str] = []
     service_seen = False
-    reset_function_seen = False
     for item in capabilities:
         if not isinstance(item, dict):
             continue
         if item.get("name") == "reset_runtime_task_records":
-            reset_function_seen = True
+            offenders.append("reset_runtime_task_records")
         if item.get("name") != "TaskRuntimeService":
             continue
         service_seen = True
@@ -1691,15 +1690,11 @@ def test_task_runtime_descriptor_does_not_advertise_destructive_service_methods(
                 offenders.append(method_name)
 
     assert service_seen, "task_runtime descriptor must still advertise TaskRuntimeService"
-    assert reset_function_seen, (
-        "task_runtime descriptor should keep the explicit owner reset function "
-        "for delivery-level reset orchestration while hiding the destructive "
-        "service method from Agent-facing TaskRuntimeService context."
-    )
     assert not offenders, (
-        "task_runtime descriptor must not advertise destructive TaskRuntimeService "
-        "methods. Reset orchestration should use the explicit owner-level "
-        "reset_runtime_task_records capability instead:\n" + "\n".join(sorted(offenders))
+        "task_runtime descriptor must not advertise destructive reset methods "
+        "or functions. Reset orchestration must remain an explicit owner-cell "
+        "runtime call path, not an Agent-facing generated capability:\n"
+        + "\n".join(sorted(offenders))
     )
 
 

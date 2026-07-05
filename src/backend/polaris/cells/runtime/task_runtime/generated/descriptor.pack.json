@@ -74,12 +74,6 @@
       ]
     },
     {
-      "type": "function",
-      "name": "reset_runtime_task_records",
-      "description": "Clear runtime taskboard state through the owning cell service.",
-      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py"
-    },
-    {
       "type": "class",
       "name": "CreateRuntimeTaskCommandV1",
       "description": "",
