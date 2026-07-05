@@ -217,6 +217,40 @@ def test_role_adapter_update_board_task_rejects_terminal_status_shortcut(tmp_pat
         BaseRoleAdapter._update_board_task(adapter, "task-7", status="failed", metadata={"phase": "execute"})
 
 
+def test_director_progress_skips_terminal_status_row_write(tmp_path: Path) -> None:
+    adapter = DirectorAdapter(workspace=str(tmp_path))
+
+    class _ProgressRuntime:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        def task_exists(self, task_id: Any) -> bool:
+            return int(str(task_id).removeprefix("task-")) == 7
+
+        def update_task_row(
+            self,
+            task_id: Any,
+            *,
+            status: str | None = None,
+            metadata: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            payload = {"task_id": task_id, "status": status, "metadata": dict(metadata or {})}
+            self.calls.append(payload)
+            return payload
+
+    runtime = _ProgressRuntime()
+    adapter._task_runtime = cast(Any, runtime)
+
+    adapter._update_task_progress("task-7", "execute", event_status="failed")
+    assert runtime.calls == []
+
+    adapter._update_task_progress("task-7", "execute", event_status="running")
+    assert runtime.calls == [{"task_id": 7, "status": "running", "metadata": {}}]
+
+    with pytest.raises(RuntimeError, match="terminal_task_status_requires_task_runtime_owner_transition"):
+        adapter._update_board_task("task-7", status="failed")
+
+
 def test_director_snapshot_uses_nanosecond_mtime(tmp_path: Path) -> None:
     source_file = tmp_path / "src" / "expense.py"
     source_file.parent.mkdir(parents=True, exist_ok=True)

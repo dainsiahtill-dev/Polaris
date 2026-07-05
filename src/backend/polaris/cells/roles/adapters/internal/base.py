@@ -24,6 +24,12 @@ _logger = logging.getLogger(__name__)
 _TERMINAL_TASK_ROW_STATUSES = frozenset({"completed", "failed", "cancelled", "timeout"})
 
 
+def _is_terminal_task_row_status(status: str | None) -> bool:
+    """Return whether a TaskRow status is terminal and must use an owner transition."""
+
+    return str(status or "").strip().lower() in _TERMINAL_TASK_ROW_STATUSES
+
+
 class BaseRoleAdapter(RoleOrchestrationAdapter):
     """角色适配器基类"""
 
@@ -210,7 +216,7 @@ class BaseRoleAdapter(RoleOrchestrationAdapter):
         if normalized is None:
             return False
         normalized_status = str(status or "").strip().lower()
-        if normalized_status in _TERMINAL_TASK_ROW_STATUSES:
+        if _is_terminal_task_row_status(normalized_status):
             raise RuntimeError(
                 "terminal_task_status_requires_task_runtime_owner_transition:"
                 f"{normalized_status}"

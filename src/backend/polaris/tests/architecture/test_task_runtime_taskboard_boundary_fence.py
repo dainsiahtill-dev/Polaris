@@ -24,6 +24,7 @@ DELIVERY_PM_TASKBOARD = POLARIS_ROOT / "delivery" / "cli" / "pm" / "engine" / "t
 DELIVERY_CLI_DIRECTOR_SERVICE = POLARIS_ROOT / "delivery" / "cli" / "director" / "director_service.py"
 ROLE_ADAPTER_BASE = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "base.py"
 PM_ADAPTER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "pm_adapter.py"
+DIRECTOR_ADAPTER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "director" / "adapter.py"
 PM_BOARD_TASKS = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "pm" / "board_tasks.py"
 QA_ADAPTER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "qa_adapter.py"
 DIRECTOR_EXECUTION_SERVICE = POLARIS_ROOT / "cells" / "director" / "execution" / "service.py"
@@ -562,6 +563,18 @@ def test_base_role_adapter_rejects_terminal_status_shortcuts() -> None:
 
     assert "_TERMINAL_TASK_ROW_STATUSES" in source
     assert "terminal_task_status_requires_task_runtime_owner_transition" in source
+
+
+def test_director_adapter_progress_does_not_finalize_task_rows() -> None:
+    source = DIRECTOR_ADAPTER.read_text(encoding="utf-8")
+
+    assert "_is_terminal_task_row_status(event_status)" in source, (
+        "Director progress events may carry terminal-looking trace statuses, "
+        "but TaskRow terminal writes must stay with TaskRuntimeService owner "
+        "transitions."
+    )
+    assert "return super()._update_board_task(task_id, status=status, metadata=metadata)" in source
+    assert "self.task_runtime.update_task_row(" not in source
 
 
 def test_task_runtime_raw_tool_factory_surface_is_removed() -> None:

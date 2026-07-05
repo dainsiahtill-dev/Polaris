@@ -31,7 +31,7 @@ from polaris.kernelone.llm.budget_policy import (
     forced_write_retry_timeout_seconds,
 )
 
-from ..base import BaseRoleAdapter
+from ..base import BaseRoleAdapter, _is_terminal_task_row_status
 from ..director_execution_backend import (
     DirectorExecutionBackendRequest,
     resolve_director_execution_backend,
@@ -2147,6 +2147,8 @@ class DirectorAdapter(BaseRoleAdapter):
     ) -> None:
         """更新任务进度"""
         if event_status:
+            if _is_terminal_task_row_status(event_status):
+                return
             self._update_board_task(task_id, status=event_status)
 
     def _update_board_task(
@@ -2158,12 +2160,7 @@ class DirectorAdapter(BaseRoleAdapter):
         """更新 TaskBoard 任务"""
         if not metadata and not status:
             return False
-        updated = self.task_runtime.update_task_row(
-            task_id,
-            status=status,
-            metadata=metadata or {},
-        )
-        return updated is not None
+        return super()._update_board_task(task_id, status=status, metadata=metadata)
 
     async def _emit_task_trace_event(
         self,
