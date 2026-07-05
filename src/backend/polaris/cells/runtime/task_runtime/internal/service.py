@@ -843,6 +843,81 @@ class TaskRuntimeService:
             execution_events=(cancelled_event,) if cancelled_event is not None else (),
         )
 
+    def fail_task_row_from_role_adapter(
+        self,
+        task_id: Any,
+        *,
+        reason: str,
+        metadata: dict[str, Any] | None = None,
+        role_id: str = "",
+        source: str = "role_adapter",
+        failure_class: str = "",
+    ) -> dict[str, Any] | None:
+        """Fail a task row because its owning role adapter failed.
+
+        Role adapters may fail before a Director-style execution lease exists,
+        for example PM contract validation or PM runtime exceptions.  Those
+        terminal row transitions still belong to ``TaskRuntimeService`` so the
+        failure appears as a first-class ``task_runtime.execution`` fact rather
+        than a generic ``updated`` row event.
+
+        Complexity:
+            O(1) task-row/session work for the target row.
+        """
+
+        normalized = self.normalize_task_id(task_id)
+        if normalized is None:
+            return None
+        task = self._board.get(normalized)
+        if task is None:
+            return None
+
+        failure_reason = sanitize_summary(reason or "role_adapter_failed")
+        session = self._read_session(normalized)
+        if session is not None and not is_terminal_session_status(session.status):
+            session.mark_failed(error=failure_reason)
+            self._write_session(session, allow_terminal_downgrade=True)
+
+        merged_metadata = dict(metadata or {})
+        merged_metadata.setdefault("role_adapter_failure_reason", failure_reason)
+        if role_id:
+            merged_metadata.setdefault("role_adapter_failure_role", sanitize_summary(role_id))
+        if failure_class:
+            merged_metadata.setdefault("role_adapter_failure_class", sanitize_summary(failure_class))
+        if session is not None:
+            merged_metadata = self._build_runtime_metadata(
+                session=session,
+                effective_status="failed",
+                resume_state="",
+                extra_metadata=merged_metadata,
+            )
+
+        updated = self._board.update(
+            normalized,
+            status=TaskStatus.FAILED,
+            metadata=merged_metadata,
+        )
+        if updated is None:
+            return None
+
+        row = self._augment_task_row(updated.to_dict())
+        failed_event = self._append_execution_event(
+            "failed",
+            task_row=row,
+            session=session,
+            details={
+                "reason": failure_reason,
+                "source": sanitize_summary(source or "role_adapter"),
+                "role": sanitize_summary(role_id),
+                "failure_class": sanitize_summary(failure_class),
+            },
+        )
+        return project_task_row_execution_event(
+            row,
+            failed_event,
+            execution_events=(failed_event,) if failed_event is not None else (),
+        )
+
     def _reopen_with_execution_event(
         self,
         task_id: Any,

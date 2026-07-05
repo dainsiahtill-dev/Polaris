@@ -570,9 +570,9 @@ class PMAdapter(
                 if signal_artifact:
                     blocked_artifacts.append(signal_artifact)
                 self._update_task_progress(task_id, "failed")
-                self._update_board_task(
+                self.task_runtime.fail_task_row_from_role_adapter(
                     task_id,
-                    status="failed",
+                    reason="pm_quality_gate_blocked",
                     metadata={
                         "pm_quality_gate": {
                             "score": score,
@@ -581,6 +581,9 @@ class PMAdapter(
                             "blocked": True,
                         }
                     },
+                    role_id=self.role_id,
+                    source="pm_adapter",
+                    failure_class="pm_quality_gate_blocked",
                 )
                 return {
                     "success": False,
@@ -688,7 +691,14 @@ class PMAdapter(
             if signal_artifact:
                 error_artifacts.append(signal_artifact)
             self._update_task_progress(task_id, "failed")
-            self._update_board_task(task_id, status="failed", metadata={"pm_error": str(e)})
+            self.task_runtime.fail_task_row_from_role_adapter(
+                task_id,
+                reason="pm_runtime_exception",
+                metadata={"pm_error": str(e)},
+                role_id=self.role_id,
+                source="pm_adapter",
+                failure_class="pm_runtime_exception",
+            )
             return {
                 "success": False,
                 "stage": "pm",

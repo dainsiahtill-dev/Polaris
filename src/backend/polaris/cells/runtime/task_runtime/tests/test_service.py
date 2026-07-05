@@ -1787,6 +1787,41 @@ def test_task_runtime_dedup_cancel_is_owner_transition(tmp_path: Path) -> None:
     }
 
 
+def test_task_runtime_role_adapter_failure_is_owner_transition(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(subject="pm planning task")
+    failed = service.fail_task_row_from_role_adapter(
+        created["id"],
+        reason="pm_runtime_exception",
+        metadata={"pm_error": "llm kernel offline"},
+        role_id="pm",
+        source="pm_adapter",
+        failure_class="pm_runtime_exception",
+    )
+
+    assert failed is not None
+    assert failed["status"] == "failed"
+    assert failed["metadata"]["pm_error"] == "llm kernel offline"
+    assert failed["metadata"]["role_adapter_failure_reason"] == "pm_runtime_exception"
+    assert failed["metadata"]["role_adapter_failure_role"] == "pm"
+    assert failed["metadata"]["role_adapter_failure_class"] == "pm_runtime_exception"
+    assert failed["execution_event"]["event_type"] == "failed"
+
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    failed_event = events[-1]
+    assert failed_event["event_type"] == "failed"
+    assert failed_event["payload"]["execution_state"] == "failed"
+    assert failed_event["payload"]["details"] == {
+        "reason": "pm_runtime_exception",
+        "source": "pm_adapter",
+        "role": "pm",
+        "failure_class": "pm_runtime_exception",
+    }
+
+
 def test_reopen_task_row_reports_event_append_failure_without_persisting_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

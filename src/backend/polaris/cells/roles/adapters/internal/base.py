@@ -21,6 +21,7 @@ from polaris.kernelone.process.command_executor import CommandExecutionService, 
 from polaris.kernelone.storage.paths import resolve_signal_path
 
 _logger = logging.getLogger(__name__)
+_TERMINAL_TASK_ROW_STATUSES = frozenset({"completed", "failed", "cancelled", "timeout"})
 
 
 class BaseRoleAdapter(RoleOrchestrationAdapter):
@@ -208,6 +209,12 @@ class BaseRoleAdapter(RoleOrchestrationAdapter):
         normalized = self._coerce_board_task_id(task_id)
         if normalized is None:
             return False
+        normalized_status = str(status or "").strip().lower()
+        if normalized_status in _TERMINAL_TASK_ROW_STATUSES:
+            raise RuntimeError(
+                "terminal_task_status_requires_task_runtime_owner_transition:"
+                f"{normalized_status}"
+            )
         if not self.task_runtime.task_exists(normalized):
             return False
         updated = self.task_runtime.update_task_row(

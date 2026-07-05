@@ -14,6 +14,7 @@ from polaris.bootstrap import config as bootstrap_config_module
 from polaris.cells.events.fact_stream.public.contracts import QueryFactEventsV1
 from polaris.cells.events.fact_stream.public.service import query_fact_events
 from polaris.cells.roles.adapters.internal import director_execution_backend as director_execution_backend_module
+from polaris.cells.roles.adapters.internal.base import BaseRoleAdapter
 from polaris.cells.roles.adapters.internal.director.state_tracking import DirectorStateTracker
 from polaris.cells.roles.adapters.internal.director_adapter import DirectorAdapter
 from polaris.cells.roles.adapters.internal.pm_adapter import PMAdapter
@@ -191,6 +192,29 @@ def test_role_adapter_update_board_task_uses_runtime_row_api(tmp_path: Path) -> 
 
     assert adapter._update_board_task("task-7", status="in_progress", metadata={"phase": "execute"}) is True
     assert runtime.updated == [{"id": 7, "status": "in_progress", "metadata": {"phase": "execute"}}]
+
+
+def test_role_adapter_update_board_task_rejects_terminal_status_shortcut(tmp_path: Path) -> None:
+    adapter = DirectorAdapter(workspace=str(tmp_path))
+
+    class _RowWriteRuntime:
+        def task_exists(self, task_id: Any) -> bool:
+            return int(str(task_id).removeprefix("task-")) == 7
+
+        def update_task_row(
+            self,
+            task_id: Any,
+            *,
+            status: str | None = None,
+            metadata: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            raise AssertionError("terminal task-row writes must use task-runtime owner transitions")
+
+    runtime = _RowWriteRuntime()
+    adapter._task_runtime = cast(Any, runtime)
+
+    with pytest.raises(RuntimeError, match="terminal_task_status_requires_task_runtime_owner_transition"):
+        BaseRoleAdapter._update_board_task(adapter, "task-7", status="failed", metadata={"phase": "execute"})
 
 
 def test_director_snapshot_uses_nanosecond_mtime(tmp_path: Path) -> None:
