@@ -654,13 +654,6 @@ class TaskBoard:
                 metadata=dict(metadata or {}),
             )
 
-            # Update reverse dependencies (this task blocks others)
-            for blocker_id in task.blocked_by:
-                blocker = self._cache.get(blocker_id)
-                if blocker and task_id not in blocker.blocks:
-                    blocker.blocks.append(task_id)
-                    self._save_task(blocker)
-
             self._cache[task_id] = task
             self._save_task(task)
 
@@ -842,6 +835,34 @@ class TaskBoard:
             # Keep in-memory cache in sync when `task` comes from update_status()
             # (which returns a deep copy). Otherwise, metadata/owner/assignee
             # updates are persisted on disk but stale in cache.
+            self._cache[task_id] = task
+            self._save_task(task)
+            return copy.deepcopy(task)
+
+    def update_blocks(self, task_id: int, blocks: list[int]) -> Task | None:
+        """Replace the reverse dependency list for one task row.
+
+        ``TaskBoard`` owns row persistence, but callers such as
+        ``TaskRuntimeService`` own the cross-row decision that determines which
+        reverse dependencies should be written.
+        """
+
+        import copy
+
+        normalized_blocks: list[int] = []
+        for dependent_id in blocks:
+            try:
+                dependent_id_int = int(dependent_id)
+            except (TypeError, ValueError):
+                continue
+            if dependent_id_int != int(task_id) and dependent_id_int not in normalized_blocks:
+                normalized_blocks.append(dependent_id_int)
+
+        with self.transaction():
+            task = self._load_task_from_disk(task_id) or self._cache.get(task_id)
+            if not task:
+                return None
+            task.blocks = normalized_blocks
             self._cache[task_id] = task
             self._save_task(task)
             return copy.deepcopy(task)

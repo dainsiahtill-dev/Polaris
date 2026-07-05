@@ -216,6 +216,19 @@ def test_task_board_completed_prerequisite_keeps_dependent_rows_local(tmp_path) 
     assert all(t.id != downstream.id for t in board.list_ready())
 
 
+def test_task_board_create_keeps_reverse_dependencies_row_local(tmp_path) -> None:
+    """Raw TaskBoard create must not mutate blocker rows behind the ledger."""
+    board = TaskBoard(str(tmp_path))
+    upstream = board.create(subject="upstream")
+    downstream = board.create(subject="downstream", blocked_by=[upstream.id])
+
+    upstream_after = board.get(upstream.id)
+
+    assert downstream.blocked_by == [upstream.id]
+    assert upstream_after is not None
+    assert upstream_after.blocks == []
+
+
 def test_task_board_repeated_complete_is_idempotent_no_op(tmp_path) -> None:
     """Re-applying the same terminal status must be a no-op.
 

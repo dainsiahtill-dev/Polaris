@@ -244,6 +244,41 @@ def test_task_runtime_service_does_not_proxy_legacy_board_methods(tmp_path: Path
             getattr(service, method_name)
 
 
+def test_task_runtime_service_create_links_reverse_dependency_with_execution_event(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    parent = service.create_task_row(subject="parent task")
+    parent_id = int(parent["id"])
+    child = service.create_task_row(subject="child task", blocked_by=[parent_id])
+    child_id = int(child["id"])
+
+    parent_after = service.get_task(parent_id)
+    assert parent_after is not None
+    assert parent_after["blocks"] == [child_id]
+
+    reverse_events = [
+        event
+        for event in child.get("execution_events", [])
+        if event.get("event_type") == "reverse_dependency_linked"
+    ]
+    assert len(reverse_events) == 1
+    reverse_event = reverse_events[0]
+    assert reverse_event["ok"] is True
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    linked_payloads = [
+        event["payload"]
+        for event in events
+        if event["event_type"] == "reverse_dependency_linked"
+    ]
+    assert len(linked_payloads) == 1
+    linked_payload = linked_payloads[0]
+    assert linked_payload["details"]["dependent_task_id"] == child_id
+    assert linked_payload["details"]["blocks"] == [child_id]
+    assert linked_payload["task_row_snapshot"]["id"] == parent_id
+
+
 def test_create_task_row_reports_event_append_failure_without_persisting_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

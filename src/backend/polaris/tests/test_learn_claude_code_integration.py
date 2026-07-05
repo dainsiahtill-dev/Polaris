@@ -254,20 +254,20 @@ class TestPhase6TaskBoard:
         task2 = board.create(subject="Second", blocked_by=[task1.id])
 
         assert task2.blocked_by == [task1.id]
-        # task1.blocks should contain task2.id (reverse dependency)
-        assert task2.id in board._cache[task1.id].blocks
+        # Raw TaskBoard create is row-local; TaskRuntimeService records reverse links.
+        assert board._cache[task1.id].blocks == []
 
-    def test_unblock_on_complete(self, board):
-        """Test that completing task unblocks dependents."""
+    def test_raw_board_complete_keeps_dependents_blocked(self, board):
+        """Raw TaskBoard completion is row-local; TaskRuntimeService unblocks deps."""
         task1 = board.create(subject="First")
         task2 = board.create(subject="Second", blocked_by=[task1.id])
 
         # Complete task1
         board.update_status(task1.id, TaskStatus.COMPLETED)
 
-        # task2 should no longer be blocked
+        # task2 remains blocked when using raw TaskBoard directly.
         updated_task2 = board.get(task2.id)
-        assert task1.id not in updated_task2.blocked_by
+        assert task1.id in updated_task2.blocked_by
 
     def test_get_ready_tasks(self, board):
         """Test getting ready-to-work tasks."""

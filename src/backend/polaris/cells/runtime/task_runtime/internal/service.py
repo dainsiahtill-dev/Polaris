@@ -221,7 +221,7 @@ class TaskRuntimeService:
     ) -> dict[str, Any]:
         """Create a task and return the runtime row projection with event evidence."""
 
-        _task, row, execution_event = self._create_with_execution_event(
+        _task, row, execution_event, reverse_dependency_events = self._create_with_execution_event(
             subject=subject,
             description=description,
             blocked_by=blocked_by,
@@ -235,7 +235,7 @@ class TaskRuntimeService:
         return project_task_row_execution_event(
             row,
             execution_event,
-            execution_events=(execution_event,),
+            execution_events=(execution_event, *reverse_dependency_events),
         )
 
     def _create_with_execution_event(
@@ -250,7 +250,7 @@ class TaskRuntimeService:
         tags: list[str] | None = None,
         estimated_hours: float = 0.0,
         metadata: dict[str, Any] | None = None,
-    ) -> tuple[Task, dict[str, Any], dict[str, Any]]:
+    ) -> tuple[Task, dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
         task = self._board.create(
             subject=subject,
             description=description,
@@ -269,7 +269,11 @@ class TaskRuntimeService:
             session=None,
             details={"source": "runtime.task_runtime.create"},
         )
-        return task, row, execution_event
+        reverse_dependency_events = self._apply_reverse_dependency_links(
+            created_task_id=int(task.id),
+            blocker_ids=self._row_blocker_ids(row),
+        )
+        return task, row, execution_event, reverse_dependency_events
 
     def ensure_task_row(
         self,
@@ -297,7 +301,7 @@ class TaskRuntimeService:
         created_metadata.setdefault("materialized_by", "runtime.task_runtime")
         created_metadata.setdefault("materialized_at", utc_now_iso())
 
-        _, row, created_event = self._create_with_execution_event(
+        _, row, created_event, reverse_dependency_events = self._create_with_execution_event(
             subject=safe_subject,
             description=safe_description,
             priority=priority,
@@ -312,7 +316,7 @@ class TaskRuntimeService:
         return project_task_row_execution_event(
             row,
             execution_event,
-            execution_events=(created_event, execution_event),
+            execution_events=(created_event, *reverse_dependency_events, execution_event),
         )
 
     def get(self, task_id: Any) -> Task | None:
@@ -1729,6 +1733,71 @@ class TaskRuntimeService:
             if blocker_id not in blocker_ids:
                 blocker_ids.append(blocker_id)
         return blocker_ids
+
+    @staticmethod
+    def _row_blocks_ids(row: dict[str, Any]) -> list[int]:
+        blocks_raw = row.get("blocks") or []
+        block_ids: list[int] = []
+        if not isinstance(blocks_raw, list):
+            return block_ids
+        for block in blocks_raw:
+            try:
+                block_id = int(block)
+            except (TypeError, ValueError):
+                continue
+            if block_id not in block_ids:
+                block_ids.append(block_id)
+        return block_ids
+
+    def _apply_reverse_dependency_links(
+        self,
+        *,
+        created_task_id: int,
+        blocker_ids: list[int],
+    ) -> list[dict[str, Any]]:
+        """Link a newly created dependent task into each blocker row.
+
+        The operation is O(b) over direct blockers supplied by the task row.
+        Missing blocker rows preserve legacy create semantics and are ignored,
+        but every persisted reverse-link mutation emits an execution fact.
+        """
+
+        events: list[dict[str, Any]] = []
+        for blocker_id in blocker_ids:
+            blocker = self._board.get(blocker_id)
+            if blocker is None:
+                continue
+            before_row = self._augment_task_row(blocker.to_dict())
+            previous_blocks = self._row_blocks_ids(before_row)
+            if created_task_id in previous_blocks:
+                continue
+            next_blocks = [*previous_blocks, created_task_id]
+            updated = self._board.update_blocks(blocker_id, next_blocks)
+            if updated is None:
+                events.append(
+                    {
+                        "ok": False,
+                        "event_type": "reverse_dependency_link_failed",
+                        "task_id": blocker_id,
+                        "reason": "task_update_failed",
+                        "failure_class": "task_state_write_failed",
+                    }
+                )
+                continue
+            after_row = self._augment_task_row(updated.to_dict())
+            events.append(
+                self._append_execution_event(
+                    "reverse_dependency_linked",
+                    task_row=after_row,
+                    session=None,
+                    details={
+                        "dependent_task_id": created_task_id,
+                        "previous_blocks": previous_blocks,
+                        "blocks": self._row_blocks_ids(after_row),
+                    },
+                )
+            )
+        return events
 
     def _apply_dependency_completion_side_effects(
         self,
