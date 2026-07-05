@@ -108,10 +108,6 @@
           "doc": ""
         },
         {
-          "name": "board",
-          "doc": ""
-        },
-        {
           "name": "reset_records",
           "doc": "Clear canonical taskboard rows and execution sessions."
         },
@@ -185,14 +181,6 @@
         },
         {
           "name": "list_ready_task_rows",
-          "doc": ""
-        },
-        {
-          "name": "wait_ready",
-          "doc": ""
-        },
-        {
-          "name": "add_ready_listener",
           "doc": ""
         },
         {
