@@ -105,6 +105,48 @@ def test_task_runtime_service_projects_rows_from_execution_facts(tmp_path: Path)
     assert rows[0]["metadata"]["source"] == "task_runtime.execution_fact"
 
 
+def test_task_runtime_service_observable_rows_overlay_execution_facts(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(
+        subject="Observable task",
+        description="File row should receive fact overlay",
+        priority=2,
+    )
+    task_id = str(created["id"])
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="claimed",
+            source="runtime.task_runtime",
+            task_id=task_id,
+            run_id="run-observable",
+            payload={
+                "task_id": task_id,
+                "run_id": "run-observable",
+                "event_type": "claimed",
+                "status": "in_progress",
+                "execution_state": "in_progress",
+                "session_id": "session-observable",
+                "task_row_snapshot": created,
+            },
+        )
+    )
+
+    rows = service.list_observable_task_rows()
+
+    assert len(rows) == 1
+    assert rows[0]["id"] == created["id"]
+    assert rows[0]["subject"] == "Observable task"
+    assert rows[0]["status"] == "in_progress"
+    assert rows[0]["running"] is True
+    assert rows[0]["metadata"]["previous_status"] == "pending"
+    assert rows[0]["metadata"]["source"] == "task_runtime.execution_fact"
+
+
 def test_task_runtime_service_raw_list_all_is_retired(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

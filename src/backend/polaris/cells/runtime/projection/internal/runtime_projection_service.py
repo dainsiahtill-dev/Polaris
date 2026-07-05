@@ -1036,50 +1036,6 @@ def _row_task_id(row: dict[str, Any]) -> str:
     ).strip()
 
 
-def _apply_task_runtime_execution_fact_overlay(rows: list[dict[str, Any]], workspace: str) -> list[dict[str, Any]]:
-    workspace_token = str(workspace or "").strip()
-    if not workspace_token:
-        return rows
-    try:
-        fact_rows = TaskRuntimeService(workspace_token).list_task_rows_from_execution_facts()
-    except (RuntimeError, ValueError) as exc:
-        logger.debug("runtime projection: failed to load task runtime execution fact rows: %s", exc)
-        return rows
-    if not fact_rows:
-        return rows
-    latest_by_task: dict[str, dict[str, Any]] = {
-        task_id: dict(fact_row)
-        for fact_row in fact_rows
-        if (task_id := _row_task_id(fact_row))
-    }
-    if not latest_by_task:
-        return rows
-
-    overlaid: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for row in rows:
-        row_map = dict(row)
-        task_id = _row_task_id(row_map)
-        fact_row = latest_by_task.get(task_id)
-        if not fact_row:
-            overlaid.append(row_map)
-            continue
-        metadata = dict(row_map.get("metadata") or {})
-        fact_metadata = dict(fact_row.get("metadata") or {})
-        fact_metadata["previous_status"] = str(row_map.get("status") or row_map.get("state") or "")
-        metadata.update(fact_metadata)
-        row_map.update({key: value for key, value in fact_row.items() if key not in {"id", "task_id", "metadata"}})
-        row_map["metadata"] = metadata
-        overlaid.append(row_map)
-        seen.add(task_id)
-
-    for task_id, fact_row in latest_by_task.items():
-        if task_id in seen:
-            continue
-        overlaid.append(fact_row)
-    return overlaid
-
-
 def _task_boundary_row_from_latest(latest_boundary: dict[str, Any]) -> dict[str, Any]:
     boundary_task_id = str(latest_boundary.get("task_id") or latest_boundary.get("taskId") or "").strip()
     if not boundary_task_id:
@@ -1805,7 +1761,9 @@ def build_snapshot_payload_from_projection(
         else None
     )
     if not tasks_from_runtime_rows:
-        tasks = _apply_task_runtime_execution_fact_overlay(tasks, workspace)
+        observable_task_rows = load_runtime_task_rows(workspace)
+        if observable_task_rows:
+            tasks = observable_task_rows
     tasks = _apply_run_ledger_task_rows_overlay(tasks, run_ledger_task_projection)
 
     pm_state = _read_first_json_candidate(
@@ -2069,23 +2027,17 @@ def select_task_rows_from_projection(projection: RuntimeProjection) -> list[dict
 
 
 def load_runtime_task_rows(workspace: str) -> list[dict[str, Any]]:
-    """Load runtime task rows from task-runtime rows plus execution facts.
+    """Load task-runtime-owned observable rows for runtime projection.
 
-    TaskRuntimeService still owns the transitional file-backed row store, but
-    task-runtime execution facts are the forward-compatible evidence stream.
-    Always applying the fact overlay lets consumers observe fact-stream state
-    when row files are absent or stale, without falling back to workflow archive
-    task rows.
+    TaskRuntimeService owns both the transitional file-backed rows and the
+    execution fact read model; runtime projection only consumes that owner
+    projection and never queries/parses the fact stream directly.
     """
     workspace_token = str(workspace or "").strip()
     if not workspace_token:
         return []
-    rows: list[dict[str, Any]] = []
     try:
-        task_runtime = TaskRuntimeService(workspace_token)
-        rows = task_runtime.list_task_rows()
-        if not rows:
-            return task_runtime.list_task_rows_from_execution_facts()
+        return TaskRuntimeService(workspace_token).list_observable_task_rows()
     except (RuntimeError, ValueError) as exc:
         logger.debug("failed to load runtime task rows: %s", exc)
-    return _apply_task_runtime_execution_fact_overlay(rows, workspace_token)
+        return []

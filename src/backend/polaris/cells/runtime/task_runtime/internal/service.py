@@ -544,6 +544,79 @@ class TaskRuntimeService:
         rows.sort(key=self._row_sort_key)
         return rows
 
+    def list_observable_task_rows(self) -> list[dict[str, Any]]:
+        """Return task rows for read-only runtime projections.
+
+        Boundary:
+            This method is the task-runtime-owned read model for status,
+            snapshot, and UI projection consumers. It combines transitional
+            file-backed rows with the append-only ``task_runtime.execution``
+            fact stream, but it does not authorize claims, writes, dependency
+            transitions, or repair actions. Execution paths that need to select
+            or mutate work must continue to call the explicit row/session APIs.
+
+        Complexity:
+            O(r + f) time and memory over file-backed rows and latest fact rows.
+        """
+
+        rows = self.list_task_rows()
+        fact_rows = self.list_task_rows_from_execution_facts()
+        if not rows:
+            return fact_rows
+        if not fact_rows:
+            return rows
+        return self._overlay_execution_fact_rows(rows, fact_rows)
+
+    @staticmethod
+    def _observable_row_task_id(row: dict[str, Any]) -> str:
+        metadata_raw = row.get("metadata")
+        metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+        return str(
+            row.get("task_id")
+            or row.get("id")
+            or row.get("taskId")
+            or metadata.get("task_id")
+            or metadata.get("pm_task_id")
+            or metadata.get("workflow_task_id")
+            or ""
+        ).strip()
+
+    def _overlay_execution_fact_rows(
+        self,
+        rows: list[dict[str, Any]],
+        fact_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        latest_by_task: dict[str, dict[str, Any]] = {
+            task_id: dict(fact_row)
+            for fact_row in fact_rows
+            if (task_id := self._observable_row_task_id(fact_row))
+        }
+        if not latest_by_task:
+            return rows
+
+        overlaid: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in rows:
+            row_map = dict(row)
+            task_id = self._observable_row_task_id(row_map)
+            fact_row = latest_by_task.get(task_id)
+            if not fact_row:
+                overlaid.append(row_map)
+                continue
+            metadata = dict(row_map.get("metadata") or {})
+            fact_metadata = dict(fact_row.get("metadata") or {})
+            fact_metadata["previous_status"] = str(row_map.get("status") or row_map.get("state") or "")
+            metadata.update(fact_metadata)
+            row_map.update({key: value for key, value in fact_row.items() if key not in {"id", "task_id", "metadata"}})
+            row_map["metadata"] = metadata
+            overlaid.append(row_map)
+            seen.add(task_id)
+
+        for task_id, fact_row in latest_by_task.items():
+            if task_id not in seen:
+                overlaid.append(fact_row)
+        return overlaid
+
     def select_next_task(
         self,
         *,

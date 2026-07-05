@@ -429,14 +429,8 @@ def test_snapshot_task_rows_project_run_ledger_boundary_when_rows_are_missing(
 
 
 def test_snapshot_task_rows_project_task_runtime_execution_facts_when_rows_are_missing(
-    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(
-        projection_service,
-        "load_runtime_task_rows",
-        lambda workspace: [],
-    )
     append_fact_event(
         AppendFactEventCommandV1(
             workspace=str(tmp_path),
@@ -492,15 +486,9 @@ def test_snapshot_task_rows_project_task_runtime_execution_facts_when_rows_are_m
     assert snapshot["tasks"][0]["metadata"]["source"] == "task_runtime.execution_fact"
 
 
-def test_snapshot_task_rows_overlay_existing_rows_with_task_runtime_execution_facts(
-    monkeypatch: pytest.MonkeyPatch,
+def test_snapshot_task_rows_prefer_task_runtime_execution_facts_over_projection_rows(
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(
-        projection_service,
-        "load_runtime_task_rows",
-        lambda workspace: [],
-    )
     append_fact_event(
         AppendFactEventCommandV1(
             workspace=str(tmp_path),
@@ -541,7 +529,6 @@ def test_snapshot_task_rows_overlay_existing_rows_with_task_runtime_execution_fa
     assert snapshot["tasks"][0]["running"] is False
     assert snapshot["tasks"][0]["last_error"] == "director execution failed"
     assert snapshot["tasks"][0]["metadata"]["status_source"] == "task_runtime.execution_fact"
-    assert snapshot["tasks"][0]["metadata"]["previous_status"] == "RUNNING"
 
 
 def test_snapshot_completed_count_includes_completed_verified_rows(tmp_path: Path) -> None:
