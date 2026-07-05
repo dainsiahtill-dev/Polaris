@@ -108,10 +108,6 @@
           "doc": ""
         },
         {
-          "name": "reset_records",
-          "doc": "Clear canonical taskboard rows and execution sessions."
-        },
-        {
           "name": "normalize_task_id",
           "doc": ""
         },

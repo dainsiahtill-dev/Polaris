@@ -169,6 +169,9 @@ TASK_RUNTIME_SERVICE_NON_AGENT_DESCRIPTOR_METHODS = {
     "board",
     "wait_ready",
 }
+TASK_RUNTIME_SERVICE_DESTRUCTIVE_DESCRIPTOR_METHODS = {
+    "reset_records",
+}
 TASK_RUNTIME_SERVICE_OWNER_READ_DESCRIPTOR_METHODS = {
     "list_task_rows",
 }
@@ -1550,6 +1553,42 @@ def test_task_runtime_descriptor_does_not_advertise_live_listener_or_raw_board_m
         "task_runtime descriptor must not advertise raw-board access or live "
         "condition/listener utilities. Agent-facing context should use stable "
         "row/session/read-model methods instead:\n" + "\n".join(sorted(offenders))
+    )
+
+
+def test_task_runtime_descriptor_does_not_advertise_destructive_service_methods() -> None:
+    descriptor = json.loads(TASK_RUNTIME_DESCRIPTOR.read_text(encoding="utf-8"))
+    capabilities = descriptor.get("capabilities")
+    assert isinstance(capabilities, list), "task_runtime descriptor must expose a capabilities list"
+
+    offenders: list[str] = []
+    service_seen = False
+    reset_function_seen = False
+    for item in capabilities:
+        if not isinstance(item, dict):
+            continue
+        if item.get("name") == "reset_runtime_task_records":
+            reset_function_seen = True
+        if item.get("name") != "TaskRuntimeService":
+            continue
+        service_seen = True
+        for method in item.get("methods", []):
+            if not isinstance(method, dict):
+                continue
+            method_name = str(method.get("name") or "")
+            if method_name in TASK_RUNTIME_SERVICE_DESTRUCTIVE_DESCRIPTOR_METHODS:
+                offenders.append(method_name)
+
+    assert service_seen, "task_runtime descriptor must still advertise TaskRuntimeService"
+    assert reset_function_seen, (
+        "task_runtime descriptor should keep the explicit owner reset function "
+        "for delivery-level reset orchestration while hiding the destructive "
+        "service method from Agent-facing TaskRuntimeService context."
+    )
+    assert not offenders, (
+        "task_runtime descriptor must not advertise destructive TaskRuntimeService "
+        "methods. Reset orchestration should use the explicit owner-level "
+        "reset_runtime_task_records capability instead:\n" + "\n".join(sorted(offenders))
     )
 
 
