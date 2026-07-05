@@ -1872,6 +1872,7 @@ def build_snapshot_payload_from_projection(
 
     tasks: list[dict[str, Any]] = []
     runtime_task_rows = load_runtime_task_rows(workspace)
+    tasks_from_runtime_rows = bool(runtime_task_rows)
     if runtime_task_rows:
         tasks = runtime_task_rows
     else:
@@ -1883,12 +1884,13 @@ def build_snapshot_payload_from_projection(
         if not tasks:
             tasks = _read_factory_latest_plan_tasks(workspace)
     tasks = _enrich_tasks_with_factory_blueprints(tasks, workspace)
-    tasks = _apply_task_runtime_execution_fact_overlay(tasks, workspace)
     run_ledger_task_projection = (
         projection.director_merged.get("run_ledger_projection")
         if isinstance(projection.director_merged, dict)
         else None
     )
+    if not tasks_from_runtime_rows:
+        tasks = _apply_task_runtime_execution_fact_overlay(tasks, workspace)
     tasks = _apply_run_ledger_task_rows_overlay(tasks, run_ledger_task_projection)
 
     pm_state = _read_first_json_candidate(
@@ -2152,12 +2154,20 @@ def select_task_rows_from_projection(projection: RuntimeProjection) -> list[dict
 
 
 def load_runtime_task_rows(workspace: str) -> list[dict[str, Any]]:
-    """Load canonical runtime task rows from runtime.state_owner storage."""
+    """Load runtime task rows from task-runtime rows plus execution facts.
+
+    TaskRuntimeService still owns the transitional file-backed row store, but
+    task-runtime execution facts are the forward-compatible evidence stream.
+    Always applying the fact overlay lets consumers observe fact-stream state
+    when row files are absent or stale, without falling back to workflow archive
+    task rows.
+    """
     workspace_token = str(workspace or "").strip()
     if not workspace_token:
         return []
+    rows: list[dict[str, Any]] = []
     try:
-        return TaskRuntimeService(workspace_token).list_task_rows()
+        rows = TaskRuntimeService(workspace_token).list_task_rows()
     except (RuntimeError, ValueError) as exc:
         logger.debug("failed to load runtime task rows: %s", exc)
-        return []
+    return _apply_task_runtime_execution_fact_overlay(rows, workspace_token)

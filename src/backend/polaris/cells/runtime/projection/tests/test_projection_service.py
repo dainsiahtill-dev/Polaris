@@ -492,7 +492,15 @@ def test_snapshot_task_rows_project_task_runtime_execution_facts_when_rows_are_m
     assert snapshot["tasks"][0]["metadata"]["source"] == "task_runtime.execution_fact"
 
 
-def test_snapshot_task_rows_overlay_existing_rows_with_task_runtime_execution_facts(tmp_path: Path) -> None:
+def test_snapshot_task_rows_overlay_existing_rows_with_task_runtime_execution_facts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        projection_service,
+        "load_runtime_task_rows",
+        lambda workspace: [],
+    )
     append_fact_event(
         AppendFactEventCommandV1(
             workspace=str(tmp_path),
@@ -1020,6 +1028,41 @@ class TestLoadRuntimeTaskRows:
         rows = load_runtime_task_rows(str(tmp_path))
         # Should return empty list (no exception)
         assert rows == []
+
+    def test_workspace_without_state_owner_uses_execution_fact_rows(self, tmp_path: Path) -> None:
+        append_fact_event(
+            AppendFactEventCommandV1(
+                workspace=str(tmp_path),
+                stream="task_runtime.execution",
+                event_type="claimed",
+                source="runtime.task_runtime",
+                task_id="TASK-5",
+                run_id="run-5",
+                payload={
+                    "task_id": "TASK-5",
+                    "run_id": "run-5",
+                    "event_type": "claimed",
+                    "status": "in_progress",
+                    "execution_state": "in_progress",
+                    "session_id": "session-5",
+                    "task_row_snapshot": {
+                        "id": "TASK-5",
+                        "task_id": "TASK-5",
+                        "subject": "Fact-backed runtime task",
+                        "description": "Loaded from task_runtime.execution",
+                        "status": "in_progress",
+                        "metadata": {"source": "task_runtime.row_snapshot"},
+                    },
+                },
+            )
+        )
+
+        rows = load_runtime_task_rows(str(tmp_path))
+
+        assert len(rows) == 1
+        assert rows[0]["task_id"] == "TASK-5"
+        assert rows[0]["subject"] == "Fact-backed runtime task"
+        assert rows[0]["metadata"]["source"] == "task_runtime.execution_fact"
 
 
 # =============================================================================
