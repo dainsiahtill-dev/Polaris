@@ -681,6 +681,7 @@ class TaskRuntimeService:
             owner=owner,
             blocked_by=blocked_by,
             metadata=metadata,
+            allow_dependency_status=True,
         )
         if updated is None:
             return None, None, None
@@ -1829,7 +1830,11 @@ class TaskRuntimeService:
             if explicit_blockers:
                 if explicit_blockers != list(task.blocked_by or []):
                     previous_blockers = [int(blocker) for blocker in task.blocked_by or []]
-                    updated = self._board.update(int(task.id), blocked_by=explicit_blockers)
+                    updated = self._board.update(
+                        int(task.id),
+                        blocked_by=explicit_blockers,
+                        allow_dependency_status=True,
+                    )
                     if updated is None:
                         failed.append({"task_id": int(task.id), "reason": "task_update_failed"})
                     else:
@@ -1867,7 +1872,12 @@ class TaskRuntimeService:
                 continue
 
             previous_blockers = [int(blocker) for blocker in task.blocked_by or []]
-            updated = self._board.update(int(task.id), status=TaskStatus.PENDING, blocked_by=[])
+            updated = self._board.update(
+                int(task.id),
+                status=TaskStatus.PENDING,
+                blocked_by=[],
+                allow_dependency_status=True,
+            )
             if updated is not None:
                 row = self._augment_task_row(updated.to_dict())
                 changed.append(int(task.id))
@@ -2351,7 +2361,12 @@ class TaskRuntimeService:
             )
             if next_blockers == previous_blockers and next_status is None:
                 continue
-            updated = self._board.update(dependent_id, status=next_status, blocked_by=next_blockers)
+            updated = self._board.update(
+                dependent_id,
+                status=next_status,
+                blocked_by=next_blockers,
+                allow_dependency_status=True,
+            )
             if updated is None:
                 events.append(
                     {
@@ -2405,7 +2420,11 @@ class TaskRuntimeService:
             if previous_blockers == active_blockers:
                 continue
 
-            updated = self._board.update(dependent_id, blocked_by=active_blockers)
+            updated = self._board.update(
+                dependent_id,
+                blocked_by=active_blockers,
+                allow_dependency_status=True,
+            )
             if updated is None:
                 events.append(
                     {

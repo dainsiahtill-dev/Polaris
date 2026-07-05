@@ -817,6 +817,7 @@ class TaskBoard:
         *,
         allow_terminal_status: bool = False,
         allow_execution_status: bool = False,
+        allow_dependency_status: bool = False,
     ) -> Task | None:
         """Compatibility update API (delegates to update_status)."""
         import copy
@@ -849,7 +850,10 @@ class TaskBoard:
                         normalized_blockers.append(dep_id_int)
                 task.blocked_by = normalized_blockers
                 if task.status in (TaskStatus.PENDING, TaskStatus.READY, TaskStatus.BLOCKED):
-                    task.status = TaskStatus.BLOCKED if task.blocked_by else TaskStatus.PENDING
+                    next_status = TaskStatus.BLOCKED if task.blocked_by else TaskStatus.PENDING
+                    if task.status != next_status and not allow_dependency_status:
+                        raise RuntimeError("taskboard_dependency_status_requires_task_runtime_owner_transition")
+                    task.status = next_status
             if isinstance(metadata, dict) and metadata:
                 task.metadata.update(metadata)
             # Keep in-memory cache in sync when `task` comes from update_status()

@@ -162,6 +162,11 @@ def test_task_board_rejects_terminal_status_without_owner_authorization(tmp_path
     with pytest.raises(RuntimeError, match=r"TaskBoard\.claim is retired"):
         board.claim(task.id, "director")
 
+    blocker = board.create(subject="blocker")
+    blocked_target = board.create(subject="blocked-target")
+    with pytest.raises(RuntimeError, match="taskboard_dependency_status_requires_task_runtime_owner_transition"):
+        board.update(blocked_target.id, blocked_by=[blocker.id])
+
     with pytest.raises(RuntimeError, match="terminal_taskboard_status_requires_task_runtime_owner_transition"):
         board.update_status(task.id, TaskStatus.COMPLETED)
 
