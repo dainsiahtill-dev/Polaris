@@ -164,6 +164,10 @@
           "doc": ""
         },
         {
+          "name": "list_observable_task_rows",
+          "doc": "Return task rows for read-only runtime projections."
+        },
+        {
           "name": "select_next_task",
           "doc": "Return the next claimable task row, preferring resumable work."
         },
@@ -204,11 +208,19 @@
           "doc": "Suspend every active task lease owned by an orchestration run."
         },
         {
+          "name": "list_ready_task_rows",
+          "doc": ""
+        },
+        {
           "name": "wait_ready",
           "doc": ""
         },
         {
           "name": "add_ready_listener",
+          "doc": ""
+        },
+        {
+          "name": "get_task_row_stats",
           "doc": ""
         },
         {
