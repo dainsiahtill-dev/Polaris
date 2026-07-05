@@ -1853,14 +1853,27 @@ class OrchestrationStageExecutor:
                 baseline[key] = 0
         return baseline
 
-    def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
-        """Return TaskBoard PM/external ids that can be claimed in this round."""
-        if limit <= 0:
-            return []
+    def _read_observable_task_rows(self) -> list[dict[str, Any]]:
+        """Return the task-runtime-owned read projection for factory decisions.
+
+        Factory may inspect task rows to decide whether to continue into quality
+        gates, but it must not glob ``runtime/tasks/task_*.json`` directly. The
+        TaskRuntimeService projection is the WS2 boundary: it overlays row files
+        with ``task_runtime.execution`` facts and keeps file layout knowledge
+        inside the task-runtime owner.
+        """
+
         try:
             rows = TaskRuntimeService(str(self.workspace)).list_observable_task_rows()
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
             return []
+        return [dict(row) for row in rows if isinstance(row, dict)]
+
+    def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
+        """Return TaskBoard PM/external ids that can be claimed in this round."""
+        if limit <= 0:
+            return []
+        rows = self._read_observable_task_rows()
 
         ids: list[str] = []
         seen: set[str] = set()
@@ -5009,20 +5022,11 @@ class OrchestrationStageExecutor:
         return any(marker in text for marker in markers)
 
     def _failed_task_records_indicate_materialization_quality_handoff(self) -> bool:
-        tasks_dir = self._artifact_path("tasks/plan.json").parent
-        if not tasks_dir.exists():
-            return False
         markers = (
             "director_materialization_quality_failed",
             "director_materialization_semantic_quality_failed",
         )
-        for task_path in sorted(tasks_dir.glob("task_*.json")):
-            try:
-                payload = json.loads(task_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if not isinstance(payload, dict):
-                continue
+        for payload in self._read_observable_task_rows():
             status = str(payload.get("status") or "").strip().lower()
             if status not in {"failed", "blocked"}:
                 continue
@@ -5039,9 +5043,6 @@ class OrchestrationStageExecutor:
         Factory should let workspace quality and QA decide whether it is runnable
         instead of stopping before gates run.
         """
-        tasks_dir = self._artifact_path("tasks/plan.json").parent
-        if not tasks_dir.exists():
-            return False
         markers = (
             "director_missing_write_receipt",
             "director_no_materialized_changes",
@@ -5053,13 +5054,7 @@ class OrchestrationStageExecutor:
             "workspace_diff_without_write_tool",
             "no_materialized_changes",
         }
-        for task_path in sorted(tasks_dir.glob("task_*.json")):
-            try:
-                payload = json.loads(task_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if not isinstance(payload, dict):
-                continue
+        for payload in self._read_observable_task_rows():
             status = str(payload.get("status") or "").strip().lower()
             if status not in {"failed", "blocked"}:
                 continue

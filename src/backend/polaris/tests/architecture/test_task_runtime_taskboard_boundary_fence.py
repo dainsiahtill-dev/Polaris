@@ -25,6 +25,9 @@ DIRECTOR_EXECUTION_SERVICE = POLARIS_ROOT / "cells" / "director" / "execution" /
 RUNTIME_PROJECTION_SERVICE = POLARIS_ROOT / "cells" / "runtime" / "projection" / "internal" / "runtime_projection_service.py"
 FACTORY_HTTP_ROUTER = POLARIS_ROOT / "delivery" / "http" / "routers" / "factory.py"
 FACTORY_BENCH_RUNNER = BACKEND_ROOT / "scripts" / "factory_bench" / "run_factory_bench.py"
+FACTORY_STAGE_EXECUTOR = (
+    POLARIS_ROOT / "cells" / "factory" / "pipeline" / "internal" / "factory_stage_executor.py"
+)
 RAW_TASKBOARD_MODULES = {
     "polaris.cells.runtime.task_runtime.internal.task_board",
     "polaris.cells.runtime.task_runtime.public.task_board_contract",
@@ -122,6 +125,24 @@ def _raw_task_row_read_calls(path: Path) -> list[str]:
         if not _is_legacy_task_runtime_receiver(func.value):
             continue
         offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} calls raw {func.attr}()")
+    return offenders
+
+
+def _direct_task_row_file_globs(path: Path) -> list[str]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr != "glob":
+            continue
+        pattern = node.args[0] if node.args else None
+        if isinstance(pattern, ast.Constant) and pattern.value == "task_*.json":
+            offenders.append(
+                f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} directly globs runtime task rows"
+            )
     return offenders
 
 
@@ -425,6 +446,22 @@ def test_director_resume_preparation_uses_task_runtime_owner() -> None:
     assert not missing_owner_calls, (
         "Director-resume preparation must route import/reset through "
         "TaskRuntimeService owner APIs:\n" + "\n".join(missing_owner_calls)
+    )
+
+
+def test_factory_stage_executor_reads_task_rows_through_task_runtime_projection() -> None:
+    offenders = _direct_task_row_file_globs(FACTORY_STAGE_EXECUTOR)
+    source = FACTORY_STAGE_EXECUTOR.read_text(encoding="utf-8")
+
+    assert not offenders, (
+        "Factory stage executor must not scan runtime/tasks/task_*.json as an "
+        "execution fact source. Use TaskRuntimeService.list_observable_task_rows() "
+        "so task_runtime.execution facts remain in the read projection:\n"
+        + "\n".join(offenders)
+    )
+    assert "list_observable_task_rows" in source, (
+        "Factory stage executor must consume TaskRuntimeService.list_observable_task_rows() "
+        "for read-only task status projections."
     )
 
 

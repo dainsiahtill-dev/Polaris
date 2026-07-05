@@ -75,6 +75,41 @@ def test_read_claimable_director_task_ids_uses_observable_rows(
     assert claimable == ["TASK-1", "TASK-2"]
 
 
+def test_failed_quality_handoff_reads_observable_task_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _ProjectionOnlyTaskRuntime:
+        def __init__(self, workspace: str) -> None:
+            assert workspace == str(tmp_path)
+
+        def list_observable_task_rows(self) -> list[dict[str, Any]]:
+            return [
+                {
+                    "id": "TASK-1",
+                    "status": "failed",
+                    "metadata": {
+                        "runtime_execution": {
+                            "last_error": "director_materialization_quality_failed",
+                        },
+                        "adapter_result": {
+                            "materialization_error": "director_materialization_quality_failed",
+                            "materialization_mode": "workspace_diff_without_write_tool",
+                        },
+                    },
+                }
+            ]
+
+        def list_task_rows(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+            raise AssertionError("Factory stage executor must read observable task rows")
+
+    monkeypatch.setattr(stage_executor_module, "TaskRuntimeService", _ProjectionOnlyTaskRuntime)
+    executor = _executor(tmp_path)
+
+    assert executor._failed_task_records_indicate_materialization_quality_handoff() is True
+    assert executor._failed_task_records_indicate_quality_handoff() is True
+
+
 def test_materialization_quality_target_filter_prefers_ts_source_over_compiled_outputs(tmp_path: Path) -> None:
     (tmp_path / "tests").mkdir(parents=True)
     (tmp_path / "dist").mkdir(parents=True)
