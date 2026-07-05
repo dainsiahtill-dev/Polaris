@@ -12,6 +12,7 @@ from typing import Any, cast
 import pytest
 from polaris.bootstrap import config as bootstrap_config_module
 from polaris.cells.roles.adapters.internal import director_execution_backend as director_execution_backend_module
+from polaris.cells.roles.adapters.internal.director.state_tracking import DirectorStateTracker
 from polaris.cells.roles.adapters.internal.director_adapter import DirectorAdapter
 from polaris.cells.roles.adapters.internal.pm_adapter import PMAdapter
 from polaris.cells.roles.adapters.internal.qa_adapter import QAAdapter
@@ -287,6 +288,40 @@ def test_director_taskboard_snapshot_includes_completed_qa_state(tmp_path: Path)
     assert qa_states.get(str(done_pending_qa["id"])) == "pending"
     assert qa_states.get(str(done_failed_qa["id"])) == "failed"
     assert qa_states.get(str(done_passed_qa["id"])) == "passed"
+
+
+def test_director_taskboard_snapshot_uses_observable_task_rows(tmp_path: Path) -> None:
+    class _ObservableRuntime:
+        def list_observable_task_rows(self) -> list[dict[str, object]]:
+            return [{"id": 1, "status": "pending", "subject": "Observable task"}]
+
+        def list_task_rows(self) -> list[dict[str, object]]:
+            raise AssertionError("Director taskboard snapshots must use observable task rows")
+
+        def get_task_row_stats(self) -> dict[str, int]:
+            return {}
+
+        def list_ready_task_rows(self) -> list[dict[str, object]]:
+            return []
+
+    snapshot = DirectorStateTracker(str(tmp_path)).build_taskboard_observation_snapshot(
+        _ObservableRuntime(),
+        sample_limit=10,
+    )
+
+    assert snapshot["counts"]["total"] == 1
+    assert snapshot["samples"]["pending"] == [
+        {
+            "id": "1",
+            "subject": "Observable task",
+            "qa_state": "",
+            "claimed_by": "",
+            "execution_backend": "",
+            "resume_state": "",
+            "session_id": "",
+            "workflow_run_id": "",
+        }
+    ]
 
 
 def test_director_taskboard_snapshot_surfaces_running_task_without_duplicate_ready_rows(

@@ -246,7 +246,7 @@ class DirectorStateTracker:
             "failed": [],
             "blocked": [],
         }
-        task_rows = task_runtime.list_task_rows()
+        task_rows = task_runtime.list_observable_task_rows()
         get_task_row_stats = getattr(task_runtime, "get_task_row_stats", None)
         stats = get_task_row_stats() if callable(get_task_row_stats) else {}
         if isinstance(stats, dict):
