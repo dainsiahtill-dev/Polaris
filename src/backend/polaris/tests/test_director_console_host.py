@@ -252,6 +252,7 @@ class _FakeTaskService:
         self.workspace = workspace
         self.tasks: list[_FakeTask] = []
         self._counter = 0
+        self.execution_event: dict[str, Any] | None = None
 
     def create_task_row(
         self,
@@ -276,7 +277,10 @@ class _FakeTaskService:
             priority=priority,
         )
         self.tasks.append(task)
-        return task.to_dict()
+        projected = task.to_dict()
+        if self.execution_event is not None:
+            projected["execution_event"] = dict(self.execution_event)
+        return projected
 
     def list_observable_task_rows(self) -> list[dict[str, Any]]:
         return [task.to_dict() for task in self.tasks]
@@ -462,6 +466,24 @@ def test_director_console_host_task_row_apis_use_task_runtime_service() -> None:
     assert listed[0]["metadata"]["role"] == "director"
     assert selected is not None
     assert selected["subject"] == "wire the CLI"
+
+
+def test_director_console_host_rejects_task_creation_without_execution_event_evidence() -> None:
+    task_service = _FakeTaskService("workspace")
+    task_service.execution_event = {
+        "ok": False,
+        "event_type": "task_created",
+        "error": "append failed",
+    }
+    host = DirectorConsoleHost(
+        "workspace",
+        session_service_factory=lambda: _FakeRoleSessionService(),
+        task_service_factory=lambda workspace: task_service,
+        runtime_service_factory=lambda: _FakeRoleRuntime(),
+    )
+
+    with pytest.raises(RoleConsoleHostError, match="task_runtime_execution_event_append_failed:task_created"):
+        host.create_task(subject="wire the CLI")
 
 
 def test_director_console_host_list_tasks_filters_terminal_observable_rows() -> None:

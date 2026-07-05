@@ -23,6 +23,7 @@ from polaris.cells.roles.session.public import (
     SessionType,
 )
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
+from polaris.delivery.cli.task_runtime_evidence import task_row_execution_event_failure
 from polaris.kernelone.context.context_os import summarize_context_os_payload
 from polaris.kernelone.context.history_materialization import SessionContinuityStrategy
 from polaris.kernelone.context.session_continuity import SessionContinuityProjection
@@ -1040,6 +1041,12 @@ class RoleConsoleHost:
             blocked_by=blocked_by,
             metadata=_copy_mapping(metadata),
         )
+        execution_failure = task_row_execution_event_failure(task_row)
+        if execution_failure is not None:
+            raise RoleConsoleHostError(
+                "task_runtime_execution_event_append_failed:"
+                f"{execution_failure.get('event_type') or 'task_created'}"
+            )
         return dict(task_row)
 
     def select_next_task(

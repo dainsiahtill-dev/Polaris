@@ -33,6 +33,7 @@ from polaris.delivery.cli.super_mode import (
     extract_task_list_from_pm_output,
     write_architect_blueprint_to_disk,
 )
+from polaris.delivery.cli.task_runtime_evidence import task_row_execution_event_failure
 from polaris.delivery.cli.terminal._base import (
     _ALLOWED_BACKENDS,
     _apply_keymode,
@@ -960,6 +961,12 @@ def _persist_super_tasks_to_board(
                     "pm_output_excerpt": pm_output[:500],
                 },
             )
+            execution_failure = task_row_execution_event_failure(created)
+            if execution_failure is not None:
+                raise RuntimeError(
+                    "task_runtime_execution_event_append_failed:"
+                    f"{execution_failure.get('event_type') or 'task_created'}"
+                )
             created_id = int(created.get("id") or 0)
             created_subject = str(created.get("subject") or task.subject)
             created_description = str(created.get("description") or task.description)

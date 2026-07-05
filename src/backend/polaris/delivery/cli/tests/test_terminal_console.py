@@ -928,6 +928,56 @@ def test_persist_super_tasks_to_board_publishes_pending_design(monkeypatch) -> N
     assert published[0].payload["workspace"] == "."
 
 
+def test_persist_super_tasks_to_board_does_not_publish_when_execution_event_fails(monkeypatch) -> None:
+    published: list[Any] = []
+
+    class _FakeTaskRuntime:
+        def __init__(self, *, workspace: str) -> None:
+            self.workspace = workspace
+
+        def create_task_row(self, **kwargs: Any) -> dict[str, Any]:
+            return {
+                "id": 1,
+                "subject": kwargs["subject"],
+                "description": kwargs["description"],
+                "execution_event": {
+                    "ok": False,
+                    "event_type": "task_created",
+                    "error": "append failed",
+                },
+            }
+
+    class _FakeMarket:
+        def publish_work_item(self, command: Any) -> Any:
+            published.append(command)
+            return SimpleNamespace(ok=True)
+
+    monkeypatch.setattr("polaris.cells.runtime.task_runtime.public.service.TaskRuntimeService", _FakeTaskRuntime)
+    monkeypatch.setattr(
+        "polaris.cells.runtime.task_market.public.service.get_task_market_service",
+        lambda: _FakeMarket(),
+    )
+
+    task_ids = terminal_cli._persist_super_tasks_to_board(
+        workspace=".",
+        tasks=[
+            SuperTaskItem(
+                subject="ContextOS",
+                description="完善 ContextOS pipeline",
+                target_files=("polaris/delivery/cli/terminal/console.py",),
+                estimated_hours=1.5,
+            )
+        ],
+        original_request="进一步完善 ContextOS",
+        publish_stage="pending_design",
+        architect_output="架构摘要",
+        pm_output="PM 摘要",
+    )
+
+    assert task_ids == []
+    assert published == []
+
+
 def test_run_role_console_super_mode_session_command_reports_super_role(monkeypatch, capsys) -> None:
     import polaris.delivery.cli.director.console_host as console_host_module
 
