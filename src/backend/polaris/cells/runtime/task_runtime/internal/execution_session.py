@@ -112,6 +112,73 @@ def build_task_row_snapshot(task_row: dict[str, Any]) -> dict[str, Any]:
     return _json_compatible_copy(task_row)
 
 
+def is_running_execution_status(status: str) -> bool:
+    """Return whether a task-runtime execution status represents active work."""
+
+    return str(status or "").strip().lower() in {"active", "claimed", "in_progress", "running"}
+
+
+def project_task_row_from_execution_fact_payload(fact: dict[str, Any]) -> dict[str, Any]:
+    """Project one task-runtime execution fact payload into a task row.
+
+    Boundary:
+        This is the owner-cell read model for ``task_runtime.execution`` facts.
+        It prefers the complete ``task_row_snapshot`` evidence and overlays the
+        current event/session fields.  Callers may use the result for read
+        projection only; claim/write authorization still belongs to the
+        TaskRuntimeService row/session APIs.
+
+    Complexity:
+        O(n) time and memory over the task-row snapshot and metadata size.
+    """
+
+    task_id = str(fact.get("task_id") or "").strip()
+    if not task_id:
+        return {}
+    execution_state = str(fact.get("execution_state") or fact.get("status") or "").strip()
+    status = execution_state or str(fact.get("event_type") or "unknown").strip()
+    snapshot = fact.get("task_row_snapshot")
+    if isinstance(snapshot, dict):
+        row = dict(snapshot)
+        row.setdefault("id", task_id)
+        row.setdefault("task_id", task_id)
+    else:
+        row = {
+            "id": task_id,
+            "task_id": task_id,
+        }
+    metadata = dict(row.get("metadata") or {})
+    metadata.update(
+        {
+            "source": "task_runtime.execution_fact",
+            "status_source": "task_runtime.execution_fact",
+            "task_runtime_execution_fact": fact,
+        }
+    )
+    row.update(
+        {
+            "status": status,
+            "state": status,
+            "execution_state": status,
+            "running": is_running_execution_status(status),
+            "session_id": str(fact.get("session_id") or ""),
+            "workflow_run_id": str(fact.get("run_id") or ""),
+            "claimed_by": str(fact.get("claimed_by") or ""),
+            "last_claimed_by": str(fact.get("last_claimed_by") or ""),
+            "resume_state": str(fact.get("resume_state") or ""),
+            "resume_available": bool(fact.get("resume_available")),
+            "claim_attempt": normalize_positive_int(fact.get("attempt"), default=0, minimum=0),
+            "resume_count": normalize_positive_int(fact.get("resume_count"), default=0, minimum=0),
+            "lease_expires_at": str(fact.get("lease_expires_at") or ""),
+            "last_heartbeat_at": str(fact.get("last_heartbeat_at") or ""),
+            "last_error": str(fact.get("last_error") or ""),
+            "last_result_summary": str(fact.get("last_result_summary") or ""),
+            "metadata": metadata,
+        }
+    )
+    return row
+
+
 def require_non_empty_field(payload: dict[str, Any], field_name: str) -> str:
     """Return a required non-empty persisted session field."""
     token = str(payload.get(field_name) or "").strip()

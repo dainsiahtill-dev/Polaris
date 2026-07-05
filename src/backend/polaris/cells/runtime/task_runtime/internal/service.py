@@ -8,8 +8,12 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, NoReturn
 
-from polaris.cells.events.fact_stream.public.contracts import AppendFactEventCommandV1
-from polaris.cells.events.fact_stream.public.service import append_fact_event
+from polaris.cells.events.fact_stream.public.contracts import (
+    AppendFactEventCommandV1,
+    FactStreamError,
+    QueryFactEventsV1,
+)
+from polaris.cells.events.fact_stream.public.service import append_fact_event, query_fact_events
 from polaris.cells.runtime.task_runtime.internal.task_board import (
     InvalidTaskStateTransitionError,
     Task,
@@ -35,6 +39,7 @@ from .execution_session import (
     is_terminal_task_row_status,
     normalize_positive_int,
     project_task_row_execution_event,
+    project_task_row_from_execution_fact_payload,
     project_task_row_runtime_state,
     sanitize_summary,
     task_row_status_counts,
@@ -493,6 +498,49 @@ class TaskRuntimeService:
             if (not include_terminal) and is_terminal_task_row_status(status):
                 continue
             rows.append(row)
+        rows.sort(key=self._row_sort_key)
+        return rows
+
+    def list_task_rows_from_execution_facts(self, *, limit: int = 500) -> list[dict[str, Any]]:
+        """Return latest task-row read models from ``task_runtime.execution`` facts.
+
+        Boundary:
+            This is a read projection only. It does not authorize claims,
+            writes, or dependency transitions. Transitional claim paths must
+            continue to use the row/session APIs until the storage owner is fully
+            event-sourced.
+
+        Complexity:
+            O(e + t log t) time over queried events and projected tasks, O(t)
+            memory for latest-by-task rows.
+        """
+
+        try:
+            result = query_fact_events(
+                QueryFactEventsV1(
+                    workspace=self.workspace,
+                    stream="task_runtime.execution",
+                    limit=max(1, int(limit)),
+                )
+            )
+        except (FactStreamError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("failed to load task runtime execution fact rows: %s", exc)
+            return []
+        latest_by_task: dict[str, dict[str, Any]] = {}
+        for event in result.events:
+            if not isinstance(event, dict):
+                continue
+            payload = event.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            fact = dict(payload)
+            fact.setdefault("event_id", str(event.get("event_id") or ""))
+            fact.setdefault("occurred_at", str(event.get("occurred_at") or event.get("timestamp") or ""))
+            row = project_task_row_from_execution_fact_payload(fact)
+            task_id = str(row.get("task_id") or row.get("id") or "").strip()
+            if task_id:
+                latest_by_task[task_id] = row
+        rows = list(latest_by_task.values())
         rows.sort(key=self._row_sort_key)
         return rows
 

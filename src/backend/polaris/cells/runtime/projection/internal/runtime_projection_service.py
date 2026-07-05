@@ -37,11 +37,6 @@ from polaris.cells.control_plane.run_ledger.public import (
     read_run_ledger_projection,
 )
 from polaris.cells.docs.court_workflow.public.service import map_engine_to_court_state
-from polaris.cells.events.fact_stream.public.service import (
-    FactStreamError,
-    QueryFactEventsV1,
-    query_fact_events,
-)
 from polaris.cells.qa.audit_verdict.public import (
     QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS,
     normalize_qa_failure_class,
@@ -1041,96 +1036,22 @@ def _row_task_id(row: dict[str, Any]) -> str:
     ).strip()
 
 
-def _read_task_runtime_execution_facts(workspace: str) -> list[dict[str, Any]]:
+def _apply_task_runtime_execution_fact_overlay(rows: list[dict[str, Any]], workspace: str) -> list[dict[str, Any]]:
     workspace_token = str(workspace or "").strip()
     if not workspace_token:
-        return []
-    try:
-        result = query_fact_events(
-            QueryFactEventsV1(
-                workspace=workspace_token,
-                stream="task_runtime.execution",
-                limit=500,
-            )
-        )
-    except (FactStreamError, RuntimeError, TypeError, ValueError) as exc:
-        logger.debug("runtime projection: failed to read task runtime execution facts: %s", exc)
-        return []
-    facts: list[dict[str, Any]] = []
-    for event in result.events:
-        if not isinstance(event, dict):
-            continue
-        payload = event.get("payload")
-        if not isinstance(payload, dict):
-            continue
-        fact = dict(payload)
-        fact.setdefault("event_id", str(event.get("event_id") or ""))
-        fact.setdefault("occurred_at", str(event.get("occurred_at") or event.get("timestamp") or ""))
-        facts.append(fact)
-    return facts
-
-
-def _task_running_from_status(status: str) -> bool:
-    return str(status or "").strip().lower() in {"active", "claimed", "in_progress", "running"}
-
-
-def _row_from_task_runtime_execution_fact(fact: dict[str, Any]) -> dict[str, Any]:
-    task_id = str(fact.get("task_id") or "").strip()
-    if not task_id:
-        return {}
-    execution_state = str(fact.get("execution_state") or fact.get("status") or "").strip()
-    status = execution_state or str(fact.get("event_type") or "unknown").strip()
-    snapshot = fact.get("task_row_snapshot")
-    if isinstance(snapshot, dict):
-        row = dict(snapshot)
-        row.setdefault("id", task_id)
-        row.setdefault("task_id", task_id)
-    else:
-        row = {
-            "id": task_id,
-            "task_id": task_id,
-        }
-    metadata = dict(row.get("metadata") or {})
-    metadata.update(
-        {
-            "source": "task_runtime.execution_fact",
-            "status_source": "task_runtime.execution_fact",
-            "task_runtime_execution_fact": fact,
-        }
-    )
-    row.update(
-        {
-            "status": status,
-            "state": status,
-            "execution_state": status,
-            "running": _task_running_from_status(status),
-            "session_id": str(fact.get("session_id") or ""),
-            "workflow_run_id": str(fact.get("run_id") or ""),
-            "claimed_by": str(fact.get("claimed_by") or ""),
-            "last_claimed_by": str(fact.get("last_claimed_by") or ""),
-            "resume_state": str(fact.get("resume_state") or ""),
-            "resume_available": bool(fact.get("resume_available")),
-            "claim_attempt": _safe_int(fact.get("attempt")),
-            "resume_count": _safe_int(fact.get("resume_count")),
-            "lease_expires_at": str(fact.get("lease_expires_at") or ""),
-            "last_heartbeat_at": str(fact.get("last_heartbeat_at") or ""),
-            "last_error": str(fact.get("last_error") or ""),
-            "last_result_summary": str(fact.get("last_result_summary") or ""),
-            "metadata": metadata,
-        }
-    )
-    return row
-
-
-def _apply_task_runtime_execution_fact_overlay(rows: list[dict[str, Any]], workspace: str) -> list[dict[str, Any]]:
-    facts = _read_task_runtime_execution_facts(workspace)
-    if not facts:
         return rows
-    latest_by_task: dict[str, dict[str, Any]] = {}
-    for fact in facts:
-        task_id = str(fact.get("task_id") or "").strip()
-        if task_id:
-            latest_by_task[task_id] = fact
+    try:
+        fact_rows = TaskRuntimeService(workspace_token).list_task_rows_from_execution_facts()
+    except (RuntimeError, ValueError) as exc:
+        logger.debug("runtime projection: failed to load task runtime execution fact rows: %s", exc)
+        return rows
+    if not fact_rows:
+        return rows
+    latest_by_task: dict[str, dict[str, Any]] = {
+        task_id: dict(fact_row)
+        for fact_row in fact_rows
+        if (task_id := _row_task_id(fact_row))
+    }
     if not latest_by_task:
         return rows
 
@@ -1139,11 +1060,7 @@ def _apply_task_runtime_execution_fact_overlay(rows: list[dict[str, Any]], works
     for row in rows:
         row_map = dict(row)
         task_id = _row_task_id(row_map)
-        latest_fact = latest_by_task.get(task_id)
-        if not latest_fact:
-            overlaid.append(row_map)
-            continue
-        fact_row = _row_from_task_runtime_execution_fact(latest_fact)
+        fact_row = latest_by_task.get(task_id)
         if not fact_row:
             overlaid.append(row_map)
             continue
@@ -1156,12 +1073,10 @@ def _apply_task_runtime_execution_fact_overlay(rows: list[dict[str, Any]], works
         overlaid.append(row_map)
         seen.add(task_id)
 
-    for task_id, fact in latest_by_task.items():
+    for task_id, fact_row in latest_by_task.items():
         if task_id in seen:
             continue
-        fact_row = _row_from_task_runtime_execution_fact(fact)
-        if fact_row:
-            overlaid.append(fact_row)
+        overlaid.append(fact_row)
     return overlaid
 
 
@@ -2167,7 +2082,10 @@ def load_runtime_task_rows(workspace: str) -> list[dict[str, Any]]:
         return []
     rows: list[dict[str, Any]] = []
     try:
-        rows = TaskRuntimeService(workspace_token).list_task_rows()
+        task_runtime = TaskRuntimeService(workspace_token)
+        rows = task_runtime.list_task_rows()
+        if not rows:
+            return task_runtime.list_task_rows_from_execution_facts()
     except (RuntimeError, ValueError) as exc:
         logger.debug("failed to load runtime task rows: %s", exc)
     return _apply_task_runtime_execution_fact_overlay(rows, workspace_token)

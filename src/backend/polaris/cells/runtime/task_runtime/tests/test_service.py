@@ -6,7 +6,12 @@ import time
 from pathlib import Path
 
 import pytest
-from polaris.cells.events.fact_stream.public.service import QueryFactEventsV1, query_fact_events
+from polaris.cells.events.fact_stream.public.service import (
+    AppendFactEventCommandV1,
+    QueryFactEventsV1,
+    append_fact_event,
+    query_fact_events,
+)
 from polaris.cells.runtime.task_runtime.internal import service as service_module
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService, reset_runtime_task_records
 from polaris.kernelone.storage import resolve_runtime_path
@@ -56,6 +61,48 @@ def test_task_runtime_service_manages_task_rows(tmp_path: Path) -> None:
     rows = service.list_task_rows()
     assert len(rows) == 1
     assert rows[0]["id"] == created["id"]
+
+
+def test_task_runtime_service_projects_rows_from_execution_facts(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="claimed",
+            source="runtime.task_runtime",
+            task_id="TASK-FACT",
+            run_id="run-fact",
+            payload={
+                "task_id": "TASK-FACT",
+                "run_id": "run-fact",
+                "event_type": "claimed",
+                "status": "in_progress",
+                "execution_state": "in_progress",
+                "session_id": "session-fact",
+                "task_row_snapshot": {
+                    "id": "TASK-FACT",
+                    "task_id": "TASK-FACT",
+                    "subject": "Fact backed task",
+                    "description": "Projected by task runtime owner",
+                    "priority": "HIGH",
+                    "metadata": {"source": "task_runtime.row_snapshot"},
+                },
+            },
+        )
+    )
+
+    rows = service.list_task_rows_from_execution_facts()
+
+    assert len(rows) == 1
+    assert rows[0]["task_id"] == "TASK-FACT"
+    assert rows[0]["subject"] == "Fact backed task"
+    assert rows[0]["description"] == "Projected by task runtime owner"
+    assert rows[0]["running"] is True
+    assert rows[0]["metadata"]["source"] == "task_runtime.execution_fact"
 
 
 def test_task_runtime_service_raw_list_all_is_retired(tmp_path: Path) -> None:
