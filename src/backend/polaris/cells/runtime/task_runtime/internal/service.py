@@ -701,6 +701,75 @@ class TaskRuntimeService:
             execution_events=execution_events,
         )
 
+    def fail_task_row_after_rework_exhausted(
+        self,
+        task_id: Any,
+        *,
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+        source: str = "task_rework",
+    ) -> dict[str, Any] | None:
+        """Fail a terminal task after sanctioned rework retries are exhausted.
+
+        This is the owner-cell transition for QA or task-boundary flows that
+        first reopen a completed task for rework accounting, then determine
+        that no more retries are allowed.  Callers must not compose this from
+        ``reopen_task_row()`` plus ``update_task_row(status="failed")`` because
+        that second step would be a sessionless terminal row update.
+
+        Complexity:
+            O(d) time and memory for dependency reblock projection, where d is
+            the number of downstream rows blocked by the task.
+        """
+
+        normalized = self.normalize_task_id(task_id)
+        if normalized is None:
+            return None
+
+        _task, _reopened_row, reopened_event, downstream_events = self._reopen_with_execution_event(
+            normalized,
+            reason=reason,
+            metadata=metadata,
+        )
+        if _reopened_row is None:
+            return None
+
+        session = self._read_session(normalized)
+        failure_reason = sanitize_summary(reason or "rework_retry_exhausted")
+        if session is not None:
+            session.mark_failed(error=failure_reason)
+            self._write_session(session, allow_terminal_downgrade=True)
+
+        updated = self._board.update(
+            normalized,
+            status=TaskStatus.FAILED,
+            metadata=metadata,
+        )
+        if updated is None:
+            return None
+
+        row = self._augment_task_row(updated.to_dict())
+        failed_event = self._append_execution_event(
+            "failed",
+            task_row=row,
+            session=session,
+            details={
+                "reason": failure_reason,
+                "source": sanitize_summary(source or "task_rework"),
+                "rework_exhausted": True,
+            },
+        )
+        execution_events = tuple(
+            event
+            for event in (reopened_event, *downstream_events, failed_event)
+            if event is not None
+        )
+        return project_task_row_execution_event(
+            row,
+            failed_event,
+            execution_events=execution_events,
+        )
+
     def _reopen_with_execution_event(
         self,
         task_id: Any,

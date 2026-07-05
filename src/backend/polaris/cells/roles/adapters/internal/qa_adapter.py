@@ -525,13 +525,12 @@ class QAAdapter(BaseRoleAdapter):
                     continue
 
                 if exhausted:
-                    # completed -> failed is not a standard transition; reopen first
-                    self.task_runtime.reopen_task_row(
+                    self.task_runtime.fail_task_row_after_rework_exhausted(
                         task_id,
                         reason="qa_rework_retry_exhausted",
                         metadata=metadata_update,
+                        source="qa_verdict",
                     )
-                    self.task_runtime.update_task_row(task_id, status="failed", metadata=metadata_update)
                     summary["failed"] += 1
                 else:
                     self.task_runtime.reopen_task_row(

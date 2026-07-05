@@ -1693,6 +1693,66 @@ def test_task_runtime_update_and_reopen_emit_execution_events(tmp_path: Path) ->
     assert child_after["blocked_by"] == [int(created_id)]
 
 
+def test_task_runtime_rework_exhaustion_failure_is_owner_transition(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(subject="qa-owned rework exhausted")
+    created_id = int(created["id"])
+    child = service.create_task_row(subject="dependent row", blocked_by=[created_id])
+    child_id = int(child["id"])
+    claimed = service.claim_execution(
+        created_id,
+        worker_id="director-worker",
+        role_id="director",
+        run_id="run-qa",
+        selection_source="test",
+    )
+    assert claimed["success"] is True
+    completed = service.complete_execution(
+        created_id,
+        session_id=str(claimed["session"]["session_id"]),
+        result_summary="director completed",
+    )
+    assert completed["success"] is True
+
+    failed = service.fail_task_row_after_rework_exhausted(
+        created_id,
+        reason="qa_rework_retry_exhausted",
+        metadata={"qa_last_verdict": "FAIL"},
+        source="qa_verdict",
+    )
+
+    assert failed is not None
+    assert failed["status"] == "failed"
+    assert failed["metadata"]["qa_last_verdict"] == "FAIL"
+    assert failed["metadata"]["runtime_execution"]["status"] == "failed"
+    assert failed["metadata"]["runtime_execution"]["last_error"] == "qa_rework_retry_exhausted"
+    execution_event_types = [
+        str(event.get("event_type") or "") for event in failed.get("execution_events", [])
+    ]
+    assert execution_event_types[-2:] == ["downstream_dependency_reblocked", "failed"]
+
+    child_after = service.get_task(child_id)
+    assert child_after is not None
+    assert child_after["status"] == "blocked"
+    assert child_after["blocked_by"] == [created_id]
+
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    event_types = [str(event.get("event_type") or "") for event in events]
+    assert "reopened" in event_types
+    assert "failed" in event_types
+    failed_event = events[-1]
+    assert failed_event["event_type"] == "failed"
+    assert failed_event["payload"]["execution_state"] == "failed"
+    assert failed_event["payload"]["details"] == {
+        "reason": "qa_rework_retry_exhausted",
+        "source": "qa_verdict",
+        "rework_exhausted": True,
+    }
+
+
 def test_reopen_task_row_reports_event_append_failure_without_persisting_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

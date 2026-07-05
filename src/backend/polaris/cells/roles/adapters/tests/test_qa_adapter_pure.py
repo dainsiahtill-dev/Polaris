@@ -37,6 +37,7 @@ class _QaRowProjectionOnlyTaskBoard:
         self.rows = [dict(row) for row in rows]
         self.reopened: list[dict[str, Any]] = []
         self.updated: list[dict[str, Any]] = []
+        self.failed_after_rework_exhausted: list[dict[str, Any]] = []
 
     def list_observable_task_rows(self) -> list[dict[str, Any]]:
         return [dict(row) for row in self.rows]
@@ -78,6 +79,24 @@ class _QaRowProjectionOnlyTaskBoard:
             }
         )
         return self._update_row(task_id, status=status, metadata=metadata)
+
+    def fail_task_row_after_rework_exhausted(
+        self,
+        task_id: Any,
+        *,
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+        source: str = "",
+    ) -> dict[str, Any] | None:
+        self.failed_after_rework_exhausted.append(
+            {
+                "task_id": task_id,
+                "reason": reason,
+                "metadata": dict(metadata or {}),
+                "source": source,
+            }
+        )
+        return self._update_row(task_id, status="failed", metadata=metadata)
 
     def _update_row(
         self,
@@ -201,6 +220,46 @@ class TestTaskboardQaVerdict:
         metadata = task_runtime.reopened[0]["metadata"]
         assert metadata["qa_rework_requested"] is True
         assert metadata["adapter_result"]["qa_review_run_id"] == "qa-run"
+
+    def test_exhausted_rework_uses_task_runtime_owner_failure_transition(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        task_runtime = _QaRowProjectionOnlyTaskBoard(
+            [
+                {
+                    "id": 8,
+                    "status": "completed",
+                    "metadata": {
+                        "adapter_result": {
+                            "qa_required_for_final_verdict": True,
+                            "qa_rework_retry_count": 2,
+                            "qa_rework_max_retries": 3,
+                        }
+                    },
+                }
+            ]
+        )
+        adapter._task_runtime = cast(Any, task_runtime)
+
+        summary = adapter._apply_taskboard_qa_verdict(
+            review_result={
+                "passed": False,
+                "score": 20,
+                "critical_issues": ["integration failed"],
+            },
+            context={"run_id": "qa-run"},
+        )
+
+        assert summary["evaluated"] == 1
+        assert summary["failed"] == 1
+        assert task_runtime.failed_after_rework_exhausted == [
+            {
+                "task_id": 8,
+                "reason": "qa_rework_retry_exhausted",
+                "metadata": task_runtime.rows[0]["metadata"],
+                "source": "qa_verdict",
+            }
+        ]
+        assert not any(item["status"] == "failed" for item in task_runtime.updated)
 
 
 class TestSafeInt:

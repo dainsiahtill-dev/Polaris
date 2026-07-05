@@ -22,6 +22,7 @@ TASK_RUNTIME_DESCRIPTOR = TASK_RUNTIME_OWNER / "generated" / "descriptor.pack.js
 ROLE_WORKER_POOL = POLARIS_ROOT / "cells" / "roles" / "runtime" / "internal" / "worker_pool.py"
 DELIVERY_PM_TASKBOARD = POLARIS_ROOT / "delivery" / "cli" / "pm" / "engine" / "taskboard.py"
 DELIVERY_CLI_DIRECTOR_SERVICE = POLARIS_ROOT / "delivery" / "cli" / "director" / "director_service.py"
+QA_ADAPTER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "qa_adapter.py"
 DIRECTOR_EXECUTION_SERVICE = POLARIS_ROOT / "cells" / "director" / "execution" / "service.py"
 RUNTIME_PROJECTION_SERVICE = POLARIS_ROOT / "cells" / "runtime" / "projection" / "internal" / "runtime_projection_service.py"
 FACTORY_HTTP_ROUTER = POLARIS_ROOT / "delivery" / "http" / "routers" / "factory.py"
@@ -311,6 +312,27 @@ def _runtime_execution_metadata_writes(path: Path) -> list[str]:
     return offenders
 
 
+def _literal_status_update_task_row_calls(path: Path, statuses: set[str]) -> list[str]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr != "update_task_row":
+            continue
+        for keyword in node.keywords:
+            if keyword.arg != "status":
+                continue
+            status = _string_literal(keyword.value)
+            if status in statuses:
+                offenders.append(
+                    f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} calls update_task_row(status={status!r})"
+                )
+    return offenders
+
+
 def test_raw_taskboard_is_private_to_task_runtime_cell() -> None:
     offenders: list[str] = []
     this_file = Path(__file__).resolve()
@@ -462,6 +484,22 @@ def test_delivery_cli_director_does_not_finalize_with_row_updates() -> None:
         "row updates. It should consume director.execution / TaskRuntimeService "
         "execution transitions and only inspect the resulting projection: "
         + ", ".join(offenders)
+    )
+
+
+def test_qa_rework_exhaustion_uses_task_runtime_owner_failure_transition() -> None:
+    source = QA_ADAPTER.read_text(encoding="utf-8")
+    offenders = _literal_status_update_task_row_calls(QA_ADAPTER, {"failed"})
+
+    assert "fail_task_row_after_rework_exhausted" in source, (
+        "QA exhausted-rework routing must use TaskRuntimeService's owner "
+        "transition so failure status, session projection, and execution "
+        "events remain one fact chain."
+    )
+    assert not offenders, (
+        "QA adapter must not finalize Director task rows with sessionless "
+        "update_task_row(status='failed'). Use "
+        "fail_task_row_after_rework_exhausted() instead:\n" + "\n".join(offenders)
     )
 
 
