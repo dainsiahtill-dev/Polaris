@@ -276,6 +276,23 @@ def test_task_runtime_raw_tool_factory_surface_is_removed() -> None:
     )
 
 
+def test_raw_taskboard_has_no_workflow_state_bridge_hook() -> None:
+    source = TASK_RUNTIME_INTERNAL_BOARD.read_text(encoding="utf-8")
+    blocked_tokens = (
+        "state_bridge",
+        "notify_task_created",
+        "notify_task_updated",
+        "notify_task_completed",
+    )
+    offenders = [token for token in blocked_tokens if token in source]
+
+    assert not offenders, (
+        "Raw TaskBoard must not dual-write to workflow runtime state; "
+        "execution-control state must flow through TaskRuntimeService row/session APIs:\n"
+        + "\n".join(offenders)
+    )
+
+
 def test_public_task_board_contract_does_not_export_raw_taskboard_types() -> None:
     source = TASK_RUNTIME_PUBLIC_BOARD_CONTRACT.read_text(encoding="utf-8")
     blocked_tokens = (

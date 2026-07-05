@@ -396,7 +396,7 @@ class TaskBoard:
     - Easy inspection and debugging
     """
 
-    def __init__(self, workspace: str, state_bridge: Any = None) -> None:
+    def __init__(self, workspace: str) -> None:
         self.workspace = Path(workspace).resolve()
         self._kernel_fs = KernelFileSystem(str(self.workspace), get_default_adapter())
         self.tasks_dir = Path(resolve_runtime_path(str(self.workspace), "runtime/tasks"))
@@ -409,7 +409,6 @@ class TaskBoard:
         self._ready_condition = threading.Condition(self._lock)
         self._ready_listeners: list[Callable[[], None]] = []
         self._cache: dict[int, Task] = {}
-        self._state_bridge = state_bridge  # Optional workflow runtime bridge
         self._load_all()
 
     def _logical_path(self, path: Path) -> str:
@@ -655,15 +654,6 @@ class TaskBoard:
             self._cache[task_id] = task
             self._save_task(task)
 
-            # Notify state bridge
-            if self._state_bridge is not None:
-                self._state_bridge.notify_task_created(
-                    task_id=task_id,
-                    subject=subject,
-                    status=task.status.value,
-                    blocked_by=deps,
-                )
-
             should_notify_ready = self._is_ready_task(task)
 
         if should_notify_ready:
@@ -778,21 +768,6 @@ class TaskBoard:
 
             self._save_task(task)
             should_notify_ready = should_notify_ready or self._is_ready_task(task)
-
-            # State bridge notification
-            if self._state_bridge is not None:
-                if next_status == TaskStatus.COMPLETED:
-                    self._state_bridge.notify_task_completed(
-                        task_id=task_id,
-                        result_summary=result_summary,
-                        workflow_id=workflow_id or None,
-                    )
-                else:
-                    self._state_bridge.notify_task_updated(
-                        task_id=task_id,
-                        status=next_status.value,
-                        workflow_id=workflow_id or None,
-                    )
 
             result_task = copy.deepcopy(task)
 
@@ -969,13 +944,6 @@ class TaskBoard:
                 self._save_task(dependent)
 
             self._save_task(task)
-
-            if self._state_bridge is not None:
-                self._state_bridge.notify_task_updated(
-                    task_id=task_id,
-                    status=task.status.value,
-                    workflow_id=None,
-                )
 
             should_notify_ready = self._is_ready_task(task)
             result_task = copy.deepcopy(task)
