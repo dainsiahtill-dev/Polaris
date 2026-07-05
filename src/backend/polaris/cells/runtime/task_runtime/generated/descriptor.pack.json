@@ -124,14 +124,6 @@
           "doc": ""
         },
         {
-          "name": "_metadata_matches_external_task_id",
-          "doc": ""
-        },
-        {
-          "name": "_get_task_by_external_task_id",
-          "doc": ""
-        },
-        {
           "name": "create",
           "doc": ""
         },
@@ -172,16 +164,8 @@
           "doc": "Return the next claimable task row, preferring resumable work."
         },
         {
-          "name": "_candidate_key",
-          "doc": ""
-        },
-        {
           "name": "claim_next_execution",
           "doc": "Atomically select and claim the next executable task."
-        },
-        {
-          "name": "_candidate_key",
-          "doc": ""
         },
         {
           "name": "claim_execution",
@@ -226,62 +210,6 @@
         {
           "name": "refresh_dependency_unblocks",
           "doc": "Normalize stale BLOCKED rows whose dependencies are now complete."
-        },
-        {
-          "name": "_active_dependency_ids",
-          "doc": ""
-        },
-        {
-          "name": "_metadata_dependency_task_ids",
-          "doc": ""
-        },
-        {
-          "name": "_row_sort_key",
-          "doc": ""
-        },
-        {
-          "name": "_is_row_claimable",
-          "doc": ""
-        },
-        {
-          "name": "_resolve_next_attempt",
-          "doc": ""
-        },
-        {
-          "name": "_task_has_unresolved_dependencies",
-          "doc": ""
-        },
-        {
-          "name": "_get_session_lock",
-          "doc": "Return the per-task session lock, creating it on demand."
-        },
-        {
-          "name": "_session_logical_path",
-          "doc": ""
-        },
-        {
-          "name": "_read_session",
-          "doc": ""
-        },
-        {
-          "name": "_write_session",
-          "doc": ""
-        },
-        {
-          "name": "_append_execution_event",
-          "doc": ""
-        },
-        {
-          "name": "_publish_factory_execution_event",
-          "doc": ""
-        },
-        {
-          "name": "_augment_task_row",
-          "doc": ""
-        },
-        {
-          "name": "_build_runtime_metadata",
-          "doc": ""
         }
       ]
     },

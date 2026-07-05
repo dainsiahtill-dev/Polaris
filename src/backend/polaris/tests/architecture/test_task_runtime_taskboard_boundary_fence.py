@@ -1430,6 +1430,32 @@ def test_task_runtime_descriptor_advertises_current_read_model_methods() -> None
     )
 
 
+def test_task_runtime_descriptor_does_not_advertise_private_service_methods() -> None:
+    descriptor = json.loads(TASK_RUNTIME_DESCRIPTOR.read_text(encoding="utf-8"))
+    capabilities = descriptor.get("capabilities")
+    assert isinstance(capabilities, list), "task_runtime descriptor must expose a capabilities list"
+
+    offenders: list[str] = []
+    for item in capabilities:
+        if not isinstance(item, dict):
+            continue
+        if item.get("name") != "TaskRuntimeService":
+            continue
+        for method in item.get("methods", []):
+            if not isinstance(method, dict):
+                continue
+            method_name = str(method.get("name") or "")
+            if method_name.startswith("_") and method_name != "__init__":
+                offenders.append(method_name)
+
+    assert not offenders, (
+        "task_runtime descriptor must not advertise private TaskRuntimeService "
+        "owner implementation methods. Descriptor context should expose stable "
+        "row/session/read-model APIs, not storage, session, selection, or event "
+        "internals:\n" + "\n".join(sorted(offenders))
+    )
+
+
 def test_director_status_uses_task_runtime_projection() -> None:
     source = DIRECTOR_EXECUTION_SERVICE.read_text(encoding="utf-8")
     tree = ast.parse(source)
