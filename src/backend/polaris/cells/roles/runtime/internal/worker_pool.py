@@ -145,6 +145,49 @@ class WorkerResult:
     metadata: dict = field(default_factory=dict)
 
 
+def _merge_task_runtime_finalization_result(
+    result: WorkerResult,
+    finalization: dict[str, Any] | None,
+) -> WorkerResult:
+    """Apply TaskRuntime finalization failure evidence to a worker result."""
+
+    if not isinstance(finalization, dict) or bool(finalization.get("success")):
+        return result
+
+    reason = str(finalization.get("reason") or "task_runtime_finalization_failed").strip()
+    if not reason:
+        reason = "task_runtime_finalization_failed"
+    failure_class = str(finalization.get("failure_class") or reason).strip()
+    finalization_projection: dict[str, Any] = {
+        "success": False,
+        "reason": reason,
+    }
+    if failure_class:
+        finalization_projection["failure_class"] = failure_class
+    for key in ("requested_reason", "state_mutation_applied", "execution_event"):
+        if key in finalization:
+            finalization_projection[key] = finalization[key]
+
+    metadata = dict(result.metadata)
+    metadata["task_runtime_finalization"] = finalization_projection
+
+    finalization_error = f"TaskRuntime finalization failed: {reason}"
+    if failure_class and failure_class != reason:
+        finalization_error = f"{finalization_error} ({failure_class})"
+    existing_error = str(result.error or "").strip()
+    error = f"{existing_error}; {finalization_error}" if existing_error else finalization_error
+
+    return WorkerResult(
+        task_id=result.task_id,
+        worker_id=result.worker_id,
+        success=False,
+        output=result.output,
+        error=error,
+        duration=result.duration,
+        metadata=metadata,
+    )
+
+
 def _row_task_id(row: dict[str, Any]) -> int | None:
     try:
         return int(row.get("id") or 0)
@@ -366,19 +409,20 @@ class Worker:
 
         if self.task_runtime and task.session_id:
             if result.success:
-                self.task_runtime.complete_execution(
+                finalization = self.task_runtime.complete_execution(
                     task.task_id,
                     session_id=task.session_id,
                     result_summary=result.output,
                     metadata={"worker_id": self.config.worker_id},
                 )
             else:
-                self.task_runtime.fail_execution(
+                finalization = self.task_runtime.fail_execution(
                     task.task_id,
                     session_id=task.session_id,
                     error=result.error,
                     metadata={"worker_id": self.config.worker_id},
                 )
+            result = _merge_task_runtime_finalization_result(result, finalization)
 
         if self.message_callback:
             self.message_callback(result)
@@ -649,19 +693,20 @@ class AsyncWorker:
 
         if self.task_runtime and task.session_id:
             if result.success:
-                self.task_runtime.complete_execution(
+                finalization = self.task_runtime.complete_execution(
                     task.task_id,
                     session_id=task.session_id,
                     result_summary=result.output,
                     metadata={"worker_id": self.config.worker_id},
                 )
             else:
-                self.task_runtime.fail_execution(
+                finalization = self.task_runtime.fail_execution(
                     task.task_id,
                     session_id=task.session_id,
                     error=result.error,
                     metadata={"worker_id": self.config.worker_id},
                 )
+            result = _merge_task_runtime_finalization_result(result, finalization)
 
         if self.message_callback:
             self.message_callback(result)

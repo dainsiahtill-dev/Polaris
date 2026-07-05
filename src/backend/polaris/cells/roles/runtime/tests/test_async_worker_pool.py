@@ -40,9 +40,16 @@ def work_dir(tmp_path: Path) -> Path:
 
 
 class _FakeTaskRuntime:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        complete_result: dict[str, Any] | None = None,
+        fail_result: dict[str, Any] | None = None,
+    ) -> None:
         self.completed: list[dict[str, Any]] = []
         self.failed: list[dict[str, Any]] = []
+        self.complete_result = complete_result or {"success": True}
+        self.fail_result = fail_result or {"success": True}
 
     def add_ready_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
         self.listener = listener
@@ -69,11 +76,11 @@ class _FakeTaskRuntime:
 
     def complete_execution(self, task_id: Any, **kwargs: Any) -> dict[str, Any]:
         self.completed.append({"task_id": task_id, **kwargs})
-        return {"success": True}
+        return dict(self.complete_result)
 
     def fail_execution(self, task_id: Any, **kwargs: Any) -> dict[str, Any]:
         self.failed.append({"task_id": task_id, **kwargs})
-        return {"success": True}
+        return dict(self.fail_result)
 
 
 @pytest.mark.asyncio
@@ -141,6 +148,62 @@ async def test_async_worker_consumes_task_runtime_rows(work_dir: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_async_worker_projects_task_runtime_finalization_failure(work_dir: Path) -> None:
+    runtime = _FakeTaskRuntime(
+        complete_result={
+            "success": False,
+            "reason": "execution_event_append_failed",
+            "requested_reason": "completed",
+            "failure_class": "ledger_append_failed",
+            "state_mutation_applied": True,
+            "execution_event": {
+                "ok": False,
+                "event_type": "completed",
+                "error": "ledger unavailable",
+            },
+        }
+    )
+    callback_results: list[WorkerResult] = []
+    config = AsyncWorkerConfig(
+        worker_id="test-worker-runtime",
+        work_dir=work_dir,
+        max_idle_time=10,
+        poll_interval=1.0,
+    )
+    worker = AsyncWorker(config, task_runtime=runtime, message_callback=callback_results.append)
+    task = WorkerTask(
+        task_id=7,
+        command=f"{sys.executable} -c \"print('ok')\"",
+        work_dir=work_dir,
+        env={},
+        timeout=30,
+        metadata={"test": "runtime_finalization_failure"},
+        session_id="session-7",
+    )
+
+    await worker._execute_worker_task(task)
+
+    assert len(runtime.completed) == 1
+    assert runtime.failed == []
+    assert len(callback_results) == 1
+    result = callback_results[0]
+    assert result.success is False
+    assert "TaskRuntime finalization failed: execution_event_append_failed" in result.error
+    assert result.metadata["task_runtime_finalization"] == {
+        "success": False,
+        "reason": "execution_event_append_failed",
+        "failure_class": "ledger_append_failed",
+        "requested_reason": "completed",
+        "state_mutation_applied": True,
+        "execution_event": {
+            "ok": False,
+            "event_type": "completed",
+            "error": "ledger unavailable",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_async_worker_failure_uses_task_runtime_fail_execution(work_dir: Path) -> None:
     runtime = _FakeTaskRuntime()
     config = AsyncWorkerConfig(
@@ -197,6 +260,72 @@ def test_sync_worker_failure_uses_task_runtime_fail_execution(work_dir: Path) ->
     assert runtime.failed[0]["session_id"] == "session-7"
     assert runtime.failed[0]["error"]
     assert runtime.failed[0]["metadata"] == {"worker_id": "test-sync-worker-runtime"}
+
+
+def test_sync_worker_projects_task_runtime_finalization_failure(work_dir: Path) -> None:
+    runtime = _FakeTaskRuntime(
+        complete_result={
+            "success": False,
+            "reason": "execution_event_append_failed",
+            "requested_reason": "completed",
+            "failure_class": "ledger_append_failed",
+            "state_mutation_applied": True,
+            "execution_event": {
+                "ok": False,
+                "event_type": "completed",
+                "error": "ledger unavailable",
+            },
+        }
+    )
+    callback_results: list[WorkerResult] = []
+    config = WorkerConfig(
+        worker_id="test-sync-worker-runtime",
+        work_dir=work_dir,
+        max_idle_time=10,
+        poll_interval=1.0,
+    )
+    worker = Worker(config, task_runtime=runtime, message_callback=callback_results.append)
+
+    def _successful_result(task: WorkerTask) -> WorkerResult:
+        return WorkerResult(
+            task_id=task.task_id,
+            worker_id=config.worker_id,
+            success=True,
+            output="ok",
+            metadata=dict(task.metadata),
+        )
+
+    worker._execute_task = _successful_result  # type: ignore[method-assign]
+    task = WorkerTask(
+        task_id=7,
+        command=f"{sys.executable} -c \"print('ok')\"",
+        work_dir=work_dir,
+        env={},
+        timeout=30,
+        metadata={"test": "runtime_finalization_failure"},
+        session_id="session-7",
+    )
+
+    worker._execute_worker_task(task)
+
+    assert len(runtime.completed) == 1
+    assert runtime.failed == []
+    assert len(callback_results) == 1
+    result = callback_results[0]
+    assert result.success is False
+    assert "TaskRuntime finalization failed: execution_event_append_failed" in result.error
+    assert result.metadata["task_runtime_finalization"] == {
+        "success": False,
+        "reason": "execution_event_append_failed",
+        "failure_class": "ledger_append_failed",
+        "requested_reason": "completed",
+        "state_mutation_applied": True,
+        "execution_event": {
+            "ok": False,
+            "event_type": "completed",
+            "error": "ledger unavailable",
+        },
+    }
 
 
 @pytest.mark.asyncio
