@@ -179,6 +179,32 @@ def _legacy_task_runtime_symbol_aliases(path: Path) -> list[str]:
     return offenders
 
 
+def _taskboard_class() -> ast.ClassDef:
+    source = TASK_RUNTIME_INTERNAL_BOARD.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "TaskBoard":
+            return node
+    raise AssertionError("TaskBoard class not found")
+
+
+def _taskboard_method(name: str) -> ast.FunctionDef:
+    taskboard = _taskboard_class()
+    for node in taskboard.body:
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    raise AssertionError(f"TaskBoard.{name}() not found")
+
+
+def _call_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        prefix = _call_name(node.value)
+        return f"{prefix}.{node.attr}" if prefix else node.attr
+    return ""
+
+
 def test_raw_taskboard_is_private_to_task_runtime_cell() -> None:
     offenders: list[str] = []
     this_file = Path(__file__).resolve()
@@ -333,6 +359,48 @@ def test_raw_taskboard_has_no_workflow_state_bridge_hook() -> None:
         "Raw TaskBoard must not dual-write to workflow runtime state; "
         "execution-control state must flow through TaskRuntimeService row/session APIs:\n"
         + "\n".join(offenders)
+    )
+
+
+def test_raw_taskboard_dependency_state_changes_are_row_local() -> None:
+    """Guard the WS2 invariant that TaskBoard does not mutate dependency peers."""
+
+    taskboard = _taskboard_class()
+    method_names = {"create", "update_status", "reopen"}
+    offenders: list[str] = []
+
+    if any(isinstance(node, ast.FunctionDef) and node.name == "_unblock_dependent_tasks" for node in taskboard.body):
+        offenders.append("TaskBoard._unblock_dependent_tasks() must not be restored")
+
+    for method_name in method_names:
+        method = _taskboard_method(method_name)
+        for node in ast.walk(method):
+            if isinstance(node, ast.Call):
+                called = _call_name(node.func)
+                if called == "self._save_task":
+                    first_arg = node.args[0] if node.args else None
+                    if not isinstance(first_arg, ast.Name) or first_arg.id != "task":
+                        offenders.append(
+                            f"TaskBoard.{method_name}():{node.lineno} saves a non-local task row"
+                        )
+                if called.endswith(".append") or called.endswith(".remove"):
+                    receiver = node.func.value if isinstance(node.func, ast.Attribute) else None
+                    if isinstance(receiver, ast.Attribute) and receiver.attr in {"blocks", "blocked_by"}:
+                        offenders.append(
+                            f"TaskBoard.{method_name}():{node.lineno} mutates dependency links directly"
+                        )
+            if isinstance(node, ast.For):
+                iter_name = _call_name(node.iter)
+                if iter_name in {"task.blocks", "task.blocked_by"}:
+                    offenders.append(
+                        f"TaskBoard.{method_name}():{node.lineno} iterates dependency links for peer mutation"
+                    )
+
+    assert not offenders, (
+        "Raw TaskBoard create/update_status/reopen must stay row-local. "
+        "Cross-row dependency link/unblock/reblock mutations belong in "
+        "TaskRuntimeService so every side effect has task_runtime.execution "
+        "facts:\n" + "\n".join(offenders)
     )
 
 
