@@ -151,6 +151,12 @@ TASK_RUNTIME_SERVICE_RAW_BOARD_READ_METHODS = {
     "list_my_tasks",
     "list_ready",
 }
+TASK_RUNTIME_SERVICE_RETIRED_PUBLIC_METHODS = {
+    "get_ready_tasks",
+    "get_stats",
+    "list_all",
+    "list_ready",
+}
 TASK_RUNTIME_EXECUTION_STREAM = "task_runtime.execution"
 TASK_RUNTIME_EXECUTION_EVENT_FILE = "task_runtime.execution.jsonl"
 TASK_RUNTIME_EXECUTION_DIRECT_WRITE_METHODS = {
@@ -1367,6 +1373,32 @@ def test_task_runtime_descriptor_does_not_advertise_raw_taskboard_surface() -> N
     assert not offenders, (
         "task_runtime descriptor must not advertise raw internal TaskBoard symbols; "
         "public consumers must use TaskRuntimeService row/session APIs:\n" + "\n".join(offenders)
+    )
+
+
+def test_task_runtime_descriptor_does_not_advertise_retired_service_methods() -> None:
+    descriptor = json.loads(TASK_RUNTIME_DESCRIPTOR.read_text(encoding="utf-8"))
+    capabilities = descriptor.get("capabilities")
+    assert isinstance(capabilities, list), "task_runtime descriptor must expose a capabilities list"
+
+    offenders: list[str] = []
+    for item in capabilities:
+        if not isinstance(item, dict):
+            continue
+        if item.get("name") != "TaskRuntimeService":
+            continue
+        for method in item.get("methods", []):
+            if not isinstance(method, dict):
+                continue
+            method_name = str(method.get("name") or "")
+            if method_name in TASK_RUNTIME_SERVICE_RETIRED_PUBLIC_METHODS:
+                offenders.append(method_name)
+
+    assert not offenders, (
+        "task_runtime descriptor must not advertise retired TaskRuntimeService "
+        "compatibility methods. Public consumers should use row/session APIs "
+        "such as list_task_rows(), list_ready_task_rows(), get_task_row_stats(), "
+        "and list_observable_task_rows():\n" + "\n".join(sorted(offenders))
     )
 
 

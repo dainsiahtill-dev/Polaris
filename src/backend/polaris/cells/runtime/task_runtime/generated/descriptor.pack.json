@@ -160,10 +160,6 @@
           "doc": ""
         },
         {
-          "name": "list_all",
-          "doc": ""
-        },
-        {
           "name": "list_task_rows",
           "doc": ""
         },
@@ -208,23 +204,11 @@
           "doc": "Suspend every active task lease owned by an orchestration run."
         },
         {
-          "name": "list_ready",
-          "doc": ""
-        },
-        {
           "name": "wait_ready",
           "doc": ""
         },
         {
           "name": "add_ready_listener",
-          "doc": ""
-        },
-        {
-          "name": "get_ready_tasks",
-          "doc": ""
-        },
-        {
-          "name": "get_stats",
           "doc": ""
         },
         {
