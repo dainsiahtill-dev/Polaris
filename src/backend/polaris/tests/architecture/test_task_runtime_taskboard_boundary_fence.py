@@ -9,6 +9,7 @@ writing task entities directly.
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
@@ -16,6 +17,7 @@ POLARIS_ROOT = BACKEND_ROOT / "polaris"
 TASK_RUNTIME_OWNER = POLARIS_ROOT / "cells" / "runtime" / "task_runtime"
 TASK_RUNTIME_INTERNAL_BOARD = TASK_RUNTIME_OWNER / "internal" / "task_board.py"
 TASK_RUNTIME_PUBLIC_BOARD_CONTRACT = TASK_RUNTIME_OWNER / "public" / "task_board_contract.py"
+TASK_RUNTIME_DESCRIPTOR = TASK_RUNTIME_OWNER / "generated" / "descriptor.pack.json"
 ROLE_WORKER_POOL = POLARIS_ROOT / "cells" / "roles" / "runtime" / "internal" / "worker_pool.py"
 DELIVERY_PM_TASKBOARD = POLARIS_ROOT / "delivery" / "cli" / "pm" / "engine" / "taskboard.py"
 DIRECTOR_EXECUTION_SERVICE = POLARIS_ROOT / "cells" / "director" / "execution" / "service.py"
@@ -310,6 +312,24 @@ def test_public_task_board_contract_does_not_export_raw_taskboard_types() -> Non
     assert not offenders, (
         "public.task_board_contract is retired as a raw TaskBoard facade; "
         "public consumers must use TaskRuntimeService:\n" + "\n".join(offenders)
+    )
+
+
+def test_task_runtime_descriptor_does_not_advertise_raw_taskboard_surface() -> None:
+    descriptor = json.loads(TASK_RUNTIME_DESCRIPTOR.read_text(encoding="utf-8"))
+    capabilities = descriptor.get("capabilities")
+    assert isinstance(capabilities, list), "task_runtime descriptor must expose a capabilities list"
+
+    offenders = [
+        str(item.get("name") or "")
+        for item in capabilities
+        if isinstance(item, dict)
+        and item.get("defined_in") == "polaris/cells/runtime/task_runtime/internal/task_board.py"
+    ]
+
+    assert not offenders, (
+        "task_runtime descriptor must not advertise raw internal TaskBoard symbols; "
+        "public consumers must use TaskRuntimeService row/session APIs:\n" + "\n".join(offenders)
     )
 
 
