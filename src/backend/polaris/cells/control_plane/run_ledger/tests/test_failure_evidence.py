@@ -178,6 +178,70 @@ def test_looks_like_failure_evidence_payload_uses_structure_not_prose() -> None:
     assert not looks_like_failure_evidence_payload({"message": "failure_class: TOOL_DISPATCH_DROPPED"})
 
 
+def test_merge_failure_evidence_payload_canonicalizes_known_separator_classes() -> None:
+    payload = merge_failure_evidence_payload(
+        {},
+        [
+            {
+                "failure_class": "failure_class: tool_dispatch_dropped; extra",
+            },
+            {
+                "failure_class": "tool-dispatch-dropped",
+            },
+            {
+                "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED,
+            },
+        ],
+    )
+
+    assert payload["failure_classes"] == (FailureClassV1.TOOL_DISPATCH_DROPPED.value,)
+    for item in payload["items"]:
+        assert item["failure_class"] in (
+            "failure_class: tool_dispatch_dropped; extra",
+            "tool-dispatch-dropped",
+            FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        )
+
+
+def test_merge_failure_evidence_payload_preserves_unknown_classes() -> None:
+    payload = merge_failure_evidence_payload(
+        {},
+        [
+            {"failure_class": "new_platform_failure"},
+            {"failure_class": "experiment_class; with extras"},
+            {"failure_class": FailureClassV1.MISSING_EFFECT_RECEIPT.value},
+        ],
+    )
+
+    assert payload["failure_classes"] == (
+        "new_platform_failure",
+        "experiment_class",
+        FailureClassV1.MISSING_EFFECT_RECEIPT.value,
+    )
+
+
+def test_merge_failure_evidence_payload_dedupes_canonical_known_class_with_variant_spelling() -> None:
+    payload = merge_failure_evidence_payload(
+        {
+            "items": [{"failure_class": "tool_dispatch_dropped"}],
+            "failure_classes": ("tool_dispatch_dropped",),
+        },
+        [
+            {"failure_class": "tool-dispatch-dropped"},
+            {"failure_class": "TOOL_DISPATCH_DROPPED"},
+            {"failure_class": "failure_class: tool-dispatch-dropped; legacy note"},
+        ],
+    )
+
+    assert payload["failure_classes"] == (FailureClassV1.TOOL_DISPATCH_DROPPED.value,)
+    assert payload["items"] == [
+        {"failure_class": "tool_dispatch_dropped"},
+        {"failure_class": "tool-dispatch-dropped"},
+        {"failure_class": "TOOL_DISPATCH_DROPPED"},
+        {"failure_class": "failure_class: tool-dispatch-dropped; legacy note"},
+    ]
+
+
 def test_merge_failure_evidence_payload_overlays_mapping_projection() -> None:
     payload = merge_failure_evidence_payload(
         {"items": [{"failure_class": "TOOL_RESULT_FAILED"}]},
@@ -251,7 +315,7 @@ def test_summarize_failed_gate_evidence_context_slot_projects_structured_payload
         "source_schema_version": "failure_evidence_payload.v1",
         "source": "qa_verdict",
         "failure_class": "tool_dispatch_dropped",
-        "failure_classes": ["tool_dispatch_dropped"],
+        "failure_classes": [FailureClassV1.TOOL_DISPATCH_DROPPED.value],
         "failure_evidence_count": 1,
         "responsible_layer": "execution_control_plane",
         "repairable_by_director": False,

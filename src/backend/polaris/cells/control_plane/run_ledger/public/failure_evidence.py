@@ -209,21 +209,46 @@ def _merge_failure_evidence_rows_into_payload(
     if not rows:
         return payload
     payload["items"] = merge_failure_evidence_rows(payload.get("items"), *rows)
-    payload["failure_classes"] = _dedupe_text_tokens(
-        [
-            *list(payload.get("failure_classes") or ()),
-            *(str(row.get("failure_class") or "") for row in rows),
-        ]
-    )
+
+    existing_classes_raw = payload.get("failure_classes") or ()
+    existing_classes: list[str] = []
+    existing_known_keys: set[str] = set()
+    for token in existing_classes_raw:
+        normalized = _failure_class_evidence_value(token)
+        if not normalized:
+            continue
+        key = _failure_class_key(normalized)
+        known = _FAILURE_CLASS_BY_KEY.get(key)
+        if known is not None:
+            if key in existing_known_keys:
+                continue
+            existing_known_keys.add(key)
+        existing_classes.append(normalized)
+
+    new_tokens: list[str] = []
+    seen_keys: set[str] = set(existing_known_keys)
+    for row in rows:
+        token = _failure_class_evidence_value(row.get("failure_class"))
+        if not token:
+            continue
+        key = _failure_class_key(token)
+        known = _FAILURE_CLASS_BY_KEY.get(key)
+        if known is not None:
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+        elif token in existing_classes or token in new_tokens:
+            continue
+        new_tokens.append(token)
+
+    payload["failure_classes"] = (*existing_classes, *new_tokens)
     evidence_ref_tokens: list[str] = list(_dedupe_text_tokens(payload.get("evidence_refs") or ()))
     for row in rows:
         raw_refs = row.get("evidence_refs")
         if not isinstance(raw_refs, (list, tuple)):
             continue
         evidence_ref_tokens.extend(str(ref or "") for ref in raw_refs)
-    payload["evidence_refs"] = _dedupe_text_tokens(
-        evidence_ref_tokens
-    )
+    payload["evidence_refs"] = _dedupe_text_tokens(evidence_ref_tokens)
     return payload
 
 
@@ -260,9 +285,7 @@ def summarize_failed_gate_evidence_context_slot(value: Any) -> dict[str, Any]:
             found.get("repairable_by_director", first_item.get("repairable_by_director"))
         ),
         "requires_ce_replan": _bool_value(found.get("requires_ce_replan", first_item.get("requires_ce_replan"))),
-        "requires_pm_revision": _bool_value(
-            found.get("requires_pm_revision", first_item.get("requires_pm_revision"))
-        ),
+        "requires_pm_revision": _bool_value(found.get("requires_pm_revision", first_item.get("requires_pm_revision"))),
         "evidence_refs": list(_dedupe_text_tokens(found.get("evidence_refs") or ())),
         "command": str(found.get("command") or found.get("verifier_command") or ""),
         "exit_code": _int_value(found.get("exit_code")),
