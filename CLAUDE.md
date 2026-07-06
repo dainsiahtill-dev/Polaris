@@ -376,36 +376,90 @@ PM TaskBoard 和 CE Blueprint 使用不同 task_id 格式时，所有查询层�
 
 ## 外部并行工程 Agent 调用规范
 
-Codex、Claude Code 等主 Agent 可以通过 OpenCode CLI 将独立工程任务派发给额外 Agent。
+Codex、Claude Code 等主 Agent 可以把独立工程任务派发给外部 Sub-Agent。默认协议是 **Claude CLI JSON Sub-Agent**；OpenCode 只保留为兼容审计路径。所有外部 Agent 只能作为主 Agent 的工程协作/审计工具使用，不属于 Polaris 平台自身。禁止在 Polaris 产品代码、Factory Bench、Run Ledger、ContextOS、ReceiptStore、UI、runtime event 或质量门禁中引入对 Claude/OpenCode 外部 Agent 的运行时依赖、调度逻辑、状态投影或成功条件。
 
 ### 调用方式
 
-单个任务：
+单个任务默认使用 Claude CLI JSON 模式：
 
 ```bash
-opencode run "<完整任务提示词>"
+claude -p "<完整任务提示词>" \
+  --dangerously-skip-permissions \
+  --output-format json \
+  --json-schema '<JSON_SCHEMA>'
 ```
 
-多个互不重叠的任务可以并行执行：
+多个互不重叠的任务可以并行执行，最多 3 个 Sub-Agent。共享主仓并发写入只允许在文件/目录/职责集合完全互斥时使用；否则必须使用独立 worktree/sandbox，或降级为串行。
 
 ```bash
-opencode run "<Agent 01 完整提示词>" &
-opencode run "<Agent 02 完整提示词>" &
-opencode run "<Agent 03 完整提示词>" &
+claude -p "<Agent 01 完整提示词>" --dangerously-skip-permissions --output-format json --json-schema '<JSON_SCHEMA>' > /tmp/polaris-subagent-<batch>-01.json &
+claude -p "<Agent 02 完整提示词>" --dangerously-skip-permissions --output-format json --json-schema '<JSON_SCHEMA>' > /tmp/polaris-subagent-<batch>-02.json &
+claude -p "<Agent 03 完整提示词>" --dangerously-skip-permissions --output-format json --json-schema '<JSON_SCHEMA>' > /tmp/polaris-subagent-<batch>-03.json &
 wait
 ```
 
-并行 Agent 可以在同一仓库中工作，但必须负责互不重叠的代码范围。不得让多个 Agent 同时修改同一文件或同一功能链路。
+禁止把 `--bg` 作为默认派工协议：它与 `-p` 的 JSON 闭环语义不同，且容易留下非结构化日志。`claude agents --json` 只用于查看 Claude 会话状态，不是 Polaris 外部子任务报告。
+
+OpenCode 兼容路径只允许在 Claude CLI 不可用或用户显式要求时使用，并且必须落盘同等 JSON 报告。OpenCode 结论不得成为 Polaris 事实源。
+
+### 输出 JSON Schema 基线
+
+每个 Sub-Agent 必须按 schema 输出机器可读 JSON，并同时由 shell 重定向落盘到 `/tmp/polaris-subagent-<batch>-<id>.json`。推荐最小 schema：
+
+```json
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "status",
+    "summary",
+    "scope",
+    "files_read",
+    "files_modified",
+    "commands_run",
+    "findings",
+    "risks",
+    "next_action"
+  ],
+  "properties": {
+    "task_id": {"type": "string"},
+    "status": {"type": "string", "enum": ["success", "blocked", "failed"]},
+    "summary": {"type": "string"},
+    "scope": {"type": "array", "items": {"type": "string"}},
+    "files_read": {"type": "array", "items": {"type": "string"}},
+    "files_modified": {"type": "array", "items": {"type": "string"}},
+    "commands_run": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["command", "exit_code", "purpose"],
+        "properties": {
+          "command": {"type": "string"},
+          "exit_code": {"type": "integer"},
+          "purpose": {"type": "string"}
+        }
+      }
+    },
+    "findings": {"type": "array", "items": {"type": "string"}},
+    "risks": {"type": "array", "items": {"type": "string"}},
+    "next_action": {"type": "string"}
+  }
+}
+```
 
 ### 主 Agent 职责
 
-调用 OpenCode 前，主 Agent必须先：
+调用外部 Sub-Agent 前，主 Agent 必须先：
 
 1. 阅读仓库中的 `AGENTS.md` 及相关架构文档。
 2. 检查 `git status`、`git diff`、失败测试和用户反馈。
 3. 使用仓库提供的代码图谱、符号索引或 MCP 工具审计相关代码。
 4. 将问题拆分成多个互不重叠、可独立完成的任务包。
 5. 为每个任务包明确目标、代码范围、禁止事项和验收命令。
+6. 为每个任务包写明 JSON schema、报告落盘路径和允许修改边界。
+7. 若任务源自角色工具调用失败，主 Agent 可派发只读审计最终 LLM 上下文、工具调用归一化路径、ToolSpec/arg_aliases、runtime event、LLM 调用日志与 ContextOS 证据；若事件中 `messages`/`content` 被 redacted，必须同时提供 `context_snapshot_ref` 对应的完整上下文快照文件；审计任务默认只读，除非已经拆出互不重叠的明确修复范围。
+8. Factory Bench 与 Polaris 运行时不得要求、生成或消费 `claude_subagent_audit`、`opencode_audit` 或类似外部审计字段作为机器可读平台字段；角色工具失败归因必须依赖 Polaris 自身的 provider request、runtime event、ContextOS、ReceiptStore、Run Ledger、命令门禁和日志证据。
 
 适合并行的任务示例：
 
@@ -426,7 +480,7 @@ wait
 
 ### Agent 提示词要求
 
-每个 `opencode run` 必须获得完整、自包含的提示词，不能依赖当前对话中的隐含上下文。
+每个 `claude -p` 必须获得完整、自包含的提示词，不能依赖当前对话中的隐含上下文。
 
 提示词至少应包含：
 
@@ -439,11 +493,11 @@ wait
 - 强调充分利用codegraph MCP
 - 不可违反的架构约束。
 - 必须运行的验证命令。
-- 最终 JSON 报告格式。
+- JSON schema 和报告落盘路径。
 
-### OpenCode Agent 通用规则
+### Sub-Agent 通用规则
 
-每个 OpenCode Agent 必须遵守：
+每个外部 Sub-Agent 必须遵守：
 
 1. 修改前阅读根目录及相关子目录中的 `AGENTS.md`。
 2. 修改前检查 `git status` 和现有 `git diff`。
@@ -476,7 +530,7 @@ wait
 5. 修复必须针对根因，禁止表层绕过、硬编码成功、静默 fallback 或只改测试。
 6. 不得违反任务列出的架构约束。
 7. 修改后必须运行全部验收命令。
-8. 最终必须输出 JSON 审计报告。
+8. 最终必须按调用方提供的 JSON schema 输出审计报告，并由调用方落盘到 /tmp/polaris-subagent-<batch>-<id>.json。
 9. 充分使用codegraph。
 
 任务目标：
@@ -506,33 +560,34 @@ wait
 - <type check 或 build 命令>
 - <相关测试命令>
 
-最终输出 JSON：
+最终输出 JSON（必须匹配调用方 --json-schema）：
 {
-  "agent_id": "<编号>/<名称>",
-  "status": "completed | blocked | failed",
-  "issue": "...",
-  "root_cause": "...",
-  "files_changed": [],
-  "tests_changed": [],
+  "task_id": "<batch>/<编号>",
+  "status": "success | blocked | failed",
+  "summary": "...",
+  "scope": [],
+  "files_read": [],
+  "files_modified": [],
   "commands_run": [
     {
       "command": "...",
       "exit_code": 0,
-      "result": "..."
+      "purpose": "..."
     }
   ],
-  "remaining_risks": [],
-  "blocked_reason": null
+  "findings": [],
+  "risks": [],
+  "next_action": "..."
 }
 ```
 
 ### 结果回收
 
-所有 OpenCode Agent 完成后，主 Agent 不得直接相信其报告，必须重新审计：
+所有 Sub-Agent 完成后，主 Agent 不得直接相信其报告，必须读取 `/tmp/polaris-subagent-*.json` 并重新审计：
 
 ```bash
-git status
-git diff
+rtk git status
+rtk git diff
 ```
 
 并检查：
@@ -551,7 +606,7 @@ git diff
 
 ### 核心原则
 
-OpenCode 并行派工必须满足：
+外部 Sub-Agent 并行派工必须满足：
 
 - 任务必须窄。
 - 修改范围必须互不重叠。
