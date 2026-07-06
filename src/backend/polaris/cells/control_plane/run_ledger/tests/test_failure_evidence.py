@@ -56,6 +56,63 @@ def test_failure_evidence_to_dict_normalizes_failure_class_and_refs() -> None:
     }
 
 
+def test_failure_evidence_to_dict_returns_canonical_shape() -> None:
+    evidence = FailureEvidenceV1(
+        failure_class=FailureClassV1.MISSING_EFFECT_RECEIPT,
+        responsible_layer="tool_executor",
+        reason="effect receipt missing",
+        evidence_refs=(" effect:1 ", ""),
+        metadata={"tool": "write_file"},
+    ).to_dict()
+
+    assert set(evidence) == {
+        "schema_version",
+        "failure_class",
+        "responsible_layer",
+        "reason",
+        "evidence_refs",
+        "metadata",
+    }
+    assert evidence["failure_class"] == FailureClassV1.MISSING_EFFECT_RECEIPT.value
+    assert evidence["evidence_refs"] == ["effect:1"]
+
+
+def test_failure_evidence_to_dict_uses_first_known_separator_token() -> None:
+    evidence = FailureEvidenceV1(
+        failure_class="failure_class: TOOL_DISPATCH_DROPPED; provider_also_missed",
+        responsible_layer="execution_control_plane",
+        reason="legacy metadata included prose around the class",
+    ).to_dict()
+
+    assert evidence["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert is_failure_class(evidence["failure_class"], FailureClassV1.TOOL_DISPATCH_DROPPED)
+
+
+def test_failure_evidence_to_dict_preserves_first_unknown_separator_token() -> None:
+    evidence = FailureEvidenceV1(
+        failure_class="new_platform_failure; extra context",
+        responsible_layer="execution_control_plane",
+        reason="unknown classes remain visible",
+    ).to_dict()
+
+    assert evidence["failure_class"] == "new_platform_failure"
+
+
+def test_failure_evidence_to_dict_round_trips_through_payload_projection() -> None:
+    evidence = FailureEvidenceV1(
+        failure_class="TOOL_RESULT_FAILED; ignored secondary note",
+        responsible_layer="tool_executor",
+        reason="tool result failed",
+        evidence_refs=("tool:1",),
+    ).to_dict()
+
+    payload = merge_failure_evidence_payload({}, [evidence])
+
+    assert payload["items"] == [evidence]
+    assert payload["failure_classes"] == (FailureClassV1.TOOL_RESULT_FAILED.value,)
+    assert payload["evidence_refs"] == ("tool:1",)
+
+
 def test_merge_failure_evidence_rows_keeps_structured_rows_and_dedupes() -> None:
     existing = {
         "schema_version": "failure_evidence.v1",

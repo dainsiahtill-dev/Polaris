@@ -37,6 +37,7 @@ def _failure_class_key(value: Any) -> str:
 
 
 _FAILURE_CLASS_BY_KEY: dict[str, FailureClassV1] = {_failure_class_key(item.value): item for item in FailureClassV1}
+_FAILURE_CLASS_TOKEN_SEPARATORS = (":", ";", "\n")
 
 
 def normalize_failure_class(value: Any, *, default: str | FailureClassV1 = "") -> str:
@@ -52,6 +53,41 @@ def normalize_failure_class(value: Any, *, default: str | FailureClassV1 = "") -
         return str(default.value if isinstance(default, FailureClassV1) else default)
     known = _FAILURE_CLASS_BY_KEY.get(_failure_class_key(raw))
     return known.value if known is not None else raw
+
+
+def _failure_class_evidence_value(value: Any) -> str:
+    """Project a failure-evidence class from structured rows, not prose.
+
+    Some upstream metadata fields are composed by humans or older projections as
+    ``CLASS; extra context`` or ``failure_class: CLASS``. The Run Ledger row must
+    carry one stable class, so prefer the first known class token and otherwise
+    preserve the first non-empty token.
+    """
+
+    if isinstance(value, FailureClassV1):
+        return value.value
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    candidates = [raw]
+    for separator in _FAILURE_CLASS_TOKEN_SEPARATORS:
+        next_candidates: list[str] = []
+        for candidate in candidates:
+            next_candidates.extend(candidate.split(separator))
+        candidates = next_candidates
+
+    fallback = ""
+    for candidate in candidates:
+        token = candidate.strip()
+        if not token:
+            continue
+        known = _FAILURE_CLASS_BY_KEY.get(_failure_class_key(token))
+        if known is not None:
+            return known.value
+        if not fallback:
+            fallback = token
+    return normalize_failure_class(fallback or raw)
 
 
 def is_failure_class(value: Any, expected: FailureClassV1) -> bool:
@@ -362,7 +398,7 @@ class FailureEvidenceV1:
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
-            "failure_class": normalize_failure_class(self.failure_class),
+            "failure_class": _failure_class_evidence_value(self.failure_class),
             "responsible_layer": str(self.responsible_layer or "").strip(),
             "reason": str(self.reason or "").strip(),
             "evidence_refs": [str(item).strip() for item in self.evidence_refs if str(item).strip()],

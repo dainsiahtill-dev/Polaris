@@ -24,6 +24,7 @@ QA_VERDICT_ENGINE = POLARIS_ROOT / "cells" / "qa" / "audit_verdict" / "internal"
 OWNED_FAILURE_CLASS_DEFINITIONS = {
     "FailureClassV1": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py",
     "TaskBoundaryFailureClassV1": "polaris/cells/control_plane/run_ledger/public/task_boundary.py",
+    "QaFailureClassV1": "polaris/cells/qa/audit_verdict/public/contracts.py",
     "AuditFailureClass": "polaris/kernelone/audit/error_correlator.py",
     "TurnFailureClass": "polaris/cells/roles/kernel/public/turn_contracts.py",
     "SequentialFailureClass": "polaris/cells/roles/runtime/internal/sequential_engine.py",
