@@ -24,6 +24,10 @@ import logging
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.roles.kernel.internal.tool_call_envelope import (
+    normalize_stream_tool_call_payload as _normalize_stream_tool_call_payload,
+)
+
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.internal.turn_engine.artifacts import AssistantTurnArtifacts
 
@@ -247,59 +251,11 @@ def normalize_stream_tool_call_payload(
         Tuple of (normalized_payload, provider_type).
         provider_type is "openai", "anthropic", or "auto".
     """
-    safe_args = dict(tool_args) if isinstance(tool_args, dict) else {}
-    safe_metadata = dict(metadata) if isinstance(metadata, dict) else {}
-
-    raw_native = safe_metadata.get("native_tool_call")
-    if not isinstance(raw_native, dict):
-        raw_native = safe_metadata.get("tool_call")
-    candidate = dict(raw_native) if isinstance(raw_native, dict) else {}
-    candidate_type = str(candidate.get("type") or "").strip().lower()
-
-    if candidate_type == "function" and isinstance(candidate.get("function"), dict):
-        candidate_function = dict(candidate["function"])
-        candidate_tool_name = str(candidate_function.get("name") or tool_name or "").strip()
-        candidate_args = candidate_function.get("arguments")
-        if not isinstance(candidate_args, dict):
-            candidate_args = safe_args
-        candidate_call_id = str(candidate.get("id") or call_id or "").strip()
-        if not candidate_tool_name:
-            return None, "auto"
-        return (
-            {
-                "id": candidate_call_id,
-                "type": "function",
-                "function": {
-                    "name": candidate_tool_name,
-                    "arguments": dict(candidate_args),
-                },
-            },
-            "openai",
-        )
-    if candidate_type == "tool_use":
-        return candidate, "anthropic"
-
-    candidate_tool_name = str(candidate.get("tool") or candidate.get("name") or tool_name or "").strip()
-    candidate_args = candidate.get("arguments")
-    if not isinstance(candidate_args, dict):
-        candidate_args = candidate.get("input")
-    if not isinstance(candidate_args, dict):
-        candidate_args = safe_args
-    candidate_call_id = str(candidate.get("call_id") or candidate.get("id") or call_id or "").strip()
-
-    if not candidate_tool_name:
-        return None, "auto"
-
-    return (
-        {
-            "id": candidate_call_id,
-            "type": "function",
-            "function": {
-                "name": candidate_tool_name,
-                "arguments": dict(candidate_args),
-            },
-        },
-        "openai",
+    return _normalize_stream_tool_call_payload(
+        tool_name=tool_name,
+        tool_args=tool_args,
+        call_id=call_id,
+        metadata=metadata,
     )
 
 

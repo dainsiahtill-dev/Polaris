@@ -16,10 +16,15 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     NativeToolCallEnvelopeV1,
     build_native_tool_call_envelope_payloads,
     build_native_tool_call_envelopes,
-    native_tool_call_envelope_refs_from_metadata,
-    native_tool_call_facts_from_raw_calls,
-    native_tool_call_names_from_facts,
     project_native_tool_call_facts_to_metadata,
+)
+from polaris.cells.roles.kernel.internal.tool_call_envelope import (
+    build_native_tool_call_from_stream_event,
+    native_tool_call_envelopes_from_metadata,
+    native_tool_call_envelopes_from_response,
+    native_tool_call_name,
+    native_tool_call_provider_from_metadata,
+    native_tool_calls_from_response,
 )
 from polaris.kernelone.llm.budget_policy import (
     BUDGET_STRATEGY_PAYLOAD_KEYS,
@@ -104,44 +109,7 @@ def resolve_tool_call_provider(*, provider_id: str, model: str) -> str:
     return "auto"
 
 
-def native_tool_call_name(call: Mapping[str, Any]) -> str:
-    facts = native_tool_call_facts_from_raw_calls([call])
-    names = native_tool_call_names_from_facts(facts)
-    return names[0] if names else ""
-
-
 _native_tool_call_name = native_tool_call_name
-
-
-def build_native_tool_call_from_stream_event(
-    *,
-    tool_name: str,
-    tool_args: Mapping[str, Any] | None,
-    call_id: str,
-    ordinal: int,
-) -> dict[str, Any]:
-    """Convert one streamed tool-call event into decoder-native shape.
-
-    Boundary:
-        The helper only normalizes already-structured stream event data. It
-        does not authorize, dispatch, or infer tool calls from assistant prose.
-
-    Complexity:
-        O(k) time and memory for copying the argument mapping.
-    """
-
-    normalized_tool_name = str(tool_name or "").strip()
-    if not normalized_tool_name:
-        return {}
-    normalized_call_id = str(call_id or "").strip() or f"stream_tool_call_{max(1, ordinal)}"
-    return {
-        "id": normalized_call_id,
-        "type": "function",
-        "function": {
-            "name": normalized_tool_name,
-            "arguments": dict(tool_args or {}),
-        },
-    }
 
 
 def stream_tool_call_signature(tool_name: str, tool_args: Mapping[str, Any] | None, call_id: str) -> str:
@@ -244,39 +212,6 @@ def supersede_partial_tool_calls(native_tool_calls: list[dict[str, Any]]) -> lis
     return kept
 
 
-def native_tool_call_envelopes_from_metadata(metadata: Mapping[str, Any] | None) -> tuple[Mapping[str, Any], ...]:
-    """Return valid native tool-call envelope payloads from response metadata."""
-
-    return native_tool_call_envelope_refs_from_metadata(metadata)
-
-
-def native_tool_calls_from_response(response: Any) -> list[dict[str, Any]]:
-    """Return provider-native tool-call payloads from a response-like object.
-
-    Boundary:
-        This helper only normalizes already-decoded response objects. It does
-        not parse assistant text, infer tool calls from prose, or authorize any
-        tool execution.
-
-    Complexity:
-        O(n) time and memory for copying mapping-shaped tool calls.
-    """
-
-    native_calls = getattr(response, "native_tool_calls", None)
-    if isinstance(native_calls, list):
-        return [dict(item) for item in native_calls if isinstance(item, Mapping)]
-    alias_calls = getattr(response, "tool_calls", None)
-    if isinstance(alias_calls, list):
-        return [dict(item) for item in alias_calls if isinstance(item, Mapping)]
-    if isinstance(response, Mapping):
-        raw_calls = response.get("native_tool_calls")
-        if not isinstance(raw_calls, list):
-            raw_calls = response.get("tool_calls")
-        if isinstance(raw_calls, list):
-            return [dict(item) for item in raw_calls if isinstance(item, Mapping)]
-    return []
-
-
 def provider_response_hash(response: Any, metadata: Mapping[str, Any] | None = None) -> str:
     """Return the stable hash used to bind response facts to dispatch evidence.
 
@@ -299,46 +234,6 @@ def provider_response_hash(response: Any, metadata: Mapping[str, Any] | None = N
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-def native_tool_call_provider_from_metadata(metadata: Mapping[str, Any] | None) -> str:
-    """Return the canonical provider label for native tool-call envelopes.
-
-    Boundary:
-        Provider identity is read only from already-structured metadata. This
-        helper does not infer provider identity from response prose or model
-        names.
-    """
-
-    if not isinstance(metadata, Mapping):
-        return "auto"
-    for key in ("tool_call_provider", "decision_caller_tool_call_provider", "provider", "provider_id"):
-        token = str(metadata.get(key) or "").strip().lower()
-        if token:
-            return token
-    return "auto"
-
-
-def native_tool_call_envelopes_from_response(
-    response: Any,
-    metadata: Mapping[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    """Return envelope payloads for native tool calls in a response-like object.
-
-    Existing metadata/lifecycle envelopes remain authoritative. Raw response
-    calls are wrapped only when no structured envelope evidence is present.
-    """
-
-    metadata_envelopes = [dict(item) for item in native_tool_call_envelopes_from_metadata(metadata)]
-    if metadata_envelopes:
-        return metadata_envelopes
-    raw_calls = native_tool_calls_from_response(response)
-    if not raw_calls:
-        return []
-    return build_native_tool_call_envelope_payloads(
-        raw_calls,
-        provider=native_tool_call_provider_from_metadata(metadata),
-    )
 
 
 def _coerce_positive_int(value: Any) -> int | None:
