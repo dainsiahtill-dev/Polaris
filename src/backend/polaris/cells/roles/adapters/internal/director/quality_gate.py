@@ -27,6 +27,7 @@ from typing import Any
 
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.kernelone.quality import (
+    artifact_quality_issue_raw,
     artifact_quality_issues_for_errors,
     artifact_quality_issues_from_errors,
     build_scope_authority_decision,
@@ -1497,7 +1498,7 @@ def _record_deferred_task_boundary_quality_errors(
     if not isinstance(context, dict) or not errors:
         return
     issues = artifact_quality_issues_for_errors(errors, issue_payloads) if issue_payloads else ()
-    record = {
+    record: dict[str, Any] = {
         "schema_version": "director.task_boundary.deferred_quality_errors.v1",
         "reason": reason,
         "artifact_quality_errors": errors[:20],
@@ -1666,6 +1667,30 @@ def _semantic_exporter_scope_discrepancy_evidence(
     return receipt
 
 
+def _artifact_quality_issue_paths_by_raw(
+    issue_payloads: tuple[dict[str, Any], ...],
+) -> dict[str, str]:
+    """Index typed artifact-quality paths by their raw display diagnostic.
+
+    This keeps task-boundary filters on structured issue facts when scanner
+    payloads are present, while preserving regex fallback for legacy diagnostics
+    that have not been typed yet.
+
+    Complexity:
+        O(n) time and memory for ``n`` issue payloads.
+    """
+
+    paths_by_raw: dict[str, str] = {}
+    for issue_payload in issue_payloads:
+        raw = artifact_quality_issue_raw(issue_payload)
+        if not raw or raw in paths_by_raw:
+            continue
+        path = str(issue_payload.get("path") or "").strip().replace("\\", "/")
+        if path:
+            paths_by_raw[raw] = path
+    return paths_by_raw
+
+
 def _filter_npm_script_entrypoint_errors_to_task_write_scope(
     errors: list[str],
     *,
@@ -1678,6 +1703,7 @@ def _filter_npm_script_entrypoint_errors_to_task_write_scope(
 
     if not _task_write_scope_candidates(task, workspace_name=workspace_name):
         return errors
+    typed_issue_paths_by_raw = _artifact_quality_issue_paths_by_raw(issue_payloads)
     retained: list[str] = []
     deferred_errors: list[str] = []
     deferred_targets: list[str] = []
@@ -1699,7 +1725,10 @@ def _filter_npm_script_entrypoint_errors_to_task_write_scope(
                 continue
         local_module_match = _NPM_SCRIPT_MISSING_LOCAL_MODULE_RE.search(text)
         if local_module_match:
-            entrypoint = str(local_module_match.group("entrypoint") or "").strip()
+            entrypoint = (
+                typed_issue_paths_by_raw.get(text)
+                or str(local_module_match.group("entrypoint") or "").strip()
+            )
             if entrypoint and not _path_within_task_write_scope(
                 entrypoint,
                 task=task,

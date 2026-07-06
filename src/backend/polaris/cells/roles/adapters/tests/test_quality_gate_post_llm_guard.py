@@ -135,6 +135,40 @@ def test_collect_materialization_quality_findings_projects_missing_declared_targ
     )
 
 
+def test_npm_local_module_scope_filter_prefers_typed_issue_path() -> None:
+    diagnostic = (
+        "npm package manifest script 'start' local entrypoint 'dist/index.js' "
+        "requires missing local module: ./engine.js"
+    )
+    typed_issue = {
+        "code": "javascript_module_error",
+        "message": "missing local module ./engine.js",
+        "path": "src/index.js",
+        "severity": "error",
+        "source": "artifact_quality",
+        "metadata": {"raw": diagnostic},
+    }
+    context: dict[str, Any] = {}
+
+    retained = quality_gate._filter_npm_script_entrypoint_errors_to_task_write_scope(
+        [diagnostic],
+        task={"target_files": ["tests/product.test.js"]},
+        context=context,
+        issue_payloads=(typed_issue,),
+    )
+
+    assert retained == []
+    assert context["director_task_boundary_deferred_quality_errors"] == [
+        {
+            "schema_version": "director.task_boundary.deferred_quality_errors.v1",
+            "reason": "npm_script_entrypoint_outside_current_task_target_files",
+            "artifact_quality_errors": [diagnostic],
+            "target_files": ["src/index.js"],
+            "artifact_quality_issues": [typed_issue],
+        }
+    ]
+
+
 def test_post_llm_materialization_guard_routes_runtime_covered_errors(monkeypatch: Any, tmp_path: Any) -> None:
     captured: dict[str, Any] = {}
     diagnostic = "npm package manifest script 'build' recursively invokes itself via build -> build"
@@ -154,7 +188,7 @@ def test_post_llm_materialization_guard_routes_runtime_covered_errors(monkeypatc
         all_affected_files: list[str],
         workspace_name: str,
         context: dict[str, Any] | None = None,
-    ) -> list[str]:
+    ) -> tuple[list[str], tuple[dict[str, Any], ...]]:
         captured["scan_paths"] = list(all_affected_files)
         captured["workspace_name"] = workspace_name
         captured["context"] = dict(context or {})
