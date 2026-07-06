@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from polaris.delivery.http.routers.factory import _quality_gate_owner_handoff_index
 from polaris.kernelone.quality.file_ownership_ledger import record_file_owners
 from polaris.kernelone.quality.scope_authority import (
     build_owner_handoff_index,
@@ -280,6 +281,35 @@ def test_scope_authority_owner_handoff_index_uses_public_task_record_routing_key
 
     routing_key = task_record_routing_key(owner_row)
     assert routing_key == "7"
+    assert index.matched_owner_handoff_by_task_key[routing_key] == request
+
+
+def test_factory_owner_handoff_index_reader_uses_public_task_record_routing_key() -> None:
+    owner_row = {
+        "id": "8",
+        "external_task_id": "TASK-8",
+        "metadata": {"source_task_id": "TASK-8"},
+    }
+    request = {
+        "schema_version": "file-ownership-handoff-request/1",
+        "target_file": "src/index.js",
+        "owner_task_identifier_tokens": ["TASK-8"],
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+    }
+    payload = {
+        "task_boundary_scope_filter": {
+            "scope_authority": {
+                "owner_task_retry_handoff_requests": [request],
+                "unresolved_owner_handoff_requests": [],
+            }
+        }
+    }
+
+    index = _quality_gate_owner_handoff_index(payload, [owner_row])
+    routing_key = task_record_routing_key(owner_row)
+
+    assert routing_key == "8"
     assert index.matched_owner_handoff_by_task_key[routing_key] == request
 
 
