@@ -65,6 +65,126 @@ def test_artifact_quality_evidence_projects_typed_issues(tmp_path: Path) -> None
     assert evidence.to_dict()["issues"][0]["code"] == "npm_manifest_invalid"
 
 
+def _assert_file_marker_issue(
+    tmp_path: Path,
+    *,
+    relative_path: str,
+    content: str,
+    code: str,
+) -> ArtifactQualityIssue:
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=[relative_path])
+    issue = next((candidate for candidate in evidence.issues if candidate.code == code), None)
+
+    assert issue is not None
+    assert issue.path == relative_path
+    assert issue.source == "file_artifact_scanner"
+    assert issue.metadata["artifact_path"] == relative_path
+    assert issue.metadata["raw"] in evidence.errors
+    return issue
+
+
+def test_artifact_quality_evidence_uses_direct_file_marker_scaffold_issue(tmp_path: Path) -> None:
+    issue = _assert_file_marker_issue(
+        tmp_path,
+        relative_path="src/scaffold.ts",
+        content='export const label = "Polaris TypeScript scaffold";\n',
+        code="deterministic_scaffold_marker",
+    )
+
+    assert "Polaris TypeScript scaffold" in issue.metadata["raw"]
+
+
+def test_artifact_quality_evidence_uses_direct_file_marker_numeric_helper_filler_issue(
+    tmp_path: Path,
+) -> None:
+    content = "\n".join(
+        f"export function sampleHelper{index}(value: number): number {{ return value + {index}; }}"
+        for index in range(5)
+    )
+
+    issue = _assert_file_marker_issue(
+        tmp_path,
+        relative_path="src/helpers.ts",
+        content=content,
+        code="repeated_numeric_helper_filler",
+    )
+
+    assert "count=5" in issue.metadata["raw"]
+
+
+def test_artifact_quality_evidence_uses_direct_file_marker_generic_payload_index_store_issue(
+    tmp_path: Path,
+) -> None:
+    helpers = "\n".join(
+        f"export function storeHelper{index}(value: number): number {{ return value + {index}; }}"
+        for index in range(3)
+    )
+    content = f"""
+export interface ItemRecord {{
+  payload: string;
+  index: number;
+}}
+
+export class ItemStore {{
+  private readonly items = new Map<string, ItemRecord>();
+}}
+
+{helpers}
+""".strip()
+
+    _assert_file_marker_issue(
+        tmp_path,
+        relative_path="src/store.ts",
+        content=content,
+        code="generic_payload_index_store_scaffold",
+    )
+
+
+def test_artifact_quality_evidence_uses_direct_file_marker_patch_residue_issue(tmp_path: Path) -> None:
+    _assert_file_marker_issue(
+        tmp_path,
+        relative_path="src/merge.ts",
+        content="<<<<<<< SEARCH\nconst value = 1;\n>>>>>>> REPLACE\n",
+        code="patch_residue_marker",
+    )
+
+
+def test_artifact_quality_evidence_uses_direct_file_marker_trivial_arithmetic_tests_issue(
+    tmp_path: Path,
+) -> None:
+    issue = _assert_file_marker_issue(
+        tmp_path,
+        relative_path="tests/arithmetic.test.ts",
+        content="\n".join(
+            [
+                "expect(1 + 1).toBe(2);",
+                "expect(2 + 2).toBe(4);",
+                "expect(3 + 3).toBe(6);",
+            ]
+        ),
+        code="repeated_trivial_arithmetic_tests",
+    )
+
+    assert "count=3" in issue.metadata["raw"]
+
+
+def test_artifact_quality_evidence_emits_no_file_marker_issue_for_clean_artifact(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "engine.ts").write_text(
+        "export function double(value: number): number { return value * 2; }\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["src/engine.ts"])
+
+    assert evidence.errors == ()
+    assert evidence.issues == ()
+
+
 def test_artifact_quality_issue_identity_helpers_preserve_raw_and_structured_keys() -> None:
     issue = ArtifactQualityIssue(
         code="typescript_import_unresolved_symbol",
