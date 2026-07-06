@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import polaris.kernelone.quality.artifact_quality as artifact_quality_module
 from polaris.kernelone.quality import (
     ArtifactQualityIssue,
     artifact_quality_issue_key,
@@ -1122,3 +1123,31 @@ export function boot(): void { render(); }`;
 
     assert not any("unresolved import symbol 'render'" in error for error in errors)
     assert not any("unresolved relative import './engine/renderer'" in error for error in errors)
+
+
+def test_scan_workspace_artifact_quality_evidence_returns_typed_issue_on_scanner_infrastructure_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "engine.ts").write_text("export const value = 1;\n", encoding="utf-8")
+
+    def _raise_os_error(_root: Path):
+        raise OSError("scanner unavailable")
+
+    monkeypatch.setattr(
+        artifact_quality_module,
+        "_iter_workspace_source_files",
+        _raise_os_error,
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path))
+
+    assert evidence.errors == ("Artifact quality scan failed: scanner unavailable",)
+    assert len(evidence.issues) == 1
+    issue = evidence.issues[0]
+    assert issue.code == "artifact_quality_scan_failed"
+    assert issue.source == "artifact_quality_scanner"
+    assert issue.message == "Artifact quality scan failed: scanner unavailable"
+    assert issue.metadata["raw"] == "Artifact quality scan failed: scanner unavailable"
+    assert issue.metadata["exception_type"] == "OSError"

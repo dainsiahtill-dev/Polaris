@@ -438,6 +438,24 @@ class _FileArtifactQualityEvidence:
     issues: tuple[ArtifactQualityIssue, ...] = ()
 
 
+def _artifact_quality_scan_failure_issue(
+    message: str,
+    *,
+    exc: BaseException | None = None,
+) -> ArtifactQualityIssue:
+    """Return typed evidence for scanner infrastructure failures."""
+
+    metadata: dict[str, Any] = {"raw": message}
+    if exc is not None:
+        metadata["exception_type"] = type(exc).__name__
+    return ArtifactQualityIssue(
+        code="artifact_quality_scan_failed",
+        message=message,
+        source="artifact_quality_scanner",
+        metadata=metadata,
+    )
+
+
 _ARTIFACT_QUALITY_ERROR_PREFIX = "Artifact quality scan failed:"
 _ARTIFACT_QUALITY_PATH_EXTENSIONS = (
     ".c",
@@ -1354,7 +1372,11 @@ def scan_workspace_artifact_quality_evidence(
                 and str(issue["metadata"].get("raw") or "").strip()
             )
     except (OSError, RuntimeError, ValueError) as exc:
-        return _artifact_quality_evidence(errors=(f"Artifact quality scan failed: {exc}",))
+        message = f"Artifact quality scan failed: {exc}"
+        return _artifact_quality_evidence(
+            errors=(message,),
+            issues=(_artifact_quality_scan_failure_issue(message, exc=exc),),
+        )
     return _artifact_quality_evidence(
         errors=errors,
         issues=typed_issues,
