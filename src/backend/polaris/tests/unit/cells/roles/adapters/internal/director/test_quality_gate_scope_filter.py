@@ -4,6 +4,7 @@ from pathlib import Path
 
 from polaris.cells.roles.adapters.internal.director.quality_gate import (
     _filter_missing_workspace_file_errors_to_task_write_scope,
+    _missing_materialization_quality_repair_target_files,
     _semantic_exporter_scope_discrepancy_evidence,
     _task_boundary_scope_filter_evidence,
 )
@@ -160,3 +161,72 @@ def test_deferred_scope_filter_record_preserves_typed_artifact_quality_issue(tmp
     assert record["artifact_quality_errors"] == [error]
     assert record["target_files"] == ["src/index.js"]
     assert record["artifact_quality_issues"] == [typed_issue]
+
+
+def test_materialization_missing_targets_prefer_typed_declared_target_issue(tmp_path: Path) -> None:
+    typed_issue = {
+        "code": "declared_target_missing",
+        "message": "declared target missing",
+        "path": "src/index.js",
+        "source": "artifact_quality_scanner",
+        "metadata": {"raw": "typed-only diagnostic"},
+    }
+
+    targets = _missing_materialization_quality_repair_target_files(
+        {"target_files": ["src/index.js"]},
+        str(tmp_path),
+        artifact_quality_errors=["typed-only diagnostic"],
+        artifact_quality_issues=(typed_issue,),
+    )
+
+    assert targets == ["src/index.js"]
+
+
+def test_scope_filter_uses_typed_missing_workspace_issue_when_raw_text_is_not_parseable(
+    tmp_path: Path,
+) -> None:
+    typed_issue = {
+        "code": "missing_workspace_file",
+        "message": "typed missing workspace file",
+        "path": "src/index.js",
+        "source": "artifact_quality_scanner",
+        "metadata": {"raw": "typed-only diagnostic"},
+    }
+    context: dict[str, object] = {}
+
+    retained = _filter_missing_workspace_file_errors_to_task_write_scope(
+        ["typed-only diagnostic"],
+        task={"task_id": "TASK-2", "target_files": ["tests/behavior.test.js"]},
+        workspace_full=str(tmp_path),
+        context=context,
+        issue_payloads=(typed_issue,),
+    )
+
+    assert retained == []
+    records = context["director_task_boundary_deferred_quality_errors"]
+    assert isinstance(records, list)
+    assert records[0]["target_files"] == ["src/index.js"]
+
+
+def test_scope_filter_does_not_treat_unrelated_typed_issue_path_as_missing_target(
+    tmp_path: Path,
+) -> None:
+    typed_issue = {
+        "code": "typescript_ts2304",
+        "message": "Cannot find name 'Widget'.",
+        "path": "src/index.js",
+        "source": "typescript_compiler",
+        "metadata": {"raw": "typed-only diagnostic"},
+    }
+    context: dict[str, object] = {}
+
+    retained = _filter_missing_workspace_file_errors_to_task_write_scope(
+        ["typed-only diagnostic"],
+        task={"task_id": "TASK-2", "target_files": ["tests/behavior.test.js"]},
+        workspace_full=str(tmp_path),
+        context=context,
+        issue_payloads=(typed_issue,),
+    )
+
+    assert retained == ["typed-only diagnostic"]
+    assert "director_task_boundary_deferred_quality_errors" not in context

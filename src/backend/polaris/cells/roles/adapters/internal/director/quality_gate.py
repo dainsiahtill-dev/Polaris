@@ -23,7 +23,7 @@ import shlex
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Mapping
 
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.kernelone.quality import (
@@ -1799,6 +1799,7 @@ def _filter_missing_workspace_file_errors_to_task_write_scope(
                 *_missing_workspace_file_quality_repair_target_files(
                     artifact_quality_errors=[text],
                     workspace_full=workspace_full,
+                    artifact_quality_issues=issue_payloads,
                 ),
                 *_missing_unresolved_relative_import_target_files(
                     [text],
@@ -5044,12 +5045,141 @@ def _missing_declared_target_files(task: dict[str, Any], workspace_full: str) ->
     return missing
 
 
+# Fallback gates for typed artifact-quality issue -> missing-target resolvers.
+# These keep regex fallbacks intact: typed paths are *preferred*; if a typed
+# issue lacks the structured field we can safely parse, the regex path still
+# drives the resolver. Never fabricate values when no typed signal exists.
+
+_DECLARED_TARGET_MISSING_ISSUE_CODES = frozenset({"declared_target_missing"})
+_MISSING_WORKSPACE_FILE_ISSUE_CODES = frozenset(
+    {
+        "declared_target_missing",
+        "missing_workspace_file",
+        "unresolved_relative_import",
+        "workspace_file_missing",
+    }
+)
+_PYTHON_MODULE_ALIAS_ISSUE_CODES = frozenset({"python_import_error", "python_module_not_found"})
+
+
+def _iter_artifact_quality_issue_payloads(
+    artifact_quality_issues: Iterable[Mapping[str, Any]] | tuple[Any, ...] | None,
+) -> list[dict[str, Any]]:
+    """Coerce typed-issue payloads into a list of dict copies.
+
+    Accepts any iterable of mapping-shaped items (typed issues produced by the
+    artifact scanner) or ``None``. Non-mapping items are dropped silently —
+    the resolver chain must never raise because of an unexpected payload
+    shape.
+    """
+
+    if not artifact_quality_issues:
+        return []
+    payloads: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for raw in artifact_quality_issues:
+        if isinstance(raw, Mapping):
+            key = id(raw)
+            if key in seen:
+                continue
+            seen.add(key)
+            payloads.append(dict(raw))
+    return payloads
+
+
+def _coerce_artifact_quality_issue_path(issue_payload: Mapping[str, Any]) -> str:
+    """Return a normalized workspace-relpath from a typed issue if safely resolvable.
+
+    Falls back through ``path`` → ``metadata.target_file`` →
+    ``metadata.path`` → ``metadata.declared_target_path`` →
+    ``metadata.raw`` (regex over the scanner's own raw diagnostic). Returns
+    ``""`` when the typed signal cannot be parsed safely so the caller can fall
+    back to the regex path.
+    """
+
+    if not isinstance(issue_payload, Mapping):
+        return ""
+    raw_path = str(issue_payload.get("path") or "").strip().replace("\\", "/")
+    if raw_path:
+        normalized = _normalize_declared_task_path(raw_path)
+        if normalized:
+            return normalized
+    metadata = issue_payload.get("metadata")
+    if isinstance(metadata, Mapping):
+        for key in ("target_file", "declared_target_path", "path"):
+            candidate = metadata.get(key)
+            if not isinstance(candidate, str):
+                continue
+            normalized = _normalize_declared_task_path(candidate.strip().replace("\\", "/"))
+            if normalized:
+                return normalized
+        metadata_raw = metadata.get("raw")
+        if isinstance(metadata_raw, str) and metadata_raw.strip():
+            for candidate in _parse_missing_declared_target_files([metadata_raw]):
+                normalized = _normalize_declared_task_path(candidate)
+                if normalized:
+                    return normalized
+    return ""
+
+
+def _coerce_artifact_quality_issue_module(issue_payload: Mapping[str, Any]) -> str:
+    """Return a Python module name from a typed issue if safely resolvable.
+
+    Looks at ``metadata.module`` / ``metadata.module_name`` / ``metadata.path``
+    (re-deriving as dotted module path) / ``message`` (regex over the scanner
+    message for ``No module named 'foo.bar'``). Returns ``""`` when the typed
+    signal cannot be parsed safely so the caller can fall back to the regex
+    path.
+    """
+
+    if not isinstance(issue_payload, Mapping):
+        return ""
+    metadata = issue_payload.get("metadata")
+    if isinstance(metadata, Mapping):
+        for key in ("module", "module_name"):
+            candidate = metadata.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        metadata_path = metadata.get("path")
+        if isinstance(metadata_path, str) and metadata_path.strip():
+            cleaned = metadata_path.strip().replace("\\", "/").removesuffix(".py")
+            return cleaned.replace("/", ".")
+    message = str(issue_payload.get("message") or "").strip()
+    if not message and isinstance(metadata, Mapping):
+        message = str(metadata.get("raw") or "").strip()
+    if message:
+        match = _PYTHON_MODULE_NOT_FOUND_RE.search(message)
+        if match:
+            return str(match.group("module") or "").strip()
+    return ""
+
+
 def _missing_materialization_quality_repair_target_files(
     task: dict[str, Any],
     workspace_full: str,
     artifact_quality_errors: list[str],
+    artifact_quality_issues: Iterable[Mapping[str, Any]] | tuple[Any, ...] | None = None,
 ) -> list[str]:
-    explicit_missing_declared = _parse_missing_declared_target_files(artifact_quality_errors)
+    """Return missing materialization repair targets.
+
+    Typed-issue paths are preferred when present (artifact scanner has already
+    structured the path into ``path`` / ``metadata.target_file`` /
+    ``metadata.declared_target_path``); the regex fallback is preserved.
+    """
+
+    issue_payloads = _iter_artifact_quality_issue_payloads(artifact_quality_issues)
+    typed_declared_targets: list[str] = []
+    for issue in issue_payloads:
+        code = str(issue.get("code") or "").strip()
+        if code not in _DECLARED_TARGET_MISSING_ISSUE_CODES:
+            continue
+        rel = _coerce_artifact_quality_issue_path(issue)
+        if rel:
+            typed_declared_targets.append(rel)
+    explicit_missing_declared = [
+        *typed_declared_targets,
+        *_parse_missing_declared_target_files(artifact_quality_errors),
+    ]
     declared_missing_now = _missing_declared_target_files(task, workspace_full)
     declared_missing_set = set(declared_missing_now)
     missing = [rel for rel in explicit_missing_declared if rel in declared_missing_set]
@@ -5058,12 +5188,14 @@ def _missing_materialization_quality_repair_target_files(
         _missing_workspace_file_quality_repair_target_files(
             artifact_quality_errors=artifact_quality_errors,
             workspace_full=workspace_full,
+            artifact_quality_issues=issue_payloads,
         )
     )
     missing.extend(
         _missing_python_module_alias_repair_target_files(
             artifact_quality_errors=artifact_quality_errors,
             workspace_full=workspace_full,
+            artifact_quality_issues=issue_payloads,
         )
     )
     missing.extend(declared_missing_now)
@@ -5074,22 +5206,44 @@ def _missing_workspace_file_quality_repair_target_files(
     *,
     artifact_quality_errors: list[str],
     workspace_full: str,
+    artifact_quality_issues: Iterable[Mapping[str, Any]] | tuple[Any, ...] | None = None,
 ) -> list[str]:
-    """Return concrete missing workspace files named by physical gate errors."""
+    """Return concrete missing workspace files named by physical gate errors.
+
+    Typed-issue paths are preferred when present (the scanner has already
+    structured the path into ``path`` / ``metadata.path`` /
+    ``metadata.target_file``); ``_missing_workspace_file_target_allowed`` still
+    gates the candidate (allowlist/prefix/suffix checks). The regex fallback
+    is preserved for issues that have not been typed yet.
+    """
 
     workspace = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
     if workspace is None or not workspace.is_dir():
         return []
 
     targets: list[str] = []
+    issue_payloads = _iter_artifact_quality_issue_payloads(artifact_quality_issues)
+    paths_by_raw = _artifact_quality_issue_paths_by_raw(tuple(issue_payloads))
+    for issue in issue_payloads:
+        code = str(issue.get("code") or "").strip()
+        if code not in _MISSING_WORKSPACE_FILE_ISSUE_CODES:
+            continue
+        rel = _coerce_artifact_quality_issue_path(issue)
+        if not rel:
+            continue
+        require_missing = True
+        if _missing_workspace_file_target_allowed(rel, workspace, require_missing=require_missing):
+            targets.append(rel)
     for error in artifact_quality_errors:
         text = str(error or "")
         for pattern in _MISSING_WORKSPACE_FILE_PATTERNS:
             for match in pattern.finditer(text):
-                rel = _missing_workspace_file_path_to_relative(match.group("path"), workspace)
-                require_missing = not _workspace_file_contract_assertion_allows_existing_target(text, rel)
-                if rel and _missing_workspace_file_target_allowed(rel, workspace, require_missing=require_missing):
-                    targets.append(rel)
+                raw_token = str(match.group("path") or "").strip()
+                rel = _missing_workspace_file_path_to_relative(raw_token, workspace)
+                if rel and (not paths_by_raw or rel != paths_by_raw.get(text)):
+                    require_missing = not _workspace_file_contract_assertion_allows_existing_target(text, rel)
+                    if _missing_workspace_file_target_allowed(rel, workspace, require_missing=require_missing):
+                        targets.append(rel)
     return _dedupe_preserve_order(targets)
 
 
@@ -5173,14 +5327,33 @@ def _missing_python_module_alias_repair_target_files(
     *,
     artifact_quality_errors: list[str],
     workspace_full: str,
+    artifact_quality_issues: Iterable[Mapping[str, Any]] | tuple[Any, ...] | None = None,
 ) -> list[str]:
-    """Return missing Python module bridge targets implied by import errors."""
+    """Return missing Python module bridge targets implied by import errors.
+
+    Typed-issue module names (via ``metadata.module`` / ``metadata.module_name``
+    / ``metadata.path`` / scanner ``message`` / raw diagnostic) are preferred
+    when a typed payload is provided. The regex fallback over
+    ``_PYTHON_MODULE_NOT_FOUND_RE`` is preserved for errors that have not been
+    typed yet — we never fabricate a module from a missing typed signal.
+    """
 
     workspace = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
     if workspace is None or not workspace.is_dir():
         return []
 
     targets: list[str] = []
+    issue_payloads = _iter_artifact_quality_issue_payloads(artifact_quality_issues)
+    for issue in issue_payloads:
+        code = str(issue.get("code") or "").strip()
+        if code not in _PYTHON_MODULE_ALIAS_ISSUE_CODES:
+            continue
+        module_name = _coerce_artifact_quality_issue_module(issue)
+        if not module_name:
+            continue
+        target = _python_missing_module_target(module_name, workspace)
+        if target:
+            targets.append(target)
     for error in artifact_quality_errors:
         text = str(error or "")
         if "modulenotfounderror" not in text.lower():
