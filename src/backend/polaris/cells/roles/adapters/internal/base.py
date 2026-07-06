@@ -274,6 +274,9 @@ class BaseRoleAdapter(RoleOrchestrationAdapter):
     def _task_runtime_transition_failure_evidence(self) -> list[dict[str, Any]]:
         return [dict(item) for item in self._task_runtime_transition_failures]
 
+    def _reset_task_runtime_transition_failures(self) -> None:
+        self._task_runtime_transition_failures.clear()
+
     def _update_task_progress(
         self,
         task_id: str,

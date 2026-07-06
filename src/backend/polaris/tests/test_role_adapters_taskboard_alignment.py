@@ -15,6 +15,7 @@ from polaris.cells.events.fact_stream.public.contracts import QueryFactEventsV1
 from polaris.cells.events.fact_stream.public.service import query_fact_events
 from polaris.cells.roles.adapters.internal import director_execution_backend as director_execution_backend_module
 from polaris.cells.roles.adapters.internal.base import BaseRoleAdapter
+from polaris.cells.roles.adapters.internal.director import adapter as director_adapter_module
 from polaris.cells.roles.adapters.internal.director.state_tracking import DirectorStateTracker
 from polaris.cells.roles.adapters.internal.director_adapter import DirectorAdapter
 from polaris.cells.roles.adapters.internal.pm_adapter import PMAdapter
@@ -237,6 +238,106 @@ def test_role_adapter_update_board_task_surfaces_execution_event_failure(tmp_pat
                 "metadata_keys": ["phase"],
             },
         }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_director_execute_resets_stale_task_runtime_transition_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = DirectorAdapter(workspace=str(tmp_path))
+    adapter._record_task_runtime_transition_failure(
+        action="update_board_task",
+        task_id="stale",
+        failure={"ok": False, "error_code": "stale"},
+        metadata={},
+    )
+
+    async def _fake_execute_director_task(
+        _adapter: DirectorAdapter,
+        task_id: str,
+        _input_data: dict[str, Any],
+        _context: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {"success": True, "task_id": task_id, "metadata": {"source": "fake"}}
+
+    monkeypatch.setattr(
+        director_adapter_module,
+        "execute_director_task",
+        _fake_execute_director_task,
+    )
+
+    result = await adapter.execute("task-7", {"task": {"target_files": []}}, {"metadata": {}})
+
+    assert result["success"] is True
+    assert "task_runtime_transition_failures" not in result
+    assert result["metadata"] == {"source": "fake"}
+
+
+@pytest.mark.asyncio
+async def test_director_execute_projects_task_runtime_transition_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = DirectorAdapter(workspace=str(tmp_path))
+
+    async def _fake_execute_director_task(
+        fake_adapter: DirectorAdapter,
+        task_id: str,
+        _input_data: dict[str, Any],
+        _context: dict[str, Any],
+    ) -> dict[str, Any]:
+        fake_adapter._record_task_runtime_transition_failure(
+            action="update_board_task",
+            task_id="7",
+            failure={
+                "ok": False,
+                "event_type": "updated",
+                "error_code": "fact_stream_unavailable",
+            },
+            metadata={"status": "in_progress"},
+        )
+        return {
+            "success": True,
+            "task_id": task_id,
+            "metadata": {"source": "fake"},
+            "decision_signals": [{"code": "existing", "severity": "info"}],
+        }
+
+    monkeypatch.setattr(
+        director_adapter_module,
+        "execute_director_task",
+        _fake_execute_director_task,
+    )
+
+    result = await adapter.execute("task-7", {"task": {"target_files": []}}, {"metadata": {}})
+
+    assert result["success"] is False
+    assert result["error_code"] == "task_runtime_transition_failure"
+    assert result["failure_stage"] == "task_runtime_transition"
+    assert result["control_plane_failure_code"] == "task_runtime_transition_failure"
+    assert result["task_runtime_transition_failed"] is True
+    assert result["qa_required_for_final_verdict"] is True
+    assert result["task_runtime_transition_failures"] == [
+        {
+            "action": "update_board_task",
+            "task_id": "7",
+            "role": "director",
+            "execution_event": {
+                "ok": False,
+                "event_type": "updated",
+                "error_code": "fact_stream_unavailable",
+            },
+            "metadata": {"status": "in_progress"},
+        }
+    ]
+    assert result["metadata"]["task_runtime_transition_failures"] == result[
+        "task_runtime_transition_failures"
+    ]
+    assert [signal["code"] for signal in result["decision_signals"]] == [
+        "existing",
+        "task_runtime_transition_failure",
     ]
 
 

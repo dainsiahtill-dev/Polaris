@@ -103,6 +103,48 @@ def _string_list_payload(value: Any, *, limit: int = 8) -> list[str]:
     return values[: max(int(limit), 0)]
 
 
+def _with_task_runtime_transition_failure_evidence(
+    result: dict[str, Any],
+    failures: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Project TaskRuntime transition failures into the Director result."""
+
+    normalized_failures = [dict(item) for item in failures if isinstance(item, dict)]
+    if not normalized_failures:
+        return result
+    signal = {
+        "code": "task_runtime_transition_failure",
+        "severity": "error",
+        "detail": "TaskRuntime transition evidence reported failed execution-event append.",
+        "failure_count": len(normalized_failures),
+    }
+    existing_signals_raw = result.get("decision_signals")
+    existing_signals = (
+        [dict(item) for item in existing_signals_raw if isinstance(item, dict)]
+        if isinstance(existing_signals_raw, list)
+        else []
+    )
+    metadata_raw = result.get("metadata")
+    metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+    metadata["task_runtime_transition_failures"] = normalized_failures
+
+    projected = {
+        **result,
+        "success": False,
+        "error": str(result.get("error") or "task_runtime_transition_failure"),
+        "error_code": str(result.get("error_code") or "task_runtime_transition_failure"),
+        "failure_stage": str(result.get("failure_stage") or "task_runtime_transition"),
+        "control_plane_failure_code": "task_runtime_transition_failure",
+        "control_plane_failure_stage": "task_runtime_transition",
+        "task_runtime_transition_failed": True,
+        "task_runtime_transition_failures": normalized_failures,
+        "decision_signals": [*existing_signals, signal],
+        "metadata": metadata,
+        "qa_required_for_final_verdict": True,
+    }
+    return projected
+
+
 # Budget/timeout constants, context-key lists and env parsing are
 # single-sourced in polaris.kernelone.llm.budget_policy (blueprint Phase 1);
 # the local names below are kept as compatibility aliases for this module.
@@ -1046,6 +1088,7 @@ class DirectorAdapter(BaseRoleAdapter):
         selected_strategy = self._select_execution_strategy(directive, task_data, context)
         if selected_strategy != "default":
             logger.info("Director strategy selected: %s for task %s", selected_strategy, task_id)
+        self._reset_task_runtime_transition_failures()
 
         # Inject strategy into context for downstream use
         if context is not None:
@@ -1056,7 +1099,13 @@ class DirectorAdapter(BaseRoleAdapter):
             if isinstance(ctx_metadata, dict):
                 ctx_metadata["director_strategy"] = selected_strategy
 
-        return await execute_director_task(self, task_id, input_data, context)
+        result = await execute_director_task(self, task_id, input_data, context)
+        if not isinstance(result, dict):
+            return result
+        return _with_task_runtime_transition_failure_evidence(
+            result,
+            self._task_runtime_transition_failure_evidence(),
+        )
 
     def _select_execution_strategy(
         self,
