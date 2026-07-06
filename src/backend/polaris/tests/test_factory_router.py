@@ -755,6 +755,58 @@ def test_quality_gate_rework_summary_uses_task_row_projection(monkeypatch: pytes
     ]
 
 
+def test_quality_gate_rework_summary_uses_source_task_id_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _TaskRowService:
+        def __init__(self, workspace: str) -> None:
+            self.workspace = workspace
+
+        def list_observable_task_rows(self) -> list[dict[str, Any]]:
+            return [
+                {
+                    "id": 17,
+                    "status": "pending",
+                    "metadata": {
+                        "source_task_id": "TASK-17",
+                        "qa_rework_requested": True,
+                        "qa_rework_reason": "owner_handoff_retry",
+                    },
+                }
+            ]
+
+    monkeypatch.setattr(factory_router_module, "TaskRuntimeService", _TaskRowService)
+
+    summary = factory_router_module._read_quality_gate_rework_summary("/tmp/workspace")
+
+    assert summary["tasks"][0]["external_task_id"] == "TASK-17"
+
+
+def test_factory_task_identifier_extraction_uses_scope_authority_aliases() -> None:
+    payload = {
+        "raw": {"source_task_id": "TASK-42"},
+        "metadata": {"pm_task_id": "TASK-41"},
+    }
+
+    assert factory_router_module._extract_task_id_from_payload(payload) == "TASK-42"
+    assert factory_router_module._extract_task_id_from_payload({"metadata": {"source_task_id": "TASK-43"}}) == "TASK-43"
+
+
+def test_per_binding_status_extracts_source_task_id_alias() -> None:
+    statuses = factory_router_module._extract_per_binding_task_status(
+        [
+            {
+                "type": "task_claimed",
+                "result": {"source_task_id": "TASK-99"},
+            },
+            {
+                "type": "task_completed",
+                "source_task_id": "TASK-99",
+            },
+        ]
+    )
+
+    assert statuses == [{"task_id": "TASK-99", "status": "completed", "events": ["task_claimed", "task_completed"]}]
+
+
 def test_quality_gate_task_boundary_rework_uses_task_row_projection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

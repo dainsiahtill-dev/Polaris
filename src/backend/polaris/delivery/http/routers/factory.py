@@ -71,6 +71,7 @@ from polaris.kernelone.quality import (
     build_owner_handoff_index,
     owner_handoff_index_summary,
     ownership_handoff_requests_from_scope_payload,
+    task_identifier_token_aliases,
     task_record_routing_key,
 )
 from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path, resolve_storage_roots
@@ -83,6 +84,15 @@ if TYPE_CHECKING:
     from polaris.cells.runtime.state_owner.public.service import AppState
 
 logger = logging.getLogger(__name__)
+
+_TASK_IDENTIFIER_KEYS = (
+    "task_id",
+    "pm_task_id",
+    "external_task_id",
+    "source_task_id",
+    "taskId",
+    "id",
+)
 
 router = APIRouter(tags=["factory"], dependencies=[Depends(require_auth)])
 
@@ -986,6 +996,24 @@ def _quality_gate_owner_handoff_index(
     return build_owner_handoff_index(repair, records)
 
 
+def _resolve_task_identifier(*sources: Any) -> str:
+    """Return the first display-stable task identifier from known payload shapes.
+
+    The alias helper is used only to validate that a candidate participates in
+    the same identifier space as ScopeAuthority owner routing. The returned
+    value intentionally remains the original display token.
+    """
+
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in _TASK_IDENTIFIER_KEYS:
+            value = str(source.get(key) or "").strip()
+            if value and task_identifier_token_aliases(value):
+                return value
+    return ""
+
+
 def _safe_rework_int(value: Any, *, default: int = 0) -> int:
     try:
         return int(value)
@@ -1146,7 +1174,7 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
         summary["evaluated_count"] += 1
         task_summary = {
             "task_id": str(task_id),
-            "external_task_id": str(metadata.get("external_task_id") or metadata.get("pm_task_id") or "").strip(),
+            "external_task_id": _resolve_task_identifier(metadata, record),
             "retry_count": next_retry_count,
             "max_retries": max_retries,
             "exhausted": exhausted,
@@ -1345,7 +1373,7 @@ def _read_quality_gate_rework_summary(workspace: str) -> dict[str, Any]:
         tasks.append(
             {
                 "task_id": str(record.get("id") or record.get("task_id") or "").strip(),
-                "external_task_id": str(metadata.get("external_task_id") or metadata.get("pm_task_id") or "").strip(),
+                "external_task_id": _resolve_task_identifier(metadata, record),
                 "status": status,
                 "reason": str(metadata.get("qa_rework_reason") or "").strip(),
                 "retry_count": metadata.get("qa_rework_retry_count"),
@@ -1536,18 +1564,11 @@ def _list_run_artifacts(
 def _extract_task_id_from_payload(payload: Any) -> str:
     if not isinstance(payload, dict):
         return ""
-    for source in (
+    return _resolve_task_identifier(
         payload,
         payload.get("raw") if isinstance(payload.get("raw"), dict) else None,
         payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
-    ):
-        if not isinstance(source, dict):
-            continue
-        for key in ("task_id", "pm_task_id", "taskId"):
-            value = str(source.get(key) or "").strip()
-            if value:
-                return value
-    return ""
+    )
 
 
 def _task_id_from_artifact_name(name: str) -> str:
@@ -1701,11 +1722,11 @@ def _extract_per_binding_task_status(
     """Extract per-task claim/terminal status from director events."""
     tasks: dict[str, dict[str, Any]] = {}
     for event in events:
-        task_id = str(event.get("task_id") or event.get("pm_task_id") or "").strip()
+        task_id = _resolve_task_identifier(event)
         if not task_id:
             payload = event.get("result") if isinstance(event.get("result"), dict) else None
             if isinstance(payload, dict):
-                task_id = str(payload.get("task_id") or payload.get("pm_task_id") or "").strip()
+                task_id = _resolve_task_identifier(payload)
         if not task_id:
             continue
         event_type = str(event.get("type") or "").strip()
