@@ -341,6 +341,111 @@ async def test_director_execute_projects_task_runtime_transition_failure(
     ]
 
 
+@pytest.mark.asyncio
+async def test_pm_execute_projects_task_runtime_transition_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = PMAdapter(workspace=str(tmp_path))
+
+    async def _fake_run_pm_stage(
+        fake_adapter: PMAdapter,
+        task_id: str,
+        _directive: str,
+        _input_data: dict[str, Any],
+        _context: dict[str, Any],
+    ) -> dict[str, Any]:
+        fake_adapter._record_task_runtime_transition_failure(
+            action="update_board_task",
+            task_id=task_id,
+            failure={"ok": False, "event_type": "updated", "error_code": "fact_stream_unavailable"},
+            metadata={"status": "planning"},
+        )
+        return {"success": True, "stage": "pm", "metadata": {"source": "fake"}}
+
+    monkeypatch.setattr(PMAdapter, "_run_pm_stage", _fake_run_pm_stage)
+
+    result = await adapter.execute("task-7", {"input": "plan"}, {"metadata": {}})
+
+    assert result["success"] is False
+    assert result["error_code"] == "task_runtime_transition_failure"
+    assert result["task_runtime_transition_failures"][0]["role"] == "pm"
+    assert result["metadata"]["task_runtime_transition_failures"] == result[
+        "task_runtime_transition_failures"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_qa_execute_projects_task_runtime_transition_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = QAAdapter(workspace=str(tmp_path))
+
+    def _fake_update_task_progress(
+        task_id: str,
+        phase: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        if phase == "completed":
+            adapter._record_task_runtime_transition_failure(
+                action="update_board_task",
+                task_id=task_id,
+                failure={
+                    "ok": False,
+                    "event_type": "updated",
+                    "error_code": "fact_stream_unavailable",
+                },
+                metadata={"status": "completed"},
+            )
+
+    async def _fake_call_role_llm(
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return {
+            "content": json.dumps(
+                {
+                    "passed": True,
+                    "score": 100,
+                    "critical_issues": [],
+                    "major_issues": [],
+                    "warnings": [],
+                    "suggestions": [],
+                }
+            )
+        }
+
+    monkeypatch.setattr(adapter, "_update_task_progress", _fake_update_task_progress)
+    monkeypatch.setattr(
+        adapter,
+        "_run_static_review",
+        lambda _target, run_id="": {
+            "passed": True,
+            "score": 100,
+            "critical_issues": [],
+            "major_issues": [],
+            "warnings": [],
+            "suggestions": [],
+            "evidence": [],
+        },
+    )
+    monkeypatch.setattr(adapter, "_call_role_llm", _fake_call_role_llm)
+    monkeypatch.setattr(adapter, "_write_qa_report", lambda **_kwargs: tmp_path / "qa_report.json")
+    monkeypatch.setattr(adapter, "_apply_taskboard_qa_verdict", lambda **_kwargs: {"passed_marked": 0})
+
+    result = await adapter.execute("task-7", {"review_target": "project"}, {"metadata": {}})
+
+    assert result["success"] is False
+    assert result["passed"] is True
+    assert result["error_code"] == "task_runtime_transition_failure"
+    assert result["task_runtime_transition_failures"][0]["role"] == "qa"
+    assert result["metadata"]["task_runtime_transition_failures"] == result[
+        "task_runtime_transition_failures"
+    ]
+
+
 def test_role_adapter_update_board_task_rejects_terminal_status_shortcut(tmp_path: Path) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
 

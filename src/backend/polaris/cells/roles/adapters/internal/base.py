@@ -277,6 +277,47 @@ class BaseRoleAdapter(RoleOrchestrationAdapter):
     def _reset_task_runtime_transition_failures(self) -> None:
         self._task_runtime_transition_failures.clear()
 
+    def _with_task_runtime_transition_failure_evidence(
+        self,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Project recorded TaskRuntime transition failures into a role result."""
+
+        failures = self._task_runtime_transition_failure_evidence()
+        if not failures:
+            return result
+        signal = {
+            "code": "task_runtime_transition_failure",
+            "severity": "error",
+            "detail": "TaskRuntime transition evidence reported failed execution-event append.",
+            "failure_count": len(failures),
+            "role": self.role_id,
+        }
+        existing_signals_raw = result.get("decision_signals")
+        existing_signals = (
+            [dict(item) for item in existing_signals_raw if isinstance(item, dict)]
+            if isinstance(existing_signals_raw, list)
+            else []
+        )
+        metadata_raw = result.get("metadata")
+        metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+        metadata["task_runtime_transition_failures"] = failures
+
+        return {
+            **result,
+            "success": False,
+            "error": str(result.get("error") or "task_runtime_transition_failure"),
+            "error_code": str(result.get("error_code") or "task_runtime_transition_failure"),
+            "failure_stage": str(result.get("failure_stage") or "task_runtime_transition"),
+            "control_plane_failure_code": "task_runtime_transition_failure",
+            "control_plane_failure_stage": "task_runtime_transition",
+            "task_runtime_transition_failed": True,
+            "task_runtime_transition_failures": failures,
+            "decision_signals": [*existing_signals, signal],
+            "metadata": metadata,
+            "qa_required_for_final_verdict": True,
+        }
+
     def _update_task_progress(
         self,
         task_id: str,

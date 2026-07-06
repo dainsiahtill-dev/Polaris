@@ -229,12 +229,15 @@ class PMAdapter(
         context: dict[str, Any],
     ) -> dict[str, Any]:
         """执行 PM 任务."""
+        self._reset_task_runtime_transition_failures()
         stage = str(input_data.get("stage", "pm")).strip().lower()
         directive = str(input_data.get("input", "")).strip()
 
         if stage == "architect":
-            return await self._run_architect_stage(task_id, directive)
-        return await self._run_pm_stage(task_id, directive, input_data, context)
+            result = await self._run_architect_stage(task_id, directive)
+        else:
+            result = await self._run_pm_stage(task_id, directive, input_data, context)
+        return self._with_task_runtime_transition_failure_evidence(result)
 
     async def _run_architect_stage(
         self,

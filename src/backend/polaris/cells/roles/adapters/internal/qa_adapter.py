@@ -238,6 +238,7 @@ class QAAdapter(BaseRoleAdapter):
         context: dict[str, Any],
     ) -> dict[str, Any]:
         """Execute QA task."""
+        self._reset_task_runtime_transition_failures()
         review_type = str(input_data.get("review_type", "quality_gate")).strip() or "quality_gate"
         target = str(input_data.get("review_target") or input_data.get("input") or "Project quality gate").strip()
 
@@ -326,7 +327,7 @@ class QAAdapter(BaseRoleAdapter):
             )
 
             self._update_task_progress(task_id, "completed")
-            return {
+            return self._with_task_runtime_transition_failure_evidence({
                 "success": bool(review_result.get("passed")),
                 "stage": "qa",
                 "review_type": review_type,
@@ -340,7 +341,7 @@ class QAAdapter(BaseRoleAdapter):
                 "artifacts": [str(report_path)],
                 "taskboard_qa_update": taskboard_update,
                 "content_length": len(raw_content),
-            }
+            })
 
         except (RuntimeError, ValueError) as exc:
             run_id = str(context.get("run_id") or "").strip() if isinstance(context, dict) else ""
@@ -374,7 +375,7 @@ class QAAdapter(BaseRoleAdapter):
                 context=context,
             )
             self._update_task_progress(task_id, "completed")
-            return {
+            return self._with_task_runtime_transition_failure_evidence({
                 "success": bool(finalized.get("passed")),
                 "stage": "qa",
                 "review_type": review_type,
@@ -388,7 +389,7 @@ class QAAdapter(BaseRoleAdapter):
                 "artifacts": [str(report_path)],
                 "taskboard_qa_update": taskboard_update,
                 "error": str(exc),
-            }
+            })
 
     async def _call_role_llm(
         self,
