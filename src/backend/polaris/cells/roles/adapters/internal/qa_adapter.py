@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+from polaris.cells.runtime.task_runtime.public.evidence import task_row_execution_event_failure
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.process.command_executor import CommandExecutionService
 from polaris.kernelone.storage import resolve_runtime_path
@@ -532,6 +533,14 @@ class QAAdapter(BaseRoleAdapter):
                         )
                         summary["skipped"] += 1
                         continue
+                    if _record_qa_task_runtime_execution_event_failure(
+                        summary,
+                        task_id=task_id,
+                        action="mark_passed",
+                        transition_result=transition_result,
+                    ):
+                        summary["skipped"] += 1
+                        continue
                     summary["passed_marked"] += 1
                     continue
 
@@ -552,6 +561,14 @@ class QAAdapter(BaseRoleAdapter):
                         )
                         summary["skipped"] += 1
                         continue
+                    if _record_qa_task_runtime_execution_event_failure(
+                        summary,
+                        task_id=task_id,
+                        action="fail_after_rework_exhausted",
+                        transition_result=transition_result,
+                    ):
+                        summary["skipped"] += 1
+                        continue
                     summary["failed"] += 1
                 else:
                     transition_result = self.task_runtime.reopen_task_row(
@@ -567,6 +584,14 @@ class QAAdapter(BaseRoleAdapter):
                             reason="task_runtime_reopen_missing_row",
                             transition_result={},
                         )
+                        summary["skipped"] += 1
+                        continue
+                    if _record_qa_task_runtime_execution_event_failure(
+                        summary,
+                        task_id=task_id,
+                        action="reopen_for_rework",
+                        transition_result=transition_result,
+                    ):
                         summary["skipped"] += 1
                         continue
                     summary["reopened"] += 1
@@ -1754,3 +1779,25 @@ def _record_qa_task_runtime_transition_failure(
             "transition_result": dict(transition_result or {}),
         }
     )
+
+
+def _record_qa_task_runtime_execution_event_failure(
+    summary: dict[str, Any],
+    *,
+    task_id: int,
+    action: str,
+    transition_result: dict[str, Any],
+) -> bool:
+    """Record TaskRuntime ledger append failure evidence from a row transition."""
+
+    execution_failure = task_row_execution_event_failure(transition_result)
+    if execution_failure is None:
+        return False
+    _record_qa_task_runtime_transition_failure(
+        summary,
+        task_id=task_id,
+        action=action,
+        reason="task_runtime_execution_event_append_failed",
+        transition_result=execution_failure,
+    )
+    return True

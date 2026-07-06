@@ -125,6 +125,66 @@ class _QaRowProjectionOnlyTaskBoard:
         raise AssertionError("QA verdict routing must use update_task_row()")
 
 
+class _QaExecutionEventFailureTaskBoard(_QaRowProjectionOnlyTaskBoard):
+    def __init__(self, rows: list[dict[str, Any]], *, fail_action: str) -> None:
+        super().__init__(rows)
+        self.fail_action = fail_action
+
+    def reopen_task_row(
+        self,
+        task_id: Any,
+        *,
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        return self._with_execution_event_failure("reopen", super().reopen_task_row(task_id, reason=reason, metadata=metadata))
+
+    def update_task_row(
+        self,
+        task_id: Any,
+        *,
+        status: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        return self._with_execution_event_failure(
+            "update",
+            super().update_task_row(task_id, status=status, metadata=metadata),
+        )
+
+    def fail_task_row_after_rework_exhausted(
+        self,
+        task_id: Any,
+        *,
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+        source: str = "",
+    ) -> dict[str, Any] | None:
+        return self._with_execution_event_failure(
+            "fail_after_rework_exhausted",
+            super().fail_task_row_after_rework_exhausted(
+                task_id,
+                reason=reason,
+                metadata=metadata,
+                source=source,
+            ),
+        )
+
+    def _with_execution_event_failure(
+        self,
+        action: str,
+        result: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if action != self.fail_action or result is None:
+            return result
+        failed_result = dict(result)
+        failed_result["execution_event"] = {
+            "ok": False,
+            "event_type": "task_runtime.execution",
+            "error_code": "append_failed",
+        }
+        return failed_result
+
+
 # ---------------------------------------------------------------------------
 # Coercion helpers
 # ---------------------------------------------------------------------------
@@ -318,6 +378,125 @@ class TestTaskboardQaVerdict:
                 "transition_result": {},
             }
         ]
+
+    def test_execution_event_append_failure_is_not_counted_as_qa_pass(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        task_runtime = _QaExecutionEventFailureTaskBoard(
+            [
+                {
+                    "id": 10,
+                    "status": "completed",
+                    "metadata": {
+                        "adapter_result": {
+                            "qa_required_for_final_verdict": True,
+                            "qa_passed": None,
+                        }
+                    },
+                }
+            ],
+            fail_action="update",
+        )
+        adapter._task_runtime = cast(Any, task_runtime)
+
+        summary = adapter._apply_taskboard_qa_verdict(
+            review_result={
+                "passed": True,
+                "score": 95,
+                "critical_issues": [],
+            },
+            context={"run_id": "qa-run"},
+        )
+
+        assert summary["evaluated"] == 1
+        assert summary["passed_marked"] == 0
+        assert summary["skipped"] == 1
+        assert summary["task_runtime_transition_failures"] == [
+            {
+                "success": False,
+                "task_id": 10,
+                "action": "mark_passed",
+                "reason": "task_runtime_execution_event_append_failed",
+                "transition_result": {
+                    "ok": False,
+                    "event_type": "task_runtime.execution",
+                    "error_code": "append_failed",
+                },
+            }
+        ]
+
+    def test_execution_event_append_failure_is_not_counted_as_qa_reopen(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        task_runtime = _QaExecutionEventFailureTaskBoard(
+            [
+                {
+                    "id": 11,
+                    "status": "completed",
+                    "metadata": {
+                        "adapter_result": {
+                            "qa_required_for_final_verdict": True,
+                            "qa_rework_retry_count": 0,
+                            "qa_rework_max_retries": 3,
+                        }
+                    },
+                }
+            ],
+            fail_action="reopen",
+        )
+        adapter._task_runtime = cast(Any, task_runtime)
+
+        summary = adapter._apply_taskboard_qa_verdict(
+            review_result={
+                "passed": False,
+                "score": 40,
+                "critical_issues": ["integration failed"],
+            },
+            context={"run_id": "qa-run"},
+        )
+
+        assert summary["evaluated"] == 1
+        assert summary["reopened"] == 0
+        assert summary["skipped"] == 1
+        assert summary["task_runtime_transition_failures"][0]["action"] == "reopen_for_rework"
+        assert summary["task_runtime_transition_failures"][0]["reason"] == (
+            "task_runtime_execution_event_append_failed"
+        )
+
+    def test_execution_event_append_failure_is_not_counted_as_qa_exhausted_failure(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        task_runtime = _QaExecutionEventFailureTaskBoard(
+            [
+                {
+                    "id": 12,
+                    "status": "completed",
+                    "metadata": {
+                        "adapter_result": {
+                            "qa_required_for_final_verdict": True,
+                            "qa_rework_retry_count": 2,
+                            "qa_rework_max_retries": 3,
+                        }
+                    },
+                }
+            ],
+            fail_action="fail_after_rework_exhausted",
+        )
+        adapter._task_runtime = cast(Any, task_runtime)
+
+        summary = adapter._apply_taskboard_qa_verdict(
+            review_result={
+                "passed": False,
+                "score": 20,
+                "critical_issues": ["integration failed"],
+            },
+            context={"run_id": "qa-run"},
+        )
+
+        assert summary["evaluated"] == 1
+        assert summary["failed"] == 0
+        assert summary["skipped"] == 1
+        assert summary["task_runtime_transition_failures"][0]["action"] == "fail_after_rework_exhausted"
+        assert summary["task_runtime_transition_failures"][0]["reason"] == (
+            "task_runtime_execution_event_append_failed"
+        )
 
 
 class TestSafeInt:

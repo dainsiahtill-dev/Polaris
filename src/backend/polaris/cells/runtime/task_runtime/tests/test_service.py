@@ -441,6 +441,90 @@ def test_complete_execution_fails_closed_on_execution_event_append_failure(
     assert completed["task"]["status"] == "completed"
 
 
+def test_fail_execution_fails_closed_on_execution_event_append_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="fail with append evidence")
+    claimed = service.claim_execution(
+        created["id"],
+        worker_id="director",
+        role_id="director",
+        run_id="run-fail-append-failure",
+        selection_source="unit",
+    )
+    assert claimed["success"] is True
+
+    def fail_append_event(_command: object) -> object:
+        raise RuntimeError("fact stream unavailable")
+
+    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+
+    failed = service.fail_execution(
+        created["id"],
+        session_id=str(claimed["session"]["session_id"]),
+        error="director execution failed",
+    )
+
+    assert failed["success"] is False
+    assert failed["reason"] == "execution_event_append_failed"
+    assert failed["requested_reason"] == "failed"
+    assert failed["failure_class"] == "ledger_append_failed"
+    assert failed["state_mutation_applied"] is True
+    assert failed["execution_event"] == {
+        "ok": False,
+        "event_type": "failed",
+        "published": False,
+        "error": "fact stream unavailable",
+    }
+    assert failed["task"]["status"] == "failed"
+
+
+def test_suspend_execution_fails_closed_on_execution_event_append_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="suspend with append evidence")
+    claimed = service.claim_execution(
+        created["id"],
+        worker_id="director",
+        role_id="director",
+        run_id="run-suspend-append-failure",
+        selection_source="unit",
+    )
+    assert claimed["success"] is True
+
+    def fail_append_event(_command: object) -> object:
+        raise RuntimeError("fact stream unavailable")
+
+    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+
+    suspended = service.suspend_execution(
+        created["id"],
+        session_id=str(claimed["session"]["session_id"]),
+        reason="factory_stage_timeout",
+    )
+
+    assert suspended["success"] is False
+    assert suspended["reason"] == "execution_event_append_failed"
+    assert suspended["requested_reason"] == "suspended"
+    assert suspended["failure_class"] == "ledger_append_failed"
+    assert suspended["state_mutation_applied"] is True
+    assert suspended["execution_event"] == {
+        "ok": False,
+        "event_type": "suspended",
+        "published": False,
+        "error": "fact stream unavailable",
+    }
+    assert suspended["task"]["status"] == "pending"
+
+
 def test_task_runtime_service_wakes_ready_waiters_on_create(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
