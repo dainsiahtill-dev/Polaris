@@ -1,0 +1,548 @@
+ ▐▛███▜▌   Claude Code v2.1.199
+▝▜█████▛▘  Fable 5 · Claude Max
+  ▘▘ ▝▝    ~/Documents/polaris
+
+ ▎ Fable 5 is back.
+ ▎ Until July 7, you can use up to 50% of your plan's weekly usage limit on Fable 5. If you hit your limit, you can continue on Fable 5 with usage credits. Fable 5 draws down usage faster than Opus 4.8. Learn more
+
+❯ /model                                                                        
+  ⎿  Set model to Fable 5 and saved as your default for new sessions
+
+❯ /effort                                                                       
+  ⎿  Set effort level to ultracode (this session only): xhigh + dynamic workflow
+     orchestration
+
+❯ /effort                                                                       
+  ⎿  Set effort level to max (this session only): Maximum capability with deepest
+     reasoning. May use excessive tokens resulting in long response times or
+     overthinking. Use sparingly for the hardest tasks.
+
+❯ /effort                                                                       
+  ⎿  Set effort level to ultracode (this session only): xhigh + dynamic workflow
+     orchestration
+
+❯ 基于最近其他agent（bench）的记忆总结，我们的Polaris架构底座问题到底出在哪，怎 
+  么进行彻底完善或重构： memory/MEMORY.md                                       
+
+● 我先读一下仓库里的 memory/MEMORY.md 和相关记忆文件，摸清 bench agent
+  们沉淀了哪些平台问题，然后用多 agent workflow 做系统性归因和重构方案设计。
+
+  Read 1 file, listed 1 directory (ctrl+o to expand)
+
+● 这是 bench agent 的详细作战日志（L2-08 r32→r59+）。我继续读完剩余部分。
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● Workflow(Verify 8 systemic architecture-defect patterns distilled from bench
+          memory against current code, with adversarial verification)
+  ⎿  /workflows to view dynamic workflow runs
+
+❯ 然后安排几个专家去审计这次未提交的所有代码都集中在哪一块，深度思考，并彻底完  
+  善我们的Polaris底座/架构。                                                    
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Workflow(Expert panel audits the 77-file uncommitted control-plane diff:
+          cartography, correctness, architecture fit, commit strategy, test
+          baseline)
+  ⎿  /workflows to view dynamic workflow runs
+
+  Ran 1 shell command (ctrl+o to expand)
+✻ Baked for 8m 30s
+
+✻ Claude resuming /loop wakeup (Jul 3 4:45pm)
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+✻ Brewed for 50s
+
+● Dynamic workflow "Verify 8 systemic architecture-defect patterns distilled
+from bench memory against current code, with adversarial verification" completed
+· 28m 58s
+
+  Read 1 file, ran 6 shell commands (ctrl+o to expand)
+
+✻ Cogitated for 2m 0s
+
+● Dynamic workflow "Expert panel audits the 77-file uncommitted control-plane
+diff: cartography, correctness, architecture fit, commit strategy, test
+baseline" completed · 42m 22s
+
+  Ran 1 shell command, recalled 1 memory, wrote 3 memories (ctrl+o to expand)
+
+● 记忆索引超限，先按 hook 要求压缩到 17KB 以下。
+
+  Ran 1 shell command, recalled 1 memory, wrote 1 memory (ctrl+o to expand)
+● 记忆索引已压到 13.9KB。现在交付最终综合报告。
+
+  ---
+  Polaris 底座诊断与彻底重构方案
+
+  审计方法：以 bench agent 的 r32–r78 作战日志（memory/MEMORY.md，46 轮
+  L2-08、每轮一个平台缺陷）为线索，两组 workflow 共 22 个 agent（约 310 万
+  tokens）在当前代码里逐项坐实——8 个架构假设每个都配了独立对抗验证 agent，未提交
+  diff 由 5 位专家 + 完备性批评家复核，关键 bug 均已实证复现（非推测）。
+
+  ---
+  一、结论先行
+
+  底座的病不是"哪个模块写错了"，而是"事实没有一等公民身份"。
+  工具调用、任务状态、预算、诊断、写权限、失败分类——这六种贯穿全链路的核心事实，
+  都没有单一权威表示：每一层用自己的
+  dict/字符串重新投影一遍，于是每条层间边界都是一座缺陷工厂。bench agent 46
+  轮修了 ~40 个缺陷、轮均一个新根因，本质是在沿着管道逐个边界排雷——这个速率不会
+  收敛，因为打补丁的速度赶不上边界组合爆炸的速度。
+
+  两条元根因：
+  1. 边界数 × 手写投影 = 缺陷率。一次 Director 调用穿过 10+
+  层，每层手抄字段。仅为了让 tool_dispatch_dropped 这一个失败类活着到达 Run
+  Ledger，就动了 49 处代码、16 个文件、8 个架构层。
+  2. 事实以散文形态流动。诊断是 f-string，scope 从 prompt
+  文本里正则挖，证据覆盖靠关键词命中，失败分类靠子串匹配。全链路 ~393 
+  个正则点在反复"重新解析发射时本就已知的结构"。
+
+  好消息：方向是对的，端点已经是 typed 的（TaskBoundaryVerdictV1、ToolCallLifecy
+  cleReceiptV1、RepairDiagnosticV1、import 拓扑的 137
+  个机械围栏测试都真实有效），烂的是中间的散文接缝。重构不是推倒重来，是把已有的
+  typed 契约从端点推进到全程。
+
+  ---
+  二、底座问题到底出在哪：8 类结构缺陷（全部对抗验证通过）
+
+  1. 工具调用生命周期没有规范表示 —— confirmed
+
+  一个 native write_file 调用从 provider 到 Run Ledger 要经过 13 种内存表示（8
+  个 typed 类 + 5 种裸 dict），无任何对象全程流动。tool_calls vs
+  native_tool_calls 别名在 8 个文件 10 处各自兼容；一个调用里工具名有 7 
+  种可接受的 key 形态、参数有 12 键别名表；同一个"调用数"被 7 
+  个独立字段分别重算（正是 r62/r63 日志计数=1、truthlog=0 的分裂类）。lifecycle
+  receipt 在 4+ 处各自合成，其中 2 处是手写 dict 孪生，可与 typed dataclass
+  漂移。stream 路径是整套平行实现（自己的 guard 拷贝、自己的 regex，还把 typed
+  decision 退化回 dict）。今天仍有 ≥4 个静默丢弃点：delivery-mode 过滤器对非
+  Director 角色/混合工具面仍可静默丢写（r64 补丁只救了 Director+纯写面）、scope
+  正则过滤、任何新别名 key、execute_method.py:3582 的子串匹配。bench 用 14
+  轮（r51–r64）修一条链，就是因为每个边界都得单独发现单独补。
+
+  2. 任务执行状态多真相多写者 —— confirmed
+
+  一个任务的状态存在 6 种持久化表示（task row JSON、session
+  JSON、metadata.runtime_execution 副本 + 7 个顶层 metadata
+  重复字段、execution.jsonl、terminal events、每实例内存缓存）。20 
+  个静态实例化点各持独立缓存和进程内锁——而 transaction_factory.py:149
+  每次工具调用新建一个 service，运行时缓存域实际无界。4 套状态词汇并存（一处
+  spelling 里 success 有两种写法）。全部写入是 last-write-wins 原子改名，0 
+  版本号、0 CAS。bench 的 5 个串行 reconcile 补丁（claim 前对账、terminal
+  单调守卫、heartbeat/suspend 对账、reload-before-write、factory
+  软超时）都在，但 reload-before-write 只覆盖 11 个缓存读者中的 2 个——r76"claim
+  后 2 秒被 factory 挂起、写入被 session guard 拦"这类事故换个入口还会再来。
+
+  3. 预算/超时策略散落 —— confirmed
+
+  Director 调用路径上有 ~21 个独立的设置/推导/封顶机制，7 
+  个层都能改写同一个数字；一个策略值被扇出成 ~12 个 context key + ~12 个
+  metadata key；3 个 key 集不同的 budget reader（分别扫 43 和 51 条路径）；数字
+  7000 有 4 个互不知晓的常量（其中一个是 floor 其他是 cap）；min(x,128000) 手抄
+  4 处；相关 env var 67 个。这就是为什么"retry 继承 128k 预算"这同一个缺陷被
+  bench 在 5 条不同路径上重新发现了 5 
+  次（r38/r40/r45/r55/r71）——而审计还找到了第 6 
+  个未修的同类：factory_stage_executor.py:118 的 45.0s 阈值（r46 只降了 CE
+  那份拷贝）。
+
+  4. 质量扫描 = 正则启发式 + 字符串诊断 —— confirmed
+
+  扫描层（artifact_quality.py 1731 行、16 个 scan 函数全部返回 list[str]、40
+  种散文格式）→ 门层（quality_gate.py 5700+ 行、62 个正则点，其中 8 模式库 + 15
+  个提取器纯粹为了把诊断字符串重新解析回路径/符号）→ 修复内核（275 个正则、108
+  处 diagnostic.message 重解析、规则靠子串 terms 匹配）。三层合计 ~393 
+  个正则点在重推导发射时已知的结构。glob 守卫 frozenset("*?[]{}")
+  存在三份独立拷贝（同一个 bug 修了两遍就是证据）。一个项目一个战役就产出 7+ 
+  类扫描器误报，每类都曾把整条任务链打死。对抗验证的重要修正：RepairDiagnosticV1
+  的 typed 通道在 public 契约里已经存在（Plan/RunDirectorRepairCommandV1.diagno
+  stics），缺陷在于发射端把 typed 数据压扁成散文的那道接缝。
+
+  5. 写权限范围：事后字符串过滤，无跨任务移交 —— confirmed
+
+  target_files = 写权限 这个契约本身是对的（收敛方向），但执法方式是在每个消费点
+  对诊断字符串做事后过滤：仅 quality_gate.py 内就有 ~10 个执法点、全仓 ≥8 
+  种"这个任务拥有哪些文件"的实现、≥12 个参与 scope 判定的正则、从 prompt
+  散文里挖目标文件的提取器有 10 个生产调用点。每来一类新诊断就得打一个新 defer
+  补丁（bench 打了 6 个）。更根本的：deferred 
+  记录零消费者——被推迟的越权目标只是落进
+  metadata，没有任何机制把它派回属主任务（r77 的 scoreWish
+  死局：测试任务的正确修复在别人拥有的 src/index.js 里，prompt
+  里同时出现三条互相矛盾的 scope 指令）。file_ownership_ledger 存在却没有任何
+  scope guard 使用它。8 个还在红的 legacy 测试就是新旧合同未迁移的活债。
+
+  6. 上下文/证据组装：命令式拼装 + 关键词审计 —— confirmed
+
+  证据覆盖检查靠 ~119 个文本 needle（has_target_files 被裸字符串 src/
+  满足、has_failure_feedback 被单词 error 满足）+ 54 条同义词表 + 19-key 
+  白名单；结构化 payload 探测要扫 6 容器×5 键。上下文提升 helper 只有 2 个 
+  opt-in 调用点，transaction 层 retry
+  在消息列表上操作、结构化证据已丢、目标文件靠重新解析 prompt 文本。同类 point
+  patch 在 git 历史里已提交过 ≥4 次（bbd273e3 等），这个战役又打了 3
+  个（r65/r66/r72）——模式清晰：这个层每季度都会再吃同类补丁。context_audit.py
+  本身已膨胀到 2463 行启发式。
+
+  7. 错误分类逐层重推导 —— confirmed
+
+  18 个 UPPERCASE failure_class 字面量散落 10 个文件手工赋值，零共享 enum；3 
+  个同名 FailureClass enum（1 个零生产引用的死代码）；~20 
+  个平行分类字段；result_mapping.py 把整个失败空间坍缩成 2 个 
+  error_code；bench_gates 用 12 处 json.dumps + 33
+  个子串判断从文本里反推失败类。做了个思想实验级验证：如果今天出现第二个失败类（
+  llm_timeout/session_not_active/coverage_gap），它到不了 Run Ledger——又得像
+  tool_dispatch_dropped 那样手工打通 8 层。
+
+  8. 治理：散文补机械化缺口 + flag 蔓延 —— partially confirmed
+
+  必读治理散文 ~166KB + 480 个治理文件；533 个 KERNELONE_ flag 只有 7 
+  个有文档；43 个 2000+ 行文件（factory_stage_executor.py 7085
+  行、quality_gate.py 5726、execute_method.py 4418）；12
+  个已知失败测试每轮人工重新甄别。但对抗验证纠正了假设的一半：import
+  拓扑/repair-kernel 边界的机械门（137 个围栏测试 + catalog gate +
+  CI）真实有效——46 轮 bench 修复没有一个违反 §0.1 就是明证。真正缺的是行为级 
+  invariant（scope、证据完整性、预算语义、lifecycle 投影）没有机械化到
+  TransactionKernel 提交点，只能靠散文 + bench 逐轮撞。
+
+  ---
+  三、未提交代码审计（这次的 77→78 个文件）
+
+  集中在哪
+
+  一句话：全部集中在"执行控制面"——roles.kernel 的 LLM 调用→事务→完成投影链，加上
+  Director adapter 的 scope/质量门。 18 个功能簇：
+
+  簇: LLM caller（roles/kernel/llm_caller，7 文件）
+  规模: +611
+  内容: required-tool retry、预算/超时 ceiling、证据白名单（r38–r72）
+  ────────────────────────────────────────
+  簇: 事务内核（transaction + decoder/controller，10 文件）
+  规模: +147
+  内容: 别名归一、write-only 面强制物化、零回执 fail-closed（r50–r64）
+  ────────────────────────────────────────
+  簇: 内核完成/投影（6 文件）
+  规模: +374
+  内容: lifecycle receipt、TaskBoundary 硬门（r49–r59）
+  ────────────────────────────────────────
+  簇: Director adapter（4 生产 + 2 测试）
+  规模: +1288
+  内容: scope 交集/defer、预算 cap、失败类保真（r33–r77）
+  ────────────────────────────────────────
+  簇: 卫星簇
+  规模: ~+1100
+  内容: run_ledger TaskBoundary、repair kernel 4 条 JS 规则、kernelone
+    扫描器修复、task_runtime 状态一致性、factory 超时、instances 探针、bench
+    runner 投影
+  ────────────────────────────────────────
+  簇: 测试
+  规模: ~+2600
+  内容: 占新增行 43%
+
+  有一个外来簇：4 个文件的 LR-212 ContextOSTraceEvent
+  别名清理，属于另一个战役（legacy residual ledger），应单独提交。其余每一个
+  hunk 都能对上 r 编号的记忆条目。
+
+  质量裁决
+
+  净收敛（convergent），应保留：lifecycle receipt fail-closed 链、TaskBoundary
+  权威完成门、factory 软超时（r77 从 1 个文件涨到 12 个文件的直接功臣）、repair
+  kernel 新规则经逐项核验完全符合 §0.1（runtime-owned、绑既有
+  source_tool、coverage-first、无旁路）。卫生全绿（ruff/format/mypy/UTF-8/无跨
+  cell internal import）。
+
+  但专家组实证复现了这批代码自身的 bug，提交前必须修：
+
+  - BLOCKER：claim_execution 的 terminal-session
+  对账（service.py:496-519）会对被重置为 READY 的重试行抛出未捕获的 
+  InvalidTaskStateTransitionError 直穿 Director claim 路径，且会把刻意重试的
+  PENDING 任务永久翻回 failed（两种模式均已复现）。
+  - HIGH · required_tools 上下文污染：_append_context_required_tool 原地改写
+  context_override，同 turn 后续的 finalization
+  调用（tool_choice=none、零工具）继承 required_tools=["write_file"] → coverage
+  硬失败 + 对一个物理上不可能调工具的调用发起 retry 风暴，在写入已成功之后把
+  turn 搞挂（已复现）。
+  - HIGH · 物化 scope 精确交集废掉多文件 runtime repair：ESM 修复计划需要 3
+  个文件、交集后只剩 1 个 → 整个修复被跳过。当前工作树 2 个 factory
+  characterization 测试红就是这个 diff 
+  造成的（专家间对"pre-existing"的分歧已由批评家裁决：8+2 个失败是 diff 造成，4
+  个是既有的）。
+  - HIGH · unresolved_local_imports 对 TS NodeNext 误报：正确的 import 
+  './x.js'（解析到 x.ts）被判
+  UNRESOLVED_LOCAL_IMPORT（已复现）——这是又一台刚造好的"缺陷工厂"（第 4
+  类模式在新代码里的复发）。
+  - HIGH · 无人评审的 r78 新函数
+  fill_content_only_write_file_from_remaining_targets：缺 file 参数的写调用被自
+  动指派给"唯一剩余目标"，重试/重复内容可能写错文件且带成功回执。
+  - MEDIUM 若干：stream 路径没有 lifecycle receipt（r56
+  修复只盖非流式，流式掉写仍会被伪装成 INCOMPLETE_MATERIALIZATION）；completion
+  receipt 会覆写合法的 ask_user/followup 错误；7000 token cap 使 >7k
+  的文件永远写不出（还与 120s 超时互相矛盾）；Director
+  只要有缺失目标就强制物化，ANALYZE_ONLY 对 Director 不可达（把 6/19 审计修掉的
+  fail-open 风险反向复活了一半）；PreWriteGuard 把合法的 JS var
+  重声明当语法错拦写。
+
+  提交策略（重要且紧急）
+
+  6.7k 行未提交、无版本保护的工作躺在一个有 openhands 自动提交器游荡的仓库里（近
+  50 个 "Clarify..." 提交都是它的），本身就是最大风险。同时 bench agent 
+  此刻活跃（审计期间 r78 完成、r79 开跑、quality_gate.py 被实时编辑），所以：
+
+  1. 先协调，不动手：等 bench agent 当轮收官（或由用户叫停），期间任何人不碰
+  src/backend。
+  2. 修复后分组提交（顺序）：① LR-212 四文件单独提交；② kernelone 扫描器/验证器
+  + instances 探针（独立、绿）；③ task_runtime——先修 BLOCKER；④ roles.kernel
+  大簇 + result_mapping + adapter + run_ledger + bench
+  runner（强耦合必须同提交），同一提交内迁移/xfail 那 8 个 legacy 合同测试，否则
+  main 直接红；⑤ factory 超时——先修 scope 交集导致的 2 个红测；⑥ repair kernel
+  规则 + language guidance。
+  3. 修 required_tools 污染、TS NodeNext 误报、fill-content
+  误指派应随各自簇一起进。
+
+  ---
+  四、彻底重构蓝图：七个工作流
+
+  统一原则：每种核心事实一次产生、typed、按引用流动；一切下游只做只读投影。
+  每个工作流都按仓库既有法则走 shadow-run/暗跑再切换，L2-08 + L2 floor 作为回归
+  oracle。
+
+  WS1 · ToolCallEnvelope（对应缺陷 1）：在 extract_native_tool_calls
+  处一次铸造带 envelope_id 的规范信封，生命周期是 append-only
+  状态迁移（observed→decoded→authorized|filtered(reason)→dispatched→effect_recei
+  pt→committed）；所有过滤点（delivery filter、scope
+  filter、幻觉丢弃）必须记录显式 filtered 迁移而非匿名 anomaly
+  dict；ToolCallLifecycleReceiptV1 变成信封迁移的纯投影（删 2 个手写孪生 + 7
+  个独立计数器）；stream 路径改调共享管道。三波推进：加性字段零行为变更 →
+  计数改为派生 → 删 10 个别名点 + execute_method 子串匹配。
+
+  WS2 · 任务状态事件溯源（缺陷 2）：execution ledger 升级为唯一事实源（带
+  expected-sequence CAS 追加），task row / session
+  文件全部变只读投影；写路径收敛到单一
+  owner（进程间用文件锁仲裁）。落地后删除全部 5 个 reconcile 
+  补丁。注意验证者指出的依赖：CAS 追加要动 AppendFactEventCommandV1 这个共享
+  kernelone 契约。这是迁移风险最高的一项，排后。（BLOCKER bug
+  先按战术修，不等重构。）
+
+  WS3 · ExecutionBudgetPolicy（缺陷 3）：一张 (role, turn_kind, model_class)
+  声明式表，turn_kind 由唯一分类器产出（替换现有 3 个字符串检测器）；每 turn 在
+  roles.kernel 边界解析一次，产出带 provenance 的冻结
+  ResolvedBudgetV1，全链路只读它；优先级语义只编码一次（ceiling 恒 min、deadline
+  恒最高）。退役 ~10 个 env var、4 个 7000 常量、~12 个 key
+  拼写。这是收益/风险比最高的一项——新路径想再继承
+  128k，除非加表行，物理上做不到。
+
+  WS4 · Typed 诊断端到端（缺陷 4）：所有 _scan_* 返回 typed
+  QualityIssue（code/path/span/symbol/confidence∈{parser,heuristic}），字符串仅
+  作展示投影；复用已存在的 RepairDiagnosticV1 public 通道，用 CLAUDE.md 已强制的
+  compare_director_repair_shadow_run 机制逐 cell 切换；修复规则按 code
+  匹配、message_terms 降级为只能产 advisory 的兜底；有真解析器的地方（node
+  --check/tsc/py_compile）直接产 typed 事实。删掉 3 层里那 ~100
+  个"重新解析自家散文"的正则。
+
+  WS5 · ScopeAuthority + 属主移交协议（缺陷 5）：单一服务提供
+  resolve_write_scope(task_id, turn) 与 classify_targets(diagnostics, 
+  task_id)，底座用已存在但闲置的 file_ownership_ledger + PM 任务图；quality_gate
+  的 ~10 个执法点、8 个 materialization 交集点、kernel 的 prompt
+  挖掘全部收敛到它。deferred 目标升级为一等 OwnershipHandoffRequestV1——经 task 
+  market 重派给属主任务（补上 r77 修复缺失的 owner-routing 后半，替代绕道
+  CE）。8 个 legacy 测试在此工作流中正式迁移到新合同。这是解开 bench
+  当前前沿死局的钥匙。
+
+  WS6 · ContextContract + FailureEvidenceV1（缺陷 6、7）：每个 (role, turn_kind)
+  一份声明式上下文契约（typed 证据槽 + 槽级来源解析器），一个组装器同时产出
+  prompt 投影和结构化
+  AIRequest.context（两者不可能再分叉）；子调用声明为父契约的 delta 而非 dict
+  拼接；证据覆盖只校验结构化槽引用，119 个 needle 降级为遥测。约束：必须扩展 
+  ADR-0071 的 ContextHandoffPack，禁止造第二套 handoff 
+  schema。失败分类侧：FailureEvidenceV1 入驻 run_ledger.public，合并 18
+  个字面量为一个 enum（同时收编 3 个 FailureClass enum），每个检测器在检测点写
+  ledger 事件，result_mapping 原样透传（删
+  2-值坍缩），删全部子串嗅探器。验收标准就用那个思想实验：新失败类零补丁直达 Run
+  Ledger。
+
+  WS7 · 治理机械化（缺陷 8）：把行为 invariant 抬到 import
+  围栏已在的机械高度——TransactionKernel 单一提交点做
+  scope/证据/预算的一次性校验（先暗跑再执法）；12 个 legacy 失败测试改为机读
+  quarantine manifest（CI 对新失败和意外通过都报警，终结逐轮人工甄别——注意与"禁
+  止只改测试制造通过"的法则书面调和）；KERNELONE_ flag 建 typed registry +
+  围栏测试（registry 外读 env 即红），533 个 flag
+  变成可审计、可日落的配置。大文件拆解（7085/5726/4418
+  行三巨头）作为伴随工程持续做。
+
+  排期：P0＝修 5 个 bug + 分组提交 + 迁移 legacy 测试（一切的前提）→ P1＝WS3 +
+  WS1 第一波 + WS7 的 quarantine/flag registry（低风险高杠杆，bench 立刻受益）→
+  P2＝WS4 + WS6 失败分类（typed 事实类工作，端点现成）→ P3＝WS5（解 bench
+  前沿）→ P4＝WS2（最重状态迁移）→ P5＝WS1 二三波 + WS6 全量上下文契约。
+
+  ---
+  五、当前硬约束
+
+  - bench agent 正在活跃作业（r79 in flight，r77 实例后端 PID 76150 仍在 50066
+  端口）：本次审计全程只读，我没有动任何源码；上述 P0 必须与它协调窗口，否则撞车
+  + 打脏它的 backend 指纹。
+  - 它记忆里已宣告的下一步（r77 exporter scope 授权）其实已半落地——fail-closed
+  门在工作树里，缺的是 owner-routing 后半，这正好是 WS5 的第一张骨牌。
+  - 完整证据留存：架构审计 /tmp/claude-1000/.../tasks/w04a3s45t.output，diff
+  审计 .../wqr081p89.output；核心结论已写入我的持久记忆。
+
+  需要我做的下一步（任选）：等 bench agent 收官后执行 P0（修 5 个 bug +
+  分组提交），或先把这份蓝图落成 src/backend/docs/governance/
+  下的正式治理文档（需等当轮 bench 结束再写入仓库）。
+
+✻ Worked for 57m 44s
+
+✻ Claude resuming /loop wakeup (Jul 3 5:09pm)
+
+● 该唤醒是此前设置的兜底心跳——两个 workflow
+  的结果我已在上一条消息中完成读取与综合，最终报告已交付完毕（底座 8
+  类结构缺陷诊断、未提交 diff 审计结论与提交策略、七工作流 P0–P5
+  重构蓝图），核心结论也已写入持久记忆。无需重复输出。
+
+  当前状态保持不变：bench agent 仍在活跃作业（r79 in
+  flight），我未做任何源码编辑。等待用户对下一步的指示——是待 bench 收官后执行
+  P0（修 5 个实证 bug + 分组提交 + 迁移 8 个 legacy
+  测试），还是先把蓝图落成治理文档。
+
+✻ Cooked for 17s
+
+❯ 彻底全量落地                                                                  
+
+● 收到——彻底全量落地。执行顺序：P0（修 5 个实证 bug → 迁移 legacy 测试 → 
+  分组提交保住 6.7k 行成果）→ P1 起逐个工作流落地。先侦察当前战场状态（bench
+  是否在跑、工作树是否又漂移、bug 位点现状）。
+
+  Ran 1 shell command (ctrl+o to expand)
+
+❯ Goal set: 完成：Polaris 底座诊断与彻底重构方案                                
+
+● Workflow(Fix 5 empirically-verified bugs in the uncommitted control-plane
+          diff, each in disjoint files with regressions)
+  ⎿  /workflows to view dynamic workflow runs
+  Read 1 file, ran 3 shell commands (ctrl+o to expand)
+  ⎿  Loaded CLAUDE.md
+
+✻ Crunched for 6m 46s
+
+● Dynamic workflow "Fix 5 empirically-verified bugs in the uncommitted
+control-plane diff, each in disjoint files with regressions" completed · 24m 45s
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Workflow(export const meta = { … +83 lines)
+  ⎿  Error: Invalid workflow script: Script parse error: Unexpected token 
+     (68:315). Workflow scripts must be plain JavaScript — TypeScript syntax 
+     (type annotations like `: string[]`, interfaces, generics) fails to parse.
+
+● Workflow(Wave 2: migrate 8 legacy write-contract tests, fix stream lifecycle
+          receipt gap + ask_user clobber, fix PreWriteGuard JS redeclaration
+          false positive)
+  ⎿  /workflows to view dynamic workflow runs
+
+  Ran 3 shell commands (ctrl+o to expand)
+✻ Churned for 4m 44s
+
+✻ Claude resuming /loop wakeup (Jul 3 6:10pm)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Write(/tmp/claude-1000/-home-dains-Documents-polaris/6e004ec5-d40d-461d-a04a-4
+       122fc2ca797/scratchpad/sweep1.sh)
+  ⎿  Wrote 28 lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Write(src/backend/docs/blueprints/EXECUTION_BUDGET_POLICY_BLUEPRINT_20260703.m
+       d)
+  ⎿  Wrote 58 lines to src/backend/docs/blueprints/EXECUTION_BUDGET_POLICY_
+     BLUEPRINT_20260703.md
+       1 # Execution Budget Policy Blueprint (2026-07-03)
+       3 ## 1. 问题陈述（量化证据）
+       5 2026-07-03 双 workflow 对抗审计（基于 bench r32-r78 战役证据 + 
+         立机制**分散设置，**7 个层**均可改写同一数值：
+       7 - 3 个 key 集不同的 context 扫描 reader：`llm_caller/helpers.py`
+         payload）、`kernel/transaction_factory.py`（镜像 helpers）。
+         py`（cap）、`request_preparer.py`（cap）、`retry_escalation_poli
+       9 - `min(value, 128_000)` 硬钳制手抄 ≥4 处；12 种 timeout key 拼写
+      10 - `KERNELONE_DIRECTOR_FORCED_WRITE_OUTPUT_TOKENS` 由 2 份独立实
+         00+60 vs 1800）
+     … +104 lines (ctrl+o to expand)
+
+● WS3 blueprint 已落。继续写 WS7 治理机械化的 blueprint：
+
+● Write(src/backend/docs/blueprints/GOVERNANCE_MECHANIZATION_BLUEPRINT_20260703.
+       md)
+  ⎿  Wrote 56 lines to src/backend/docs/blueprints/GOVERNANCE_MECHANIZATION
+     _BLUEPRINT_20260703.md
+      1 # Governance Mechanization Blueprint: Quarantine Manifest + Flag 
+      2 
+      4 
+         个 architecture fence tests + catalog gate——是有效的，本蓝图把其
+      6 
+        中波动（322p/4f → 371p/8f → 318p/12f → 321p/12f → 380p/8f），每轮
+        tation_guard_soft_mode.py` 5 个、`test_tool_batch_executor_decisi
+        名 + 2 个 PM TASK-3 期望漂移。没有机器可读的隔离清单，新回归和既
+      8 2. **Flag 蔓延无登记**：backend 源码中 **533 个**唯一 `KERNELONE_
+        文档；执行路径根部 140 个。每个 bench 修复平均新增 flag，无 owner
+     … +79 lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+✻ Baked for 3m 38s
+
+● Background command "Run full validation sweep part 1 in background" completed
+(exit code 0)
+
+  Committed 767e588d, a8e98cda, bf2568cb, de784507, read 1 file, ran 10 shell commands (ctrl+o to expand)
+
+● Dynamic workflow "Wave 2: migrate 8 legacy write-contract tests, fix stream
+lifecycle receipt gap + ask_user clobber, fix PreWriteGuard JS redeclaration
+false positive" completed · 33m 15s
+  Ran 1 shell command (ctrl+o to expand)
+
+● Workflow(P1: implement ExecutionBudgetPolicy Phase 1 and governance
+          mechanization (quarantine gate + flag registry) per blueprints)
+  ⎿  /workflows to view dynamic workflow runs
+
+● Write(src/backend/docs/blueprints/TOOL_CALL_ENVELOPE_WAVE1_BLUEPRINT_20260703.
+       md)
+  ⎿  Wrote 50 lines to src/backend/docs/blueprints/TOOL_CALL_ENVELOPE_WAVE1
+     _BLUEPRINT_20260703.md
+      1 # ToolCallEnvelope Wave 1 Blueprint (2026-07-03)
+      3 ## 1. 问题陈述（量化证据）
+      5 2026-07-03 对抗审计确认：一个 provider-native 工具调用从 wire 到 
+        Run Ledger 经过 **13 种内存表示**（8 typed + 5 raw dict），无任何
+        0 处各自兼容；工具名 7 种 key 形态、参数 12 键别名表；同一"调用数
+        ifecycle receipt 在 ≥4 处独立合成（含 2 处手写 dict 孪生）；strea
+        通，因为每个边界都要单独发现、单独补。
+      6 
+      8 
+        的只读投影**。
+     … +73 lines (ctrl+o to expand)
+
+● Write(src/backend/docs/blueprints/FAILURE_EVIDENCE_TAXONOMY_BLUEPRINT_20260703
+       .md)
+  ⎿  Wrote 48 lines to src/backend/docs/blueprints/FAILURE_EVIDENCE_TAXONOM
+     Y_BLUEPRINT_20260703.md
+       1 # FailureEvidenceV1 Taxonomy Blueprint (2026-07-03)
+       3 ## 1. 问题陈述（量化证据）
+       5 2026-07-03 对抗审计确认：失败分类在每层由字符串重推导——保住单个 
+          层**；**18 个 UPPERCASE failure_class 字面量**在 10 个文件手工
+         ernelone/audit/failure_envelope.py` 死代码零生产引用、`roles/ker
+         n 侧一份）；~20 个平行 ad-hoc 分类字段；`roles/runtime/public/re
+         es 用 12 处 json.dumps + ~33 个子串判断反推失败类。思想实验实证
+         ge_gap`）**到不了 Run Ledger**——每类都需重打 8 层补丁。
+       7 ## 2. 目标态架构
+       9 ```
+     … +82 lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+✻ Cogitated for 8m 52s
+
+● Dynamic workflow "P1: implement ExecutionBudgetPolicy Phase 1 and governance
+mechanization (quarantine gate + flag registry) per blueprints" completed · 22m 
+14s
+  ⎿  You've hit your session limit · resets 9:10pm (Asia/Taipei)
+     /usage-credits to finish what you’re working on.
+
+✻ Cogitated for 1h 33m 23s

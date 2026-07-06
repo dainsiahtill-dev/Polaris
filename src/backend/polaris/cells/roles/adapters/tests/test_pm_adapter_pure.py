@@ -151,6 +151,29 @@ class _RowWriteOnlyTaskRuntime:
     def task_exists(self, task_id: Any) -> bool:
         return self.get_task(task_id) is not None
 
+    def cancel_task_row_for_deduplication(
+        self,
+        task_id: Any,
+        *,
+        primary_task_id: int,
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+        source: str = "",
+    ) -> dict[str, Any] | None:
+        for row in self._rows:
+            if str(row.get("id") or "") != str(task_id or ""):
+                continue
+            row["status"] = "cancelled"
+            current_metadata = row.get("metadata")
+            merged_metadata = dict(current_metadata) if isinstance(current_metadata, dict) else {}
+            merged_metadata.update(dict(metadata or {}))
+            merged_metadata["dedup_merged_into"] = int(primary_task_id or 0)
+            merged_metadata["dedup_reason"] = str(reason or "").strip()
+            merged_metadata["dedup_source"] = str(source or "").strip()
+            row["metadata"] = merged_metadata
+            return dict(row)
+        return None
+
     def create(self, **_kwargs: Any) -> None:
         raise AssertionError("PM task creation must use create_task_row()")
 
@@ -177,6 +200,106 @@ class _DependencyUpdateMissingTaskRuntime(_RowWriteOnlyTaskRuntime):
         if blocked_by is not None:
             return None
         return super().update_task_row(task_id, status=status, blocked_by=blocked_by, metadata=metadata, **_kwargs)
+
+
+class _ExecutionEventFailureTaskRuntime(_RowWriteOnlyTaskRuntime):
+    def __init__(self, *, fail_action: str) -> None:
+        super().__init__()
+        self.fail_action = fail_action
+
+    def create_task_row(
+        self,
+        *,
+        subject: str,
+        description: str = "",
+        blocked_by: list[int] | None = None,
+        metadata: dict[str, Any] | None = None,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        result = self._with_execution_event_failure(
+            "create_board_task",
+            super().create_task_row(
+                subject=subject,
+                description=description,
+                blocked_by=blocked_by,
+                metadata=metadata,
+                **_kwargs,
+            ),
+        )
+        if result is None:
+            raise AssertionError("create_task_row must return a row projection")
+        return result
+
+    def update_task_row(
+        self,
+        task_id: Any,
+        *,
+        status: str | None = None,
+        blocked_by: list[int] | None = None,
+        metadata: dict[str, Any] | None = None,
+        **_kwargs: Any,
+    ) -> dict[str, Any] | None:
+        action = "resolve_dependencies" if blocked_by is not None else "deduplicate_contract_match"
+        return self._with_execution_event_failure(
+            action,
+            super().update_task_row(
+                task_id,
+                status=status,
+                blocked_by=blocked_by,
+                metadata=metadata,
+                **_kwargs,
+            ),
+        )
+
+    def _with_execution_event_failure(
+        self,
+        action: str,
+        result: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if action != self.fail_action or result is None:
+            return result
+        failed_result = dict(result)
+        failed_result["execution_event"] = {
+            "ok": False,
+            "event_type": "task_runtime.execution",
+            "error_code": "append_failed",
+        }
+        return failed_result
+
+
+class _DedupCancelExecutionEventFailureTaskRuntime(_RowWriteOnlyTaskRuntime):
+    def __init__(self, *, missing_row: bool = False, failed_event: bool = True) -> None:
+        super().__init__()
+        self.missing_row = missing_row
+        self.failed_event = failed_event
+
+    def cancel_task_row_for_deduplication(
+        self,
+        task_id: Any,
+        *,
+        primary_task_id: int,
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+        source: str = "",
+    ) -> dict[str, Any] | None:
+        result = super().cancel_task_row_for_deduplication(
+            task_id,
+            primary_task_id=primary_task_id,
+            reason=reason,
+            metadata=metadata,
+            source=source,
+        )
+        if self.missing_row:
+            return None
+        if not self.failed_event or result is None:
+            return result
+        failed_result = dict(result)
+        failed_result["execution_event"] = {
+            "ok": False,
+            "event_type": "task_runtime.execution",
+            "error_code": "append_failed",
+        }
+        return failed_result
 
 
 # ---------------------------------------------------------------------------
@@ -2275,6 +2398,286 @@ class TestCreateBoardTasksRows:
                 "reason": "task_runtime_dependency_update_missing_row",
                 "blocked_by": [1],
                 "transition_result": {},
+            }
+        ]
+
+    def test_create_execution_event_failure_is_returned_as_transition_evidence(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        runtime = _ExecutionEventFailureTaskRuntime(fail_action="create_board_task")
+        adapter._task_runtime = cast(Any, runtime)
+
+        created = adapter._create_board_tasks(
+            [
+                {
+                    "id": "TASK-1",
+                    "title": "Create model",
+                    "description": "Create the domain model",
+                    "goal": "model",
+                    "scope": "src/model.py",
+                    "scope_paths": ["src/model.py"],
+                    "target_files": ["src/model.py"],
+                    "steps": ["write model"],
+                    "acceptance": ["model exists"],
+                    "depends_on": [],
+                }
+            ]
+        )
+
+        assert created[0]["task_runtime_transition_failures"] == [
+            {
+                "success": False,
+                "task_id": 1,
+                "action": "create_board_task",
+                "reason": "task_runtime_execution_event_append_failed",
+                "blocked_by": [],
+                "transition_result": {
+                    "ok": False,
+                    "event_type": "task_runtime.execution",
+                    "error_code": "append_failed",
+                },
+            }
+        ]
+
+    def test_dedup_match_execution_event_failure_is_returned_as_transition_evidence(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        runtime = _ExecutionEventFailureTaskRuntime(fail_action="deduplicate_contract_match")
+        runtime.create_task_row(
+            subject="Create model",
+            description="Create the domain model",
+            metadata={"goal": "model"},
+        )
+        adapter._task_runtime = cast(Any, runtime)
+
+        created = adapter._create_board_tasks(
+            [
+                {
+                    "id": "TASK-1",
+                    "title": "Create model",
+                    "description": "Create the domain model",
+                    "goal": "model",
+                    "scope": "src/model.py",
+                    "scope_paths": ["src/model.py"],
+                    "target_files": ["src/model.py"],
+                    "steps": ["write model"],
+                    "acceptance": ["model exists"],
+                    "depends_on": [],
+                }
+            ]
+        )
+
+        assert created[0]["id"] == 1
+        assert created[0]["task_runtime_transition_failures"][0]["action"] == "deduplicate_contract_match"
+        assert created[0]["task_runtime_transition_failures"][0]["reason"] == (
+            "task_runtime_execution_event_append_failed"
+        )
+
+    def test_dependency_execution_event_failure_is_returned_as_transition_evidence(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        runtime = _ExecutionEventFailureTaskRuntime(fail_action="resolve_dependencies")
+        adapter._task_runtime = cast(Any, runtime)
+
+        created = adapter._create_board_tasks(
+            [
+                {
+                    "id": "TASK-1",
+                    "title": "Create model",
+                    "description": "Create the domain model",
+                    "goal": "model",
+                    "scope": "src/model.py",
+                    "scope_paths": ["src/model.py"],
+                    "target_files": ["src/model.py"],
+                    "steps": ["write model"],
+                    "acceptance": ["model exists"],
+                    "depends_on": [],
+                },
+                {
+                    "id": "TASK-2",
+                    "title": "Create engine",
+                    "description": "Create the engine",
+                    "goal": "engine",
+                    "scope": "src/engine.py",
+                    "scope_paths": ["src/engine.py"],
+                    "target_files": ["src/engine.py"],
+                    "steps": ["write engine"],
+                    "acceptance": ["engine exists"],
+                    "depends_on": ["TASK-1"],
+                },
+            ]
+        )
+
+        assert created[1]["blocked_by"] == [1]
+        assert created[1]["task_runtime_transition_failures"] == [
+            {
+                "success": False,
+                "task_id": 2,
+                "action": "resolve_dependencies",
+                "reason": "task_runtime_execution_event_append_failed",
+                "blocked_by": [1],
+                "transition_result": {
+                    "ok": False,
+                    "event_type": "task_runtime.execution",
+                    "error_code": "append_failed",
+                },
+            }
+        ]
+
+    def test_dedup_cancel_execution_event_failure_attaches_to_primary_row(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        runtime = _DedupCancelExecutionEventFailureTaskRuntime()
+        runtime.create_task_row(subject="Create model", description="old", metadata={"goal": "model"})
+        runtime.create_task_row(subject="Create model", description="new", metadata={"goal": "model"})
+        adapter._task_runtime = cast(Any, runtime)
+
+        created = adapter._create_board_tasks(
+            [
+                {
+                    "id": "TASK-1",
+                    "title": "Create model",
+                    "description": "Create the domain model",
+                    "goal": "model",
+                    "scope": "src/model.py",
+                    "scope_paths": ["src/model.py"],
+                    "target_files": ["src/model.py"],
+                    "steps": ["write model"],
+                    "acceptance": ["model exists"],
+                    "depends_on": [],
+                }
+            ]
+        )
+
+        assert created[0]["id"] == 2
+        assert created[0]["task_runtime_transition_failures"] == [
+            {
+                "success": False,
+                "task_id": 1,
+                "action": "deduplicate_cancel",
+                "reason": "task_runtime_execution_event_append_failed",
+                "blocked_by": [],
+                "transition_result": {
+                    "ok": False,
+                    "event_type": "task_runtime.execution",
+                    "error_code": "append_failed",
+                },
+            }
+        ]
+
+    def test_dedup_cancel_missing_row_attaches_to_primary_row(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        runtime = _DedupCancelExecutionEventFailureTaskRuntime(missing_row=True)
+        runtime.create_task_row(subject="Create model", description="old", metadata={"goal": "model"})
+        runtime.create_task_row(subject="Create model", description="new", metadata={"goal": "model"})
+        adapter._task_runtime = cast(Any, runtime)
+
+        created = adapter._create_board_tasks(
+            [
+                {
+                    "id": "TASK-1",
+                    "title": "Create model",
+                    "description": "Create the domain model",
+                    "goal": "model",
+                    "scope": "src/model.py",
+                    "scope_paths": ["src/model.py"],
+                    "target_files": ["src/model.py"],
+                    "steps": ["write model"],
+                    "acceptance": ["model exists"],
+                    "depends_on": [],
+                }
+            ]
+        )
+
+        assert created[0]["id"] == 2
+        assert created[0]["task_runtime_transition_failures"] == [
+            {
+                "success": False,
+                "task_id": 1,
+                "action": "deduplicate_cancel",
+                "reason": "task_runtime_dedup_cancel_returned_none",
+                "blocked_by": [],
+                "transition_result": {},
+            }
+        ]
+
+    def test_dedup_cancel_success_does_not_attach_transition_failure(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        runtime = _DedupCancelExecutionEventFailureTaskRuntime(failed_event=False)
+        runtime.create_task_row(subject="Create model", description="old", metadata={"goal": "model"})
+        runtime.create_task_row(subject="Create model", description="new", metadata={"goal": "model"})
+        adapter._task_runtime = cast(Any, runtime)
+
+        created = adapter._create_board_tasks(
+            [
+                {
+                    "id": "TASK-1",
+                    "title": "Create model",
+                    "description": "Create the domain model",
+                    "goal": "model",
+                    "scope": "src/model.py",
+                    "scope_paths": ["src/model.py"],
+                    "target_files": ["src/model.py"],
+                    "steps": ["write model"],
+                    "acceptance": ["model exists"],
+                    "depends_on": [],
+                }
+            ]
+        )
+
+        assert created[0]["id"] == 2
+        assert "task_runtime_transition_failures" not in created[0]
+
+    def test_pm_stage_surfaces_dedup_cancel_execution_event_failure_signal(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        runtime = _DedupCancelExecutionEventFailureTaskRuntime()
+        runtime.create_task_row(subject="Create model", description="old", metadata={"goal": "model"})
+        runtime.create_task_row(subject="Create model", description="new", metadata={"goal": "model"})
+        adapter._task_runtime = cast(Any, runtime)
+
+        async def fake_call_role_llm(_message: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+            return {
+                "response": json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "TASK-1",
+                                "title": "Create model",
+                                "description": "Create the domain model",
+                                "goal": "model",
+                                "scope": "src/model.py",
+                                "scope_paths": ["src/model.py"],
+                                "target_files": ["src/model.py"],
+                                "steps": ["write model"],
+                                "acceptance": ["model exists"],
+                                "depends_on": [],
+                            }
+                        ]
+                    }
+                )
+            }
+
+        adapter._call_role_llm = fake_call_role_llm
+
+        result = asyncio.run(
+            adapter._run_pm_stage(
+                "pm-task",
+                "Create model",
+                {},
+                {},
+            )
+        )
+
+        signals = result["quality_gate"]["signals"]
+        assert any(item["code"] == "pm.dedup.cancelled_rows" and item["detail"] == "cancelled_rows=1" for item in signals)
+        failure_signals = [item for item in signals if item["code"] == "pm.dedup.execution_event_failure"]
+        assert failure_signals == [
+            {
+                "code": "pm.dedup.execution_event_failure",
+                "severity": "warning",
+                "detail": "task_id=1; reason=task_runtime_execution_event_append_failed",
+                "task_id": 1,
+                "transition_result": {
+                    "ok": False,
+                    "event_type": "task_runtime.execution",
+                    "error_code": "append_failed",
+                },
             }
         ]
 

@@ -287,9 +287,10 @@ class PMAdapter(
     ) -> dict[str, Any]:
         """运行 PM 阶段."""
         self._update_task_progress(task_id, "planning")
-        self._deduplicate_existing_board_tasks()
-        tasks_snapshot = self._list_board_task_rows()
         quality_signals: list[dict[str, Any]] = []
+        dedup_cancelled_rows = self._deduplicate_existing_board_tasks()
+        quality_signals.extend(self._task_runtime_dedup_quality_signals(dedup_cancelled_rows))
+        tasks_snapshot = self._list_board_task_rows()
 
         # Phase 2.1: Meta-planning - analyze directive before task generation
         directive_analysis: dict[str, Any] | None = None

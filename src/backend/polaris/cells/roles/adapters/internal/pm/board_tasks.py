@@ -8,6 +8,8 @@ from __future__ import annotations
 from difflib import SequenceMatcher
 from typing import Any
 
+from polaris.cells.runtime.task_runtime.public.evidence import task_row_execution_event_failure
+
 from ._protocol import _PMAdapterMixinBase
 
 
@@ -42,6 +44,79 @@ def _with_task_runtime_transition_failure(
     return projected
 
 
+def _task_runtime_transition_failures(row: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_failures = row.get("task_runtime_transition_failures")
+    return [dict(item) for item in raw_failures if isinstance(item, dict)] if isinstance(raw_failures, list) else []
+
+
+def _append_task_runtime_transition_failures(
+    row: dict[str, Any],
+    failures: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not failures:
+        return row
+    projected = dict(row)
+    projected["task_runtime_transition_failures"] = _task_runtime_transition_failures(projected) + [
+        dict(item) for item in failures
+    ]
+    return projected
+
+
+def _with_task_runtime_execution_event_failure(
+    row: dict[str, Any],
+    *,
+    task_id: int,
+    action: str,
+    blocked_by: list[int] | None = None,
+) -> dict[str, Any]:
+    """Annotate a row projection when its TaskRuntime execution fact failed."""
+
+    execution_failure = task_row_execution_event_failure(row)
+    if execution_failure is None:
+        return row
+    return _with_task_runtime_transition_failure(
+        row,
+        task_id=task_id,
+        action=action,
+        reason="task_runtime_execution_event_append_failed",
+        blocked_by=blocked_by,
+        transition_result=execution_failure,
+    )
+
+
+def _dedup_primary_task_id(row: dict[str, Any]) -> int:
+    raw_metadata = row.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+    try:
+        return int(metadata.get("dedup_merged_into") or metadata.get("dedup_primary_task_id") or 0)
+    except (RuntimeError, ValueError, TypeError):
+        return 0
+
+
+def _with_dedup_cancel_metadata(row: dict[str, Any], *, primary_task_id: int) -> dict[str, Any]:
+    projected = dict(row)
+    raw_metadata = projected.get("metadata")
+    metadata: dict[str, Any] = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+    metadata.setdefault("dedup_merged_into", int(primary_task_id or 0))
+    metadata.setdefault("dedup_reason", "pm_duplicate_subject")
+    metadata.setdefault("dedup_source", "pm_adapter")
+    projected["metadata"] = metadata
+    return projected
+
+
+def _dedup_failures_by_primary_id(cancelled_rows: list[dict[str, Any]]) -> dict[int, list[dict[str, Any]]]:
+    failures_by_primary_id: dict[int, list[dict[str, Any]]] = {}
+    for cancelled_row in cancelled_rows:
+        primary_task_id = _dedup_primary_task_id(cancelled_row)
+        if primary_task_id <= 0:
+            continue
+        failures = _task_runtime_transition_failures(cancelled_row)
+        if not failures:
+            continue
+        failures_by_primary_id.setdefault(primary_task_id, []).extend(failures)
+    return failures_by_primary_id
+
+
 class PMBoardTaskMixin(_PMAdapterMixinBase):
     """PM 任务板 mixin：在 TaskBoard 上创建/去重/匹配任务，并回填依赖关系。"""
 
@@ -59,7 +134,8 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
         by_id: dict[str, int] = {}
         board_task_ids_by_contract_index: list[int] = []
         created_task_ids: set[int] = set()
-        self._deduplicate_existing_board_tasks()
+        dedup_cancelled_rows = self._deduplicate_existing_board_tasks()
+        dedup_failures_by_primary_id = _dedup_failures_by_primary_id(dedup_cancelled_rows)
         existing_tasks = self._list_board_task_rows()
         signature_index: dict[str, list[dict[str, Any]]] = {}
         title_index: dict[str, list[dict[str, Any]]] = {}
@@ -136,7 +212,13 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
                 merged_metadata["pm_deduplicated"] = True
                 merged_metadata["pm_last_contract_subject"] = subject
                 task_row = self.task_runtime.update_task_row(matched_id, metadata=merged_metadata)
-                if task_row is None:
+                if isinstance(task_row, dict):
+                    task_row = _with_task_runtime_execution_event_failure(
+                        task_row,
+                        task_id=matched_id,
+                        action="deduplicate_contract_match",
+                    )
+                else:
                     task_row = self.task_runtime.get_task(matched_id)
                 if task_row is None:
                     task_row = self.task_runtime.create_task_row(
@@ -144,11 +226,21 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
                         description=description,
                         metadata=metadata,
                     )
+                    task_row = _with_task_runtime_execution_event_failure(
+                        task_row,
+                        task_id=int(task_row.get("id") or 0),
+                        action="create_board_task",
+                    )
             else:
                 task_row = self.task_runtime.create_task_row(
                     subject=subject,
                     description=description,
                     metadata=metadata,
+                )
+                task_row = _with_task_runtime_execution_event_failure(
+                    task_row,
+                    task_id=int(task_row.get("id") or 0),
+                    action="create_board_task",
                 )
                 _index_task(task_row)
 
@@ -159,7 +251,12 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
                 by_id[token] = board_task_id
             if board_task_id not in created_task_ids:
                 created_task_ids.add(board_task_id)
-                created.append(dict(task_row))
+                created.append(
+                    _append_task_runtime_transition_failures(
+                        dict(task_row),
+                        dedup_failures_by_primary_id.get(board_task_id, []),
+                    )
+                )
 
         for idx, contract in enumerate(task_contracts):
             dependencies = contract.get("depends_on")
@@ -188,6 +285,13 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
                             reason="task_runtime_dependency_update_missing_row",
                             blocked_by=blocked_by,
                         )
+                else:
+                    refreshed_row = _with_task_runtime_execution_event_failure(
+                        refreshed_row,
+                        task_id=board_task_id,
+                        action="resolve_dependencies",
+                        blocked_by=blocked_by,
+                    )
                 if refreshed_row is not None:
                     for position, row in enumerate(created):
                         if int(row.get("id") or 0) == board_task_id:
@@ -196,7 +300,8 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
 
         return created
 
-    def _deduplicate_existing_board_tasks(self) -> None:
+    def _deduplicate_existing_board_tasks(self) -> list[dict[str, Any]]:
+        cancelled_rows: list[dict[str, Any]] = []
         tasks = self._list_board_task_rows()
         grouped: dict[str, list[dict[str, Any]]] = {}
         for row in tasks:
@@ -218,7 +323,7 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
                 status = str(row.get("status") or "").strip().lower()
                 if status not in {"pending", "blocked", "in_progress", "failed"}:
                     continue
-                self.task_runtime.cancel_task_row_for_deduplication(
+                cancel_result = self.task_runtime.cancel_task_row_for_deduplication(
                     task_id,
                     primary_task_id=primary_id,
                     reason="pm_duplicate_subject",
@@ -227,6 +332,49 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
                     },
                     source="pm_adapter",
                 )
+                if isinstance(cancel_result, dict):
+                    cancelled_rows.append(
+                        _with_task_runtime_execution_event_failure(
+                            cancel_result,
+                            task_id=task_id,
+                            action="deduplicate_cancel",
+                        )
+                    )
+                    continue
+                cancelled_rows.append(
+                    _with_task_runtime_transition_failure(
+                        _with_dedup_cancel_metadata(row, primary_task_id=primary_id),
+                        task_id=task_id,
+                        action="deduplicate_cancel",
+                        reason="task_runtime_dedup_cancel_returned_none",
+                    )
+                )
+        return cancelled_rows
+
+    def _task_runtime_dedup_quality_signals(self, cancelled_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        signals: list[dict[str, Any]] = []
+        if cancelled_rows:
+            signals.append(
+                {
+                    "code": "pm.dedup.cancelled_rows",
+                    "severity": "info",
+                    "detail": f"cancelled_rows={len(cancelled_rows)}",
+                }
+            )
+        for cancelled_row in cancelled_rows:
+            for failure in _task_runtime_transition_failures(cancelled_row):
+                task_id = int(failure.get("task_id") or cancelled_row.get("id") or 0)
+                reason = str(failure.get("reason") or "task_runtime_transition_failed").strip()
+                signals.append(
+                    {
+                        "code": "pm.dedup.execution_event_failure",
+                        "severity": "warning",
+                        "detail": f"task_id={task_id}; reason={reason}",
+                        "task_id": task_id,
+                        "transition_result": dict(failure.get("transition_result") or {}),
+                    }
+                )
+        return signals
 
     @staticmethod
     def _canonical_text(value: str) -> str:
