@@ -195,11 +195,7 @@ class ScopeAuthorityDecision:
             "owner_found_count": owner_found_count,
             "owner_unknown_count": owner_unknown_count,
             "recommended_routes": sorted(
-                {
-                    route
-                    for item in requests
-                    if (route := _clean_token(item.get("recommended_route")))
-                }
+                {route for item in requests if (route := _clean_token(item.get("recommended_route")))}
             ),
             "deferred": True,
         }
@@ -238,11 +234,7 @@ def scope_authority_decision_summary(
         payload: Mapping[str, Any] = decision.to_dict()
     elif isinstance(decision, Mapping):
         nested = decision.get("scope_authority")
-        payload = (
-            nested
-            if isinstance(nested, Mapping) and "task_declared_write_targets" not in decision
-            else decision
-        )
+        payload = nested if isinstance(nested, Mapping) and "task_declared_write_targets" not in decision else decision
     else:
         payload = {}
     bounded_limit = max(0, int(limit))
@@ -479,23 +471,91 @@ def _handoff_candidate_values(payload: Mapping[str, Any], key: str) -> tuple[Any
 
 
 def _handoff_requests_from_scope_payload(payload: Mapping[str, Any], key: str) -> tuple[dict[str, Any], ...]:
+    """Read-only extractor for typed handoff-request rows from a scope payload.
+
+    ``payload`` may be a full repair payload, a task-boundary scope-filter
+    payload, or a nested scope-authority projection. Candidates are scanned in
+    priority order:
+
+    1. ``task_boundary_scope_filter[key]``
+    2. ``task_boundary_scope_filter.scope_authority[key]``
+    3. ``payload[key]``
+    4. ``payload.scope_authority[key]``
+
+    Each candidate must be a ``list`` or ``tuple`` of ``Mapping`` rows. Any
+    non-Mapping row is ignored (string parsing is never used to recover
+    evidence). Within a candidate, duplicate Mapping rows are deduplicated in a
+    stable, order-preserving way. An empty ``list`` or ``tuple`` at a higher
+    priority is treated as explicit-empty evidence and prevents fallthrough to
+    lower-priority candidates.
+    """
+
     candidates: list[Any] = []
     scope_filter_raw = payload.get("task_boundary_scope_filter")
     if isinstance(scope_filter_raw, Mapping):
         candidates.extend(_handoff_candidate_values(scope_filter_raw, key))
     candidates.extend(_handoff_candidate_values(payload, key))
 
-    empty_list_seen = False
+    empty_sequence_seen = False
     for candidate in candidates:
-        if not isinstance(candidate, list):
+        if not isinstance(candidate, (list, tuple)) or isinstance(candidate, (str, bytes, bytearray)):
             continue
-        requests = tuple(dict(item) for item in candidate if isinstance(item, Mapping) and item)
+        requests, had_mapping_row = _dedupe_mapping_rows(candidate)
         if requests:
             return requests
-        empty_list_seen = True
-    if empty_list_seen:
+        if had_mapping_row or len(candidate) == 0:
+            empty_sequence_seen = True
+    if empty_sequence_seen:
         return ()
     return ()
+
+
+def _dedupe_mapping_rows(candidate: list[Any] | tuple[Any, ...]) -> tuple[tuple[dict[str, Any], ...], bool]:
+    """Return order-preserved unique Mapping rows from a candidate container.
+
+    Returns ``(unique_rows, had_mapping_row)``. ``had_mapping_row`` is ``True``
+    if the candidate contained at least one Mapping entry, even when all rows
+    deduplicated away; this lets callers distinguish explicit-empty containers
+    from payloads that never carried row-shaped evidence.
+
+    Deduplication uses a stable string fingerprint for each row so it never
+    raises on rows carrying nested lists, dicts, or unhashable values. The
+    fingerprint is purely an identity/equality check for repeated rows; no
+    string parsing is used to recover evidence.
+    """
+
+    unique: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    had_mapping_row = False
+    for item in candidate:
+        if not isinstance(item, Mapping) or not item:
+            continue
+        had_mapping_row = True
+        fingerprint = _mapping_row_fingerprint(item)
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        unique.append(dict(item))
+    return tuple(unique), had_mapping_row
+
+
+def _mapping_row_fingerprint(row: Mapping[str, Any]) -> str:
+    """Return a stable string fingerprint for a single Mapping row."""
+
+    parts: list[str] = []
+    for key in sorted(row.keys(), key=lambda value: str(value)):
+        parts.append(f"{key!r}:{_fingerprint_value(row[key])}")
+    return "{" + ",".join(parts) + "}"
+
+
+def _fingerprint_value(value: Any) -> str:
+    if isinstance(value, Mapping):
+        return _mapping_row_fingerprint(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ",".join(_fingerprint_value(item) for item in value) + "]"
+    if isinstance(value, (set, frozenset)):
+        return "{" + ",".join(sorted(_fingerprint_value(item) for item in value)) + "}"
+    return repr(value)
 
 
 def _classified_handoff_requests_from_scope_payload(payload: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:

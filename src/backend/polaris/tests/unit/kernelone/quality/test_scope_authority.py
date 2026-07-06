@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from polaris.delivery.http.routers.factory import _quality_gate_owner_handoff_index
 from polaris.kernelone.quality.file_ownership_ledger import record_file_owners
@@ -232,6 +233,167 @@ def test_scope_authority_extracts_and_classifies_handoff_payloads() -> None:
     )
     assert owner_task_retry_handoff_requests_from_scope_payload(classified_only_payload) == (owned_request,)
     assert unresolved_owner_handoff_requests_from_scope_payload(classified_only_payload) == (unknown_request,)
+
+
+def test_scope_authority_accepts_tuple_handoff_payload_with_priority() -> None:
+    owned_request = {
+        "schema_version": "file-ownership-handoff-request/1",
+        "target_file": "src/index.js",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+        "owner_step_id": "PM-0001-1-S4",
+    }
+    unknown_request = {
+        "schema_version": "file-ownership-handoff-request/1",
+        "target_file": "src/missing.js",
+        "owner_found": False,
+        "recommended_route": "scope_authority_resolution",
+    }
+
+    top_level_tuple: dict[str, Any] = {
+        "ownership_handoff_requests": (owned_request, unknown_request),
+    }
+    assert ownership_handoff_requests_from_scope_payload(top_level_tuple) == (
+        owned_request,
+        unknown_request,
+    )
+    assert owner_task_retry_handoff_requests_from_scope_payload(top_level_tuple) == (owned_request,)
+    assert unresolved_owner_handoff_requests_from_scope_payload(top_level_tuple) == (unknown_request,)
+
+    nested_tuple: dict[str, Any] = {
+        "scope_authority": {
+            "ownership_handoff_requests": (owned_request, unknown_request),
+        }
+    }
+    assert ownership_handoff_requests_from_scope_payload(nested_tuple) == (
+        owned_request,
+        unknown_request,
+    )
+
+    scope_filter_priority_tuple: dict[str, Any] = {
+        "task_boundary_scope_filter": {
+            "ownership_handoff_requests": (owned_request,),
+        },
+        "ownership_handoff_requests": (owned_request, unknown_request),
+    }
+    assert ownership_handoff_requests_from_scope_payload(scope_filter_priority_tuple) == (owned_request,)
+
+
+def test_scope_authority_dedupes_repeated_handoff_rows_within_candidate() -> None:
+    owned_request = {
+        "schema_version": "file-ownership-handoff-request/1",
+        "target_file": "src/index.js",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+        "owner_step_id": "PM-0001-1-S4",
+        "owner_task_identifier_tokens": ["4", "TASK-04", "TASK-4"],
+    }
+    duplicate_owned = dict(owned_request)
+    unknown_request = {
+        "schema_version": "file-ownership-handoff-request/1",
+        "target_file": "src/missing.js",
+        "owner_found": False,
+        "recommended_route": "scope_authority_resolution",
+    }
+
+    payload: dict[str, Any] = {
+        "ownership_handoff_requests": (
+            owned_request,
+            duplicate_owned,
+            owned_request,
+            unknown_request,
+            unknown_request,
+        )
+    }
+
+    deduped = ownership_handoff_requests_from_scope_payload(payload)
+    assert deduped == (owned_request, unknown_request)
+    assert owner_task_retry_handoff_requests_from_scope_payload(payload) == (owned_request,)
+    assert unresolved_owner_handoff_requests_from_scope_payload(payload) == (unknown_request,)
+
+    list_payload: dict[str, Any] = {
+        "ownership_handoff_requests": [owned_request, duplicate_owned, unknown_request],
+    }
+    deduped_list = ownership_handoff_requests_from_scope_payload(list_payload)
+    assert deduped_list == (owned_request, unknown_request)
+
+
+def test_scope_authority_explicit_empty_tuple_or_list_blocks_fallthrough() -> None:
+    owned_request = {
+        "schema_version": "file-ownership-handoff-request/1",
+        "target_file": "src/index.js",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+        "owner_step_id": "PM-0001-1-S4",
+    }
+
+    only_empty_list: dict[str, Any] = {
+        "ownership_handoff_requests": [],
+    }
+    assert ownership_handoff_requests_from_scope_payload(only_empty_list) == ()
+    assert owner_task_retry_handoff_requests_from_scope_payload(only_empty_list) == ()
+    assert unresolved_owner_handoff_requests_from_scope_payload(only_empty_list) == ()
+
+    only_empty_tuple: dict[str, Any] = {
+        "ownership_handoff_requests": (),
+    }
+    assert ownership_handoff_requests_from_scope_payload(only_empty_tuple) == ()
+    assert owner_task_retry_handoff_requests_from_scope_payload(only_empty_tuple) == ()
+    assert unresolved_owner_handoff_requests_from_scope_payload(only_empty_tuple) == ()
+
+    nested_only_empty_tuple: dict[str, Any] = {
+        "scope_authority": {
+            "ownership_handoff_requests": (),
+            "owner_task_retry_handoff_requests": (),
+            "unresolved_owner_handoff_requests": (),
+        }
+    }
+    assert ownership_handoff_requests_from_scope_payload(nested_only_empty_tuple) == ()
+    assert owner_task_retry_handoff_requests_from_scope_payload(nested_only_empty_tuple) == ()
+    assert unresolved_owner_handoff_requests_from_scope_payload(nested_only_empty_tuple) == ()
+
+    scope_filter_only_empty_list_falls_through_to_top_tuple: dict[str, Any] = {
+        "task_boundary_scope_filter": {
+            "ownership_handoff_requests": [],
+            "scope_authority": {"ownership_handoff_requests": (owned_request,)},
+        },
+        "ownership_handoff_requests": [owned_request],
+    }
+    assert ownership_handoff_requests_from_scope_payload(scope_filter_only_empty_list_falls_through_to_top_tuple) == (
+        owned_request,
+    )
+
+
+def test_scope_authority_ignores_non_mapping_rows_in_handoff_candidates() -> None:
+    owned_request = {
+        "schema_version": "file-ownership-handoff-request/1",
+        "target_file": "src/index.js",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+        "owner_step_id": "PM-0001-1-S4",
+    }
+
+    payload: dict[str, Any] = {
+        "ownership_handoff_requests": (
+            "src/string-row-must-not-be-parsed",
+            42,
+            None,
+            owned_request,
+        )
+    }
+
+    assert ownership_handoff_requests_from_scope_payload(payload) == (owned_request,)
+
+    non_string_payload: dict[str, Any] = {
+        "ownership_handoff_requests": (
+            "src/looks-like-target-but-is-not-evidence",
+            ["src/list-row-is-not-evidence"],
+            {"target_file": "src/looks-like-target-but-is-evidence-from-mapping"},
+        )
+    }
+    assert ownership_handoff_requests_from_scope_payload(non_string_payload) == (
+        {"target_file": "src/looks-like-target-but-is-evidence-from-mapping"},
+    )
 
 
 def test_scope_authority_matches_owner_handoff_using_projected_identifier_tokens() -> None:
