@@ -4,6 +4,7 @@ from pathlib import Path
 
 from polaris.cells.roles.adapters.internal.director.quality_gate import (
     _filter_missing_workspace_file_errors_to_task_write_scope,
+    _semantic_exporter_scope_discrepancy_evidence,
     _task_boundary_scope_filter_evidence,
 )
 from polaris.kernelone.quality import artifact_quality_issues_for_errors
@@ -52,6 +53,48 @@ def test_scope_filter_evidence_includes_file_ownership_handoff_requests(tmp_path
     assert scope_authority["owner_found_count"] == 1
     assert scope_authority["owner_unknown_count"] == 1
     assert scope_authority["recommended_routes"] == ["owner_task_retry", "scope_authority_resolution"]
+
+
+def test_semantic_exporter_scope_discrepancy_projects_owner_handoff_requests(tmp_path: Path) -> None:
+    workspace = str(tmp_path)
+    record_file_owners(
+        workspace,
+        workspace,
+        [{"step_id": "S4", "target_file": "src/index.js"}],
+        "PM-0001-1",
+    )
+    scope_filter = _task_boundary_scope_filter_evidence(
+        {
+            "task_id": "PM-0001-2-step-3",
+            "target_files": ["tests/behavior.test.js"],
+        },
+        target_files=["src/index.js", "src/missing.js"],
+        reason="quality_repair_targets_outside_current_task_target_files",
+        workspace=workspace,
+        cache_root=workspace,
+    )
+
+    evidence = _semantic_exporter_scope_discrepancy_evidence(
+        task={
+            "task_id": "PM-0001-2-step-3",
+            "target_files": ["tests/behavior.test.js"],
+            "module_interface_contract": {"exports": ["scoreWish"]},
+        },
+        semantic_exporter_targets=["src/index.js"],
+        repair_target_files=["src/index.js"],
+        artifact_quality_errors=["Artifact quality scan failed: exported symbol lives outside task scope"],
+        task_scope_filter_evidence=scope_filter,
+    )
+
+    assert evidence["recommended_owner"] == "chief_engineer"
+    assert evidence["recommended_route"] == "pending_design_interface_contract"
+    assert evidence["ownership_handoff_requests"] == scope_filter["ownership_handoff_requests"]
+    assert evidence["owner_task_retry_handoff_requests"] == [scope_filter["ownership_handoff_requests"][0]]
+    assert evidence["unresolved_owner_handoff_requests"] == [scope_filter["ownership_handoff_requests"][1]]
+    assert evidence["scope_authority"] == scope_filter["scope_authority"]
+    assert evidence["triage_summary"]["ownership_handoff_request_count"] == 2
+    assert evidence["triage_summary"]["owner_task_retry_handoff_request_count"] == 1
+    assert evidence["triage_summary"]["unresolved_owner_handoff_request_count"] == 1
 
 
 def test_scope_filter_evidence_normalizes_workspace_prefixed_targets(tmp_path: Path) -> None:

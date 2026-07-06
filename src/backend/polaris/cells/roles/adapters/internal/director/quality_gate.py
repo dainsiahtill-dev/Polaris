@@ -1590,6 +1590,12 @@ def _task_boundary_scope_filter_evidence(
     }
 
 
+def _dict_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
 def _semantic_exporter_scope_discrepancy_evidence(
     *,
     task: dict[str, Any],
@@ -1601,6 +1607,15 @@ def _semantic_exporter_scope_discrepancy_evidence(
     task_interface_contract = _extract_task_interface_contract(task)
     declared_write_targets = _task_write_scope_candidates(task)[:12]
     out_of_scope_targets = _dedupe_preserve_order(semantic_exporter_targets)[:12]
+    raw_scope_authority = task_scope_filter_evidence.get("scope_authority")
+    scope_authority = dict(raw_scope_authority) if isinstance(raw_scope_authority, dict) else {}
+    ownership_handoff_requests = _dict_items(task_scope_filter_evidence.get("ownership_handoff_requests"))[:12]
+    owner_task_retry_handoff_requests = _dict_items(
+        task_scope_filter_evidence.get("owner_task_retry_handoff_requests")
+    )[:12]
+    unresolved_owner_handoff_requests = _dict_items(
+        task_scope_filter_evidence.get("unresolved_owner_handoff_requests")
+    )[:12]
     interface_delta = {
         "schema_version": "director.interface_delta.v1",
         "contract_present": bool(task_interface_contract),
@@ -1620,6 +1635,9 @@ def _semantic_exporter_scope_discrepancy_evidence(
         "macro_blueprint_regeneration_allowed": False,
         "triage_policy": "owner_task_repair_if_contract_present_else_contract_amendment",
         "reason": "semantic_exporter_owner_outside_current_task_scope",
+        "ownership_handoff_request_count": len(ownership_handoff_requests),
+        "owner_task_retry_handoff_request_count": len(owner_task_retry_handoff_requests),
+        "unresolved_owner_handoff_request_count": len(unresolved_owner_handoff_requests),
     }
     receipt = DirectorInterfaceDiscrepancyReceiptV1(
         task_id=str(task.get("id") or task.get("task_id") or task.get("external_task_id") or "materialization-task"),
@@ -1648,6 +1666,10 @@ def _semantic_exporter_scope_discrepancy_evidence(
             "semantic_exporter_owner_targets": out_of_scope_targets,
             "task_declared_write_targets": declared_write_targets,
             "task_scope_filter": task_scope_filter_evidence,
+            "scope_authority": scope_authority,
+            "ownership_handoff_requests": ownership_handoff_requests,
+            "owner_task_retry_handoff_requests": owner_task_retry_handoff_requests,
+            "unresolved_owner_handoff_requests": unresolved_owner_handoff_requests,
             "artifact_quality_errors": artifact_quality_errors[:8],
             "task_interface_contract_keys": sorted(str(key) for key in task_interface_contract),
         },
@@ -1660,6 +1682,10 @@ def _semantic_exporter_scope_discrepancy_evidence(
             "semantic_exporter_owner_targets": out_of_scope_targets,
             "task_declared_write_targets": declared_write_targets,
             "task_scope_filter": task_scope_filter_evidence,
+            "scope_authority": scope_authority,
+            "ownership_handoff_requests": ownership_handoff_requests,
+            "owner_task_retry_handoff_requests": owner_task_retry_handoff_requests,
+            "unresolved_owner_handoff_requests": unresolved_owner_handoff_requests,
             "artifact_quality_errors": artifact_quality_errors[:8],
             "task_interface_contract_keys": sorted(str(key) for key in task_interface_contract),
         }
