@@ -73,6 +73,73 @@ class TestAppendFactEventCommandV1EdgeCases:
             AppendFactEventCommandV1(workspace="/repo", stream="audit", event_type="x", payload={}, source="y")
 
 
+class TestAppendFactEventCommandV1ExpectedSeq:
+    def test_default_is_none(self) -> None:
+        cmd = AppendFactEventCommandV1(
+            workspace="/repo",
+            stream="audit",
+            event_type="x",
+            payload={"k": "v"},
+            source="src",
+        )
+        assert cmd.expected_seq is None
+
+    def test_valid_expected_seq_kept(self) -> None:
+        cmd = AppendFactEventCommandV1(
+            workspace="/repo",
+            stream="audit",
+            event_type="x",
+            payload={"k": "v"},
+            source="src",
+            expected_seq=7,
+        )
+        assert cmd.expected_seq == 7
+
+    def test_zero_expected_seq_raises(self) -> None:
+        with pytest.raises(ValueError, match="expected_seq"):
+            AppendFactEventCommandV1(
+                workspace="/repo",
+                stream="audit",
+                event_type="x",
+                payload={"k": "v"},
+                source="src",
+                expected_seq=0,
+            )
+
+    def test_negative_expected_seq_raises(self) -> None:
+        with pytest.raises(ValueError, match="expected_seq"):
+            AppendFactEventCommandV1(
+                workspace="/repo",
+                stream="audit",
+                event_type="x",
+                payload={"k": "v"},
+                source="src",
+                expected_seq=-1,
+            )
+
+    def test_bool_expected_seq_raises(self) -> None:
+        with pytest.raises(ValueError, match="expected_seq"):
+            AppendFactEventCommandV1(
+                workspace="/repo",
+                stream="audit",
+                event_type="x",
+                payload={"k": "v"},
+                source="src",
+                expected_seq=True,  # type: ignore[arg-type]
+            )
+
+    def test_str_expected_seq_raises(self) -> None:
+        with pytest.raises(ValueError, match="expected_seq"):
+            AppendFactEventCommandV1(
+                workspace="/repo",
+                stream="audit",
+                event_type="x",
+                payload={"k": "v"},
+                source="src",
+                expected_seq="7",  # type: ignore[arg-type]
+            )
+
+
 class TestQueryFactEventsV1HappyPath:
     def test_defaults(self) -> None:
         q = QueryFactEventsV1(workspace="/repo", stream="audit")
@@ -142,6 +209,49 @@ class TestFactEventAppendedV1EdgeCases:
                 stream="audit",
                 storage_path="",
                 appended_at="2026-03-24T10:00:00Z",
+            )
+
+    def test_default_appended_seq_is_none(self) -> None:
+        evt = FactEventAppendedV1(
+            event_id="e1",
+            workspace="/repo",
+            stream="audit",
+            storage_path="/f",
+            appended_at="2026-03-24T10:00:00Z",
+        )
+        assert evt.appended_seq is None
+
+    def test_valid_appended_seq_kept(self) -> None:
+        evt = FactEventAppendedV1(
+            event_id="e1",
+            workspace="/repo",
+            stream="audit",
+            storage_path="/f",
+            appended_at="2026-03-24T10:00:00Z",
+            appended_seq=42,
+        )
+        assert evt.appended_seq == 42
+
+    def test_zero_appended_seq_raises(self) -> None:
+        with pytest.raises(ValueError, match="appended_seq"):
+            FactEventAppendedV1(
+                event_id="e1",
+                workspace="/repo",
+                stream="audit",
+                storage_path="/f",
+                appended_at="2026-03-24T10:00:00Z",
+                appended_seq=0,
+            )
+
+    def test_bool_appended_seq_raises(self) -> None:
+        with pytest.raises(ValueError, match="appended_seq"):
+            FactEventAppendedV1(
+                event_id="e1",
+                workspace="/repo",
+                stream="audit",
+                storage_path="/f",
+                appended_at="2026-03-24T10:00:00Z",
+                appended_seq=True,  # type: ignore[arg-type]
             )
 
 

@@ -29,6 +29,7 @@ class AppendFactEventCommandV1:
     task_id: str | None = None
     correlation_id: str | None = None
     idempotency_key: str | None = None
+    expected_seq: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
@@ -41,6 +42,17 @@ class AppendFactEventCommandV1:
         object.__setattr__(self, "payload", payload)
         idempotency_key = str(self.idempotency_key or "").strip() or None
         object.__setattr__(self, "idempotency_key", idempotency_key)
+        # Coerce and validate expected_seq. None is the default (no CAS) and
+        # preserves the historic append semantics — only when callers opt in
+        # do we enforce the sequence contract. bool is rejected explicitly
+        # because it's a subclass of int but never a meaningful seq.
+        expected = self.expected_seq
+        if expected is not None:
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("expected_seq must be an int or None")
+            if expected < 1:
+                raise ValueError("expected_seq must be >= 1")
+            object.__setattr__(self, "expected_seq", int(expected))
 
 
 @dataclass(frozen=True)
@@ -69,6 +81,7 @@ class FactEventAppendedV1:
     stream: str
     storage_path: str
     appended_at: str
+    appended_seq: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "event_id", _require_non_empty("event_id", self.event_id))
@@ -76,6 +89,12 @@ class FactEventAppendedV1:
         object.__setattr__(self, "stream", _require_non_empty("stream", self.stream))
         object.__setattr__(self, "storage_path", _require_non_empty("storage_path", self.storage_path))
         object.__setattr__(self, "appended_at", _require_non_empty("appended_at", self.appended_at))
+        appended_seq = self.appended_seq
+        if appended_seq is not None:
+            if isinstance(appended_seq, bool) or not isinstance(appended_seq, int):
+                raise ValueError("appended_seq must be an int or None")
+            if appended_seq < 1:
+                raise ValueError("appended_seq must be >= 1")
 
 
 @dataclass(frozen=True)

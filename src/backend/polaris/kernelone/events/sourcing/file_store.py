@@ -7,7 +7,14 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.fs import KernelFileSystem
-from polaris.kernelone.fs.jsonl.ops import _next_seq_for_path
+from polaris.kernelone.fs.jsonl.locking import acquire_lock_fd, release_lock_fd
+from polaris.kernelone.fs.jsonl.ops import (
+    _commit_seq_for_path,
+    _next_seq_for_path,
+    _read_seq_file,
+    _write_seq_file,
+    scan_last_seq,
+)
 from polaris.kernelone.fs.registry import get_default_adapter
 
 from .models import EventEnvelope, EventQueryResult, EventSourcingError, new_event_id, utc_now_iso
@@ -59,26 +66,47 @@ class JsonlEventStore:
         correlation_id: str | None = None,
         causation_id: str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        expected_seq: int | None = None,
     ) -> EventEnvelope:
         payload_dict = dict(payload or {})
         if not payload_dict:
             raise ValueError("payload must not be empty")
+        if expected_seq is not None:
+            # Coerce defensively: only ints are accepted. bool is a subclass of
+            # int but is not a meaningful sequence number, so reject it.
+            if isinstance(expected_seq, bool) or not isinstance(expected_seq, int):
+                raise ValueError("expected_seq must be an int or None")
+            if expected_seq < 1:
+                raise ValueError("expected_seq must be >= 1")
         logical_path = self.stream_logical_path(stream)
         absolute_path = str(self._kernel_fs.resolve_path(logical_path))
-        seq = self._next_seq(absolute_path)
-        envelope = EventEnvelope(
-            event_id=new_event_id(),
-            stream=self._normalize_stream(stream),
-            event_type=self._normalize_stream(event_type),
-            event_version=int(event_version),
-            seq=seq,
-            occurred_at=utc_now_iso(),
-            source=self._normalize_stream(source),
-            aggregate_id=self._normalize_optional(aggregate_id),
-            correlation_id=self._normalize_optional(correlation_id),
-            causation_id=self._normalize_optional(causation_id),
+        if expected_seq is not None:
+            return self._append_with_expected_seq(
+                logical_path=logical_path,
+                absolute_path=absolute_path,
+                stream=stream,
+                event_type=event_type,
+                source=source,
+                payload=payload_dict,
+                event_version=event_version,
+                aggregate_id=aggregate_id,
+                correlation_id=correlation_id,
+                causation_id=causation_id,
+                metadata=metadata,
+                expected_seq=expected_seq,
+            )
+        seq = self._allocate_seq(absolute_path)
+        envelope = self._build_envelope(
+            stream=stream,
+            event_type=event_type,
+            source=source,
             payload=payload_dict,
-            metadata=dict(metadata or {}),
+            event_version=event_version,
+            aggregate_id=aggregate_id,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            metadata=metadata,
+            seq=seq,
         )
         try:
             self._kernel_fs.append_jsonl(logical_path, envelope.to_record())
@@ -86,6 +114,17 @@ class JsonlEventStore:
             raise EventSourcingError(
                 f"failed to append event stream={stream!r}: {exc}",
             ) from exc
+        # Commit the .seq cursor only after a successful JSONL write so the
+        # caller can rely on seq durability matching event durability.
+        try:
+            _commit_seq_for_path(absolute_path, seq)
+        except (RuntimeError, ValueError) as exc:
+            logger.warning(
+                "failed to commit seq %s for %s: %s",
+                seq,
+                absolute_path,
+                exc,
+            )
         return envelope
 
     def query(
@@ -145,9 +184,104 @@ class JsonlEventStore:
             next_offset=next_offset,
         )
 
+    def _allocate_seq(self, absolute_path: str) -> int:
+        """Allocate the next non-CAS sequence number without committing it."""
+
+        return self._next_seq(absolute_path)
+
+    def _append_with_expected_seq(
+        self,
+        *,
+        logical_path: str,
+        absolute_path: str,
+        stream: str,
+        event_type: str,
+        source: str,
+        payload: Mapping[str, Any],
+        event_version: int,
+        aggregate_id: str | None,
+        correlation_id: str | None,
+        causation_id: str | None,
+        metadata: Mapping[str, Any] | None,
+        expected_seq: int,
+    ) -> EventEnvelope:
+        """Append with an optimistic sequence CAS held through durability."""
+
+        seq_path = absolute_path + ".seq"
+        lock_path = seq_path + ".lock"
+        fd = acquire_lock_fd(lock_path, timeout_sec=2.0)
+        if fd is None:
+            raise EventSourcingError(
+                f"failed to acquire seq lock for expected_seq={expected_seq} path={absolute_path!r}",
+            )
+        try:
+            existing = _read_seq_file(seq_path)
+            if existing <= 0:
+                existing = scan_last_seq(absolute_path, key="seq")
+            if existing + 1 != expected_seq:
+                raise EventSourcingError(
+                    f"expected_seq drift: requested={expected_seq} actual={existing + 1} path={absolute_path!r}",
+                )
+            envelope = self._build_envelope(
+                stream=stream,
+                event_type=event_type,
+                source=source,
+                payload=payload,
+                event_version=event_version,
+                aggregate_id=aggregate_id,
+                correlation_id=correlation_id,
+                causation_id=causation_id,
+                metadata=metadata,
+                seq=expected_seq,
+            )
+            try:
+                self._kernel_fs.append_jsonl(logical_path, envelope.to_record())
+            except (RuntimeError, ValueError) as exc:
+                raise EventSourcingError(
+                    f"failed to append event stream={stream!r}: {exc}",
+                ) from exc
+            try:
+                _write_seq_file(seq_path, expected_seq)
+            except (RuntimeError, ValueError, OSError) as exc:
+                raise EventSourcingError(
+                    f"failed to commit expected_seq={expected_seq} for path={absolute_path!r}: {exc}",
+                ) from exc
+            return envelope
+        finally:
+            release_lock_fd(fd, lock_path)
+
+    def _build_envelope(
+        self,
+        *,
+        stream: str,
+        event_type: str,
+        source: str,
+        payload: Mapping[str, Any],
+        event_version: int,
+        aggregate_id: str | None,
+        correlation_id: str | None,
+        causation_id: str | None,
+        metadata: Mapping[str, Any] | None,
+        seq: int,
+    ) -> EventEnvelope:
+        return EventEnvelope(
+            event_id=new_event_id(),
+            stream=self._normalize_stream(stream),
+            event_type=self._normalize_stream(event_type),
+            event_version=int(event_version),
+            seq=seq,
+            occurred_at=utc_now_iso(),
+            source=self._normalize_stream(source),
+            aggregate_id=self._normalize_optional(aggregate_id),
+            correlation_id=self._normalize_optional(correlation_id),
+            causation_id=self._normalize_optional(causation_id),
+            payload=dict(payload or {}),
+            metadata=dict(metadata or {}),
+        )
+
     def _next_seq(self, absolute_path: str) -> int:
         try:
-            seq = int(_next_seq_for_path(absolute_path, 0, key="seq"))
+            seq = int(_next_seq_for_path(absolute_path, 0, key="seq", commit=False))
             if seq < 1:
                 return 1
             return seq

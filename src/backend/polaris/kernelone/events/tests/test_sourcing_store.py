@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
-from polaris.kernelone.events.sourcing import JsonlEventStore
+from polaris.kernelone.events.sourcing import EventSourcingError, JsonlEventStore
 from polaris.kernelone.fs import set_default_adapter
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -80,3 +77,30 @@ def test_jsonl_event_store_query_filters_by_event_type_run_and_task(tmp_path: Pa
     assert len(filtered.events) == 1
     assert filtered.events[0].event_type == "completed"
     assert filtered.events[0].payload["task_id"] == "task-1"
+
+
+def test_jsonl_event_store_expected_seq_does_not_commit_seq_when_append_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    store = JsonlEventStore(str(workspace))
+    logical_path = store.stream_logical_path("task_runtime.execution")
+    absolute_path = str(store._kernel_fs.resolve_path(logical_path))
+
+    def fail_append_jsonl(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(store._kernel_fs, "append_jsonl", fail_append_jsonl)
+
+    with pytest.raises(EventSourcingError, match="failed to append event"):
+        store.append(
+            stream="task_runtime.execution",
+            event_type="claimed",
+            source="runtime.task_runtime",
+            payload={"task_id": "task-1"},
+            expected_seq=1,
+        )
+
+    assert not Path(f"{absolute_path}.seq").exists()

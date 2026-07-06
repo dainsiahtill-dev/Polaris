@@ -28,7 +28,15 @@ from .contracts import (
 
 
 def append_fact_event(command: AppendFactEventCommandV1) -> FactEventAppendedV1:
-    """Append an immutable fact event to the canonical runtime stream."""
+    """Append an immutable fact event to the canonical runtime stream.
+
+    When ``command.expected_seq`` is provided (opt-in CAS), the underlying
+    store allocates that exact sequence number and fail-closes if the
+    stream's next free number doesn't match. Idempotent hits return the
+    existing event unchanged; if the caller supplied ``expected_seq`` but
+    the existing event's seq doesn't match the request, we fail-closed
+    rather than silently returning a mismatched event.
+    """
     try:
         store = JsonlEventStore(command.workspace)
         idempotency_key = str(command.idempotency_key or "").strip()
@@ -39,12 +47,25 @@ def append_fact_event(command: AppendFactEventCommandV1) -> FactEventAppendedV1:
                 idempotency_key=idempotency_key,
             )
             if existing is not None:
+                if command.expected_seq is not None and existing.seq != command.expected_seq:
+                    raise FactStreamError(
+                        "idempotent hit but expected_seq drift",
+                        code="expected_seq_drift",
+                        details={
+                            "workspace": command.workspace,
+                            "stream": command.stream,
+                            "expected_seq": command.expected_seq,
+                            "existing_seq": int(existing.seq),
+                            "event_id": existing.event_id,
+                        },
+                    )
                 return FactEventAppendedV1(
                     event_id=existing.event_id,
                     workspace=command.workspace,
                     stream=command.stream,
                     storage_path=store.stream_logical_path(command.stream),
                     appended_at=existing.occurred_at,
+                    appended_seq=int(existing.seq),
                 )
         metadata = _compact_metadata(
             {
@@ -63,15 +84,27 @@ def append_fact_event(command: AppendFactEventCommandV1) -> FactEventAppendedV1:
             aggregate_id=command.task_id or command.run_id or None,
             correlation_id=command.correlation_id,
             metadata=metadata,
+            expected_seq=command.expected_seq,
         )
     except (ValueError, EventSourcingError) as exc:
+        # Translate generic store failures to FactStreamError so callers
+        # see a single error type. Use a dedicated code when the underlying
+        # message clearly identifies a CAS drift so consumers can branch.
+        # Note: the idempotent drift raise inside this try raises
+        # FactStreamError (a RuntimeError subclass) which is NOT in this
+        # except tuple, so it propagates unchanged.
+        code = "append_failed"
+        message = str(exc)
+        if "expected_seq drift" in message:
+            code = "expected_seq_drift"
         raise FactStreamError(
             f"append_fact_event failed: {exc}",
-            code="append_failed",
+            code=code,
             details={
                 "workspace": command.workspace,
                 "stream": command.stream,
                 "event_type": command.event_type,
+                "expected_seq": command.expected_seq,
             },
         ) from exc
 
@@ -81,6 +114,7 @@ def append_fact_event(command: AppendFactEventCommandV1) -> FactEventAppendedV1:
         stream=command.stream,
         storage_path=store.stream_logical_path(command.stream),
         appended_at=event.occurred_at,
+        appended_seq=int(event.seq),
     )
 
 
