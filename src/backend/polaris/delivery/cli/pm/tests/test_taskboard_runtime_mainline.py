@@ -135,6 +135,57 @@ def test_pm_taskboard_mainline_records_claim_failure(
     ]
 
 
+def test_pm_taskboard_mainline_records_claim_execution_event_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runtime = _build_taskboard_runtime(
+        workspace_full=str(tmp_path),
+        run_id="run-claim-event-failure",
+        director_tasks=[_task("TASK-1")],
+        max_workers=1,
+    )
+
+    def fake_claim_execution(self, task_id, **kwargs):
+        del self, kwargs
+        return {
+            "success": True,
+            "reason": "claimed",
+            "task": {"id": task_id},
+            "session": {"session_id": "session-1"},
+            "execution_event": {
+                "ok": False,
+                "event_type": "claimed",
+                "error_code": "fact_stream_unavailable",
+            },
+        }
+
+    monkeypatch.setattr(TaskRuntimeService, "claim_execution", fake_claim_execution)
+
+    batch = _select_taskboard_ready_batch(runtime, max_workers=1)
+
+    assert batch == []
+    assert _taskboard_runtime_claim_failures(runtime) == [
+        {
+            "success": False,
+            "board_id": 1,
+            "worker_id": "director-worker-1",
+            "reason": "task_runtime_claim_execution_event_append_failed",
+            "claim_result": {
+                "success": False,
+                "reason": "task_runtime_claim_execution_event_append_failed",
+                "task": {"id": 1},
+                "session": {"session_id": "session-1"},
+                "execution_event": {
+                    "ok": False,
+                    "event_type": "claimed",
+                    "error_code": "fact_stream_unavailable",
+                },
+            },
+        }
+    ]
+
+
 def test_pm_taskboard_mainline_records_transition_failure(tmp_path: Path) -> None:
     runtime = _build_taskboard_runtime(
         workspace_full=str(tmp_path),
@@ -166,3 +217,86 @@ def test_pm_taskboard_mainline_records_transition_failure(tmp_path: Path) -> Non
         }
     ]
     assert failures[0]["transition_result"]["success"] is False
+
+
+def test_pm_taskboard_mainline_blocks_create_execution_event_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    original_create_task_row = TaskRuntimeService.create_task_row
+
+    def fake_create_task_row(self, **kwargs):
+        row = original_create_task_row(self, **kwargs)
+        row["execution_event"] = {
+            "ok": False,
+            "event_type": "created",
+            "error_code": "fact_stream_unavailable",
+        }
+        return row
+
+    monkeypatch.setattr(TaskRuntimeService, "create_task_row", fake_create_task_row)
+
+    runtime = _build_taskboard_runtime(
+        workspace_full=str(tmp_path),
+        run_id="run-create-event-failure",
+        director_tasks=[_task("TASK-1")],
+        max_workers=1,
+    )
+
+    assert _select_taskboard_ready_batch(runtime, max_workers=1) == []
+    assert runtime["board_id_to_task"] == {}
+    assert _taskboard_runtime_transition_failures(runtime) == [
+        {
+            "success": False,
+            "board_id": 1,
+            "pm_status": "created",
+            "reason": "task_runtime_create_execution_event_append_failed",
+            "transition_result": {
+                "ok": False,
+                "event_type": "created",
+                "error_code": "fact_stream_unavailable",
+            },
+        }
+    ]
+
+
+def test_pm_taskboard_mainline_blocks_dependency_update_execution_event_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    original_update_task_row = TaskRuntimeService.update_task_row
+
+    def fake_update_task_row(self, task_id, **kwargs):
+        row = original_update_task_row(self, task_id, **kwargs)
+        if isinstance(row, dict):
+            row["execution_event"] = {
+                "ok": False,
+                "event_type": "updated",
+                "error_code": "fact_stream_unavailable",
+            }
+        return row
+
+    monkeypatch.setattr(TaskRuntimeService, "update_task_row", fake_update_task_row)
+
+    runtime = _build_taskboard_runtime(
+        workspace_full=str(tmp_path),
+        run_id="run-dependency-event-failure",
+        director_tasks=[_task("TASK-1")],
+        max_workers=1,
+    )
+
+    assert _select_taskboard_ready_batch(runtime, max_workers=1) == []
+    assert runtime["board_id_to_task"] == {}
+    assert _taskboard_runtime_transition_failures(runtime) == [
+        {
+            "success": False,
+            "board_id": 1,
+            "pm_status": "dependency_update",
+            "reason": "task_runtime_dependency_update_execution_event_append_failed",
+            "transition_result": {
+                "ok": False,
+                "event_type": "updated",
+                "error_code": "fact_stream_unavailable",
+            },
+        }
+    ]

@@ -376,6 +376,61 @@ async def test_pm_execute_projects_task_runtime_transition_failure(
 
 
 @pytest.mark.asyncio
+async def test_pm_execute_projects_exception_transition_event_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = PMAdapter(workspace=str(tmp_path))
+
+    class _Runtime:
+        def fail_task_row_from_role_adapter(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            return {
+                "success": False,
+                "execution_event": {
+                    "ok": False,
+                    "event_type": "failed",
+                    "error_code": "fact_stream_unavailable",
+                },
+            }
+
+    adapter._task_runtime = cast(Any, _Runtime())
+    monkeypatch.setattr(adapter, "_update_task_progress", lambda *args, **kwargs: None)
+    monkeypatch.setattr(adapter, "_deduplicate_existing_board_tasks", lambda: [])
+    monkeypatch.setattr(adapter, "_list_board_task_rows", lambda: [])
+    monkeypatch.setattr(
+        adapter,
+        "_extract_projection_contract_hint",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_build_pm_message",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("pm boom")),
+    )
+    monkeypatch.setattr(adapter, "_write_plan_artifact", lambda **_kwargs: tmp_path / "plan.json")
+    monkeypatch.setattr(adapter, "_append_runtime_stage_signals", lambda **_kwargs: "")
+
+    result = await adapter.execute("task-7", {"input": "plan"}, {"metadata": {}})
+
+    assert result["success"] is False
+    assert result["error"] == "pm boom"
+    assert result["error_code"] == "task_runtime_transition_failure"
+    assert result["task_runtime_transition_failures"] == [
+        {
+            "action": "fail_task_row_from_role_adapter",
+            "task_id": "task-7",
+            "role": "pm",
+            "execution_event": {
+                "ok": False,
+                "event_type": "failed",
+                "error_code": "fact_stream_unavailable",
+            },
+            "metadata": {"reason": "pm_runtime_exception"},
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_qa_execute_projects_task_runtime_transition_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.runtime.task_runtime.public.evidence import task_row_execution_event_failure
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.delivery.cli.pm.tasks import build_taskboard_sync_payload
 
@@ -180,6 +181,15 @@ def _build_taskboard_runtime(
 
     pm_id_to_row_id: dict[str, int] = {}
     row_id_to_task: dict[int, dict[str, Any]] = {}
+    runtime: dict[str, Any] = {
+        "task_runtime": task_runtime,
+        "run_id": str(run_id or "").strip(),
+        "task_runtime_workspace": str(task_runtime_workspace),
+        "taskboard_root": str(task_runtime_workspace),
+        "workers": [f"director-worker-{index + 1}" for index in range(max(1, int(max_workers or 1)))],
+        "worker_index": 0,
+        "board_id_to_task": row_id_to_task,
+    }
 
     for entry in payload:
         pm_task_id = str(entry.get("task_id") or "").strip()
@@ -204,6 +214,16 @@ def _build_taskboard_runtime(
         row_id = _task_row_id(row)
         if row_id <= 0:
             continue
+        execution_failure = task_row_execution_event_failure(row)
+        if execution_failure is not None:
+            _record_task_runtime_transition_failure(
+                runtime,
+                board_id=row_id,
+                pm_status="created",
+                reason="task_runtime_create_execution_event_append_failed",
+                transition_result=execution_failure,
+            )
+            continue
         pm_id_to_row_id[pm_task_id] = row_id
         row_id_to_task[row_id] = source_task
 
@@ -218,23 +238,33 @@ def _build_taskboard_runtime(
             for dep_id in (entry.get("dependencies") or [])
             if dep_id in pm_id_to_row_id
         ]
-        task_runtime.update_task_row(
+        updated = task_runtime.update_task_row(
             row_id,
             blocked_by=list(dict.fromkeys(deps)),
             metadata={"resolved_depends_on_task_ids": list(dict.fromkeys(deps))},
         )
+        if updated is None:
+            row_id_to_task.pop(row_id, None)
+            _record_task_runtime_transition_failure(
+                runtime,
+                board_id=row_id,
+                pm_status="dependency_update",
+                reason="task_runtime_dependency_update_missing_row",
+            )
+            continue
+        execution_failure = task_row_execution_event_failure(updated)
+        if execution_failure is not None:
+            row_id_to_task.pop(row_id, None)
+            _record_task_runtime_transition_failure(
+                runtime,
+                board_id=row_id,
+                pm_status="dependency_update",
+                reason="task_runtime_dependency_update_execution_event_append_failed",
+                transition_result=execution_failure,
+            )
 
-    workers = [f"director-worker-{index + 1}" for index in range(max(1, int(max_workers or 1)))]
-    return {
-        "task_runtime": task_runtime,
-        "run_id": str(run_id or "").strip(),
-        "task_runtime_workspace": str(task_runtime_workspace),
-        "taskboard_root": str(task_runtime_workspace),
-        "workers": workers,
-        "worker_index": 0,
-        "board_id_to_task": row_id_to_task,
-        "pm_id_to_board_id": pm_id_to_row_id,
-    }
+    runtime["pm_id_to_board_id"] = pm_id_to_row_id
+    return runtime
 
 
 def _select_taskboard_ready_batch(
@@ -286,6 +316,19 @@ def _select_taskboard_ready_batch(
                 board_id=board_id,
                 worker_id=worker_id,
                 claim_result=claim_result if isinstance(claim_result, dict) else {},
+            )
+            continue
+        execution_failure = task_row_execution_event_failure(claim_result)
+        if execution_failure is not None:
+            failed_claim_result = dict(claim_result)
+            failed_claim_result["success"] = False
+            failed_claim_result["reason"] = "task_runtime_claim_execution_event_append_failed"
+            failed_claim_result["execution_event"] = execution_failure
+            _record_task_runtime_claim_failure(
+                runtime,
+                board_id=board_id,
+                worker_id=worker_id,
+                claim_result=failed_claim_result,
             )
             continue
         selected.append(

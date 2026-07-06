@@ -25,6 +25,7 @@ from polaris.cells.orchestration.pm_planning.public.service import (
     autofix_pm_contract_for_quality,
     evaluate_pm_task_quality,
 )
+from polaris.cells.runtime.task_runtime.public.evidence import task_row_execution_event_failure
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.planning import (
     Plan,
@@ -695,14 +696,40 @@ class PMAdapter(
             if signal_artifact:
                 error_artifacts.append(signal_artifact)
             self._update_task_progress(task_id, "failed")
-            self.task_runtime.fail_task_row_from_role_adapter(
-                task_id,
-                reason="pm_runtime_exception",
-                metadata={"pm_error": str(e)},
-                role_id=self.role_id,
-                source="pm_adapter",
-                failure_class="pm_runtime_exception",
-            )
+            try:
+                transition_result = self.task_runtime.fail_task_row_from_role_adapter(
+                    task_id,
+                    reason="pm_runtime_exception",
+                    metadata={"pm_error": str(e)},
+                    role_id=self.role_id,
+                    source="pm_adapter",
+                    failure_class="pm_runtime_exception",
+                )
+            except (RuntimeError, ValueError) as transition_exc:
+                self._record_task_runtime_transition_failure(
+                    action="fail_task_row_from_role_adapter",
+                    task_id=task_id,
+                    failure={
+                        "ok": False,
+                        "error_code": "task_runtime_transition_exception",
+                        "exception_type": type(transition_exc).__name__,
+                        "message": str(transition_exc),
+                    },
+                    metadata={"reason": "pm_runtime_exception"},
+                )
+            else:
+                execution_failure = (
+                    task_row_execution_event_failure(transition_result)
+                    if isinstance(transition_result, dict)
+                    else None
+                )
+                if execution_failure is not None:
+                    self._record_task_runtime_transition_failure(
+                        action="fail_task_row_from_role_adapter",
+                        task_id=task_id,
+                        failure=execution_failure,
+                        metadata={"reason": "pm_runtime_exception"},
+                    )
             return {
                 "success": False,
                 "stage": "pm",
