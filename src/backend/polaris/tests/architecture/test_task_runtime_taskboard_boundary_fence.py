@@ -92,6 +92,44 @@ TASK_RUNTIME_OWNER_TRANSITION_CALL_ALLOWLIST = {
         "polaris/delivery/http/routers/factory.py",
     },
 }
+TASK_RUNTIME_EXECUTION_EVENT_CHECK_REQUIRED = {
+    "polaris/cells/orchestration/pm_planning/internal/pm_agent.py": {
+        "_tool_taskboard_create",
+    },
+    "polaris/cells/roles/adapters/internal/base.py": {
+        "_update_board_task",
+    },
+    "polaris/cells/roles/adapters/internal/pm/board_tasks.py": {
+        "_create_board_tasks",
+    },
+    "polaris/cells/roles/adapters/internal/pm_adapter.py": {
+        "_run_pm_stage",
+    },
+    "polaris/cells/roles/adapters/internal/qa_adapter.py": {
+        "_apply_taskboard_qa_verdict",
+    },
+    "polaris/delivery/cli/pm/engine/taskboard.py": {
+        "_build_taskboard_runtime",
+        "_select_taskboard_ready_batch",
+    },
+    "polaris/delivery/http/routers/factory.py": {
+        "_apply_quality_gate_task_boundary_rework_requests",
+    },
+}
+TASK_RUNTIME_EXECUTION_EVENT_CHECK_HELPERS = {
+    (
+        "polaris/cells/roles/adapters/internal/pm/board_tasks.py",
+        "_create_board_tasks",
+    ): {
+        "_with_task_runtime_execution_event_failure",
+    },
+    (
+        "polaris/cells/roles/adapters/internal/qa_adapter.py",
+        "_apply_taskboard_qa_verdict",
+    ): {
+        "_record_qa_task_runtime_execution_event_failure",
+    },
+}
 REVIEWED_TASK_RUNTIME_SERVICE_BOARD_WRITES = {
     ("_apply_dependency_completion_side_effects", "notify_ready_tasks"): 1,
     ("_apply_dependency_completion_side_effects", "update"): 1,
@@ -756,6 +794,25 @@ def _function_body_references_name(path: Path, function_name: str, referenced_na
     return False
 
 
+def _function_body_references_any_name(
+    path: Path,
+    function_name: str,
+    referenced_names: set[str],
+) -> bool:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name != function_name:
+            continue
+        return any(
+            isinstance(child, ast.Name) and child.id in referenced_names
+            for child in ast.walk(node)
+        )
+    return False
+
+
 def _owner_transition_call_boundary_violations(path: Path) -> list[str]:
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -864,6 +921,30 @@ def test_pm_planning_taskboard_create_checks_execution_event_projection() -> Non
         "with task_row_execution_event_failure() before returning ok=True. "
         "TaskRuntime row writes can persist a row while failing to append the "
         "authoritative task_runtime.execution fact."
+    )
+
+
+def test_task_runtime_row_write_consumers_check_execution_event_projection() -> None:
+    offenders: list[str] = []
+    for rel, function_names in sorted(TASK_RUNTIME_EXECUTION_EVENT_CHECK_REQUIRED.items()):
+        path = BACKEND_ROOT / rel
+        for function_name in sorted(function_names):
+            expected_names = {
+                "task_row_execution_event_failure",
+                *TASK_RUNTIME_EXECUTION_EVENT_CHECK_HELPERS.get((rel, function_name), set()),
+            }
+            if not _function_body_references_any_name(
+                path,
+                function_name,
+                expected_names,
+            ):
+                offenders.append(f"{rel}:{function_name}()")
+
+    assert not offenders, (
+        "TaskRuntime row-write consumers that can advance downstream state must "
+        "inspect execution-event projections with task_row_execution_event_failure(). "
+        "A row can persist while the authoritative task_runtime.execution fact append "
+        "fails:\n" + "\n".join(offenders)
     )
 
 
