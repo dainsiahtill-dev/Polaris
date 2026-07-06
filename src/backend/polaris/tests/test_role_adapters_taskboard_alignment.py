@@ -194,6 +194,52 @@ def test_role_adapter_update_board_task_uses_runtime_row_api(tmp_path: Path) -> 
     assert runtime.updated == [{"id": 7, "status": "in_progress", "metadata": {"phase": "execute"}}]
 
 
+def test_role_adapter_update_board_task_surfaces_execution_event_failure(tmp_path: Path) -> None:
+    adapter = DirectorAdapter(workspace=str(tmp_path))
+
+    class _RowWriteRuntime:
+        def task_exists(self, task_id: Any) -> bool:
+            return str(task_id or "") == "7"
+
+        def update_task_row(
+            self,
+            task_id: Any,
+            *,
+            status: str | None = None,
+            metadata: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            return {
+                "id": int(str(task_id).removeprefix("task-")),
+                "status": status or "pending",
+                "metadata": dict(metadata or {}),
+                "execution_event": {
+                    "ok": False,
+                    "event_type": "updated",
+                    "error_code": "fact_stream_unavailable",
+                },
+            }
+
+    adapter._task_runtime = cast(Any, _RowWriteRuntime())
+
+    assert adapter._update_board_task("task-7", status="in_progress", metadata={"phase": "execute"}) is False
+    assert adapter._task_runtime_transition_failure_evidence() == [
+        {
+            "action": "update_board_task",
+            "task_id": "7",
+            "role": "director",
+            "execution_event": {
+                "ok": False,
+                "event_type": "updated",
+                "error_code": "fact_stream_unavailable",
+            },
+            "metadata": {
+                "status": "in_progress",
+                "metadata_keys": ["phase"],
+            },
+        }
+    ]
+
+
 def test_role_adapter_update_board_task_rejects_terminal_status_shortcut(tmp_path: Path) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
 

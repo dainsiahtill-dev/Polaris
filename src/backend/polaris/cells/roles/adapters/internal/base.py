@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.orchestration.workflow_runtime.public.service import RoleAdapterFactoryPort, RoleOrchestrationAdapter
+from polaris.cells.runtime.task_runtime.public import task_row_execution_event_failure
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.process.command_executor import CommandExecutionService, CommandRequest
@@ -39,6 +40,7 @@ class BaseRoleAdapter(RoleOrchestrationAdapter):
         self._message_bus: Any = None
         self._task_trace_seq: dict[str, int] = {}
         self._factory_port: RoleAdapterFactoryPort | None = None
+        self._task_runtime_transition_failures: list[dict[str, Any]] = []
 
     def _register_with_factory(self, port: RoleAdapterFactoryPort) -> None:
         """Register this adapter with the given factory port.
@@ -228,7 +230,49 @@ class BaseRoleAdapter(RoleOrchestrationAdapter):
             status=status,
             metadata=metadata or {},
         )
-        return updated is not None
+        if updated is None:
+            return False
+        failure = task_row_execution_event_failure(updated)
+        if failure is not None:
+            self._record_task_runtime_transition_failure(
+                action="update_board_task",
+                task_id=normalized,
+                failure=failure,
+                metadata={
+                    "status": status,
+                    "metadata_keys": sorted(str(key) for key in (metadata or {})),
+                },
+            )
+            return False
+        return True
+
+    def _record_task_runtime_transition_failure(
+        self,
+        *,
+        action: str,
+        task_id: Any,
+        failure: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        evidence = {
+            "action": str(action or "").strip() or "task_runtime_transition",
+            "task_id": str(task_id or "").strip(),
+            "role": self.role_id,
+            "execution_event": dict(failure),
+            "metadata": dict(metadata or {}),
+        }
+        self._task_runtime_transition_failures.append(evidence)
+        _logger.warning(
+            "task_runtime_transition_failure: role=%s action=%s task_id=%s error=%s",
+            self.role_id,
+            evidence["action"],
+            evidence["task_id"],
+            failure.get("error_code") or failure.get("error") or "unknown",
+        )
+        return evidence
+
+    def _task_runtime_transition_failure_evidence(self) -> list[dict[str, Any]]:
+        return [dict(item) for item in self._task_runtime_transition_failures]
 
     def _update_task_progress(
         self,
