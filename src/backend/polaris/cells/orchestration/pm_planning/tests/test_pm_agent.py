@@ -324,6 +324,46 @@ class TestPMAgentGovernanceTools:
         assert stats["stats"]["ready"] == 1
         assert stats["stats"]["pending"] == 1
 
+    def test_taskboard_create_surfaces_task_runtime_execution_event_failure(self, tmp_path) -> None:
+        class _TaskRuntimeWithFailedCreateEvent:
+            def create_task_row(self, **kwargs) -> dict[str, object]:
+                return {
+                    "id": 41,
+                    "subject": kwargs.get("subject"),
+                    "status": "pending",
+                    "execution_event": {
+                        "ok": False,
+                        "event_type": "created",
+                        "error_code": "fact_stream_unavailable",
+                    },
+                    "execution_events": [
+                        {
+                            "ok": False,
+                            "event_type": "created",
+                            "error_code": "fact_stream_unavailable",
+                        }
+                    ],
+        }
+
+        agent = PMAgent(str(tmp_path))
+        agent._task_runtime = _TaskRuntimeWithFailedCreateEvent()
+
+        created = agent._tool_taskboard_create(
+            subject="Implement status projection",
+            description="Keep PM tools on task runtime rows",
+            priority="high",
+            blocked_by=[],
+        )
+
+        assert created["ok"] is False
+        assert created["error_code"] == "task_runtime_execution_event_append_failed"
+        assert created["task_id"] == 41
+        assert created["execution_event"] == {
+            "ok": False,
+            "event_type": "created",
+            "error_code": "fact_stream_unavailable",
+        }
+
     def test_taskboard_list_ready_uses_observable_rows(self, tmp_path) -> None:
         class _ProjectionOnlyTaskRuntime:
             def list_observable_task_rows(self) -> list[dict[str, object]]:

@@ -21,6 +21,7 @@ from polaris.cells.roles.runtime.public.service import (
     ProtocolType,
     RoleAgent,
 )
+from polaris.cells.runtime.task_runtime.public import task_row_execution_event_failure
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.domain.entities.task import TaskPriority as TBPriority
 from polaris.kernelone.fs.text_ops import write_text_atomic
@@ -783,6 +784,17 @@ class PMAgent(RoleAgent):
             owner="PM",
             blocked_by=kwargs.get("blocked_by", []),
         )
+        failure = task_row_execution_event_failure(row)
+        if failure is not None:
+            return {
+                "ok": False,
+                "error_code": "task_runtime_execution_event_append_failed",
+                "task_id": row.get("id"),
+                "subject": row.get("subject"),
+                "status": row.get("status"),
+                "execution_event": failure,
+                "execution_events": row.get("execution_events") or [],
+            }
 
         return {
             "ok": True,

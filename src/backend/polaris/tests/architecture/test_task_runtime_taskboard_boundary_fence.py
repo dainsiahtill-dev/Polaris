@@ -28,6 +28,7 @@ DELIVERY_PM_TASKBOARD = POLARIS_ROOT / "delivery" / "cli" / "pm" / "engine" / "t
 DELIVERY_CLI_DIRECTOR_SERVICE = POLARIS_ROOT / "delivery" / "cli" / "director" / "director_service.py"
 ROLE_ADAPTER_BASE = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "base.py"
 PM_ADAPTER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "pm_adapter.py"
+PM_PLANNING_AGENT = POLARIS_ROOT / "cells" / "orchestration" / "pm_planning" / "internal" / "pm_agent.py"
 DIRECTOR_ADAPTER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "director" / "adapter.py"
 PM_BOARD_TASKS = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "pm" / "board_tasks.py"
 QA_ADAPTER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "qa_adapter.py"
@@ -743,6 +744,18 @@ def _update_task_row_boundary_violations(path: Path) -> list[str]:
     return offenders
 
 
+def _function_body_references_name(path: Path, function_name: str, referenced_name: str) -> bool:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name != function_name:
+            continue
+        return any(isinstance(child, ast.Name) and child.id == referenced_name for child in ast.walk(node))
+    return False
+
+
 def _owner_transition_call_boundary_violations(path: Path) -> list[str]:
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -838,6 +851,19 @@ def test_update_task_row_writers_are_metadata_only_or_owner_guarded() -> None:
         "status changes must use owner transitions such as claim/complete/fail, "
         "dedup cancellation, QA rework failure, or role-adapter failure helpers:\n"
         + "\n".join(offenders)
+    )
+
+
+def test_pm_planning_taskboard_create_checks_execution_event_projection() -> None:
+    assert _function_body_references_name(
+        PM_PLANNING_AGENT,
+        "_tool_taskboard_create",
+        "task_row_execution_event_failure",
+    ), (
+        "PM planning _tool_taskboard_create() must inspect the row projection "
+        "with task_row_execution_event_failure() before returning ok=True. "
+        "TaskRuntime row writes can persist a row while failing to append the "
+        "authoritative task_runtime.execution fact."
     )
 
 
