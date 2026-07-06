@@ -1913,11 +1913,19 @@ def _required_evidence_refs(
     if not refs:
         normalized_role = role_id.strip().lower()
         if normalized_role == "director":
-            refs.extend(["pm_contract", "ce_blueprint", "target_files"])
+            refs.extend(
+                _mapped_evidence_requirements(
+                    (
+                        "pm_task_contract",
+                        "chief_engineer_blueprint",
+                        "target_files_or_declared_scopes",
+                    )
+                )
+            )
         elif normalized_role == "chief_engineer":
-            refs.extend(["pm_contract", "target_files"])
+            refs.extend(_mapped_evidence_requirements(("pm_task_contract", "target_files_or_declared_scopes")))
         elif normalized_role == "pm":
-            refs.extend(["pm_raw_intent"])
+            refs.extend(_mapped_evidence_requirements(("pm_raw_intent",)))
         else:
             refs.extend(
                 final_request_evidence_refs_for_coverage_flags(
@@ -1926,16 +1934,15 @@ def _required_evidence_refs(
                 )
             )
     if request_metadata_summary.get("has_execution_profile"):
-        refs.append("execution_profile")
+        refs.extend(_mapped_evidence_requirements(("execution_profile",)))
     if request_metadata_summary.get("has_execution_strategy"):
-        refs.append("execution_strategy")
-        refs.append("execution_envelope")
+        refs.extend(_mapped_evidence_requirements(("execution_strategy", "execution_envelope")))
     if request_metadata_summary.get("has_execution_envelope"):
-        refs.append("execution_envelope")
+        refs.extend(_mapped_evidence_requirements(("execution_envelope",)))
     context_payload = _request_context(ai_request)
     refs.extend(_mapped_evidence_requirements(context_payload.get("required_evidence")))
     if any(key in context_payload for key in _INTERFACE_DISCREPANCY_CONTEXT_KEYS):
-        refs.append("interface_discrepancy_context")
+        refs.extend(_mapped_evidence_requirements(("interface_discrepancy_context",)))
     return _unique_strings(refs)
 
 

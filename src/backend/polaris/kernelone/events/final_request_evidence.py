@@ -114,6 +114,7 @@ _INCLUDED_EVIDENCE_COVERAGE_EXCLUDED_FLAGS = frozenset(
     }
 )
 _EVIDENCE_REQUIREMENT_TO_REF = {
+    "pm_raw_intent": "pm_raw_intent",
     "pm_task_contract": "pm_contract",
     "pm_contract": "pm_contract",
     "pm_delivery_plan_document": "delivery_plan_document",

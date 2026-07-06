@@ -361,6 +361,7 @@ def test_missing_required_readers_fallback_to_legacy_fields_when_slots_absent() 
 
 
 def test_final_request_evidence_ref_helpers_normalize_requirement_and_coverage_aliases() -> None:
+    assert final_request_evidence_ref_for_requirement("pm_raw_intent") == "pm_raw_intent"
     assert final_request_evidence_ref_for_requirement("pm_task_contract") == "pm_contract"
     assert final_request_evidence_ref_for_requirement("cross_file_interface_contract") == "module_interface_contract"
     assert final_request_evidence_ref_for_requirement("verification_failure_evidence") == "failed_gate_evidence"

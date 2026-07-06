@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+from polaris.cells.roles.kernel.internal.llm_caller import context_audit as context_audit_module
 from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
     FinalRequestEvidenceCoverageError,
     build_final_provider_request_snapshot,
@@ -909,6 +910,98 @@ def test_final_request_evidence_aliases_verification_failure_and_architecture_pl
     assert "architecture_or_file_plan" in evidence_coverage["included_refs"]
     assert audit["coverage"]["has_workspace_quality_evidence"] is True
     assert audit["coverage"]["has_architecture_or_file_plan"] is True
+
+
+def test_final_request_evidence_role_defaults_use_canonical_ref_helper(monkeypatch) -> None:
+    original_ref_helper = context_audit_module.final_request_evidence_ref_for_requirement
+    observed_requirements: list[str] = []
+
+    def recording_ref_helper(value: object) -> str:
+        observed_requirements.append(str(value))
+        return original_ref_helper(value)
+
+    monkeypatch.setattr(
+        context_audit_module,
+        "final_request_evidence_ref_for_requirement",
+        recording_ref_helper,
+    )
+
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "director_execution_profile": {
+                "schema_version": "task.execution_profile.v1",
+                "source": "director.tasking",
+            },
+            "director_execution_strategy": {
+                "schema_version": "task.execution_strategy.v1",
+                "source": "director.tasking",
+            },
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+            },
+            "pm_contract": {
+                "schema_version": "pm.task_contract.v1",
+                "task_id": "TASK-1",
+                "target_files": ["src/main.py"],
+            },
+            "ce_blueprint": {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": "ce_TASK-1",
+                "target_files": ["src/main.py"],
+                "construction_plan": {"phase": "implement"},
+            },
+            "interface_discrepancy_context": {
+                "schema_version": "polaris.interface_discrepancy_context.evidence.v1",
+                "diagnostics": [{"symbol": "WeatherKind"}],
+            },
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {"role": "user", "content": "Implement TASK-1."},
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {"role": "user", "content": "Implement TASK-1."},
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert {
+        "pm_task_contract",
+        "chief_engineer_blueprint",
+        "target_files_or_declared_scopes",
+        "execution_profile",
+        "execution_strategy",
+        "execution_envelope",
+        "interface_discrepancy_context",
+    } <= set(observed_requirements)
+    assert evidence_coverage["required_refs"] == [
+        "pm_contract",
+        "ce_blueprint",
+        "target_files",
+        "execution_profile",
+        "execution_strategy",
+        "execution_envelope",
+        "interface_discrepancy_context",
+    ]
 
 
 def test_final_request_evidence_accepts_structured_failure_and_quality_slots_without_keywords() -> None:
