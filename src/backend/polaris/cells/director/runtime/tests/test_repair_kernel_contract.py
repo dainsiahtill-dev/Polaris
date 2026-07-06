@@ -945,6 +945,38 @@ def test_repair_coverage_uses_typed_metadata_archetype_before_message_guessing()
     assert payload["items"][0]["diagnostic_phase"] == "dependency_resolution"
 
 
+def test_repair_coverage_uses_typed_code_for_phase_before_message_guessing() -> None:
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="typescript_custom_quality",
+        message="opaque structured diagnostic",
+        path="src/widget.ts",
+    )
+
+    payload = build_repair_coverage_report((diagnostic,)).to_dict()
+
+    assert payload["items"][0]["known_rule_matched"] is False
+    assert payload["items"][0]["diagnostic_archetype"] == "unknown"
+    assert payload["items"][0]["diagnostic_language"] == "typescript"
+    assert payload["items"][0]["diagnostic_phase"] == "quality_repair"
+
+
+def test_repair_coverage_uses_typed_source_path_for_phase_before_message_guessing() -> None:
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="custom_quality_gate",
+        message="opaque structured diagnostic",
+        path="src/widget.go",
+    )
+
+    payload = build_repair_coverage_report((diagnostic,)).to_dict()
+
+    assert payload["items"][0]["known_rule_matched"] is False
+    assert payload["items"][0]["diagnostic_archetype"] == "unknown"
+    assert payload["items"][0]["diagnostic_language"] == "go"
+    assert payload["items"][0]["diagnostic_phase"] == "quality_repair"
+
+
 def test_repair_rule_registry_matches_language_specific_go_and_rust_rules() -> None:
     diagnostics = normalize_artifact_quality_errors(
         [

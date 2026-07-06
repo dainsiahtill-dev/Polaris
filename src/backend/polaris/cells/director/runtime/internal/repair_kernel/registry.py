@@ -3798,9 +3798,37 @@ def _infer_diagnostic_phase(diagnostic: RepairDiagnostic, archetype: str) -> str
         return "quality_repair"
     if archetype == RepairArchetype.MISSING_METHOD_SELF.value:
         return "quality_repair"
-    if diagnostic.code == "declared_target_missing":
-        return "target_contract"
+    typed_phase = _infer_typed_diagnostic_phase(diagnostic)
+    if typed_phase:
+        return typed_phase
     return "unknown"
+
+
+def _infer_typed_diagnostic_phase(diagnostic: RepairDiagnostic) -> str:
+    code = str(diagnostic.code or "").strip().lower()
+    if code == "declared_target_missing":
+        return "target_contract"
+    quality_repair_prefixes = (
+        "cpp_",
+        "go_",
+        "javascript_",
+        "npm_",
+        "python_",
+        "rust_",
+        "typescript_",
+    )
+    if any(code.startswith(prefix) for prefix in quality_repair_prefixes):
+        return "quality_repair"
+    source = str(diagnostic.source or "").strip().lower()
+    if source not in {"artifact_quality", "runtime_smoke", "workspace_quality"}:
+        return ""
+    path = str(diagnostic.path or "").strip().lower().replace("\\", "/")
+    if not path:
+        return ""
+    for slot in repair_language_slots():
+        if _slot_path_matches(slot=slot, path=path):
+            return "quality_repair"
+    return ""
 
 
 __all__ = [
