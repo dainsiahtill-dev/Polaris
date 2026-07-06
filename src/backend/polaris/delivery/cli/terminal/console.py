@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.host.public import RoleHostKind
+from polaris.cells.runtime.task_runtime.public.evidence import task_row_execution_event_failure
 from polaris.delivery.cli.cli_completion import load_history, readline_input, save_history
 from polaris.delivery.cli.cli_prompt import create_prompt_session
 from polaris.delivery.cli.super_mode import (
@@ -33,7 +34,6 @@ from polaris.delivery.cli.super_mode import (
     extract_task_list_from_pm_output,
     write_architect_blueprint_to_disk,
 )
-from polaris.delivery.cli.task_runtime_evidence import task_row_execution_event_failure
 from polaris.delivery.cli.terminal._base import (
     _ALLOWED_BACKENDS,
     _apply_keymode,

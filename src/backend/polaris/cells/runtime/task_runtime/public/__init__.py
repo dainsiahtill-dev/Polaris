@@ -8,6 +8,7 @@ from .contracts import (
     RuntimeTaskRuntimeError,
     UpdateRuntimeTaskCommandV1,
 )
+from .evidence import task_row_execution_event_failure
 from .service import TaskRuntimeService, reset_runtime_task_records
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "TaskRuntimeService",
     "UpdateRuntimeTaskCommandV1",
     "reset_runtime_task_records",
+    "task_row_execution_event_failure",
 ]

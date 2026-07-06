@@ -798,6 +798,146 @@ def test_quality_gate_task_boundary_rework_uses_task_row_projection(
     assert summary["tasks"] == []
 
 
+def test_quality_gate_task_boundary_rework_blocks_reopen_without_execution_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _TaskRowService:
+        def __init__(self, workspace: str) -> None:
+            self.workspace = workspace
+
+        def list_observable_task_rows(self) -> list[dict[str, Any]]:
+            return [
+                {
+                    "id": 8,
+                    "status": "failed",
+                    "metadata": {
+                        "external_task_id": "TASK-8",
+                        "adapter_result": {
+                            "success_reason": factory_router_module._TASK_BOUNDARY_REWORK_REASON,
+                        },
+                    },
+                }
+            ]
+
+        def reopen_task_row(self, *_args: object, **_kwargs: object) -> dict[str, Any]:
+            return {
+                "id": 8,
+                "execution_event": {
+                    "ok": False,
+                    "event_type": "task_reopened",
+                    "error": "append failed",
+                },
+            }
+
+        def update_task_row(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("non-exhausted rework must not update task row")
+
+    monkeypatch.setattr(factory_router_module, "TaskRuntimeService", _TaskRowService)
+    monkeypatch.setattr(factory_router_module, "_resolve_quality_rework_max_cycles", lambda: 3)
+    monkeypatch.setattr(
+        factory_router_module,
+        "_read_task_boundary_workspace_validation",
+        lambda _workspace: (
+            {
+                "passed": False,
+                "repair": {"success_reason": factory_router_module._TASK_BOUNDARY_REWORK_REASON},
+            },
+            "workspace/qa/latest.workspace-validation.json",
+        ),
+    )
+
+    summary = factory_router_module._apply_quality_gate_task_boundary_rework_requests("/tmp/workspace")
+
+    assert summary["requested"] is False
+    assert summary["evaluated_count"] == 1
+    assert summary["reopened_count"] == 0
+    assert summary["skipped_count"] == 1
+    assert summary["tasks"] == []
+    assert summary["task_runtime_transition_failures"] == [
+        {
+            "success": False,
+            "task_id": 8,
+            "action": "reopen_for_rework",
+            "reason": "task_runtime_execution_event_append_failed",
+            "transition_result": {
+                "ok": False,
+                "event_type": "task_reopened",
+                "error": "append failed",
+            },
+        }
+    ]
+
+
+def test_quality_gate_task_boundary_rework_blocks_exhausted_update_without_execution_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _TaskRowService:
+        def __init__(self, workspace: str) -> None:
+            self.workspace = workspace
+
+        def list_observable_task_rows(self) -> list[dict[str, Any]]:
+            return [
+                {
+                    "id": 9,
+                    "status": "failed",
+                    "metadata": {
+                        "external_task_id": "TASK-9",
+                        "adapter_result": {
+                            "success_reason": factory_router_module._TASK_BOUNDARY_REWORK_REASON,
+                        },
+                    },
+                }
+            ]
+
+        def update_task_row(self, *_args: object, **_kwargs: object) -> dict[str, Any]:
+            return {
+                "id": 9,
+                "execution_event": {
+                    "ok": False,
+                    "event_type": "task_rework_exhausted",
+                    "error": "append failed",
+                },
+            }
+
+        def reopen_task_row(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("exhausted rework must not reopen task row")
+
+    monkeypatch.setattr(factory_router_module, "TaskRuntimeService", _TaskRowService)
+    monkeypatch.setattr(factory_router_module, "_resolve_quality_rework_max_cycles", lambda: 1)
+    monkeypatch.setattr(
+        factory_router_module,
+        "_read_task_boundary_workspace_validation",
+        lambda _workspace: (
+            {
+                "passed": False,
+                "repair": {"success_reason": factory_router_module._TASK_BOUNDARY_REWORK_REASON},
+            },
+            "workspace/qa/latest.workspace-validation.json",
+        ),
+    )
+
+    summary = factory_router_module._apply_quality_gate_task_boundary_rework_requests("/tmp/workspace")
+
+    assert summary["requested"] is False
+    assert summary["evaluated_count"] == 1
+    assert summary["exhausted_count"] == 0
+    assert summary["skipped_count"] == 1
+    assert summary["tasks"] == []
+    assert summary["task_runtime_transition_failures"] == [
+        {
+            "success": False,
+            "task_id": 9,
+            "action": "mark_rework_exhausted",
+            "reason": "task_runtime_execution_event_append_failed",
+            "transition_result": {
+                "ok": False,
+                "event_type": "task_rework_exhausted",
+                "error": "append failed",
+            },
+        }
+    ]
+
+
 def test_quality_gate_rework_summary_keeps_exhausted_requests(temp_workspace: Path) -> None:
     task_board = TaskRuntimeService(str(temp_workspace))
     row = task_board.ensure_task_row(

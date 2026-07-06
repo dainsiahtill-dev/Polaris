@@ -1,4 +1,4 @@
-"""Helpers for consuming TaskRuntime row evidence from CLI entrypoints."""
+"""Public helpers for consuming TaskRuntime row evidence."""
 
 from __future__ import annotations
 
@@ -10,8 +10,9 @@ def task_row_execution_event_failure(row: Mapping[str, Any]) -> dict[str, Any] |
     """Return failed TaskRuntime execution-event evidence from a row projection.
 
     TaskRuntime row writers may persist the row but fail to append the
-    authoritative ``task_runtime.execution`` fact. CLI entrypoints must not
-    publish or report those rows as successful task creation.
+    authoritative ``task_runtime.execution`` fact. Consumers that dispatch work
+    or report a state transition as successful must check this projection before
+    advancing downstream state.
     """
 
     events: list[Mapping[str, Any]] = []

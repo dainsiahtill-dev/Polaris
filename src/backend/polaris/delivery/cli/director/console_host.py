@@ -22,8 +22,8 @@ from polaris.cells.roles.session.public import (
     SessionState,
     SessionType,
 )
+from polaris.cells.runtime.task_runtime.public.evidence import task_row_execution_event_failure
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
-from polaris.delivery.cli.task_runtime_evidence import task_row_execution_event_failure
 from polaris.kernelone.context.context_os import summarize_context_os_payload
 from polaris.kernelone.context.history_materialization import SessionContinuityStrategy
 from polaris.kernelone.context.session_continuity import SessionContinuityProjection

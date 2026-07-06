@@ -44,6 +44,7 @@ from polaris.cells.factory.pipeline.public.types import (
     RunLifecycleStatus,
     RunPhase,
 )
+from polaris.cells.runtime.task_runtime.public.evidence import task_row_execution_event_failure
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.cells.storage.layout.public.service import (
     save_persisted_settings,
@@ -1019,6 +1020,36 @@ def _task_boundary_rework_evidence(payload: dict[str, Any], *, artifact: str) ->
     return evidence
 
 
+def _record_factory_task_runtime_transition_failure(
+    summary: dict[str, Any],
+    *,
+    task_id: int,
+    action: str,
+    reason: str,
+    transition_result: dict[str, Any] | None = None,
+) -> None:
+    """Record a failed TaskRuntime transition before Factory advances rework state."""
+
+    failures_raw = summary.get("task_runtime_transition_failures")
+    failures: list[dict[str, Any]]
+    if isinstance(failures_raw, list):
+        failures = failures_raw
+    else:
+        failures = []
+        summary["task_runtime_transition_failures"] = failures
+
+    failures.append(
+        {
+            "success": False,
+            "task_id": int(task_id),
+            "action": str(action or "").strip(),
+            "reason": str(reason or "task_runtime_transition_failed").strip()
+            or "task_runtime_transition_failed",
+            "transition_result": dict(transition_result or {}),
+        }
+    )
+
+
 def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[str, Any]:
     payload, artifact = _read_task_boundary_workspace_validation(workspace)
     summary: dict[str, Any] = {
@@ -1027,6 +1058,7 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
         "reopened_count": 0,
         "exhausted_count": 0,
         "skipped_count": 0,
+        "task_runtime_transition_failures": [],
         **owner_handoff_index_summary(),
         "tasks": [],
         "reason": _TASK_BOUNDARY_REWORK_REASON,
@@ -1127,18 +1159,68 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
             ).strip()
         try:
             if exhausted:
-                task_runtime.update_task_row(task_id, metadata=metadata_update)
+                transition_result = task_runtime.update_task_row(task_id, metadata=metadata_update)
+                if transition_result is None:
+                    _record_factory_task_runtime_transition_failure(
+                        summary,
+                        task_id=task_id,
+                        action="mark_rework_exhausted",
+                        reason="task_runtime_update_missing_row",
+                    )
+                    summary["skipped_count"] += 1
+                    continue
+                execution_failure = task_row_execution_event_failure(transition_result)
+                if execution_failure is not None:
+                    _record_factory_task_runtime_transition_failure(
+                        summary,
+                        task_id=task_id,
+                        action="mark_rework_exhausted",
+                        reason="task_runtime_execution_event_append_failed",
+                        transition_result=execution_failure,
+                    )
+                    summary["skipped_count"] += 1
+                    continue
                 summary["exhausted_count"] += 1
             else:
-                task_runtime.reopen_task_row(
+                transition_result = task_runtime.reopen_task_row(
                     task_id,
                     reason=rework_reason,
                     metadata=metadata_update,
                 )
+                if transition_result is None:
+                    _record_factory_task_runtime_transition_failure(
+                        summary,
+                        task_id=task_id,
+                        action="reopen_for_rework",
+                        reason="task_runtime_reopen_missing_row",
+                    )
+                    summary["skipped_count"] += 1
+                    continue
+                execution_failure = task_row_execution_event_failure(transition_result)
+                if execution_failure is not None:
+                    _record_factory_task_runtime_transition_failure(
+                        summary,
+                        task_id=task_id,
+                        action="reopen_for_rework",
+                        reason="task_runtime_execution_event_append_failed",
+                        transition_result=execution_failure,
+                    )
+                    summary["skipped_count"] += 1
+                    continue
                 summary["reopened_count"] += 1
                 summary["requested"] = True
             summary["tasks"].append(task_summary)
-        except (RuntimeError, ValueError):
+        except (RuntimeError, ValueError) as exc:
+            _record_factory_task_runtime_transition_failure(
+                summary,
+                task_id=task_id,
+                action="mark_rework_exhausted" if exhausted else "reopen_for_rework",
+                reason="task_runtime_transition_exception",
+                transition_result={
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            )
             summary["skipped_count"] += 1
 
     owner_handoff_summary = owner_handoff_index_summary(owner_handoff_index)
