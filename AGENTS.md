@@ -496,6 +496,14 @@ OpenCode 兼容路径只允许在 Claude CLI 不可用或用户显式要求时�
 }
 ```
 
+Claude CLI 的 `--output-format json` stdout 是 Claude 执行 envelope，不一定直接等于上面的 schema 根对象。主 Agent 回收时必须按顺序解析：
+
+1. 先读取顶层 JSON。
+2. 若顶层存在 `structured_output` 且非空，优先把它作为 Sub-Agent 报告。
+3. 否则若顶层存在字符串字段 `result`，必须再次 `json.loads(result)` 得到 Sub-Agent 报告。
+4. 只有解析出的内层报告匹配 schema，才算该 Sub-Agent 有效完成。
+5. 若进程超时、exit code 非 0、顶层 `is_error=true`、`result` 非 JSON 或 schema 校验失败，必须把该 Sub-Agent 标记为 `blocked | failed`，禁止把外层 envelope 当成成功报告。
+
 ### 主 Agent 职责
 
 调用外部 Sub-Agent 前，主 Agent 必须先：
