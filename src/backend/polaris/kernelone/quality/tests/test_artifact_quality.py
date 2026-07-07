@@ -268,10 +268,37 @@ def test_artifact_quality_evidence_uses_direct_source_syntax_issue(tmp_path: Pat
 
     assert evidence.errors
     assert len(evidence.issues) == 1
-    assert evidence.issues[0].code == "syntax_error"
-    assert evidence.issues[0].path == "package.json"
-    assert evidence.issues[0].source == "source_syntax_checker"
-    assert evidence.issues[0].metadata["raw"] == evidence.errors[0]
+    issue = evidence.issues[0]
+    assert issue.code == "syntax_error"
+    assert issue.path == "package.json"
+    assert issue.source == "source_syntax_checker"
+    assert issue.metadata["raw"] == evidence.errors[0]
+    assert issue.metadata["diagnostic_kind"] == "syntax_error"
+
+
+def test_artifact_quality_issue_projection_maps_source_syntax_diagnostic_kind() -> None:
+    """Stable scanner metadata must classify syntax_error without display-string parsing."""
+
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "path": "src/main.ts",
+                "source": "source_syntax_checker",
+                "message": "scanner reported a source syntax problem",
+                "metadata": {
+                    "diagnostic_kind": "syntax_error",
+                    "language": "typescript",
+                },
+            },
+        )
+    )
+
+    assert len(issues) == 1
+    assert issues[0]["code"] == "syntax_error"
+    assert issues[0]["path"] == "src/main.ts"
+    assert issues[0]["source"] == "source_syntax_checker"
+    assert issues[0]["metadata"]["diagnostic_kind"] == "syntax_error"
+    assert issues[0]["metadata"]["language"] == "typescript"
 
 
 def test_artifact_quality_evidence_uses_direct_declared_interface_issue(

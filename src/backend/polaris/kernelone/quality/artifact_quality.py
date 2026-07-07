@@ -603,6 +603,8 @@ def _artifact_quality_issue_code_from_typed_metadata(
 
     diagnostic_kind = str(metadata.get("diagnostic_kind") or "").strip()
     language = str(metadata.get("language") or "").strip().lower()
+    if diagnostic_kind == "syntax_error" and source_token == "source_syntax_checker":
+        return "syntax_error"
     if diagnostic_kind == "undefined_identifier" and language == "go":
         return "go_compile_error"
     if diagnostic_kind == "package_module_type_commonjs_mismatch":
@@ -1746,6 +1748,7 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
                 metadata={
                     "raw": syntax_error,
                     "syntax_error": syntax_detail,
+                    "diagnostic_kind": "syntax_error",
                 },
             )
         )
