@@ -456,6 +456,30 @@ def test_artifact_quality_issue_projection_extracts_go_undefined_identifier() ->
     assert issues[0]["metadata"]["identifier"] == "errString"
 
 
+def test_artifact_quality_issue_projection_uses_module_type_diagnostic_kind() -> None:
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "message": "type=module package contains CommonJS runtime syntax",
+                "path": "package.json",
+                "source": "package_module_type_scanner",
+                "metadata": {
+                    "diagnostic_kind": "package_module_type_commonjs_mismatch",
+                    "source_path": "src/index.js",
+                    "declared_type": "module",
+                    "runtime_syntax": "commonjs",
+                },
+            },
+        )
+    )
+
+    assert issues[0]["code"] == "package_module_type_commonjs_mismatch"
+    assert issues[0]["path"] == "package.json"
+    assert issues[0]["source"] == "package_module_type_scanner"
+    assert issues[0]["metadata"]["diagnostic_kind"] == "package_module_type_commonjs_mismatch"
+    assert issues[0]["metadata"]["source_path"] == "src/index.js"
+
+
 def test_artifact_quality_issue_projection_extracts_undeclared_runtime_import() -> None:
     error = "Artifact quality scan failed: undeclared runtime import 'mongoose' in src/models/auditlog.ts"
 
@@ -767,16 +791,18 @@ def test_artifact_quality_evidence_uses_direct_package_module_type_issue(tmp_pat
         "in package.json",
     )
     assert len(evidence.issues) == 1
-    assert evidence.issues[0].code == "package_module_type_commonjs_mismatch"
-    assert evidence.issues[0].source == "package_module_type_scanner"
-    assert evidence.issues[0].path == "package.json"
-    assert evidence.issues[0].metadata == {
-        "raw": evidence.errors[0],
-        "manifest_path": "package.json",
-        "source_path": "src/index.js",
-        "declared_type": "module",
-        "runtime_syntax": "commonjs",
-    }
+    issue = evidence.issues[0]
+    assert issue.code == "package_module_type_commonjs_mismatch"
+    assert issue.source == "package_module_type_scanner"
+    assert issue.path == "package.json"
+    # Assert metadata fields individually so each typed contract is documented in the test surface.
+    metadata = dict(issue.metadata)
+    assert metadata["raw"] == evidence.errors[0]
+    assert metadata["manifest_path"] == "package.json"
+    assert metadata["source_path"] == "src/index.js"
+    assert metadata["declared_type"] == "module"
+    assert metadata["runtime_syntax"] == "commonjs"
+    assert metadata["diagnostic_kind"] == "package_module_type_commonjs_mismatch"
 
 
 def test_artifact_quality_evidence_uses_direct_typescript_project_typecheck_issue(tmp_path: Path) -> None:

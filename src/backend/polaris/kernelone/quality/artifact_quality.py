@@ -593,6 +593,8 @@ def _artifact_quality_issue_code_from_typed_metadata(
     language = str(metadata.get("language") or "").strip().lower()
     if diagnostic_kind == "undefined_identifier" and language == "go":
         return "go_compile_error"
+    if diagnostic_kind == "package_module_type_commonjs_mismatch":
+        return "package_module_type_commonjs_mismatch"
     return ""
 
 
@@ -2651,6 +2653,7 @@ def _package_module_type_mismatch_issue(error: str, relative_path: str, *, sourc
             "source_path": source_path,
             "declared_type": "module",
             "runtime_syntax": "commonjs",
+            "diagnostic_kind": "package_module_type_commonjs_mismatch",
         },
     )
 
