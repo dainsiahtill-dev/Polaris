@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -25,6 +25,7 @@ from polaris.cells.runtime.projection.internal.runtime_projection_service import
     RuntimeProjection,
     RuntimeProjectionService,
     TaskSource,
+    _apply_run_ledger_task_rows_overlay,
     _extract_run_ledger_run_id,
     _parse_engine_updated_at,
     _read_run_ledger_projection_for_run,
@@ -645,6 +646,152 @@ class TestSelectTaskRows:
         rows, source = select_task_rows(None, local)
         assert rows == [{"id": "x"}]
         assert source == TaskSource.LOCAL_LIVE
+
+
+# =============================================================================
+# fact_event_seq preservation tests
+# =============================================================================
+
+
+class TestTaskRowFactEventSeqPreservation:
+    """Runtime projection must preserve ``fact_event_seq`` evidence from
+    ``runtime.task_runtime`` task rows.
+
+    When ``TaskRuntimeService.list_observable_task_rows()`` returns rows that
+    carry ``fact_event_seq`` (or nested ``execution_event.fact_event_seq``)
+    from the ``task_runtime.execution`` fact stream, the projection pipeline
+    must carry that field through ``select_task_rows``,
+    ``_apply_run_ledger_task_rows_overlay``, and
+    ``build_snapshot_payload_from_projection``. Workflow/archive rows are
+    historical evidence only and must NOT replace runtime task rows that
+    already carry fact-stream seq metadata.
+    """
+
+    def test_select_task_rows_preserves_fact_event_seq_from_runtime_rows(self) -> None:
+        """``select_task_rows`` must not strip ``fact_event_seq`` when picking
+        runtime.task_runtime rows as the active source."""
+        runtime_rows = [
+            {
+                "id": "TASK-SEQ-1",
+                "task_id": "TASK-SEQ-1",
+                "status": "RUNNING",
+                "running": True,
+                "fact_event_seq": 42,
+                "execution_event": {"fact_event_seq": 42, "ok": True},
+            }
+        ]
+        # Local Director state is idle so rule 1 (local task-runtime rows) does
+        # not match; ``runtime_projection_rows`` from the orchestration active
+        # projection must therefore win under rule 2.
+        local = {"running": False, "state": "IDLE"}
+
+        rows, source = select_task_rows(runtime_rows, local)
+
+        assert source == TaskSource.TASK_RUNTIME
+        assert rows is runtime_rows
+        assert rows[0]["fact_event_seq"] == 42
+        execution_event = cast("dict[str, Any]", rows[0]["execution_event"])
+        assert execution_event["fact_event_seq"] == 42
+
+    def test_run_ledger_task_boundary_overlay_preserves_fact_event_seq(self) -> None:
+        """``_apply_run_ledger_task_rows_overlay`` must preserve
+        ``fact_event_seq`` when overlaying terminal verdicts."""
+        runtime_rows = [
+            {
+                "id": "TASK-SEQ-2",
+                "task_id": "TASK-SEQ-2",
+                "status": "RUNNING",
+                "running": True,
+                "fact_event_seq": 17,
+                "metadata": {"source": "runtime.task_runtime"},
+            }
+        ]
+        run_ledger_projection = {
+            "task_boundary": {
+                "latest": {
+                    "task_id": "TASK-SEQ-2",
+                    "ok": False,
+                    "failure_class": "INCOMPLETE_MATERIALIZATION",
+                    "responsible_layer": "director",
+                    "reason": "target files were not written",
+                }
+            }
+        }
+
+        overlaid = _apply_run_ledger_task_rows_overlay(runtime_rows, run_ledger_projection)
+
+        assert len(overlaid) == 1
+        assert overlaid[0]["task_id"] == "TASK-SEQ-2"
+        assert overlaid[0]["fact_event_seq"] == 17
+        assert overlaid[0]["status"] == "FAILED_ARTIFACT"
+        assert overlaid[0]["metadata"]["source"] == "runtime.task_runtime"
+        assert overlaid[0]["metadata"]["status_source"] == "run_ledger_projection"
+
+    def test_snapshot_payload_preserves_fact_event_seq_against_workflow_replacement(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """End-to-end: when ``RuntimeProjection.task_rows`` carry
+        ``fact_event_seq`` from runtime.task_runtime, the snapshot must keep
+        those rows intact and must NOT replace them with workflow/archive task
+        rows that lack the field."""
+
+        # Workspace has no task_runtime state files, so load_runtime_task_rows
+        # returns empty and the snapshot builder must fall back to
+        # ``projection.task_rows`` instead of rewriting from a workflow archive.
+        monkeypatch.setattr(
+            projection_service,
+            "load_runtime_task_rows",
+            lambda workspace: [],
+        )
+
+        runtime_task_row = {
+            "id": "TASK-SEQ-3",
+            "task_id": "TASK-SEQ-3",
+            "status": "RUNNING",
+            "running": True,
+            "subject": "Runtime row with fact_event_seq evidence",
+            "fact_event_seq": 99,
+            "execution_event": {"fact_event_seq": 99, "event_type": "claimed", "ok": True},
+            "metadata": {"source": "runtime.task_runtime"},
+        }
+        # Workflow/archive rows that MUST NOT overwrite the runtime row.
+        workflow_archive_rows = {
+            "tasks": {
+                "projection_source": "orchestration.workflow_runtime",
+                "task_rows": [
+                    {
+                        "id": "TASK-SEQ-3",
+                        "task_id": "TASK-SEQ-3",
+                        "status": "PENDING",
+                        "subject": "Stale workflow archive row",
+                    }
+                ],
+            }
+        }
+
+        projection = RuntimeProjection(
+            task_rows=[runtime_task_row],
+            workflow_archive={
+                "tasks": workflow_archive_rows["tasks"],
+                "raw_workflow_status": {
+                    "workflow_tasks": workflow_archive_rows["tasks"],
+                },
+            },
+        )
+
+        snapshot = build_snapshot_payload_from_projection(projection, workspace=str(tmp_path))
+
+        assert len(snapshot["tasks"]) == 1
+        projected_task = snapshot["tasks"][0]
+        assert projected_task["task_id"] == "TASK-SEQ-3"
+        assert projected_task["fact_event_seq"] == 99
+        assert projected_task["execution_event"]["fact_event_seq"] == 99
+        # The workflow/archive row must NOT have replaced the runtime row.
+        assert projected_task["status"] == "RUNNING"
+        assert projected_task["subject"] == "Runtime row with fact_event_seq evidence"
+        assert projected_task["metadata"]["source"] == "runtime.task_runtime"
 
 
 # =============================================================================
