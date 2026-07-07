@@ -2,14 +2,5 @@
   "version": 1,
   "description": "Machine-readable quarantine registry of known-failing tests. Consumed by docs/governance/ci/scripts/run_test_quarantine_gate.py. Test bodies keep their failing assertions; this registry only lets the gate distinguish pre-existing debt from new regressions and flags stale entries (unexpected passes) for removal. See docs/blueprints/GOVERNANCE_MECHANIZATION_BLUEPRINT_20260703.md.",
   "registered_at": "2026-07-03",
-  "entries": [
-    {
-      "node_id": "polaris/tests/unit/kernelone/quality/test_r6_regression_gates.py::TestFactoryRunServiceFailClosed::test_clean_chain_preserves_static_pass",
-      "file": "polaris/tests/unit/kernelone/quality/test_r6_regression_gates.py",
-      "reason": "FactoryRunService fail-closed clean-chain scenario no longer preserves the static pass verdict the regression gate expects (pre-existing failure at HEAD per 2026-07-03 audit).",
-      "owner_hint": "kernelone.quality",
-      "registered_at": "2026-07-03",
-      "expiry": null
-    }
-  ]
+  "entries": []
 }

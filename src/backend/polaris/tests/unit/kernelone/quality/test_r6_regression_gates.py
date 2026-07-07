@@ -433,6 +433,7 @@ class TestFactoryRunServiceFailClosed:
             "chain_state": "clean",
             "chain_results": {"qa_ran": True, "qa_passed": True},
             "wrong_product_suspect": False,
+            "implementation_depth": {"ok": True, "detail": "implementation depth passed"},
             "real_run_gate": {"ok": True, "summary": "real run gate passed"},
             "llm_route_audit": {"ok": True, "summary": "LLM route audit passed"},
             "backend_freshness": {"ok": True, "detail": "backend fingerprint matches source"},
