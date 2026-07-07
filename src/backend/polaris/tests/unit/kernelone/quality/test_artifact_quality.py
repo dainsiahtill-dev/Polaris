@@ -1322,12 +1322,63 @@ def test_scan_requires_node_types_for_typescript_builtin_import(tmp_path: Path) 
         encoding="utf-8",
     )
 
-    errors = scan_workspace_artifact_quality(
+    evidence = scan_workspace_artifact_quality_evidence(
         str(tmp_path),
         relative_paths=["src/middleware/tenant.middleware.ts"],
     )
 
-    assert any("requires '@types/node'" in error for error in errors)
+    assert any("requires '@types/node'" in error for error in evidence.errors)
+
+    node_types_issues = [
+        issue for issue in evidence.issues if issue.code == "typescript_node_types_missing"
+    ]
+    assert len(node_types_issues) == 1
+    issue = node_types_issues[0]
+    assert issue.source == "typescript_import_scanner"
+    assert issue.path == "src/middleware/tenant.middleware.ts"
+    assert issue.severity == "error"
+
+    metadata = dict(issue.metadata or {})
+    assert metadata["diagnostic_kind"] == "typescript_node_types_missing"
+    assert metadata["required_dependency"] == "@types/node"
+    assert metadata["specifier"] == "async_hooks"
+    assert metadata["importer_path"] == "src/middleware/tenant.middleware.ts"
+    assert metadata["raw"] in evidence.errors
+
+
+def test_artifact_quality_issues_from_errors_projects_typescript_node_types_missing() -> None:
+    """Public projection must classify typescript_node_types_missing without message parsing."""
+
+    projected = artifact_quality_issues_from_errors(
+        (
+            {
+                "path": "src/middleware/tenant.middleware.ts",
+                "source": "typescript_import_scanner",
+                # Message intentionally omits the legacy hint phrase so the
+                # classifier cannot fall back to message-text matching.
+                "message": "scanner reported a node builtin import that lacks @types/node",
+                "metadata": {
+                    "diagnostic_kind": "typescript_node_types_missing",
+                    "required_dependency": "@types/node",
+                    "specifier": "async_hooks",
+                    "importer_path": "src/middleware/tenant.middleware.ts",
+                },
+            },
+        )
+    )
+
+    assert len(projected) == 1
+    projected_issue = projected[0]
+    assert projected_issue["code"] == "typescript_node_types_missing"
+    assert projected_issue["path"] == "src/middleware/tenant.middleware.ts"
+    assert projected_issue["source"] == "typescript_import_scanner"
+    assert projected_issue["severity"] == "error"
+
+    projected_metadata = dict(projected_issue["metadata"] or {})
+    assert projected_metadata["diagnostic_kind"] == "typescript_node_types_missing"
+    assert projected_metadata["required_dependency"] == "@types/node"
+    assert projected_metadata["specifier"] == "async_hooks"
+    assert projected_metadata["importer_path"] == "src/middleware/tenant.middleware.ts"
 
 
 def test_scan_detects_typescript_project_typecheck_failure(tmp_path: Path, monkeypatch) -> None:

@@ -612,6 +612,11 @@ def _artifact_quality_issue_code_from_typed_metadata(
     if diagnostic_kind == "unresolved_relative_import" and source_token == "typescript_import_scanner":
         return "unresolved_relative_import"
     if (
+        diagnostic_kind == "typescript_node_types_missing"
+        and source_token == "typescript_import_scanner"
+    ):
+        return "typescript_node_types_missing"
+    if (
         diagnostic_kind == "typescript_escaped_newline_line_comment"
         and source_token == "typescript_syntax_red_flag_scanner"
     ):
@@ -3028,7 +3033,11 @@ def _scan_typescript_import_evidence(
                         error=error,
                         code="typescript_node_types_missing",
                         relative_path=relative_path,
-                        metadata={"specifier": specifier, "required_dependency": "@types/node"},
+                        metadata={
+                            "specifier": specifier,
+                            "required_dependency": "@types/node",
+                            "diagnostic_kind": "typescript_node_types_missing",
+                        },
                     )
                 )
                 node_types_error_added = True
