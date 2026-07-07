@@ -1171,17 +1171,28 @@ class TaskRuntimeService:
     ) -> dict[str, Any] | None:
         """Return the next claimable task row, preferring resumable work.
 
+        Selection consumes the task-runtime-owned observable read model
+        (``list_observable_task_rows``) so that ``task_runtime.execution``
+        fact overlays can override stale file-backed status before the
+        claimable filter is applied. Requested-task lookup also resolves
+        from the observable rows for the same reason; if the latest fact
+        says terminal/non-claimable, the requested row is rejected even if
+        the underlying file row still looks pending.
+
         This is a deterministic preview API. Concurrent Director fanout must
         use ``claim_next_execution`` so selection and claim stay in one retryable
         operation.
         """
         self.refresh_dependency_unblocks()
-        requested = self.get_task(requested_task_id) if requested_task_id else None
-        if isinstance(requested, dict) and self._is_row_claimable(requested):
-            return requested
+        observable_rows = self.list_observable_task_rows()
+        if requested_task_id:
+            normalized_requested = self.normalize_task_id(requested_task_id)
+            for row in observable_rows:
+                if self.normalize_task_id(row.get("id")) == normalized_requested and self._is_row_claimable(row):
+                    return row
+            return None
 
-        rows = self.list_task_rows(include_terminal=False)
-        candidates = [row for row in rows if self._is_row_claimable(row)]
+        candidates = [row for row in observable_rows if self._is_row_claimable(row)]
         if not candidates:
             return None
 
@@ -1228,8 +1239,8 @@ class TaskRuntimeService:
             - reason (str): Reason for failure (if success is False)
         """
         self.refresh_dependency_unblocks()
-        rows = self.list_task_rows(include_terminal=False)
-        candidates = [row for row in rows if self._is_row_claimable(row)]
+        observable_rows = self.list_observable_task_rows()
+        candidates = [row for row in observable_rows if self._is_row_claimable(row)]
         if not candidates:
             return build_task_execution_claim_next_result(
                 success=False,
@@ -1821,7 +1832,7 @@ class TaskRuntimeService:
         return self._board.add_ready_listener(listener)
 
     def list_ready_task_rows(self) -> list[dict[str, Any]]:
-        rows = self.list_task_rows(include_terminal=False)
+        rows = self.list_observable_task_rows()
         ready_rows: list[dict[str, Any]] = []
         for row in rows:
             status = str(row.get("status") or "").strip().lower()
