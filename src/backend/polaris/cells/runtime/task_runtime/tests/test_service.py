@@ -2248,3 +2248,222 @@ def test_execution_event_omits_fact_event_seq_when_appended_seq_is_none(
     assert isinstance(execution_event, dict)
     assert execution_event["ok"] is True
     assert "fact_event_seq" not in execution_event
+
+
+def test_list_task_rows_from_execution_facts_projects_fact_event_seq_matching_event_seq(
+    tmp_path: Path,
+) -> None:
+    """``list_task_rows_from_execution_facts`` must copy the queried Fact Stream
+    event wrapper ``seq`` onto the projected row as ``fact_event_seq`` when the
+    payload lacks a valid positive seq, and the value must match the queried
+    event's seq exactly. The seq must never be fabricated.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="claimed",
+            source="runtime.task_runtime",
+            task_id="TASK-SEQ",
+            run_id="run-seq-read",
+            payload={
+                "task_id": "TASK-SEQ",
+                "event_type": "claimed",
+                "status": "in_progress",
+                "execution_state": "in_progress",
+                "session_id": "session-seq",
+                "task_row_snapshot": {
+                    "id": "TASK-SEQ",
+                    "task_id": "TASK-SEQ",
+                    "subject": "fact-derived row",
+                },
+            },
+        )
+    )
+
+    rows = service.list_task_rows_from_execution_facts()
+    assert len(rows) == 1
+    row = rows[0]
+
+    # Top-level fact_event_seq must be projected and must match the wrapper
+    # seq returned by the FactStream query — proving the read-side copy is
+    # sourced from the event envelope, not fabricated.
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    seq_by_task: dict[str, int] = {}
+    for event in events:
+        task_id = str(event.get("task_id") or "").strip()
+        if task_id:
+            seq_by_task[task_id] = int(event["seq"])
+
+    assert row["fact_event_seq"] == seq_by_task["TASK-SEQ"]
+    assert isinstance(row["fact_event_seq"], int)
+    assert row["fact_event_seq"] >= 1
+
+
+def test_list_task_rows_from_execution_facts_preserves_payload_fact_event_seq(tmp_path: Path) -> None:
+    """When the persisted fact payload already carries a valid positive
+    ``fact_event_seq``, the read model must keep that value rather than
+    overwrite it with the wrapper seq.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="claimed",
+            source="runtime.task_runtime",
+            task_id="TASK-PRESET",
+            run_id="run-preset",
+            payload={
+                "task_id": "TASK-PRESET",
+                "event_type": "claimed",
+                "status": "in_progress",
+                "execution_state": "in_progress",
+                "session_id": "session-preset",
+                "fact_event_seq": 999,
+                "task_row_snapshot": {
+                    "id": "TASK-PRESET",
+                    "task_id": "TASK-PRESET",
+                    "subject": "preset seq row",
+                },
+            },
+        )
+    )
+
+    rows = service.list_task_rows_from_execution_facts()
+    assert len(rows) == 1
+    assert rows[0]["fact_event_seq"] == 999
+
+
+def test_list_task_rows_from_execution_facts_omits_fact_event_seq_when_wrapper_seq_invalid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When both the payload ``fact_event_seq`` and the wrapper ``seq`` are
+    missing/invalid, the projected row must NOT fabricate a seq field.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="claimed",
+            source="runtime.task_runtime",
+            task_id="TASK-INVALID",
+            run_id="run-invalid",
+            payload={
+                "task_id": "TASK-INVALID",
+                "event_type": "claimed",
+                "status": "in_progress",
+                "execution_state": "in_progress",
+                "task_row_snapshot": {
+                    "id": "TASK-INVALID",
+                    "task_id": "TASK-INVALID",
+                    "subject": "invalid seq row",
+                },
+            },
+        )
+    )
+
+    events = list(
+        query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    )
+    assert events, "fact stream must contain the appended event"
+
+    # Strip seq/fact_event_seq from the queried event to simulate an event
+    # record that has no seq evidence to copy.
+    def fake_query_fact_events(query: QueryFactEventsV1) -> Any:
+        result = original_query_fact_events(query)
+        scrubbed: list[dict[str, object]] = []
+        for event in result.events:
+            stripped = dict(event)
+            stripped.pop("seq", None)
+            payload = dict(stripped.get("payload") or {})
+            payload.pop("fact_event_seq", None)
+            stripped["payload"] = payload
+            scrubbed.append(stripped)
+        return type(result)(
+            workspace=result.workspace,
+            stream=result.stream,
+            events=tuple(scrubbed),
+            total=result.total,
+            next_offset=result.next_offset,
+        )
+
+    original_query_fact_events = service_module.query_fact_events
+    monkeypatch.setattr(service_module, "query_fact_events", fake_query_fact_events)
+
+    rows = service.list_task_rows_from_execution_facts()
+    assert len(rows) == 1
+    assert "fact_event_seq" not in rows[0]
+
+
+def test_list_observable_task_rows_preserves_fact_event_seq_overlay(tmp_path: Path) -> None:
+    """The observable overlay must keep the fact-derived ``fact_event_seq``
+    field visible on the merged row, matching the queried event wrapper seq
+    for the latest event and never dropping it during the file-row overlay
+    merge.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(
+        subject="Overlay preserves fact_event_seq",
+        description="file row overlaid by fact row",
+    )
+    task_id = str(created["id"])
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="claimed",
+            source="runtime.task_runtime",
+            task_id=task_id,
+            run_id="run-overlay-seq",
+            payload={
+                "task_id": task_id,
+                "event_type": "claimed",
+                "status": "in_progress",
+                "execution_state": "in_progress",
+                "session_id": "session-overlay-seq",
+                "task_row_snapshot": created,
+            },
+        )
+    )
+
+    rows = service.list_observable_task_rows()
+    assert len(rows) == 1
+    row = rows[0]
+
+    # The overlay must carry the LATEST fact_event_seq from the fact stream —
+    # the ``claimed`` event (seq=2) is later than the original ``created``
+    # event (seq=1) emitted by create_task_row.
+    latest_seq = max(
+        int(event["seq"])
+        for event in query_fact_events(
+            QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")
+        ).events
+        if str(event.get("task_id") or "").strip() == task_id
+    )
+    assert row["fact_event_seq"] == latest_seq
+    assert isinstance(row["fact_event_seq"], int)
+    # Overlay must not have dropped other projection fields.
+    assert row["status"] == "in_progress"
+    assert row["running"] is True
+    assert row["metadata"]["previous_status"] == "pending"
+    assert row["metadata"]["source"] == "task_runtime.execution_fact"

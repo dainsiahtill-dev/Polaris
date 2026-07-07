@@ -128,6 +128,14 @@ def project_task_row_from_execution_fact_payload(fact: dict[str, Any]) -> dict[s
         projection only; claim/write authorization still belongs to the
         TaskRuntimeService row/session APIs.
 
+        The ``fact_event_seq`` field is projected as a read-only top-level
+        sequence marker so consumers can correlate fact-derived rows with the
+        fact-stream append evidence. Validation rejects missing, zero,
+        negative, bool, float, and other non-positive-int input by simply
+        omitting the field rather than fabricating a value. The full
+        structured fact is always preserved under
+        ``metadata["task_runtime_execution_fact"]`` for read-only inspection.
+
     Complexity:
         O(n) time and memory over the task-row snapshot and metadata size.
     """
@@ -176,6 +184,13 @@ def project_task_row_from_execution_fact_payload(fact: dict[str, Any]) -> dict[s
             "metadata": metadata,
         }
     )
+    # Read-only seq projection: only a real positive integer (>= 1) is
+    # accepted; missing/zero/negative/bool/float/other inputs cause the field
+    # to be omitted. This is a read-model projection — no write authority is
+    # granted and the seq cannot be reused to mint fact-stream events.
+    fact_event_seq = _coerce_fact_event_seq(fact.get("fact_event_seq"))
+    if fact_event_seq is not None:
+        row["fact_event_seq"] = fact_event_seq
     return row
 
 

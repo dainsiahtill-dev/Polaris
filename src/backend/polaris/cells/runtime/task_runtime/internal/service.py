@@ -27,6 +27,7 @@ from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_root
 
 from .execution_session import (
     TaskExecutionSession,
+    _coerce_fact_event_seq,
     build_task_execution_bulk_suspend_result,
     build_task_execution_claim_attempt,
     build_task_execution_claim_next_result,
@@ -1025,6 +1026,17 @@ class TaskRuntimeService:
             continue to use the row/session APIs until the storage owner is fully
             event-sourced.
 
+        The queried FactStream event wrapper exposes the canonical
+        ``FactEventAppendedV1.appended_seq`` value as the ``seq`` field on
+        the event envelope. When the persisted fact payload lacks a valid
+        positive ``fact_event_seq`` field, the wrapper's ``seq`` is copied
+        onto the payload before projection so the read-only
+        ``project_task_row_from_execution_fact_payload`` can expose it as
+        the row-level ``fact_event_seq`` marker. The seq is never
+        fabricated — payloads that already carry a valid positive
+        ``fact_event_seq`` keep that value, and missing/invalid seq values
+        cause the top-level field to be omitted entirely.
+
         Complexity:
             O(e + t log t) time over queried events and projected tasks, O(t)
             memory for latest-by-task rows.
@@ -1051,6 +1063,15 @@ class TaskRuntimeService:
             fact = dict(payload)
             fact.setdefault("event_id", str(event.get("event_id") or ""))
             fact.setdefault("occurred_at", str(event.get("occurred_at") or event.get("timestamp") or ""))
+            # Carry the wrapper-level fact-stream seq onto the payload only
+            # when the payload itself does not already carry a valid positive
+            # ``fact_event_seq``. ``_coerce_fact_event_seq`` is the same
+            # fail-closed validator used elsewhere, so we never inject a
+            # missing/zero/negative/non-int seq into the payload.
+            if _coerce_fact_event_seq(fact.get("fact_event_seq")) is None:
+                wrapper_seq = _coerce_fact_event_seq(event.get("seq"))
+                if wrapper_seq is not None:
+                    fact["fact_event_seq"] = wrapper_seq
             row = project_task_row_from_execution_fact_payload(fact)
             task_id = str(row.get("task_id") or row.get("id") or "").strip()
             if task_id:

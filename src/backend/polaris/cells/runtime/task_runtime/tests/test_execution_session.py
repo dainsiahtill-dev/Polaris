@@ -18,6 +18,7 @@ from polaris.cells.runtime.task_runtime.internal.execution_session import (
     is_terminal_session_status,
     is_terminal_task_row_status,
     project_task_row_execution_event,
+    project_task_row_from_execution_fact_payload,
     project_task_row_runtime_state,
     task_row_status_counts,
     terminal_session_timestamp,
@@ -705,3 +706,110 @@ def test_project_task_row_runtime_state_marks_superseded_terminal_session() -> N
     assert runtime_execution["effective_status"] == "pending"
     assert runtime_execution["superseded_terminal_session_status"] == "failed"
     assert runtime_execution["session_projection_authority"] == "row_reset_after_terminal_session"
+
+
+def test_project_task_row_from_execution_fact_payload_projects_positive_fact_event_seq() -> None:
+    """A positive ``fact_event_seq`` in the payload must be projected as a
+    read-only top-level sequence marker while the full fact stays preserved
+    under ``metadata.task_runtime_execution_fact``.
+    """
+
+    fact = {
+        "task_id": "TASK-42",
+        "event_type": "claimed",
+        "status": "in_progress",
+        "execution_state": "in_progress",
+        "session_id": "session-1",
+        "fact_event_seq": 9,
+        "task_row_snapshot": {"id": "TASK-42", "subject": "row snapshot"},
+    }
+
+    row = project_task_row_from_execution_fact_payload(fact)
+
+    assert row["fact_event_seq"] == 9
+    assert isinstance(row["fact_event_seq"], int)
+    # Read-only invariant: the full structured fact must still be reachable
+    # for inspection. The row must not be returned empty even when the
+    # payload carries only a minimal snapshot.
+    assert row["task_id"] == "TASK-42"
+    assert row["subject"] == "row snapshot"
+    assert row["metadata"]["task_runtime_execution_fact"] == fact
+
+
+def test_project_task_row_from_execution_fact_payload_omits_invalid_fact_event_seq() -> None:
+    """Missing/zero/negative/bool/float/other invalid ``fact_event_seq``
+    values must be silently omitted from the row projection — never
+    fabricated — so the top-level field always carries a real positive
+    int or is absent.
+    """
+
+    invalid_inputs: list[object] = [
+        None,
+        0,
+        -7,
+        True,
+        False,
+        1.5,
+        "",
+        "garbage",
+        [3],
+        {"x": 1},
+    ]
+
+    for bad_value in invalid_inputs:
+        fact = {
+            "task_id": "TASK-OMIT",
+            "event_type": "claimed",
+            "status": "in_progress",
+            "execution_state": "in_progress",
+            "fact_event_seq": bad_value,
+            "task_row_snapshot": {"id": "TASK-OMIT", "subject": "row"},
+        }
+        row = project_task_row_from_execution_fact_payload(fact)
+
+        assert "fact_event_seq" not in row, (
+            f"fact_event_seq must not be projected for invalid input {bad_value!r}; got {row!r}"
+        )
+        # The full fact must still be preserved for inspection even when
+        # the seq was invalid.
+        assert row["metadata"]["task_runtime_execution_fact"] == fact
+
+
+def test_project_task_row_from_execution_fact_payload_coerces_int_like_fact_event_seq() -> None:
+    """A string ``fact_event_seq`` representation of a positive int must be
+    coerced into the row-level field so legacy or migrated payloads stay
+    consistent with the integer projection semantics.
+    """
+
+    fact = {
+        "task_id": "TASK-COERCE",
+        "event_type": "claimed",
+        "status": "in_progress",
+        "execution_state": "in_progress",
+        "fact_event_seq": "42",
+        "task_row_snapshot": {"id": "TASK-COERCE", "subject": "row"},
+    }
+
+    row = project_task_row_from_execution_fact_payload(fact)
+
+    assert row["fact_event_seq"] == 42
+    assert isinstance(row["fact_event_seq"], int)
+
+
+def test_project_task_row_from_execution_fact_payload_omits_fact_event_seq_for_unsnapshot_payload() -> None:
+    """The seq projection still obeys the missing-payload field rule when
+    no ``fact_event_seq`` is carried at all — the row is still projected
+    from the bare minimum fields but exposes no seq field.
+    """
+
+    fact = {
+        "task_id": "TASK-NONE",
+        "event_type": "claimed",
+        "status": "in_progress",
+        "execution_state": "in_progress",
+    }
+
+    row = project_task_row_from_execution_fact_payload(fact)
+
+    assert row["task_id"] == "TASK-NONE"
+    assert "fact_event_seq" not in row
