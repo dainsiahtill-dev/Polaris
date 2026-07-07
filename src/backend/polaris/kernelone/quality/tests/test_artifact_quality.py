@@ -1502,3 +1502,39 @@ def test_scan_workspace_artifact_quality_evidence_returns_typed_issue_on_scanner
     assert issue.message == "Artifact quality scan failed: scanner unavailable"
     assert issue.metadata["raw"] == "Artifact quality scan failed: scanner unavailable"
     assert issue.metadata["exception_type"] == "OSError"
+    assert issue.metadata["diagnostic_kind"] == "artifact_quality_scan_failed"
+
+
+def test_artifact_quality_issue_projection_maps_artifact_quality_scan_failed_diagnostic_kind() -> None:
+    """Stable scanner metadata must classify without depending on message text.
+
+    The scanner emits ``diagnostic_kind="artifact_quality_scan_failed"``
+    plus ``source="artifact_quality_scanner"``. The projection layer must
+    map that contract directly to the canonical issue code, regardless of
+    what the ``message`` field carries. The payload is intentionally code-less
+    so the classifier cannot fall back to a pre-assigned code field.
+    """
+
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "source": "artifact_quality_scanner",
+                # Message intentionally omits the legacy hint phrase so the
+                # classifier cannot fall back to message-text matching.
+                "message": "scanner reported an infrastructure failure during scan",
+                "metadata": {
+                    "diagnostic_kind": "artifact_quality_scan_failed",
+                    "raw": "Artifact quality scan failed: scanner unavailable",
+                    "exception_type": "OSError",
+                },
+            },
+        )
+    )
+
+    assert len(issues) == 1
+    assert issues[0]["code"] == "artifact_quality_scan_failed"
+    assert issues[0]["source"] == "artifact_quality_scanner"
+    metadata = dict(issues[0]["metadata"])
+    assert metadata["diagnostic_kind"] == "artifact_quality_scan_failed"
+    assert metadata["raw"] == "Artifact quality scan failed: scanner unavailable"
+    assert metadata["exception_type"] == "OSError"

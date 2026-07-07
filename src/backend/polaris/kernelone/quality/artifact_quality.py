@@ -456,7 +456,10 @@ def _artifact_quality_scan_failure_issue(
 ) -> ArtifactQualityIssue:
     """Return typed evidence for scanner infrastructure failures."""
 
-    metadata: dict[str, Any] = {"raw": message}
+    metadata: dict[str, Any] = {
+        "raw": message,
+        "diagnostic_kind": "artifact_quality_scan_failed",
+    }
     if exc is not None:
         metadata["exception_type"] = type(exc).__name__
     return ArtifactQualityIssue(
@@ -603,6 +606,8 @@ def _artifact_quality_issue_code_from_typed_metadata(
 
     diagnostic_kind = str(metadata.get("diagnostic_kind") or "").strip()
     language = str(metadata.get("language") or "").strip().lower()
+    if diagnostic_kind == "artifact_quality_scan_failed" and source_token == "artifact_quality_scanner":
+        return "artifact_quality_scan_failed"
     if diagnostic_kind == "workspace_path_missing" and source_token == "artifact_quality_scanner":
         return "workspace_path_missing"
     if diagnostic_kind == "syntax_error" and source_token == "source_syntax_checker":
