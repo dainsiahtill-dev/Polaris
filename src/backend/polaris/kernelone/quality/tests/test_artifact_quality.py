@@ -785,13 +785,52 @@ export function build() {
         "semicolon-terminated property in src/factory.ts",
     )
     assert len(evidence.issues) == 1
-    assert evidence.issues[0].code == "typescript_return_object_semicolon_property"
-    assert evidence.issues[0].source == "typescript_syntax_red_flag_scanner"
-    assert evidence.issues[0].path == "src/factory.ts"
-    assert evidence.issues[0].metadata == {
-        "raw": evidence.errors[0],
-        "path": "src/factory.ts",
-    }
+    issue = evidence.issues[0]
+    assert issue.code == "typescript_return_object_semicolon_property"
+    assert issue.source == "typescript_syntax_red_flag_scanner"
+    assert issue.path == "src/factory.ts"
+    # Assert metadata fields individually so each typed contract is documented in
+    # the test surface. ``diagnostic_kind`` is the scanner-emitted classifier that
+    # lets downstream gates key off the typed metadata contract instead of
+    # reparsing the legacy ``message`` string.
+    metadata = dict(issue.metadata)
+    assert metadata["raw"] == evidence.errors[0]
+    assert metadata["path"] == "src/factory.ts"
+    assert metadata["diagnostic_kind"] == "typescript_return_object_semicolon_property"
+
+
+def test_artifact_quality_issue_projection_maps_typescript_return_object_semicolon_diagnostic_kind() -> None:
+    """Stable scanner metadata must classify without depending on message text.
+
+    The scanner now emits ``diagnostic_kind="typescript_return_object_semicolon_property"``
+    plus ``source="typescript_syntax_red_flag_scanner"``. The projection layer must
+    map that contract directly to the canonical issue code, regardless of what
+    the ``message`` field carries. Callers should not have to repackage scanner
+    output into legacy strings to recover the typed code.
+    """
+
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "path": "src/factory.ts",
+                "source": "typescript_syntax_red_flag_scanner",
+                # Message intentionally omits the legacy hint phrase so the
+                # classifier cannot fall back to message-text matching.
+                "message": "scanner reported a semicolon-terminated property",
+                "metadata": {
+                    "diagnostic_kind": "typescript_return_object_semicolon_property",
+                    "path": "src/factory.ts",
+                },
+            },
+        )
+    )
+
+    assert len(issues) == 1
+    assert issues[0]["code"] == "typescript_return_object_semicolon_property"
+    assert issues[0]["path"] == "src/factory.ts"
+    assert issues[0]["source"] == "typescript_syntax_red_flag_scanner"
+    assert issues[0]["metadata"]["diagnostic_kind"] == "typescript_return_object_semicolon_property"
+    assert issues[0]["metadata"]["path"] == "src/factory.ts"
 
 
 def test_artifact_quality_evidence_uses_direct_html_module_script_issue(tmp_path: Path) -> None:
