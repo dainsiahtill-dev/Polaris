@@ -2596,3 +2596,158 @@ def test_project_task_row_from_execution_fact_payload_normalizes_fact_event_seq(
         "value on the returned row, and must not bypass the Fact Stream via "
         ".seq cursor/file reads. Offenders:\n" + "\n".join(all_offenders)
     )
+
+
+# ---------------------------------------------------------------------------
+# WS2 selection/readiness — observable rows only
+# ---------------------------------------------------------------------------
+#
+# TaskRuntimeService selection and ready-readiness paths must read through the
+# observable row model (``list_observable_task_rows``) so the
+# ``task_runtime.execution`` Fact Stream overlay remains the read-model SSoT.
+# Direct calls to the raw file-backed ``list_task_rows`` API in those methods
+# would silently drop late status reconciliation evidence for in-flight rows,
+# regressing Director fanout and worker wakeup back to the pre-WS2 raw read.
+#
+# This fence is intentionally scoped to the three selection/readiness methods:
+#   * ``select_next_task`` — preview selection
+#   * ``claim_next_execution`` — atomic select-and-claim
+#   * ``list_ready_task_rows`` — readiness projection
+#
+# It does NOT ban ``list_task_rows`` globally. Mutation/write APIs and
+# ``list_observable_task_rows`` itself legitimately read through the raw API.
+
+TASK_RUNTIME_SERVICE_SELECTION_READINESS_METHODS = (
+    "select_next_task",
+    "claim_next_execution",
+    "list_ready_task_rows",
+)
+
+
+def _selection_readiness_method_function_def(name: str) -> ast.FunctionDef:
+    """Return the AST node for ``TaskRuntimeService.<name>()`` if it is a sync method.
+
+    Skips non-method top-level ``def`` entries and ignores methods that live on
+    other classes; selectors and readiness helpers above only exist on the
+    ``TaskRuntimeService`` class.
+    """
+
+    source = TASK_RUNTIME_INTERNAL_SERVICE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    parents = _parent_lookup(tree)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if node.name != name:
+            continue
+        enclosing = parents.get(node)
+        if isinstance(enclosing, ast.ClassDef) and enclosing.name == "TaskRuntimeService":
+            return node
+    raise AssertionError(
+        f"TaskRuntimeService.{name}() not found in {TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)}"
+    )
+
+
+def _call_is_self_method(node: ast.Call, method_name: str) -> bool:
+    """True if ``node`` is ``self.<method_name>(...)`` regardless of keyword args."""
+
+    func = node.func
+    if not isinstance(func, ast.Attribute) or func.attr != method_name:
+        return False
+    receiver = func.value
+    return isinstance(receiver, ast.Name) and receiver.id == "self"
+
+
+def _method_body_calls_self_method(method_def: ast.FunctionDef, method_name: str) -> bool:
+    """True if ``method_def`` contains at least one ``self.<method_name>(...)`` call."""
+
+    return any(isinstance(node, ast.Call) and _call_is_self_method(node, method_name) for node in ast.walk(method_def))
+
+
+def _collect_direct_list_task_rows_in_method(method_def: ast.FunctionDef) -> list[ast.Call]:
+    """Return ``self.list_task_rows(...)`` call nodes inside ``method_def``.
+
+    Only direct ``self.list_task_rows(...)`` calls are flagged. Indirect calls
+    through locals/aliases or sub-helper methods are not targeted by this fence,
+    and the legitimate callers (``list_observable_task_rows`` itself and the
+    raw write/mutation API) live outside these selection/readiness methods.
+    """
+
+    return [
+        node
+        for node in ast.walk(method_def)
+        if isinstance(node, ast.Call) and _call_is_self_method(node, "list_task_rows")
+    ]
+
+
+def _check_selection_readiness_uses_observable_rows() -> list[str]:
+    """Walk the three selection/readiness methods and emit fence offenders.
+
+    Each method must call ``self.list_observable_task_rows(...)`` at least
+    once. Direct ``self.list_task_rows(...)`` calls are forbidden inside
+    selection/readiness methods because they bypass the execution-fact overlay
+    that keeps status projection authoritative for in-flight rows.
+    """
+
+    offenders: list[str] = []
+    for method_name in TASK_RUNTIME_SERVICE_SELECTION_READINESS_METHODS:
+        try:
+            method_def = _selection_readiness_method_function_def(method_name)
+        except AssertionError as exc:  # pragma: no cover - structural guard
+            offenders.append(str(exc))
+            continue
+
+        if not _method_body_calls_self_method(method_def, "list_observable_task_rows"):
+            offenders.append(
+                f"{TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)}:"
+                f"TaskRuntimeService.{method_name}() does not call "
+                "self.list_observable_task_rows() to project task-runtime status "
+                "through the task_runtime.execution Fact Stream overlay."
+            )
+
+        for bad_call in _collect_direct_list_task_rows_in_method(method_def):
+            offenders.append(
+                f"{TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)}:"
+                f"TaskRuntimeService.{method_name}():{bad_call.lineno} calls "
+                "self.list_task_rows() directly; selection/readiness paths must "
+                "read through self.list_observable_task_rows() so execution "
+                "facts remain part of the read-model projection."
+            )
+    return offenders
+
+
+def test_selection_and_readiness_methods_use_observable_rows_not_raw_list() -> None:
+    """WS2 selection/readiness fence.
+
+    ``TaskRuntimeService.select_next_task()``, ``claim_next_execution()``, and
+    ``list_ready_task_rows()`` are the public read-side entry points that
+    Director fanout and worker wakeup consume to choose the next row. They
+    must read through ``self.list_observable_task_rows(...)`` so late
+    ``task_runtime.execution`` fact evidence (claim_renewed, completed, failed,
+    QA rework, role-adapter failure) is part of the projection SSoT.
+
+    The fence is structural: it walks the AST of each method and checks:
+
+    1. The method calls ``self.list_observable_task_rows(...)`` at least once.
+    2. The method does NOT call ``self.list_task_rows(...)`` directly.
+
+    ``list_task_rows`` remains the legitimate primitive for
+    ``list_observable_task_rows`` itself and for write/mutation/refresh paths;
+    the fence only bans its direct appearance inside these three selection/
+    readiness methods. Existing ``_task_runtime_service_raw_board_*`` fences
+    and assertion-based invariants continue to apply.
+    """
+
+    offenders = _check_selection_readiness_uses_observable_rows()
+
+    assert not offenders, (
+        "WS2 selection/readiness fence: "
+        "TaskRuntimeService.select_next_task(), claim_next_execution(), and "
+        "list_ready_task_rows() must consume the observable row projection "
+        "(self.list_observable_task_rows(...)) instead of the raw file-backed "
+        "self.list_task_rows(...), so the task_runtime.execution Fact Stream "
+        "overlay stays part of the read-model SSoT for selection and "
+        "readiness. Direct list_task_rows() calls inside write/mutation paths "
+        "and inside list_observable_task_rows() itself remain allowed. "
+        "Offenders:\n" + "\n".join(offenders)
+    )
