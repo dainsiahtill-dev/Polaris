@@ -1297,13 +1297,29 @@ def test_scan_detects_unresolved_runtime_typescript_imports(tmp_path: Path) -> N
         encoding="utf-8",
     )
 
-    errors = scan_workspace_artifact_quality(
+    evidence = scan_workspace_artifact_quality_evidence(
         str(tmp_path),
         relative_paths=["src/middleware/tenant.middleware.ts"],
     )
 
+    errors = evidence.errors
     assert any("undeclared runtime import 'express'" in error for error in errors)
     assert any("unresolved relative import '../context'" in error for error in errors)
+    runtime_import_issues = [
+        issue for issue in evidence.issues if issue.code == "undeclared_runtime_import"
+    ]
+    assert len(runtime_import_issues) == 1
+    issue = runtime_import_issues[0]
+    assert issue.source == "typescript_import_scanner"
+    assert issue.path == "src/middleware/tenant.middleware.ts"
+    assert issue.severity == "error"
+
+    metadata = dict(issue.metadata or {})
+    assert metadata["diagnostic_kind"] == "undeclared_runtime_import"
+    assert metadata["specifier"] == "express"
+    assert metadata["package_root"] == "express"
+    assert metadata["importer_path"] == "src/middleware/tenant.middleware.ts"
+    assert metadata["raw"] in errors
 
 
 def test_scan_requires_node_types_for_typescript_builtin_import(tmp_path: Path) -> None:
@@ -1379,6 +1395,41 @@ def test_artifact_quality_issues_from_errors_projects_typescript_node_types_miss
     assert projected_metadata["required_dependency"] == "@types/node"
     assert projected_metadata["specifier"] == "async_hooks"
     assert projected_metadata["importer_path"] == "src/middleware/tenant.middleware.ts"
+
+
+def test_artifact_quality_issues_from_errors_projects_undeclared_runtime_import() -> None:
+    """Public projection must classify undeclared_runtime_import without message parsing."""
+
+    projected = artifact_quality_issues_from_errors(
+        (
+            {
+                "path": "src/models/auditlog.ts",
+                "source": "typescript_import_scanner",
+                # Message intentionally omits the legacy hint phrase so the
+                # classifier cannot fall back to message-text matching.
+                "message": "scanner reported a runtime import missing from package.json",
+                "metadata": {
+                    "diagnostic_kind": "undeclared_runtime_import",
+                    "specifier": "mongoose",
+                    "package_root": "mongoose",
+                    "importer_path": "src/models/auditlog.ts",
+                },
+            },
+        )
+    )
+
+    assert len(projected) == 1
+    projected_issue = projected[0]
+    assert projected_issue["code"] == "undeclared_runtime_import"
+    assert projected_issue["path"] == "src/models/auditlog.ts"
+    assert projected_issue["source"] == "typescript_import_scanner"
+    assert projected_issue["severity"] == "error"
+
+    projected_metadata = dict(projected_issue["metadata"] or {})
+    assert projected_metadata["diagnostic_kind"] == "undeclared_runtime_import"
+    assert projected_metadata["specifier"] == "mongoose"
+    assert projected_metadata["package_root"] == "mongoose"
+    assert projected_metadata["importer_path"] == "src/models/auditlog.ts"
 
 
 def test_scan_detects_typescript_project_typecheck_failure(tmp_path: Path, monkeypatch) -> None:

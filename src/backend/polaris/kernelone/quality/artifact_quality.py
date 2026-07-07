@@ -612,6 +612,11 @@ def _artifact_quality_issue_code_from_typed_metadata(
     if diagnostic_kind == "unresolved_relative_import" and source_token == "typescript_import_scanner":
         return "unresolved_relative_import"
     if (
+        diagnostic_kind == "undeclared_runtime_import"
+        and source_token == "typescript_import_scanner"
+    ):
+        return "undeclared_runtime_import"
+    if (
         diagnostic_kind == "typescript_node_types_missing"
         and source_token == "typescript_import_scanner"
     ):
@@ -3052,7 +3057,11 @@ def _scan_typescript_import_evidence(
                     error=error,
                     code="undeclared_runtime_import",
                     relative_path=relative_path,
-                    metadata={"specifier": specifier, "package_root": root_name},
+                    metadata={
+                        "specifier": specifier,
+                        "package_root": root_name,
+                        "diagnostic_kind": "undeclared_runtime_import",
+                    },
                 )
             )
     if _ts_symbol_coherence_enabled():
