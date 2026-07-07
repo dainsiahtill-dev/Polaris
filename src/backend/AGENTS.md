@@ -140,7 +140,7 @@ Cell 是最小自治边界。
 1. PM、Chief Engineer、Director、QA 任一角色出现工具调用失败、工具调用缺失、工具参数无法归一化、工具结果被误判成功、或 LLM 输出被错误送入 action/parser 时，主 Agent 可以安排 OpenCode 外部 Agent 独立审计，不能只凭主 Agent 口头推断结案。
 2. OpenCode 审计只属于 Codex/Claude 等主 Agent 的外部工程协作手段，绝对不是 Polaris 后端、Factory、Run Ledger、ContextOS、ReceiptStore、runtime event、UI 或质量门禁的一部分。后端产品代码不得调度 OpenCode、等待 OpenCode、生成 `opencode_audit` 平台字段，或把 OpenCode 状态作为成功/失败依据。
 3. 审计范围必须覆盖最终送入 provider 的 LLM request（messages、tool schema、response format、token 估算、覆盖度 flags）、工具调用解析与归一化链路、`ToolSpecRegistry` aliases/arg_aliases、runtime event、LLM 调用日志、ContextOS 证据、bench session 和角色日志；若事件中 `messages`/`content` 被 redacted，主 Agent 必须把 `context_snapshot_ref` 对应的 `runtime/contexts/<shard>/<hash>` 快照文件纳入自己的外部审计证据包，禁止只看 redacted event。
-4. OpenCode 审计默认只读；只有在主 Agent 已经拆分出互不重叠且授权明确的修复范围时，才允许子 Agent 修改代码。
+4. 外部 Agent 不应长期只做审计。对于已经有明确根因、授权文件范围、验收命令和无交叉依赖的账本项，主 Agent 应优先使用 Claude CLI JSON Sub-Agent 的 `mode=implementation` 让子 Agent 直接修改代码/测试/文档；OpenCode 审计默认只读，只在 Claude CLI 不可用或用户显式要求时作为兼容审计路径。任何可写子任务都必须互斥范围明确、不得跨桶写入，且完成后由主 Agent 复核 diff、运行门禁并提交。
 5. 平台自身的失败分类仍必须由 Polaris 原生证据闭环完成：PM Contract、Chief Engineer Blueprint、Director Execution、LLM Output、Context Budget、Baseline Issue、Runtime Environment。无法归类时视为 Polaris 证据链缺口，先补 runtime/ledger/receipt/command 证据，不得用 OpenCode 审计状态补位。
 
 ### 4.15 Director Multi-Binding Degraded Execution

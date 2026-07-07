@@ -391,6 +391,8 @@ claude -p "<完整任务提示词>" \
 
 多个互不重叠的任务可以并行执行，最多 3 个 Sub-Agent。Sub-Agent 必须显式声明 `mode=audit` 或 `mode=implementation`：审计任务只读；实施任务可以直接写代码，但共享主仓并发写入只允许在文件/目录/职责集合完全互斥时使用，否则必须使用独立 worktree/sandbox，或降级为串行。
 
+默认派工策略是 **implementation-first for bounded work**：当账本项已经有明确根因、授权文件范围、验收命令和无交叉依赖时，主 Agent 必须优先派 `mode=implementation` Sub-Agent 直接修改代码/测试/文档，而不是只让外部 Agent 审计。`mode=audit` 只适用于边界尚未确定、需要先确认事实源、跨 Cell 共享接口仍未定、或可能与其他正在运行的 Agent 冲突的高风险阶段。审计完成后如果形成了互斥范围，下一轮必须转为 `mode=implementation` 或由主 Agent 亲自收敛，禁止长期停留在“只审计不落地”。
+
 ```bash
 claude -p "<Agent 01 完整提示词>" --dangerously-skip-permissions --output-format json --json-schema '<JSON_SCHEMA>' > /tmp/polaris-subagent-<batch>-01.json &
 claude -p "<Agent 02 完整提示词>" --dangerously-skip-permissions --output-format json --json-schema '<JSON_SCHEMA>' > /tmp/polaris-subagent-<batch>-02.json &
