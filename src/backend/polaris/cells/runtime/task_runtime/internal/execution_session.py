@@ -295,16 +295,8 @@ def build_task_runtime_execution_event_payload(
     task_metadata: dict[str, Any] = task_metadata_raw if isinstance(task_metadata_raw, dict) else {}
     runtime_execution_raw = task_metadata.get("runtime_execution")
     runtime_execution: dict[str, Any] = runtime_execution_raw if isinstance(runtime_execution_raw, dict) else {}
-    effective_status = str(
-        runtime_execution.get("effective_status")
-        or task_row.get("status")
-        or ""
-    ).strip()
-    resume_state = str(
-        runtime_execution.get("resume_state")
-        or task_row.get("resume_state")
-        or ""
-    ).strip()
+    effective_status = str(runtime_execution.get("effective_status") or task_row.get("status") or "").strip()
+    resume_state = str(runtime_execution.get("resume_state") or task_row.get("resume_state") or "").strip()
     payload: dict[str, Any] = {
         "event_type": event_type_str,
         "workspace": str(workspace or "").strip(),
@@ -324,8 +316,12 @@ def build_task_runtime_execution_event_payload(
         else normalize_positive_int(runtime_execution.get("resume_count"), default=0, minimum=0),
         "resume_state": resume_state,
         "resume_available": bool(task_row.get("resume_available")) or bool(runtime_execution.get("resume_available")),
-        "lease_expires_at": session.lease_expires_at if session is not None else str(task_row.get("lease_expires_at") or ""),
-        "last_heartbeat_at": session.last_heartbeat_at if session is not None else str(task_row.get("last_heartbeat_at") or ""),
+        "lease_expires_at": session.lease_expires_at
+        if session is not None
+        else str(task_row.get("lease_expires_at") or ""),
+        "last_heartbeat_at": session.last_heartbeat_at
+        if session is not None
+        else str(task_row.get("last_heartbeat_at") or ""),
         "last_error": sanitize_summary(session.last_error if session is not None else task_row.get("last_error")),
         "last_result_summary": sanitize_summary(
             session.last_result_summary if session is not None else task_row.get("last_result_summary")
@@ -346,12 +342,55 @@ def build_task_runtime_execution_event_payload(
     return payload
 
 
+def _coerce_fact_event_seq(value: Any) -> int | None:
+    """Coerce int-like input into a positive fact-stream seq number.
+
+    Returns ``None`` when ``value`` is missing, non-numeric, a ``bool`` (since
+    ``bool`` is a subclass of ``int`` and never a meaningful seq), a ``float``
+    (rejected so ``1.5`` never silently truncates to ``1``), or below the
+    minimum bound of 1. This is the only path that decides whether the
+    ``fact_event_seq`` field is projected; callers never construct the field
+    themselves so the helper guarantees fail-closed validation.
+
+    Int-like input includes plain ``int`` (the canonical
+    ``FactEventAppendedV1.appended_seq`` type) and string representations of
+    positive integers (e.g. ``"42"``). Other types — lists, dicts, bools,
+    floats — are rejected to prevent silent fabrication.
+    """
+
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    # Reject floats explicitly; ``int(1.5)`` truncates to 1 which would silently
+    # fabricate a positive seq from non-integer input.
+    if isinstance(value, float):
+        return None
+    if isinstance(value, int):
+        coerced = value
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            coerced = int(stripped)
+        except (TypeError, ValueError):
+            return None
+    else:
+        return None
+    if coerced < 1:
+        return None
+    return coerced
+
+
 def build_task_runtime_execution_event_append_result(
     *,
     event_type: Any,
     fact_event_id: Any = "",
     fact_stream: Any = "",
     fact_storage_path: Any = "",
+    fact_event_seq: Any = None,
+    fact_seq: Any = None,
     published: bool = False,
     append_error: Any = "",
     publish_error: Any = "",
@@ -362,6 +401,12 @@ def build_task_runtime_execution_event_append_result(
         The task runtime service owns state transitions and persistence. This
         helper owns the stable append-evidence shape so ledger failures do not
         disappear behind debug logs or grow ad-hoc result fields per caller.
+
+    Both ``fact_event_seq`` and the legacy ``fact_seq`` keyword are accepted as
+    int-like input (callers may pass ``FactEventAppendedV1.appended_seq``
+    directly). The seq number is only projected when it is a real positive
+    integer (``>= 1``); missing or invalid input never produces a fabricated
+    ``fact_event_seq`` field.
     """
 
     clean_event_type = str(event_type or "unknown").strip() or "unknown"
@@ -370,6 +415,10 @@ def build_task_runtime_execution_event_append_result(
     clean_storage_path = str(fact_storage_path or "").strip()
     clean_append_error = str(append_error or "").strip()
     clean_publish_error = str(publish_error or "").strip()
+
+    clean_fact_event_seq = _coerce_fact_event_seq(fact_event_seq)
+    if clean_fact_event_seq is None:
+        clean_fact_event_seq = _coerce_fact_event_seq(fact_seq)
 
     result: dict[str, Any] = {
         "ok": bool(clean_fact_event_id) and not clean_append_error,
@@ -382,6 +431,8 @@ def build_task_runtime_execution_event_append_result(
         result["fact_stream"] = clean_fact_stream
     if clean_storage_path:
         result["fact_storage_path"] = clean_storage_path
+    if clean_fact_event_seq is not None:
+        result["fact_event_seq"] = clean_fact_event_seq
     if clean_append_error:
         result["error"] = sanitize_summary(clean_append_error, max_chars=300)
     if clean_publish_error:

@@ -4,6 +4,7 @@ import json
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 from polaris.cells.events.fact_stream.public.service import (
@@ -259,19 +260,13 @@ def test_task_runtime_service_create_links_reverse_dependency_with_execution_eve
     assert parent_after["blocks"] == [child_id]
 
     reverse_events = [
-        event
-        for event in child.get("execution_events", [])
-        if event.get("event_type") == "reverse_dependency_linked"
+        event for event in child.get("execution_events", []) if event.get("event_type") == "reverse_dependency_linked"
     ]
     assert len(reverse_events) == 1
     reverse_event = reverse_events[0]
     assert reverse_event["ok"] is True
     events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
-    linked_payloads = [
-        event["payload"]
-        for event in events
-        if event["event_type"] == "reverse_dependency_linked"
-    ]
+    linked_payloads = [event["payload"] for event in events if event["event_type"] == "reverse_dependency_linked"]
     assert len(linked_payloads) == 1
     linked_payload = linked_payloads[0]
     assert linked_payload["details"]["dependent_task_id"] == child_id
@@ -1256,9 +1251,7 @@ def test_task_runtime_inspects_reexecution_source_task_rows(tmp_path: Path) -> N
 
     inspection = TaskRuntimeService.inspect_reexecution_source_task_rows(task_dir)
 
-    assert inspection["task_rows"] == [
-        {"id": 2, "status": "failed", "metadata": {"pm_task_id": "TASK-2"}}
-    ]
+    assert inspection["task_rows"] == [{"id": 2, "status": "failed", "metadata": {"pm_task_id": "TASK-2"}}]
     assert inspection["task_files"] == ["task_2.json"]
     assert inspection["task_count"] == 1
     assert isinstance(inspection["latest_mtime"], float)
@@ -1856,9 +1849,7 @@ def test_task_runtime_rework_exhaustion_failure_is_owner_transition(tmp_path: Pa
     assert failed["metadata"]["qa_last_verdict"] == "FAIL"
     assert failed["metadata"]["runtime_execution"]["status"] == "failed"
     assert failed["metadata"]["runtime_execution"]["last_error"] == "qa_rework_retry_exhausted"
-    execution_event_types = [
-        str(event.get("event_type") or "") for event in failed.get("execution_events", [])
-    ]
+    execution_event_types = [str(event.get("event_type") or "") for event in failed.get("execution_events", [])]
     assert execution_event_types[-2:] == ["downstream_dependency_reblocked", "failed"]
 
     child_after = service.get_task(child_id)
@@ -2096,3 +2087,164 @@ def test_task_runtime_factory_event_preserves_payload_director_run_id(
     assert payload["run_id"] == "director-123456789abc"
     assert payload["factory_run_id"] == "factory_123456789abc"
     assert payload["director_run_id"] == "director-123456789abc"
+
+
+def test_create_task_row_projects_fact_event_seq_matching_fact_stream(tmp_path: Path) -> None:
+    """``create_task_row`` must project a positive ``fact_event_seq`` that matches the
+    seq stored in the fact stream entry. The seq must NOT be fabricated on
+    the failure path.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    row = service.create_task_row(subject="project fact_event_seq")
+
+    execution_event = row["execution_event"]
+    assert isinstance(execution_event, dict)
+    assert execution_event["ok"] is True
+    assert execution_event["event_type"] == "created"
+    assert isinstance(execution_event.get("fact_event_seq"), int)
+    assert execution_event["fact_event_seq"] >= 1
+
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    created_event = next(event for event in events if event.get("event_type") == "created")
+    assert int(created_event["seq"]) == execution_event["fact_event_seq"]
+
+
+def test_claim_and_complete_execution_projects_fact_event_seq_consistently(tmp_path: Path) -> None:
+    """Claim + complete must publish execution_event.fact_event_seq that is consistent
+    with the ``query_fact_events`` seq for the same stream event.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(subject="seq claim+complete")
+    created_id = int(created["id"])
+
+    claimed = service.claim_execution(
+        created_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-seq-claim",
+        selection_source="unit",
+    )
+    assert claimed["success"] is True
+    claim_event = claimed["execution_event"]
+    assert claim_event["ok"] is True
+    assert claim_event["event_type"] == "claimed"
+    assert isinstance(claim_event.get("fact_event_seq"), int)
+    assert claim_event["fact_event_seq"] >= 1
+
+    completed = service.complete_execution(
+        created_id,
+        session_id=str(claimed["session"]["session_id"]),
+        result_summary="done",
+    )
+    assert completed["success"] is True
+    completed_event = completed["execution_event"]
+    assert completed_event["ok"] is True
+    assert completed_event["event_type"] == "completed"
+    assert isinstance(completed_event.get("fact_event_seq"), int)
+    assert completed_event["fact_event_seq"] > claim_event["fact_event_seq"]
+
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    seq_by_type: dict[str, int] = {}
+    for event in events:
+        event_type = str(event.get("event_type") or "")
+        seq_by_type[event_type] = int(event["seq"])
+
+    assert seq_by_type["created"] == int(created["execution_event"]["fact_event_seq"])
+    assert seq_by_type["claimed"] == int(claim_event["fact_event_seq"])
+    assert seq_by_type["completed"] == int(completed_event["fact_event_seq"])
+
+
+def test_execution_event_does_not_fabricate_fact_event_seq_on_append_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed ``append_fact_event`` must omit ``fact_event_seq`` from the public
+    ``execution_event`` projection so consumers cannot latch onto a phantom seq.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    def fail_append_event(_command: object) -> object:
+        raise RuntimeError("fact stream unavailable")
+
+    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+
+    row = service.create_task_row(subject="fail append seq projection")
+    execution_event = row["execution_event"]
+    assert isinstance(execution_event, dict)
+    assert execution_event["ok"] is False
+    assert execution_event["event_type"] == "created"
+    assert "fact_event_seq" not in execution_event
+
+
+def test_execution_event_does_not_fabricate_fact_event_seq_on_publish_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If ``_publish_factory_execution_event`` raises after a successful append,
+    the public ``execution_event`` still exposes ``fact_event_seq`` because the
+    seq was already allocated by the fact stream; the helper projects it as
+    positive evidence regardless of publish path so the failure shape remains
+    transparent.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    def fail_publish(_payload: dict[str, object]) -> bool:
+        raise RuntimeError("publish down")
+
+    monkeypatch.setattr(service, "_publish_factory_execution_event", fail_publish)
+
+    row = service.create_task_row(subject="publish-failure seq")
+    execution_event = row["execution_event"]
+    assert isinstance(execution_event, dict)
+    assert execution_event["published"] is False
+    assert execution_event["publish_error"] == "publish down"
+    # The fact stream accepted the event even if publish failed, so fact_event_seq
+    # is projected. The publish_error/published fields carry the honest verdict.
+    assert isinstance(execution_event.get("fact_event_seq"), int)
+    assert execution_event["fact_event_seq"] >= 1
+
+
+def test_execution_event_omits_fact_event_seq_when_appended_seq_is_none(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If ``FactEventAppendedV1.appended_seq`` is ``None`` (e.g. future idempotent
+    hits that opt out of CAS), the public projection must still omit
+    ``fact_event_seq`` rather than emit a fabricated ``0`` or ``-1``.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    workspace_path = str(workspace)
+
+    def _make_appended() -> Any:
+        class _Appended:
+            event_id = "evt-no-seq"
+            workspace = workspace_path
+            stream = "task_runtime.execution"
+            storage_path = "runtime/events/task_runtime.execution.jsonl"
+            appended_at = "2026-01-01T00:00:00+00:00"
+            appended_seq = None
+
+        return _Appended()
+
+    def append_no_seq(_command: object) -> Any:
+        return _make_appended()
+
+    monkeypatch.setattr(service_module, "append_fact_event", append_no_seq)
+
+    row = service.create_task_row(subject="no-seq append")
+    execution_event = row["execution_event"]
+    assert isinstance(execution_event, dict)
+    assert execution_event["ok"] is True
+    assert "fact_event_seq" not in execution_event

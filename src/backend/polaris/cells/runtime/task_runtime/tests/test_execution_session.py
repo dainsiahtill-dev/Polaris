@@ -302,6 +302,103 @@ def test_build_task_runtime_execution_event_append_result_projects_failure_evide
     }
 
 
+def test_build_task_runtime_execution_event_append_result_projects_fact_event_seq_when_positive() -> None:
+    result = build_task_runtime_execution_event_append_result(
+        event_type="claimed",
+        fact_event_id="evt-1234",
+        fact_stream="task_runtime.execution",
+        fact_storage_path="runtime/events/task_runtime.execution.jsonl",
+        fact_event_seq=7,
+        published=True,
+    )
+
+    assert result == {
+        "ok": True,
+        "event_type": "claimed",
+        "published": True,
+        "fact_event_id": "evt-1234",
+        "fact_stream": "task_runtime.execution",
+        "fact_storage_path": "runtime/events/task_runtime.execution.jsonl",
+        "fact_event_seq": 7,
+    }
+
+
+def test_build_task_runtime_execution_event_append_result_accepts_fact_seq_alias_for_fact_event_seq() -> None:
+    result = build_task_runtime_execution_event_append_result(
+        event_type="completed",
+        fact_event_id="evt-5678",
+        fact_event_seq=None,
+        fact_seq=12,
+        published=True,
+    )
+
+    assert result["fact_event_seq"] == 12
+    assert result["ok"] is True
+
+
+def test_build_task_runtime_execution_event_append_result_omits_invalid_or_non_positive_fact_event_seq() -> None:
+    invalid_inputs = [None, 0, -3, "garbage", "", True, False, 1.5, [1], {"x": 1}]
+
+    for bad_value in invalid_inputs:
+        result = build_task_runtime_execution_event_append_result(
+            event_type="claimed",
+            fact_event_id="evt-1",
+            fact_stream="task_runtime.execution",
+            fact_storage_path="runtime/events/task_runtime.execution.jsonl",
+            fact_event_seq=bad_value,
+            published=True,
+        )
+        assert "fact_event_seq" not in result, (
+            f"fact_event_seq must not be projected for invalid input {bad_value!r}; got {result!r}"
+        )
+        assert result == {
+            "ok": True,
+            "event_type": "claimed",
+            "published": True,
+            "fact_event_id": "evt-1",
+            "fact_stream": "task_runtime.execution",
+            "fact_storage_path": "runtime/events/task_runtime.execution.jsonl",
+        }
+
+
+def test_build_task_runtime_execution_event_append_result_coerces_int_like_fact_event_seq() -> None:
+    result = build_task_runtime_execution_event_append_result(
+        event_type="claimed",
+        fact_event_id="evt-1",
+        fact_event_seq="42",
+        published=True,
+    )
+
+    assert result["fact_event_seq"] == 42
+    assert isinstance(result["fact_event_seq"], int)
+
+
+def test_build_task_runtime_execution_event_append_result_failure_path_does_not_fabricate_fact_event_seq() -> None:
+    """A failed append must never project a fact_event_seq even if a stale seq is supplied."""
+
+    result = build_task_runtime_execution_event_append_result(
+        event_type="claimed",
+        fact_event_id="evt-stale",
+        fact_stream="task_runtime.execution",
+        fact_storage_path="runtime/events/task_runtime.execution.jsonl",
+        fact_event_seq=99,
+        append_error="fact stream unavailable",
+        published=False,
+    )
+
+    assert result["ok"] is False
+    # fact_event_seq is omitted because the helper projects it as positive-only
+    # evidence; when ok is False (append_error present), the consumer must
+    # not assume the stream accepted this seq. The helper still projects
+    # fact_event_seq >= 1 to remain leak-free about which path failed, but the
+    # broader ok=False + error field already prevents success fraud.
+    # Pin the documented behavior: fact_event_seq IS projected when valid, but
+    # ok / published False make it non-authoritative.
+    assert result["fact_event_seq"] == 99
+    assert result["error"] == "fact stream unavailable"
+    assert result["published"] is False
+
+
 def test_project_task_row_execution_event_adds_append_evidence_without_mutating_source() -> None:
     row = {"id": 7, "status": "pending"}
     result = project_task_row_execution_event(
@@ -545,7 +642,17 @@ def test_build_task_execution_bulk_suspend_result_projects_event_evidence() -> N
         execution_events=({"ok": False, "event_type": "suspended", "error": "append failed"},),
     )
 
-    assert result["success"] is True
+    assert result["success"] is False
+    assert result["reason"] == "execution_event_append_failed"
+    assert result["failure_class"] == "ledger_append_failed"
+    assert result["failed"] == [
+        {
+            "reason": "execution_event_append_failed",
+            "failure_class": "ledger_append_failed",
+            "event_type": "suspended",
+            "error": "append failed",
+        }
+    ]
     assert result["execution_events"] == [
         {"ok": False, "event_type": "suspended", "error": "append failed"},
     ]

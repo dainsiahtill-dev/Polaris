@@ -735,9 +735,7 @@ class TaskRuntimeService:
         )
         if row is None:
             return None
-        execution_events = (
-            (execution_event,) if execution_event is not None else ()
-        ) + tuple(downstream_events)
+        execution_events = ((execution_event,) if execution_event is not None else ()) + tuple(downstream_events)
         return project_task_row_execution_event(
             row,
             execution_event,
@@ -804,9 +802,7 @@ class TaskRuntimeService:
             },
         )
         execution_events = tuple(
-            event
-            for event in (reopened_event, *downstream_events, failed_event)
-            if event is not None
+            event for event in (reopened_event, *downstream_events, failed_event) if event is not None
         )
         return project_task_row_execution_event(
             row,
@@ -1106,9 +1102,7 @@ class TaskRuntimeService:
         fact_rows: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         latest_by_task: dict[str, dict[str, Any]] = {
-            task_id: dict(fact_row)
-            for fact_row in fact_rows
-            if (task_id := self._observable_row_task_id(fact_row))
+            task_id: dict(fact_row) for fact_row in fact_rows if (task_id := self._observable_row_task_id(fact_row))
         }
         if not latest_by_task:
             return rows
@@ -1858,9 +1852,7 @@ class TaskRuntimeService:
                                     "failure_class": "ledger_append_failed",
                                     "event_type": "dependency_blockers_refreshed",
                                     "error": str(
-                                        execution_event.get("error")
-                                        or execution_event.get("publish_error")
-                                        or ""
+                                        execution_event.get("error") or execution_event.get("publish_error") or ""
                                     ),
                                 }
                             )
@@ -2063,10 +2055,9 @@ class TaskRuntimeService:
     ) -> bool:
         if candidate is None:
             return False
-        return (
-            str(candidate.session_id or "").strip() == str(incoming.session_id or "").strip()
-            and is_terminal_session_status(candidate.status)
-        )
+        return str(candidate.session_id or "").strip() == str(
+            incoming.session_id or ""
+        ).strip() and is_terminal_session_status(candidate.status)
 
     @staticmethod
     def _copy_session_state(target: TaskExecutionSession, source: TaskExecutionSession) -> None:
@@ -2356,9 +2347,7 @@ class TaskRuntimeService:
             if reopened_task_id not in next_blockers:
                 next_blockers.append(reopened_task_id)
             previous_status = str(before_row.get("status") or "").strip().lower()
-            next_status: TaskStatus | None = (
-                TaskStatus.BLOCKED if previous_status in {"pending", "ready"} else None
-            )
+            next_status: TaskStatus | None = TaskStatus.BLOCKED if previous_status in {"pending", "ready"} else None
             if next_blockers == previous_blockers and next_status is None:
                 continue
             updated = self._board.update(
@@ -2522,6 +2511,8 @@ class TaskRuntimeService:
         payload["fact_event_id"] = appended.event_id
         payload["fact_stream"] = appended.stream
         payload["fact_storage_path"] = appended.storage_path
+        if appended.appended_seq is not None:
+            payload["fact_event_seq"] = int(appended.appended_seq)
         try:
             self._publish_factory_execution_event(payload)
         except (RuntimeError, ValueError) as exc:
@@ -2535,6 +2526,7 @@ class TaskRuntimeService:
                 fact_event_id=appended.event_id,
                 fact_stream=appended.stream,
                 fact_storage_path=appended.storage_path,
+                fact_event_seq=appended.appended_seq,
                 publish_error=str(exc),
             )
         return build_task_runtime_execution_event_append_result(
@@ -2542,6 +2534,7 @@ class TaskRuntimeService:
             fact_event_id=appended.event_id,
             fact_stream=appended.stream,
             fact_storage_path=appended.storage_path,
+            fact_event_seq=appended.appended_seq,
             published=True,
         )
 
@@ -2601,10 +2594,9 @@ class TaskRuntimeService:
         session = self._read_session(task_id)
         terminal_session_superseded = False
         if session is not None:
-            terminal_session_superseded = (
-                is_terminal_session_status(session.status)
-                and self._row_authorizes_retry_over_terminal_session(task, session)
-            )
+            terminal_session_superseded = is_terminal_session_status(
+                session.status
+            ) and self._row_authorizes_retry_over_terminal_session(task, session)
         return project_task_row_runtime_state(
             row,
             task_status_value=task.status.value,
