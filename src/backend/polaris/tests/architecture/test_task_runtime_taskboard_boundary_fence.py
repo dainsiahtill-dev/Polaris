@@ -33,15 +33,13 @@ DIRECTOR_ADAPTER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / 
 PM_BOARD_TASKS = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "pm" / "board_tasks.py"
 QA_ADAPTER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "qa_adapter.py"
 DIRECTOR_EXECUTION_SERVICE = POLARIS_ROOT / "cells" / "director" / "execution" / "service.py"
-RUNTIME_PROJECTION_SERVICE = POLARIS_ROOT / "cells" / "runtime" / "projection" / "internal" / "runtime_projection_service.py"
+RUNTIME_PROJECTION_SERVICE = (
+    POLARIS_ROOT / "cells" / "runtime" / "projection" / "internal" / "runtime_projection_service.py"
+)
 FACTORY_HTTP_ROUTER = POLARIS_ROOT / "delivery" / "http" / "routers" / "factory.py"
 FACTORY_BENCH_RUNNER = BACKEND_ROOT / "scripts" / "factory_bench" / "run_factory_bench.py"
-FACTORY_STAGE_EXECUTOR = (
-    POLARIS_ROOT / "cells" / "factory" / "pipeline" / "internal" / "factory_stage_executor.py"
-)
-RUNTIME_ARTIFACT_STORE_ARTIFACTS = (
-    POLARIS_ROOT / "cells" / "runtime" / "artifact_store" / "internal" / "artifacts.py"
-)
+FACTORY_STAGE_EXECUTOR = POLARIS_ROOT / "cells" / "factory" / "pipeline" / "internal" / "factory_stage_executor.py"
+RUNTIME_ARTIFACT_STORE_ARTIFACTS = POLARIS_ROOT / "cells" / "runtime" / "artifact_store" / "internal" / "artifacts.py"
 RAW_TASKBOARD_MODULES = {
     "polaris.cells.runtime.task_runtime.internal.task_board",
     "polaris.cells.runtime.task_runtime.public.task_board_contract",
@@ -347,9 +345,7 @@ def _direct_task_row_file_globs(path: Path) -> list[str]:
             continue
         pattern = node.args[0] if node.args else None
         if isinstance(pattern, ast.Constant) and pattern.value == "task_*.json":
-            offenders.append(
-                f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} directly globs runtime task rows"
-            )
+            offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} directly globs runtime task rows")
     return offenders
 
 
@@ -398,9 +394,7 @@ def _direct_task_row_file_accesses(path: Path) -> list[str]:
         if method not in TASK_ROW_FILE_ACCESS_METHODS:
             continue
         if _contains_task_row_file_literal(node):
-            offenders.append(
-                f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} directly accesses runtime task-row files"
-            )
+            offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} directly accesses runtime task-row files")
     return offenders
 
 
@@ -420,9 +414,7 @@ def _task_runtime_execution_writer_violations(path: Path) -> list[str]:
             continue
         call = _call_name(node.func)
         if call == "AppendFactEventCommandV1" and _contains_string_literal(node, TASK_RUNTIME_EXECUTION_STREAM):
-            offenders.append(
-                f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} appends task_runtime.execution facts"
-            )
+            offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} appends task_runtime.execution facts")
             continue
         method = call.rsplit(".", maxsplit=1)[-1]
         if method in TASK_RUNTIME_EXECUTION_DIRECT_WRITE_METHODS and _contains_string_literal(
@@ -447,9 +439,7 @@ def _task_runtime_execution_reader_violations(path: Path) -> list[str]:
             node,
             TASK_RUNTIME_EXECUTION_STREAM,
         ):
-            offenders.append(
-                f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} reads task_runtime.execution facts"
-            )
+            offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} reads task_runtime.execution facts")
             continue
         method = call.rsplit(".", maxsplit=1)[-1]
         if method in TASK_RUNTIME_EXECUTION_DIRECT_READ_METHODS and _contains_string_literal(
@@ -514,9 +504,7 @@ def _legacy_task_runtime_symbol_aliases(path: Path) -> list[str]:
             annotation = _annotation_name(node.annotation)
             target = _target_name(node.target)
             if annotation.endswith("TaskRuntimeService") and target in {"taskboard", "_taskboard", "task_board"}:
-                offenders.append(
-                    f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} names TaskRuntimeService as {target}"
-                )
+                offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} names TaskRuntimeService as {target}")
         if isinstance(node, ast.FunctionDef):
             returns = _annotation_name(node.returns)
             if node.name == "taskboard" and returns.endswith("TaskRuntimeService"):
@@ -806,10 +794,7 @@ def _function_body_references_any_name(
             continue
         if node.name != function_name:
             continue
-        return any(
-            isinstance(child, ast.Name) and child.id in referenced_names
-            for child in ast.walk(node)
-        )
+        return any(isinstance(child, ast.Name) and child.id in referenced_names for child in ast.walk(node))
     return False
 
 
@@ -906,8 +891,7 @@ def test_update_task_row_writers_are_metadata_only_or_owner_guarded() -> None:
         "distributed task-state owner. Production callers outside "
         "runtime.task_runtime may only perform reviewed metadata-only updates; "
         "status changes must use owner transitions such as claim/complete/fail, "
-        "dedup cancellation, QA rework failure, or role-adapter failure helpers:\n"
-        + "\n".join(offenders)
+        "dedup cancellation, QA rework failure, or role-adapter failure helpers:\n" + "\n".join(offenders)
     )
 
 
@@ -1067,8 +1051,7 @@ def test_runtime_execution_metadata_writes_stay_in_task_runtime_owner() -> None:
     assert not offenders, (
         "metadata['runtime_execution'] is a task-runtime-owned execution-state "
         "projection. Production code outside runtime.task_runtime may read it "
-        "as a projection, but must not write, pop, setdefault, or update it:\n"
-        + "\n".join(offenders)
+        "as a projection, but must not write, pop, setdefault, or update it:\n" + "\n".join(offenders)
     )
 
 
@@ -1120,11 +1103,7 @@ def test_role_worker_pool_task_runtime_port_does_not_require_live_listener() -> 
             break
 
     assert port_class is not None, "TaskRuntimePort protocol not found"
-    port_methods = {
-        item.name
-        for item in port_class.body
-        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
+    port_methods = {item.name for item in port_class.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))}
 
     assert "add_ready_listener" not in port_methods, (
         "TaskRuntimePort must not require live listener utilities. Worker wakeup "
@@ -1142,8 +1121,8 @@ def test_delivery_pm_taskboard_mainline_uses_task_runtime_service() -> None:
         "create_taskboard",
         "_load_role_taskboard_module",
         "_taskboard_priority_enum",
-        "runtime.get(\"board\")",
-        "runtime.get(\"module\")",
+        'runtime.get("board")',
+        'runtime.get("module")',
         ".list_ready(",
         ".claim(",
         "._save_task",
@@ -1168,8 +1147,7 @@ def test_delivery_cli_director_does_not_finalize_with_row_updates() -> None:
     assert not offenders, (
         "delivery CLI Director must not finalize execution with sessionless "
         "row updates. It should consume director.execution / TaskRuntimeService "
-        "execution transitions and only inspect the resulting projection: "
-        + ", ".join(offenders)
+        "execution transitions and only inspect the resulting projection: " + ", ".join(offenders)
     )
 
 
@@ -1274,8 +1252,7 @@ def test_raw_taskboard_has_no_workflow_state_bridge_hook() -> None:
 
     assert not offenders, (
         "Raw TaskBoard must not dual-write to workflow runtime state; "
-        "execution-control state must flow through TaskRuntimeService row/session APIs:\n"
-        + "\n".join(offenders)
+        "execution-control state must flow through TaskRuntimeService row/session APIs:\n" + "\n".join(offenders)
     )
 
 
@@ -1356,8 +1333,7 @@ def test_factory_stage_executor_reads_task_rows_through_task_runtime_projection(
     assert not offenders, (
         "Factory stage executor must not scan runtime/tasks/task_*.json as an "
         "execution fact source. Use TaskRuntimeService.list_observable_task_rows() "
-        "so task_runtime.execution facts remain in the read projection:\n"
-        + "\n".join(offenders)
+        "so task_runtime.execution facts remain in the read projection:\n" + "\n".join(offenders)
     )
     assert "list_observable_task_rows" in source, (
         "Factory stage executor must consume TaskRuntimeService.list_observable_task_rows() "
@@ -1372,12 +1348,10 @@ def test_runtime_artifact_store_reads_task_rows_through_task_runtime_projection(
     assert not offenders, (
         "runtime.artifact_store must not scan runtime/tasks/task_*.json as an "
         "execution fact source. Task rows are owned by runtime.task_runtime; "
-        "artifact-backed workflow status must use TaskRuntimeService observable rows:\n"
-        + "\n".join(offenders)
+        "artifact-backed workflow status must use TaskRuntimeService observable rows:\n" + "\n".join(offenders)
     )
     assert "list_observable_task_rows" in source, (
-        "runtime.artifact_store workflow status must consume "
-        "TaskRuntimeService.list_observable_task_rows()."
+        "runtime.artifact_store workflow status must consume TaskRuntimeService.list_observable_task_rows()."
     )
 
 
@@ -1400,18 +1374,14 @@ def test_factory_bench_task_runtime_event_file_is_workspace_evidence_only() -> N
         "a task_runtime.execution status reader."
     )
     assert "_file_mentions_workspace" in runtime_matcher_calls, (
-        "_runtime_dir_matches_workspace should consume task-runtime events only "
-        "through workspace evidence matching."
+        "_runtime_dir_matches_workspace should consume task-runtime events only through workspace evidence matching."
     )
     assert not any(
         isinstance(node, ast.Constant)
         and isinstance(node.value, str)
         and node.value in {"status", "execution_state", "resume_state", "task_row_snapshot"}
         for node in ast.walk(workspace_matcher)
-    ), (
-        "Workspace evidence matching must not inspect task execution fields from "
-        "task_runtime.execution events."
-    )
+    ), "Workspace evidence matching must not inspect task execution fields from task_runtime.execution events."
 
 
 def test_raw_taskboard_dependency_state_changes_are_row_local() -> None:
@@ -1432,15 +1402,11 @@ def test_raw_taskboard_dependency_state_changes_are_row_local() -> None:
                 if called == "self._save_task":
                     first_arg = node.args[0] if node.args else None
                     if not isinstance(first_arg, ast.Name) or first_arg.id != "task":
-                        offenders.append(
-                            f"TaskBoard.{method_name}():{node.lineno} saves a non-local task row"
-                        )
+                        offenders.append(f"TaskBoard.{method_name}():{node.lineno} saves a non-local task row")
                 if called.endswith(".append") or called.endswith(".remove"):
                     receiver = node.func.value if isinstance(node.func, ast.Attribute) else None
                     if isinstance(receiver, ast.Attribute) and receiver.attr in {"blocks", "blocked_by"}:
-                        offenders.append(
-                            f"TaskBoard.{method_name}():{node.lineno} mutates dependency links directly"
-                        )
+                        offenders.append(f"TaskBoard.{method_name}():{node.lineno} mutates dependency links directly")
             if isinstance(node, ast.For):
                 iter_name = _call_name(node.iter)
                 if iter_name in {"task.blocks", "task.blocked_by"}:
@@ -1483,15 +1449,13 @@ def test_task_runtime_service_raw_board_writes_are_reviewed() -> None:
         if actual_count != expected_count:
             method_name, board_method = key
             offenders.append(
-                f"{method_name} -> self._board.{board_method}: "
-                f"expected {expected_count}, found {actual_count}"
+                f"{method_name} -> self._board.{board_method}: expected {expected_count}, found {actual_count}"
             )
 
     assert not offenders, (
         "TaskRuntimeService is the only reviewed owner for raw TaskBoard writes. "
         "New raw Board write calls must be audited for execution-ledger evidence "
-        "and recorded in REVIEWED_TASK_RUNTIME_SERVICE_BOARD_WRITES:\n"
-        + "\n".join(offenders)
+        "and recorded in REVIEWED_TASK_RUNTIME_SERVICE_BOARD_WRITES:\n" + "\n".join(offenders)
     )
 
 
@@ -1505,15 +1469,13 @@ def test_task_runtime_service_raw_board_reads_are_reviewed() -> None:
         if actual_count != expected_count:
             method_name, board_method = key
             offenders.append(
-                f"{method_name} -> self._board.{board_method}: "
-                f"expected {expected_count}, found {actual_count}"
+                f"{method_name} -> self._board.{board_method}: expected {expected_count}, found {actual_count}"
             )
 
     assert not offenders, (
         "TaskRuntimeService is the reviewed owner for raw TaskBoard reads. "
         "New raw Board read calls must be audited against the observable "
-        "read-model boundary and recorded in REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS:\n"
-        + "\n".join(offenders)
+        "read-model boundary and recorded in REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS:\n" + "\n".join(offenders)
     )
 
 
@@ -1561,8 +1523,7 @@ def test_task_runtime_descriptor_does_not_advertise_internal_execution_session_s
     offenders = [
         str(item.get("name") or "")
         for item in capabilities
-        if isinstance(item, dict)
-        and item.get("defined_in") == TASK_RUNTIME_INTERNAL_EXECUTION_SESSION_DESCRIPTOR_FILE
+        if isinstance(item, dict) and item.get("defined_in") == TASK_RUNTIME_INTERNAL_EXECUTION_SESSION_DESCRIPTOR_FILE
     ]
 
     assert not offenders, (
@@ -1661,8 +1622,7 @@ def test_task_runtime_descriptor_advertises_current_row_mutation_methods() -> No
     missing = sorted(TASK_RUNTIME_SERVICE_REQUIRED_ROW_MUTATION_METHODS - advertised)
     assert not missing, (
         "task_runtime descriptor must advertise current row mutation methods so "
-        "agents use APIs that return projection and execution-event evidence:\n"
-        + "\n".join(missing)
+        "agents use APIs that return projection and execution-event evidence:\n" + "\n".join(missing)
     )
 
 
@@ -1735,7 +1695,9 @@ def test_task_runtime_descriptor_does_not_advertise_non_operation_service_method
             if method_name in TASK_RUNTIME_SERVICE_NON_OPERATION_DESCRIPTOR_METHODS:
                 offenders.append(method_name)
 
-    required_operations = TASK_RUNTIME_SERVICE_REQUIRED_ROW_MUTATION_METHODS | TASK_RUNTIME_SERVICE_REQUIRED_READ_MODEL_METHODS
+    required_operations = (
+        TASK_RUNTIME_SERVICE_REQUIRED_ROW_MUTATION_METHODS | TASK_RUNTIME_SERVICE_REQUIRED_READ_MODEL_METHODS
+    )
     missing_operations = sorted(required_operations - advertised)
 
     assert not missing_operations, (
@@ -1800,8 +1762,7 @@ def test_task_runtime_descriptor_does_not_advertise_destructive_service_methods(
     assert not offenders, (
         "task_runtime descriptor must not advertise destructive reset methods "
         "or functions. Reset orchestration must remain an explicit owner-cell "
-        "runtime call path, not an Agent-facing generated capability:\n"
-        + "\n".join(sorted(offenders))
+        "runtime call path, not an Agent-facing generated capability:\n" + "\n".join(sorted(offenders))
     )
 
 
@@ -1832,8 +1793,7 @@ def test_task_runtime_descriptor_does_not_advertise_utility_service_methods() ->
     assert not offenders, (
         "task_runtime descriptor must not advertise helper-style utility "
         "methods. Agent-facing context should use get_task() and row/read-model "
-        "APIs instead of task id normalization or raw existence checks:\n"
-        + "\n".join(sorted(offenders))
+        "APIs instead of task id normalization or raw existence checks:\n" + "\n".join(sorted(offenders))
     )
 
 
@@ -1885,8 +1845,7 @@ def test_task_runtime_descriptor_does_not_advertise_owner_maintenance_methods() 
         "task_runtime descriptor must not advertise owner maintenance methods. "
         "Dependency unblock refresh is a side effect owned by TaskRuntimeService "
         "selection/read-model paths; Agent-facing context should use explicit "
-        "read-model, select, claim, or terminal transition APIs instead:\n"
-        + "\n".join(sorted(offenders))
+        "read-model, select, claim, or terminal transition APIs instead:\n" + "\n".join(sorted(offenders))
     )
 
 
@@ -1911,8 +1870,7 @@ def test_task_runtime_descriptor_does_not_advertise_preview_selection_methods() 
                 offenders.append(method_name)
 
     assert "claim_next_execution" in advertised, (
-        "task_runtime descriptor must keep the atomic select-and-claim API for "
-        "execution consumers."
+        "task_runtime descriptor must keep the atomic select-and-claim API for execution consumers."
     )
     assert not offenders, (
         "task_runtime descriptor must not advertise preview-only selection "
@@ -1972,6 +1930,172 @@ def test_active_orchestration_status_uses_runtime_task_rows() -> None:
     assert task_payload_assignments == ["_runtime_task_rows_payload"], (
         "Active Director orchestration status must expose task-runtime rows as "
         f"the top-level tasks payload, got {task_payload_assignments!r}"
+    )
+
+
+def _append_execution_event_function_def() -> ast.FunctionDef:
+    source = TASK_RUNTIME_INTERNAL_SERVICE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    parents = _parent_lookup(tree)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef) or node.name != "_append_execution_event":
+            continue
+        enclosing_class = parents.get(node)
+        if isinstance(enclosing_class, ast.ClassDef) and enclosing_class.name == "TaskRuntimeService":
+            return node
+    raise AssertionError(
+        "TaskRuntimeService._append_execution_event() not found in "
+        f"{TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)}"
+    )
+
+
+def _build_task_runtime_execution_event_append_result_function_def() -> ast.FunctionDef:
+    source = (BACKEND_ROOT / "polaris/cells/runtime/task_runtime/internal/execution_session.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(source)
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "build_task_runtime_execution_event_append_result":
+            return node
+    raise AssertionError(
+        "build_task_runtime_execution_event_append_result() not found in "
+        "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    )
+
+
+def _attribute_chain_matches(node: ast.AST, expected_chain: tuple[str, ...]) -> bool:
+    """Match an attribute chain that ends at ``node``.
+
+    ``expected_chain`` lists attribute names from the deepest attribute outward
+    toward the terminal receiver (e.g. ``("appended_seq", "appended")`` for
+    ``appended.appended_seq``). Each intermediate hop must be an ``ast.Attribute``
+    whose ``attr`` matches the expected entry; the final hop may be either an
+    ``ast.Attribute`` (longer chain) or an ``ast.Name`` (terminal receiver).
+    """
+
+    if not expected_chain:
+        return False
+    current: ast.AST = node
+    last_index = len(expected_chain) - 1
+    for index, expected in enumerate(expected_chain):
+        if isinstance(current, ast.Name):
+            return current.id == expected and index == last_index
+        if isinstance(current, ast.Attribute):
+            if current.attr != expected:
+                return False
+            current = current.value
+            continue
+        return False
+    return True
+
+
+def _append_execution_event_references_appended_seq() -> bool:
+    function_def = _append_execution_event_function_def()
+    expected_chain = ("appended_seq", "appended")
+    return any(_attribute_chain_matches(node, expected_chain) for node in ast.walk(function_def))
+
+
+def _build_task_runtime_execution_event_append_result_accepts_fact_event_seq() -> bool:
+    function_def = _build_task_runtime_execution_event_append_result_function_def()
+    return any(arg.arg == "fact_event_seq" for arg in function_def.args.args + function_def.args.kwonlyargs)
+
+
+def _append_execution_event_calls_pass_fact_event_seq() -> tuple[bool, list[str]]:
+    """Detect call sites that propagate ``appended.appended_seq`` to the append-result.
+
+    The success-path call sites must propagate the append-only sequence
+    projection by passing ``fact_event_seq=appended.appended_seq`` to
+    ``build_task_runtime_execution_event_append_result``. Pre-append failure
+    branches (where ``appended`` is not yet bound) are excluded by checking
+    that the call is not enclosed by any ``ExceptHandler`` between it and the
+    function body.
+    """
+
+    function_def = _append_execution_event_function_def()
+    parents = _parent_lookup(function_def)
+    missing: list[str] = []
+    success_call_count = 0
+    for node in ast.walk(function_def):
+        if not isinstance(node, ast.Call):
+            continue
+        if _call_name(node.func) != "build_task_runtime_execution_event_append_result":
+            continue
+        # Skip call sites that are inside an ExceptHandler (pre-append failure branch).
+        enclosing: ast.AST | None = parents.get(node)
+        in_except = False
+        while enclosing is not None and enclosing is not function_def:
+            if isinstance(enclosing, ast.ExceptHandler):
+                in_except = True
+                break
+            enclosing = parents.get(enclosing)
+        if in_except:
+            continue
+        if not any(keyword.arg == "fact_event_seq" for keyword in node.keywords):
+            missing.append(f"line {node.lineno} (success call without fact_event_seq=)")
+            continue
+        success_call_count += 1
+        keyword_value_node = next(
+            (keyword.value for keyword in node.keywords if keyword.arg == "fact_event_seq"),
+            None,
+        )
+        if keyword_value_node is None or not _attribute_chain_matches(
+            keyword_value_node,
+            ("appended_seq", "appended"),
+        ):
+            missing.append(f"line {node.lineno} (fact_event_seq= must source appended.appended_seq)")
+    return success_call_count > 0 and not missing, missing
+
+
+def test_task_runtime_append_event_propagates_fact_stream_sequence_evidence() -> None:
+    """WS2 append-only Fact Stream sequence evidence fence.
+
+    ``TaskRuntimeService._append_execution_event`` must surface ``appended.appended_seq``
+    from the ``FactEventAppendedV1`` return value into the execution-event append
+    result. Otherwise the Fact Stream keeps the assigned sequence internally while
+    every caller's ``build_task_runtime_execution_event_append_result`` projection
+    silently drops it, breaking append-only evidence reconstruction for
+    ``task_runtime.execution``.
+    """
+
+    service_rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    execution_session_rel = "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    offender_blocks: list[str] = []
+
+    projected_append_seq = _append_execution_event_references_appended_seq()
+    if not projected_append_seq:
+        offender_blocks.append(
+            f"{service_rel}:TaskRuntimeService._append_execution_event does not "
+            f"reference appended.appended_seq; the Fact Stream sequence number from "
+            f"the FactEventAppendedV1 return value cannot be lost."
+        )
+
+    if not _build_task_runtime_execution_event_append_result_accepts_fact_event_seq():
+        offender_blocks.append(
+            f"{execution_session_rel}:build_task_runtime_execution_event_append_result "
+            f"must accept a fact_event_seq keyword argument so "
+            f"TaskRuntimeService._append_execution_event can surface the WS2 "
+            f"append-only Fact Stream sequence projection."
+        )
+
+    calls_pass_kw, missing_calls = _append_execution_event_calls_pass_fact_event_seq()
+    if not calls_pass_kw:
+        detail = (
+            "; no call sites found"
+            if not missing_calls
+            else "; missing fact_event_seq= kwarg at: " + ", ".join(missing_calls)
+        )
+        offender_blocks.append(
+            f"{service_rel}:TaskRuntimeService._append_execution_event must call "
+            f"build_task_runtime_execution_event_append_result with "
+            f"fact_event_seq=<append-only sequence projection>" + detail + "."
+        )
+
+    assert not offender_blocks, (
+        "WS2 append-only sequence evidence fence: "
+        "TaskRuntimeService._append_execution_event must propagate "
+        "appended.appended_seq from the Fact Stream append-result into the "
+        "execution-event append-result/projection so the task_runtime.execution "
+        "stream stays append-only reconstructable. Offenders:\n" + "\n".join(offender_blocks)
     )
 
 
