@@ -1602,12 +1602,74 @@ def test_scan_detects_escaped_newline_that_comments_out_typescript_export(tmp_pa
         encoding="utf-8",
     )
 
-    errors = scan_workspace_artifact_quality(
+    evidence = scan_workspace_artifact_quality_evidence(
         str(tmp_path),
         relative_paths=["src/middleware/tenant.middleware.ts"],
     )
 
-    assert any("escaped newline in line comment" in error for error in errors)
+    assert evidence.errors
+    assert any(
+        "escaped newline in line comment" in error and "src/middleware/tenant.middleware.ts" in error
+        for error in evidence.errors
+    )
+
+    escaped_issues = [
+        issue
+        for issue in evidence.issues
+        if issue.code == "typescript_escaped_newline_line_comment"
+    ]
+    assert escaped_issues, "file-level scanner must emit typed typescript_escaped_newline_line_comment issue"
+    assert len(escaped_issues) == 1
+
+    escaped_issue: ArtifactQualityIssue = escaped_issues[0]
+    assert escaped_issue.source == "typescript_syntax_red_flag_scanner"
+    assert escaped_issue.path == "src/middleware/tenant.middleware.ts"
+    assert escaped_issue.severity == "error"
+    assert escaped_issue.line is None
+    assert escaped_issue.column is None
+
+    escaped_metadata = dict(escaped_issue.metadata or {})
+    assert escaped_metadata["path"] == "src/middleware/tenant.middleware.ts"
+    assert escaped_metadata["diagnostic_kind"] == "typescript_escaped_newline_line_comment"
+    assert "escaped newline in line comment" in str(escaped_metadata.get("raw") or "")
+    assert evidence.errors[0] == escaped_metadata["raw"]
+
+
+def test_artifact_quality_issues_from_errors_projects_typescript_escaped_newline_line_comment() -> None:
+    """Public projection must classify scanner metadata without message parsing."""
+
+    projected = artifact_quality_issues_from_errors(
+        [
+            {
+                "message": "scanner-owned structured payload",
+                "path": "src/middleware/tenant.middleware.ts",
+                "source": "typescript_syntax_red_flag_scanner",
+                "metadata": {
+                    "raw": (
+                        "Artifact quality scan failed: TypeScript escaped newline "
+                        "in line comment before code in src/middleware/tenant.middleware.ts"
+                    ),
+                    "path": "src/middleware/tenant.middleware.ts",
+                    "diagnostic_kind": "typescript_escaped_newline_line_comment",
+                },
+            }
+        ]
+    )
+
+    assert [payload["code"] for payload in projected] == ["typescript_escaped_newline_line_comment"]
+
+    projected_issue = projected[0]
+    assert projected_issue["source"] == "typescript_syntax_red_flag_scanner"
+    assert projected_issue["path"] == "src/middleware/tenant.middleware.ts"
+    assert projected_issue["severity"] == "error"
+
+    projected_metadata = dict(projected_issue["metadata"] or {})
+    assert projected_metadata["path"] == "src/middleware/tenant.middleware.ts"
+    assert projected_metadata["diagnostic_kind"] == "typescript_escaped_newline_line_comment"
+    assert projected_metadata["raw"] == (
+        "Artifact quality scan failed: TypeScript escaped newline "
+        "in line comment before code in src/middleware/tenant.middleware.ts"
+    )
 
 
 def test_scan_resolves_dotted_typescript_relative_import_stems(tmp_path: Path) -> None:

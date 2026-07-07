@@ -612,6 +612,11 @@ def _artifact_quality_issue_code_from_typed_metadata(
     if diagnostic_kind == "unresolved_relative_import" and source_token == "typescript_import_scanner":
         return "unresolved_relative_import"
     if (
+        diagnostic_kind == "typescript_escaped_newline_line_comment"
+        and source_token == "typescript_syntax_red_flag_scanner"
+    ):
+        return "typescript_escaped_newline_line_comment"
+    if (
         diagnostic_kind == "typescript_return_object_semicolon_property"
         and source_token == "typescript_syntax_red_flag_scanner"
     ):
@@ -1834,6 +1839,9 @@ def _scan_typescript_syntax_red_flag_evidence(
                     error=error,
                     code="typescript_escaped_newline_line_comment",
                     relative_path=relative_path,
+                    metadata={
+                        "diagnostic_kind": "typescript_escaped_newline_line_comment",
+                    },
                 ),
             ),
         )
