@@ -504,6 +504,7 @@ Claude CLI 的 `--output-format json` stdout 是 Claude 执行 envelope，不一
 - 禁止修改的范围。
 - 强调充分利用codegraph MCP
 - 不可违反的架构约束。
+- 工业级工程标准：UTF-8、完整实现、类型注解、异常边界、测试矩阵、复杂度说明和自检项。
 - 必须运行的验证命令。
 - JSON schema 和报告落盘路径。
 
@@ -526,6 +527,15 @@ Claude CLI 的 `--output-format json` stdout 是 Claude 执行 envelope，不一
 13. 未实际执行的命令不得报告为通过。
 14. 最终必须输出机器可读的 JSON 报告。
 15. 所有文本文件读写必须显式使用 `UTF-8`（包括日志/JSON/Markdown/代码文件）。
+16. `mode=implementation` 的 Sub-Agent 必须交付生产级完整实现，不得提交占位、伪代码、演示代码、未实现分支、空壳类/函数或“后续补齐”类文本。
+17. Python 代码必须遵循现代 PEP 8、Ruff/Black 约束和清晰命名；公共函数、类、dataclass、TypedDict、协议和返回对象必须有明确类型注解与边界说明。
+18. 复杂核心逻辑必须与 I/O、配置、存储、网络、框架细节解耦；不得把一次性胶水逻辑塞进跨 Cell 公共路径。
+19. 异常处理必须捕获具体异常并保留可定位错误信息；禁止裸异常捕获、吞异常、用 `pass` 掩盖失败、或把失败改写成成功。
+20. 修改必须考虑空值、非法输入、重复调用、幂等性、并发安全、资源释放和跨平台路径边界；发现无法覆盖的边界必须在 JSON `risks` 中明确说明。
+21. 核心算法或扫描逻辑必须在报告中说明时间复杂度、空间复杂度、潜在性能瓶颈和后续优化方向。
+22. 测试必须覆盖 Happy Path、Edge Cases、Exceptions 和 Regression；可以用 mock 隔离外部依赖，但不得 mock 掉任务要求验证的真实平台路径。
+23. `mypy --strict` 或项目等价严格类型门禁能跑时必须运行；若仓库当前 strict 不可用，至少运行任务指定 mypy/pyright 门禁，并在报告中说明 strict 阻塞原因。
+24. 输出报告必须包含自检结论：无占位实现、无越界文件、门禁命令和退出码、剩余风险、以及是否需要主 Agent 复核合并。
 
 ### 标准提示词模板
 
@@ -544,6 +554,12 @@ Claude CLI 的 `--output-format json` stdout 是 Claude 执行 envelope，不一
 7. 修改后必须运行全部验收命令。
 8. 最终必须按调用方提供的 JSON schema 输出执行报告，并由调用方落盘到 /tmp/polaris-subagent-<batch>-<id>.json。
 9. 充分使用codegraph。
+10. 所有文本读写必须显式使用 UTF-8。
+11. 必须交付生产级完整实现：禁止占位、伪代码、演示代码、空壳符号、未实现分支或“后续补齐”。
+12. Python 代码必须具备清晰类型注解、具体异常处理、可定位错误信息和必要的 Google Style docstring；禁止裸异常捕获、吞异常、静默 fallback。
+13. 核心逻辑必须与 I/O、配置、存储、网络、框架细节解耦；优先高内聚、低耦合、单一职责。
+14. 必须覆盖 Happy Path、Edge Cases、Exceptions、Regression；不得用 mock/fake 替代任务要求验证的真实平台路径。
+15. 报告中必须说明关键逻辑的时间复杂度、空间复杂度、性能瓶颈、剩余风险和自检结果。
 
 任务目标：
 <这个 Agent 独立负责的缺口>
