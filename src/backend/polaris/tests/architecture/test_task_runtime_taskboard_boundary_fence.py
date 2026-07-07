@@ -37,6 +37,18 @@ RUNTIME_PROJECTION_SERVICE = (
     POLARIS_ROOT / "cells" / "runtime" / "projection" / "internal" / "runtime_projection_service.py"
 )
 FACTORY_HTTP_ROUTER = POLARIS_ROOT / "delivery" / "http" / "routers" / "factory.py"
+EXECUTION_SESSION_MODULE = (
+    BACKEND_ROOT / "polaris" / "cells" / "runtime" / "task_runtime" / "internal" / "execution_session.py"
+)
+EXECUTION_FACT_READ_PROJECTOR = "project_task_row_from_execution_fact_payload"
+EXECUTION_FACT_LIST_READER = "list_task_rows_from_execution_facts"
+EXECUTION_FACT_SEQ_KEY = "fact_event_seq"
+EXECUTION_FACT_SEQ_SOURCE_KEY = "seq"
+EXECUTION_FACT_DOT_SEQ_FILE_PATTERNS = (
+    ".seq",
+    ".seq.lock",
+    "task_runtime.execution.jsonl.seq",
+)
 FACTORY_BENCH_RUNNER = BACKEND_ROOT / "scripts" / "factory_bench" / "run_factory_bench.py"
 FACTORY_STAGE_EXECUTOR = POLARIS_ROOT / "cells" / "factory" / "pipeline" / "internal" / "factory_stage_executor.py"
 RUNTIME_ARTIFACT_STORE_ARTIFACTS = POLARIS_ROOT / "cells" / "runtime" / "artifact_store" / "internal" / "artifacts.py"
@@ -2111,4 +2123,418 @@ def test_runtime_projection_never_selects_workflow_archive_tasks_as_live_rows() 
         "RuntimeProjection.task_rows must come from runtime.task_runtime rows, "
         "not workflow archive task rows. Archive tasks may remain under "
         "workflow_archive/raw_workflow_status as read-only evidence:\n" + "\n".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# WS2 Fact Stream sequence evidence — read-model projection
+# ---------------------------------------------------------------------------
+#
+# The append path (``TaskRuntimeService._append_execution_event``) already
+# surfaces ``appended.appended_seq`` as ``fact_event_seq`` in
+# ``build_task_runtime_execution_event_append_result``. The read path must
+# carry that same fact-stream sequence number back into the projected task row
+# so observers can correlate a row back to its ``task_runtime.execution``
+# evidence line.
+#
+# These fences catch future drift where the read path drops the
+# ``fact_event_seq`` projection — even though the writer still emits it — or
+# where someone reintroduces a parallel ``.seq`` cursor / file read into the
+# read model.
+
+
+def _list_task_rows_from_execution_facts_function_def() -> ast.FunctionDef:
+    """Return the ``TaskRuntimeService.list_task_rows_from_execution_facts`` AST node."""
+
+    source = TASK_RUNTIME_INTERNAL_SERVICE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    parents = _parent_lookup(tree)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if node.name != EXECUTION_FACT_LIST_READER:
+            continue
+        enclosing_class = parents.get(node)
+        if isinstance(enclosing_class, ast.ClassDef) and enclosing_class.name == "TaskRuntimeService":
+            return node
+    raise AssertionError(
+        f"TaskRuntimeService.{EXECUTION_FACT_LIST_READER}() not found in "
+        f"{TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)}"
+    )
+
+
+def _project_task_row_from_execution_fact_payload_function_def() -> ast.FunctionDef:
+    """Return the module-level ``project_task_row_from_execution_fact_payload`` AST node."""
+
+    source = EXECUTION_SESSION_MODULE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == EXECUTION_FACT_READ_PROJECTOR:
+            return node
+    raise AssertionError(
+        f"{EXECUTION_FACT_READ_PROJECTOR}() not found in {EXECUTION_SESSION_MODULE.relative_to(BACKEND_ROOT)}"
+    )
+
+
+def _iter_events_loop_in(function_def: ast.FunctionDef) -> ast.For | ast.AsyncFor | None:
+    """Locate the ``for event in result.events:`` style loop in the read method."""
+
+    for node in ast.walk(function_def):
+        if not isinstance(node, (ast.For, ast.AsyncFor)):
+            continue
+        # The loop must iterate over ``result.events`` (the queried Fact Stream
+        # events tuple). We match by attribute chain so a renamed local
+        # variable does not break the fence.
+        if _attribute_chain_matches(node.iter, ("events", "result")):
+            return node
+    return None
+
+
+def _fact_dict_assignments_in_loop(loop: ast.For | ast.AsyncFor) -> list[ast.AST]:
+    """Return AST nodes inside ``loop`` that assign into a ``fact`` dict.
+
+    Catches both ``fact["fact_event_seq"] = ...`` (ast.Assign on a Subscript)
+    and ``fact.setdefault("fact_event_seq", ...)`` (ast.Call on a method).
+    """
+
+    result: list[ast.AST] = []
+    for node in ast.walk(loop):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if _fact_subscript_key(target) == EXECUTION_FACT_SEQ_KEY:
+                    result.append(node)
+        elif isinstance(node, ast.AugAssign):
+            if _fact_subscript_key(node.target) == EXECUTION_FACT_SEQ_KEY:
+                result.append(node)
+        elif isinstance(node, ast.Call):
+            if _call_name(node.func) != "setdefault":
+                continue
+            receiver = node.func.value if isinstance(node.func, ast.Attribute) else None
+            if receiver is None or _call_name(receiver) != "fact":
+                continue
+            first_arg = node.args[0] if node.args else None
+            if _string_literal(first_arg) == EXECUTION_FACT_SEQ_KEY:
+                result.append(node)
+    return result
+
+
+def _fact_subscript_key(node: ast.AST) -> str:
+    """If ``node`` is ``fact["<key>"]`` (or equivalent chain), return ``<key>``."""
+
+    if not isinstance(node, ast.Subscript):
+        return ""
+    slice_value = node.slice
+    if isinstance(slice_value, ast.Index):  # pragma: no cover - py<3.9 compat
+        slice_value = slice_value.value  # type: ignore[attr-defined]
+    return _string_literal(slice_value)
+
+
+def _call_references_mapping_key(call_node: ast.Call, *, receiver_name: str, key_name: str) -> bool:
+    """True if ``call_node`` reads ``<receiver>.get("<key>")``."""
+
+    return (
+        _attribute_chain_matches(call_node.func, ("get", receiver_name))
+        and bool(call_node.args)
+        and _string_literal(call_node.args[0]) == key_name
+    )
+
+
+def _call_references_event_seq(call_node: ast.Call) -> bool:
+    """True if ``call_node`` reads the queried event's ``seq`` field."""
+
+    return _call_references_mapping_key(
+        call_node,
+        receiver_name="event",
+        key_name=EXECUTION_FACT_SEQ_SOURCE_KEY,
+    )
+
+
+def _subscript_references_mapping_key(node: ast.AST, *, receiver_name: str, key_name: str) -> bool:
+    """True if ``node`` is ``<receiver>["<key>"]``."""
+
+    if not isinstance(node, ast.Subscript):
+        return False
+    if _string_literal(node.slice) != key_name:
+        return False
+    receiver = node.value
+    if isinstance(receiver, ast.Name) and receiver.id == "event":
+        return receiver_name == "event"
+    return isinstance(receiver, ast.Name) and receiver.id == receiver_name
+
+
+def _node_sources_event_seq(node: ast.AST) -> bool:
+    """True if ``node`` reads ``event.get("seq")`` or ``event["seq"]``."""
+
+    if isinstance(node, ast.Call):
+        if _call_references_event_seq(node):
+            return True
+        return any(_node_sources_event_seq(child) for child in ast.iter_child_nodes(node))
+    return _subscript_references_mapping_key(
+        node,
+        receiver_name="event",
+        key_name=EXECUTION_FACT_SEQ_SOURCE_KEY,
+    )
+
+
+def _node_sources_fact_event_seq(node: ast.AST) -> bool:
+    """True if ``node`` reads ``fact.get("fact_event_seq")`` or ``fact["fact_event_seq"]``."""
+
+    if isinstance(node, ast.Call):
+        if _call_references_mapping_key(
+            node,
+            receiver_name="fact",
+            key_name=EXECUTION_FACT_SEQ_KEY,
+        ):
+            return True
+        return any(_node_sources_fact_event_seq(child) for child in ast.iter_child_nodes(node))
+    return _subscript_references_mapping_key(
+        node,
+        receiver_name="fact",
+        key_name=EXECUTION_FACT_SEQ_KEY,
+    )
+
+
+def _list_reader_propagates_fact_event_seq() -> tuple[bool, list[str]]:
+    """Check that ``list_task_rows_from_execution_facts`` carries event seq into the fact payload.
+
+    The check is structural rather than line-exact:
+      1. Locate the ``for event in result.events:`` loop in the function.
+      2. Within that loop, there must be an assignment (or ``setdefault``)
+         of ``fact["fact_event_seq"]`` whose right-hand side reads the
+         queried event's ``seq`` field (``event.get("seq")`` or
+         ``event["seq"]``).
+      3. The call to ``project_task_row_from_execution_fact_payload(fact)``
+         must appear AFTER the ``fact_event_seq`` write in the same
+         iteration, so the projector can see the propagated value.
+    """
+
+    function_def = _list_task_rows_from_execution_facts_function_def()
+    loop = _iter_events_loop_in(function_def)
+    if loop is None:
+        return False, ["no `for event in result.events` loop found"]
+
+    seq_assignments = _fact_dict_assignments_in_loop(loop)
+    if not seq_assignments:
+        return False, [
+            "list_task_rows_from_execution_facts does not propagate fact_event_seq "
+            "into the fact payload before projecting rows"
+        ]
+
+    projector_call: ast.Call | None = None
+    for node in ast.walk(loop):
+        if isinstance(node, ast.Call) and _call_name(node.func) == EXECUTION_FACT_READ_PROJECTOR:
+            projector_call = node
+            break
+
+    if projector_call is None:
+        return False, [
+            f"list_task_rows_from_execution_facts does not call {EXECUTION_FACT_READ_PROJECTOR}() in the events loop"
+        ]
+
+    event_seq_names: set[str] = set()
+    for node in ast.walk(loop):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not _node_sources_event_seq(node.value):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                event_seq_names.add(target.id)
+
+    missing_source: list[str] = []
+    order_violations: list[str] = []
+    for assignment in seq_assignments:
+        if not hasattr(assignment, "lineno") or not hasattr(assignment, "value"):
+            continue
+        rhs = assignment.value
+        rhs_sources_event_seq = _node_sources_event_seq(rhs) or (
+            isinstance(rhs, ast.Name) and rhs.id in event_seq_names
+        )
+        if not rhs_sources_event_seq:
+            missing_source.append(
+                f"line {assignment.lineno}: fact_event_seq source must read event.get('seq') or event['seq']"
+            )
+        elif assignment.lineno > projector_call.lineno:
+            order_violations.append(
+                f"line {assignment.lineno}: fact_event_seq assignment must precede "
+                f"{EXECUTION_FACT_READ_PROJECTOR}() call at line {projector_call.lineno}"
+            )
+
+    offenders: list[str] = []
+    if missing_source:
+        offenders.extend(missing_source)
+    if order_violations:
+        offenders.extend(order_violations)
+    return not offenders, offenders
+
+
+def _function_reads_dot_seq_files(function_def: ast.FunctionDef) -> list[str]:
+    """Detect forbidden direct ``.seq`` cursor / file reads in a function body."""
+
+    offenders: list[str] = []
+    for node in ast.walk(function_def):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if any(pattern in node.value for pattern in EXECUTION_FACT_DOT_SEQ_FILE_PATTERNS):
+                offenders.append(f"line {node.lineno}: literal {node.value!r} references .seq cursor/file")
+        elif isinstance(node, ast.JoinedStr):
+            literal_text = "".join(
+                part.value for part in node.values if isinstance(part, ast.Constant) and isinstance(part.value, str)
+            )
+            if any(pattern in literal_text for pattern in EXECUTION_FACT_DOT_SEQ_FILE_PATTERNS):
+                offenders.append(f"line {node.lineno}: f-string literal references .seq cursor/file")
+        elif isinstance(node, ast.Attribute) and node.attr.endswith(".seq"):
+            # Allow attribute access whose target is the Fact Stream ``event``
+            # envelope (``event.seq``), but flag explicit cursor handles such
+            # as ``stream.seq``, ``path.seq``, ``file.seq`` etc.
+            target = node.value
+            if isinstance(target, ast.Name) and target.id == "event":
+                continue
+            offenders.append(f"line {node.lineno}: attribute access .{node.attr} may bypass fact stream seq")
+    return offenders
+
+
+def _projector_projects_fact_event_seq_via_normalize_positive_int() -> tuple[bool, list[str]]:
+    """Check ``project_task_row_from_execution_fact_payload`` projects ``fact_event_seq`` through ``normalize_positive_int``.
+
+    The fence accepts ``normalize_positive_int`` or ``_coerce_fact_event_seq``
+    as the canonical positive-int helpers. Direct ``int(...)`` coercion is
+    rejected because it can silently fabricate a positive seq from a missing
+    field.
+    """
+
+    function_def = _project_task_row_from_execution_fact_payload_function_def()
+    allowed_helpers = {"normalize_positive_int", "_coerce_fact_event_seq"}
+
+    offenders: list[str] = []
+    found_projection = False
+    for node in ast.walk(function_def):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = _call_name(node.func)
+        if callee not in allowed_helpers:
+            continue
+        if not any(
+            _node_sources_fact_event_seq(arg) for arg in (*node.args, *(keyword.value for keyword in node.keywords))
+        ):
+            continue
+        found_projection = True
+
+        if callee == "normalize_positive_int":
+            # normalize_positive_int must be invoked with a non-None default
+            # so a missing fact_event_seq still produces a deterministic int
+            # (typically 0). Inspect kwargs for default= / minimum=.
+            keyword_args = {keyword.arg for keyword in node.keywords}
+            if "default" not in keyword_args:
+                offenders.append(
+                    f"line {node.lineno}: normalize_positive_int(fact_event_seq=...) must pass default= explicitly"
+                )
+        elif callee == "_coerce_fact_event_seq":
+            # _coerce_fact_event_seq returns Optional[int] and never silently
+            # fabricates a seq. Acceptable as-is.
+            pass
+
+    if not found_projection:
+        offenders.append(
+            "project_task_row_from_execution_fact_payload does not project fact_event_seq "
+            "through normalize_positive_int or _coerce_fact_event_seq"
+        )
+
+    return not offenders, offenders
+
+
+def _projector_assigns_fact_event_seq_to_row() -> tuple[bool, list[str]]:
+    """Check the projector places ``fact_event_seq`` on the returned row.
+
+    Accepts both ``row["fact_event_seq"] = ...`` style and inclusion in the
+    ``row.update({...})`` dict literal at the bottom of the projector.
+    """
+
+    function_def = _project_task_row_from_execution_fact_payload_function_def()
+    offenders: list[str] = []
+
+    direct_assignment = False
+    for node in ast.walk(function_def):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if _fact_subscript_key(target) == EXECUTION_FACT_SEQ_KEY:
+                    direct_assignment = True
+        elif isinstance(node, ast.AugAssign):
+            if _fact_subscript_key(node.target) == EXECUTION_FACT_SEQ_KEY:
+                direct_assignment = True
+        elif isinstance(node, ast.Call) and _call_name(node.func) == "update":
+            receiver = node.func.value if isinstance(node.func, ast.Attribute) else None
+            if receiver is None or _call_name(receiver) != "row":
+                continue
+            if not node.args:
+                continue
+            first_arg = node.args[0]
+            if isinstance(first_arg, ast.Dict) and any(
+                isinstance(key, ast.Constant) and key.value == EXECUTION_FACT_SEQ_KEY
+                for key in first_arg.keys
+                if key is not None
+            ):
+                direct_assignment = True
+
+    if not direct_assignment:
+        offenders.append(
+            "project_task_row_from_execution_fact_payload must place fact_event_seq on the "
+            "returned row via direct subscript assignment or row.update({...})"
+        )
+
+    return not offenders, offenders
+
+
+def test_list_task_rows_from_execution_facts_carries_event_seq_into_fact_payload() -> None:
+    """WS2 read-model Fact Stream sequence propagation fence.
+
+    ``TaskRuntimeService.list_task_rows_from_execution_facts`` is the read-side
+    consumer of the ``task_runtime.execution`` Fact Stream. For every queried
+    event, the read projection must carry the event's ``seq`` number into the
+    fact payload as ``fact_event_seq`` *before* invoking
+    ``project_task_row_from_execution_fact_payload``. Otherwise the projector
+    can never emit the read-model ``fact_event_seq`` and observers cannot
+    correlate projected rows back to their evidence line in
+    ``task_runtime.execution.jsonl``.
+    """
+
+    service_rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    passes, offenders = _list_reader_propagates_fact_event_seq()
+    seq_cursor_offenders = _function_reads_dot_seq_files(_list_task_rows_from_execution_facts_function_def())
+
+    assert passes and not seq_cursor_offenders, (
+        "WS2 read-model sequence evidence fence: "
+        f"{service_rel}:TaskRuntimeService.list_task_rows_from_execution_facts "
+        "must propagate the queried event's seq into the fact payload as "
+        "fact_event_seq (sourced from event.get('seq') or event['seq']) before "
+        "calling project_task_row_from_execution_fact_payload, and must not "
+        "bypass the Fact Stream via .seq cursor/file reads. Offenders:\n" + "\n".join(offenders + seq_cursor_offenders)
+    )
+
+
+def test_project_task_row_from_execution_fact_payload_normalizes_fact_event_seq() -> None:
+    """WS2 read-model projector positive-int normalization fence.
+
+    ``project_task_row_from_execution_fact_payload`` must project the
+    ``fact_event_seq`` field of the propagated fact payload into the returned
+    row using the canonical positive-int helper (``normalize_positive_int`` or
+    ``_coerce_fact_event_seq``). Direct ``int(...)`` coercion or bare
+    passthrough must not be used, since missing or invalid input would
+    silently fabricate a seq number. The function must also avoid parallel
+    ``.seq`` cursor/file reads so the Fact Stream stays the single source of
+    truth for sequence evidence.
+    """
+
+    session_rel = EXECUTION_SESSION_MODULE.relative_to(BACKEND_ROOT).as_posix()
+    passes, projection_offenders = _projector_projects_fact_event_seq_via_normalize_positive_int()
+    placement_passes, placement_offenders = _projector_assigns_fact_event_seq_to_row()
+    cursor_offenders = _function_reads_dot_seq_files(_project_task_row_from_execution_fact_payload_function_def())
+
+    all_offenders = projection_offenders + placement_offenders + cursor_offenders
+    assert passes and placement_passes and not cursor_offenders, (
+        "WS2 read-model projector sequence fence: "
+        f"{session_rel}:{EXECUTION_FACT_READ_PROJECTOR} must project "
+        f"{EXECUTION_FACT_SEQ_KEY!r} into the returned row through "
+        "normalize_positive_int or _coerce_fact_event_seq, must place the "
+        "value on the returned row, and must not bypass the Fact Stream via "
+        ".seq cursor/file reads. Offenders:\n" + "\n".join(all_offenders)
     )
