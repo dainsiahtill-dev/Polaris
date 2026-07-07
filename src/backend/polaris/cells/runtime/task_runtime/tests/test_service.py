@@ -2953,3 +2953,159 @@ def test_claim_execution_refreshes_dependency_unblocks_from_execution_fact(
     persisted_child = json.loads(_task_file_path(workspace, child_id).read_text(encoding="utf-8"))
     assert persisted_child["status"] == "in_progress"
     assert persisted_child["blocked_by"] == []
+
+
+# ---------------------------------------------------------------------------
+# get_task observable fact-overlay regression
+# ---------------------------------------------------------------------------
+#
+# ``TaskRuntimeService.get_task`` is the canonical public read projection for
+# a single task row. It MUST surface the latest ``task_runtime.execution`` fact
+# overlay (the same converged view that ``list_observable_task_rows`` exposes)
+# rather than the raw ``TaskBoard`` row that lives on disk. Without the
+# overlay, downstream consumers reading a single task directly would observe a
+# stale ``pending`` row while the authoritative ``completed`` fact exists in
+# the execution ledger, defeating the read-model convergence the rest of the
+# selection/claim paths now rely on.
+
+
+def test_get_task_returns_fact_overlaid_status_for_numeric_task_id(tmp_path: Path) -> None:
+    """``get_task(task_id)`` must surface the latest ``task_runtime.execution``
+    fact overlay for a numeric task id.
+
+    Regression: a stale ``pending`` file row must NOT be returned as the
+    authoritative status when a newer ``completed`` fact exists in the
+    execution ledger. The raw file row remains untouched — the overlay is a
+    read-model convergence, not a hidden mutation.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(
+        subject="get_task numeric overlay",
+        description="file row stays pending while fact overlays to completed",
+    )
+    created_id = int(created["id"])
+
+    # Sanity: file row is initially pending and get_task agrees.
+    on_disk_before = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
+    assert on_disk_before["status"] == "pending"
+    initial_row = service.get_task(created_id)
+    assert isinstance(initial_row, dict)
+    assert initial_row["status"] == "pending"
+
+    # Append a newer terminal fact WITHOUT going through the service APIs.
+    # ``complete_execution`` is intentionally NOT called; no session file is
+    # written; the file row stays stale/pending on disk.
+    _append_terminal_fact_event(
+        workspace,
+        task_id=str(created_id),
+        event_type="completed",
+        status="completed",
+        run_id="run-fact-completed-get-task",
+    )
+
+    # Raw file row on disk must remain pending: the overlay is read-only.
+    on_disk_after = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
+    assert on_disk_after["status"] == "pending", (
+        "get_task must not mutate the file row when overlaying the execution "
+        "fact stream; the raw row stays pending so the eventual owner path "
+        "can run the sanctioned state transition"
+    )
+
+    # ``get_task`` MUST now surface the fact-overlaid status, not the stale
+    # pending file row.
+    overlaid = service.get_task(created_id)
+    assert isinstance(overlaid, dict)
+    assert overlaid["status"] == "completed", (
+        f"get_task must surface the latest task_runtime.execution fact status; got status={overlaid.get('status')!r}"
+    )
+    assert overlaid["id"] == created_id
+    # The fact-overlay marker must be present so consumers can distinguish a
+    # file-row status from a fact-overlaid status.
+    assert overlaid.get("metadata", {}).get("source") == "task_runtime.execution_fact"
+    assert overlaid.get("metadata", {}).get("previous_status") == "pending"
+
+
+def test_get_task_returns_fact_overlaid_status_for_external_task_id(tmp_path: Path) -> None:
+    """``get_task(external_task_id)`` must surface the latest
+    ``task_runtime.execution`` fact overlay for an external token such as
+    ``TASK-EXT`` when the payload's ``task_row_snapshot`` preserves the
+    external id in metadata.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    external_id = "TASK-EXT"
+    created = service.create_task_row(
+        subject="get_task external overlay",
+        description="external-task-id lookup must also overlay facts",
+        metadata={"external_task_id": external_id, "source_task_id": external_id},
+    )
+    created_id = int(created["id"])
+
+    # Sanity: the external-id lookup hits the same row before any fact is
+    # appended.
+    initial_lookup = service.get_task(external_id)
+    assert isinstance(initial_lookup, dict)
+    assert initial_lookup["id"] == created_id
+    assert initial_lookup["status"] == "pending"
+
+    # Append a terminal execution fact for the SAME numeric task whose
+    # ``task_row_snapshot`` preserves the external id in metadata. The fact's
+    # ``task_id`` is the numeric file-row id so the observable read model
+    # merges the fact onto the file row; the external id stays discoverable
+    # through the snapshot metadata.
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="completed",
+            source="runtime.task_runtime",
+            task_id=str(created_id),
+            run_id="run-fact-completed-external",
+            payload={
+                "task_id": str(created_id),
+                "run_id": "run-fact-completed-external",
+                "event_type": "completed",
+                "status": "completed",
+                "execution_state": "completed",
+                "task_row_snapshot": {
+                    "id": created_id,
+                    "task_id": str(created_id),
+                    "subject": "external overlay row",
+                    "description": "fact snapshot preserves external id",
+                    "metadata": {
+                        "external_task_id": external_id,
+                        "source_task_id": external_id,
+                        "source": "task_runtime.row_snapshot",
+                    },
+                },
+            },
+        )
+    )
+
+    # Raw file row on disk remains pending.
+    on_disk_after = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
+    assert on_disk_after["status"] == "pending"
+
+    # ``get_task(external_id)`` must surface the fact-overlaid status, not the
+    # stale pending file row, while keeping the external id discoverable.
+    overlaid = service.get_task(external_id)
+    assert isinstance(overlaid, dict)
+    assert overlaid["status"] == "completed", (
+        "get_task must surface the latest task_runtime.execution fact status "
+        f"for external id {external_id!r}; got status={overlaid.get('status')!r}"
+    )
+    # The overlay merges the fact onto the file row, so the observable row id
+    # is the file-row's numeric id while the external id stays reachable
+    # through metadata.
+    assert overlaid["id"] == created_id
+    assert str(overlaid["metadata"].get("external_task_id") or "") == external_id
+    assert str(overlaid["metadata"].get("source_task_id") or "") == external_id
+    assert overlaid["metadata"].get("source") == "task_runtime.execution_fact"
+    assert overlaid["metadata"].get("previous_status") == "pending"

@@ -600,15 +600,63 @@ class TaskRuntimeService:
         _raise_retired_entity_api("get", "get_task")
 
     def get_task(self, task_id: Any) -> dict[str, Any] | None:
-        external_id = str(task_id or "").strip()
-        external_row = self._get_task_by_external_task_id(external_id)
-        if isinstance(external_row, dict):
-            return external_row
+        """Return the task-runtime observable read model for a single task row.
+
+        This is a public read projection that must surface the
+        ``task_runtime.execution`` fact overlay, not raw ``TaskBoard`` state.
+        It derives the returned row from ``list_observable_task_rows()`` so
+        callers always observe the converged fact-overlaid read model.
+
+        Lookup order preserves the historical external-token priority: an
+        external id (matching ``external_task_id`` / ``pm_task_id`` /
+        ``source_task_id`` / ``task_id`` metadata aliases on any observable
+        row) wins over numeric id matching. Numeric id matching then falls
+        back to ``normalize_task_id(row.get("id"))`` against the same
+        observable set.
+
+        Boundary:
+            Read-only. Never writes to workspace, never mints events, never
+            consults ``self._board`` directly. ``ensure_task_row()`` keeps
+            using ``_get_task_by_external_task_id()`` for creation
+            idempotency so this change does not affect that path.
+        """
+        return self._resolve_observable_task_row(task_id)
+
+    def _resolve_observable_task_row(self, task_id: Any) -> dict[str, Any] | None:
+        """Resolve one task row from the observable read model.
+
+        Helper extracted from :meth:`get_task` so the read projection can be
+        reused without reintroducing raw ``TaskBoard`` access. Walks the
+        observable rows once, attempting external-token matching first and
+        numeric-id matching second; returns the first match as the
+        fact-overlaid row.
+        """
+        try:
+            observable_rows = self.list_observable_task_rows()
+        except (RuntimeError, ValueError) as exc:
+            logger.warning(
+                "Failed to load observable task rows for get_task lookup: %s",
+                exc,
+            )
+            return None
+
+        external_token = str(task_id or "").strip()
+        if external_token:
+            for row in observable_rows:
+                if not isinstance(row, dict):
+                    continue
+                raw_metadata = row.get("metadata")
+                metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+                if self._metadata_matches_external_task_id(metadata, external_token):
+                    return dict(row)
 
         normalized = self.normalize_task_id(task_id)
         if normalized is not None:
-            task = self._board.get(normalized)
-            return self._augment_task_row(task.to_dict()) if task is not None else None
+            for row in observable_rows:
+                if not isinstance(row, dict):
+                    continue
+                if self.normalize_task_id(row.get("id")) == normalized:
+                    return dict(row)
 
         return None
 

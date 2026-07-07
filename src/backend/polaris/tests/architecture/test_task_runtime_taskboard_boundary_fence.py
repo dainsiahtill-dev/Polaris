@@ -176,7 +176,6 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
     ("complete_execution", "get"): 1,
     ("fail_execution", "get"): 1,
     ("fail_task_row_from_role_adapter", "get"): 1,
-    ("get_task", "get"): 1,
     ("refresh_dependency_unblocks", "list_all"): 1,
     ("reset_task_rows_for_reexecution", "list_all"): 1,
     ("suspend_active_executions_for_run", "list_all"): 1,
@@ -3472,4 +3471,226 @@ def test_new_fact_stream_readers_in_task_runtime_service_are_read_only_projectio
         "projections, and must not append new fact events or write the "
         "event file directly. Do not weaken the existing raw-board "
         "read/write allowlists to satisfy this fence. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# WS2 get_task() — observable single-row read model
+# ---------------------------------------------------------------------------
+#
+# ``TaskRuntimeService.get_task()`` is the public single-row read projection
+# for status / snapshot / UI consumers. To stay consistent with the
+# multi-row observable projection (``list_observable_task_rows``) it must
+# funnel through that same projection so late ``task_runtime.execution``
+# facts and the in-flight execution overlay stay part of the read model.
+#
+# This is a structural fence: it walks the AST of ``get_task()`` and any
+# private ``TaskRuntimeService`` helpers it delegates to, then asserts:
+#
+#   1. The projection is reachable from ``get_task()`` (directly or through
+#      a single layer of private ``self.<helper>()`` delegation).
+#   2. ``get_task()`` does not regress to raw row-only reads by calling
+#      ``self._board.get()``, ``self._board.list_all()``,
+#      ``self.list_task_rows()``, or ``self._get_task_by_external_task_id()``.
+#
+# The fence is intentionally line-number-agnostic. New helper methods that
+# ``get_task()`` delegates to (e.g. ``_resolve_observable_task_row``) are
+# detected by walking the AST for ``self.<name>(...)`` call sites and
+# resolving each helper to its ``ast.FunctionDef`` body.
+
+GET_TASK_FORBIDDEN_RAW_READ_TARGETS: dict[str, str] = {
+    "self._board.get": "raw TaskBoard.get() bypasses the execution-fact overlay",
+    "self._board.list_all": "raw TaskBoard.list_all() bypasses the execution-fact overlay",
+    "self.list_task_rows": "raw list_task_rows() regresses to file-backed status only",
+    "self._get_task_by_external_task_id": "_get_task_by_external_task_id() still walks self._board.list_all()",
+}
+
+GET_TASK_DELEGATED_HELPER_DEPTH = 1
+
+
+def _get_task_function_def() -> ast.FunctionDef:
+    """Return the ``TaskRuntimeService.get_task`` AST node."""
+
+    return _task_runtime_service_method_def("get_task")
+
+
+def _iter_get_task_self_method_calls(method_def: ast.FunctionDef) -> list[ast.Call]:
+    """Return ``self.<name>(...)`` call nodes in ``method_def``.
+
+    The leaf method name is what the fence looks at when deciding whether to
+    follow a helper (one level deep). Module-level helper calls (e.g.
+    ``_augment_task_row(...)``) are intentionally ignored: the public read
+    model must stay on the observable row projection, not on top-level
+    mutation/lookup helpers.
+    """
+
+    matches: list[ast.Call] = []
+    for node in ast.walk(method_def):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute):
+            continue
+        if not _call_is_self_method(node, func.attr):
+            continue
+        matches.append(node)
+    return matches
+
+
+def _collect_get_task_delegated_helpers(root_def: ast.FunctionDef) -> dict[str, ast.FunctionDef]:
+    """Return private ``TaskRuntimeService`` helpers reachable from ``root_def``.
+
+    Walks ``root_def`` for ``self.<name>(...)`` call sites and resolves each
+    unique name to its ``TaskRuntimeService`` method AST node. The depth
+    bound is intentionally small (``GET_TASK_DELEGATED_HELPER_DEPTH``) so the
+    fence does not silently walk the entire service graph.
+    """
+
+    helpers: dict[str, ast.FunctionDef] = {}
+    pending: list[ast.FunctionDef] = [root_def]
+    for _ in range(GET_TASK_DELEGATED_HELPER_DEPTH + 1):
+        next_pending: list[ast.FunctionDef] = []
+        for scope_def in pending:
+            for call_node in _iter_get_task_self_method_calls(scope_def):
+                if not isinstance(call_node.func, ast.Attribute):
+                    continue
+                name = call_node.func.attr
+                if not name.startswith("_") or name == "__init__":
+                    continue
+                if name in helpers:
+                    continue
+                try:
+                    helper_def = _task_runtime_service_method_def(name)
+                except AssertionError:
+                    # Helper is not on TaskRuntimeService (e.g. local import);
+                    # the forbidden-call fence will still catch raw reads.
+                    continue
+                helpers[name] = helper_def
+                next_pending.append(helper_def)
+        pending = next_pending
+        if not pending:
+            break
+    return helpers
+
+
+def _check_get_task_calls_list_observable_task_rows() -> list[str]:
+    """Emit offenders if ``get_task()`` cannot reach ``self.list_observable_task_rows()``.
+
+    The fence allows either a direct call inside ``get_task()`` or a call
+    inside any private ``TaskRuntimeService`` helper it delegates to. This
+    mirrors how the production code already factors the read resolution into
+    a small private helper while keeping the public surface tied to the
+    observable read model.
+    """
+
+    get_task_def = _get_task_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+
+    if _method_body_calls_self_method(get_task_def, "list_observable_task_rows"):
+        return []
+
+    for _helper_name, helper_def in _collect_get_task_delegated_helpers(get_task_def).items():
+        if _method_body_calls_self_method(helper_def, "list_observable_task_rows"):
+            return []
+
+    return [
+        f"{rel}:TaskRuntimeService.get_task() does not reach "
+        "self.list_observable_task_rows(); the single-row read model must "
+        "derive from the observable row projection so the "
+        "task_runtime.execution Fact Stream overlay stays part of the read "
+        "SSoT."
+    ]
+
+
+def _check_get_task_forbidden_raw_reads() -> list[str]:
+    """Emit offenders if ``get_task`` or its private helper regresses to raw reads."""
+
+    get_task_def = _get_task_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+    scopes: list[tuple[str, ast.FunctionDef]] = [("get_task", get_task_def)]
+    scopes.extend(
+        (helper_name, helper_def)
+        for helper_name, helper_def in sorted(_collect_get_task_delegated_helpers(get_task_def).items())
+    )
+
+    for scope_name, scope_def in scopes:
+        for call_node in ast.walk(scope_def):
+            if not isinstance(call_node, ast.Call):
+                continue
+            callee = _call_name(call_node.func)
+            for forbidden in GET_TASK_FORBIDDEN_RAW_READ_TARGETS:
+                if callee == forbidden:
+                    offenders.append(
+                        f"{rel}:TaskRuntimeService.{scope_name}():{call_node.lineno} "
+                        f"calls {callee!r}; {GET_TASK_FORBIDDEN_RAW_READ_TARGETS[forbidden]}. "
+                        "get_task() and its delegated single-row read helpers must read through "
+                        "self.list_observable_task_rows() so the task_runtime.execution Fact Stream "
+                        "overlay remains the read-model SSoT."
+                    )
+                    break
+
+    return offenders
+
+
+def test_get_task_reads_through_observable_rows() -> None:
+    """WS2 single-row read model fence (positive invariant).
+
+    ``TaskRuntimeService.get_task()`` is the public single-row lookup for
+    status / snapshot / UI consumers. To stay consistent with
+    ``list_observable_task_rows()``, it must reach the observable row
+    projection directly or via a small private ``TaskRuntimeService``
+    helper. Reading the raw ``TaskBoard`` snapshot would silently drop late
+    ``task_runtime.execution`` completion facts and any in-flight execution
+    overlay, regressing the read model to the pre-WS2 raw-row view.
+
+    The fence is structural: it walks the ``get_task()`` AST and the AST of
+    any private ``TaskRuntimeService`` helper it delegates to
+    (``GET_TASK_DELEGATED_HELPER_DEPTH`` levels deep) and verifies the
+    observable row projection is reachable. It does not assert on line
+    numbers or call ordering, so refactors that extract the lookup into a
+    helper stay compliant as long as the helper itself reads observable
+    rows.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_get_task_calls_list_observable_task_rows()
+
+    assert not offenders, (
+        "WS2 single-row read model fence: "
+        f"{rel}:TaskRuntimeService.get_task() must reach "
+        "self.list_observable_task_rows() (directly or via a private "
+        "TaskRuntimeService helper it delegates to) so the public single-row "
+        "read projection stays consistent with list_observable_task_rows() "
+        "and the task_runtime.execution Fact Stream overlay. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_get_task_does_not_regress_to_raw_row_only_reads() -> None:
+    """WS2 single-row read model fence (negative invariant).
+
+    ``TaskRuntimeService.get_task()`` must not call
+    ``self._board.get(...)``, ``self._board.list_all(...)``,
+    ``self.list_task_rows(...)``, or ``self._get_task_by_external_task_id()``
+    because each of those primitives reads raw ``TaskBoard`` state without
+    the ``task_runtime.execution`` fact overlay. Allowing any of them inside
+    ``get_task()`` would silently regress the public single-row read
+    projection to the pre-WS2 raw-row view.
+
+    The fence is structural and walks both the ``get_task()`` AST body and
+    any private helper that ``get_task()`` delegates to (for example
+    ``_resolve_observable_task_row``), so raw reads cannot be hidden one
+    function call away.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_get_task_forbidden_raw_reads()
+
+    assert not offenders, (
+        "WS2 single-row read model fence: "
+        f"{rel}:TaskRuntimeService.get_task() must not regress to raw "
+        "row-only reads. The public single-row read projection must route "
+        "through self.list_observable_task_rows() so the "
+        "task_runtime.execution Fact Stream overlay stays part of the read "
+        "SSoT. Offenders:\n" + "\n".join(offenders)
     )
