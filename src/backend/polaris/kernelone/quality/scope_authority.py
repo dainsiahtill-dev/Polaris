@@ -423,13 +423,22 @@ def owner_handoff_index_summary(
     if index is None:
         return {
             "ownership_handoff_count": 0,
+            "matched_owner_handoff_count": 0,
+            "matched_owner_handoff_routes": [],
             "unmatched_owner_handoff_count": 0,
             "unmatched_owner_handoff_requests": [],
             "unknown_owner_handoff_count": 0,
             "unknown_owner_handoff_requests": [],
         }
+    matched_routes: list[dict[str, Any]] = []
+    for task_key, request in index.matched_owner_handoff_by_task_key.items():
+        if len(matched_routes) >= bounded_limit:
+            break
+        matched_routes.append({"task_key": task_key, "request": dict(request)})
     return {
         "ownership_handoff_count": len(index.all_handoff_requests),
+        "matched_owner_handoff_count": len(index.matched_owner_handoff_by_task_key),
+        "matched_owner_handoff_routes": matched_routes,
         "unmatched_owner_handoff_count": len(index.unmatched_owner_handoff_requests),
         "unmatched_owner_handoff_requests": [
             dict(request) for request in index.unmatched_owner_handoff_requests[:bounded_limit]

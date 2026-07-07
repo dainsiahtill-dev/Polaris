@@ -547,6 +547,8 @@ def test_scope_authority_summarizes_owner_handoff_index() -> None:
     empty_summary = owner_handoff_index_summary()
     assert empty_summary == {
         "ownership_handoff_count": 0,
+        "matched_owner_handoff_count": 0,
+        "matched_owner_handoff_routes": [],
         "unmatched_owner_handoff_count": 0,
         "unmatched_owner_handoff_requests": [],
         "unknown_owner_handoff_count": 0,
@@ -568,9 +570,97 @@ def test_scope_authority_summarizes_owner_handoff_index() -> None:
     summary = owner_handoff_index_summary(index, limit=1)
 
     assert summary["ownership_handoff_count"] == 2
+    assert summary["matched_owner_handoff_count"] == 0
+    assert summary["matched_owner_handoff_routes"] == []
     assert summary["unmatched_owner_handoff_count"] == 1
     assert summary["unmatched_owner_handoff_requests"] == [unmatched_request]
     assert summary["unmatched_owner_handoff_requests"][0] is not unmatched_request
     assert summary["unknown_owner_handoff_count"] == 1
     assert summary["unknown_owner_handoff_requests"] == [unknown_request]
     assert summary["unknown_owner_handoff_requests"][0] is not unknown_request
+
+
+def test_scope_authority_index_summary_none_projects_empty_matched_route() -> None:
+    """``owner_handoff_index_summary`` must project an empty matched route even when no index exists."""
+
+    summary = owner_handoff_index_summary()
+
+    assert summary["matched_owner_handoff_count"] == 0
+    assert summary["matched_owner_handoff_routes"] == []
+
+
+def test_scope_authority_index_summary_projects_matched_routes_with_copy() -> None:
+    """Matched owner handoffs are projected as a bounded list of copies, not the original request objects."""
+
+    matched_request = {
+        "schema_version": "file-ownership-handoff-request/1",
+        "target_file": "src/index.js",
+        "owner_task_identifier_tokens": ["TASK-7"],
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+    }
+    unmatched_request = {
+        "schema_version": "file-ownership-handoff-request/1",
+        "target_file": "src/missing.js",
+        "owner_task_identifier_tokens": ["TASK-99"],
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+    }
+    unknown_request = {
+        "schema_version": "file-ownership-handoff-request/1",
+        "target_file": "src/unknown.js",
+        "owner_found": False,
+        "recommended_route": "scope_authority_resolution",
+    }
+
+    index = build_owner_handoff_index(
+        {
+            "task_boundary_scope_filter": {
+                "ownership_handoff_requests": [
+                    matched_request,
+                    unmatched_request,
+                    unknown_request,
+                ]
+            }
+        },
+        [{"id": "TASK-7", "metadata": {}}],
+    )
+
+    summary = owner_handoff_index_summary(index, limit=12)
+
+    assert summary["matched_owner_handoff_count"] == 1
+    assert summary["unmatched_owner_handoff_count"] == 1
+    assert summary["unknown_owner_handoff_count"] == 1
+    assert summary["ownership_handoff_count"] == 3
+    assert summary["matched_owner_handoff_routes"] == [{"task_key": "TASK-7", "request": matched_request}]
+    assert summary["matched_owner_handoff_routes"][0]["request"] is not matched_request
+
+
+def test_scope_authority_index_summary_bounds_matched_route_list() -> None:
+    """The matched route projection must respect the ``limit`` bound like other list projections."""
+
+    requests = [
+        {
+            "schema_version": "file-ownership-handoff-request/1",
+            "target_file": f"src/file_{index}.js",
+            "owner_task_identifier_tokens": [f"TASK-{index}"],
+            "owner_found": True,
+            "recommended_route": "owner_task_retry",
+        }
+        for index in range(3)
+    ]
+    records = [{"id": f"TASK-{index}", "metadata": {}} for index in range(3)]
+
+    index = build_owner_handoff_index(
+        {"ownership_handoff_requests": requests},
+        records,
+    )
+
+    summary = owner_handoff_index_summary(index, limit=2)
+
+    assert summary["matched_owner_handoff_count"] == 3
+    assert len(summary["matched_owner_handoff_routes"]) == 2
+    assert all(
+        isinstance(item, dict) and "task_key" in item and "request" in item
+        for item in summary["matched_owner_handoff_routes"]
+    )
