@@ -87,6 +87,36 @@ async def test_execute_role_session_persists_transcript_and_context_os(monkeypat
                     content="我会继续推进 context engine。",
                     thinking="先持久化 session continuity。",
                     tool_calls=[{"name": "search_memory"}],
+                    tool_results=[
+                        {
+                            "name": "search_memory",
+                            "ok": True,
+                            "tool_call_id": "call-session-1",
+                            "result": {"matches": []},
+                            "metadata": {
+                                "dispatch_status": "dispatched",
+                                "operation_id": "tool.search_memory.session-1",
+                                "effect_receipt": {
+                                    "schema_version": "tool_effect_receipt.v1",
+                                    "tool_name": "search_memory",
+                                    "operation_id": "tool.search_memory.session-1",
+                                    "side_effect_class": "read",
+                                    "committed": True,
+                                },
+                            },
+                        },
+                    ],
+                    batch_receipt={
+                        "schema_version": "tool_batch_receipt.v1",
+                        "results": [
+                            {
+                                "tool_name": "search_memory",
+                                "tool_call_id": "call-session-1",
+                                "ok": True,
+                                "committed": True,
+                            }
+                        ],
+                    },
                     is_complete=True,
                     execution_stats={"platform_retry_count": 0},
                     turn_history=[
@@ -284,6 +314,36 @@ async def test_execute_role_task_emits_cognitive_runtime_shadow_receipt(monkeypa
             return RoleTurnResult(
                 content="Task execution finished.",
                 tool_calls=[{"name": "apply_patch"}],
+                tool_results=[
+                    {
+                        "name": "apply_patch",
+                        "ok": True,
+                        "tool_call_id": "call-task-1",
+                        "result": {"applied": True, "patch_id": "patch-1"},
+                        "metadata": {
+                            "dispatch_status": "dispatched",
+                            "operation_id": "tool.apply_patch.task-1",
+                            "effect_receipt": {
+                                "schema_version": "tool_effect_receipt.v1",
+                                "tool_name": "apply_patch",
+                                "operation_id": "tool.apply_patch.task-1",
+                                "side_effect_class": "write",
+                                "committed": True,
+                            },
+                        },
+                    },
+                ],
+                batch_receipt={
+                    "schema_version": "tool_batch_receipt.v1",
+                    "results": [
+                        {
+                            "tool_name": "apply_patch",
+                            "tool_call_id": "call-task-1",
+                            "ok": True,
+                            "committed": True,
+                        }
+                    ],
+                },
                 is_complete=True,
                 execution_stats={"platform_retry_count": 0},
                 metadata={

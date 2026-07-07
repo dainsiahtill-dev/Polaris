@@ -4,22 +4,6 @@
   "registered_at": "2026-07-03",
   "entries": [
     {
-      "node_id": "polaris/cells/roles/runtime/tests/test_host_session_continuity.py::test_execute_role_task_emits_cognitive_runtime_shadow_receipt",
-      "file": "polaris/cells/roles/runtime/tests/test_host_session_continuity.py",
-      "reason": "Cognitive runtime shadow receipt is no longer emitted the way the test expects (pre-existing failure at HEAD per 2026-07-03 audit).",
-      "owner_hint": "cells.roles.runtime",
-      "registered_at": "2026-07-03",
-      "expiry": null
-    },
-    {
-      "node_id": "polaris/cells/roles/runtime/tests/test_host_session_continuity.py::test_execute_role_session_persists_transcript_and_context_os",
-      "file": "polaris/cells/roles/runtime/tests/test_host_session_continuity.py",
-      "reason": "Transcript and ContextOS persistence expectations drifted from the current host session runtime (pre-existing failure at HEAD per 2026-07-03 audit).",
-      "owner_hint": "cells.roles.runtime",
-      "registered_at": "2026-07-03",
-      "expiry": null
-    },
-    {
       "node_id": "polaris/tests/unit/kernelone/quality/test_r6_regression_gates.py::TestFactoryRunServiceFailClosed::test_clean_chain_preserves_static_pass",
       "file": "polaris/tests/unit/kernelone/quality/test_r6_regression_gates.py",
       "reason": "FactoryRunService fail-closed clean-chain scenario no longer preserves the static pass verdict the regression gate expects (pre-existing failure at HEAD per 2026-07-03 audit).",
