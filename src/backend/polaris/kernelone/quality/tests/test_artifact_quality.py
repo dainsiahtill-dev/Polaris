@@ -934,14 +934,44 @@ def test_artifact_quality_evidence_uses_direct_typescript_project_typecheck_issu
         "Artifact quality scan failed: TypeScript project typecheck failed: src/index.ts(1,7): error TS2322: bad type",
     )
     assert len(evidence.issues) == 1
-    assert evidence.issues[0].code == "typescript_project_typecheck_failed"
-    assert evidence.issues[0].source == "typescript_project_typecheck"
-    assert evidence.issues[0].metadata == {
-        "raw": evidence.errors[0],
-        "command": "tsc --noEmit --pretty false",
-        "exit_code": 2,
-        "detail": "src/index.ts(1,7): error TS2322: bad type",
-    }
+    issue = evidence.issues[0]
+    assert issue.code == "typescript_project_typecheck_failed"
+    assert issue.source == "typescript_project_typecheck"
+    metadata = dict(issue.metadata)
+    assert metadata["raw"] == evidence.errors[0]
+    assert metadata["command"] == "tsc --noEmit --pretty false"
+    assert metadata["exit_code"] == 2
+    assert metadata["detail"] == "src/index.ts(1,7): error TS2322: bad type"
+    assert metadata["diagnostic_kind"] == "typescript_project_typecheck_failed"
+
+
+def test_artifact_quality_issue_projection_maps_typescript_project_typecheck_failed_diagnostic_kind() -> None:
+    """Stable scanner metadata must classify without depending on message text."""
+
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "source": "typescript_project_typecheck",
+                "message": "scanner reported a typecheck failure",
+                "metadata": {
+                    "diagnostic_kind": "typescript_project_typecheck_failed",
+                    "command": "tsc --noEmit --pretty false",
+                    "exit_code": 2,
+                    "detail": "src/index.ts(1,7): error TS2322: bad type",
+                },
+            },
+        )
+    )
+
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue["code"] == "typescript_project_typecheck_failed"
+    assert issue["source"] == "typescript_project_typecheck"
+    metadata = dict(issue["metadata"])
+    assert metadata["diagnostic_kind"] == "typescript_project_typecheck_failed"
+    assert metadata["command"] == "tsc --noEmit --pretty false"
+    assert metadata["exit_code"] == 2
+    assert metadata["detail"] == "src/index.ts(1,7): error TS2322: bad type"
 
 
 def test_artifact_quality_evidence_uses_direct_typescript_symbol_coherence_issue(

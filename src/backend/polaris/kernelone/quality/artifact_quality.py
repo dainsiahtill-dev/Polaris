@@ -646,6 +646,11 @@ def _artifact_quality_issue_code_from_typed_metadata(
         and source_token == "typescript_symbol_coherence_scanner"
     ):
         return "typescript_import_unresolved_symbol"
+    if (
+        diagnostic_kind == "typescript_project_typecheck_failed"
+        and source_token == "typescript_project_typecheck"
+    ):
+        return "typescript_project_typecheck_failed"
     return ""
 
 
@@ -2865,6 +2870,7 @@ def _typescript_project_typecheck_issue(
             "command": "tsc --noEmit --pretty false",
             "exit_code": exit_code,
             "detail": detail,
+            "diagnostic_kind": "typescript_project_typecheck_failed",
         },
     )
 
