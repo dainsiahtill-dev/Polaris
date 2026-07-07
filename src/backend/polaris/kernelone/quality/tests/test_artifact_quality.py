@@ -1039,6 +1039,42 @@ def test_artifact_quality_evidence_projects_node_eval_syntax_per_script_issue_me
     assert issue.metadata["raw"] == evidence.errors[0]
 
 
+def test_artifact_quality_evidence_projects_node_eval_syntax_with_options_before_eval_flag(
+    tmp_path: Path,
+) -> None:
+    """Regression: node options before -e must not hide invalid eval JavaScript."""
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "node-eval-options-project",
+                "version": "1.0.0",
+                "scripts": {
+                    "test": 'node --input-type module --no-warnings -e "console.log(\'missing close quote)"',
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["package.json"])
+
+    assert len(evidence.errors) == 1
+    assert len(evidence.issues) == 1
+    issue = evidence.issues[0]
+    assert issue.code == "npm_manifest_invalid"
+    assert issue.path == "package.json"
+    assert issue.source == "package_manifest_scanner"
+    assert issue.metadata["script_name"] == "test"
+    assert issue.metadata["script_issue"] == "invalid_node_eval_syntax"
+    assert issue.metadata["script_issue_source"] == "package_manifest_scanner"
+    assert issue.metadata["diagnostic_kind"] == "node_eval_syntax"
+    assert issue.metadata["diagnostic_detail"]
+    assert "SyntaxError" in issue.metadata["diagnostic_detail"]
+    assert issue.metadata["raw"] == evidence.errors[0]
+
+
 def test_artifact_quality_evidence_projects_typescript_dependency_metadata_directly(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text(
         '{"name":"typescript-project","version":"1.0.0","scripts":{"build":"tsc"}}\n',

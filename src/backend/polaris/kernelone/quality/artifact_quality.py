@@ -259,7 +259,18 @@ _NPM_SCRIPT_ENTRYPOINT_SUBCOMMANDS = {
     "deno": {"run", "test", "bench"},
 }
 _NPM_NODE_INLINE_CODE_FLAGS = {"-e", "--eval", "-p", "--print", "-c", "--check"}
-_NPM_NODE_OPTION_VALUE_FLAGS = {"--loader", "--require", "-r", "--import"}
+_NPM_NODE_OPTION_VALUE_FLAGS = {
+    "--conditions",
+    "--experimental-default-type",
+    "--icu-data-dir",
+    "--input-type",
+    "--loader",
+    "--openssl-config",
+    "--require",
+    "--title",
+    "-C",
+    "-r",
+}
 _NPM_SCRIPT_SEPARATORS = {"&&", "||", ";", "|"}
 _NPM_SCRIPT_FAILURE_SWALLOW_RE = re.compile(
     r"(?:^|[\s;&|])\|\|\s*(?:echo|printf|true|exit\s+0)(?:$|[\s;&|])",
@@ -2350,26 +2361,53 @@ def _scan_npm_script_node_eval_syntax(
 
 
 def _iter_node_eval_sources(tokens: list[str]) -> Iterable[str]:
-    for index, token in enumerate(tokens):
-        normalized = os.path.basename(str(token or "").strip().lower())
-        if normalized not in {"node", "node.exe"}:
+    """Yield JavaScript source snippets passed to ``node --eval`` / ``-e``.
+
+    Scans one ``node`` invocation at a time, skipping safe Node options such as
+    ``--no-warnings`` or ``--enable-source-maps`` that may appear between
+    ``node`` and the eval flag. It fails closed on shell operators and on a
+    positional script path / command, so snippets are never inferred from a
+    later clause or from code meant to run from a file.
+    """
+
+    length = len(tokens)
+    index = 0
+    while index < length:
+        if os.path.basename(str(tokens[index] or "").strip().lower()) not in {"node", "node.exe"}:
+            index += 1
             continue
-        next_index = index + 1
-        if next_index >= len(tokens):
-            continue
-        eval_flag = str(tokens[next_index] or "").strip()
-        if eval_flag in {"-e", "--eval"}:
-            source_index = next_index + 1
-            if source_index < len(tokens):
-                source = str(tokens[source_index] or "")
+        index += 1
+        while index < length:
+            token = str(tokens[index] or "").strip()
+            if token in _NPM_SCRIPT_SEPARATORS:
+                break
+            lowered = token.lower()
+            if lowered in {"-e", "--eval"}:
+                index += 1
+                if index < length:
+                    source = str(tokens[index] or "")
+                    if source.strip():
+                        yield source
+                    index += 1
+                continue
+            if lowered.startswith("-e=") or lowered.startswith("--eval="):
+                source = token.split("=", 1)[1]
                 if source.strip():
                     yield source
-            continue
-        for prefix in ("-e=", "--eval="):
-            if eval_flag.startswith(prefix):
-                source = eval_flag[len(prefix) :]
-                if source.strip():
-                    yield source
+                index += 1
+                continue
+            if lowered in _NPM_NODE_OPTION_VALUE_FLAGS:
+                index += 2
+                continue
+            if lowered.startswith(("--loader=", "--require=", "--import=")):
+                index += 1
+                continue
+            if lowered.startswith("-"):
+                # Safe boolean option such as --no-warnings or --enable-source-maps.
+                index += 1
+                continue
+            # Positional script path / command: stop scanning this node invocation.
+            break
 
 
 def _check_javascript_snippet_syntax(source: str) -> str:
