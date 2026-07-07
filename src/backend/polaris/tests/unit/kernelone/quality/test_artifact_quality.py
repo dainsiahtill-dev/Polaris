@@ -1906,8 +1906,56 @@ def test_deterministic_scaffold_marker_threads_direct_typed_issue(
     metadata = dict(scaffold_issue.metadata or {})
     assert metadata["marker_kind"] == "deterministic_scaffold"
     assert metadata["marker_value"] == "structural build passed"
+    assert metadata["diagnostic_kind"] == "deterministic_scaffold_marker"
     raw = str((scaffold_issue.metadata or {}).get("raw") or "")
     assert "deterministic scaffold marker" in raw, "metadata.raw must include legacy error string"
+
+
+def test_file_artifact_scanner_projection_maps_typed_diagnostic_kind() -> None:
+    file_artifact_codes = (
+        "tool_receipt_contamination",
+        "source_narration_contamination",
+        "deterministic_scaffold_marker",
+        "repeated_numeric_helper_filler",
+        "generic_payload_index_store_scaffold",
+        "patch_residue_marker",
+        "repeated_trivial_arithmetic_tests",
+    )
+
+    for code in file_artifact_codes:
+        projected = artifact_quality_issues_from_errors(
+            (
+                {
+                    "source": "file_artifact_scanner",
+                    "message": "opaque file scanner event without legacy classifier text",
+                    "metadata": {
+                        "diagnostic_kind": code,
+                        "artifact_path": "src/example.ts",
+                    },
+                },
+            )
+        )
+
+        assert len(projected) == 1
+        assert projected[0]["code"] == code
+
+
+def test_file_artifact_scanner_projection_rejects_unknown_diagnostic_kind() -> None:
+    projected = artifact_quality_issues_from_errors(
+        (
+            {
+                "source": "file_artifact_scanner",
+                "message": "opaque file scanner event without legacy classifier text",
+                "metadata": {
+                    "diagnostic_kind": "unknown_file_artifact_kind",
+                    "artifact_path": "src/example.ts",
+                },
+            },
+        )
+    )
+
+    assert len(projected) == 1
+    assert projected[0]["code"] != "unknown_file_artifact_kind"
 
 
 def test_scan_detects_generic_payload_store_scaffold(tmp_path: Path) -> None:

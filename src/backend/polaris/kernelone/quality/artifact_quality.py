@@ -112,6 +112,17 @@ _TOOL_RECEIPT_CONTAMINATION_TOKENS = (
     "director_write_policy_denied",
     "handler_error_type",
 )
+_FILE_ARTIFACT_SCANNER_DIAGNOSTIC_KINDS: frozenset[str] = frozenset(
+    (
+        "tool_receipt_contamination",
+        "source_narration_contamination",
+        "deterministic_scaffold_marker",
+        "repeated_numeric_helper_filler",
+        "generic_payload_index_store_scaffold",
+        "patch_residue_marker",
+        "repeated_trivial_arithmetic_tests",
+    )
+)
 _SOURCE_NARRATION_LEAK_RE = re.compile(
     r"(?is)^\s*(?:"
     r"i(?:'|’)ll\s+|"
@@ -665,6 +676,11 @@ def _artifact_quality_issue_code_from_typed_metadata(
         and source_token == "npm_script_test_target_scanner"
     ):
         return "npm_script_node_test_directory_target"
+    if (
+        source_token == "file_artifact_scanner"
+        and diagnostic_kind in _FILE_ARTIFACT_SCANNER_DIAGNOSTIC_KINDS
+    ):
+        return diagnostic_kind
     return ""
 
 
@@ -1659,6 +1675,12 @@ def _file_artifact_quality_issue(
             if value is None:
                 continue
             issue_metadata[str(key)] = value
+    if (
+        source == "file_artifact_scanner"
+        and code in _FILE_ARTIFACT_SCANNER_DIAGNOSTIC_KINDS
+        and "diagnostic_kind" not in issue_metadata
+    ):
+        issue_metadata["diagnostic_kind"] = code
     return ArtifactQualityIssue(
         code=code,
         message=message,
