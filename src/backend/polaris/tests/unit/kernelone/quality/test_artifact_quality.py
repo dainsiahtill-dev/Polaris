@@ -1188,13 +1188,71 @@ export class TaskDefinition {
         encoding="utf-8",
     )
 
-    errors = scan_workspace_artifact_quality(
+    evidence = scan_workspace_artifact_quality_evidence(
         str(tmp_path),
         relative_paths=["src/models/task_definition.ts"],
     )
 
-    assert errors
-    assert "TypeScript zod inferred type collides with class TaskDefinition" in errors[0]
+    assert evidence.errors
+    assert "TypeScript zod inferred type collides with class TaskDefinition" in evidence.errors[0]
+
+    collision_issues = [
+        issue for issue in evidence.issues if issue.code == "typescript_zod_type_class_collision"
+    ]
+    assert collision_issues, "file-level scanner must emit typed typescript_zod_type_class_collision issue"
+    assert len(collision_issues) == 1
+
+    collision_issue: ArtifactQualityIssue = collision_issues[0]
+    assert collision_issue.source == "typescript_syntax_red_flag_scanner"
+    assert collision_issue.path == "src/models/task_definition.ts"
+    assert collision_issue.severity == "error"
+    assert collision_issue.line is None
+    assert collision_issue.column is None
+
+    metadata = dict(collision_issue.metadata or {})
+    assert metadata["collision_name"] == "TaskDefinition"
+    assert metadata["path"] == "src/models/task_definition.ts"
+    assert metadata["diagnostic_kind"] == "typescript_zod_type_class_collision"
+    assert "TypeScript zod inferred type collides with class TaskDefinition" in str(metadata.get("raw") or "")
+
+    assert evidence.errors[0] == collision_issue.metadata["raw"]
+
+
+def test_artifact_quality_issues_from_errors_projects_typescript_zod_type_class_collision() -> None:
+    """Public projection must classify scanner metadata without message parsing."""
+
+    projected = artifact_quality_issues_from_errors(
+        [
+            {
+                "message": "scanner-owned structured payload",
+                "path": "src/models/task_definition.ts",
+                "source": "typescript_syntax_red_flag_scanner",
+                "metadata": {
+                    "raw": "Artifact quality scan failed: TypeScript zod inferred type "
+                    "collides with class TaskDefinition in src/models/task_definition.ts",
+                    "path": "src/models/task_definition.ts",
+                    "collision_name": "TaskDefinition",
+                    "diagnostic_kind": "typescript_zod_type_class_collision",
+                },
+            }
+        ]
+    )
+
+    assert [payload["code"] for payload in projected] == ["typescript_zod_type_class_collision"]
+
+    projected_issue = projected[0]
+    assert projected_issue["source"] == "typescript_syntax_red_flag_scanner"
+    assert projected_issue["path"] == "src/models/task_definition.ts"
+    assert projected_issue["severity"] == "error"
+
+    projected_metadata = dict(projected_issue["metadata"] or {})
+    assert projected_metadata["collision_name"] == "TaskDefinition"
+    assert projected_metadata["path"] == "src/models/task_definition.ts"
+    assert projected_metadata["diagnostic_kind"] == "typescript_zod_type_class_collision"
+    assert projected_metadata["raw"] == (
+        "Artifact quality scan failed: TypeScript zod inferred type "
+        "collides with class TaskDefinition in src/models/task_definition.ts"
+    )
 
 
 def test_scan_detects_python_runtime_masquerading_as_npm_manifest(tmp_path: Path) -> None:

@@ -621,6 +621,11 @@ def _artifact_quality_issue_code_from_typed_metadata(
         and source_token == "typescript_syntax_red_flag_scanner"
     ):
         return "typescript_isolated_modules_type_reexport"
+    if (
+        diagnostic_kind == "typescript_zod_type_class_collision"
+        and source_token == "typescript_syntax_red_flag_scanner"
+    ):
+        return "typescript_zod_type_class_collision"
     return ""
 
 
@@ -1847,7 +1852,10 @@ def _scan_typescript_syntax_red_flag_evidence(
                     error=error,
                     code="typescript_zod_type_class_collision",
                     relative_path=relative_path,
-                    metadata={"collision_name": collision_name},
+                    metadata={
+                        "collision_name": collision_name,
+                        "diagnostic_kind": "typescript_zod_type_class_collision",
+                    },
                 ),
             ),
         )
