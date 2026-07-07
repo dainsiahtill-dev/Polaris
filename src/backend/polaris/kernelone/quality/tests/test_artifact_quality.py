@@ -259,6 +259,9 @@ def test_artifact_quality_evidence_uses_direct_typed_issue_for_missing_workspace
     assert evidence.errors == ("Artifact quality scan failed: workspace path does not exist",)
     assert [issue.code for issue in evidence.issues] == ["workspace_path_missing"]
     assert evidence.issues[0].source == "artifact_quality_scanner"
+    metadata = evidence.issues[0].metadata or {}
+    assert metadata.get("diagnostic_kind") == "workspace_path_missing"
+    assert metadata.get("raw") == evidence.errors[0]
 
 
 def test_artifact_quality_evidence_uses_direct_source_syntax_issue(tmp_path: Path) -> None:
@@ -299,6 +302,29 @@ def test_artifact_quality_issue_projection_maps_source_syntax_diagnostic_kind() 
     assert issues[0]["source"] == "source_syntax_checker"
     assert issues[0]["metadata"]["diagnostic_kind"] == "syntax_error"
     assert issues[0]["metadata"]["language"] == "typescript"
+
+
+def test_artifact_quality_issue_projection_maps_workspace_path_missing_diagnostic_kind() -> None:
+    """Stable scanner metadata must classify without depending on message text."""
+
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "source": "artifact_quality_scanner",
+                "message": "scanner reported a missing workspace path",
+                "metadata": {
+                    "diagnostic_kind": "workspace_path_missing",
+                    "raw": "Artifact quality scan failed: workspace path does not exist",
+                },
+            },
+        )
+    )
+
+    assert len(issues) == 1
+    assert issues[0]["code"] == "workspace_path_missing"
+    assert issues[0]["source"] == "artifact_quality_scanner"
+    assert issues[0]["metadata"]["diagnostic_kind"] == "workspace_path_missing"
+    assert issues[0]["metadata"]["raw"] == "Artifact quality scan failed: workspace path does not exist"
 
 
 def test_artifact_quality_evidence_uses_direct_declared_interface_issue(

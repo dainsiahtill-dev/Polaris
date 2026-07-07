@@ -603,6 +603,8 @@ def _artifact_quality_issue_code_from_typed_metadata(
 
     diagnostic_kind = str(metadata.get("diagnostic_kind") or "").strip()
     language = str(metadata.get("language") or "").strip().lower()
+    if diagnostic_kind == "workspace_path_missing" and source_token == "artifact_quality_scanner":
+        return "workspace_path_missing"
     if diagnostic_kind == "syntax_error" and source_token == "source_syntax_checker":
         return "syntax_error"
     if diagnostic_kind == "undefined_identifier" and language == "go":
@@ -1377,6 +1379,10 @@ def scan_workspace_artifact_quality_evidence(
                     code="workspace_path_missing",
                     message=message,
                     source="artifact_quality_scanner",
+                    metadata={
+                        "raw": message,
+                        "diagnostic_kind": "workspace_path_missing",
+                    },
                 ),
             ),
         )
