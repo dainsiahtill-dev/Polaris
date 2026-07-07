@@ -2513,3 +2513,184 @@ def test_list_observable_task_rows_preserves_fact_event_seq_overlay(tmp_path: Pa
     assert row["running"] is True
     assert row["metadata"]["previous_status"] == "pending"
     assert row["metadata"]["source"] == "task_runtime.execution_fact"
+
+
+# ---------------------------------------------------------------------------
+# WS2 Execution Ledger SSoT convergence — selection must respect terminal facts
+# ---------------------------------------------------------------------------
+#
+# These tests pin the contract that ``list_ready_task_rows``,
+# ``select_next_task``, and ``claim_next_execution`` consult the observable
+# task-runtime read model (file row overlaid with the latest
+# ``task_runtime.execution`` fact) instead of relying on a stale pending file
+# row alone. They fail if the selection APIs ever fall back to file-only
+# state when a newer execution fact projects the task as terminal.
+
+
+def _append_terminal_fact_event(
+    workspace: Path,
+    *,
+    task_id: str,
+    event_type: str,
+    status: str,
+    run_id: str,
+) -> None:
+    """Append a fact-only terminal event without mutating the file row.
+
+    The payload deliberately omits ``task_row_snapshot`` for the row-id fact so
+    the read projection still carries the file-row's id while picking up the
+    terminal ``execution_state`` from the event payload itself.
+    """
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type=event_type,
+            source="runtime.task_runtime",
+            task_id=task_id,
+            run_id=run_id,
+            payload={
+                "task_id": task_id,
+                "run_id": run_id,
+                "event_type": event_type,
+                "status": status,
+                "execution_state": status,
+            },
+        )
+    )
+
+
+def test_list_ready_task_rows_skips_file_pending_row_with_terminal_fact(tmp_path: Path) -> None:
+    """``list_ready_task_rows`` must drop a pending file row whose latest fact
+    is terminal — without rewriting the underlying file row.
+
+    Test setup:
+      * file row stays at status="pending" (ready candidate).
+      * newer ``task_runtime.execution`` fact projects the same task as
+        ``completed``.
+    Expected: the stale pending file row is NOT returned by
+    ``list_ready_task_rows`` because the observable model is terminal.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(subject="stale pending row over terminal fact")
+    created_id = str(created["id"])
+
+    # Sanity check: a fresh pending row is ready.
+    initial_ready = service.list_ready_task_rows()
+    assert [row["id"] for row in initial_ready] == [int(created_id)]
+    assert initial_ready[0]["status"] == "pending"
+
+    # Append a newer terminal fact WITHOUT mutating the file row.
+    _append_terminal_fact_event(
+        workspace,
+        task_id=created_id,
+        event_type="completed",
+        status="completed",
+        run_id="run-fact-completed",
+    )
+
+    # File row on disk is still pending.
+    on_disk = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
+    assert on_disk["status"] == "pending"
+
+    ready_rows = service.list_ready_task_rows()
+    assert all(int(row["id"]) != int(created_id) for row in ready_rows), (
+        "stale pending file row must not be returned once a terminal fact exists; "
+        f"got {[row['id'] for row in ready_rows]}"
+    )
+
+    # Observable model confirms the terminal verdict.
+    observable = service.list_observable_task_rows()
+    matching = [row for row in observable if int(row["id"]) == int(created_id)]
+    assert matching, "observable rows must still surface the task id"
+    assert matching[0]["status"] == "completed"
+
+
+def test_select_next_task_with_requested_id_rejects_stale_pending_file_row(tmp_path: Path) -> None:
+    """``select_next_task(requested_task_id=...)`` must not return a stale
+    pending file row when the latest observable fact for that task is
+    terminal.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(subject="select_next_task terminal fact rejection")
+    created_id = str(created["id"])
+
+    _append_terminal_fact_event(
+        workspace,
+        task_id=created_id,
+        event_type="failed",
+        status="failed",
+        run_id="run-fact-failed",
+    )
+
+    # File row stays pending; observable model is failed.
+    on_disk = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
+    assert on_disk["status"] == "pending"
+    observable = service.list_observable_task_rows()
+    assert observable[0]["status"] == "failed"
+
+    selected = service.select_next_task(requested_task_id=created_id)
+
+    assert selected is None, (
+        "select_next_task must NOT return a stale pending file row when the "
+        f"latest observable fact is terminal; got {selected!r}"
+    )
+
+
+def test_claim_next_execution_skips_stale_pending_row_with_terminal_fact(tmp_path: Path) -> None:
+    """``claim_next_execution`` must skip a stale pending file row whose
+    latest observable fact is terminal and claim another available task
+    instead.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    stale = service.create_task_row(subject="stale pending file row over terminal fact")
+    stale_id = str(stale["id"])
+    fresh = service.create_task_row(subject="fresh available task")
+    fresh_id = str(fresh["id"])
+
+    _append_terminal_fact_event(
+        workspace,
+        task_id=stale_id,
+        event_type="completed",
+        status="completed",
+        run_id="run-fact-completed-skip",
+    )
+
+    on_disk = json.loads(_task_file_path(workspace, stale_id).read_text(encoding="utf-8"))
+    assert on_disk["status"] == "pending"
+    observable = {int(row["id"]): row for row in service.list_observable_task_rows()}
+    assert observable[int(stale_id)]["status"] == "completed"
+    assert observable[int(fresh_id)]["status"] == "pending"
+
+    claimed = service.claim_next_execution(
+        worker_id="director",
+        role_id="director",
+        run_id="run-claim-skip-stale",
+        selection_source="queue",
+    )
+
+    assert claimed["success"] is True
+    assert claimed["task"]["id"] == int(fresh_id)
+    assert claimed["task"]["status"] == "in_progress"
+    # The stale task must NOT have been claimed or had its file row mutated.
+    persisted_stale = json.loads(_task_file_path(workspace, stale_id).read_text(encoding="utf-8"))
+    assert persisted_stale["status"] == "pending"
+    attempted_ids = [
+        int(attempt["task_id"]) for attempt in (claimed.get("attempts") or []) if attempt.get("task_id") is not None
+    ]
+    assert int(stale_id) not in attempted_ids, (
+        f"stale pending row with terminal fact must not appear in claim attempts; got attempts={attempted_ids!r}"
+    )
