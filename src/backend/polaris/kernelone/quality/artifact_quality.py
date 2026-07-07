@@ -588,6 +588,12 @@ def _artifact_quality_issue_code_from_typed_metadata(
         and source_token == "runtime_smoke"
     ):
         return "javascript_module_error"
+    if (
+        script_issue == "missing_local_config"
+        and source_token == "npm_script_config_scanner"
+        and script_issue_source == "npm_script_config_scanner"
+    ):
+        return "npm_script_missing_local_config"
 
     diagnostic_kind = str(metadata.get("diagnostic_kind") or "").strip()
     language = str(metadata.get("language") or "").strip().lower()
@@ -2709,6 +2715,8 @@ def _npm_script_missing_local_config_issue(
         metadata={
             "raw": str(error or "").strip(),
             "manifest_path": relative_path,
+            "script_issue": "missing_local_config",
+            "script_issue_source": "npm_script_config_scanner",
             "script_name": script_name,
             "config_path": config_path,
         },

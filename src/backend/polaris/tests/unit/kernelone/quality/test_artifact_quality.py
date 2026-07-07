@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Any
 
 from polaris.kernelone.quality import (
+    ArtifactQualityIssue,
     artifact_quality as artifact_quality_module,
+    artifact_quality_issues_from_errors,
     scan_workspace_artifact_quality,
     scan_workspace_artifact_quality_evidence,
 )
@@ -593,9 +595,71 @@ def test_scan_detects_npm_script_missing_local_config_file(tmp_path: Path) -> No
         encoding="utf-8",
     )
 
-    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["package.json"])
 
-    assert any("references missing config file 'jest.config.js'" in error for error in errors)
+    assert evidence.errors
+    assert any("references missing config file 'jest.config.js'" in error for error in evidence.errors)
+
+    config_issues = [issue for issue in evidence.issues if issue.code == "npm_script_missing_local_config"]
+    assert config_issues, "evidence.issues must contain a typed npm_script_missing_local_config entry"
+    assert len(config_issues) == 1
+
+    config_issue: ArtifactQualityIssue = config_issues[0]
+    assert config_issue.source == "npm_script_config_scanner"
+    assert config_issue.path == "package.json"
+    assert config_issue.severity == "error"
+    assert config_issue.line is None
+    assert config_issue.column is None
+
+    metadata = dict(config_issue.metadata or {})
+    assert metadata["script_issue"] == "missing_local_config"
+    assert metadata["script_issue_source"] == "npm_script_config_scanner"
+    assert metadata["script_name"] == "test"
+    assert metadata["config_path"] == "jest.config.js"
+    assert metadata["manifest_path"] == "package.json"
+    assert "references missing config file 'jest.config.js'" in str(metadata.get("raw") or "")
+
+    legacy_error = next(
+        error for error in evidence.errors if "references missing config file 'jest.config.js'" in error
+    )
+    assert legacy_error in evidence.errors
+
+
+def test_artifact_quality_issues_from_errors_projects_npm_script_missing_local_config(
+) -> None:
+    """Public projection must classify scanner metadata without message parsing."""
+
+    projected = artifact_quality_issues_from_errors(
+        [
+            {
+                "message": "scanner-owned structured payload",
+                "path": "package.json",
+                "source": "npm_script_config_scanner",
+                "metadata": {
+                    "raw": "human display only",
+                    "manifest_path": "package.json",
+                    "script_issue": "missing_local_config",
+                    "script_issue_source": "npm_script_config_scanner",
+                    "script_name": "test",
+                    "config_path": "jest.config.js",
+                },
+            }
+        ]
+    )
+
+    assert [payload["code"] for payload in projected] == ["npm_script_missing_local_config"]
+
+    projected_issue = projected[0]
+    assert projected_issue["source"] == "npm_script_config_scanner"
+    assert projected_issue["path"] == "package.json"
+    assert projected_issue["severity"] == "error"
+
+    projected_metadata = dict(projected_issue["metadata"] or {})
+    assert projected_metadata["script_issue"] == "missing_local_config"
+    assert projected_metadata["script_issue_source"] == "npm_script_config_scanner"
+    assert projected_metadata["script_name"] == "test"
+    assert projected_metadata["config_path"] == "jest.config.js"
+    assert projected_metadata["manifest_path"] == "package.json"
 
 
 def test_scan_detects_standalone_manifest_check_passed_test_script(tmp_path: Path) -> None:
