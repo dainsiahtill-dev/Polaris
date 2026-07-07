@@ -180,7 +180,6 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
     ("reset_task_rows_for_reexecution", "list_all"): 1,
     ("suspend_active_executions_for_run", "list_all"): 1,
     ("suspend_execution", "get"): 1,
-    ("task_exists", "get"): 1,
 }
 TASK_RUNTIME_SERVICE_RAW_BOARD_WRITE_METHODS = {
     "create",
@@ -3693,4 +3692,162 @@ def test_get_task_does_not_regress_to_raw_row_only_reads() -> None:
         "through self.list_observable_task_rows() so the "
         "task_runtime.execution Fact Stream overlay stays part of the read "
         "SSoT. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# WS2 task_exists() — observable single-row existence check
+# ---------------------------------------------------------------------------
+#
+# ``TaskRuntimeService.task_exists()`` is the public existence check used by
+# role adapters (``_board_task_exists`` in ``roles.adapters.internal.base``)
+# before applying task-row mutations. To stay consistent with the single-row
+# read model (``get_task()``) and the multi-row observable projection, the
+# existence check must derive from the observable row model rather than the
+# raw ``TaskBoard.get()`` snapshot. Calling ``self._board.get()`` would
+# silently drop late ``task_runtime.execution`` completion facts and any
+# in-flight execution overlay, regressing existence to the pre-WS2 raw-row
+# view.
+#
+# The fence mirrors the ``get_task()`` structural shape:
+#
+#   1. Positive invariant: ``task_exists()`` reaches
+#      ``self.list_observable_task_rows()`` either directly or via a single
+#      private ``TaskRuntimeService`` helper it delegates to.
+#   2. Negative invariant: ``task_exists()`` and any delegated helper do
+#      not call ``self._board.get(...)``, ``self._board.list_all(...)``,
+#      ``self.list_task_rows(...)``, or
+#      ``self._get_task_by_external_task_id(...)``.
+#
+# The fence is intentionally line-number-agnostic so future refactors that
+# keep the helper delegation (e.g. ``_resolve_observable_task_row``) stay
+# compliant as long as the helper continues to read observable rows.
+
+
+def _task_exists_function_def() -> ast.FunctionDef:
+    """Return the ``TaskRuntimeService.task_exists`` AST node."""
+
+    return _task_runtime_service_method_def("task_exists")
+
+
+def _check_task_exists_calls_list_observable_task_rows() -> list[str]:
+    """Emit offenders if ``task_exists()`` cannot reach ``self.list_observable_task_rows()``.
+
+    The fence allows either a direct call inside ``task_exists()`` or a call
+    inside any private ``TaskRuntimeService`` helper it delegates to (within
+    ``GET_TASK_DELEGATED_HELPER_DEPTH`` levels). This mirrors how the
+    production code already factors existence resolution into
+    ``_resolve_observable_task_row`` so the public surface stays tied to the
+    observable row projection.
+    """
+
+    task_exists_def = _task_exists_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+
+    if _method_body_calls_self_method(task_exists_def, "list_observable_task_rows"):
+        return []
+
+    for _helper_name, helper_def in _collect_get_task_delegated_helpers(task_exists_def).items():
+        if _method_body_calls_self_method(helper_def, "list_observable_task_rows"):
+            return []
+
+    return [
+        f"{rel}:TaskRuntimeService.task_exists() does not reach "
+        "self.list_observable_task_rows(); the public existence check must "
+        "derive from the observable row projection so the "
+        "task_runtime.execution Fact Stream overlay stays part of the read "
+        "SSoT."
+    ]
+
+
+def _check_task_exists_forbidden_raw_reads() -> list[str]:
+    """Emit offenders if ``task_exists`` or its private helper regresses to raw reads."""
+
+    task_exists_def = _task_exists_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+    scopes: list[tuple[str, ast.FunctionDef]] = [("task_exists", task_exists_def)]
+    scopes.extend(
+        (helper_name, helper_def)
+        for helper_name, helper_def in sorted(_collect_get_task_delegated_helpers(task_exists_def).items())
+    )
+
+    for scope_name, scope_def in scopes:
+        for call_node in ast.walk(scope_def):
+            if not isinstance(call_node, ast.Call):
+                continue
+            callee = _call_name(call_node.func)
+            for forbidden in GET_TASK_FORBIDDEN_RAW_READ_TARGETS:
+                if callee == forbidden:
+                    offenders.append(
+                        f"{rel}:TaskRuntimeService.{scope_name}():{call_node.lineno} "
+                        f"calls {callee!r}; {GET_TASK_FORBIDDEN_RAW_READ_TARGETS[forbidden]}. "
+                        "task_exists() and its delegated single-row read helpers must read through "
+                        "self.list_observable_task_rows() so the task_runtime.execution Fact Stream "
+                        "overlay remains the read-model SSoT."
+                    )
+                    break
+
+    return offenders
+
+
+def test_task_exists_reads_through_observable_rows() -> None:
+    """WS2 single-row existence-check fence (positive invariant).
+
+    ``TaskRuntimeService.task_exists()`` is the public existence check used
+    by role adapters before applying task-row mutations. To stay consistent
+    with ``get_task()`` and ``list_observable_task_rows()`` it must reach
+    the observable row projection directly or via a small private
+    ``TaskRuntimeService`` helper. Reading the raw ``TaskBoard`` snapshot
+    would silently drop late ``task_runtime.execution`` completion facts
+    and any in-flight execution overlay, regressing the public existence
+    check to the pre-WS2 raw-row view.
+
+    The fence is structural: it walks the ``task_exists()`` AST and the AST
+    of any private ``TaskRuntimeService`` helper it delegates to
+    (``GET_TASK_DELEGATED_HELPER_DEPTH`` levels deep) and verifies the
+    observable row projection is reachable.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_task_exists_calls_list_observable_task_rows()
+
+    assert not offenders, (
+        "WS2 single-row existence-check fence: "
+        f"{rel}:TaskRuntimeService.task_exists() must reach "
+        "self.list_observable_task_rows() (directly or via a private "
+        "TaskRuntimeService helper it delegates to) so the public existence "
+        "check stays consistent with list_observable_task_rows() and "
+        "get_task(), and the task_runtime.execution Fact Stream overlay "
+        "stays part of the read-model SSoT. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_task_exists_does_not_regress_to_raw_row_only_reads() -> None:
+    """WS2 single-row existence-check fence (negative invariant).
+
+    ``TaskRuntimeService.task_exists()`` must not call
+    ``self._board.get(...)``, ``self._board.list_all(...)``,
+    ``self.list_task_rows(...)``, or ``self._get_task_by_external_task_id()``
+    because each of those primitives reads raw ``TaskBoard`` state without
+    the ``task_runtime.execution`` fact overlay. Allowing any of them inside
+    ``task_exists()`` would silently regress the public existence check to
+    the pre-WS2 raw-row view.
+
+    The fence is structural and walks both the ``task_exists()`` AST body
+    and any private helper that ``task_exists()`` delegates to (for example
+    ``_resolve_observable_task_row``), so raw reads cannot be hidden one
+    function call away.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_task_exists_forbidden_raw_reads()
+
+    assert not offenders, (
+        "WS2 single-row existence-check fence: "
+        f"{rel}:TaskRuntimeService.task_exists() must not regress to raw "
+        "row-only reads. The public existence check must route through "
+        "self.list_observable_task_rows() so the task_runtime.execution "
+        "Fact Stream overlay stays part of the read-model SSoT. "
+        "Offenders:\n" + "\n".join(offenders)
     )

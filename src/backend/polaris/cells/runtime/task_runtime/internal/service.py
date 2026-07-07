@@ -441,10 +441,28 @@ class TaskRuntimeService:
         }
 
     def task_exists(self, task_id: Any) -> bool:
+        """Return whether a task row exists in the observable read model.
+
+        Boundary:
+            Public existence check.  Resolves through
+            :meth:`_resolve_observable_task_row` (the same observable
+            projection that powers :meth:`get_task`) so callers consult the
+            fact-overlaid read model instead of the raw ``TaskBoard`` row.
+            ``normalize_task_id`` semantics are preserved (an unparseable
+            id returns ``False``) and the read is a strict subset of the
+            ``list_observable_task_rows`` walk, so no extra fact query or
+            file scan is triggered beyond what the projection already
+            performs.
+
+        Complexity:
+            O(r + f) time and memory, inherited from
+            :meth:`list_observable_task_rows`.
+        """
+
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
             return False
-        return self._board.get(normalized) is not None
+        return self._resolve_observable_task_row(normalized) is not None
 
     @staticmethod
     def _metadata_matches_external_task_id(metadata: dict[str, Any], external_id: str) -> bool:

@@ -3109,3 +3109,217 @@ def test_get_task_returns_fact_overlaid_status_for_external_task_id(tmp_path: Pa
     assert str(overlaid["metadata"].get("source_task_id") or "") == external_id
     assert overlaid["metadata"].get("source") == "task_runtime.execution_fact"
     assert overlaid["metadata"].get("previous_status") == "pending"
+
+
+# ---------------------------------------------------------------------------
+# task_exists observable fact-overlay regression
+# ---------------------------------------------------------------------------
+#
+# ``TaskRuntimeService.task_exists`` is the public existence probe consumed by
+# role adapters (e.g. ``_board_task_exists`` / ``_update_board_task``). It MUST
+# consult the observable read model — i.e. the file row overlaid with the
+# latest ``task_runtime.execution`` fact — instead of probing ``self._board``
+# alone. Otherwise a task whose existence is only attested by the execution
+# ledger (fact-only projection) is silently invisible to roles adapters that
+# use ``task_exists`` as a precondition for writes, defeating the read-model
+# convergence that ``get_task`` / ``list_observable_task_rows`` already pin.
+
+
+def test_task_exists_returns_true_for_fact_only_numeric_task_id(tmp_path: Path) -> None:
+    """``task_exists(numeric_id)`` must return ``True`` when a
+    ``task_runtime.execution`` fact attests to that id, even when no file row
+    has ever been created.
+
+    Regression: ``task_exists`` used to consult ``self._board.get(normalized)``
+    only, so any fact-only task was reported as ``False`` — making role
+    adapters bypass the existence check, write a duplicate file row, and break
+    the fact-only read-model convergence. The probe must consult the same
+    observable read model ``get_task`` uses, so any task visible to
+    ``list_observable_task_rows`` is also visible to ``task_exists``.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    fact_only_id = 4242
+
+    # Sanity: no file row exists for the chosen id and the raw board probe
+    # agrees the task is absent.
+    assert not _task_file_path(workspace, fact_only_id).exists()
+    assert service.task_exists(fact_only_id) is False, (
+        "sanity precondition failed: a brand-new workspace must not contain an arbitrary numeric task id"
+    )
+
+    # Append a task_runtime.execution fact WITHOUT creating a file row. The
+    # payload's ``task_row_snapshot.id`` is the same numeric id, so the
+    # observable read model can resolve the task purely from the ledger.
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="claimed",
+            source="runtime.task_runtime",
+            task_id=str(fact_only_id),
+            run_id="run-fact-only-existence",
+            payload={
+                "task_id": str(fact_only_id),
+                "run_id": "run-fact-only-existence",
+                "event_type": "claimed",
+                "status": "in_progress",
+                "execution_state": "in_progress",
+                "session_id": "session-fact-only-existence",
+                "task_row_snapshot": {
+                    "id": fact_only_id,
+                    "task_id": str(fact_only_id),
+                    "subject": "fact-only existence probe",
+                    "description": "task_exists must see this row via the fact stream",
+                    "priority": "HIGH",
+                    "metadata": {"source": "task_runtime.row_snapshot"},
+                },
+            },
+        )
+    )
+
+    # Observable rows confirm the fact-only projection: this is the same
+    # read model ``task_exists`` must now consult.
+    observable = {int(row["id"]): row for row in service.list_observable_task_rows()}
+    assert fact_only_id in observable, (
+        f"observable rows must surface the fact-only task; got ids={sorted(observable.keys())!r}"
+    )
+    assert observable[fact_only_id]["status"] == "in_progress"
+
+    # File row is still absent on disk — this is a fact-only existence.
+    assert not _task_file_path(workspace, fact_only_id).exists(), (
+        "test invariant: the file row must not be created; task_exists must consult the observable read model"
+    )
+
+    # The contract: ``task_exists`` must report the fact-only task as
+    # existing. This is the regression the production code must satisfy.
+    assert service.task_exists(fact_only_id) is True, (
+        "task_exists must consult the observable read model so a fact-only "
+        "task_runtime.execution projection is reported as existing; got "
+        f"task_exists({fact_only_id}) == False"
+    )
+
+    # The same verdict must hold for the canonical ``task-<id>`` token used by
+    # role adapters when they normalize ids through ``normalize_task_id``.
+    assert service.task_exists(f"task-{fact_only_id}") is True, (
+        "task_exists must accept the canonical task-<id> token and consult the observable read model"
+    )
+
+
+def test_task_exists_keeps_true_when_observable_overlays_terminal_fact(tmp_path: Path) -> None:
+    """``task_exists`` must stay ``True`` for an existing file row once a
+    newer ``task_runtime.execution`` fact overlays it, mirroring the
+    ``get_task`` fact-overlay contract.
+
+    Regression: role adapters call ``task_exists`` before writes; if the
+    probe stops consulting the observable model, an externally-attached
+    terminal fact that does NOT mutate the file row would let the probe drift
+    away from what ``get_task`` reports. The probe must keep reporting
+    existence for any task the observable model still surfaces, regardless of
+    the fact-overlaid status (pending, in_progress, terminal — all still
+    surface the id).
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(
+        subject="task_exists overlay",
+        description="file row stays pending; fact overlays status",
+    )
+    created_id = int(created["id"])
+
+    # Baseline: the file row exists and the probe agrees.
+    assert service.task_exists(created_id) is True
+
+    # Append a terminal fact WITHOUT going through the service APIs.
+    _append_terminal_fact_event(
+        workspace,
+        task_id=str(created_id),
+        event_type="completed",
+        status="completed",
+        run_id="run-fact-completed-task-exists",
+    )
+
+    # File row stays pending on disk: the fact overlay is read-only.
+    on_disk = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
+    assert on_disk["status"] == "pending"
+
+    # Observable model surfaces the file row id with the fact-overlaid
+    # status; the task is still present.
+    observable = {int(row["id"]): row for row in service.list_observable_task_rows()}
+    assert observable[created_id]["status"] == "completed"
+
+    # ``task_exists`` must keep returning ``True`` for the task id because
+    # the observable model still surfaces it. Failing here means the probe
+    # falls back to raw board state and ignores the fact overlay.
+    assert service.task_exists(created_id) is True, (
+        "task_exists must remain True for any task still surfaced by the "
+        "observable read model; the fact overlay must not make the probe "
+        "report the task as absent"
+    )
+
+
+def test_task_exists_returns_false_for_unknown_task_id_when_facts_present(tmp_path: Path) -> None:
+    """``task_exists`` must keep returning ``False`` for ids that the
+    observable read model never surfaces — even when the fact stream has
+    facts for OTHER tasks.
+
+    This pins the negative side of the contract: the probe must not become a
+    blanket ``True`` once any fact exists in the stream. Only ids that the
+    observable read model actually projects get reported as existing.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    fact_only_id = 9001
+
+    # Pre-condition: the fact stream is empty for this id; probe must
+    # already report False.
+    assert service.task_exists(fact_only_id) is False
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="claimed",
+            source="runtime.task_runtime",
+            task_id=str(fact_only_id),
+            run_id="run-fact-only-existence-negative",
+            payload={
+                "task_id": str(fact_only_id),
+                "run_id": "run-fact-only-existence-negative",
+                "event_type": "claimed",
+                "status": "in_progress",
+                "execution_state": "in_progress",
+                "session_id": "session-fact-only-existence-negative",
+                "task_row_snapshot": {
+                    "id": fact_only_id,
+                    "task_id": str(fact_only_id),
+                    "subject": "fact-only existence (negative side)",
+                    "priority": "HIGH",
+                    "metadata": {"source": "task_runtime.row_snapshot"},
+                },
+            },
+        )
+    )
+
+    # The fact-only id is now projectable: the probe returns True.
+    assert service.task_exists(fact_only_id) is True
+
+    # An unrelated id remains unknown: the probe still returns False. This
+    # pins the negative side of the contract — the probe must scope the
+    # fact lookup to the queried id, not the whole stream.
+    other_id = 9999
+    assert other_id != fact_only_id
+    assert service.task_exists(other_id) is False, (
+        "task_exists must keep returning False for ids the observable model "
+        "does not surface; a fact-only presence must not make the probe "
+        "report unrelated ids as existing"
+    )
