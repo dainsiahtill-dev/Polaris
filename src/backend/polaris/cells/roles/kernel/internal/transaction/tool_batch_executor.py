@@ -77,9 +77,11 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
     FinalizeMode,
     ToolBatch,
+    ToolEffectType,
     ToolExecutionMode,
     TurnDecision,
     TurnId,
+    _infer_effect_type,
 )
 from polaris.cells.roles.kernel.public.turn_events import ErrorEvent, TurnEvent, TurnPhaseEvent
 from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
@@ -188,6 +190,228 @@ _DIRECT_READ_TOOLS = {
 
 _LINE_RANGE_REPLACEMENT_KEYS = ("replace", "new_text", "new_content", "replacement", "code")
 _FILE_ARGUMENT_KEYS = ("file", "path", "filepath", "file_path", "target_file", "target_path")
+
+
+# Valid execution_mode values that downstream bucket filters recognize. Anything
+# outside this set (None, empty string, unknown enum-like value, unsupported
+# type) is treated as missing during normalization.
+_VALID_TOOL_EXECUTION_MODES: frozenset[str] = frozenset({mode.value for mode in ToolExecutionMode})
+_VALID_TOOL_EFFECT_TYPES: frozenset[str] = frozenset({effect.value for effect in ToolEffectType})
+
+
+def _is_valid_execution_mode(raw_mode: Any) -> bool:
+    """Whether ``raw_mode`` is a ToolExecutionMode-accepted bucket value.
+
+    Accepts both Enum members and the canonical string form so callers that
+    pass either flavor (turn_contracts ``ToolInvocation`` models use the Enum,
+    raw ``Mapping`` invocations from the decoder often use the string) are
+    recognized as already-annotated.
+    """
+
+    if isinstance(raw_mode, ToolExecutionMode):
+        return True
+    if isinstance(raw_mode, str):
+        return raw_mode in _VALID_TOOL_EXECUTION_MODES
+    return False
+
+
+def _resolve_missing_execution_mode(invocation: Any) -> ToolExecutionMode:
+    """Derive the canonical ``ToolExecutionMode`` for an invocation lacking one.
+
+    Reuses :py:meth:`ToolBatchRuntime.classify_tool` — the kernel's single
+    tool-classification truth source — so we never introduce a parallel
+    classification table here. Read tools map to ``READONLY_PARALLEL``,
+    async tools to ``ASYNC_RECEIPT``, and anything else falls back to
+    ``WRITE_SERIAL`` (safe default: serial write barrier).
+
+    An invocation with a missing/blank tool name still resolves to
+    ``WRITE_SERIAL`` rather than raising, so a malformed call doesn't escalate
+    into a hard contract violation; the bucket filter will route it through
+    the authoritative write path where downstream effect policy gates
+    inspect it again.
+    """
+
+    tool_name = extract_invocation_tool_name(invocation)
+    if not tool_name:
+        return ToolExecutionMode.WRITE_SERIAL
+    try:
+        return ToolBatchRuntime.classify_tool(tool_name)
+    except (AttributeError, TypeError, ValueError):
+        # Defensive: ``classify_tool`` should never raise on a str input, but
+        # if a future change narrows its contract we still want the executor
+        # to fail-closed via the safe default rather than crash mid-turn.
+        return ToolExecutionMode.WRITE_SERIAL
+
+
+def _set_invocation_execution_mode(invocation: Any, mode: ToolExecutionMode) -> Any:
+    """Return a copy of ``invocation`` with ``execution_mode`` set to ``mode``.
+
+    Mirrors the read-side shims (``_with_invocation_arguments``,
+    ``_with_invocation_top_level_field``) — dict inputs get a shallow-copied
+    dict, Mapping inputs fall through to ``dict(...)``, and opaque objects
+    without a writable attribute are returned unchanged so the caller can
+    still detect them and surface a diagnostic. The caller must always
+    treat the result as best-effort: bucket filters re-read the value via
+    ``inv.get("execution_mode")`` after normalization.
+    """
+
+    if isinstance(invocation, dict):
+        updated = dict(invocation)
+        updated["execution_mode"] = mode
+        return updated
+    if isinstance(invocation, Mapping):
+        updated = dict(invocation)
+        updated["execution_mode"] = mode
+        return updated
+    to_dict = getattr(invocation, "to_dict", None)
+    if callable(to_dict):
+        try:
+            payload = to_dict()
+        except (RuntimeError, TypeError, ValueError):
+            return invocation
+        if isinstance(payload, dict):
+            updated = dict(payload)
+            updated["execution_mode"] = mode
+            return updated
+    if hasattr(invocation, "execution_mode"):
+        try:
+            object.__setattr__(invocation, "execution_mode", mode) if hasattr(invocation, "__frozen__") else setattr(
+                invocation, "execution_mode", mode
+            )
+        except (AttributeError, TypeError):
+            return invocation
+        return invocation
+    return invocation
+
+
+def _set_invocation_effect_type(invocation: Any, effect_type: Any) -> Any:
+    """Return a copy of ``invocation`` with ``effect_type`` set to ``effect_type``.
+
+    Same shape as :py:func:`_set_invocation_execution_mode` but writes the
+    ``effect_type`` field. ``effect_type`` accepts both a
+    :class:`ToolEffectType` enum and its string form so callers using
+    either flavor get a consistent rewrite. Failure modes mirror the
+    execution-mode setter: defensive shallow copy first, fall back to
+    ``setattr`` only when the target is a regular (non-frozen) object,
+    and never raise mid-normalization.
+    """
+
+    if isinstance(invocation, dict):
+        updated = dict(invocation)
+        updated["effect_type"] = effect_type
+        return updated
+    if isinstance(invocation, Mapping):
+        updated = dict(invocation)
+        updated["effect_type"] = effect_type
+        return updated
+    to_dict = getattr(invocation, "to_dict", None)
+    if callable(to_dict):
+        try:
+            payload = to_dict()
+        except (RuntimeError, TypeError, ValueError):
+            return invocation
+        if isinstance(payload, dict):
+            updated = dict(payload)
+            updated["effect_type"] = effect_type
+            return updated
+    if hasattr(invocation, "effect_type"):
+        try:
+            object.__setattr__(invocation, "effect_type", effect_type) if hasattr(
+                invocation, "__frozen__"
+            ) else setattr(invocation, "effect_type", effect_type)
+        except (AttributeError, TypeError):
+            return invocation
+        return invocation
+    return invocation
+
+
+def normalize_replay_execution_modes(invocations: list[Any]) -> list[Any]:
+    """Normalize ``execution_mode`` on replay-bound invocations (WS1 hot-fix).
+
+    ``ToolBatchExecutor.execute_tool_batch`` buckets ``replay_invocations`` by
+    ``execution_mode`` before handing them to ``ToolBatchRuntime``. When a
+    decoded/native tool call already passed allow-list, guard, and mutation
+    checks but was emitted without an ``execution_mode`` annotation, every
+    bucket filter rejects it and the executor produces an empty
+    ``ToolBatch``. The downstream hard gate then raises
+    ``tool_dispatch_dropped: decoded tool batch produced no authoritative
+    batch receipt``, which violates the ToolCallEnvelope normalization
+    principle (every decoded call must resolve to one executable bucket).
+
+    When a call is missing ``effect_type`` alongside the missing mode,
+    ``ToolBatch``'s pydantic model validator still rejects the dispatch
+    (the field is required for ``ToolInvocation``). The same canonical
+    helper :py:func:`_infer_effect_type` that the ``ToolInvocation``
+    model validator calls is reused here to fill it, so the dispatch
+    shape stays in lockstep with the kernel's strict schema.
+
+    Both fields are derived through the kernel's single tool-classification
+    truth source (``ToolBatchRuntime.classify_tool`` for execution_mode and
+    ``_infer_effect_type`` for effect_type), so we don't grow a parallel
+    classification table here. Already-annotated invocations keep their
+    original routing — only invocations whose ``execution_mode`` is
+    missing, blank, or of an unrecognized shape are rewritten.
+
+    Time complexity: O(n) over ``invocations``; each call performs one
+    ``execution_mode`` read, one optional ``classify_tool`` call, one
+    optional ``effect_type`` derivation, and at most one shallow copy
+    per missing-mode invocation.
+
+    Args:
+        invocations: Replay-bound invocations to normalize in place-shape.
+
+    Returns:
+        A new list of invocations whose ``execution_mode`` (and
+        ``effect_type``, when also missing) is set to a valid
+        :class:`ToolExecutionMode` / :class:`ToolEffectType` value;
+        original invocations with already-valid modes are passed through
+        unchanged.
+
+    Side Effects:
+        None. The function does not mutate the input list; invocations
+        without a valid mode are replaced with shallow copies that carry
+        the synthesized mode/effect-type. The downstream
+        ``tool_dispatch_dropped`` hard gate remains untouched — if the
+        runtime still produces no authoritative receipt after
+        normalization, the executor stays fail-closed.
+    """
+
+    if not invocations:
+        return invocations
+    normalized: list[Any] = []
+    missing_mode_count = 0
+    missing_effect_count = 0
+    for invocation in invocations:
+        if isinstance(invocation, Mapping):
+            raw_mode = invocation.get("execution_mode")
+        else:
+            raw_mode = getattr(invocation, "execution_mode", None)
+        if _is_valid_execution_mode(raw_mode):
+            normalized.append(invocation)
+            continue
+        resolved_mode = _resolve_missing_execution_mode(invocation)
+        missing_mode_count += 1
+        rewritten = _set_invocation_execution_mode(invocation, resolved_mode)
+        if isinstance(rewritten, Mapping):
+            raw_effect = rewritten.get("effect_type")
+        else:
+            raw_effect = getattr(rewritten, "effect_type", None)
+        if raw_effect is None or (
+            not isinstance(raw_effect, ToolEffectType)
+            and not (isinstance(raw_effect, str) and raw_effect in _VALID_TOOL_EFFECT_TYPES)
+        ):
+            resolved_effect = _infer_effect_type(extract_invocation_tool_name(rewritten), resolved_mode)
+            missing_effect_count += 1
+            rewritten = _set_invocation_effect_type(rewritten, resolved_effect)
+        normalized.append(rewritten)
+    if missing_mode_count or missing_effect_count:
+        logger.debug(
+            "tool_batch_execution_mode_normalized: filled_mode=%d filled_effect=%d total=%d",
+            missing_mode_count,
+            missing_effect_count,
+            len(invocations),
+        )
+    return normalized
 
 
 def _canonical_single_target_file(target_files: tuple[str, ...] | list[str]) -> str | None:
@@ -1800,6 +2024,19 @@ class ToolBatchExecutor:
                     replay_invocations.append(invocation)
         else:
             replay_invocations = list(invocations)
+
+        # WS1 (2026-07-07): ToolCallEnvelope 归一化缺口修复。
+        # ToolBatchRuntime 按 execution_mode 分桶执行 replay_invocations；
+        # 但 decoded/native tool call 在 allow-list/guard/mutation 检查通过后
+        # 仍可能缺失 execution_mode 标注（弱模型 textual 工具调用、native
+        # FC 调用但 provider 未填 execution_mode 等场景）。未归一化的调用会
+        # 同时落入空 ToolBatch，被下游 hard gate 误判为
+        # ``tool_dispatch_dropped`` 拒绝整个 batch，破坏 ToolCallEnvelope
+        # 的统一归一化契约。已显式标注 execution_mode 的 invocation 行为
+        # 完全不变；只有缺失/非法标注的 invocation 才走 ToolBatchRuntime
+        # 共享分类真相源补齐。hard gate 仍保留：如果补齐后仍无 receipt，
+        # executor 必须 fail-closed。
+        replay_invocations = normalize_replay_execution_modes(replay_invocations)
 
         # 对未命中的 invocation 走 authoritative batch 执行
         if replay_invocations:
