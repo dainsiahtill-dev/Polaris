@@ -1042,14 +1042,26 @@ class TaskRuntimeService:
             memory for latest-by-task rows.
         """
 
+        event_limit = max(1, int(limit))
         try:
             result = query_fact_events(
                 QueryFactEventsV1(
                     workspace=self.workspace,
                     stream="task_runtime.execution",
-                    limit=max(1, int(limit)),
+                    limit=event_limit,
                 )
             )
+            if result.total > len(result.events):
+                latest_offset = max(0, int(result.total) - event_limit)
+                if latest_offset:
+                    result = query_fact_events(
+                        QueryFactEventsV1(
+                            workspace=self.workspace,
+                            stream="task_runtime.execution",
+                            limit=event_limit,
+                            offset=latest_offset,
+                        )
+                    )
         except (FactStreamError, RuntimeError, TypeError, ValueError) as exc:
             logger.debug("failed to load task runtime execution fact rows: %s", exc)
             return []

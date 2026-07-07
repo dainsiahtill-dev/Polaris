@@ -2344,6 +2344,52 @@ def test_list_task_rows_from_execution_facts_preserves_payload_fact_event_seq(tm
     assert rows[0]["fact_event_seq"] == 999
 
 
+def test_list_task_rows_from_execution_facts_uses_latest_fact_window(tmp_path: Path) -> None:
+    """When the fact stream has more events than the requested window, the read
+    model must project the latest window, not the earliest one.
+
+    Otherwise a long-running task can keep showing a stale status even though
+    later ``task_runtime.execution`` facts are the authoritative state source.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    for event_type, status in (
+        ("created", "pending"),
+        ("claimed", "in_progress"),
+        ("completed", "completed"),
+    ):
+        append_fact_event(
+            AppendFactEventCommandV1(
+                workspace=str(workspace),
+                stream="task_runtime.execution",
+                event_type=event_type,
+                source="runtime.task_runtime",
+                task_id="TASK-WINDOW",
+                run_id="run-window",
+                payload={
+                    "task_id": "TASK-WINDOW",
+                    "event_type": event_type,
+                    "status": status,
+                    "execution_state": status,
+                    "task_row_snapshot": {
+                        "id": "TASK-WINDOW",
+                        "task_id": "TASK-WINDOW",
+                        "subject": "latest window row",
+                    },
+                },
+            )
+        )
+
+    rows = service.list_task_rows_from_execution_facts(limit=2)
+    assert len(rows) == 1
+    assert rows[0]["status"] == "completed"
+    assert rows[0]["execution_state"] == "completed"
+    assert rows[0]["fact_event_seq"] == 3
+
+
 def test_list_task_rows_from_execution_facts_omits_fact_event_seq_when_wrapper_seq_invalid(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
