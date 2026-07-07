@@ -595,6 +595,8 @@ def _artifact_quality_issue_code_from_typed_metadata(
         return "go_compile_error"
     if diagnostic_kind == "package_module_type_commonjs_mismatch":
         return "package_module_type_commonjs_mismatch"
+    if diagnostic_kind == "html_module_script_typescript_source":
+        return "html_module_script_typescript_source"
     return ""
 
 
@@ -1874,6 +1876,7 @@ def _html_module_script_quality_issue(error: str, relative_path: str, *, src: st
             "raw": str(error or "").strip(),
             "html_path": relative_path,
             "script_src": src,
+            "diagnostic_kind": "html_module_script_typescript_source",
         },
     )
 

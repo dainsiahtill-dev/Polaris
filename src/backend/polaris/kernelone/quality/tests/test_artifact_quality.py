@@ -767,14 +767,41 @@ def test_artifact_quality_evidence_uses_direct_html_module_script_issue(tmp_path
         "'./src/main.ts' in index.html; static entrypoints must load JavaScript",
     )
     assert len(evidence.issues) == 1
-    assert evidence.issues[0].code == "html_module_script_typescript_source"
-    assert evidence.issues[0].source == "html_module_script_scanner"
-    assert evidence.issues[0].path == "index.html"
-    assert evidence.issues[0].metadata == {
-        "raw": evidence.errors[0],
-        "html_path": "index.html",
-        "script_src": "./src/main.ts",
-    }
+    issue = evidence.issues[0]
+    assert issue.code == "html_module_script_typescript_source"
+    assert issue.source == "html_module_script_scanner"
+    assert issue.path == "index.html"
+    # Assert metadata fields individually so each typed contract is documented in the test surface.
+    metadata = dict(issue.metadata)
+    assert metadata["raw"] == evidence.errors[0]
+    assert metadata["html_path"] == "index.html"
+    assert metadata["script_src"] == "./src/main.ts"
+    assert metadata["diagnostic_kind"] == "html_module_script_typescript_source"
+
+
+def test_artifact_quality_issue_code_from_typed_metadata_maps_html_module_script_diagnostic() -> None:
+    """Project the HTML module-script diagnostic_kind to its canonical issue code."""
+
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "message": "HTML module script references TypeScript source",
+                "path": "index.html",
+                "source": "html_module_script_scanner",
+                "metadata": {
+                    "diagnostic_kind": "html_module_script_typescript_source",
+                    "html_path": "index.html",
+                    "script_src": "./src/main.ts",
+                },
+            },
+        )
+    )
+
+    assert issues[0]["code"] == "html_module_script_typescript_source"
+    assert issues[0]["path"] == "index.html"
+    assert issues[0]["source"] == "html_module_script_scanner"
+    assert issues[0]["metadata"]["diagnostic_kind"] == "html_module_script_typescript_source"
+    assert issues[0]["metadata"]["script_src"] == "./src/main.ts"
 
 
 def test_artifact_quality_evidence_uses_direct_package_module_type_issue(tmp_path: Path) -> None:
