@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -517,6 +518,12 @@ def test_post_execution_repair_schedule_public_wrapper_uses_catalog_source_tool(
 def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    expected_quality_issues: tuple[dict[str, Any], ...] = (
+        {"code": "TS1005", "path": "src/app.ts", "severity": "error"},
+    )
+    expected_advisor_notes: tuple[Any, ...] = (
+        {"source": "agi", "kind": "advisory", "note": "consider stricter tsconfig"},
+    )
     observed_step_ids: list[str] = []
 
     def fake_materialization_repair_step(
@@ -526,6 +533,8 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         task: dict[str, Any],
         task_id: str,
         artifact_quality_errors: list[str],
+        artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
+        advisor_notes: tuple[Any, ...] = (),
         convergence_verifier: Any = None,
     ) -> list[dict[str, Any]]:
         observed_step_ids.append(step_id)
@@ -533,6 +542,8 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         assert task_id == "task-1"
         assert task == {"target_files": ["src/app.ts"]}
         assert artifact_quality_errors == ["error TS1005"]
+        assert tuple(dict(item) for item in artifact_quality_issues) == expected_quality_issues
+        assert tuple(advisor_notes or ()) == expected_advisor_notes
         assert convergence_verifier is None
         return []
 
@@ -547,6 +558,8 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         task={"target_files": ["src/app.ts"]},
         task_id="task-1",
         artifact_quality_errors=["error TS1005"],
+        artifact_quality_issues=expected_quality_issues,
+        advisor_notes=expected_advisor_notes,
     )
 
     assert results == []
@@ -568,8 +581,8 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
     assert summary["repair_kernel"]["stage"] == "materialization_quality_repairs"
     assert summary["repair_kernel"]["receipt_count"] == 0
     assert summary["repair_kernel"]["coverage_report"]["total_diagnostics"] == 1
-    assert summary["coverage_preaudit"]["total_diagnostics"] == 1
-    assert summary["coverage_preaudit"]["uncovered_diagnostic_count"] == 1
+    assert summary["coverage_preaudit"]["total_diagnostics"] == 2
+    assert summary["coverage_preaudit"]["uncovered_diagnostic_count"] == 2
     assert summary["coverage_preaudit"]["rule_discovery_required"] is True
     assert summary["dark_launch_comparison"]["comparison_mode"] == "receipt_projection_self_check"
     assert summary["dark_launch_comparison"]["cutover_ready"] is False
@@ -656,6 +669,13 @@ def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
     def sentinel_verifier(request: Any) -> Any:
         return request
 
+    expected_quality_issues: tuple[dict[str, Any], ...] = (
+        {"code": "NPM001", "path": "package.json", "severity": "error"},
+    )
+    expected_advisor_notes: tuple[Any, ...] = (
+        {"source": "agi", "kind": "advisory", "note": "consider adding test script"},
+    )
+
     def fake_materialization_repair_step(
         step_id: str,
         adapter: Any,
@@ -663,12 +683,16 @@ def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
         task: dict[str, Any],
         task_id: str,
         artifact_quality_errors: list[str],
+        artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
+        advisor_notes: tuple[Any, ...] = (),
         convergence_verifier: Any = None,
     ) -> list[dict[str, Any]]:
         assert adapter == {"workspace": "/tmp/demo"}
         assert task == {"target_files": ["package.json"]}
         assert task_id == "task-1"
         assert artifact_quality_errors == ["missing npm test script"]
+        assert tuple(dict(item) for item in artifact_quality_issues) == expected_quality_issues
+        assert tuple(advisor_notes or ()) == expected_advisor_notes
         assert convergence_verifier is sentinel_verifier
         if step_id != "materialization.node_manifest":
             return []
@@ -695,6 +719,8 @@ def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
         task={"target_files": ["package.json"]},
         task_id="task-1",
         artifact_quality_errors=["missing npm test script"],
+        artifact_quality_issues=expected_quality_issues,
+        advisor_notes=expected_advisor_notes,
         convergence_verifier=sentinel_verifier,
     )
 
