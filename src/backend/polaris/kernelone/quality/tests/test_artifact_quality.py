@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -121,8 +122,7 @@ def test_artifact_quality_evidence_uses_direct_file_marker_generic_payload_index
     tmp_path: Path,
 ) -> None:
     helpers = "\n".join(
-        f"export function storeHelper{index}(value: number): number {{ return value + {index}; }}"
-        for index in range(3)
+        f"export function storeHelper{index}(value: number): number {{ return value + {index}; }}" for index in range(3)
     )
     content = f"""
 export interface ItemRecord {{
@@ -343,7 +343,9 @@ def test_artifact_quality_issue_projection_preserves_typed_issue_payload() -> No
 
 
 def test_artifact_quality_issue_projection_extracts_python_command_npm_script_metadata() -> None:
-    error = "Artifact quality scan failed: npm package manifest contains Python command in script 'test:py' in package.json"
+    error = (
+        "Artifact quality scan failed: npm package manifest contains Python command in script 'test:py' in package.json"
+    )
 
     issues = artifact_quality_issues_from_errors((error,))
 
@@ -435,10 +437,7 @@ def test_artifact_quality_issue_projection_extracts_compiler_path() -> None:
 
 def test_artifact_quality_issue_projection_extracts_missing_compiled_entrypoint() -> None:
     issues = artifact_quality_issues_from_errors(
-        (
-            "npm run start failed: Error: Cannot find module "
-            "'/tmp/factory/project/dist/main.js'",
-        )
+        ("npm run start failed: Error: Cannot find module '/tmp/factory/project/dist/main.js'",)
     )
 
     assert issues[0]["code"] == "javascript_module_error"
@@ -486,12 +485,7 @@ def test_artifact_quality_issue_projection_extracts_colon_line_column() -> None:
 
 
 def test_artifact_quality_issue_projection_extracts_rust_compiler_code_and_location() -> None:
-    error = (
-        "error[E0583]: file not found for module `weather`\n"
-        "  --> src/main.rs:2:1\n"
-        "   |\n"
-        "2  | mod weather;\n"
-    )
+    error = "error[E0583]: file not found for module `weather`\n  --> src/main.rs:2:1\n   |\n2  | mod weather;\n"
 
     issues = artifact_quality_issues_from_errors((error,))
 
@@ -550,7 +544,7 @@ def test_artifact_quality_issue_projection_extracts_declared_target_metadata() -
 def test_artifact_quality_issue_projection_extracts_npm_script_metadata() -> None:
     error = (
         "Artifact quality scan failed: npm package manifest script 'test' "
-        "is a placeholder command: echo \"Error: no test specified\" && exit 1"
+        'is a placeholder command: echo "Error: no test specified" && exit 1'
     )
 
     issues = artifact_quality_issues_from_errors((error,))
@@ -797,9 +791,7 @@ def test_artifact_quality_evidence_uses_direct_typescript_project_typecheck_issu
         tsc.write_text("@echo off\necho src/index.ts(1,7): error TS2322: bad type\nexit /b 2\n", encoding="utf-8")
     else:
         tsc.write_text(
-            "#!/usr/bin/env sh\n"
-            "echo 'src/index.ts(1,7): error TS2322: bad type'\n"
-            "exit 2\n",
+            "#!/usr/bin/env sh\necho 'src/index.ts(1,7): error TS2322: bad type'\nexit 2\n",
             encoding="utf-8",
         )
         tsc.chmod(0o755)
@@ -807,8 +799,7 @@ def test_artifact_quality_evidence_uses_direct_typescript_project_typecheck_issu
     evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["src/index.ts"])
 
     assert evidence.errors == (
-        "Artifact quality scan failed: TypeScript project typecheck failed: "
-        "src/index.ts(1,7): error TS2322: bad type",
+        "Artifact quality scan failed: TypeScript project typecheck failed: src/index.ts(1,7): error TS2322: bad type",
     )
     assert len(evidence.issues) == 1
     assert evidence.issues[0].code == "typescript_project_typecheck_failed"
@@ -1012,6 +1003,40 @@ def test_artifact_quality_evidence_projects_per_script_issue_metadata_directly(t
     assert evidence.issues[0].metadata["script_name"] == "test"
     assert evidence.issues[0].metadata["script_issue"] == "shell_command_substitution"
     assert evidence.issues[0].metadata["script_issue_source"] == "package_manifest_scanner"
+
+
+def test_artifact_quality_evidence_projects_node_eval_syntax_per_script_issue_metadata(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "node-eval-syntax-project",
+                "version": "1.0.0",
+                "scripts": {
+                    "test": 'node -e "console.log(\'missing close quote)"',
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["package.json"])
+
+    assert len(evidence.errors) == 1
+    assert len(evidence.issues) == 1
+    issue = evidence.issues[0]
+    assert issue.code == "npm_manifest_invalid"
+    assert issue.path == "package.json"
+    assert issue.source == "package_manifest_scanner"
+    assert issue.metadata["script_name"] == "test"
+    assert issue.metadata["script_issue"] == "invalid_node_eval_syntax"
+    assert issue.metadata["script_issue_source"] == "package_manifest_scanner"
+    assert issue.metadata["diagnostic_detail"]
+    assert "SyntaxError" in issue.metadata["diagnostic_detail"]
+    assert issue.metadata["raw"] == evidence.errors[0]
 
 
 def test_artifact_quality_evidence_projects_typescript_dependency_metadata_directly(tmp_path: Path) -> None:

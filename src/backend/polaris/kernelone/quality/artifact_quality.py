@@ -2222,17 +2222,19 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
                     },
                 )
                 break
-            node_eval_error = _scan_npm_script_node_eval_syntax(tokens, str(script_name), relative_path)
-            if node_eval_error:
+            node_eval_issue = _scan_npm_script_node_eval_syntax(tokens, str(script_name), relative_path)
+            if node_eval_issue is not None:
                 _append_package_manifest_issue(
                     errors,
                     issues,
-                    node_eval_error,
+                    node_eval_issue.display_error,
                     relative_path,
                     {
-                        "script_name": str(script_name),
+                        "script_name": node_eval_issue.script_name,
                         "script_issue": "invalid_node_eval_syntax",
                         "script_issue_source": "package_manifest_scanner",
+                        "diagnostic_detail": node_eval_issue.diagnostic_detail,
+                        "diagnostic_kind": "node_eval_syntax",
                     },
                 )
                 continue
@@ -2316,15 +2318,35 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
     return _package_manifest_evidence_from_errors(errors, relative_path, issues)
 
 
-def _scan_npm_script_node_eval_syntax(tokens: list[str], script_name: str, relative_path: str) -> str:
+@dataclass(frozen=True, slots=True)
+class _NodeEvalSyntaxIssue:
+    """Structured npm script `node --eval` syntax finding."""
+
+    display_error: str
+    diagnostic_detail: str
+    script_name: str
+    relative_path: str
+
+
+def _scan_npm_script_node_eval_syntax(
+    tokens: list[str],
+    script_name: str,
+    relative_path: str,
+) -> _NodeEvalSyntaxIssue | None:
     for source in _iter_node_eval_sources(tokens):
         detail = _check_javascript_snippet_syntax(source)
         if detail:
-            return (
-                "Artifact quality scan failed: npm package manifest script "
-                f"{script_name!r} has invalid node eval syntax in {relative_path}: {detail[:200]}"
+            diagnostic_detail = detail[:200]
+            return _NodeEvalSyntaxIssue(
+                display_error=(
+                    "Artifact quality scan failed: npm package manifest script "
+                    f"{script_name!r} has invalid node eval syntax in {relative_path}: {diagnostic_detail}"
+                ),
+                diagnostic_detail=diagnostic_detail,
+                script_name=script_name,
+                relative_path=relative_path,
             )
-    return ""
+    return None
 
 
 def _iter_node_eval_sources(tokens: list[str]) -> Iterable[str]:
