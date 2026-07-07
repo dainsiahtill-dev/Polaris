@@ -292,6 +292,8 @@ async def v2_runtime_fact_stream_probe(
         "absolute_path": absolute_path,
         "artifact_exists": os.path.isfile(absolute_path),
         "appended_at": appended.appended_at,
+        "appended_seq": int(appended.appended_seq) if appended.appended_seq is not None else None,
+        "fact_event_seq": int(appended.appended_seq) if appended.appended_seq is not None else None,
         "queried_total": queried.total,
         "queried_events": list(queried.events),
         "next_offset": queried.next_offset,

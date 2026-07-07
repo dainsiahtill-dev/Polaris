@@ -79,6 +79,16 @@ async def test_fact_stream_probe_appends_and_queries_via_public_service(
     assert payload["queried_total"] >= 1
     assert payload["queried_events"][0]["payload"]["marker"] == "fact-stream-e2e"
 
+    # Append-only sequence projection: must be a positive int sourced from
+    # the public append_fact_event result, and must align with the queried
+    # event record so dev/acceptance chains can observe append ordering.
+    assert isinstance(payload["appended_seq"], int)
+    assert payload["appended_seq"] >= 1
+    assert isinstance(payload["fact_event_seq"], int)
+    assert payload["fact_event_seq"] >= 1
+    assert payload["appended_seq"] == payload["fact_event_seq"]
+    assert payload["appended_seq"] == int(payload["queried_events"][0]["seq"])
+
     event_path = Path(str(payload["absolute_path"]))
     assert event_path.is_file()
     assert event_path.name == "e2e.fact_stream_probe.jsonl"
