@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -99,7 +100,7 @@ def test_file_scanner_only_fallback_parses_residual_string_errors(
     parsed_string_errors: list[str] = []
     original = artifact_quality_module._artifact_quality_issues_from_errors
 
-    def _capture_string_fallback(values: object) -> Any:
+    def _capture_string_fallback(values: Iterable[Any] | str) -> Any:
         rows = tuple(values) if not isinstance(values, str) else (values,)
         parsed_string_errors.extend(str(item) for item in rows if isinstance(item, str) and item)
         return original(rows)
@@ -151,7 +152,7 @@ def test_tool_receipt_contamination_threads_direct_typed_issue_without_fallback(
     parsed_string_errors: list[str] = []
     original = artifact_quality_module._artifact_quality_issues_from_errors
 
-    def _capture_string_fallback(values: object) -> Any:
+    def _capture_string_fallback(values: Iterable[Any] | str) -> Any:
         rows = tuple(values) if not isinstance(values, str) else (values,)
         parsed_string_errors.extend(str(item) for item in rows if isinstance(item, str) and item)
         return original(rows)
@@ -203,7 +204,7 @@ def test_source_narration_contamination_threads_direct_typed_issue_without_fallb
     parsed_string_errors: list[str] = []
     original = artifact_quality_module._artifact_quality_issues_from_errors
 
-    def _capture_string_fallback(values: object) -> Any:
+    def _capture_string_fallback(values: Iterable[Any] | str) -> Any:
         rows = tuple(values) if not isinstance(values, str) else (values,)
         parsed_string_errors.extend(str(item) for item in rows if isinstance(item, str) and item)
         return original(rows)
@@ -443,8 +444,7 @@ def test_package_manifest_scanner_threads_direct_typed_issue_before_projection(
         direct_issues: list[artifact_quality_module.ArtifactQualityIssue] | None = None,
     ) -> Any:
         captured_issue_raws.extend(
-            str((issue.metadata or {}).get("raw") or issue.message).strip()
-            for issue in direct_issues or []
+            str((issue.metadata or {}).get("raw") or issue.message).strip() for issue in direct_issues or []
         )
         return original(errors, relative_path, direct_issues)
 
@@ -1418,6 +1418,92 @@ def test_scan_detects_repeated_numeric_helper_filler(tmp_path: Path) -> None:
     assert "numeric helper filler" in errors[0]
 
 
+def test_repeated_numeric_helper_filler_threads_direct_typed_issue(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "src" / "client" / "feature.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "\n".join(
+            f"export function featureHelper{index}(value: number): number {{ return value + {index}; }}"
+            for index in range(6)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(
+        str(tmp_path),
+        relative_paths=["src/client/feature.ts"],
+    )
+
+    assert evidence.errors
+    helper_issues = [issue for issue in evidence.issues if issue.code == "repeated_numeric_helper_filler"]
+    assert helper_issues, "file-level scanner must emit typed repeated_numeric_helper_filler issue"
+    helper_issue = helper_issues[0]
+    assert helper_issue.source == "file_artifact_scanner"
+    assert helper_issue.path == "src/client/feature.ts"
+    assert helper_issue.metadata["helper_count"] == 6
+    raw = str(helper_issue.metadata.get("raw") or "")
+    assert "numeric helper filler" in raw, "metadata.raw must include legacy error string"
+
+
+def test_patch_residue_marker_threads_direct_typed_issue(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "src" / "assets" / "card-assets.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "export const assetReady = true;\n>>>> REPLACE src/assets/card-assets.ts\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(
+        str(tmp_path),
+        relative_paths=["src/assets/card-assets.ts"],
+    )
+
+    assert evidence.errors
+    patch_issues = [issue for issue in evidence.issues if issue.code == "patch_residue_marker"]
+    assert patch_issues, "file-level scanner must emit typed patch_residue_marker issue"
+    patch_issue = patch_issues[0]
+    assert patch_issue.source == "file_artifact_scanner"
+    assert patch_issue.path == "src/assets/card-assets.ts"
+    metadata = dict(patch_issue.metadata or {})
+    assert metadata["marker_kind"] == "patch_residue"
+    assert metadata["marker_value"] == ">>>> REPLACE"
+    raw = str(metadata.get("raw") or "")
+    assert "patch residue marker" in raw, "metadata.raw must include legacy error string"
+
+
+def test_deterministic_scaffold_marker_threads_direct_typed_issue(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "src" / "client" / "scaffold.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "export const note = 'structural build passed';\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(
+        str(tmp_path),
+        relative_paths=["src/client/scaffold.ts"],
+    )
+
+    assert evidence.errors
+    scaffold_issues = [issue for issue in evidence.issues if issue.code == "deterministic_scaffold_marker"]
+    assert scaffold_issues, "file-level scanner must emit typed deterministic_scaffold_marker issue"
+    scaffold_issue = scaffold_issues[0]
+    assert scaffold_issue.source == "file_artifact_scanner"
+    assert scaffold_issue.path == "src/client/scaffold.ts"
+    metadata = dict(scaffold_issue.metadata or {})
+    assert metadata["marker_kind"] == "deterministic_scaffold"
+    assert metadata["marker_value"] == "structural build passed"
+    raw = str((scaffold_issue.metadata or {}).get("raw") or "")
+    assert "deterministic scaffold marker" in raw, "metadata.raw must include legacy error string"
+
+
 def test_scan_detects_generic_payload_store_scaffold(tmp_path: Path) -> None:
     target = tmp_path / "src" / "state" / "store.ts"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -1444,6 +1530,62 @@ export function cardHelper3(value: number): number { return value + 3; }
 
     assert errors
     assert any("generic payload/index store scaffold" in error for error in errors)
+
+
+def test_generic_payload_store_scaffold_threads_direct_typed_issue(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "state" / "store.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        """
+export interface CardRecord {
+  payload: string;
+  index: number;
+}
+
+export class CardStore {
+  private readonly items = new Map<string, CardRecord>();
+}
+
+export function cardHelper1(value: number): number { return value + 1; }
+export function cardHelper2(value: number): number { return value + 2; }
+export function cardHelper3(value: number): number { return value + 3; }
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(
+        str(tmp_path),
+        relative_paths=["src/state/store.ts"],
+    )
+
+    scaffold_issues = [issue for issue in evidence.issues if issue.code == "generic_payload_index_store_scaffold"]
+    assert scaffold_issues, "file-level scanner must emit typed generic payload store issue"
+    scaffold_issue = scaffold_issues[0]
+    assert scaffold_issue.source == "file_artifact_scanner"
+    assert scaffold_issue.path == "src/state/store.ts"
+    assert scaffold_issue.metadata["helper_count"] == 3
+    assert scaffold_issue.metadata["scaffold_kind"] == "generic_payload_index_store"
+    raw = str(scaffold_issue.metadata.get("raw") or "")
+    assert "generic payload/index store scaffold" in raw
+
+
+def test_repeated_trivial_arithmetic_tests_thread_direct_typed_issue(tmp_path: Path) -> None:
+    _write_trivial_test(tmp_path / "tests" / "unit" / "card-rules.test.ts", count=4)
+
+    evidence = scan_workspace_artifact_quality_evidence(
+        str(tmp_path),
+        relative_paths=["tests/unit/card-rules.test.ts"],
+    )
+
+    trivial_issues = [issue for issue in evidence.issues if issue.code == "repeated_trivial_arithmetic_tests"]
+    assert trivial_issues, "file-level scanner must emit typed trivial arithmetic issue"
+    trivial_issue = trivial_issues[0]
+    assert trivial_issue.source == "file_artifact_scanner"
+    assert trivial_issue.path == "tests/unit/card-rules.test.ts"
+    assert trivial_issue.metadata["assertion_count"] == 4
+    raw = str(trivial_issue.metadata.get("raw") or "")
+    assert "repeated trivial arithmetic placeholder tests" in raw
 
 
 class TestSourceSyntaxInQualityScan:

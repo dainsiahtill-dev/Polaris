@@ -491,9 +491,7 @@ _ARTIFACT_QUALITY_COMPILER_PATH_RE = re.compile(
 )
 _ARTIFACT_QUALITY_TYPESCRIPT_ERROR_RE = re.compile(r"\berror\s+(?P<code>TS\d+):", re.IGNORECASE)
 _ARTIFACT_QUALITY_RUST_ERROR_RE = re.compile(r"\berror\[(?P<code>E\d+)\]:", re.IGNORECASE)
-_ARTIFACT_QUALITY_RUST_LOCATION_RE = re.compile(
-    r"(?m)^\s*-->\s*(?P<path>[^:\n]+\.rs):(?P<line>\d+):(?P<column>\d+)"
-)
+_ARTIFACT_QUALITY_RUST_LOCATION_RE = re.compile(r"(?m)^\s*-->\s*(?P<path>[^:\n]+\.rs):(?P<line>\d+):(?P<column>\d+)")
 _ARTIFACT_QUALITY_JAVASCRIPT_MODULE_ERROR_RE = re.compile(
     r"(?P<message>The requested module\s+['\"]?[^'\"\s]+['\"]?\s+"
     r"does not provide an export named\s+(?:['\"][^'\"]+['\"]|[A-Za-z_$][\w$]*)|"
@@ -1119,11 +1117,7 @@ def artifact_quality_issues_for_errors(
 
     error_rows = [str(error or "").strip() for error in errors if str(error or "").strip()]
     allowed_raw = set(error_rows)
-    allowed_structural_keys = {
-        key
-        for error in error_rows
-        if (key := artifact_quality_issue_structural_key(error))
-    }
+    allowed_structural_keys = {key for error in error_rows if (key := artifact_quality_issue_structural_key(error))}
     merged: list[dict[str, Any]] = []
     seen_keys: set[tuple[str, ...]] = set()
     seen_raw: set[str] = set()
@@ -1235,19 +1229,13 @@ def _artifact_quality_evidence(
     direct_issues = _artifact_quality_issues_from_errors(issues)
     deduped_cross_artifact_issues = tuple(cross_artifact_issues)
     cross_artifact_error_messages = {
-        issue.to_error_message()
-        for issue in deduped_cross_artifact_issues
-        if not issue.code.startswith("contract_")
+        issue.to_error_message() for issue in deduped_cross_artifact_issues if not issue.code.startswith("contract_")
     }
-    direct_issue_messages = {
-        str((issue.metadata or {}).get("raw") or issue.message).strip()
-        for issue in direct_issues
-    }
+    direct_issue_messages = {str((issue.metadata or {}).get("raw") or issue.message).strip() for issue in direct_issues}
     residual_errors = tuple(
         error
         for error in deduped_errors
-        if str(error or "").strip()
-        not in (*cross_artifact_error_messages, *direct_issue_messages)
+        if str(error or "").strip() not in (*cross_artifact_error_messages, *direct_issue_messages)
     )
     string_projected_issues = _artifact_quality_issues_from_errors(residual_errors)
     projected_cross_artifact_issues = tuple(
@@ -1368,8 +1356,7 @@ def scan_workspace_artifact_quality_evidence(
             errors.extend(
                 issue["metadata"]["raw"]
                 for issue in declared_interface_issues
-                if isinstance(issue.get("metadata"), Mapping)
-                and str(issue["metadata"].get("raw") or "").strip()
+                if isinstance(issue.get("metadata"), Mapping) and str(issue["metadata"].get("raw") or "").strip()
             )
     except (OSError, RuntimeError, ValueError) as exc:
         message = f"Artifact quality scan failed: {exc}"
@@ -1570,20 +1557,27 @@ def _file_artifact_quality_issue(
     *,
     code: str,
     source: str = "file_artifact_scanner",
+    metadata: Mapping[str, Any] | None = None,
 ) -> ArtifactQualityIssue:
     normalized_error = str(error or "").strip()
     message = normalized_error
     if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
         message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    issue_metadata: dict[str, Any] = {
+        "raw": normalized_error,
+        "artifact_path": relative_path,
+    }
+    if isinstance(metadata, Mapping):
+        for key, value in metadata.items():
+            if value is None:
+                continue
+            issue_metadata[str(key)] = value
     return ArtifactQualityIssue(
         code=code,
         message=message,
         path=relative_path,
         source=source,
-        metadata={
-            "raw": normalized_error,
-            "artifact_path": relative_path,
-        },
+        metadata=issue_metadata,
     )
 
 
@@ -1643,12 +1637,26 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
     errors: list[str] = []
     issues: list[ArtifactQualityIssue] = []
 
-    def append_file_issue(error: str, *, code: str, source: str = "file_artifact_scanner") -> None:
+    def append_file_issue(
+        error: str,
+        *,
+        code: str,
+        source: str = "file_artifact_scanner",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
         normalized_error = str(error or "").strip()
         if not normalized_error:
             return
         errors.append(normalized_error)
-        issues.append(_file_artifact_quality_issue(normalized_error, relative_path, code=code, source=source))
+        issues.append(
+            _file_artifact_quality_issue(
+                normalized_error,
+                relative_path,
+                code=code,
+                source=source,
+                metadata=metadata,
+            )
+        )
 
     syntax = check_source_file_syntax(str(full_path))
     if syntax is not None and syntax.get("ok") is False:
@@ -1685,6 +1693,10 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
             append_file_issue(
                 f"Artifact quality scan failed: deterministic scaffold marker {marker!r} in {relative_path}",
                 code="deterministic_scaffold_marker",
+                metadata={
+                    "marker_kind": "deterministic_scaffold",
+                    "marker_value": marker,
+                },
             )
             break
     helper_count = len(_NUMERIC_HELPER_FILLER_RE.findall(text))
@@ -1692,16 +1704,26 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
         append_file_issue(
             f"Artifact quality scan failed: repeated numeric helper filler in {relative_path} (count={helper_count})",
             code="repeated_numeric_helper_filler",
+            metadata={"helper_count": helper_count},
         )
     if helper_count >= 3 and _GENERIC_STORE_RECORD_RE.search(text) and _GENERIC_STORE_MAP_RE.search(text):
         append_file_issue(
             f"Artifact quality scan failed: generic payload/index store scaffold in {relative_path}",
             code="generic_payload_index_store_scaffold",
+            metadata={
+                "helper_count": helper_count,
+                "scaffold_kind": "generic_payload_index_store",
+            },
         )
-    if _PATCH_RESIDUE_RE.search(text):
+    patch_residue_match = _PATCH_RESIDUE_RE.search(text)
+    if patch_residue_match:
         append_file_issue(
             f"Artifact quality scan failed: patch residue marker in {relative_path}",
             code="patch_residue_marker",
+            metadata={
+                "marker_kind": "patch_residue",
+                "marker_value": patch_residue_match.group(0).strip(),
+            },
         )
     if _is_test_like_artifact_path(relative_path):
         trivial_count = len(_TRIVIAL_ARITHMETIC_EXPECT_RE.findall(text))
@@ -1710,16 +1732,12 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
                 "Artifact quality scan failed: repeated trivial arithmetic placeholder "
                 f"tests in {relative_path} (count={trivial_count})",
                 code="repeated_trivial_arithmetic_tests",
+                metadata={
+                    "assertion_count": trivial_count,
+                },
             )
-    direct_issue_messages = {
-        str((issue.metadata or {}).get("raw") or issue.message).strip()
-        for issue in issues
-    }
-    residual_errors = tuple(
-        error
-        for error in errors
-        if str(error or "").strip() not in direct_issue_messages
-    )
+    direct_issue_messages = {str((issue.metadata or {}).get("raw") or issue.message).strip() for issue in issues}
+    residual_errors = tuple(error for error in errors if str(error or "").strip() not in direct_issue_messages)
     string_projected_issues = _artifact_quality_issues_from_errors(residual_errors)
     return _FileArtifactQualityEvidence(
         errors=tuple(errors),
@@ -1762,7 +1780,9 @@ def _scan_typescript_syntax_red_flag_evidence(
     if suffix not in _TS_JS_SOURCE_EXTS:
         return _FileArtifactQualityEvidence()
     if _typescript_line_comment_contains_escaped_newline_code(text):
-        error = f"Artifact quality scan failed: TypeScript escaped newline in line comment before code in {relative_path}"
+        error = (
+            f"Artifact quality scan failed: TypeScript escaped newline in line comment before code in {relative_path}"
+        )
         return _FileArtifactQualityEvidence(
             errors=(error,),
             issues=(
@@ -2037,10 +2057,7 @@ def _package_manifest_evidence_from_errors(
     direct_issues: list[ArtifactQualityIssue] | None = None,
 ) -> _FileArtifactQualityEvidence:
     issues = list(direct_issues or [])
-    direct_issue_messages = {
-        str((issue.metadata or {}).get("raw") or issue.message).strip()
-        for issue in issues
-    }
+    direct_issue_messages = {str((issue.metadata or {}).get("raw") or issue.message).strip() for issue in issues}
     issues.extend(
         _package_manifest_quality_issue(error, relative_path)
         for error in errors
@@ -2719,7 +2736,9 @@ def _typescript_project_typecheck_issue(
     )
 
 
-def _scan_typescript_project_typecheck_evidence(root_full: Path, relative_paths: list[str]) -> _FileArtifactQualityEvidence:
+def _scan_typescript_project_typecheck_evidence(
+    root_full: Path, relative_paths: list[str]
+) -> _FileArtifactQualityEvidence:
     """Return TypeScript project typecheck findings as strings and typed issues."""
 
     if os.environ.get(_TSC_PROJECT_CHECK_FLAG, "1").strip().lower() in {"0", "false", "no", "off"}:
