@@ -1158,15 +1158,20 @@ def test_artifact_quality_evidence_uses_direct_npm_script_test_directory_issue(t
         "'test' references test directory 'tests' instead of concrete test files in package.json",
     )
     assert len(evidence.issues) == 1
-    assert evidence.issues[0].code == "npm_script_node_test_directory_target"
-    assert evidence.issues[0].source == "npm_script_test_target_scanner"
-    assert evidence.issues[0].path == "package.json"
-    assert evidence.issues[0].metadata == {
-        "raw": evidence.errors[0],
-        "manifest_path": "package.json",
-        "script_name": "test",
-        "target_directory": "tests",
-    }
+    issue = evidence.issues[0]
+    metadata = dict(issue.metadata)
+    assert issue.code == "npm_script_node_test_directory_target"
+    assert issue.source == "npm_script_test_target_scanner"
+    assert issue.path == "package.json"
+    # Typed metadata captures the failing script, the directory it targeted,
+    # and the typed classification that downstream gates consume.
+    assert metadata["script_name"] == "test"
+    assert metadata["target_directory"] == "tests"
+    assert metadata["script_issue"] == "node_test_directory_target"
+    assert metadata["script_issue_source"] == "npm_script_test_target_scanner"
+    # Preserve the legacy context fields required by callers that key on them.
+    assert metadata["manifest_path"] == "package.json"
+    assert metadata["raw"] == evidence.errors[0]
 
 
 def test_typescript_import_scanner_ignores_fixture_string_imports(tmp_path: Path) -> None:

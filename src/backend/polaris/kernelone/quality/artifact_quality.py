@@ -2569,6 +2569,8 @@ def _npm_script_node_test_directory_target_issue(
             "manifest_path": relative_path,
             "script_name": script_name,
             "target_directory": target_directory,
+            "script_issue": "node_test_directory_target",
+            "script_issue_source": "npm_script_test_target_scanner",
         },
     )
 
