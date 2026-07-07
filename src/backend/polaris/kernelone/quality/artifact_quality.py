@@ -609,6 +609,8 @@ def _artifact_quality_issue_code_from_typed_metadata(
         return "package_module_type_commonjs_mismatch"
     if diagnostic_kind == "html_module_script_typescript_source":
         return "html_module_script_typescript_source"
+    if diagnostic_kind == "unresolved_relative_import" and source_token == "typescript_import_scanner":
+        return "unresolved_relative_import"
     return ""
 
 
@@ -2966,7 +2968,10 @@ def _scan_typescript_import_evidence(
                         error=error,
                         code="unresolved_relative_import",
                         relative_path=relative_path,
-                        metadata={"specifier": specifier},
+                        metadata={
+                            "specifier": specifier,
+                            "diagnostic_kind": "unresolved_relative_import",
+                        },
                     )
                 )
             continue

@@ -703,6 +703,42 @@ def test_artifact_quality_issue_projection_extracts_unresolved_relative_import_m
     }
 
 
+def test_artifact_quality_issue_projection_maps_unresolved_relative_import_diagnostic_kind() -> None:
+    """Stable scanner metadata must classify without depending on message text.
+
+    The scanner now emits ``diagnostic_kind="unresolved_relative_import"`` plus
+    ``source="typescript_import_scanner"``. The projection layer must map that
+    contract directly to the canonical issue code, regardless of what the
+    ``message`` field carries. Callers should not have to repackage scanner
+    output into legacy strings to recover the typed code.
+    """
+
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "path": "src/index.ts",
+                "source": "typescript_import_scanner",
+                # Message intentionally omits the legacy hint phrase so the
+                # classifier cannot fall back to message-text matching.
+                "message": "scanner reported a relative import that did not resolve",
+                "metadata": {
+                    "diagnostic_kind": "unresolved_relative_import",
+                    "specifier": "./engine/runner",
+                    "importer_path": "src/index.ts",
+                },
+            },
+        )
+    )
+
+    assert len(issues) == 1
+    assert issues[0]["code"] == "unresolved_relative_import"
+    assert issues[0]["path"] == "src/index.ts"
+    assert issues[0]["source"] == "typescript_import_scanner"
+    assert issues[0]["metadata"]["diagnostic_kind"] == "unresolved_relative_import"
+    assert issues[0]["metadata"]["specifier"] == "./engine/runner"
+    assert issues[0]["metadata"]["importer_path"] == "src/index.ts"
+
+
 def test_artifact_quality_evidence_uses_direct_typescript_import_issue(tmp_path: Path) -> None:
     src_dir = tmp_path / "src"
     src_dir.mkdir()
@@ -714,14 +750,18 @@ def test_artifact_quality_evidence_uses_direct_typescript_import_issue(tmp_path:
         "Artifact quality scan failed: unresolved relative import './engine/runner' in src/index.ts",
     )
     assert len(evidence.issues) == 1
-    assert evidence.issues[0].code == "unresolved_relative_import"
-    assert evidence.issues[0].source == "typescript_import_scanner"
-    assert evidence.issues[0].path == "src/index.ts"
-    assert evidence.issues[0].metadata == {
-        "raw": evidence.errors[0],
-        "importer_path": "src/index.ts",
-        "specifier": "./engine/runner",
-    }
+    issue = evidence.issues[0]
+    assert issue.code == "unresolved_relative_import"
+    assert issue.source == "typescript_import_scanner"
+    assert issue.path == "src/index.ts"
+    # Assert metadata fields individually so each typed contract is documented in the test surface.
+    metadata = dict(issue.metadata)
+    assert metadata["raw"] == evidence.errors[0]
+    assert metadata["importer_path"] == "src/index.ts"
+    assert metadata["specifier"] == "./engine/runner"
+    # The scanner-emitted diagnostic_kind must match the issue code so downstream
+    # gates can key off the typed metadata contract rather than reparsing message prose.
+    assert metadata["diagnostic_kind"] == "unresolved_relative_import"
 
 
 def test_artifact_quality_evidence_uses_direct_typescript_red_flag_issue(tmp_path: Path) -> None:
@@ -919,6 +959,8 @@ def test_artifact_quality_evidence_uses_direct_npm_script_missing_config_issue(t
     assert evidence.issues[0].metadata == {
         "raw": evidence.errors[0],
         "manifest_path": "package.json",
+        "script_issue": "missing_local_config",
+        "script_issue_source": "npm_script_config_scanner",
         "script_name": "test",
         "config_path": "jest.config.js",
     }
@@ -952,6 +994,8 @@ def test_artifact_quality_evidence_uses_direct_npm_script_missing_entrypoint_iss
     assert evidence.issues[0].metadata == {
         "raw": evidence.errors[0],
         "manifest_path": "package.json",
+        "script_issue": "missing_local_entrypoint",
+        "script_issue_source": "npm_script_entrypoint_scanner",
         "script_name": "start",
         "entrypoint": "src/index.js",
     }
