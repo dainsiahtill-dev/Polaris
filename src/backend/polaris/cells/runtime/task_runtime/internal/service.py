@@ -2300,16 +2300,69 @@ class TaskRuntimeService:
         return normalize_positive_int(metadata.get("claim_attempt"), default=1)
 
     def _task_has_unresolved_dependencies(self, task: Task) -> bool:
-        for dependency_id in list(task.blocked_by or []):
+        """Return whether ``task`` still has a dependency that is not completed.
+
+        Boundary:
+            Read-only.  This helper exists so the claim path can reuse the
+            same fact-overlaid dependency status projection that
+            :meth:`refresh_dependency_unblocks` already trusts
+            (:meth:`_fact_overlaid_dependency_status_rows`).  Without it,
+            ``claim_execution`` would still consult the raw ``TaskBoard``
+            status for each blocker, leaving a row-only dependency decision
+            seam in the claim path that can disagree with the refresh step.
+
+        Fail-closed semantics (any of the following => unresolved / blocked):
+
+        * ``task.blocked_by`` is missing or empty, which means there is no
+          unresolved dependency for this row;
+        * a dependency id cannot be coerced to a positive int (the caller
+          supplied a token the runtime cannot resolve);
+        * a dependency id is not present in the fact-overlaid status map
+          (the row is missing or unreadable);
+        * the overlaid status is anything other than ``TaskStatus.COMPLETED``
+          (including non-terminal, terminal-failed, terminal-cancelled,
+          and unknown tokens).
+
+        The overlay map itself falls back to the file-backed status when no
+        authoritative ``task_runtime.execution`` fact exists for a row. This
+        helper intentionally does not perform its own raw ``TaskBoard`` walk:
+        a missing dependency in the overlay is treated as unresolved, keeping
+        the fact-overlaid projection as the single dependency status source.
+
+        Complexity:
+            O(d + r + f) time and memory where ``d`` is the number of
+            blockers for ``task``, ``r`` is the number of file-backed rows,
+            and ``f`` is the number of latest fact rows; bounded by the
+            ``_fact_overlaid_dependency_status_rows`` walk and so amortised
+            once per call.
+        """
+
+        blocked_by = task.blocked_by if task.blocked_by is not None else []
+        if not blocked_by:
+            return False
+        try:
+            status_by_id = self._fact_overlaid_dependency_status_rows()
+        except (RuntimeError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Failing closed on unresolved dependency check for task_id=%s: overlay unavailable: %s",
+                getattr(task, "id", None),
+                exc,
+            )
+            return True
+
+        for dependency_id in list(blocked_by):
             try:
                 dep_id_int = int(dependency_id)
-            except ValueError:
+            except (TypeError, ValueError):
                 logger.warning("Skipping non-integer dependency_id: %r", dependency_id)
                 return True
-            dependency = self._board.get(dep_id_int)
-            if dependency is None:
+            if dep_id_int <= 0:
+                logger.warning("Skipping non-positive dependency_id: %r", dependency_id)
                 return True
-            if dependency.status != TaskStatus.COMPLETED:
+            dependency_status = status_by_id.get(dep_id_int)
+            if dependency_status is None:
+                return True
+            if dependency_status != TaskStatus.COMPLETED:
                 return True
         return False
 

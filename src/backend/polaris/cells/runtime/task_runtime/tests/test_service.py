@@ -3323,3 +3323,228 @@ def test_task_exists_returns_false_for_unknown_task_id_when_facts_present(tmp_pa
         "does not surface; a fact-only presence must not make the probe "
         "report unrelated ids as existing"
     )
+
+
+# ---------------------------------------------------------------------------
+# _task_has_unresolved_dependencies observable fact-overlay regression
+# ---------------------------------------------------------------------------
+#
+# ``TaskRuntimeService._task_has_unresolved_dependencies`` is the per-task
+# blocker probe consulted by the claim path (``claim_execution`` ->
+# ``task_blocked`` rejection). It MUST consult the same fact-overlay-aware
+# status projection that ``refresh_dependency_unblocks`` /
+# ``_fact_overlaid_dependency_status_rows`` expose, instead of reading the raw
+# ``self._board.get(dep_id).status`` alone. Without the overlay, a child
+# blocked against a parent whose authoritative completion lives only in the
+# ``task_runtime.execution`` fact stream stays ``task_blocked`` even after
+# ``refresh_dependency_unblocks`` has unblocked the file row, defeating the
+# read-model convergence the rest of the selection/claim paths now rely on.
+
+
+def test_task_has_unresolved_dependencies_uses_fact_overlay_for_completed_parent(
+    tmp_path: Path,
+) -> None:
+    """``_task_has_unresolved_dependencies`` must treat a parent dependency as
+    resolved when the latest ``task_runtime.execution`` fact overlays it as
+    ``completed``, even when the raw file-backed parent row stays pending.
+
+    Test setup:
+      * Parent file row stays ``status=pending`` (no claim / no completion via
+        the service APIs).
+      * Child file row stays ``status=blocked`` with ``blocked_by=[parent_id]``
+        (no ``refresh_dependency_unblocks`` is called — we want the helper to
+        see the stale file row alone).
+      * A newer ``task_runtime.execution`` ``completed`` fact is appended for
+        the parent, so the overlay projects the parent as ``completed``.
+    Expected:
+      * ``_task_has_unresolved_dependencies(child_task)`` returns ``False``
+        because the overlay is authoritative; the raw ``self._board.get``
+        path would still see the stale pending parent and incorrectly return
+        ``True``.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    parent = service.create_task_row(subject="fact-overlay completed parent")
+    parent_id = int(parent["id"])
+    child = service.create_task_row(
+        subject="child blocked on fact-completed parent",
+        blocked_by=[parent["id"]],
+    )
+    child_id = int(child["id"])
+
+    # Sanity: raw file rows are pending/blocked and no terminal fact exists
+    # yet. The board cache must still report the raw (pre-refresh) state.
+    raw_parent = json.loads(_task_file_path(workspace, parent_id).read_text(encoding="utf-8"))
+    raw_child = json.loads(_task_file_path(workspace, child_id).read_text(encoding="utf-8"))
+    assert raw_parent["status"] == "pending"
+    assert raw_child["status"] == "blocked"
+    assert raw_child["blocked_by"] == [parent_id]
+
+    cached_child = service._board.get(child_id)
+    assert cached_child is not None
+    assert list(cached_child.blocked_by) == [parent_id]
+    cached_parent_before = service._board.get(parent_id)
+    assert cached_parent_before is not None
+    assert cached_parent_before.status.value == "pending", (
+        "test invariant: parent cache must still be pending before the fact is appended"
+    )
+
+    # Pre-overlay: helper must keep returning True because the raw dependency
+    # row is still pending. This pins the baseline the regression is measured
+    # against.
+    assert service._task_has_unresolved_dependencies(cached_child) is True, (
+        "with no execution fact overlay the helper must still see the raw pending parent as an unresolved blocker"
+    )
+
+    # Append a terminal execution fact for the parent WITHOUT going through
+    # the service APIs. The file row stays stale/pending on disk and the
+    # in-memory board cache is also untouched.
+    _append_terminal_fact_event(
+        workspace,
+        task_id=str(parent_id),
+        event_type="completed",
+        status="completed",
+        run_id="run-fact-completed-dep-helper",
+    )
+
+    # File row on disk is still pending; observable model is completed.
+    on_disk_parent = json.loads(_task_file_path(workspace, parent_id).read_text(encoding="utf-8"))
+    assert on_disk_parent["status"] == "pending"
+    observable_parent = service._fact_overlaid_dependency_status_rows()
+    assert observable_parent[parent_id].value == "completed", (
+        f"fact-overlay projection must report parent as completed; got {observable_parent[parent_id]!r}"
+    )
+
+    # The board cache of the parent is still pending — the helper must NOT
+    # consult ``self._board.get(parent).status`` alone, or it would still
+    # return True here.
+    cached_parent_after = service._board.get(parent_id)
+    assert cached_parent_after is not None
+    assert cached_parent_after.status.value == "pending", (
+        "test invariant: parent board cache must remain pending; the helper must "
+        "rely on the fact-overlay projection, not on raw board state"
+    )
+
+    # The same cached child instance must now resolve to False because the
+    # overlay projects the parent as completed.
+    resolved_child = service._board.get(child_id)
+    assert resolved_child is not None
+    has_unresolved = service._task_has_unresolved_dependencies(resolved_child)
+    assert has_unresolved is False, (
+        "_task_has_unresolved_dependencies must consult the fact-overlay "
+        "projection so a fact-only-completed parent unblocks the child even "
+        "when the raw TaskBoard cache still reports the parent as pending"
+    )
+
+
+def test_task_has_unresolved_dependencies_returns_true_when_dependency_missing(
+    tmp_path: Path,
+) -> None:
+    """``_task_has_unresolved_dependencies`` must return ``True`` when a child
+    lists a dependency that the fact-overlay projection never surfaces — i.e.
+    the dependency is missing from the read model.
+
+    This pins the negative side of the contract: the helper must NOT silently
+    treat a missing overlay entry as resolved; it must keep flagging the
+    blocker so the claim path continues to reject the row.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    missing_parent_id = 7777
+    created = service.create_task_row(
+        subject="child blocked against missing parent",
+        blocked_by=[missing_parent_id],
+    )
+    child_id = int(created["id"])
+
+    cached_child = service._board.get(child_id)
+    assert cached_child is not None
+    assert list(cached_child.blocked_by) == [missing_parent_id]
+
+    # Sanity: the fact-overlay projection never surfaces the missing parent.
+    overlay = service._fact_overlaid_dependency_status_rows()
+    assert missing_parent_id not in overlay, (
+        "test invariant: a missing-parent dependency must not appear in the overlay projection"
+    )
+
+    # The helper MUST still report the dependency as unresolved.
+    assert service._task_has_unresolved_dependencies(cached_child) is True, (
+        "_task_has_unresolved_dependencies must keep returning True when the "
+        "dependency is absent from the overlay projection; a missing entry "
+        "must not be silently treated as resolved"
+    )
+
+
+def test_task_has_unresolved_dependencies_returns_true_when_overlay_status_not_completed(
+    tmp_path: Path,
+) -> None:
+    """``_task_has_unresolved_dependencies`` must return ``True`` when the
+    fact-overlay projection shows a non-``completed`` status for the parent
+    (e.g. ``in_progress`` or another intermediate state) — only the
+    ``completed`` verdict should clear the blocker.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    parent = service.create_task_row(subject="non-completed overlay parent")
+    parent_id = int(parent["id"])
+    child = service.create_task_row(
+        subject="child blocked on in_progress parent",
+        blocked_by=[parent["id"]],
+    )
+    child_id = int(child["id"])
+
+    # Append an intermediate (non-terminal, non-completed) execution fact for
+    # the parent. The overlay must project the parent as ``in_progress``,
+    # not ``completed``, so the dependency must remain unresolved.
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="claimed",
+            source="runtime.task_runtime",
+            task_id=str(parent_id),
+            run_id="run-fact-in-progress-dep-helper",
+            payload={
+                "task_id": str(parent_id),
+                "run_id": "run-fact-in-progress-dep-helper",
+                "event_type": "claimed",
+                "status": "in_progress",
+                "execution_state": "in_progress",
+                "session_id": "session-fact-in-progress-dep-helper",
+                "task_row_snapshot": {
+                    "id": parent_id,
+                    "task_id": str(parent_id),
+                    "subject": parent["subject"],
+                    "description": parent.get("description", ""),
+                    "priority": "HIGH",
+                    "metadata": {"source": "task_runtime.row_snapshot"},
+                },
+            },
+        )
+    )
+
+    # Sanity: the overlay projects the parent as in_progress (not completed).
+    overlay = service._fact_overlaid_dependency_status_rows()
+    assert overlay[parent_id].value == "in_progress", (
+        f"overlay must project in_progress for a non-terminal fact; got {overlay[parent_id]!r}"
+    )
+
+    cached_child = service._board.get(child_id)
+    assert cached_child is not None
+
+    # The helper must still report the dependency as unresolved because the
+    # overlay status is not ``completed``.
+    assert service._task_has_unresolved_dependencies(cached_child) is True, (
+        "_task_has_unresolved_dependencies must keep returning True when the "
+        "fact-overlay status for the parent is anything other than 'completed'; "
+        "only a completed overlay status clears the blocker"
+    )

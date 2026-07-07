@@ -170,7 +170,6 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
     ("_find_terminal_session_snapshot", "get"): 1,
     ("_get_task_by_external_task_id", "list_all"): 1,
     ("_list_file_task_rows", "list_all"): 1,
-    ("_task_has_unresolved_dependencies", "get"): 1,
     ("cancel_task_row_for_deduplication", "get"): 1,
     ("claim_execution", "get"): 1,
     ("complete_execution", "get"): 1,
@@ -3849,5 +3848,67 @@ def test_task_exists_does_not_regress_to_raw_row_only_reads() -> None:
         "row-only reads. The public existence check must route through "
         "self.list_observable_task_rows() so the task_runtime.execution "
         "Fact Stream overlay stays part of the read-model SSoT. "
+        "Offenders:\n" + "\n".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# WS2 _task_has_unresolved_dependencies() — fact-aware dependency decision
+# ---------------------------------------------------------------------------
+
+DEPENDENCY_HELPER_REQUIRED_STATUS_CALL = "self._fact_overlaid_dependency_status_rows"
+DEPENDENCY_HELPER_FORBIDDEN_RAW_READ_CALLS: frozenset[str] = frozenset(
+    {
+        "self._board.get",
+        "self._board.list_all",
+        "self.list_task_rows",
+        "self.list_observable_task_rows",
+        "self._get_task_by_external_task_id",
+    }
+)
+
+
+def _task_has_unresolved_dependencies_function_def() -> ast.FunctionDef:
+    return _task_runtime_service_method_def("_task_has_unresolved_dependencies")
+
+
+def test_task_has_unresolved_dependencies_uses_fact_overlay_projection() -> None:
+    """The claim dependency probe must use the fact-overlaid status projection."""
+
+    method_def = _task_has_unresolved_dependencies_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    found = any(
+        isinstance(node, ast.Call) and _call_name(node.func) == DEPENDENCY_HELPER_REQUIRED_STATUS_CALL
+        for node in ast.walk(method_def)
+    )
+
+    assert found, (
+        "WS2 dependency-decision fence: "
+        f"{rel}:TaskRuntimeService._task_has_unresolved_dependencies() must call "
+        f"{DEPENDENCY_HELPER_REQUIRED_STATUS_CALL}() directly. Dependency claim "
+        "decisions must stay anchored on the task_runtime.execution fact overlay."
+    )
+
+
+def test_task_has_unresolved_dependencies_has_no_raw_dependency_status_reads() -> None:
+    """The dependency probe must not rebuild dependency status from raw rows."""
+
+    method_def = _task_has_unresolved_dependencies_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+    for node in ast.walk(method_def):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = _call_name(node.func)
+        if callee in DEPENDENCY_HELPER_FORBIDDEN_RAW_READ_CALLS:
+            offenders.append(
+                f"{rel}:TaskRuntimeService._task_has_unresolved_dependencies():{node.lineno} calls {callee}"
+            )
+
+    assert not offenders, (
+        "WS2 dependency-decision fence: "
+        "TaskRuntimeService._task_has_unresolved_dependencies() must not read "
+        "dependency status from raw TaskBoard rows or recursive observable-row "
+        "projections. Use only the fact-overlaid dependency status projection. "
         "Offenders:\n" + "\n".join(offenders)
     )
