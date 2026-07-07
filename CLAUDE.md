@@ -376,7 +376,7 @@ PM TaskBoard 和 CE Blueprint 使用不同 task_id 格式时，所有查询层�
 
 ## 外部并行工程 Agent 调用规范
 
-Codex、Claude Code 等主 Agent 可以把独立工程任务派发给外部 Sub-Agent。默认协议是 **Claude CLI JSON Sub-Agent**；OpenCode 只保留为兼容审计路径。所有外部 Agent 只能作为主 Agent 的工程协作/审计工具使用，不属于 Polaris 平台自身。禁止在 Polaris 产品代码、Factory Bench、Run Ledger、ContextOS、ReceiptStore、UI、runtime event 或质量门禁中引入对 Claude/OpenCode 外部 Agent 的运行时依赖、调度逻辑、状态投影或成功条件。
+Codex、Claude Code 等主 Agent 可以把独立工程任务派发给外部 Sub-Agent。默认协议是 **Claude CLI JSON Sub-Agent**；OpenCode 只保留为兼容审计路径。所有外部 Agent 只能作为主 Agent 的工程实施/审计工具使用，不属于 Polaris 平台自身。禁止在 Polaris 产品代码、Factory Bench、Run Ledger、ContextOS、ReceiptStore、UI、runtime event 或质量门禁中引入对 Claude/OpenCode 外部 Agent 的运行时依赖、调度逻辑、状态投影或成功条件。
 
 ### 调用方式
 
@@ -389,7 +389,7 @@ claude -p "<完整任务提示词>" \
   --json-schema '<JSON_SCHEMA>'
 ```
 
-多个互不重叠的任务可以并行执行，最多 3 个 Sub-Agent。共享主仓并发写入只允许在文件/目录/职责集合完全互斥时使用；否则必须使用独立 worktree/sandbox，或降级为串行。
+多个互不重叠的任务可以并行执行，最多 3 个 Sub-Agent。Sub-Agent 必须显式声明 `mode=audit` 或 `mode=implementation`：审计任务只读；实施任务可以直接写代码，但共享主仓并发写入只允许在文件/目录/职责集合完全互斥时使用，否则必须使用独立 worktree/sandbox，或降级为串行。
 
 ```bash
 claude -p "<Agent 01 完整提示词>" --dangerously-skip-permissions --output-format json --json-schema '<JSON_SCHEMA>' > /tmp/polaris-subagent-<batch>-01.json &
@@ -412,6 +412,7 @@ OpenCode 兼容路径只允许在 Claude CLI 不可用或用户显式要求时�
   "additionalProperties": false,
   "required": [
     "task_id",
+    "mode",
     "status",
     "summary",
     "scope",
@@ -424,6 +425,7 @@ OpenCode 兼容路径只允许在 Claude CLI 不可用或用户显式要求时�
   ],
   "properties": {
     "task_id": {"type": "string"},
+    "mode": {"type": "string", "enum": ["audit", "implementation"]},
     "status": {"type": "string", "enum": ["success", "blocked", "failed"]},
     "summary": {"type": "string"},
     "scope": {"type": "array", "items": {"type": "string"}},
@@ -538,7 +540,7 @@ Claude CLI 的 `--output-format json` stdout 是 Claude 执行 envelope，不一
 5. 修复必须针对根因，禁止表层绕过、硬编码成功、静默 fallback 或只改测试。
 6. 不得违反任务列出的架构约束。
 7. 修改后必须运行全部验收命令。
-8. 最终必须按调用方提供的 JSON schema 输出审计报告，并由调用方落盘到 /tmp/polaris-subagent-<batch>-<id>.json。
+8. 最终必须按调用方提供的 JSON schema 输出执行报告，并由调用方落盘到 /tmp/polaris-subagent-<batch>-<id>.json。
 9. 充分使用codegraph。
 
 任务目标：
@@ -571,6 +573,7 @@ Claude CLI 的 `--output-format json` stdout 是 Claude 执行 envelope，不一
 最终输出 JSON（必须匹配调用方 --json-schema）：
 {
   "task_id": "<batch>/<编号>",
+  "mode": "audit | implementation",
   "status": "success | blocked | failed",
   "summary": "...",
   "scope": [],

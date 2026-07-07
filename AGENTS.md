@@ -73,7 +73,7 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
 10. **工具调用归一化优先**：平台必须适配不同 LLM 的自然工具调用习惯，先通过统一 ToolSpecRegistry/tool alias/arg_aliases 归一化工具名与参数，再进入授权、路径、命令、读写门禁；禁止强迫 LLM 只按 Polaris 内部字段写调用。不可安全推断的调用必须 fail-closed 并留下工具/LLM/runtime 证据，禁止吞异常、硬编码成功、静默 fallback。
 11. **LLM 最终请求上下文审计**：每次真实 LLM 调用都必须审计最终 provider request，而不只统计 messages 投影；审计至少包含 message/tool schema/response_format token 估算、最终请求 token、窗口利用率，以及 PM 合同、Chief Engineer 蓝图、目标文件、失败反馈、workspace quality evidence 覆盖度 flags。ContextOS 必须优先展示最终请求上下文 token，禁止用 messages-only 或 prompt usage 冒充最终上下文占用。`context_snapshot_ref` 只能表示已落盘、可通过 `/v2/context/{hash}` 读取的 24 位 hex 快照 key；`request_hash`、`prompt_hash`、`call_id`、`turn_id`、路径、审计包 hash 或旧事件字符串不得冒充 `context_snapshot_ref`，前端不得为非法 ref 展示“查看完整上下文”入口或发起 `/v2/context/{hash}` 请求。
 12. **角色工具失败外部审计（主 Agent 专用，禁止产品化）**：PM、Chief Engineer、Director、QA 任一角色发生工具调用失败、工具调用缺失、工具参数无法归一化、工具结果被误判成功、或 LLM 输出被错误当作工具 action 时，主 Agent 可以安排至少一个 OpenCode 外部 Agent 做独立审计。该审计只属于 Codex/Claude 等主 Agent 的工程协作手段，绝对不是 Polaris 平台能力、运行时依赖、Factory gate、bench 成功条件、ContextOS/ReceiptStore 事实源或产品功能。Polaris 产品代码、脚本、UI、runtime event、Run Ledger、bench report 不得调度、等待、要求或展示 OpenCode 审计状态作为平台证据。外部审计应覆盖最终送入 LLM 的完整 provider request 上下文、工具调用归一化链路、ToolSpec/arg_aliases、runtime event、LLM 调用日志、ContextOS 证据和失败归因；若 LLM event 因安全策略 redacted 了 `messages`/`content`，主 Agent 必须把 `context_snapshot_ref` 对应的 `runtime/contexts/<shard>/<hash>` 快照文件纳入自己的外部审计证据包；禁止把 OpenCode 审计结论写成 Polaris 的 SSoT。
-   - **Claude CLI JSON Sub-Agent 标准（主 Agent 默认派工方式）**：需要并行分配外部子任务时，主 Agent 默认使用 `claude -p "<任务指令>" --dangerously-skip-permissions --output-format json --json-schema '<schema>'`，而不是交互式日志或非结构化后台输出。每批最多 3 个 Sub-Agent；任务必须先按文件/目录/职责拆成互不重叠的范围，不能保证互斥时必须降级串行。每个 Sub-Agent 的提示词必须包含：任务 ID、允许/禁止修改范围、必须读取的规范、必须使用 codegraph/MCP 的审计要求、验证命令、输出 JSON schema、报告落盘路径（推荐 `/tmp/polaris-subagent-<batch>-<id>.json`）。JSON 结果至少包含 `status`、`summary`、`scope`、`files_read`、`files_modified`、`commands_run`、`findings`、`risks`、`next_action`。主 Agent 只能把该 JSON 当作外部审计材料，必须重新检查 `git status`、`git diff`、测试结果和越界修改；禁止把 Claude/OpenCode 子任务状态或报告写入 Run Ledger、ContextOS、ReceiptStore、Factory/Bench 成功条件、产品 UI 或 runtime event。若子任务需要真实代码修改，优先使用独立 worktree/sandbox 或确保三路文件集合完全互斥；共享主仓并发只允许只读审计。
+   - **Claude CLI JSON Sub-Agent 标准（主 Agent 默认派工方式）**：需要并行分配外部子任务时，主 Agent 默认使用 `claude -p "<任务指令>" --dangerously-skip-permissions --output-format json --json-schema '<schema>'`，而不是交互式日志或非结构化后台输出。每批最多 3 个 Sub-Agent；任务必须先按文件/目录/职责拆成互不重叠的范围，不能保证互斥时必须降级串行。Sub-Agent 任务必须显式声明 `mode=audit` 或 `mode=implementation`：`audit` 只读；`implementation` 可以直接修改授权范围内代码、测试和文档，但必须使用独立 worktree/sandbox 或共享主仓互斥文件集合，且不得跨桶写入。每个 Sub-Agent 的提示词必须包含：任务 ID、mode、允许/禁止修改范围、必须读取的规范、必须使用 codegraph/MCP 的审计要求、验证命令、输出 JSON schema、报告落盘路径（推荐 `/tmp/polaris-subagent-<batch>-<id>.json`）。JSON 结果至少包含 `mode`、`status`、`summary`、`scope`、`files_read`、`files_modified`、`commands_run`、`findings`、`risks`、`next_action`。主 Agent 只能把该 JSON 当作外部执行报告，必须重新检查 `git status`、`git diff`、测试结果和越界修改；禁止把 Claude/OpenCode 子任务状态或报告写入 Run Ledger、ContextOS、ReceiptStore、Factory/Bench 成功条件、产品 UI 或 runtime event。
 13. **最终请求唯一真相与主动缺陷发现制**：主 Agent 不能等待用户从 UI 发现问题后再被动排查。每次 bench、角色运行或工具失败后，必须主动先验 `context_snapshot_ref` 对应的最终 provider request，并把它作为唯一事实源；`messages`、prompt 文本、RoleProfile whitelist、日志摘要、UI 文案都只能作为辅助证据，不能替代最终 provider request。必须逐项比对：
    - `provider_request.messages[0]` 的角色身份是否与当前角色一致，禁止 CE/Director/PM 系统提示串线。
    - `provider_request.tools` 是否包含任务和提示词要求的可调用工具；如果提示词要求 `repo_tree`、`read_file`、`repo_read_*`、`write_file`、`execute_command` 等工具，而最终 tools schema 缺失，直接按 P0 平台缺陷处理。
@@ -424,7 +424,7 @@ python -m scripts.director.cli_thin --workspace . --iterations 1
 
 ## 外部并行工程 Agent 调用规范（主 Agent 专用）
 
-Codex、Claude Code 等主 Agent 可以把独立工程任务派发给外部 Sub-Agent。默认协议是 **Claude CLI JSON Sub-Agent**；OpenCode 只保留为兼容审计路径。所有外部 Agent 只能作为主 Agent 的工程协作/审计工具使用，不属于 Polaris 平台自身。禁止在 Polaris 产品代码、Factory Bench、Run Ledger、ContextOS、ReceiptStore、UI、runtime event 或质量门禁中引入对 Claude/OpenCode 外部 Agent 的运行时依赖、调度逻辑、状态投影或成功条件。
+Codex、Claude Code 等主 Agent 可以把独立工程任务派发给外部 Sub-Agent。默认协议是 **Claude CLI JSON Sub-Agent**；OpenCode 只保留为兼容审计路径。所有外部 Agent 只能作为主 Agent 的工程实施/审计工具使用，不属于 Polaris 平台自身。禁止在 Polaris 产品代码、Factory Bench、Run Ledger、ContextOS、ReceiptStore、UI、runtime event 或质量门禁中引入对 Claude/OpenCode 外部 Agent 的运行时依赖、调度逻辑、状态投影或成功条件。
 
 ### 调用方式
 
@@ -437,7 +437,7 @@ claude -p "<完整任务提示词>" \
   --json-schema '<JSON_SCHEMA>'
 ```
 
-多个互不重叠的任务可以并行执行，最多 3 个 Sub-Agent。共享主仓并发写入只允许在文件/目录/职责集合完全互斥时使用；否则必须使用独立 worktree/sandbox，或降级为串行。
+多个互不重叠的任务可以并行执行，最多 3 个 Sub-Agent。Sub-Agent 必须显式声明 `mode=audit` 或 `mode=implementation`：审计任务只读；实施任务可以直接写代码，但共享主仓并发写入只允许在文件/目录/职责集合完全互斥时使用，否则必须使用独立 worktree/sandbox，或降级为串行。
 
 ```bash
 claude -p "<Agent 01 完整提示词>" --dangerously-skip-permissions --output-format json --json-schema '<JSON_SCHEMA>' > /tmp/polaris-subagent-<batch>-01.json &
@@ -460,6 +460,7 @@ OpenCode 兼容路径只允许在 Claude CLI 不可用或用户显式要求时�
   "additionalProperties": false,
   "required": [
     "task_id",
+    "mode",
     "status",
     "summary",
     "scope",
@@ -472,6 +473,7 @@ OpenCode 兼容路径只允许在 Claude CLI 不可用或用户显式要求时�
   ],
   "properties": {
     "task_id": {"type": "string"},
+    "mode": {"type": "string", "enum": ["audit", "implementation"]},
     "status": {"type": "string", "enum": ["success", "blocked", "failed"]},
     "summary": {"type": "string"},
     "scope": {"type": "array", "items": {"type": "string"}},
@@ -586,7 +588,7 @@ Claude CLI 的 `--output-format json` stdout 是 Claude 执行 envelope，不一
 5. 修复必须针对根因，禁止表层绕过、硬编码成功、静默 fallback 或只改测试。
 6. 不得违反任务列出的架构约束。
 7. 修改后必须运行全部验收命令。
-8. 最终必须按调用方提供的 JSON schema 输出审计报告，并由调用方落盘到 /tmp/polaris-subagent-<batch>-<id>.json。
+8. 最终必须按调用方提供的 JSON schema 输出执行报告，并由调用方落盘到 /tmp/polaris-subagent-<batch>-<id>.json。
 9. 充分使用codegraph。
 
 任务目标：
@@ -619,6 +621,7 @@ Claude CLI 的 `--output-format json` stdout 是 Claude 执行 envelope，不一
 最终输出 JSON（必须匹配调用方 --json-schema）：
 {
   "task_id": "<batch>/<编号>",
+  "mode": "audit | implementation",
   "status": "success | blocked | failed",
   "summary": "...",
   "scope": [],
