@@ -1083,6 +1083,27 @@ class TaskRuntimeService:
                 continue
         return status_by_id
 
+    def _project_execution_fact_event_row(self, event: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Project one FactStream event into the task-runtime row read model.
+
+        The event wrapper may carry the canonical append sequence separately
+        from the payload.  This helper applies the same seq carry-forward rule
+        for every fact-derived TaskRuntime read model so direct lookup,
+        observable rows, and list projections cannot drift.
+        """
+
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        fact = dict(payload)
+        fact.setdefault("event_id", str(event.get("event_id") or ""))
+        fact.setdefault("occurred_at", str(event.get("occurred_at") or event.get("timestamp") or ""))
+        if _coerce_fact_event_seq(fact.get("fact_event_seq")) is None:
+            wrapper_seq = _coerce_fact_event_seq(event.get("seq"))
+            if wrapper_seq is not None:
+                fact["fact_event_seq"] = wrapper_seq
+        return project_task_row_from_execution_fact_payload(fact)
+
     def list_task_rows_from_execution_facts(self, *, limit: int = 500) -> list[dict[str, Any]]:
         """Return latest task-row read models from ``task_runtime.execution`` facts.
 
@@ -1135,28 +1156,107 @@ class TaskRuntimeService:
         for event in result.events:
             if not isinstance(event, dict):
                 continue
-            payload = event.get("payload")
-            if not isinstance(payload, dict):
+            row = self._project_execution_fact_event_row(event)
+            if row is None:
                 continue
-            fact = dict(payload)
-            fact.setdefault("event_id", str(event.get("event_id") or ""))
-            fact.setdefault("occurred_at", str(event.get("occurred_at") or event.get("timestamp") or ""))
-            # Carry the wrapper-level fact-stream seq onto the payload only
-            # when the payload itself does not already carry a valid positive
-            # ``fact_event_seq``. ``_coerce_fact_event_seq`` is the same
-            # fail-closed validator used elsewhere, so we never inject a
-            # missing/zero/negative/non-int seq into the payload.
-            if _coerce_fact_event_seq(fact.get("fact_event_seq")) is None:
-                wrapper_seq = _coerce_fact_event_seq(event.get("seq"))
-                if wrapper_seq is not None:
-                    fact["fact_event_seq"] = wrapper_seq
-            row = project_task_row_from_execution_fact_payload(fact)
             task_id = str(row.get("task_id") or row.get("id") or "").strip()
             if task_id:
                 latest_by_task[task_id] = row
         rows = list(latest_by_task.values())
         rows.sort(key=self._row_sort_key)
         return rows
+
+    def _find_latest_execution_fact_row_for_task(
+        self,
+        task_id: int,
+        *,
+        page_size: int = 500,
+    ) -> dict[str, Any] | None:
+        """Return the latest fact-derived row for one ``task_id`` via exact paging.
+
+        Boundary:
+            Read-only projection that locates the authoritative
+            ``task_runtime.execution`` fact for a single task.  It must not
+            write to workspace, mint new events, or fabricate session state.
+            Direct ``claim_execution(task_id=...)`` callers use the returned row
+            to detect a terminal verdict that the stale file row may not yet
+            reflect, so we page backward through the fact stream until we find
+            a matching task_id rather than scanning a single latest window.
+
+        The projection reuses ``project_task_row_from_execution_fact_payload``
+        and the wrapper-level ``seq`` carry-forward logic from
+        ``list_task_rows_from_execution_facts`` so the read model stays
+        consistent with the public list read model.  We also reuse
+        ``_coerce_fact_event_seq`` to avoid inventing a second inconsistent
+        projection for ``fact_event_seq``.
+
+        Complexity:
+            O(e * p) time where ``e`` is the events inspected per page and
+            ``p`` is the number of pages walked before either finding the task
+            id or exhausting the stream; O(1) additional memory.
+        """
+
+        normalized_id = self.normalize_task_id(task_id)
+        if normalized_id is None:
+            return None
+        target_task_id = str(normalized_id).strip()
+        if not target_task_id:
+            return None
+
+        per_page = max(1, int(page_size))
+        try:
+            first_page = query_fact_events(
+                QueryFactEventsV1(
+                    workspace=self.workspace,
+                    stream="task_runtime.execution",
+                    limit=1,
+                    offset=0,
+                )
+            )
+        except (FactStreamError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug(
+                "failed to inspect task runtime execution facts for task_id=%s: %s",
+                target_task_id,
+                exc,
+            )
+            return None
+
+        total = int(getattr(first_page, "total", 0) or 0)
+        if total <= 0:
+            return None
+
+        offset = max(0, total - per_page)
+        while True:
+            try:
+                result = query_fact_events(
+                    QueryFactEventsV1(
+                        workspace=self.workspace,
+                        stream="task_runtime.execution",
+                        limit=per_page,
+                        offset=offset,
+                    )
+                )
+            except (FactStreamError, RuntimeError, TypeError, ValueError) as exc:
+                logger.debug(
+                    "failed to load task runtime execution fact row for task_id=%s: %s",
+                    target_task_id,
+                    exc,
+                )
+                return None
+
+            events = [event for event in list(getattr(result, "events", []) or []) if isinstance(event, dict)]
+            for event in reversed(events):
+                payload = event.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                payload_task_id = str(payload.get("task_id") or payload.get("id") or "").strip()
+                if payload_task_id != target_task_id:
+                    continue
+                return self._project_execution_fact_event_row(event)
+
+            if offset <= 0:
+                return None
+            offset = max(0, offset - per_page)
 
     def list_observable_task_rows(self) -> list[dict[str, Any]]:
         """Return task rows for read-only runtime projections.
@@ -1388,15 +1488,33 @@ class TaskRuntimeService:
         context_summary: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Claim a task for execution and persist a lease-backed session."""
+        """Claim a task for execution and persist a lease-backed session.
+
+        Direct ``claim_execution(task_id=...)`` paths must respect both
+        terminal session evidence and the authoritative
+        ``task_runtime.execution`` fact stream, not only the raw
+        ``TaskBoard`` file row.  Before reading or mutating the raw row we
+        refresh dependency unblocks so a child whose blocker is only complete
+        in the latest fact becomes claimable.  Terminal session reconciliation
+        remains the first terminal authority because it can repair stale rows;
+        the latest terminal fact is the fail-closed fallback when no terminal
+        session handled the row.
+        """
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
             return build_task_execution_claim_result(success=False, reason="invalid_task_id")
+
+        # Refresh dependency unblocks before reading/mutating the raw row so
+        # a child whose blocker is only complete in the latest fact can be
+        # claimed.  ``refresh_dependency_unblocks`` is idempotent and uses the
+        # fact-overlay-aware status projection under the hood.
+        self.refresh_dependency_unblocks()
 
         task = self._board.get(normalized)
         if task is None:
             return build_task_execution_claim_result(success=False, reason="task_not_found")
 
+        latest_fact_row = self._find_latest_execution_fact_row_for_task(normalized)
         session_lock = self._get_session_lock(normalized)
         with session_lock:
             existing_session = self._read_session(normalized)
@@ -1431,6 +1549,30 @@ class TaskRuntimeService:
                             reconcile_error=reconcile_error,
                             execution_event=execution_event,
                         )
+
+            # Authoritative latest-terminal-fact check: if no terminal session
+            # has reconciled the row but the latest execution fact says the
+            # task reached a terminal verdict, reject the claim without
+            # mutating the raw row.  This prevents reclaiming a completed/
+            # failed/cancelled/timeout task whose only authoritative evidence
+            # lives in the fact stream.
+            if latest_fact_row is not None:
+                fact_status = str(latest_fact_row.get("status") or "").strip().lower()
+                if is_terminal_task_row_status(fact_status):
+                    rejection = build_task_execution_claim_result(
+                        success=False,
+                        reason="task_terminal",
+                        task_row=dict(latest_fact_row),
+                    )
+                    # Surface that the rejection is anchored on the execution
+                    # fact stream rather than the raw row.  The result shape
+                    # is intentionally identical to the existing
+                    # ``task_terminal`` branch so claim-next consumers see the
+                    # same reason token.
+                    rejection["execution_fact_authoritative"] = True
+                    rejection["source"] = "task_runtime.execution_fact"
+                    rejection["fact_status"] = fact_status
+                    return rejection
 
             if task.is_terminal:
                 return build_task_execution_claim_result(

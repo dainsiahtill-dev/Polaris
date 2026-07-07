@@ -2143,8 +2143,8 @@ def test_runtime_projection_never_selects_workflow_archive_tasks_as_live_rows() 
 # read model.
 
 
-def _list_task_rows_from_execution_facts_function_def() -> ast.FunctionDef:
-    """Return the ``TaskRuntimeService.list_task_rows_from_execution_facts`` AST node."""
+def _task_runtime_service_method_def(method_name: str) -> ast.FunctionDef:
+    """Return a ``TaskRuntimeService`` method AST node by name."""
 
     source = TASK_RUNTIME_INTERNAL_SERVICE.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -2152,15 +2152,20 @@ def _list_task_rows_from_execution_facts_function_def() -> ast.FunctionDef:
     for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef):
             continue
-        if node.name != EXECUTION_FACT_LIST_READER:
+        if node.name != method_name:
             continue
         enclosing_class = parents.get(node)
         if isinstance(enclosing_class, ast.ClassDef) and enclosing_class.name == "TaskRuntimeService":
             return node
     raise AssertionError(
-        f"TaskRuntimeService.{EXECUTION_FACT_LIST_READER}() not found in "
-        f"{TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)}"
+        f"TaskRuntimeService.{method_name}() not found in {TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)}"
     )
+
+
+def _list_task_rows_from_execution_facts_function_def() -> ast.FunctionDef:
+    """Return the ``TaskRuntimeService.list_task_rows_from_execution_facts`` AST node."""
+
+    return _task_runtime_service_method_def(EXECUTION_FACT_LIST_READER)
 
 
 def _project_task_row_from_execution_fact_payload_function_def() -> ast.FunctionDef:
@@ -2190,15 +2195,15 @@ def _iter_events_loop_in(function_def: ast.FunctionDef) -> ast.For | ast.AsyncFo
     return None
 
 
-def _fact_dict_assignments_in_loop(loop: ast.For | ast.AsyncFor) -> list[ast.AST]:
-    """Return AST nodes inside ``loop`` that assign into a ``fact`` dict.
+def _fact_dict_assignments_in_scope(scope: ast.AST) -> list[ast.AST]:
+    """Return AST nodes inside ``scope`` that assign into a ``fact`` dict.
 
     Catches both ``fact["fact_event_seq"] = ...`` (ast.Assign on a Subscript)
     and ``fact.setdefault("fact_event_seq", ...)`` (ast.Call on a method).
     """
 
     result: list[ast.AST] = []
-    for node in ast.walk(loop):
+    for node in ast.walk(scope):
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 if _fact_subscript_key(target) == EXECUTION_FACT_SEQ_KEY:
@@ -2216,6 +2221,12 @@ def _fact_dict_assignments_in_loop(loop: ast.For | ast.AsyncFor) -> list[ast.AST
             if _string_literal(first_arg) == EXECUTION_FACT_SEQ_KEY:
                 result.append(node)
     return result
+
+
+def _fact_dict_assignments_in_loop(loop: ast.For | ast.AsyncFor) -> list[ast.AST]:
+    """Return AST nodes inside ``loop`` that assign into a ``fact`` dict."""
+
+    return _fact_dict_assignments_in_scope(loop)
 
 
 def _fact_subscript_key(node: ast.AST) -> str:
@@ -2298,41 +2309,49 @@ def _list_reader_propagates_fact_event_seq() -> tuple[bool, list[str]]:
     """Check that ``list_task_rows_from_execution_facts`` carries event seq into the fact payload.
 
     The check is structural rather than line-exact:
-      1. Locate the ``for event in result.events:`` loop in the function.
-      2. Within that loop, there must be an assignment (or ``setdefault``)
-         of ``fact["fact_event_seq"]`` whose right-hand side reads the
-         queried event's ``seq`` field (``event.get("seq")`` or
-         ``event["seq"]``).
-      3. The call to ``project_task_row_from_execution_fact_payload(fact)``
-         must appear AFTER the ``fact_event_seq`` write in the same
-         iteration, so the projector can see the propagated value.
+      1. Prefer the shared ``_project_execution_fact_event_row`` helper when
+         the list reader delegates per-event projection.
+      2. In the helper (or the list reader body for legacy inline projection),
+         there must be an assignment of ``fact["fact_event_seq"]`` whose RHS
+         reads the queried event's ``seq`` field.
+      3. The call to ``project_task_row_from_execution_fact_payload(fact)`` must
+         appear AFTER the ``fact_event_seq`` write so the projector can see the
+         propagated value.
     """
 
-    function_def = _list_task_rows_from_execution_facts_function_def()
-    loop = _iter_events_loop_in(function_def)
-    if loop is None:
-        return False, ["no `for event in result.events` loop found"]
+    list_function_def = _list_task_rows_from_execution_facts_function_def()
+    projection_scope: ast.AST = list_function_def
+    projection_label = "list_task_rows_from_execution_facts"
+    helper_name = "_project_execution_fact_event_row"
+    if any(
+        isinstance(node, ast.Call) and _call_name(node.func).rsplit(".", maxsplit=1)[-1] == helper_name
+        for node in ast.walk(list_function_def)
+    ):
+        projection_scope = _task_runtime_service_method_def(helper_name)
+        projection_label = helper_name
+    else:
+        loop = _iter_events_loop_in(list_function_def)
+        if loop is None:
+            return False, ["no `for event in result.events` loop found and no shared event projector helper used"]
+        projection_scope = loop
 
-    seq_assignments = _fact_dict_assignments_in_loop(loop)
+    seq_assignments = _fact_dict_assignments_in_scope(projection_scope)
     if not seq_assignments:
         return False, [
-            "list_task_rows_from_execution_facts does not propagate fact_event_seq "
-            "into the fact payload before projecting rows"
+            f"{projection_label} does not propagate fact_event_seq into the fact payload before projecting rows"
         ]
 
     projector_call: ast.Call | None = None
-    for node in ast.walk(loop):
+    for node in ast.walk(projection_scope):
         if isinstance(node, ast.Call) and _call_name(node.func) == EXECUTION_FACT_READ_PROJECTOR:
             projector_call = node
             break
 
     if projector_call is None:
-        return False, [
-            f"list_task_rows_from_execution_facts does not call {EXECUTION_FACT_READ_PROJECTOR}() in the events loop"
-        ]
+        return False, [f"{projection_label} does not call {EXECUTION_FACT_READ_PROJECTOR}() while projecting fact rows"]
 
     event_seq_names: set[str] = set()
-    for node in ast.walk(loop):
+    for node in ast.walk(projection_scope):
         if not isinstance(node, ast.Assign):
             continue
         if not _node_sources_event_seq(node.value):
@@ -3003,4 +3022,454 @@ def test_refresh_dependency_unblocks_uses_fact_aware_dependency_status_projectio
         "walk, but the status source for dependency resolution must be "
         "fact-aware so latest task_runtime.execution completion facts remain "
         "authoritative. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# WS2 claim_execution() — dependency refresh + fact-aware terminal veto
+# ---------------------------------------------------------------------------
+#
+# ``TaskRuntimeService.claim_execution()`` is the direct claim entry point used
+# by the worker pool and the director adapter. Unlike ``claim_next_execution``
+# (which is a *preview* + atomic claim), ``claim_execution`` takes an explicit
+# ``task_id`` and must still consult the WS2 fact-aware read path before it
+# hands out a lease. Otherwise:
+#
+#   * Dependency unblocks driven by late ``task_runtime.execution`` completion
+#     facts never reach the claim path, so a BLOCKED row can be claimed before
+#     its dependencies are reconciled.
+#   * The terminal fact veto (``_terminal_task_status_for_session``) is the
+#     only place that can refuse a claim based on the latest execution fact,
+#     so it must be consulted *before* the lease/session is created. A claim
+#     that ignores the fact veto regresses to raw-file-only claim authority.
+#
+# Both fences are structural: they walk the ``claim_execution`` AST, locate
+# the relevant call sites by name (not by line number), and verify ordering.
+
+CLAIM_EXECUTION_FACT_AWARE_HELPERS: frozenset[str] = frozenset(
+    {
+        "list_task_rows_from_execution_facts",
+        "_fact_overlaid_dependency_status_rows",
+        "_list_dependency_status_rows",
+        "list_observable_task_rows",
+        "_find_latest_execution_fact_row_for_task",
+    }
+)
+CLAIM_EXECUTION_TERMINAL_FACT_VETO_HELPERS: frozenset[str] = frozenset(
+    {
+        "_terminal_task_status_for_session",
+        "is_terminal_session_status",
+        "terminal_task_status_value_for_session_status",
+        "is_terminal_task_row_status",
+        "_row_authorizes_retry_over_terminal_session",
+    }
+)
+CLAIM_EXECUTION_SESSION_CREATE_NAMES: frozenset[str] = frozenset(
+    {
+        "create",  # TaskExecutionSession.create(...)
+    }
+)
+# Forward-looking allowlist for private fact-stream readers. New helpers
+# added to ``TaskRuntimeService`` that query the ``task_runtime.execution``
+# Fact Stream directly must be added here so the WS2 claim fence knows
+# they are read-only projections rather than new task-state sources.
+CLAIM_EXECUTION_FACT_STREAM_READER_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "list_task_rows_from_execution_facts",
+        "_fact_overlaid_dependency_status_rows",
+        "_list_dependency_status_rows",
+        "list_observable_task_rows",
+        "_augment_task_row",
+        "_find_latest_execution_fact_row_for_task",
+    }
+)
+
+
+def _claim_execution_function_def() -> ast.FunctionDef:
+    """Return the ``TaskRuntimeService.claim_execution`` AST node."""
+
+    source = TASK_RUNTIME_INTERNAL_SERVICE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    parents = _parent_lookup(tree)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef) or node.name != "claim_execution":
+            continue
+        enclosing = parents.get(node)
+        if isinstance(enclosing, ast.ClassDef) and enclosing.name == "TaskRuntimeService":
+            return node
+    raise AssertionError(
+        f"TaskRuntimeService.claim_execution() not found in {TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)}"
+    )
+
+
+def _iter_self_method_calls(method_def: ast.FunctionDef, method_name: str) -> list[ast.Call]:
+    """Return ``self.<method_name>(...)`` call nodes in ``method_def``."""
+
+    return [
+        node for node in ast.walk(method_def) if isinstance(node, ast.Call) and _call_is_self_method(node, method_name)
+    ]
+
+
+def _iter_qualified_call_nodes_anywhere(
+    method_def: ast.FunctionDef,
+    *,
+    leaf_method_names: frozenset[str] | set[str],
+) -> list[ast.Call]:
+    """Return call nodes whose trailing attribute (or Name) matches ``leaf_method_names``.
+
+    Matches both ``ast.Attribute`` callees (e.g. ``self._foo.method(...)``,
+    ``SomeClass.method(...)``) and bare ``ast.Name`` callees
+    (e.g. ``module_helper(...)``) so the fence can detect module-level
+    helpers as well as bound self-methods.
+    """
+
+    matches: list[ast.Call] = []
+    for node in ast.walk(method_def):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            if func.attr in leaf_method_names:
+                matches.append(node)
+        elif isinstance(func, ast.Name) and func.id in leaf_method_names:
+            matches.append(node)
+    return matches
+
+
+def _call_arg_references_local(call_node: ast.Call, local_name: str) -> bool:
+    """True if any positional arg of ``call_node`` is the bare local ``local_name``."""
+
+    return any(isinstance(arg, ast.Name) and arg.id == local_name for arg in call_node.args)
+
+
+def _check_claim_execution_refreshes_dependency_unblocks_before_raw_claim() -> list[str]:
+    """WS2 claim refresh fence.
+
+    Locate the first ``self._board.get(normalized)`` call site in
+    ``claim_execution`` and require that a ``self.refresh_dependency_unblocks()``
+    call exists earlier in the function body. The dependency-unblock refresh
+    is the WS2 path that consults the latest ``task_runtime.execution``
+    completion facts to wake BLOCKED rows. Skipping it on the direct claim
+    path lets a BLOCKED row be claimed before its dependencies are reconciled.
+    """
+
+    method_def = _claim_execution_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    raw_claim_calls = [
+        call
+        for call in ast.walk(method_def)
+        if isinstance(call, ast.Call)
+        and _call_name(call.func) == "self._board.get"
+        and _call_arg_references_local(call, "normalized")
+    ]
+    if not raw_claim_calls:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.claim_execution() no longer has the "
+            "self._board.get(normalized) raw claim path. If the claim entry "
+            "point was removed, the WS2 claim refresh fence becomes vacuous "
+            "and the entire function should be retired."
+        )
+        return offenders
+
+    first_raw_claim = raw_claim_calls[0]
+    refresh_calls = _iter_self_method_calls(method_def, "refresh_dependency_unblocks")
+
+    if not refresh_calls:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.claim_execution():{first_raw_claim.lineno} "
+            "is the raw self._board.get(normalized) claim path, but the function "
+            "does not call self.refresh_dependency_unblocks() before it. Late "
+            "task_runtime.execution completion facts can unblock dependencies "
+            "that the raw file-backed row still reports as BLOCKED; the direct "
+            "claim path must refresh dependency unblocks first."
+        )
+        return offenders
+
+    if any(call.lineno < first_raw_claim.lineno for call in refresh_calls):
+        return offenders
+
+    offenders.append(
+        f"{rel}:TaskRuntimeService.claim_execution() calls "
+        "self.refresh_dependency_unblocks() only at line "
+        f"{refresh_calls[0].lineno}, AFTER the raw self._board.get(normalized) "
+        f"claim path at line {first_raw_claim.lineno}. The refresh must "
+        "precede the raw claim so dependency unblock evidence from "
+        "task_runtime.execution facts is consulted first."
+    )
+    return offenders
+
+
+def _check_claim_execution_consults_fact_aware_helper_and_terminal_veto() -> list[str]:
+    """WS2 claim fact-aware helper + terminal fact veto fence.
+
+    Before ``TaskRuntimeService.claim_execution()`` constructs a
+    ``TaskExecutionSession`` (lease creation), it must:
+
+      1. Consult a fact-aware read helper so the latest
+         ``task_runtime.execution`` events are part of the read projection.
+      2. Consult a terminal fact veto helper
+         (``_terminal_task_status_for_session``,
+         ``is_terminal_session_status``, or
+         ``terminal_task_status_value_for_session_status``) so a row that
+         the Fact Stream has already marked terminal cannot be claimed.
+
+    The fence is structural: it locates the first
+    ``TaskExecutionSession.create(...)`` call, then verifies that at least
+    one fact-aware helper call AND at least one terminal veto call appear
+    earlier in the same function body.
+    """
+
+    method_def = _claim_execution_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    session_create_calls = _iter_qualified_call_nodes_anywhere(
+        method_def,
+        leaf_method_names=CLAIM_EXECUTION_SESSION_CREATE_NAMES,
+    )
+    session_create_calls = [
+        call for call in session_create_calls if _call_name(call.func) == "TaskExecutionSession.create"
+    ]
+    if not session_create_calls:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.claim_execution() no longer calls "
+            "TaskExecutionSession.create(...). The fact-aware helper + "
+            "terminal veto fence becomes vacuous without a session-creation "
+            "boundary; if claim_execution was retired, drop this fence."
+        )
+        return offenders
+
+    first_session_create = session_create_calls[0]
+
+    fact_aware_calls = _iter_qualified_call_nodes_anywhere(
+        method_def,
+        leaf_method_names=set(CLAIM_EXECUTION_FACT_AWARE_HELPERS),
+    )
+    fact_aware_before_create = [
+        call
+        for call in fact_aware_calls
+        if _call_name(call.func).rsplit(".", maxsplit=1)[-1] in CLAIM_EXECUTION_FACT_AWARE_HELPERS
+        and call.lineno < first_session_create.lineno
+    ]
+    if not fact_aware_before_create:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.claim_execution() must consult a "
+            "fact-aware helper such as "
+            + ", ".join(sorted(CLAIM_EXECUTION_FACT_AWARE_HELPERS))
+            + f" before TaskExecutionSession.create(...) at line "
+            f"{first_session_create.lineno}. A claim path that skips the "
+            "Fact Stream regresses to raw-file-only claim authority."
+        )
+
+    terminal_veto_calls = _iter_qualified_call_nodes_anywhere(
+        method_def,
+        leaf_method_names=set(CLAIM_EXECUTION_TERMINAL_FACT_VETO_HELPERS),
+    )
+    terminal_veto_before_create = [
+        call
+        for call in terminal_veto_calls
+        if _call_name(call.func).rsplit(".", maxsplit=1)[-1] in CLAIM_EXECUTION_TERMINAL_FACT_VETO_HELPERS
+        and call.lineno < first_session_create.lineno
+    ]
+    if not terminal_veto_before_create:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.claim_execution() must consult a "
+            "terminal fact veto helper such as "
+            + ", ".join(sorted(CLAIM_EXECUTION_TERMINAL_FACT_VETO_HELPERS))
+            + f" before TaskExecutionSession.create(...) at line "
+            f"{first_session_create.lineno}. The terminal fact veto is the "
+            "only authority that can refuse a claim based on the latest "
+            "task_runtime.execution evidence; without it, a terminal row can "
+            "be silently re-leased."
+        )
+
+    return offenders
+
+
+def test_claim_execution_refreshes_dependency_unblocks_before_raw_claim_path() -> None:
+    """WS2 claim refresh fence.
+
+    ``TaskRuntimeService.claim_execution()`` is the direct claim entry point
+    used by the worker pool (``TaskRuntimePort.claim_execution``) and the
+    director adapter. It must call ``self.refresh_dependency_unblocks()``
+    *before* the raw ``self._board.get(normalized)`` claim path so late
+    ``task_runtime.execution`` completion facts (and any in-flight execution
+    overlay) wake BLOCKED rows before the claim commits.
+
+    The fence is structural: it walks the ``claim_execution`` AST, locates
+    the first ``self._board.get(normalized)`` call site, and verifies that
+    at least one ``self.refresh_dependency_unblocks()`` call precedes it. It
+    does not weaken the existing raw-board read/write allowlists; the
+    reviewed call counts in ``REVIEWED_TASK_RUNTIME_SERVICE_BOARD_*`` are
+    intentionally unchanged.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_claim_execution_refreshes_dependency_unblocks_before_raw_claim()
+
+    assert not offenders, (
+        "WS2 claim refresh fence: "
+        f"{rel}:TaskRuntimeService.claim_execution() must call "
+        "self.refresh_dependency_unblocks() before the raw "
+        "self._board.get(normalized) claim path so dependency unblock "
+        "evidence from task_runtime.execution facts is consulted before "
+        "the claim commits. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_claim_execution_consults_fact_aware_helper_and_terminal_fact_veto() -> None:
+    """WS2 claim fact-aware helper + terminal fact veto fence.
+
+    ``TaskRuntimeService.claim_execution()`` must consult a fact-aware
+    helper (``list_task_rows_from_execution_facts``,
+    ``_fact_overlaid_dependency_status_rows``,
+    ``_list_dependency_status_rows``, or ``list_observable_task_rows``) and
+    a terminal fact veto helper (``_terminal_task_status_for_session``,
+    ``is_terminal_session_status``, or
+    ``terminal_task_status_value_for_session_status``) before constructing
+    the lease-backed ``TaskExecutionSession``. Without these consultations,
+    the direct claim path regresses to raw-file-only claim authority and
+    can lease a row that the Fact Stream has already marked terminal.
+
+    The fence is structural: it locates the first
+    ``TaskExecutionSession.create(...)`` call, then verifies that at least
+    one fact-aware helper call AND at least one terminal veto call appear
+    earlier in the same function body.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_claim_execution_consults_fact_aware_helper_and_terminal_veto()
+
+    assert not offenders, (
+        "WS2 claim fact-aware helper + terminal fact veto fence: "
+        f"{rel}:TaskRuntimeService.claim_execution() must consult a "
+        "fact-aware helper and a terminal fact veto helper before "
+        "TaskExecutionSession.create(...) so the lease/session is only "
+        "created when the latest task_runtime.execution evidence allows it. "
+        "Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def _top_level_function_defs(path: Path) -> list[ast.FunctionDef]:
+    """Return top-level ``def`` entries in ``path`` (no class/inner methods)."""
+
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    return [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+
+
+def _function_queries_execution_fact_stream(method_def: ast.FunctionDef) -> bool:
+    """True if ``method_def`` queries the ``task_runtime.execution`` Fact Stream.
+
+    Catches ``QueryFactEventsV1(...)`` and ``query_fact_events(...)`` calls
+    whose stream literal matches ``task_runtime.execution``. Imports or
+    unrelated streams are ignored.
+    """
+
+    for node in ast.walk(method_def):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = _call_name(node.func)
+        if callee not in {"QueryFactEventsV1", "query_fact_events"}:
+            continue
+        for arg in (*node.args, *(keyword.value for keyword in node.keywords)):
+            if _contains_string_literal(arg, TASK_RUNTIME_EXECUTION_STREAM):
+                return True
+    return False
+
+
+def test_new_fact_stream_readers_in_task_runtime_service_are_read_only_projections() -> None:
+    """WS2 claim fact-stream reader containment fence.
+
+    ``TaskRuntimeService`` may add private helpers that query the
+    ``task_runtime.execution`` Fact Stream directly. Each such helper must
+    be a read-only projection: its name must appear in
+    ``CLAIM_EXECUTION_FACT_STREAM_READER_ALLOWLIST`` (a small curated list
+    of reader helpers) and it must not contain any direct write to the
+    ``task_runtime.execution.jsonl`` event file or to
+    ``AppendFactEventCommandV1``.
+
+    The fence is forward-looking: today every fact-stream reader is in the
+    allowlist, so a name-only addition that violates the allowlist (or a
+    helper that secretly writes the fact stream) is caught. The fence does
+    not weaken any existing raw-board read/write allowlist; it only
+    constrains new top-level helpers that touch the Fact Stream.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+    known_owners = {"TaskRuntimeService"}  # helpers expected to live on this class
+
+    # Top-level module functions: every fact-stream reader must be allowlisted.
+    for func_def in _top_level_function_defs(TASK_RUNTIME_INTERNAL_SERVICE):
+        if not _function_queries_execution_fact_stream(func_def):
+            continue
+        if func_def.name in CLAIM_EXECUTION_FACT_STREAM_READER_ALLOWLIST:
+            continue
+        offenders.append(
+            f"{rel}:{func_def.name}() is a new top-level helper that queries "
+            "the task_runtime.execution Fact Stream directly. Add it to "
+            "CLAIM_EXECUTION_FACT_STREAM_READER_ALLOWLIST (read-only "
+            "projection) or refactor it through an allowlisted reader."
+        )
+
+    # Bound methods on TaskRuntimeService: any new fact-stream reader must
+    # also be allowlisted and must not bypass the reader projection.
+    source = TASK_RUNTIME_INTERNAL_SERVICE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    parents = _parent_lookup(tree)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef) or node.name in (
+            "__init__",
+            "claim_execution",
+        ):
+            continue
+        enclosing = parents.get(node)
+        if not isinstance(enclosing, ast.ClassDef) or enclosing.name not in known_owners:
+            continue
+        if node.name in CLAIM_EXECUTION_FACT_STREAM_READER_ALLOWLIST:
+            continue
+        if not _function_queries_execution_fact_stream(node):
+            continue
+        offenders.append(
+            f"{rel}:TaskRuntimeService.{node.name}() is a new private helper "
+            "that queries the task_runtime.execution Fact Stream directly. "
+            "Add it to CLAIM_EXECUTION_FACT_STREAM_READER_ALLOWLIST "
+            "(read-only projection) so the WS2 claim fence does not treat it "
+            "as a new task-state source."
+        )
+        # Bound fact-stream readers must not write the event file or append
+        # new fact events; that is the role of _append_execution_event only.
+        for child in ast.walk(node):
+            if isinstance(child, ast.Call):
+                callee = _call_name(child.func)
+                if callee == "AppendFactEventCommandV1" and _contains_string_literal(
+                    child, TASK_RUNTIME_EXECUTION_STREAM
+                ):
+                    offenders.append(
+                        f"{rel}:TaskRuntimeService.{node.name}() at line "
+                        f"{child.lineno} appends task_runtime.execution facts; "
+                        "fact-stream readers must remain read-only projections."
+                    )
+            elif isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute):
+                method = child.func.attr
+                if method in TASK_RUNTIME_EXECUTION_DIRECT_WRITE_METHODS and _contains_string_literal(
+                    child, TASK_RUNTIME_EXECUTION_EVENT_FILE
+                ):
+                    offenders.append(
+                        f"{rel}:TaskRuntimeService.{node.name}() at line "
+                        f"{child.lineno} writes task_runtime.execution.jsonl "
+                        "directly; fact-stream readers must remain read-only."
+                    )
+
+    assert not offenders, (
+        "WS2 claim fact-stream reader containment fence: "
+        "New helpers in "
+        f"{rel} that query the task_runtime.execution Fact Stream must be "
+        "added to CLAIM_EXECUTION_FACT_STREAM_READER_ALLOWLIST as read-only "
+        "projections, and must not append new fact events or write the "
+        "event file directly. Do not weaken the existing raw-board "
+        "read/write allowlists to satisfy this fence. Offenders:\n" + "\n".join(offenders)
     )

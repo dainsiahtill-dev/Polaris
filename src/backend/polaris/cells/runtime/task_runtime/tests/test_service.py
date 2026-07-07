@@ -2781,3 +2781,175 @@ def test_refresh_dependency_unblocks_overlays_execution_fact_status(tmp_path: Pa
     persisted_child = json.loads(_task_file_path(workspace, child_id).read_text(encoding="utf-8"))
     assert persisted_child["status"] == "pending"
     assert persisted_child["blocked_by"] == []
+
+
+def test_claim_execution_rejects_stale_pending_row_with_terminal_execution_fact(
+    tmp_path: Path,
+) -> None:
+    """``claim_execution(task_id)`` must reject a stale pending file row when
+    the latest ``task_runtime.execution`` fact for the same task is terminal,
+    without mutating the file row.
+
+    Regression: a direct ``claim_execution(task_id)`` call used to consult only
+    the file-backed ``TaskBoard`` row. If an external orchestrator appended a
+    terminal fact (e.g. ``completed``) without going through
+    ``complete_execution``, the raw row stayed ``pending`` and the claim would
+    silently re-acquire a task whose authoritative state is already terminal.
+    The direct claim path must treat the latest execution fact as
+    authoritative and reject the claim with ``task_terminal`` while leaving the
+    stale file row untouched (read-model veto, not a hidden mutation).
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(subject="claim direct rejects stale pending over terminal fact")
+    created_id = int(created["id"])
+
+    # Sanity: the file row is initially ready/pending and no terminal fact exists.
+    initial_ready = service.list_ready_task_rows()
+    assert [int(row["id"]) for row in initial_ready] == [created_id]
+    assert initial_ready[0]["status"] == "pending"
+
+    # Append a newer terminal fact WITHOUT going through the service APIs.
+    # ``complete_execution`` is intentionally NOT called and no session file
+    # exists on disk; the file row stays stale/pending.
+    _append_terminal_fact_event(
+        workspace,
+        task_id=str(created_id),
+        event_type="completed",
+        status="completed",
+        run_id="run-fact-completed-claim-direct",
+    )
+
+    # File row on disk is still pending; observable model is terminal.
+    on_disk = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
+    assert on_disk["status"] == "pending"
+    observable = service.list_observable_task_rows()
+    matching = [row for row in observable if int(row["id"]) == created_id]
+    assert matching, "observable rows must still surface the task id"
+    assert matching[0]["status"] == "completed"
+
+    claimed = service.claim_execution(
+        created_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-claim-direct-over-terminal-fact",
+        selection_source="task_id_lookup",
+    )
+
+    assert claimed["success"] is False
+    assert claimed["reason"] == "task_terminal"
+    # The returned task row is the projected fact row — its status reflects the
+    # terminal verdict from the execution fact stream.
+    assert isinstance(claimed.get("task"), dict)
+    assert claimed["task"]["status"] == "completed"
+    # The rejection must surface that the execution fact is authoritative so
+    # callers can distinguish read-model vetoes from raw-row terminal states.
+    assert claimed.get("execution_fact_authoritative") is True
+    assert claimed.get("source") == "task_runtime.execution_fact"
+    assert claimed.get("fact_status") == "completed"
+
+    # The raw file row must remain pending: this is a read-model veto, not a
+    # hidden mutation. The next ``complete_execution`` / ``reopen`` flow is
+    # still free to act on the file row.
+    persisted = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
+    assert persisted["status"] == "pending", (
+        "claim_execution must not mutate the file row when the rejection is "
+        "anchored on the execution fact stream; the raw row stays pending so "
+        "the eventual owner path can run the sanctioned state transition"
+    )
+
+
+def test_claim_execution_refreshes_dependency_unblocks_from_execution_fact(
+    tmp_path: Path,
+) -> None:
+    """``claim_execution(child_id)`` must refresh dependency unblocks before
+    reading the child row, so a child whose parent is only complete in the
+    latest ``task_runtime.execution`` fact becomes directly claimable.
+
+    Regression: the direct ``claim_execution(task_id)`` path used to skip the
+    ``refresh_dependency_unblocks`` projection, so a child blocked against a
+    parent that completed only via the fact stream would be rejected with
+    ``task_blocked`` even though the parent was already complete. The direct
+    path now refreshes first, then claims, so the child row reaches
+    ``in_progress`` in a single call.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    # Parent file row stays at status="pending" — never claimed, never
+    # completed through the service APIs.
+    parent = service.create_task_row(subject="fact-only completed parent for direct claim")
+    parent_id = int(parent["id"])
+    # Child is created with blocked_by=[parent_id], so the on-disk child row
+    # is status="blocked" with blocked_by=[parent_id].
+    child = service.create_task_row(
+        subject="child blocked on fact-completed parent",
+        blocked_by=[parent_id],
+    )
+    child_id = int(child["id"])
+
+    # Sanity: the on-disk child row is blocked against the pending parent and
+    # no terminal fact exists yet.
+    raw_parent = json.loads(_task_file_path(workspace, parent_id).read_text(encoding="utf-8"))
+    raw_child = json.loads(_task_file_path(workspace, child_id).read_text(encoding="utf-8"))
+    assert raw_parent["status"] == "pending"
+    assert raw_child["status"] == "blocked"
+    assert raw_child["blocked_by"] == [parent_id]
+
+    # Append a terminal execution fact for the parent WITHOUT going through the
+    # service APIs. The file row stays stale/pending on disk.
+    _append_terminal_fact_event(
+        workspace,
+        task_id=str(parent_id),
+        event_type="completed",
+        status="completed",
+        run_id="run-fact-completed-parent-direct-claim",
+    )
+
+    # File row on disk still pending; observable model says the parent is
+    # completed. ``list_observable_task_rows`` already triggers the dependency
+    # refresh internally, so the child also projects as ``pending`` in the
+    # observable view — but the file row on disk is still ``blocked``.
+    on_disk_parent = json.loads(_task_file_path(workspace, parent_id).read_text(encoding="utf-8"))
+    assert on_disk_parent["status"] == "pending"
+    on_disk_child = json.loads(_task_file_path(workspace, child_id).read_text(encoding="utf-8"))
+    assert on_disk_child["status"] == "blocked", (
+        "claim_execution must be the path that triggers the unblock refresh on "
+        "the file row; until then the persisted child row stays blocked"
+    )
+    observable = {int(row["id"]): row for row in service.list_observable_task_rows()}
+    assert observable[parent_id]["status"] == "completed"
+    assert observable[child_id]["status"] == "pending"
+
+    # Direct ``claim_execution(child_id)`` must refresh dependency unblocks
+    # first, see the parent as completed via the fact overlay, unblock the
+    # child, and then claim it in one call.
+    claimed = service.claim_execution(
+        child_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-claim-child-direct",
+        selection_source="task_id_lookup",
+    )
+
+    assert claimed["success"] is True, (
+        "claim_execution must refresh dependency unblocks before checking "
+        "dependencies so a fact-only-completed parent unblocks the child; got "
+        f"{claimed!r}"
+    )
+    assert claimed["reason"] == "claimed"
+    assert isinstance(claimed.get("task"), dict)
+    assert int(claimed["task"]["id"]) == child_id
+    assert claimed["task"]["status"] == "in_progress"
+
+    # Persisted child row must reach ``in_progress`` and have its blockers
+    # cleared: refresh_dependency_unblocks cleared ``blocked_by`` to ``[]``
+    # and the subsequent claim step moved the row to ``in_progress``.
+    persisted_child = json.loads(_task_file_path(workspace, child_id).read_text(encoding="utf-8"))
+    assert persisted_child["status"] == "in_progress"
+    assert persisted_child["blocked_by"] == []
