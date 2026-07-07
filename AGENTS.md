@@ -441,6 +441,21 @@ claude -p "<完整任务提示词>" \
 
 默认派工策略是 **implementation-first for bounded work**：当账本项已经有明确根因、授权文件范围、验收命令和无交叉依赖时，主 Agent 必须优先派 `mode=implementation` Sub-Agent 直接修改代码/测试/文档，而不是只让外部 Agent 审计。`mode=audit` 只适用于边界尚未确定、需要先确认事实源、跨 Cell 共享接口仍未定、或可能与其他正在运行的 Agent 冲突的高风险阶段。审计完成后如果形成了互斥范围，下一轮必须转为 `mode=implementation` 或由主 Agent 亲自收敛，禁止长期停留在“只审计不落地”。
 
+### Principal Architect 生产级执行标准
+
+所有 `mode=implementation` Sub-Agent 都必须按 Principal Architect 标准执行，而不是按临时补丁工模式执行：
+
+1. 修改前必须先形成架构蓝图，并在 JSON 报告的 `architecture_blueprint` 中说明系统拓扑、模块职责、核心数据流、状态转移和关键技术取舍。
+2. 实现必须是完整生产级交付，禁止占位、伪代码、演示分支、空壳符号、`TODO`、`NotImplemented`、无意义 `pass` 或“后续补齐”。
+3. 公共接口必须具备清晰类型注解、契约边界和错误语义；Python 代码必须遵循现代 PEP 8、Ruff/Black 约束，优先通过 `mypy --strict` 或项目等价严格门禁。
+4. 核心逻辑必须与 I/O、配置、存储、网络、框架和 CLI/HTTP 适配层解耦，保持高内聚、低耦合、单一职责、可替换和可测试。
+5. 错误处理必须捕获具体异常并保留可定位上下文；禁止裸 `except`、吞异常、静默 fallback、硬编码成功或把失败改写为通过。
+6. 必须显式考虑空值、非法输入、重复调用、幂等性、并发安全、资源释放、跨平台路径、权限边界和回滚/恢复路径。
+7. 报告必须包含 `complexity_analysis`，说明关键逻辑时间复杂度、空间复杂度、潜在性能瓶颈和未来优化方向。
+8. 测试必须覆盖 Happy Path、Edge Cases、Exceptions 和 Regression；不得用 mock/fake 替代任务要求验证的真实平台路径。
+9. 报告必须包含 `self_check`，至少声明：无占位实现、无越界修改、类型/格式/测试门禁结果、剩余风险和是否需要主 Agent 合并复核。
+10. 若任务边界不足以安全写代码，Sub-Agent 必须返回 `status=blocked` 并说明缺口；不得猜测授权范围或扩大 scope。
+
 ```bash
 claude -p "<Agent 01 完整提示词>" --dangerously-skip-permissions --output-format json --json-schema '<JSON_SCHEMA>' > /tmp/polaris-subagent-<batch>-01.json &
 claude -p "<Agent 02 完整提示词>" --dangerously-skip-permissions --output-format json --json-schema '<JSON_SCHEMA>' > /tmp/polaris-subagent-<batch>-02.json &
@@ -471,6 +486,10 @@ OpenCode 兼容路径只允许在 Claude CLI 不可用或用户显式要求时�
     "commands_run",
     "findings",
     "risks",
+    "architecture_blueprint",
+    "complexity_analysis",
+    "testing_evidence",
+    "self_check",
     "next_action"
   ],
   "properties": {
@@ -495,6 +514,10 @@ OpenCode 兼容路径只允许在 Claude CLI 不可用或用户显式要求时�
     },
     "findings": {"type": "array", "items": {"type": "string"}},
     "risks": {"type": "array", "items": {"type": "string"}},
+    "architecture_blueprint": {"type": "string"},
+    "complexity_analysis": {"type": "string"},
+    "testing_evidence": {"type": "array", "items": {"type": "string"}},
+    "self_check": {"type": "array", "items": {"type": "string"}},
     "next_action": {"type": "string"}
   }
 }
@@ -603,11 +626,12 @@ Claude CLI 的 `--output-format json` stdout 是 Claude 执行 envelope，不一
 8. 最终必须按调用方提供的 JSON schema 输出执行报告，并由调用方落盘到 /tmp/polaris-subagent-<batch>-<id>.json。
 9. 充分使用codegraph。
 10. 所有文本读写必须显式使用 UTF-8。
-11. 必须交付生产级完整实现：禁止占位、伪代码、演示代码、空壳符号、未实现分支或“后续补齐”。
-12. Python 代码必须具备清晰类型注解、具体异常处理、可定位错误信息和必要的 Google Style docstring；禁止裸异常捕获、吞异常、静默 fallback。
-13. 核心逻辑必须与 I/O、配置、存储、网络、框架细节解耦；优先高内聚、低耦合、单一职责。
-14. 必须覆盖 Happy Path、Edge Cases、Exceptions、Regression；不得用 mock/fake 替代任务要求验证的真实平台路径。
-15. 报告中必须说明关键逻辑的时间复杂度、空间复杂度、性能瓶颈、剩余风险和自检结果。
+11. 动代码前必须先形成架构蓝图，并在 JSON `architecture_blueprint` 中记录系统拓扑、模块职责、数据流、状态转移和技术取舍。
+12. 必须交付生产级完整实现：禁止占位、伪代码、演示代码、空壳符号、未实现分支或“后续补齐”。
+13. Python 代码必须具备清晰类型注解、具体异常处理、可定位错误信息和必要的 Google Style docstring；禁止裸异常捕获、吞异常、静默 fallback。
+14. 核心逻辑必须与 I/O、配置、存储、网络、框架细节解耦；优先高内聚、低耦合、单一职责。
+15. 必须覆盖 Happy Path、Edge Cases、Exceptions、Regression；不得用 mock/fake 替代任务要求验证的真实平台路径。
+16. 报告中必须说明关键逻辑的时间复杂度、空间复杂度、性能瓶颈、剩余风险和自检结果。
 
 任务目标：
 <这个 Agent 独立负责的缺口>
@@ -654,6 +678,10 @@ Claude CLI 的 `--output-format json` stdout 是 Claude 执行 envelope，不一
   ],
   "findings": [],
   "risks": [],
+  "architecture_blueprint": "...",
+  "complexity_analysis": "...",
+  "testing_evidence": [],
+  "self_check": [],
   "next_action": "..."
 }
 ```
