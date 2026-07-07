@@ -1437,9 +1437,69 @@ export {
         encoding="utf-8",
     )
 
-    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/main.ts"])
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["src/main.ts"])
 
-    assert any("isolatedModules requires `export type` for Firefly" in error for error in errors)
+    assert any("isolatedModules requires `export type` for Firefly" in error for error in evidence.errors)
+
+    reexport_issues = [
+        issue
+        for issue in evidence.issues
+        if issue.code == "typescript_isolated_modules_type_reexport"
+    ]
+    assert reexport_issues, "file-level scanner must emit typed typescript_isolated_modules_type_reexport issue"
+    assert len(reexport_issues) == 1
+
+    reexport_issue: ArtifactQualityIssue = reexport_issues[0]
+    assert reexport_issue.source == "typescript_syntax_red_flag_scanner"
+    assert reexport_issue.path == "src/main.ts"
+    assert reexport_issue.severity == "error"
+    assert reexport_issue.line is None
+    assert reexport_issue.column is None
+
+    metadata = dict(reexport_issue.metadata or {})
+    assert metadata["export_name"] == "Firefly"
+    assert metadata["path"] == "src/main.ts"
+    assert metadata["diagnostic_kind"] == "typescript_isolated_modules_type_reexport"
+    assert "isolatedModules requires `export type` for Firefly" in str(metadata.get("raw") or "")
+
+    assert evidence.errors[0] == reexport_issue.metadata["raw"]
+
+
+def test_artifact_quality_issues_from_errors_projects_isolated_modules_type_reexport() -> None:
+    """Public projection must classify scanner metadata without message parsing."""
+
+    projected = artifact_quality_issues_from_errors(
+        [
+            {
+                "message": "scanner-owned structured payload",
+                "path": "src/main.ts",
+                "source": "typescript_syntax_red_flag_scanner",
+                "metadata": {
+                    "raw": "Artifact quality scan failed: TypeScript isolatedModules requires "
+                    "`export type` for Firefly in src/main.ts",
+                    "path": "src/main.ts",
+                    "export_name": "Firefly",
+                    "diagnostic_kind": "typescript_isolated_modules_type_reexport",
+                },
+            }
+        ]
+    )
+
+    assert [payload["code"] for payload in projected] == ["typescript_isolated_modules_type_reexport"]
+
+    projected_issue = projected[0]
+    assert projected_issue["source"] == "typescript_syntax_red_flag_scanner"
+    assert projected_issue["path"] == "src/main.ts"
+    assert projected_issue["severity"] == "error"
+
+    projected_metadata = dict(projected_issue["metadata"] or {})
+    assert projected_metadata["export_name"] == "Firefly"
+    assert projected_metadata["path"] == "src/main.ts"
+    assert projected_metadata["diagnostic_kind"] == "typescript_isolated_modules_type_reexport"
+    assert projected_metadata["raw"] == (
+        "Artifact quality scan failed: TypeScript isolatedModules requires "
+        "`export type` for Firefly in src/main.ts"
+    )
 
 
 def test_scan_allows_node_builtin_import_when_node_types_declared(tmp_path: Path) -> None:

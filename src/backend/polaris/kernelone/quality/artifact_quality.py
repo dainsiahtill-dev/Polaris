@@ -616,6 +616,11 @@ def _artifact_quality_issue_code_from_typed_metadata(
         and source_token == "typescript_syntax_red_flag_scanner"
     ):
         return "typescript_return_object_semicolon_property"
+    if (
+        diagnostic_kind == "typescript_isolated_modules_type_reexport"
+        and source_token == "typescript_syntax_red_flag_scanner"
+    ):
+        return "typescript_isolated_modules_type_reexport"
     return ""
 
 
@@ -1878,7 +1883,10 @@ def _scan_typescript_syntax_red_flag_evidence(
                     error=error,
                     code="typescript_isolated_modules_type_reexport",
                     relative_path=relative_path,
-                    metadata={"export_name": type_export_error},
+                    metadata={
+                        "export_name": type_export_error,
+                        "diagnostic_kind": "typescript_isolated_modules_type_reexport",
+                    },
                 ),
             ),
         )
