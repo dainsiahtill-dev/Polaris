@@ -594,6 +594,12 @@ def _artifact_quality_issue_code_from_typed_metadata(
         and script_issue_source == "npm_script_config_scanner"
     ):
         return "npm_script_missing_local_config"
+    if (
+        script_issue == "missing_local_entrypoint"
+        and source_token == "npm_script_entrypoint_scanner"
+        and script_issue_source == "npm_script_entrypoint_scanner"
+    ):
+        return "npm_script_missing_local_entrypoint"
 
     diagnostic_kind = str(metadata.get("diagnostic_kind") or "").strip()
     language = str(metadata.get("language") or "").strip().lower()
@@ -2507,6 +2513,8 @@ def _npm_script_missing_local_entrypoint_issue(
         metadata={
             "raw": str(error or "").strip(),
             "manifest_path": relative_path,
+            "script_issue": "missing_local_entrypoint",
+            "script_issue_source": "npm_script_entrypoint_scanner",
             "script_name": script_name,
             "entrypoint": entrypoint,
         },

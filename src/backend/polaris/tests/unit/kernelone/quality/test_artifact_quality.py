@@ -662,6 +662,43 @@ def test_artifact_quality_issues_from_errors_projects_npm_script_missing_local_c
     assert projected_metadata["manifest_path"] == "package.json"
 
 
+def test_artifact_quality_issues_from_errors_projects_npm_script_missing_local_entrypoint() -> None:
+    """Public projection must classify scanner metadata without message parsing."""
+
+    projected = artifact_quality_issues_from_errors(
+        [
+            {
+                "message": "scanner-owned structured payload",
+                "path": "package.json",
+                "source": "npm_script_entrypoint_scanner",
+                "metadata": {
+                    "raw": "human display only",
+                    "manifest_path": "package.json",
+                    "script_issue": "missing_local_entrypoint",
+                    "script_issue_source": "npm_script_entrypoint_scanner",
+                    "script_name": "start",
+                    "entrypoint": "dist/main.js",
+                },
+            }
+        ]
+    )
+
+    assert [payload["code"] for payload in projected] == ["npm_script_missing_local_entrypoint"]
+
+    projected_issue = projected[0]
+    assert projected_issue["source"] == "npm_script_entrypoint_scanner"
+    assert projected_issue["path"] == "package.json"
+    assert projected_issue["severity"] == "error"
+
+    projected_metadata = dict(projected_issue["metadata"] or {})
+    assert projected_metadata["script_issue"] == "missing_local_entrypoint"
+    assert projected_metadata["script_issue_source"] == "npm_script_entrypoint_scanner"
+    assert projected_metadata["script_name"] == "start"
+    assert projected_metadata["entrypoint"] == "dist/main.js"
+    assert projected_metadata["manifest_path"] == "package.json"
+    assert projected_metadata["raw"] == "human display only"
+
+
 def test_scan_detects_standalone_manifest_check_passed_test_script(tmp_path: Path) -> None:
     target = tmp_path / "package.json"
     target.write_text(
@@ -700,9 +737,32 @@ def test_scan_detects_start_script_missing_local_entrypoint(tmp_path: Path) -> N
         encoding="utf-8",
     )
 
-    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["package.json"])
 
-    assert any("references missing local entrypoint 'dist/main.js'" in error for error in errors)
+    assert any("references missing local entrypoint 'dist/main.js'" in error for error in evidence.errors)
+
+    entrypoint_issues = [
+        issue
+        for issue in evidence.issues
+        if issue.code == "npm_script_missing_local_entrypoint"
+        and dict(issue.metadata or {}).get("script_name") == "start"
+    ]
+    assert len(entrypoint_issues) == 1
+
+    entrypoint_issue: ArtifactQualityIssue = entrypoint_issues[0]
+    assert entrypoint_issue.source == "npm_script_entrypoint_scanner"
+    assert entrypoint_issue.path == "package.json"
+    assert entrypoint_issue.severity == "error"
+    assert entrypoint_issue.line is None
+    assert entrypoint_issue.column is None
+
+    metadata = dict(entrypoint_issue.metadata or {})
+    assert metadata["script_issue"] == "missing_local_entrypoint"
+    assert metadata["script_issue_source"] == "npm_script_entrypoint_scanner"
+    assert metadata["script_name"] == "start"
+    assert metadata["entrypoint"] == "dist/main.js"
+    assert metadata["manifest_path"] == "package.json"
+    assert "references missing local entrypoint 'dist/main.js'" in str(metadata.get("raw") or "")
 
 
 def test_scan_detects_start_script_direct_tsc_then_missing_dist_entrypoint(tmp_path: Path) -> None:
