@@ -641,6 +641,11 @@ def _artifact_quality_issue_code_from_typed_metadata(
         and source_token == "typescript_syntax_red_flag_scanner"
     ):
         return "typescript_zod_type_class_collision"
+    if (
+        diagnostic_kind == "typescript_import_unresolved_symbol"
+        and source_token == "typescript_symbol_coherence_scanner"
+    ):
+        return "typescript_import_unresolved_symbol"
     return ""
 
 
@@ -3332,6 +3337,7 @@ def _typescript_symbol_coherence_quality_issue(
             "exporter_path": exporter_path,
             "specifier": specifier,
             "imported_symbol": imported_symbol,
+            "diagnostic_kind": "typescript_import_unresolved_symbol",
         },
     )
 

@@ -957,17 +957,50 @@ def test_artifact_quality_evidence_uses_direct_typescript_symbol_coherence_issue
     issue = next(item for item in evidence.issues if item.code == "typescript_import_unresolved_symbol")
     assert issue.source == "typescript_symbol_coherence_scanner"
     assert issue.path == "index.ts"
-    assert issue.metadata == {
-        "raw": (
-            "Artifact quality scan failed: unresolved import symbol 'Missing' "
-            "from './sibling' in index.ts (sibling module does not define it)"
-        ),
-        "importer_path": "index.ts",
-        "exporter_path": "sibling.ts",
-        "specifier": "./sibling",
-        "imported_symbol": "Missing",
-    }
-    assert issue.metadata["raw"] in evidence.errors
+    metadata = dict(issue.metadata)
+    assert metadata["raw"] == (
+        "Artifact quality scan failed: unresolved import symbol 'Missing' "
+        "from './sibling' in index.ts (sibling module does not define it)"
+    )
+    assert metadata["importer_path"] == "index.ts"
+    assert metadata["exporter_path"] == "sibling.ts"
+    assert metadata["specifier"] == "./sibling"
+    assert metadata["imported_symbol"] == "Missing"
+    assert metadata["diagnostic_kind"] == "typescript_import_unresolved_symbol"
+    assert metadata["raw"] in evidence.errors
+
+
+def test_artifact_quality_issue_projection_maps_typescript_import_unresolved_symbol_diagnostic_kind() -> None:
+    """Stable scanner metadata must classify without depending on message text."""
+
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "path": "index.ts",
+                "source": "typescript_symbol_coherence_scanner",
+                # Message intentionally omits the legacy hint phrase so the
+                # classifier cannot fall back to message-text matching.
+                "message": "scanner reported an unresolved symbol imported across modules",
+                "metadata": {
+                    "diagnostic_kind": "typescript_import_unresolved_symbol",
+                    "importer_path": "index.ts",
+                    "exporter_path": "sibling.ts",
+                    "specifier": "./sibling",
+                    "imported_symbol": "Missing",
+                },
+            },
+        )
+    )
+
+    assert len(issues) == 1
+    assert issues[0]["code"] == "typescript_import_unresolved_symbol"
+    assert issues[0]["path"] == "index.ts"
+    assert issues[0]["source"] == "typescript_symbol_coherence_scanner"
+    assert issues[0]["metadata"]["diagnostic_kind"] == "typescript_import_unresolved_symbol"
+    assert issues[0]["metadata"]["importer_path"] == "index.ts"
+    assert issues[0]["metadata"]["exporter_path"] == "sibling.ts"
+    assert issues[0]["metadata"]["specifier"] == "./sibling"
+    assert issues[0]["metadata"]["imported_symbol"] == "Missing"
 
 
 def test_artifact_quality_evidence_uses_direct_npm_script_missing_config_issue(tmp_path: Path) -> None:
