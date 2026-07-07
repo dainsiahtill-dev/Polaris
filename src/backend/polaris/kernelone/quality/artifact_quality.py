@@ -651,6 +651,11 @@ def _artifact_quality_issue_code_from_typed_metadata(
         and source_token == "typescript_project_typecheck"
     ):
         return "typescript_project_typecheck_failed"
+    if (
+        diagnostic_kind == "npm_script_node_test_directory_target"
+        and source_token == "npm_script_test_target_scanner"
+    ):
+        return "npm_script_node_test_directory_target"
     return ""
 
 
@@ -2644,6 +2649,7 @@ def _npm_script_node_test_directory_target_issue(
             "target_directory": target_directory,
             "script_issue": "node_test_directory_target",
             "script_issue_source": "npm_script_test_target_scanner",
+            "diagnostic_kind": "npm_script_node_test_directory_target",
         },
     )
 

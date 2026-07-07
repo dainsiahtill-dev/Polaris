@@ -1362,15 +1362,48 @@ def test_artifact_quality_evidence_uses_direct_npm_script_test_directory_issue(t
     assert issue.code == "npm_script_node_test_directory_target"
     assert issue.source == "npm_script_test_target_scanner"
     assert issue.path == "package.json"
-    # Typed metadata captures the failing script, the directory it targeted,
-    # and the typed classification that downstream gates consume.
     assert metadata["script_name"] == "test"
     assert metadata["target_directory"] == "tests"
     assert metadata["script_issue"] == "node_test_directory_target"
     assert metadata["script_issue_source"] == "npm_script_test_target_scanner"
+    assert metadata["diagnostic_kind"] == "npm_script_node_test_directory_target"
     # Preserve the legacy context fields required by callers that key on them.
     assert metadata["manifest_path"] == "package.json"
     assert metadata["raw"] == evidence.errors[0]
+
+
+def test_artifact_quality_issue_projection_maps_npm_script_node_test_directory_target_diagnostic_kind() -> None:
+    """Stable scanner metadata must classify without depending on message text."""
+
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "path": "package.json",
+                "source": "npm_script_test_target_scanner",
+                "message": "scanner reported a test script targeting a directory",
+                "metadata": {
+                    "diagnostic_kind": "npm_script_node_test_directory_target",
+                    "script_name": "test",
+                    "target_directory": "tests",
+                    "script_issue": "node_test_directory_target",
+                    "script_issue_source": "npm_script_test_target_scanner",
+                    "manifest_path": "package.json",
+                },
+            },
+        )
+    )
+
+    assert len(issues) == 1
+    assert issues[0]["code"] == "npm_script_node_test_directory_target"
+    assert issues[0]["path"] == "package.json"
+    assert issues[0]["source"] == "npm_script_test_target_scanner"
+    metadata = dict(issues[0]["metadata"])
+    assert metadata["diagnostic_kind"] == "npm_script_node_test_directory_target"
+    assert metadata["script_name"] == "test"
+    assert metadata["target_directory"] == "tests"
+    assert metadata["script_issue"] == "node_test_directory_target"
+    assert metadata["script_issue_source"] == "npm_script_test_target_scanner"
+    assert metadata["manifest_path"] == "package.json"
 
 
 def test_typescript_import_scanner_ignores_fixture_string_imports(tmp_path: Path) -> None:
