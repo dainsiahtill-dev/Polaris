@@ -1006,7 +1006,32 @@ class TaskRuntimeService:
         raise RuntimeError("TaskRuntimeService.list_all is retired; use list_task_rows()")
 
     def list_task_rows(self, *, include_terminal: bool = True) -> list[dict[str, Any]]:
+        """Return the canonical file-backed task rows.
+
+        ``refresh_dependency_unblocks()`` is called first so that any stale
+        ``blocked`` state is normalized against the latest
+        ``task_runtime.execution`` fact projection before the rows are returned.
+        The row construction itself delegates to ``_list_file_task_rows`` so
+        that other service methods can rebuild file-backed rows without
+        recursively re-entering this refresh path.
+        """
+
         self.refresh_dependency_unblocks()
+        return self._list_file_task_rows(include_terminal=include_terminal)
+
+    def _list_file_task_rows(self, *, include_terminal: bool = True) -> list[dict[str, Any]]:
+        """Return file-backed task rows without triggering ``refresh_dependency_unblocks``.
+
+        This helper is the recursion-free source of truth for file-backed row
+        projection: it preserves the existing ``include_terminal`` filtering and
+        sort behaviour that ``list_task_rows`` relied on, while letting
+        ``list_observable_task_rows`` and ``refresh_dependency_unblocks`` skip
+        the recursive refresh side effect.
+
+        Complexity:
+            O(t log t) time where t is the number of file-backed rows.
+        """
+
         rows: list[dict[str, Any]] = []
         for task in self._board.list_all():
             row = self._augment_task_row(task.to_dict())
@@ -1016,6 +1041,47 @@ class TaskRuntimeService:
             rows.append(row)
         rows.sort(key=self._row_sort_key)
         return rows
+
+    def _fact_overlaid_dependency_status_rows(self) -> dict[int, TaskStatus]:
+        """Return ``task_id -> TaskStatus`` using the fact-overlay-aware read model.
+
+        This projection overlays the latest ``task_runtime.execution`` facts
+        onto the file-backed rows without calling ``list_task_rows`` (which
+        triggers ``refresh_dependency_unblocks``) or
+        ``list_observable_task_rows`` (which itself refreshes). Callers that
+        need to mutate persisted tasks still iterate the
+        ``TaskBoard.list_all()`` output; this helper only provides the status
+        anchor they should consult for dependency decisions.
+
+        Unknown or non-terminal fact statuses fall back to the file-backed
+        status so that the dependency decision matches what a downstream
+        caller would observe.
+        """
+
+        file_rows = self._list_file_task_rows()
+        fact_rows = self.list_task_rows_from_execution_facts()
+        overlay_source: list[dict[str, Any]] = list(file_rows)
+        if fact_rows:
+            overlay_source = self._overlay_execution_fact_rows(list(file_rows), fact_rows)
+
+        status_by_id: dict[int, TaskStatus] = {}
+        for row in overlay_source:
+            task_id = self.normalize_task_id(row.get("id"))
+            if task_id is None:
+                continue
+            status_token = str(row.get("status") or "").strip().lower()
+            if not status_token:
+                continue
+            try:
+                status_by_id[task_id] = TaskStatus(status_token)
+            except ValueError:
+                logger.debug(
+                    "Skipping unknown dependency status token from overlay for task_id=%s: %r",
+                    task_id,
+                    status_token,
+                )
+                continue
+        return status_by_id
 
     def list_task_rows_from_execution_facts(self, *, limit: int = 500) -> list[dict[str, Any]]:
         """Return latest task-row read models from ``task_runtime.execution`` facts.
@@ -1103,11 +1169,16 @@ class TaskRuntimeService:
             transitions, or repair actions. Execution paths that need to select
             or mutate work must continue to call the explicit row/session APIs.
 
+        The implementation refreshes dependency unblocks directly (instead of
+        routing through ``list_task_rows``) so that the file-backed row
+        projection stays free of a recursive refresh.
+
         Complexity:
             O(r + f) time and memory over file-backed rows and latest fact rows.
         """
 
-        rows = self.list_task_rows()
+        self.refresh_dependency_unblocks()
+        rows = self._list_file_task_rows()
         fact_rows = self.list_task_rows_from_execution_facts()
         if not rows:
             return fact_rows
@@ -1850,7 +1921,15 @@ class TaskRuntimeService:
         raise RuntimeError("TaskRuntimeService.get_stats is retired; use get_task_row_stats()")
 
     def refresh_dependency_unblocks(self) -> dict[str, Any]:
-        """Normalize stale BLOCKED rows whose dependencies are now complete."""
+        """Normalize stale BLOCKED rows whose dependencies are now complete.
+
+        Dependency status is anchored on the fact-overlay-aware projection
+        (``_fact_overlaid_dependency_status_rows``) so that the latest
+        authoritative ``task_runtime.execution`` completion facts can
+        unblock downstream rows even when the file-backed rows are stale.
+        Iteration still walks persisted ``Task`` objects because the mutation
+        path needs ``TaskBoard.update`` rather than projected dicts.
+        """
 
         changed: list[int] = []
         refreshed: list[int] = []
@@ -1858,7 +1937,13 @@ class TaskRuntimeService:
         execution_events: list[dict[str, Any]] = []
         inspected = 0
         tasks = self._board.list_all()
-        status_by_id = {int(task.id): task.status for task in tasks}
+        status_by_id = self._fact_overlaid_dependency_status_rows()
+        # Backwards-compatible fallback: callers may pass a metadata-derived
+        # dependency token that points at a row absent from the overlay. Make
+        # sure persisted terminal statuses are still visible to the blocker
+        # resolver without leaking unknown status tokens.
+        for task in tasks:
+            status_by_id.setdefault(int(task.id), task.status)
         for task in tasks:
             inspected += 1
             if task.status != TaskStatus.BLOCKED:

@@ -2694,3 +2694,90 @@ def test_claim_next_execution_skips_stale_pending_row_with_terminal_fact(tmp_pat
     assert int(stale_id) not in attempted_ids, (
         f"stale pending row with terminal fact must not appear in claim attempts; got attempts={attempted_ids!r}"
     )
+
+
+def test_refresh_dependency_unblocks_overlays_execution_fact_status(tmp_path: Path) -> None:
+    """``refresh_dependency_unblocks`` must treat a parent as completed when
+    its latest ``task_runtime.execution`` fact says so — even when the file
+    row is left stale/pending and ``complete_execution`` was never called.
+
+    Test setup:
+      * Parent file row stays at ``status=pending`` (never claimed, never
+        completed through the service).
+      * Child is created with ``blocked_by=[parent_id]`` so the on-disk row
+        is ``status=blocked`` with ``blocked_by=[parent_id]``.
+      * A ``task_runtime.execution`` fact is appended for the parent whose
+        payload carries ``event_type="completed"`` /
+        ``status="completed"`` / ``execution_state="completed"`` plus a
+        full ``task_row_snapshot`` so the projection is consistent.
+    Expected:
+      * ``refresh_dependency_unblocks()`` unblocks the child:
+        ``unblocked_task_ids`` contains the child id, the persisted file
+        row moves to ``pending`` with ``blocked_by=[]``, and a
+        ``dependencies_unblocked`` execution event is recorded.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    parent = service.create_task_row(subject="fact-only completed parent")
+    parent_id = str(parent["id"])
+    child = service.create_task_row(
+        subject="child blocked on fact-completed parent",
+        blocked_by=[parent["id"]],
+    )
+    child_id = int(child["id"])
+
+    # Sanity: the on-disk child row is blocked against the pending parent.
+    raw_parent = json.loads(_task_file_path(workspace, parent_id).read_text(encoding="utf-8"))
+    raw_child = json.loads(_task_file_path(workspace, child_id).read_text(encoding="utf-8"))
+    assert raw_parent["status"] == "pending"
+    assert raw_child["status"] == "blocked"
+    assert raw_child["blocked_by"] == [parent["id"]]
+
+    # Append a terminal execution fact for the parent WITHOUT going through
+    # the service APIs — the file row stays stale/pending on disk.
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="completed",
+            source="runtime.task_runtime",
+            task_id=parent_id,
+            run_id="run-fact-completed-parent",
+            payload={
+                "task_id": parent_id,
+                "run_id": "run-fact-completed-parent",
+                "event_type": "completed",
+                "status": "completed",
+                "execution_state": "completed",
+                "session_id": "session-fact-completed",
+                "task_row_snapshot": {
+                    "id": parent_id,
+                    "task_id": parent_id,
+                    "subject": parent["subject"],
+                    "description": parent.get("description", ""),
+                    "priority": "HIGH",
+                    "metadata": {"source": "task_runtime.row_snapshot"},
+                },
+            },
+        )
+    )
+
+    refresh = service.refresh_dependency_unblocks()
+
+    assert child_id in refresh["unblocked_task_ids"], (
+        f"child must be unblocked once parent fact projects as completed; got "
+        f"unblocked_task_ids={refresh['unblocked_task_ids']!r}"
+    )
+    assert refresh["unblocked_count"] == 1
+    matching_events = [
+        event for event in refresh["execution_events"] if event.get("event_type") == "dependencies_unblocked"
+    ]
+    assert matching_events, "refresh must record a dependencies_unblocked execution event"
+    assert matching_events[0]["ok"] is True
+
+    persisted_child = json.loads(_task_file_path(workspace, child_id).read_text(encoding="utf-8"))
+    assert persisted_child["status"] == "pending"
+    assert persisted_child["blocked_by"] == []

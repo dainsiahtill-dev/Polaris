@@ -169,6 +169,7 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
     ("_dependent_rows_blocked_by", "list_all"): 1,
     ("_find_terminal_session_snapshot", "get"): 1,
     ("_get_task_by_external_task_id", "list_all"): 1,
+    ("_list_file_task_rows", "list_all"): 1,
     ("_task_has_unresolved_dependencies", "get"): 1,
     ("cancel_task_row_for_deduplication", "get"): 1,
     ("claim_execution", "get"): 1,
@@ -176,7 +177,6 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
     ("fail_execution", "get"): 1,
     ("fail_task_row_from_role_adapter", "get"): 1,
     ("get_task", "get"): 1,
-    ("list_task_rows", "list_all"): 1,
     ("refresh_dependency_unblocks", "list_all"): 1,
     ("reset_task_rows_for_reexecution", "list_all"): 1,
     ("suspend_active_executions_for_run", "list_all"): 1,
@@ -2750,4 +2750,257 @@ def test_selection_and_readiness_methods_use_observable_rows_not_raw_list() -> N
         "readiness. Direct list_task_rows() calls inside write/mutation paths "
         "and inside list_observable_task_rows() itself remain allowed. "
         "Offenders:\n" + "\n".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# WS2 dependency refresh — fact-aware dependency-status projection
+# ---------------------------------------------------------------------------
+#
+# ``TaskRuntimeService.refresh_dependency_unblocks()`` decides whether a
+# BLOCKED row's dependencies are now resolvable. The decision depends on the
+# authoritative completion status of every dependency. If that status is
+# derived from the raw file-backed ``self._board.list_all()`` snapshot, late
+# ``task_runtime.execution`` completion facts (and any in-flight execution
+# overlay) are silently dropped — the very symptom WS2 is meant to eliminate.
+#
+# The function may still call ``self._board.list_all()`` to walk the persisted
+# ``Task`` objects for the mutation path, but the dependency-status source
+# (``status_by_id`` / equivalent mapping) must come from a fact-aware helper
+# such as ``_fact_overlaid_dependency_status_rows``,
+# ``_list_dependency_status_rows``, or ``list_task_rows_from_execution_facts``.
+#
+# This fence is structural: it locates the mapping assignment by target name
+# pattern (not line number) and checks that its RHS calls a fact-aware helper
+# rather than deriving the mapping purely from the raw ``list_all()`` payload.
+
+REFRESH_DEPENDENCY_UNBLOCKS_FACT_AWARE_HELPERS: frozenset[str] = frozenset(
+    {
+        "_fact_overlaid_dependency_status_rows",
+        "_list_dependency_status_rows",
+        "list_task_rows_from_execution_facts",
+    }
+)
+REFRESH_DEPENDENCY_UNBLOCKS_STATUS_TARGET_TOKENS: frozenset[str] = frozenset(
+    {
+        "status_by_id",
+        "dependency_status",
+        "dependency_status_by_id",
+        "fact_status_by_id",
+        "overlay_status_by_id",
+    }
+)
+
+
+def _refresh_dependency_unblocks_function_def() -> ast.FunctionDef:
+    """Return the ``TaskRuntimeService.refresh_dependency_unblocks`` AST node."""
+
+    source = TASK_RUNTIME_INTERNAL_SERVICE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    parents = _parent_lookup(tree)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if node.name != "refresh_dependency_unblocks":
+            continue
+        enclosing = parents.get(node)
+        if isinstance(enclosing, ast.ClassDef) and enclosing.name == "TaskRuntimeService":
+            return node
+    raise AssertionError(
+        "TaskRuntimeService.refresh_dependency_unblocks() not found in "
+        f"{TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)}"
+    )
+
+
+def _assignment_targets_token(node: ast.Assign, token: str) -> bool:
+    """True if any target of ``node`` is a plain ``Name`` matching ``token``."""
+
+    return any(isinstance(target, ast.Name) and target.id == token for target in node.targets)
+
+
+def _collect_refresh_dependency_unblocks_status_assignments(
+    method_def: ast.FunctionDef,
+) -> list[ast.Assign]:
+    """Return ``ast.Assign`` nodes whose plain-Name target is a dependency-status mapping."""
+
+    matches: list[ast.Assign] = []
+    for node in ast.walk(method_def):
+        if not isinstance(node, ast.Assign):
+            continue
+        for token in REFRESH_DEPENDENCY_UNBLOCKS_STATUS_TARGET_TOKENS:
+            if _assignment_targets_token(node, token):
+                matches.append(node)
+                break
+    return matches
+
+
+def _call_invokes_fact_aware_dependency_helper(node: ast.AST) -> bool:
+    """True if ``node`` (or any child call) invokes a fact-aware helper by name."""
+
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        callee = _call_name(child.func)
+        if not callee:
+            continue
+        # Match the trailing segment so calls like
+        # ``self._fact_overlaid_dependency_status_rows()`` qualify alongside
+        # the bare module-level import path.
+        leaf = callee.rsplit(".", maxsplit=1)[-1]
+        if leaf in REFRESH_DEPENDENCY_UNBLOCKS_FACT_AWARE_HELPERS:
+            return True
+    return False
+
+
+def _expression_derives_mapping_from_raw_list_all(
+    expr: ast.AST,
+    raw_list_all_target: str | None,
+) -> bool:
+    """True if ``expr`` is a dict-comprehension sourced from the ``list_all()`` result.
+
+    Catches the pre-WS2 regression pattern::
+
+        tasks = self._board.list_all()
+        status_by_id = {int(task.id): task.status for task in tasks}
+
+    by binding the variable on the LHS of the ``list_all()`` assignment and
+    detecting a dict-comprehension / generator expression that iterates over
+    that variable. We only flag a mapping whose values come from the raw
+    ``Task`` row, not from a fact-aware helper.
+    """
+
+    if raw_list_all_target is None:
+        return False
+
+    if isinstance(expr, ast.DictComp):
+        return _comprehension_iterates(expr, raw_list_all_target)
+    if isinstance(expr, (ast.ListComp, ast.GeneratorExp, ast.SetComp)):
+        return _comprehension_iterates(expr, raw_list_all_target)
+    if isinstance(expr, ast.Call):
+        callee = _call_name(expr.func)
+        if callee.rsplit(".", maxsplit=1)[-1] in {"dict", "dict.fromkeys"}:
+            for arg in expr.args:
+                if _expression_derives_mapping_from_raw_list_all(arg, raw_list_all_target):
+                    return True
+    return False
+
+
+def _find_list_all_target_name(method_def: ast.FunctionDef, list_all_call: ast.Call) -> str | None:
+    """Find the plain-Name target of the assignment that produced ``list_all_call``."""
+
+    for node in ast.walk(method_def):
+        if not isinstance(node, ast.Assign):
+            continue
+        if node.value is list_all_call:
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    return target.id
+    return None
+
+
+def _comprehension_iterates(node: ast.DictComp | ast.ListComp | ast.SetComp | ast.GeneratorExp, name: str) -> bool:
+    """True if any comprehension clause iterates over the named variable."""
+
+    return any(isinstance(generator.iter, ast.Name) and generator.iter.id == name for generator in node.generators)
+
+
+def _check_refresh_dependency_unblocks_uses_fact_aware_status_source() -> list[str]:
+    """Walk ``refresh_dependency_unblocks`` and emit fence offenders.
+
+    For each mapping assignment whose target matches
+    ``REFRESH_DEPENDENCY_UNBLOCKS_STATUS_TARGET_TOKENS`` the RHS must invoke a
+    fact-aware helper. If the RHS instead derives the mapping from a raw
+    ``self._board.list_all()`` snapshot (dict-comprehension over the
+    ``list_all()`` result, or ``dict(...)`` wrapping the same), the function
+    regresses to the pre-WS2 raw-only dependency view and the assignment is
+    flagged.
+    """
+
+    method_def = _refresh_dependency_unblocks_function_def()
+    offenders: list[str] = []
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+
+    raw_list_all_call: ast.Call | None = None
+    for node in ast.walk(method_def):
+        if not isinstance(node, ast.Call):
+            continue
+        if _call_name(node.func) != "self._board.list_all":
+            continue
+        if raw_list_all_call is None:
+            raw_list_all_call = node
+
+    raw_list_all_target: str | None = None
+    if raw_list_all_call is not None:
+        raw_list_all_target = _find_list_all_target_name(method_def, raw_list_all_call)
+
+    for assignment in _collect_refresh_dependency_unblocks_status_assignments(method_def):
+        if _call_invokes_fact_aware_dependency_helper(assignment.value):
+            continue
+        if raw_list_all_call is not None and _expression_derives_mapping_from_raw_list_all(
+            assignment.value, raw_list_all_target
+        ):
+            target_name = next(
+                target.id
+                for target in assignment.targets
+                if isinstance(target, ast.Name) and target.id in REFRESH_DEPENDENCY_UNBLOCKS_STATUS_TARGET_TOKENS
+            )
+            offenders.append(
+                f"{rel}:TaskRuntimeService.refresh_dependency_unblocks():"
+                f"{assignment.lineno} derives {target_name!r} from raw "
+                "self._board.list_all() instead of a fact-aware dependency "
+                "status helper. Use one of "
+                + ", ".join(sorted(REFRESH_DEPENDENCY_UNBLOCKS_FACT_AWARE_HELPERS))
+                + " so latest task_runtime.execution completion facts stay "
+                "authoritative for dependency unblock decisions."
+            )
+            continue
+        # If neither path matches, the assignment uses some other fact-aware
+        # construct we did not explicitly enumerate. Surface a softer reminder
+        # so the change author can document it in the fence allowlist.
+        target_name = next(
+            target.id
+            for target in assignment.targets
+            if isinstance(target, ast.Name) and target.id in REFRESH_DEPENDENCY_UNBLOCKS_STATUS_TARGET_TOKENS
+        )
+        offenders.append(
+            f"{rel}:TaskRuntimeService.refresh_dependency_unblocks():"
+            f"{assignment.lineno} builds {target_name!r} without a recognized "
+            "fact-aware dependency status helper. New fact-aware helpers must "
+            "be added to REFRESH_DEPENDENCY_UNBLOCKS_FACT_AWARE_HELPERS so the "
+            "WS2 dependency-status projection stays the read-model SSoT."
+        )
+
+    return offenders
+
+
+def test_refresh_dependency_unblocks_uses_fact_aware_dependency_status_projection() -> None:
+    """WS2 dependency refresh fence.
+
+    ``TaskRuntimeService.refresh_dependency_unblocks()`` is the side-effect
+    path that wakes BLOCKED rows whose dependencies are now complete. The
+    dependency-status source must come from a fact-aware helper so late
+    ``task_runtime.execution`` completion facts (and any in-flight execution
+    overlay) unblock downstream rows even when file-backed rows are stale.
+
+    The function may still iterate ``self._board.list_all()`` to walk
+    persisted ``Task`` objects for the mutation path; the fence only forbids
+    using the raw ``list_all()`` snapshot as the *sole* source of dependency
+    status. A targeted structural check walks the mapping assignment by
+    target name (not by line number) and verifies the RHS invokes a
+    fact-aware helper from a small explicit set.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_refresh_dependency_unblocks_uses_fact_aware_status_source()
+
+    assert not offenders, (
+        "WS2 dependency refresh fence: "
+        f"{rel}:TaskRuntimeService.refresh_dependency_unblocks() must build "
+        "its dependency-status mapping from a fact-aware helper such as "
+        + ", ".join(sorted(REFRESH_DEPENDENCY_UNBLOCKS_FACT_AWARE_HELPERS))
+        + " rather than deriving the mapping from raw self._board.list_all(). "
+        "Raw list_all() iteration is still allowed for the Task-object mutation "
+        "walk, but the status source for dependency resolution must be "
+        "fact-aware so latest task_runtime.execution completion facts remain "
+        "authoritative. Offenders:\n" + "\n".join(offenders)
     )
