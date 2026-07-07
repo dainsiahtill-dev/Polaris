@@ -2368,6 +2368,44 @@ def _list_reader_propagates_fact_event_seq() -> tuple[bool, list[str]]:
     return not offenders, offenders
 
 
+def _list_reader_queries_latest_fact_window() -> tuple[bool, list[str]]:
+    """Check fact-derived task rows read the latest event window, not the first page."""
+
+    function_def = _list_task_rows_from_execution_facts_function_def()
+    offenders: list[str] = []
+
+    has_total_window_guard = False
+    has_latest_offset_assignment = False
+    has_offset_query = False
+
+    for node in ast.walk(function_def):
+        if isinstance(node, ast.Compare):
+            expression = ast.unparse(node)
+            if "result.total" in expression and "len(result.events)" in expression:
+                has_total_window_guard = True
+        elif isinstance(node, ast.Assign):
+            target_names = {target.id for target in node.targets if isinstance(target, ast.Name)}
+            if "latest_offset" in target_names:
+                expression = ast.unparse(node.value)
+                if "result.total" in expression and "event_limit" in expression:
+                    has_latest_offset_assignment = True
+        elif isinstance(node, ast.Call) and _call_name(node.func) == "QueryFactEventsV1":
+            for keyword in node.keywords:
+                if keyword.arg != "offset":
+                    continue
+                if isinstance(keyword.value, ast.Name) and keyword.value.id == "latest_offset":
+                    has_offset_query = True
+
+    if not has_total_window_guard:
+        offenders.append("missing guard comparing result.total with len(result.events)")
+    if not has_latest_offset_assignment:
+        offenders.append("missing latest_offset assignment from result.total - event_limit")
+    if not has_offset_query:
+        offenders.append("missing second QueryFactEventsV1(..., offset=latest_offset) query")
+
+    return not offenders, offenders
+
+
 def _function_reads_dot_seq_files(function_def: ast.FunctionDef) -> list[str]:
     """Detect forbidden direct ``.seq`` cursor / file reads in a function body."""
 
@@ -2508,6 +2546,26 @@ def test_list_task_rows_from_execution_facts_carries_event_seq_into_fact_payload
         "fact_event_seq (sourced from event.get('seq') or event['seq']) before "
         "calling project_task_row_from_execution_fact_payload, and must not "
         "bypass the Fact Stream via .seq cursor/file reads. Offenders:\n" + "\n".join(offenders + seq_cursor_offenders)
+    )
+
+
+def test_list_task_rows_from_execution_facts_queries_latest_fact_window() -> None:
+    """WS2 read-model pagination fence.
+
+    ``JsonlEventStore.query`` returns the requested offset/limit window in
+    append order. TaskRuntime's live read model must therefore re-query the
+    tail window when the stream contains more events than the requested limit;
+    otherwise status projection regresses to the oldest facts in long runs.
+    """
+
+    service_rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    passes, offenders = _list_reader_queries_latest_fact_window()
+
+    assert passes, (
+        "WS2 read-model pagination fence: "
+        f"{service_rel}:TaskRuntimeService.list_task_rows_from_execution_facts "
+        "must use Fact Stream total/offset pagination to query the latest "
+        "event window instead of projecting the earliest page. Offenders:\n" + "\n".join(offenders)
     )
 
 
