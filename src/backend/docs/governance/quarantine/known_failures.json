@@ -26,22 +26,6 @@
       "owner_hint": "kernelone.quality",
       "registered_at": "2026-07-03",
       "expiry": null
-    },
-    {
-      "node_id": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py::TestFrontendTestRepairContracts::test_typescript_web_root_workspace_directive_prefers_package_contracts",
-      "file": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
-      "reason": "PM frontend-test repair contract now emits TASK-3 which the expected task list does not include (expectation drift; pre-existing failure at HEAD per 2026-07-03 audit).",
-      "owner_hint": "cells.roles.adapters",
-      "registered_at": "2026-07-03",
-      "expiry": null
-    },
-    {
-      "node_id": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py::TestFrontendTestRepairContracts::test_typescript_placeholder_script_rule_does_not_route_to_qa_repair",
-      "file": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
-      "reason": "PM frontend-test repair contract now emits TASK-3 which the expected task list does not include (expectation drift; pre-existing failure at HEAD per 2026-07-03 audit).",
-      "owner_hint": "cells.roles.adapters",
-      "registered_at": "2026-07-03",
-      "expiry": null
     }
   ]
 }
