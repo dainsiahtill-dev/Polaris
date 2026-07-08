@@ -1073,8 +1073,37 @@ class TaskExecutionSession:
         self.resumable = bool(resumable)
 
 
+@dataclass(frozen=True, slots=True)
+class TaskExecutionSessionWriteReceipt:
+    """In-memory anchor for the most recent successful session write."""
+
+    task_id: int
+    session_id: str
+    session_path: str
+    before_hash: str
+    after_hash: str
+    operation: str
+    written_at: str
+    preserved_terminal_session: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe projection suitable for internal evidence."""
+
+        return {
+            "task_id": int(self.task_id),
+            "session_id": str(self.session_id),
+            "session_path": str(self.session_path),
+            "before_hash": str(self.before_hash),
+            "after_hash": str(self.after_hash),
+            "operation": str(self.operation),
+            "written_at": str(self.written_at),
+            "preserved_terminal_session": bool(self.preserved_terminal_session),
+        }
+
+
 __all__ = [
     "TaskExecutionSession",
+    "TaskExecutionSessionWriteReceipt",
     "build_task_execution_bulk_suspend_result",
     "build_task_execution_claim_attempt",
     "build_task_execution_claim_next_result",

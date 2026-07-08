@@ -7764,3 +7764,470 @@ def test_role_stats_fence_allows_get_observable_task_row_stats() -> None:
         "get_observable_task_row_stats() calls. The fence should only "
         "block get_task_row_stats(), not the observable API."
     )
+
+
+# ---------------------------------------------------------------------------
+# WS2 execution ledger SSoT - session write receipt anchor fence
+# ---------------------------------------------------------------------------
+#
+# ``TaskRuntimeService._write_session()`` is the only owner of durable
+# execution-session writes. Claim / heartbeat / complete / fail / suspend
+# transitions may mutate a ``TaskExecutionSession`` and delegate persistence to
+# ``_write_session()``, but they must not hand-build write receipts. This keeps
+# the execution-ledger anchor coupled to the actual ``write_json_atomic()``
+# success path instead of letting transition methods drift into independent
+# receipt writers.
+
+SESSION_WRITE_RECEIPT_ANCHOR = "_last_session_write_receipt"
+SESSION_WRITE_RECEIPT_ACCESSOR = "last_session_write_receipt"
+SESSION_WRITE_RECEIPT_CLASS = "TaskExecutionSessionWriteReceipt"
+SESSION_WRITE_RECEIPT_OWNER_METHOD = "_write_session"
+SESSION_WRITE_RECEIPT_RECORD_HELPER = "_record_session_write_receipt"
+SESSION_WRITE_RECEIPT_TRANSITION_METHODS = frozenset(
+    {
+        "claim_execution",
+        "heartbeat_execution",
+        "complete_execution",
+        "fail_execution",
+        "suspend_execution",
+        "suspend_active_executions_for_run",
+    }
+)
+SESSION_WRITE_RECEIPT_SAFE_COPY_CALLS = frozenset(
+    {
+        "copy.copy",
+        "copy.deepcopy",
+        "dataclasses.replace",
+        "replace",
+    }
+)
+SESSION_WRITE_RECEIPT_PRESERVED_KEY = "preserved_terminal_session"
+
+
+def _is_self_attribute(node: ast.AST, attribute: str) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == attribute
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+    )
+
+
+def _assignment_targets(node: ast.Assign | ast.AnnAssign) -> list[ast.AST]:
+    if isinstance(node, ast.Assign):
+        return list(node.targets)
+    return [node.target]
+
+
+def _task_runtime_self_attribute_assignment_lines(
+    method_def: ast.FunctionDef,
+    attribute: str,
+) -> list[int]:
+    lines: list[int] = []
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.Assign | ast.AnnAssign):
+            continue
+        if any(_is_self_attribute(target, attribute) for target in _assignment_targets(node)):
+            lines.append(node.lineno)
+    return lines
+
+
+def _task_runtime_self_attribute_commit_assignments(
+    method_def: ast.FunctionDef,
+    attribute: str,
+) -> list[ast.Assign | ast.AnnAssign]:
+    assignments: list[ast.Assign | ast.AnnAssign] = []
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.Assign | ast.AnnAssign):
+            continue
+        if any(_is_self_attribute(target, attribute) for target in _assignment_targets(node)):
+            assignments.append(node)
+    return assignments
+
+
+def _assignment_value(node: ast.Assign | ast.AnnAssign) -> ast.AST | None:
+    return node.value
+
+
+def _enclosing_statement(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> ast.stmt | None:
+    current = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, ast.stmt):
+            return current
+    return None
+
+
+def _sibling_statements_after(
+    statement: ast.stmt,
+    parents: dict[ast.AST, ast.AST],
+) -> list[ast.stmt]:
+    parent = parents.get(statement)
+    if parent is None:
+        return []
+    for _field_name, value in ast.iter_fields(parent):
+        if not isinstance(value, list) or statement not in value:
+            continue
+        index = value.index(statement)
+        return [item for item in value[index + 1 :] if isinstance(item, ast.stmt)]
+    return []
+
+
+def _assigned_local_name_from_statement(statement: ast.stmt, call: ast.Call) -> str:
+    if isinstance(statement, ast.Assign) and statement.value is call:
+        target_names: set[str] = set()
+        for target in statement.targets:
+            target_names.update(_assignment_target_names(target))
+        return next(iter(sorted(target_names)), "")
+    if isinstance(statement, ast.AnnAssign) and statement.value is call:
+        return next(iter(sorted(_assignment_target_names(statement.target))), "")
+    return ""
+
+
+def _bool_keyword_value(call: ast.Call, name: str) -> bool | None:
+    value = _call_keyword_value(call, name)
+    if isinstance(value, ast.Constant) and isinstance(value.value, bool):
+        return value.value
+    return None
+
+
+def _receipt_assignment_value_call(assignment: ast.Assign | ast.AnnAssign) -> ast.Call | None:
+    value = _assignment_value(assignment)
+    if isinstance(value, ast.Call):
+        return value
+    return None
+
+
+def _session_write_receipt_commit_after_call(
+    method_def: ast.FunctionDef,
+    write_call: ast.Call,
+) -> ast.Assign | ast.AnnAssign | ast.Call | None:
+    parents = _parent_lookup(method_def)
+    statement = _enclosing_statement(write_call, parents)
+    if statement is None:
+        return None
+
+    for sibling in _sibling_statements_after(statement, parents):
+        if isinstance(sibling, ast.Return):
+            return None
+        for node in ast.walk(sibling):
+            if isinstance(node, ast.Assign | ast.AnnAssign):
+                if not any(
+                    _is_self_attribute(target, SESSION_WRITE_RECEIPT_ANCHOR) for target in _assignment_targets(node)
+                ):
+                    continue
+                value_call = _receipt_assignment_value_call(node)
+                if value_call is None or _call_name(value_call.func) != SESSION_WRITE_RECEIPT_CLASS:
+                    continue
+                return node
+            if isinstance(node, ast.Call) and _call_name(node.func) == f"self.{SESSION_WRITE_RECEIPT_RECORD_HELPER}":
+                return node
+    return None
+
+
+def _write_session_atomic_write_calls(method_def: ast.FunctionDef) -> list[ast.Call]:
+    return [
+        node
+        for node in _walk_task_runtime_method_body(method_def)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "self._kernel_fs.write_json_atomic"
+    ]
+
+
+def _session_write_receipt_preserved_flag(commit: ast.Assign | ast.AnnAssign | ast.Call) -> bool | None:
+    if isinstance(commit, ast.Call):
+        return _bool_keyword_value(commit, SESSION_WRITE_RECEIPT_PRESERVED_KEY)
+    value_call = _receipt_assignment_value_call(commit)
+    if value_call is None:
+        return None
+    return _bool_keyword_value(value_call, SESSION_WRITE_RECEIPT_PRESERVED_KEY)
+
+
+def _session_write_receipt_constructor_call(node: ast.Call) -> bool:
+    leaf_name = _call_name(node.func).rsplit(".", maxsplit=1)[-1]
+    return leaf_name == SESSION_WRITE_RECEIPT_CLASS or ("Session" in leaf_name and "WriteReceipt" in leaf_name)
+
+
+def _dataclass_decorator_is_frozen(decorator: ast.AST) -> bool:
+    if not isinstance(decorator, ast.Call):
+        return False
+    if _call_name(decorator.func).rsplit(".", maxsplit=1)[-1] != "dataclass":
+        return False
+    return _bool_keyword_value(decorator, "frozen") is True
+
+
+def _execution_session_receipt_class_is_frozen_dataclass() -> bool:
+    source = EXECUTION_SESSION_MODULE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or node.name != SESSION_WRITE_RECEIPT_CLASS:
+            continue
+        return any(_dataclass_decorator_is_frozen(decorator) for decorator in node.decorator_list)
+    return False
+
+
+def _return_directly_exposes_session_write_receipt(node: ast.Return) -> bool:
+    return node.value is not None and any(
+        _is_self_attribute(child, SESSION_WRITE_RECEIPT_ANCHOR) for child in ast.walk(node.value)
+    )
+
+
+def _return_safely_copies_session_write_receipt(node: ast.Return) -> bool:
+    value = node.value
+    if not isinstance(value, ast.Call):
+        return False
+    call_name = _call_name(value.func)
+    if call_name in SESSION_WRITE_RECEIPT_SAFE_COPY_CALLS:
+        return any(_is_self_attribute(child, SESSION_WRITE_RECEIPT_ANCHOR) for child in ast.walk(value))
+    return call_name == f"self.{SESSION_WRITE_RECEIPT_ANCHOR}.to_dict"
+
+
+def _check_task_runtime_service_initializes_session_write_receipt_anchor() -> list[str]:
+    method_defs = _task_runtime_service_method_defs()
+    init_method = method_defs.get("__init__")
+    if init_method is None:
+        return ["TaskRuntimeService.__init__() not found"]
+    if _task_runtime_self_attribute_assignment_lines(init_method, SESSION_WRITE_RECEIPT_ANCHOR):
+        return []
+    return [
+        "TaskRuntimeService.__init__() must initialize "
+        f"self.{SESSION_WRITE_RECEIPT_ANCHOR} so session writes have an "
+        "explicit in-memory receipt anchor from construction time"
+    ]
+
+
+def _check_write_session_updates_session_write_receipts() -> list[str]:
+    method_defs = _task_runtime_service_method_defs()
+    write_session = method_defs.get(SESSION_WRITE_RECEIPT_OWNER_METHOD)
+    if write_session is None:
+        return [f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_OWNER_METHOD}() not found"]
+
+    offenders: list[str] = []
+    write_calls = _write_session_atomic_write_calls(write_session)
+    if not write_calls:
+        offenders.append(
+            "TaskRuntimeService._write_session() must persist sessions through self._kernel_fs.write_json_atomic()"
+        )
+        return offenders
+
+    preserved_receipt_count = 0
+    normal_receipt_count = 0
+
+    for write_call in write_calls:
+        receipt_assignment = _session_write_receipt_commit_after_call(write_session, write_call)
+        if receipt_assignment is None:
+            offenders.append(
+                f"TaskRuntimeService._write_session():{write_call.lineno} must update "
+                f"self.{SESSION_WRITE_RECEIPT_ANCHOR} directly or call "
+                f"self.{SESSION_WRITE_RECEIPT_RECORD_HELPER}(...) after "
+                "write_json_atomic() returns successfully"
+            )
+            continue
+
+        preserved_flag = _session_write_receipt_preserved_flag(receipt_assignment)
+        if preserved_flag is True:
+            preserved_receipt_count += 1
+            continue
+        if preserved_flag is False:
+            normal_receipt_count += 1
+            continue
+        offenders.append(
+            f"TaskRuntimeService._write_session():{receipt_assignment.lineno} must set "
+            f"{SESSION_WRITE_RECEIPT_PRESERVED_KEY}=True for preserved terminal "
+            "session write-backs or False for normal session writes"
+        )
+
+    if preserved_receipt_count == 0:
+        offenders.append(
+            "TaskRuntimeService._write_session() must update the session write "
+            "receipt on the preserved terminal session write-back path with "
+            f"{SESSION_WRITE_RECEIPT_PRESERVED_KEY}=True"
+        )
+    if normal_receipt_count == 0:
+        offenders.append(
+            "TaskRuntimeService._write_session() must update the session write "
+            "receipt on the normal session write path with "
+            f"{SESSION_WRITE_RECEIPT_PRESERVED_KEY}=False"
+        )
+    return offenders
+
+
+def _task_runtime_service_self_method_call_lines(method_def: ast.FunctionDef, method_name: str) -> list[int]:
+    return [
+        node.lineno
+        for node in _walk_task_runtime_method_body(method_def)
+        if isinstance(node, ast.Call) and _call_name(node.func) == f"self.{method_name}"
+    ]
+
+
+def _check_session_write_receipt_record_helper_contract() -> list[str]:
+    method_defs = _task_runtime_service_method_defs()
+    helper = method_defs.get(SESSION_WRITE_RECEIPT_RECORD_HELPER)
+    if helper is None:
+        return []
+
+    offenders: list[str] = []
+    helper_receipt_assignments = _task_runtime_self_attribute_commit_assignments(
+        helper,
+        SESSION_WRITE_RECEIPT_ANCHOR,
+    )
+    if not helper_receipt_assignments:
+        offenders.append(
+            f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_RECORD_HELPER}() must assign "
+            f"self.{SESSION_WRITE_RECEIPT_ANCHOR} after constructing "
+            f"{SESSION_WRITE_RECEIPT_CLASS}"
+        )
+    if not any(
+        isinstance(node, ast.Call) and _session_write_receipt_constructor_call(node)
+        for node in _walk_task_runtime_method_body(helper)
+    ):
+        offenders.append(
+            f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_RECORD_HELPER}() must construct "
+            f"{SESSION_WRITE_RECEIPT_CLASS}; receipt metadata must not be an untyped dict"
+        )
+
+    for method_name, method_def in method_defs.items():
+        call_lines = _task_runtime_service_self_method_call_lines(method_def, SESSION_WRITE_RECEIPT_RECORD_HELPER)
+        if not call_lines:
+            continue
+        if method_name == SESSION_WRITE_RECEIPT_OWNER_METHOD:
+            continue
+        offenders.extend(
+            f"TaskRuntimeService.{method_name}():{line} calls "
+            f"self.{SESSION_WRITE_RECEIPT_RECORD_HELPER}(); only _write_session() "
+            "may invoke the session receipt commit helper"
+            for line in call_lines
+        )
+    return offenders
+
+
+def _check_last_session_write_receipt_accessor_is_safe() -> list[str]:
+    method_defs = _task_runtime_service_method_defs()
+    accessor = method_defs.get(SESSION_WRITE_RECEIPT_ACCESSOR)
+    if accessor is None:
+        return [
+            f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_ACCESSOR}() must expose "
+            "a read-only projection of the latest session write receipt"
+        ]
+
+    offenders: list[str] = []
+    returns = [node for node in _walk_task_runtime_method_body(accessor) if isinstance(node, ast.Return)]
+    if not returns:
+        offenders.append(f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_ACCESSOR}() must return receipt state")
+        return offenders
+
+    receipt_is_frozen = _execution_session_receipt_class_is_frozen_dataclass()
+    for node in returns:
+        if not _return_directly_exposes_session_write_receipt(node):
+            continue
+        if _return_safely_copies_session_write_receipt(node):
+            continue
+        if receipt_is_frozen:
+            continue
+        offenders.append(
+            f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_ACCESSOR}():{node.lineno} returns "
+            f"self.{SESSION_WRITE_RECEIPT_ANCHOR} without a defensive copy; direct return "
+            "is only allowed for a frozen dataclass receipt"
+        )
+    return offenders
+
+
+def _check_session_write_receipt_owner_boundary() -> list[str]:
+    method_defs = _task_runtime_service_method_defs()
+    offenders: list[str] = _check_session_write_receipt_record_helper_contract()
+    allowed_assignment_methods = {"__init__", SESSION_WRITE_RECEIPT_OWNER_METHOD, SESSION_WRITE_RECEIPT_RECORD_HELPER}
+
+    for method_name, method_def in method_defs.items():
+        assignment_lines = _task_runtime_self_attribute_assignment_lines(method_def, SESSION_WRITE_RECEIPT_ANCHOR)
+        if assignment_lines and method_name not in allowed_assignment_methods:
+            offenders.extend(
+                f"TaskRuntimeService.{method_name}():{line} assigns "
+                f"self.{SESSION_WRITE_RECEIPT_ANCHOR}; only _write_session() may "
+                "commit session write receipts after durable writes"
+                for line in assignment_lines
+            )
+
+    for method_name in sorted(SESSION_WRITE_RECEIPT_TRANSITION_METHODS):
+        transition_method_def = method_defs.get(method_name)
+        if transition_method_def is None:
+            offenders.append(f"TaskRuntimeService.{method_name}() not found")
+            continue
+        for node in _walk_task_runtime_method_body(transition_method_def):
+            if isinstance(node, ast.Call) and _session_write_receipt_constructor_call(node):
+                offenders.append(
+                    f"TaskRuntimeService.{method_name}():{node.lineno} constructs "
+                    f"{SESSION_WRITE_RECEIPT_CLASS}; transition methods must delegate "
+                    "receipt creation to _write_session()"
+                )
+            if isinstance(node, ast.keyword) and node.arg == SESSION_WRITE_RECEIPT_PRESERVED_KEY:
+                offenders.append(
+                    f"TaskRuntimeService.{method_name}():{node.lineno} sets "
+                    f"{SESSION_WRITE_RECEIPT_PRESERVED_KEY}; only _write_session() owns "
+                    "session receipt metadata"
+                )
+
+    return offenders
+
+
+def test_task_runtime_service_initializes_session_write_receipt_anchor() -> None:
+    """WS2 execution-ledger fence: service construction must anchor receipts."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_task_runtime_service_initializes_session_write_receipt_anchor()
+
+    assert not offenders, (
+        "WS2 execution ledger SSoT session receipt fence: "
+        f"{rel}:TaskRuntimeService.__init__() must initialize the session "
+        "write receipt anchor. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_write_session_updates_session_write_receipt_after_atomic_write() -> None:
+    """WS2 execution-ledger fence: ``_write_session`` owns write receipts.
+
+    Each successful ``self._kernel_fs.write_json_atomic(...)`` call must be
+    followed by a receipt commit in the same control-flow block. The commit may
+    assign ``self._last_session_write_receipt`` directly or route through the
+    private ``self._record_session_write_receipt(...)`` helper, but the helper
+    must remain callable only from ``_write_session()``. The normal path must
+    mark ``preserved_terminal_session=False`` and the preserved terminal
+    session write-back path must mark it ``True``.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_write_session_updates_session_write_receipts()
+
+    assert not offenders, (
+        "WS2 execution ledger SSoT session receipt fence: "
+        f"{rel}:TaskRuntimeService._write_session() must be the single owner "
+        "that records the latest session write receipt immediately after "
+        "durable write_json_atomic() success. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_last_session_write_receipt_accessor_does_not_leak_mutable_internal_state() -> None:
+    """WS2 execution-ledger fence: accessor must be immutable or defensive."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_last_session_write_receipt_accessor_is_safe()
+
+    assert not offenders, (
+        "WS2 execution ledger SSoT session receipt fence: "
+        f"{rel}:TaskRuntimeService.last_session_write_receipt() must not leak "
+        "a mutable internal receipt reference. Direct return is allowed only "
+        "when TaskExecutionSessionWriteReceipt is a frozen dataclass; otherwise "
+        "return a defensive copy/projection. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_session_write_receipt_is_only_written_by_write_session_owner() -> None:
+    """WS2 execution-ledger fence: transition methods must not write receipts."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_session_write_receipt_owner_boundary()
+
+    assert not offenders, (
+        "WS2 execution ledger SSoT session receipt fence: "
+        f"{rel}:claim/heartbeat/complete/fail/suspend paths may only call "
+        "_write_session(); they must not assign or construct session write "
+        "receipts themselves. Offenders:\n" + "\n".join(offenders)
+    )

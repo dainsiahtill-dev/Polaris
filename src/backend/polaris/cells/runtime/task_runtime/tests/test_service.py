@@ -36,6 +36,18 @@ def _sha256_utf8_file(path: Path) -> str:
 
 
 _ROW_WRITE_RECEIPT_FIELDS = frozenset({"task_id", "task_path", "before_hash", "after_hash", "operation", "written_at"})
+_SESSION_WRITE_RECEIPT_FIELDS = frozenset(
+    {
+        "task_id",
+        "session_id",
+        "session_path",
+        "before_hash",
+        "after_hash",
+        "operation",
+        "written_at",
+        "preserved_terminal_session",
+    }
+)
 
 
 def _execution_event_payload_for_result(
@@ -79,6 +91,34 @@ def _assert_task_row_write_receipt(
     assert values["operation"].strip()
     assert isinstance(values["written_at"], str)
     assert values["written_at"].strip()
+    return values
+
+
+def _assert_task_execution_session_write_receipt(
+    receipt: object,
+    *,
+    task_id: int,
+    session_id: str,
+    session_path: Path,
+    preserved_terminal_session: bool,
+) -> dict[str, Any]:
+    assert receipt is not None
+    if isinstance(receipt, dict):
+        values = {field: receipt[field] for field in _SESSION_WRITE_RECEIPT_FIELDS}
+    else:
+        values = {field: getattr(receipt, field) for field in _SESSION_WRITE_RECEIPT_FIELDS if hasattr(receipt, field)}
+    missing = _SESSION_WRITE_RECEIPT_FIELDS - set(values)
+    assert not missing
+    assert values["task_id"] == task_id
+    assert values["session_id"] == session_id
+    assert str(values["session_path"]) in {str(session_path), f"runtime/tasks/task_{task_id}.session.json"}
+    assert isinstance(values["before_hash"], str)
+    assert isinstance(values["after_hash"], str)
+    assert values["after_hash"].strip()
+    assert values["operation"] == "replace"
+    assert isinstance(values["written_at"], str)
+    assert values["written_at"].strip()
+    assert values["preserved_terminal_session"] is preserved_terminal_session
     return values
 
 
@@ -339,6 +379,135 @@ def test_task_runtime_service_records_taskboard_row_write_receipt(tmp_path: Path
     assert update_receipt["before_hash"] == create_after_hash
     assert update_receipt["after_hash"] == update_after_hash
     assert update_receipt["after_hash"] != update_receipt["before_hash"]
+
+
+def test_claim_execution_records_session_write_receipt(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(
+        subject="session receipt anchored task",
+        description="claim should record a session write receipt",
+        metadata={"phase": "session-write-receipt"},
+    )
+    task_id = int(created["id"])
+
+    claimed = service.claim_execution(
+        task_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-session-receipt",
+        selection_source="unit",
+    )
+
+    assert claimed["success"] is True
+    session_id = str(claimed["session"]["session_id"])
+    session_path = _session_file_path(workspace, task_id)
+    assert session_path.is_file()
+
+    receipt = _assert_task_execution_session_write_receipt(
+        service.last_session_write_receipt(),
+        task_id=task_id,
+        session_id=session_id,
+        session_path=session_path,
+        preserved_terminal_session=False,
+    )
+    assert receipt["after_hash"] == _sha256_utf8_file(session_path)
+
+
+def test_write_session_receipt_marks_terminal_session_preserved_when_write_returns_false(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="preserve terminal session receipt")
+    task_id = int(created["id"])
+
+    terminal_session = TaskExecutionSession.create(
+        task_id=task_id,
+        role_id="director",
+        worker_id="director-worker",
+        run_id="run-terminal-preserved-receipt",
+        lease_ttl_seconds=120,
+        attempt=1,
+        resume_count=0,
+        origin="unit",
+        selection_source="task_id_lookup",
+    )
+    terminal_session.mark_completed(result_summary="terminal session wins")
+    session_path = _session_file_path(workspace, task_id)
+    session_path.write_text(
+        json.dumps(terminal_session.to_dict(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    incoming = TaskExecutionSession.from_dict(
+        {
+            **terminal_session.to_dict(),
+            "status": "active",
+            "last_result_summary": "",
+            "released_at": "",
+            "resumable": True,
+        }
+    )
+
+    session_written = service._write_session(incoming)
+
+    assert session_written is False
+    assert incoming.status == "completed"
+    persisted_session = json.loads(session_path.read_text(encoding="utf-8"))
+    assert persisted_session["status"] == "completed"
+    receipt = _assert_task_execution_session_write_receipt(
+        service.last_session_write_receipt(),
+        task_id=task_id,
+        session_id=terminal_session.session_id,
+        session_path=session_path,
+        preserved_terminal_session=True,
+    )
+    assert receipt["after_hash"] == _sha256_utf8_file(session_path)
+
+
+def test_failed_session_write_does_not_update_last_session_write_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="failed session receipt write")
+    task_id = int(created["id"])
+    claimed = service.claim_execution(
+        task_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-session-write-failure",
+        selection_source="unit",
+    )
+    assert claimed["success"] is True
+    session_id = str(claimed["session"]["session_id"])
+    session_path = _session_file_path(workspace, task_id)
+    baseline = _assert_task_execution_session_write_receipt(
+        service.last_session_write_receipt(),
+        task_id=task_id,
+        session_id=session_id,
+        session_path=session_path,
+        preserved_terminal_session=False,
+    )
+
+    def raise_session_write_unavailable(*_args: object, **_kwargs: Any) -> NoReturn:
+        raise RuntimeError("session write unavailable")
+
+    monkeypatch.setattr(service._kernel_fs, "write_json_atomic", raise_session_write_unavailable)
+
+    with pytest.raises(RuntimeError, match="session write unavailable"):
+        service.heartbeat_execution(
+            task_id,
+            session_id=session_id,
+            lease_ttl_seconds=180,
+            context_summary="receipt should stay anchored to the last successful write",
+        )
+
+    assert service.last_session_write_receipt().to_dict() == baseline
 
 
 def test_taskboard_save_task_row_write_is_guarded_by_per_row_file_lock(

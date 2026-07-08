@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -28,6 +29,7 @@ from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_root
 
 from .execution_session import (
     TaskExecutionSession,
+    TaskExecutionSessionWriteReceipt,
     _coerce_fact_event_seq,
     build_task_execution_bulk_suspend_result,
     build_task_execution_claim_attempt,
@@ -149,10 +151,18 @@ class TaskRuntimeService:
         # Per-task-id locks guard the read-modify-write cycle on session files.
         self._session_locks: dict[int, threading.Lock] = {}
         self._session_locks_meta = threading.Lock()
+        self._last_session_write_receipt: TaskExecutionSessionWriteReceipt | None = None
+        self._session_write_receipt_lock = threading.Lock()
 
     @property
     def workspace(self) -> str:
         return self._workspace
+
+    def last_session_write_receipt(self) -> TaskExecutionSessionWriteReceipt | None:
+        """Return the last successful execution-session write receipt anchor."""
+
+        with self._session_write_receipt_lock:
+            return self._last_session_write_receipt
 
     def _list_file_task_entities(self) -> list[Task]:
         """Return raw file-backed ``TaskBoard`` entities for owner-cell use.
@@ -2521,6 +2531,60 @@ class TaskRuntimeService:
     def _session_logical_path(self, task_id: int) -> str:
         return f"runtime/tasks/task_{int(task_id)}.session.json"
 
+    @staticmethod
+    def _session_payload_text(payload: Any) -> str:
+        """Return the exact UTF-8 JSON text used by ``write_json_atomic``."""
+
+        return (
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n"
+        )
+
+    @classmethod
+    def _session_payload_hash(cls, payload: Any) -> str:
+        """Return the write-format UTF-8 JSON payload hash for session receipts."""
+
+        return hashlib.sha256(cls._session_payload_text(payload).encode("utf-8")).hexdigest()
+
+    def _read_current_session_payload_hash(self, logical_path: str) -> str:
+        """Return the current UTF-8 session file hash, or empty string when absent."""
+
+        if not self._kernel_fs.exists(logical_path):
+            return ""
+        try:
+            session_text = self._kernel_fs.read_text(logical_path, encoding="utf-8")
+            return hashlib.sha256(session_text.encode("utf-8")).hexdigest()
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.warning("Failed to hash task runtime session text %s: %s", logical_path, exc)
+            return ""
+
+    def _record_session_write_receipt(
+        self,
+        *,
+        session: TaskExecutionSession,
+        session_path: str,
+        before_hash: str,
+        after_hash: str,
+        operation: str,
+        preserved_terminal_session: bool,
+    ) -> None:
+        receipt = TaskExecutionSessionWriteReceipt(
+            task_id=session.task_id,
+            session_id=session.session_id,
+            session_path=session_path,
+            before_hash=before_hash,
+            after_hash=after_hash,
+            operation=operation,
+            written_at=utc_now_iso(),
+            preserved_terminal_session=preserved_terminal_session,
+        )
+        with self._session_write_receipt_lock:
+            self._last_session_write_receipt = receipt
+
     def _read_session(self, task_id: int) -> TaskExecutionSession | None:
         logical_path = self._session_logical_path(task_id)
         if not self._kernel_fs.exists(logical_path):
@@ -2544,22 +2608,45 @@ class TaskRuntimeService:
         *,
         allow_terminal_downgrade: bool = False,
     ) -> bool:
+        session_path = self._session_logical_path(session.task_id)
         if not allow_terminal_downgrade and not is_terminal_session_status(session.status):
             terminal_session = self._find_terminal_session_snapshot(session)
             if terminal_session is not None:
                 self._copy_session_state(session, terminal_session)
+                terminal_payload = terminal_session.to_dict()
+                before_hash = self._read_current_session_payload_hash(session_path)
+                after_hash = self._session_payload_hash(terminal_payload)
                 self._kernel_fs.write_json_atomic(
-                    self._session_logical_path(session.task_id),
-                    terminal_session.to_dict(),
+                    session_path,
+                    terminal_payload,
                     indent=2,
                     ensure_ascii=False,
                 )
+                self._record_session_write_receipt(
+                    session=terminal_session,
+                    session_path=session_path,
+                    before_hash=before_hash,
+                    after_hash=after_hash,
+                    operation="replace",
+                    preserved_terminal_session=True,
+                )
                 return False
+        session_payload = session.to_dict()
+        before_hash = self._read_current_session_payload_hash(session_path)
+        after_hash = self._session_payload_hash(session_payload)
         self._kernel_fs.write_json_atomic(
-            self._session_logical_path(session.task_id),
-            session.to_dict(),
+            session_path,
+            session_payload,
             indent=2,
             ensure_ascii=False,
+        )
+        self._record_session_write_receipt(
+            session=session,
+            session_path=session_path,
+            before_hash=before_hash,
+            after_hash=after_hash,
+            operation="replace",
+            preserved_terminal_session=False,
         )
         return True
 

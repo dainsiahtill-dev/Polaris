@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 from polaris.cells.runtime.task_runtime.internal.execution_session import (
     TaskExecutionSession,
+    TaskExecutionSessionWriteReceipt,
     build_task_execution_bulk_suspend_result,
     build_task_execution_claim_attempt,
     build_task_execution_claim_next_result,
@@ -37,6 +38,30 @@ def _valid_session_payload() -> dict[str, object]:
         "claimed_at": "2026-01-01T00:00:00+00:00",
         "last_heartbeat_at": "2026-01-01T00:00:00+00:00",
         "lease_expires_at": "2026-01-01T00:02:00+00:00",
+    }
+
+
+def test_task_execution_session_write_receipt_to_dict_projects_stable_fields() -> None:
+    receipt = TaskExecutionSessionWriteReceipt(
+        task_id=7,
+        session_id="tx-1",
+        session_path="runtime/tasks/task_7.session.json",
+        before_hash="file_absent",
+        after_hash="abc123",
+        operation="replace",
+        written_at="2026-01-01T00:00:00+00:00",
+        preserved_terminal_session=True,
+    )
+
+    assert receipt.to_dict() == {
+        "task_id": 7,
+        "session_id": "tx-1",
+        "session_path": "runtime/tasks/task_7.session.json",
+        "before_hash": "file_absent",
+        "after_hash": "abc123",
+        "operation": "replace",
+        "written_at": "2026-01-01T00:00:00+00:00",
+        "preserved_terminal_session": True,
     }
 
 
